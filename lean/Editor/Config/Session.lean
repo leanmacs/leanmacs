@@ -2,6 +2,7 @@ import Editor.Config.Diagnostic
 import Editor.Config.LakePackage
 import Editor.Config.Lakefile
 import Editor.Config.Registry
+import Editor.PackageSet.Fingerprint
 
 /-!
 # The config session: what one reload builds
@@ -243,11 +244,70 @@ structure PackageFiles where
   /-- The names of the packages a lakefile with this text requires, or why
   the text cannot be read. -/
   requires : String → IO (Except String (Array String))
+  /-- The `[[require]]` tables of a lakefile with this text, or why the
+  text cannot be read (`Config.Lakefile.Toml.requireEntries`). -/
+  requireEntries : String → IO (Except String (Array PackageSet.Require)) := fun _ => pure (.ok #[])
+  /-- The config directory, absolute: what a path require is relative to.
+  Empty for a host with none. -/
+  directory : String := ""
+  /-- The Lake name of the shipped set the editor was built from, when it
+  knows one (`Config.LakePackage.Origin.setName`). -/
+  setName : Option String := Option.none
+  /-- The `[[require]]` tables of the `lakefile.toml` in this directory,
+  absolute: asked only of the shipped set's directory, when the config's
+  lakefile requires that set by path (`PackageSet.Facts.setRequires`). -/
+  setRequires : String → IO (Except String (Array PackageSet.Require)) := fun _ => pure (.ok #[])
 
 /-- The package port of a host with no config directory to read: it holds
 no file. -/
 def PackageFiles.none : PackageFiles :=
   { read := fun _ => pure Option.none, requires := fun _ => pure (.ok #[]) }
+
+/-- The name of the manifest Lake writes beside a lakefile. -/
+def manifestName : String :=
+  "lake-manifest.json"
+
+/-- What the config directory holds as a package set, read through
+`package` (`docs/design/packages.md`, "User package sets"): its lakefile,
+a `lakefile.toml` with its `[[require]]` tables (`requireEntries`), else a
+`lakefile.lean`, whose text alone is kept, else none; the text of its
+`lake-manifest.json`; and, when the lakefile requires the shipped set
+(`PackageFiles.setName`) by path, the requires of that set's own
+lakefile. A read that throws is a lakefile that cannot be read. -/
+def packageFacts (package : PackageFiles) : IO PackageSet.Facts := do
+  try
+    let lakefile ←
+      match ← package.read LakePackage.lakefileName with
+      | some text =>
+        match ← package.requireEntries text with
+        | .ok required =>
+          pure (PackageSet.Lakefile.toml text required)
+        | .error why =>
+          pure (.unreadable why)
+      | Option.none =>
+        match ← package.read LakePackage.leanLakefileName with
+        | some text =>
+          pure (.lean text)
+        | Option.none =>
+          pure .absent
+    let manifest ← package.read manifestName
+    let setRequires ←
+      match lakefile, package.setName with
+      | .toml _ required, some setName =>
+        match required.find? (·.name == setName) with
+        | some { source := .path directory, .. } =>
+          match ← package.setRequires (PackageSet.normalise package.directory directory) with
+          | .ok entries =>
+            pure entries
+          | .error _ =>
+            pure #[]
+        | _ =>
+          pure #[]
+      | _, _ =>
+        pure #[]
+    return { lakefile, manifest, setRequires }
+  catch error =>
+    return { lakefile := .unreadable ((toString error).splitOn "\n" |>.headD "") }
 
 /-- The port the config directory's generated files are written through,
 with what they are written from ("The package ports", in the module
@@ -422,6 +482,10 @@ structure Outcome (β σ : Type) where
   /-- The config, if every file elaborated and its `setup` was accepted;
   `none` when the reload is rejected. -/
   built : Option (Built σ)
+  /-- What the reload read of the config directory as a package set
+  (`packageFacts`), whether it installed or not; empty for an outcome
+  `build` alone made (`reload` reads it). -/
+  facts : PackageSet.Facts := {}
 
 /-- An outcome exists for any types: a promise of one can be made before
 there is a base. -/
@@ -687,5 +751,15 @@ def build {β σ : Type} (scheme : InputScheme) (elaborator : Elaborator β σ) 
         return rejected (diagnostics.push (failure "setup" message))
       | none =>
         return { base := some grown, diagnostics, built := some { files, registrations } }
+
+/-- One reload as a host runs it: `build`, then what the config directory
+holds as a package set (`packageFacts`), read whatever the build came to,
+so a config refused for an import of a package the set lacks still starts
+the set's rebuild (`docs/design/packages.md`, "User package sets"). -/
+def reload {β σ : Type} (scheme : InputScheme) (elaborator : Elaborator β σ) (source : Source)
+    (package : PackageFiles) (generator : Option Generator) (base : Option β)
+    (loaded : Array (LoadedFile σ)) : IO (Outcome β σ) := do
+  let outcome ← build scheme elaborator source package generator base loaded
+  return { outcome with facts := ← packageFacts package }
 
 end Editor.Config

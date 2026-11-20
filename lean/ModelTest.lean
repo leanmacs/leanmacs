@@ -110,6 +110,8 @@ import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
 import ModelTest.Editor.ModeLine.Compiled
 import ModelTest.Editor.ModuleLookup
+import ModelTest.Editor.PackageSet.Fingerprint
+import ModelTest.Editor.PackageSet.Running
 import ModelTest.Editor.Process.Environment
 import ModelTest.Editor.Process.Model
 import ModelTest.Editor.Program
@@ -764,7 +766,8 @@ The config session's decisions are tested here too, with no elaborator:
   a host with no package port and in one with no generator too; a config
   file that is not there; a cycle; a config in the old form; a root spelt
   `Init.lean`, which is a misspelt root and not the old form), the generated
-  lakefile and toolchain file, and what an outcome carries;
+  lakefile and toolchain file, what an outcome carries, and what every
+  reload reads of the config directory as a package set (`packageFacts`);
 - `lakePackageChecks`: the config directory as a Lake package
   (`Editor/Config/LakePackage.lean`): the generated lakefile's text, and
   what is done about the lakefile and the toolchain file given what the
@@ -827,6 +830,18 @@ The config session's decisions are tested here too, with no elaborator:
   the `workspace` package `find-workspace`, `find-mode-markers` and
   `compile-list` (`Editor/Workspace/Compiled.lean`), and the `restore`
   package its four (`Editor/Restore/Compiled.lean`);
+- `packageSetFingerprintChecks`: a user's package set's fingerprint
+  (`Editor/PackageSet/Fingerprint.lean`): each require's line, a path
+  made absolute and normalised; the manifest's git pins, read from a
+  manifest a real `lake update` wrote, its path entries left out; the
+  comparison, which ignores the set's name and a manifest's path entries;
+  the record `editor.packages` and its read; the shipped default's
+  fingerprint, which a generated lakefile matches; and a `lakefile.lean`
+  known by its hash;
+- `packageSetRunningChecks`: what the running editor knows of its own
+  package set (`Editor/PackageSet/Running.lean`): the records beside it,
+  the shipped fingerprint with no `.packages` record and the recorded one
+  with one, and the toolchain's `lake` only when it is there;
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
@@ -1431,6 +1446,8 @@ def checks : List Check :=
     windowLoopChecks ++
     windowArgumentChecks ++
     moduleLookupChecks ++
+    packageSetFingerprintChecks ++
+    packageSetRunningChecks ++
     headlessCommandLineChecks ++
     executableModeChecks ++
     versionChecks ++

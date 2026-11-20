@@ -59,4 +59,34 @@ def lakefileChecks (_ : Unit) : List Check :=
             Config.Lakefile.libraryRoot name ==
               (Lake.toUpperCamelCase (Lean.Name.mkSimple name)).toString (escape := false)) }]
 
+/-- The checks of the adapter's `[[require]]` tables
+(`Config.Lakefile.Toml.requireEntries`), on texts written here: each
+table's kind and fields, and the generated lakefile read back. -/
+def lakefileEntryChecks (_ : Unit) : List Check :=
+  let entries (text : String) : IO (Option (Array PackageSet.Require)) :=
+    return (← Config.Lakefile.Toml.requireEntries text).toOption
+  [{  name :=
+        "a lakefile's require tables are path, git or Reservoir dependencies, in order, each with its fields"
+      run := do
+        let text :=
+          "name = \"config\"\n\n[[require]]\nname = \"default-set\"\npath = \"/w/packages\"\n\n[[require]]\nname = \"loud\"\ngit = \"https://example.invalid/loud\"\nrev = \"main\"\nsubDir = \"pkg\"\n\n[[require]]\nname = \"bare\"\ngit = \"https://example.invalid/bare\"\n\n[[require]]\nname = \"batteries\"\nscope = \"leanprover-community\"\nversion = \"v1.2\"\n\n[[require]]\nname = \"unscoped\"\n\n[[lean_lib]]\nname = \"Config\"\n"
+        return (← entries text) ==
+            some
+              #[{ name := "default-set", source := .path "/w/packages" },
+                { name := "loud",
+                  source := .git "https://example.invalid/loud" (some "main") (some "pkg") },
+                { name := "bare", source := .git "https://example.invalid/bare" none none },
+                { name := "batteries", source := .reservoir "leanprover-community" (some "v1.2") },
+                { name := "unscoped", source := .reservoir "" none }] },
+    { name := "the generated lakefile is read back as one path require of its set"
+      run := do
+        let text :=
+          Config.LakePackage.lakefile { name := "default-set", directory := "/w/packages" }
+        return (← entries text) ==
+            some #[{ name := "default-set", source := .path "/w/packages" }] },
+    { name := "a text that is not TOML is an error, and a table with no string name is left out"
+      run := do
+        let broken := (← Config.Lakefile.Toml.requireEntries "name = \"config\n[[require").toOption
+        return broken.isNone && (← entries "[[require]]\nname = 3\npath = \"/a\"\n") == some #[] }]
+
 end ConfigTest

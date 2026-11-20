@@ -909,6 +909,50 @@ fixture package `greeting`'s headless fixture from it with no `.olean`
 directory given, verifies its signature on macOS, and checks that a second
 install into the same directory is refused.
 
+### The fingerprint: when a set differs from the running editor's
+
+"The lakefile's dependencies or `lake-manifest.json` differ from those the
+running executable was linked with" is decided on a **fingerprint**
+(`lean/Editor/PackageSet/Fingerprint.lean`):
+
+- **Requires**: the lakefile's `[[require]]` tables, in order, each
+  normalised to one line: `path <name> <absolute directory>` (made absolute
+  against the config directory and normalised lexically), `git <name>
+  <url> <rev|-> <subDir|->`, or `reservoir <name> <scope> <version|->`.
+  The tables are read with Lake's TOML loader
+  (`Config.Lakefile.Toml.requireEntries`).
+- **Pins**: the git entries of `lake-manifest.json`, `pin <name> <url>
+  <rev>`. Path entries are left out: the lakefile decides them, and Lean's
+  language server writes them into a manifest the user never touched. A
+  stale entry for a package no longer required stays on both sides, so it
+  never starts a build.
+- **The shipped set's name**, `set <name>`, carried for `:package-remove`
+  and not compared.
+
+A `lakefile.lean` is not read (it is a program): its fingerprint is the
+hash of its text, so any edit of it starts a build.
+
+Every reload reads the config directory's facts as a package set (its
+lakefile, the manifest and, when the lakefile requires the shipped set by
+path, that set's own requires) into its outcome (`Config.reload`,
+`Config.packageFacts`), whether it installed or was refused: a config that
+imports a package the set lacks is refused until the rebuild, and still
+starts it.
+
+The running executable's fingerprint (`lean/Editor/PackageSet/Running.lean`,
+read once at the edge into `EditorState.packageSet`) is:
+
+- for a **per-user install**, the record `editor.packages` beside it,
+  `leanmacs-packages 1` and then its `require`, `pin` and `set` lines;
+- for an **executable built from a set directory**, the shipped default,
+  the fingerprint of the lakefile it would generate: one `path <set name>
+  <set directory>` require and no pin. So a generated lakefile matches it
+  and starts no build.
+
+The running editor also reads `editor.core` and `editor.build` beside
+itself, and knows its toolchain's `lake` (`<sysroot>/bin/lake`, when it is
+there).
+
 ## What a package may import
 
 The core's API is the set of core modules a package may name in an `import`

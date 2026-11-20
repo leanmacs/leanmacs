@@ -270,7 +270,8 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
     (patience : Option Nat := some configPatience) (workingDirectory : System.FilePath := "/")
     (generator : Option Config.Generator := none) (afterRestore : Array Headless.Request := #[])
     (replace : Restart.Invocation → IO String := Restart.noExec)
-    (say : String → IO Unit := IO.eprintln) : IO UInt32 := do
+    (say : String → IO Unit := IO.eprintln) (packageSet : PackageSet.Running := {})
+    (package : Option Config.PackageFiles := none) : IO UInt32 := do
   let shipped ←
     Headless.shipped packages base (options.sysroot.getD "") options.oleans (options.config.getD "")
         IO.eprintln processes (stateDirectory := options.stateDirectory)
@@ -280,7 +281,8 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
       clipboard := pure clipboard
       generator, workingDirectory, replace
       home := processes.home
-      launch := { options.launch with arguments := options.restartArguments } }
+      launch := { options.launch with arguments := options.restartArguments }
+      packageSet, package := package.getD shipped.package }
   display.present
   let host ← Headless.start collaborators
   for start in options.starts plan said do
@@ -435,11 +437,20 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
       some <$> Headless.generatorAt origin appPath directory
     | none =>
       pure none
+  -- What it knows of its own package set, and the reload's package port,
+  -- read here at the edge.
+  let packageSet ← Headless.runningAt origin appPath (options.config.getD "") options.sysroot none
+  let package ←
+    match options.config with
+    | some directory =>
+      some <$> Headless.packageFilesAt directory packageSet.setName
+    | none =>
+      pure none
   -- A restart is exec'd by `host`, through the real exec.
   let status ←
     host packages base .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown
         (.window home) (workingDirectory := environment.workingDirectory) (generator := generator)
-        (replace := Restart.real)
+        (replace := Restart.real) (packageSet := packageSet) (package := package)
   IO.Process.exit status.toUInt8
 
 end Editor.Window

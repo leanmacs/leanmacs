@@ -654,9 +654,75 @@ def moduleSessionChecks : List Check :=
         return outcome.built.isNone && outcome.base == some { modules := #["Editor"] } &&
             said outcome == #[("setup", .error)] }]
 
+/-- A fake package port over `files`, whose lakefile's lines
+`require <name> <path>` are path requires, and whose shipped set is
+`default-set`, read from the directory `/s` as two requires. -/
+def factsPackage (files : List (String × String)) : PackageFiles :=
+  { read := fun name => pure ((files.find? (·.1 == name)).map (·.2))
+    requires := fun _ => pure (.ok #[])
+    requireEntries := fun text =>
+      if text == "broken" then pure (.error "the fake lakefile is broken")
+      else
+        pure
+          (.ok
+            ((text.splitOn "\n").filterMap fun line =>
+                match line.splitOn " " with
+                | ["require", name, path] => some { name, source := .path path }
+                | _ => none).toArray)
+    directory := "/c", setName := some "default-set"
+    setRequires := fun directory =>
+      if directory == "/s" then
+        pure
+          (.ok
+            #[{ name := "editor-core", source := .path "../lean" },
+              { name := "compile", source := .path "compile" }])
+      else pure (.error "no such set") }
+
+/-- The checks of what a reload reads of the config directory as a package
+set (`packageFacts`, `reload`): every outcome carries it, installed or
+refused; a `lakefile.toml`'s requires, a `lakefile.lean`'s text, none, or
+one that cannot be read; the manifest; and the shipped set's own requires
+when the lakefile requires that set by path. -/
+def packageFactsChecks : List Check :=
+  [{  name :=
+        "every reload's outcome carries what the config directory holds as a package set, an installed one and one refused for an import alike"
+      run := do
+        let files :=
+          [("lakefile.toml", "require default-set /s\nrequire hello /h"),
+            ("lake-manifest.json", "{}")]
+        let installed ←
+          reload TestScheme.scheme (recording (← IO.mkRef #[])) (configOf [plainRoot])
+              (factsPackage files) none none #[]
+        let refused ←
+          reload TestScheme.scheme (recording (← IO.mkRef #[]))
+              (configOf [("init", ["import Hello", "define setup"])]) (factsPackage files) none none
+              #[]
+        let expected : PackageSet.Facts :=
+          { lakefile :=
+              .toml (files.head!.2)
+                #[{ name := "default-set", source := .path "/s" },
+                  { name := "hello", source := .path "/h" }]
+            manifest := some "{}"
+            setRequires :=
+              #[{ name := "editor-core", source := .path "../lean" },
+                { name := "compile", source := .path "compile" }] }
+        return installed.built.isSome && installed.facts == expected && refused.built.isNone &&
+            refused.facts == expected },
+    { name :=
+        "a lakefile.lean is kept as its text, no lakefile is absent, one that cannot be read says why, and the shipped set is read only when it is required by path"
+      run := do
+        let lean ← packageFacts (factsPackage [("lakefile.lean", "import Lake")])
+        let none_ ← packageFacts (factsPackage [])
+        let broken ← packageFacts (factsPackage [("lakefile.toml", "broken")])
+        let other ← packageFacts (factsPackage [("lakefile.toml", "require hello /h")])
+        return lean.lakefile == .lean "import Lake" && none_.lakefile == .absent &&
+            broken.lakefile == .unreadable "the fake lakefile is broken" &&
+            other.setRequires.isEmpty &&
+            lean.manifest.isNone }]
+
 /-- The checks of the config session: the graph's, then the session
-core's. -/
+core's, then what a reload reads of the package set. -/
 def sessionChecks : List Check :=
-  moduleGraphChecks ++ moduleSessionChecks
+  moduleGraphChecks ++ moduleSessionChecks ++ packageFactsChecks
 
 end ModelTest

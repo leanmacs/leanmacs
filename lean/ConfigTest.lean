@@ -76,6 +76,9 @@ show:
 - `lakefileChecks`: a lakefile's requires read with Lake's TOML loader, the
   generated lakefile read back, and the core's copy of Lake's casing rule
   against Lake's own;
+- `lakefileEntryChecks`: a lakefile's `[[require]]` tables read whole with
+  Lake's TOML loader, each a path, git or Reservoir dependency with its
+  fields, and the generated lakefile read back as one path require;
 - `directoryChecks`: the directory as a source of config files (the root, a
   config file by exactly its module name, also on a file system that
   ignores case, the stray files, and a root spelt `Init.lean` rejected as
@@ -318,7 +321,8 @@ open Editor
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
-  lakefileChecks () ++ directoryChecks () ++ moduleFilesChecks () ++ hostChecks context ++
+  lakefileChecks () ++ lakefileEntryChecks () ++ directoryChecks () ++ moduleFilesChecks () ++
+    hostChecks context ++
     threadChecks context ++
     jobChecks context ++
     treeObjectChecks context ++

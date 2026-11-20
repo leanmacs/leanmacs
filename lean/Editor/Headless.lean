@@ -1047,6 +1047,11 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   line (`Editor/Executable.lean`); empty by default, a run with no
   launcher. -/
   launch : Restart.Launch := {}
+  /-- What the running editor knows of its own package set
+  (`EditorState.packageSet`), which `start` writes into the editor state.
+  The executable's hosts read it at the edge (`PackageSet.at`); empty by
+  default, a host that never builds a user's package set. -/
+  packageSet : PackageSet.Running := {}
   /-- Execs a restart's plan in place of this process, once the host has shut
   down ("Restarting", in the module docs): it answers only when the exec
   failed, with the reason. The hosts exec only through it
@@ -1270,7 +1275,7 @@ def reloadJob (collaborators : Collaborators β σ scheme) (base : Option β)
   try
     promise.resolve
         (←
-          Config.build scheme collaborators.elaborator collaborators.source collaborators.package
+          Config.reload scheme collaborators.elaborator collaborators.source collaborators.package
               collaborators.generator base files)
   finally
     discard <| Ffi.postEvent .editor collaborators.wakeups 0 ""
@@ -2362,7 +2367,7 @@ def Collaborators.hosting {β σ : Type} {scheme : InputScheme}
       return { loop with
           state :=
             loop.state.hostedBy collaborators.workingDirectory collaborators.home
-              collaborators.stateDirectory collaborators.launch } }
+              collaborators.stateDirectory collaborators.launch collaborators.packageSet } }
 
 /-- Starts a host: its loop runs on a dedicated task until `stop` or `halt`.
 The loop it makes, when it is first needed, has the collaborators' working
@@ -3027,6 +3032,34 @@ def drawnDisplay (snapshots : SnapshotReader) : IO Host.Display := do
   display.present
   Host.Display.real (← RealDisplay.over display snapshots Theme.builtin)
 
+/-- The package port over the config directory `configDir`
+(`Config.PackageFiles`): its files read by name, a lakefile's requires and
+its `[[require]]` tables read with Lake's TOML loader, and another
+directory's `lakefile.toml` read the same way. Its directory is
+`configDir` as given and it knows no shipped set; a host that knows them
+sets the absolute directory and the set's name (`packageFilesAt`). -/
+def packageFilesOver (configDir : String) : Config.PackageFiles :=
+  { read := Config.Directory.read configDir, requires := Config.Lakefile.Toml.requires
+    requireEntries := Config.Lakefile.Toml.requireEntries, directory := configDir
+    setRequires := fun directory => do
+      try
+        Config.Lakefile.Toml.requireEntries (← IO.FS.readFile (directory ++ "/lakefile.toml"))
+      catch error =>
+        return .error ((toString error).splitOn "\n" |>.headD "") }
+
+/-- The package port over `configDir` as an executable host makes it, at
+the edge: `packageFilesOver`, with the directory made absolute (the real
+path, or as given when it cannot be resolved) and `setName`, the shipped
+set's Lake name. -/
+def packageFilesAt (configDir : String) (setName : Option String) : IO Config.PackageFiles := do
+  let directory ←
+    try
+      pure (← IO.FS.realPath configDir).toString
+    catch _ =>
+      pure configDir
+  return { packageFilesOver configDir with
+      directory, setName }
+
 /-- The collaborators the executable's hosts are made of, over the jobs'
 `services`, the table of snapshots `published` and what jobs hold `held`:
 `packages` as the packages the host registers, the real elaborator over the
@@ -3057,11 +3090,9 @@ def shippedOver (packages : Array Package) (base : Array Lean.Name) (sysroot : S
   { elaborator :=
       Config.Elaborate.elaborator
         { sysroot, oleanDirs := oleans.map System.FilePath.mk, imports := base } files,
-    source := Config.Directory.source configDir,
-    package :=
-      { read := Config.Directory.read configDir, requires := Config.Lakefile.Toml.requires },
-    emit, services, published, held, requests := 1, wakeups := 2, jobs := 3, environment := 4,
-    posts := 5, pauseEvents := 6, packages, stateDirectory, log := IO.eprintln
+    source := Config.Directory.source configDir, package := packageFilesOver configDir, emit,
+    services, published, held, requests := 1, wakeups := 2, jobs := 3, environment := 4, posts := 5,
+    pauseEvents := 6, packages, stateDirectory, log := IO.eprintln
     journal := Journal.real published.reader
     dispose := files.remove }
 
@@ -3148,6 +3179,34 @@ def generatorAt (origin : Config.LakePackage.Origin) (appPath : String) (configD
   return {
       create := Config.Directory.create configDir, pin := origin.pin
       set := origin.set directory }
+
+/-- What the executable at `appPath`, built as `origin` says, knows of its
+own package set (`PackageSet.at`), read at the edge with the real file
+read and test of existence: its records, the set directory it finds for
+itself (`ModuleLookup.setDirectory?`), the config directory `configDir`
+made absolute, the toolchain directory `sysroot` and the data directory
+`data`. Both executable hosts read theirs with it. -/
+def runningAt (origin : Config.LakePackage.Origin) (appPath : String) (configDir : String)
+    (sysroot data : Option String) : IO PackageSet.Running := do
+  let readFile (path : String) : IO (Option String) := do
+    try
+      return some (← IO.FS.readFile path)
+    catch _ =>
+      return none
+  let isDirectory (path : System.FilePath) : IO Bool := do
+    try
+      path.isDir
+    catch _ =>
+      return false
+  let directory ←
+    ModuleLookup.setDirectory? appPath (fun path => readFile path.toString) isDirectory
+  let config ←
+    try
+      pure (← IO.FS.realPath configDir).toString
+    catch _ =>
+      pure configDir
+  PackageSet.at appPath config (directory.map (origin.setName, ·)) sysroot data readFile fun path =>
+      System.FilePath.pathExists path
 
 /-- The headless mode of the executable, handed the packages its host
 registers, the base config is elaborated on (`Editor/Main.lean`, "The
@@ -3246,9 +3305,12 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
   -- A restart hands the next run this command line, its `--resume` one
   -- more than this run's.
   let launch := { launch with arguments := "headless" :: handedOn arguments resume }
+  let packageSet ←
+    runningAt origin appPath configDir (if sysroot.isEmpty then none else some sysroot) none
+  let package ← packageFilesAt configDir packageSet.setName
   let collaborators :=
     { shipped with
-      generator, workingDirectory, launch, replace := Restart.real
+      generator, workingDirectory, launch, replace := Restart.real, packageSet, package
       display :=
         if drawn then drawnDisplay else fun snapshots => Host.Display.recorder cells snapshots
       render := if drawn then some Render.library else none }

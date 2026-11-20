@@ -1,12 +1,15 @@
 import Editor.Config.Lakefile
+import Editor.PackageSet.Fingerprint
 import Lake.Toml.Load
 
 /-!
 # A lakefile's requires, read with Lake's TOML loader
 
 The adapter that reads the names a `lakefile.toml` requires from its text
-(`requires`), for the read-only package port of the config session
-(`Config.PackageFiles.requires`, `Editor/Config/Session.lean`). The session
+(`requires`), and its `[[require]]` tables whole (`requireEntries`), for
+the read-only package port of the config session
+(`Config.PackageFiles.requires`, `Config.PackageFiles.requireEntries`,
+`Editor/Config/Session.lean`). The session
 core asks it when a config file imports a module that is not linked, to
 say whether the module belongs to a package the config's lakefile names
 (`Editor/Config/Lakefile.lean`).
@@ -57,6 +60,43 @@ def requires (text : String) : IO (Except String (Array String)) := do
               match fields.find? `name with
               | some (.string _ name) => some name
               | _ => none
+            | _ => none)
+    | _ =>
+      return .ok #[]
+
+/-- The string a table's field `name` holds, if it holds one. -/
+def field? (fields : Lake.Toml.Table) (name : Lean.Name) : Option String :=
+  match fields.find? name with
+  | some (.string _ text) => some text
+  | _ => none
+
+/-- The `[[require]]` tables of the lakefile whose text is `text`, in order,
+each with where it comes from (`PackageSet.Require`): a table with `git` is
+a git dependency, with its `rev` and `subDir`; else one with `path` is a
+path dependency; else it is Reservoir's, with its `scope` (empty when it
+has none) and its `version`. A table with no name that is a string is left
+out. With no `require` there is none. A text that is not TOML is an error,
+in one line. The package-set fingerprint (`Editor/PackageSet/Fingerprint.lean`)
+and the lakefile's edits (`Editor/PackageSet/Edit.lean`) read these. -/
+def requireEntries (text : String) : IO (Except String (Array PackageSet.Require)) := do
+  let input := Lean.Parser.mkInputContext text "lakefile.toml"
+  match ← (Lake.Toml.loadToml input).toBaseIO with
+  | .error messages =>
+    return .error (← reason messages)
+  | .ok table =>
+    match table.find? `require with
+    | some (.array _ entries) =>
+      return .ok
+          (entries.filterMap fun entry =>
+            match entry with
+            | .table _ fields => do
+              let name ← field? fields `name
+              let source : PackageSet.Source :=
+                match field? fields `git, field? fields `path with
+                | some url, _ => .git url (field? fields `rev) (field? fields `subDir)
+                | none, some directory => .path directory
+                | none, none => .reservoir ((field? fields `scope).getD "") (field? fields `version)
+              some { name, source }
             | _ => none)
     | _ =>
       return .ok #[]
