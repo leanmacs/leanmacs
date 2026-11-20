@@ -23,8 +23,8 @@ commands with ex names that edit the config's `lakefile.toml`
   `lake update` for the named package or for every git and Reservoir one,
   with no edit of the lakefile: the manifest pins which revision.
 
-Every edit is made with the core's require written at the lakefile's root
-first, by the running editor's core directory (`withCoreEdit`,
+Every edit writes the core's require at the lakefile's root, as its last
+require, by the running editor's core directory (`withCoreEdit`,
 `Editor/PackageSet/Edit.lean`, "The core's require"), so each repairs a
 lakefile without it; an editor that knows no core directory refuses
 them: `<command>: this editor knows no directory of its core, so it

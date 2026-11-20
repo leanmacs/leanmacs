@@ -20,8 +20,8 @@ open Editor.PackageSet
 /-- The checks of the lakefile's edits read back with Lake's loader: an
 install of each kind, a remove, the default set expanded without one of
 its packages, and a rev set, each made with the core's require written at
-the root first (`withCoreEdit`), which Lake reads as the first require, by
-the running core's directory; and a lakefile that names the core from git
+the root (`withCoreEdit`), which Lake reads as the last require, by the
+running core's directory; and a lakefile that names the core from git
 after the set, repaired. -/
 def packageSetEditChecks (_ : Unit) : List Check :=
   let lakefile :=
@@ -37,7 +37,7 @@ def packageSetEditChecks (_ : Unit) : List Check :=
     | .error _ =>
       return false
   [{  name :=
-        "each edited lakefile is read back by Lake's loader as requiring the running core first, by its directory, then exactly what the edit meant"
+        "each edited lakefile is read back by Lake's loader as requiring exactly what the edit meant, then the running core, last, by its directory"
       run := do
         let some required ← read lakefile | return false
         let setRequired : Array Require :=
@@ -52,23 +52,23 @@ def packageSetEditChecks (_ : Unit) : List Check :=
         let some gitRequired ← read gitText | return false
         return (←
               after (edit (install · · { name := "x", source := .path "/p/x" }))
-                  (#[own] ++ required.push { name := "x", source := .path "/p/x" })) &&
-            (← after installedGit (#[own] ++ required.push git)) &&
-            (← after (edit (install · · reservoir)) (#[own] ++ required.push reservoir)) &&
+                  ((required.push { name := "x", source := .path "/p/x" }).push own)) &&
+            (← after installedGit ((required.push git).push own)) &&
+            (← after (edit (install · · reservoir)) ((required.push reservoir).push own)) &&
             (←
               after (edit (remove · · "hello" "/c" (some "default-set") setRequired))
-                  #[own, required[0]!]) &&
+                  #[required[0]!, own]) &&
             (←
               after (edit (remove · · "compile" "/c" (some "default-set") setRequired))
-                  #[own, { name := "shipped-themes", source := .path "/w/packages/shipped-themes" },
-                    required[1]!]) &&
+                  #[{ name := "shipped-themes", source := .path "/w/packages/shipped-themes" },
+                    required[1]!, own]) &&
             (←
               after (withCoreEdit (some core) gitText gitRequired (setRev · · "g" "v2"))
-                  (#[own] ++
-                    required.push
-                      { git with source := .git "https://h/g" (some "v2") (some "s") })) },
+                  ((required.push
+                        { git with source := .git "https://h/g" (some "v2") (some "s") }).push
+                    own)) },
     { name :=
-        "a lakefile that names the core from git after the set is read back, once repaired, as requiring the running core first and no other editor-core"
+        "a lakefile that names the core from git after the set is read back, once repaired, as requiring the running core last and no other editor-core"
       run := do
         let text :=
           "name = \"config\"\n\n[[require]]\nname = \"default-set\"\npath = \"/w/packages\"\n\n[[require]]\nname = \"editor-core\"\ngit = \"https://h/leanmacs\"\nsubDir = \"lean\"\nrev = \"nightly-1\"\n"
@@ -76,7 +76,7 @@ def packageSetEditChecks (_ : Unit) : List Check :=
         match withCore text required core with
         | .ok (repaired, _) =>
           return (← read repaired) ==
-              some #[own, { name := "default-set", source := .path "/w/packages" }]
+              some #[{ name := "default-set", source := .path "/w/packages" }, own]
         | .error _ =>
           return false }]
 

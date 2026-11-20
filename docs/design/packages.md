@@ -350,29 +350,36 @@ generates its `lakefile.toml` when there is none
 name = "config"
 
 [[require]]
-name = "editor-core"
-path = "/…/lean"
-
-[[require]]
 name = "default-set"
 path = "/…/packages"
+
+[[require]]
+name = "editor-core"
+path = "/…/lean"
 
 [[lean_lib]]
 name = "Config"
 globs = ["Config.+"]
 ```
 
-- **It requires the running editor's own core at its root, by path, then
-  the set, by path, and nothing else** (packages phase 12). The set
+- **It requires the set, by path, then the running editor's own core at
+  its root, by path, last, and nothing else** (packages phase 12). The set
   requires the core and each of its packages, so Lake resolves, for the
   language server, exactly the modules the editor links, from the build
   directories the editor's own build filled: nothing is fetched and
-  nothing under the set is rebuilt. The core's require at the root is what
-  keeps it so for a package that names the core from git: Lake's root
-  require wins over any a package makes, whichever order the requires are
-  in, so that package builds against this editor's core and no core is
-  cloned. A set that reaches the core only through another package takes
-  the package's git require instead (probed on Lake 4.35.0, 2026-11-20).
+  nothing under the set is rebuilt. The core's require at the root, last,
+  is what keeps it so for a package that names the core from git. Lake
+  4.35 resolves a root's requires last first, a dependency's own manifest
+  entries with it, and the first resolution of a name wins. So a root
+  `editor-core` after every package wins over a package's git require of
+  the core: that package builds against this editor's core and no core is
+  cloned. One before the package loses to it, and so does a set that
+  reaches the core only through another package: Lake clones the git core
+  (measured 2026-11-20 with a `file://` stand-in: core first, the
+  package's manifest entry won and the core was cloned; core last, the
+  root's path entry, nothing cloned). The phase's probe had found the root
+  winning whichever its place; that was not so once the package carried
+  its own manifest.
   The core's directory is the one the editor links
   (`lean/Editor/ModuleLookup.lean`, "The core"): the checkout's `lean/`, or
   the app's `Contents/Resources/lean/lean`.
@@ -1036,12 +1043,13 @@ as the last reload read them with Lake's loader:
 - **A rev** is written into a git require's table.
 - **A `lakefile.lean`** is never edited: the commands say they edit
   `lakefile.toml` only.
-- **The core's require, at the root, first** (packages phase 12). Each
-  edit is made on the lakefile with `editor-core` written at its root by
-  the running editor's core directory first (`withCore`): any
-  `editor-core` table is taken out, whatever its source, and the core's is
-  inserted before the first `[[require]]` table. A lakefile whose first
-  table already requires that directory is left as it is. So every edit
+- **The core's require, at the root, last** (packages phase 12). Each
+  edit writes `editor-core` at the lakefile's root by the running editor's
+  core directory, as the last require (`withCoreEdit`, `withCore`): any
+  `editor-core` table is taken out before the edit, whatever its source,
+  and the core's added after the last `[[require]]` table once the edit is
+  made, so an installed package comes before it. A lakefile whose last
+  require is already that directory is left as it is by `withCore`. So every edit
   repairs a lakefile an older editor generated (the set alone) or one
   edited by hand, and a package's git require of the core stays only a
   name. An editor that knows no core directory refuses the edits:
@@ -1053,7 +1061,7 @@ as the last reload read them with Lake's loader:
   it.
 
 `config-test` reads every text these edits make back with Lake's loader,
-the core first.
+the core last.
 
 ### The build, as a job
 
@@ -1106,11 +1114,11 @@ is pinned on the models (`ModelTest.packageSetBuildChecks`):
    makes a staging directory: "the package set resolves editor-core to
    `<git <url> at <rev> | the directory <dir> | nothing>`, not this
    editor's core `<core>`; require it at the root of
-   `<config>/lakefile.toml` with path = "`<core>`", ahead of the other
-   requires (:package-install and :package-remove write it), then
+   `<config>/lakefile.toml` with path = "`<core>`", as its last require,
+   after every other (:package-install and :package-remove write it), then
    :reload". That is a set that reaches the core only through another
-   package while a package names the core from git: Lake takes the git
-   require, and would build a core from source that is not the one the
+   package, or requires it before a package, while that package names the
+   core from git: Lake takes the git require, and would build a core from source that is not the one the
    editor links. The refusal comes after the resolve, which may already
    have fetched that core; the manifest is authoritative only then. Step 5
    reuses the manifest this step read. `user-sets-test` D shows it end to

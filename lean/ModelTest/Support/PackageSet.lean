@@ -39,10 +39,10 @@ def runningWith (facts : Facts) (data : Option String := some "/d")
     coreDirectory := some coreDirectory
     build := #[("LEAN_CC", "/usr/bin/cc")], sysroot := some "/t", lake, data, facts }
 
-/-- The generated lakefile's requires: the running core, then the set. -/
+/-- The generated lakefile's requires: the set, then the running core. -/
 def generated : Array Require :=
-  #[{ name := "editor-core", source := .path coreDirectory },
-    { name := "default-set", source := .path setDirectory }]
+  #[{ name := "default-set", source := .path setDirectory },
+    { name := "editor-core", source := .path coreDirectory }]
 
 /-- The requires of the lakefile generated before the core was required at
 the root: the set alone. -/

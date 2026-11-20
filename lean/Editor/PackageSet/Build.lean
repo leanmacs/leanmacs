@@ -52,8 +52,8 @@ core directory.
    staging directory made: `the package set resolves editor-core to <git
    <url> at <rev> | the directory <dir> | nothing>, not this editor's core
    <core>; require it at the root of <config>/lakefile.toml with path =
-   "<core>", ahead of the other requires (:package-install and
-   :package-remove write it), then :reload`. A git core may already have
+   "<core>", as its last require, after every other (:package-install
+   and :package-remove write it), then :reload`. A git core may already have
    been fetched by the resolve: the manifest is authoritative only after
    it.
 3. **Rust**: `lake query :editorRustCrates`, then, when the set holds a
@@ -247,7 +247,7 @@ def coreRefusal? (config core : String) (manifest : Option String) : Option Stri
     | some (.git url rev _) => some s!"git {url} at {rev}"
     | none => some "nothing"
   resolved.map fun what =>
-    s!"the package set resolves editor-core to {what}, not this editor's core {core}; require it at the root of {config}/lakefile.toml with path = \"{core}\", ahead of the other requires (:package-install and :package-remove write it), then :reload"
+    s!"the package set resolves editor-core to {what}, not this editor's core {core}; require it at the root of {config}/lakefile.toml with path = \"{core}\", as its last require, after every other (:package-install and :package-remove write it), then :reload"
 
 /-- What a reload is to do about the package set (`decide`). -/
 inductive Decision where

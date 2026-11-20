@@ -33,23 +33,25 @@ package ports").
 name = "config"
 
 [[require]]
-name = "editor-core"
-path = "<the running editor's core directory>"
-
-[[require]]
 name = "<the set's Lake name>"
 path = "<the set's directory>"
+
+[[require]]
+name = "editor-core"
+path = "<the running editor's core directory>"
 
 [[lean_lib]]
 name = "Config"
 globs = ["Config.+"]
 ```
 
-The core is required at the root, ahead of the set, by the directory of
-the core the running editor links (`Editor/ModuleLookup.lean`, "The
-core"): Lake's root require wins over any a package makes, so a package
-that names the core from git builds against this editor's core, and
-nothing is cloned (`docs/design/packages.md`, "A config directory requires
+The core is required at the root, by the directory of the core the
+running editor links (`Editor/ModuleLookup.lean`, "The core"), as the
+last require: Lake resolves a root's requires last first, and the first
+resolution of a name wins, so the last require takes precedence over the
+set and over any package's own require of the core. So a package that
+names the core from git builds against this editor's core, and nothing is
+cloned (`docs/design/packages.md`, "A config directory requires
 the core and the set").
 
 The library is every module under `Config/`: the config files other than
@@ -117,7 +119,7 @@ def quoted (text : String) : String :=
 /-- The text of the lakefile generated for a config directory of an editor
 built from `set` ("The generated lakefile", in the module docs). -/
 def lakefile (set : Set) : String :=
-  s!"name = \"config\"\n\n[[require]]\nname = \"editor-core\"\npath = {quoted set.core}\n\n[[require]]\nname = {quoted set.name}\npath = {quoted set.directory}\n\n[[lean_lib]]\nname = \"Config\"\nglobs = [\"Config.+\"]\n"
+  s!"name = \"config\"\n\n[[require]]\nname = {quoted set.name}\npath = {quoted set.directory}\n\n[[require]]\nname = \"editor-core\"\npath = {quoted set.core}\n\n[[lean_lib]]\nname = \"Config\"\nglobs = [\"Config.+\"]\n"
 
 /-- What a config directory holds of the two files. -/
 structure Holds where

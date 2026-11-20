@@ -21,9 +21,10 @@
 # 1. `editor headless --generate` on a copy must print exactly the
 #    fixture's `expected` (the config loads), and leave a `lean-toolchain`
 #    that is `lean/lean-toolchain` byte for byte and a `lakefile.toml` that
-#    names the package `config`, requires `editor-core` by the checkout's
-#    `lean/` (the core the editor links, its `.coredir`), then the set by
-#    its Lake name and its directory, and declares the library `Config`.
+#    names the package `config`, requires the set by its Lake name and its
+#    directory, then `editor-core` by the checkout's `lean/` (the core the
+#    editor links, its `.coredir`), last, and declares the library
+#    `Config`.
 # 2. A second run with `--generate` must leave both files as they were:
 #    a file that is there is never rewritten.
 # 3. A run without `--generate` on a second copy must print the same and
@@ -82,10 +83,10 @@ cmp -s "$work/config/lean-toolchain" "$pin" ||
   fail "the generated lean-toolchain is not lean/lean-toolchain"
 [ -f "$work/config/lakefile.toml" ] || fail "no lakefile.toml was generated"
 core_dir=$(cd "$root/lean" && pwd -P)
-printf 'name = "config"\n\n[[require]]\nname = "editor-core"\npath = "%s"\n\n[[require]]\nname = "%s"\npath = "%s"\n\n[[lean_lib]]\nname = "Config"\nglobs = ["Config.+"]\n' \
-  "$core_dir" "$set_name" "$set_dir" >"$work/wanted"
+printf 'name = "config"\n\n[[require]]\nname = "%s"\npath = "%s"\n\n[[require]]\nname = "editor-core"\npath = "%s"\n\n[[lean_lib]]\nname = "Config"\nglobs = ["Config.+"]\n' \
+  "$set_name" "$set_dir" "$core_dir" >"$work/wanted"
 diff "$work/wanted" "$work/config/lakefile.toml" ||
-  fail "the generated lakefile.toml does not require the core at $core_dir, then the set $set_name at $set_dir"
+  fail "the generated lakefile.toml does not require the set $set_name at $set_dir, then the core at $core_dir"
 held=$(cd "$work/config" && find . -type f | LC_ALL=C sort | tr '\n' ' ')
 [ "$held" = "./init.lean ./lakefile.toml ./lean-toolchain " ] ||
   fail "the config directory holds $held after the run"

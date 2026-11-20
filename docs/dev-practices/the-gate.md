@@ -1457,8 +1457,8 @@ directory the script makes and removes.
   1. The default set's `editor headless --generate`, on a temporary copy,
      must print the fixture's `expected`, and leave a `lean-toolchain` that
      is `lean/lean-toolchain` byte for byte and a `lakefile.toml` that
-     requires `editor-core` by the checkout's `lean/`, the core the editor
-     links, then the set by its Lake name and its directory.
+     requires the set by its Lake name and its directory, then, last,
+     `editor-core` by the checkout's `lean/`, the core the editor links.
   2. A second run must leave both files as they were.
   3. A run without `--generate` on another copy must leave neither.
 
@@ -1964,9 +1964,9 @@ trap and runs its editor as the installed app runs it
    to `tests/headless/generate/expected-lakefile-bundle` with `@CORE@` the
    bundle's `Contents/Resources/lean/lean` and `@SET@` its
    `Contents/Resources/lean/set`, and a `lean-toolchain` that is
-   `lean/lean-toolchain` byte for byte. That lakefile requires the core the
-   editor links at its root, then the set the editor was built from, so
-   the reload starts no build.
+   `lean/lean-toolchain` byte for byte. That lakefile requires the set the
+   editor was built from, then, last, the core the editor links, at its
+   root, so the reload starts no build.
 5. **The version and the identity.** With `tests/headless/bundle/
    Info.plist` (the version, build ID and commit keys with a fake stamp)
    in `Contents/`, `--version` must print exactly `version-expected`, and

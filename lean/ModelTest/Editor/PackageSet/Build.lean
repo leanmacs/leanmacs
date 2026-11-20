@@ -154,8 +154,8 @@ def packageSetBuildChecks : List Check :=
           { generatedFacts with
             lakefile :=
               .toml ""
-                (#[{ name := "editor-core", source := .path "/elsewhere/lean" }] ++
-                  generated.extract 1 generated.size) }
+                (generated.extract 0 1 ++
+                  #[{ name := "editor-core", source := .path "/elsewhere/lean" }]) }
         pure
           (decide (runningWith generatedFacts) generatedFacts false == .nothing &&
             decide (runningWith oldFacts) oldFacts false == .nothing &&
@@ -183,8 +183,9 @@ def packageSetBuildChecks : List Check :=
                 (Config.LakePackage.lakefile
                   { name := "default-set", directory
                     core := "/A.app/Contents/Resources/lean/lean" })
-                #[{ name := "editor-core", source := .path "/A.app/Contents/Resources/lean/lean" },
-                  { name := "default-set", source := .path directory }] }
+                #[{ name := "default-set", source := .path directory },
+                  { name := "editor-core",
+                    source := .path "/A.app/Contents/Resources/lean/lean" }] }
         let facts := generatedFor bundleSet
         let elsewhere := generatedFor setDirectory
         pure
@@ -207,7 +208,7 @@ def packageSetBuildChecks : List Check :=
                   environment := #[("LEAN_CC", "/usr/bin/cc")]
                   required := #["path default-set /w/packages", "path hello /h"]
                   set := some "default-set", fetched := #[],
-                  resolve := #["editor-core", "default-set", "hello"], core := "/w/lean" } &&
+                  resolve := #["default-set", "editor-core", "hello"], core := "/w/lean" } &&
             decide running facts true == .nothing &&
             decide (runningWith facts (data := none)) facts false == .nothing &&
             decide { running with core := none } facts false == .nothing &&
@@ -320,7 +321,7 @@ def packageSetBuildChecks : List Check :=
           let resolve :=
             streaming
               (lakeCommand order
-                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
+                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
               #[]
           match buildDriver (runningWith facts) #[manifestRead, query] #[resolve],
             buildDriver (runningWith facts)
@@ -346,7 +347,7 @@ def packageSetBuildChecks : List Check :=
           let resolve :=
             streaming
               (lakeCommand order
-                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
+                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
               #["updated"]
           let failing :=
             streaming (install order) #["error: undefined symbol: leanmacs_no_such_symbol"] 1
@@ -404,7 +405,7 @@ def packageSetBuildChecks : List Check :=
           let resolve :=
             streaming
               (lakeCommand order
-                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
+                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
               #[]
           let failing :=
             streaming (install order) #["c/glue.c:1:10: fatal error: 'stdio.h' file not found"] 1
@@ -436,7 +437,7 @@ def packageSetBuildChecks : List Check :=
           let resolve :=
             { command :=
                 lakeCommand order
-                  #["update", "--keep-toolchain", "editor-core", "default-set", "hello"]
+                  #["update", "--keep-toolchain", "default-set", "editor-core", "hello"]
               steps := #[], exit := .signal 9 : Process.StreamScript }
           match buildDriver (runningWith facts (lake := some bundled)) #[] #[resolve] with
           | none => pure false
@@ -464,7 +465,7 @@ def packageSetBuildChecks : List Check :=
           let resolve :=
             streaming
               (lakeCommand order
-                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
+                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
               #[]
           let query := lakeCommand order #["query", ":editorRustCrates"]
           let (scripts, streams) := succeeding order
@@ -521,10 +522,10 @@ def packageSetBuildChecks : List Check :=
           let resolve :=
             streaming
               (lakeCommand order
-                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
+                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
               #[]
           let fix :=
-            "not this editor's core /w/lean; require it at the root of /c/lakefile.toml with path = \"/w/lean\", ahead of the other requires (:package-install and :package-remove write it), then :reload"
+            "not this editor's core /w/lean; require it at the root of /c/lakefile.toml with path = \"/w/lean\", as its last require, after every other (:package-install and :package-remove write it), then :reload"
           let refused (manifest : String) (what : String) : Bool :=
             match buildDriver (runningWith facts) #[manifestRead manifest] #[resolve] with
             | none => false
@@ -565,7 +566,7 @@ def packageSetBuildChecks : List Check :=
           let resolve :=
             streaming
               (lakeCommand order
-                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
+                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
               #[]
           let (scripts, streams) := succeeding order (probe := "dyld: no\n")
           match buildDriver (runningWith facts) scripts (streams.push resolve) with
@@ -586,7 +587,7 @@ def packageSetBuildChecks : List Check :=
           let resolve :=
             streaming
               (lakeCommand order
-                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
+                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
               #[]
           let (scripts, streams) := succeeding order
           match buildDriver (runningWith facts) scripts (streams.push resolve) with
@@ -631,7 +632,8 @@ def packageSetBuildChecks : List Check :=
           match facts.lakefile with
           | .toml text _ => text
           | _ => ""
-        let edited := (PackageSet.install text generated hello).toOption.getD ""
+        let edited :=
+          (withCoreEdit (some coreDirectory) text generated (install · · hello)).toOption.getD ""
         let cat := replied (rootCommand "/bin/cat" #["/c/lakefile.toml"]) 0 text
         let mv :=
           replied (rootCommand "/bin/mv" #["/c/lakefile.toml.leanmacs-edit", "/c/lakefile.toml"])
@@ -648,7 +650,7 @@ def packageSetBuildChecks : List Check :=
                 s!"{installName}: this config's lakefile is a lakefile.lean, and the package commands edit lakefile.toml only")
         | _, _ => pure false },
     { name :=
-        ":package-install, :package-remove and :package-update with a rev, on the lakefile generated before the core was required at its root, each start the edit job with the text repaired: the running core's require first"
+        ":package-install, :package-remove and :package-update with a rev, on the lakefile generated before the core was required at its root, each start the edit job with the text repaired: the running core's require last"
       run :=
         let facts := setOnlyLakefileWith #[gitPackage]
         let (text, required) :=
@@ -660,12 +662,12 @@ def packageSetBuildChecks : List Check :=
           replied (rootCommand "/bin/mv" #["/c/lakefile.toml.leanmacs-edit", "/c/lakefile.toml"])
         let repaired (edit : String → Array Require → Except String String) : Option ByteArray :=
           (withCoreEdit (some coreDirectory) text required edit).toOption.map (·.toUTF8)
-        let firstIsCore (bytes : Option ByteArray) : Bool :=
+        let lastIsCore (bytes : Option ByteArray) : Bool :=
           match bytes.bind (String.fromUTF8? ·) with
           | some edited =>
-            (edited.splitOn "[[require]]\nname = \"editor-core\"\npath = \"/w/lean\"").length ==
-                2 &&
-              (edited.splitOn "[[require]]")[1]?.map (·.startsWith "\nname = \"editor-core\"") ==
+            (edited.splitOn "name = \"editor-core\"").length == 2 &&
+              (edited.splitOn "[[require]]").getLast?.map
+                  (·.startsWith "\nname = \"editor-core\"\npath = \"/w/lean\"\n") ==
                 some true
           | none => false
         let after (name : String) (argument : String) : Option ByteArray :=
@@ -675,12 +677,12 @@ def packageSetBuildChecks : List Check :=
         let removed := after removeName "compile"
         let revised := after updateName "g v2"
         pure
-          (installed == repaired (install · · hello) && firstIsCore installed &&
+          (installed == repaired (install · · hello) && lastIsCore installed &&
             removed ==
               repaired (remove · · "compile" "/c" (some "default-set") facts.setRequires) &&
-            firstIsCore removed &&
+            lastIsCore removed &&
             revised == repaired (setRev · · "g" "v2") &&
-            firstIsCore revised) },
+            lastIsCore revised) },
     { name :=
         "an editor that knows no directory of its core refuses an edit, saying so, and writes nothing"
       run :=
@@ -725,7 +727,8 @@ def packageSetBuildChecks : List Check :=
           pure
             (revised.reloads == driver.reloads + 1 &&
               bytesAt revised "/c/lakefile.toml.leanmacs-edit" ==
-                ((PackageSet.setRev text (generated.push gitPackage) "g" "v2").toOption.map
+                ((withCoreEdit (some coreDirectory) text (generated.push gitPackage)
+                      (setRev · · "g" "v2")).toOption.map
                   (·.toUTF8)) &&
               order &&
               updating.loop.state.echo == startedLine &&

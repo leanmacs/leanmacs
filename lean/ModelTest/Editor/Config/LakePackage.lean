@@ -21,11 +21,11 @@ def lakePackageChecks : List Check :=
     { name := "default-set", directory := "/w/packages", core := "/w/lean" }
   let pin := "leanprover/lean4:v4.35.0\n"
   [{  name :=
-        "the generated lakefile names the package config, requires editor-core by the running editor's core directory first, then the set by its Lake name and its directory, and declares the library Config of every module under it"
+        "the generated lakefile names the package config, requires the set by its Lake name and its directory, then editor-core by the running editor's core directory, last, so it takes precedence, and declares the library Config of every module under it"
       run :=
         pure
           (LakePackage.lakefile set ==
-            "name = \"config\"\n\n[[require]]\nname = \"editor-core\"\npath = \"/w/lean\"\n\n[[require]]\nname = \"default-set\"\npath = \"/w/packages\"\n\n[[lean_lib]]\nname = \"Config\"\nglobs = [\"Config.+\"]\n") },
+            "name = \"config\"\n\n[[require]]\nname = \"default-set\"\npath = \"/w/packages\"\n\n[[require]]\nname = \"editor-core\"\npath = \"/w/lean\"\n\n[[lean_lib]]\nname = \"Config\"\nglobs = [\"Config.+\"]\n") },
     { name := "an editor's set is known only when both its set directory and its core directory are"
       run :=
         let origin : LakePackage.Origin := { setName := "default-set", pin }

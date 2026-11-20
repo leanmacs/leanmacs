@@ -42,16 +42,19 @@ hand".
 
 ## The core's require
 
-Every edit is made on the lakefile with the core's require written at its
-root first (`withCoreEdit`, `withCore`): `editor-core` by the directory of
-the running editor's own core (`Running.coreDirectory`), ahead of every
-other require, so Lake's root require wins over a git core a package
-names (`docs/design/packages.md`, "A config directory requires the core
-and the set"). Any `editor-core` table is taken out, whatever its source,
-and the core's is inserted before the first `[[require]]` table and the
-comments just before it; a lakefile whose first table already requires
-that directory, and has no other `editor-core`, is left as it is, so a
-repaired lakefile is a fixed point. So an edit repairs a lakefile an older
+Every edit writes the core's require at the lakefile's root
+(`withCoreEdit`, `withCore`): `editor-core` by the directory of the
+running editor's own core (`Running.coreDirectory`), as the **last**
+require. Lake (4.35) resolves a root's requires last first, and the first
+resolution of a name wins, a dependency's manifest entries with it; so
+only a core required after every package takes precedence over a git core
+a package names, and nothing is cloned (`docs/design/packages.md`, "A
+config directory requires the core and the set"). Any `editor-core`
+table is taken out before the edit, whatever its source, and the core's
+added after the last `[[require]]` table once the edit is made, so an
+installed package comes before it; a lakefile whose last require is
+already that directory, and has no other `editor-core`, is left as it is
+by `withCore`, so a repaired lakefile is a fixed point. So an edit repairs a lakefile an older
 editor generated, which requires the set alone, or one edited by hand. A
 remove's expansion of the shipped set leaves the core out: the root holds
 it. An editor that knows no directory of its core refuses every edit
@@ -224,44 +227,44 @@ def isCoreAt (core : String) (require : Require) : Bool :=
     directory.startsWith "/" && normalise "/" directory == normalise "/" core
   | _, _ => false
 
-/-- The index of the first line of the comments just before the line
-`index` of `lines`: the comment block a table's header follows, which
-belongs to that table ("Where a table is", in the module docs). -/
-def commentsBefore (lines : Array String) (index : Nat) : Nat :=
-  Id.run do
-    let mut start := index
-    while start > 0 && lines[start - 1]!.trimAscii.toString.startsWith "#" do
-      start := start - 1
-    return start
-
-/-- The text with the core's require at its root, by the directory `core`,
-and its requires in table order, the core first ("The core's require", in
-the module docs): every `editor-core` table taken out, whatever its source,
-and the core's inserted before the first `[[require]]` table and the
-comments just before it, with one blank line after it; with no table, at
-the end, as `install` adds one. A lakefile whose first table already
-requires the core by that directory, and no other, is answered as it is. -/
-def withCore (text : String) (required : Array Require) (core : String) :
+/-- The text with every `editor-core` table taken out, whatever its
+source, and the requires left, in order. -/
+def withoutCore (text : String) (required : Array Require) :
     Except String (String × Array Require) := do
-  let others := required.filter (·.name != coreName)
-  if (required[0]?.map (isCoreAt core)) == some true && others.size + 1 == required.size then
-    return (text, required)
   let (lines, tabled) ← located text required
   let kept :=
     tabled.foldr
       (fun (require, start, stop) lines =>
         if require.name == coreName then replaced lines start stop #[] else lines)
       lines
-  let own := coreRequire core
-  match (tables kept)[0]? with
-  | some (first, _) =>
-    let at_ := commentsBefore kept first
-    return (joined (kept.extract 0 at_ ++ own.table ++ #[""] ++ kept.extract at_ kept.size),
-        #[own] ++ others)
+  return (joined kept, required.filter (·.name != coreName))
+
+/-- The text with the core's require by the directory `core` added after
+its last `[[require]]` table, or at its end with none, as `install` adds
+one. -/
+def appendCore (text : String) (core : String) : String :=
+  let lines := linesOf text
+  let own := (coreRequire core).table
+  match (tables lines).back? with
+  | some (_, stop) => joined (lines.extract 0 stop ++ #[""] ++ own ++ lines.extract stop lines.size)
   | none =>
-    let text := joined kept
     let body := if text.isEmpty || text.endsWith "\n" then text else text ++ "\n"
-    return (body ++ "\n" ++ joined own.table ++ "\n", #[own] ++ others)
+    body ++ "\n" ++ joined own ++ "\n"
+
+/-- The text with the core's require at its root, by the directory `core`,
+as its last require, and its requires in table order, the core last ("The
+core's require", in the module docs): every `editor-core` table taken out,
+whatever its source, and the core's added after the last `[[require]]`
+table, with one blank line before it; with no table, at the end, as
+`install` adds one. A lakefile whose last require is already the core by
+that directory, and has no other, is answered as it is. -/
+def withCore (text : String) (required : Array Require) (core : String) :
+    Except String (String × Array Require) := do
+  let others := required.filter (·.name != coreName)
+  if (required.back?.map (isCoreAt core)) == some true && others.size + 1 == required.size then
+    return (text, required)
+  let (text, others) ← withoutCore text required
+  return (appendCore text core, others.push (coreRequire core))
 
 /-- Why an edit is refused by an editor that knows no directory of its
 core. -/
@@ -269,13 +272,14 @@ def noCoreDirectory : String :=
   "this editor knows no directory of its core, so it cannot write the lakefile's editor-core require"
 
 /-- The edit `edit` of the lakefile `text`, whose requires are `required`,
-made on it with the core's require written at its root first (`withCore`),
-by the running editor's core directory `core`; refused when it knows none
-(`noCoreDirectory`). -/
+made on it with every `editor-core` table taken out (`withoutCore`), and
+the core's require by the running editor's core directory `core` added
+after, as the last require (`appendCore`), so a table the edit adds comes
+before it; refused when it knows none (`noCoreDirectory`). -/
 def withCoreEdit (core : Option String) (text : String) (required : Array Require)
     (edit : String → Array Require → Except String String) : Except String String := do
   let some core := core | throw noCoreDirectory
-  let (text, required) ← withCore text required core
-  edit text required
+  let (text, required) ← withoutCore text required
+  return appendCore (← edit text required) core
 
 end Editor.PackageSet

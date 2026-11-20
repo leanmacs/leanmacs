@@ -1,16 +1,16 @@
 name = "config"
 
 [[require]]
-name = "editor-core"
-path = "@REPO@/lean"
-
-[[require]]
 name = "shipped-themes"
 path = "@REPO@/packages/shipped-themes"
 
 [[require]]
 name = "hello-init"
 path = "@REPO@/tests/user-sets/hello-init"
+
+[[require]]
+name = "editor-core"
+path = "@REPO@/lean"
 
 [[lean_lib]]
 name = "Config"
