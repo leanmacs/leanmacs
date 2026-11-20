@@ -25,14 +25,14 @@ mod open;
 use std::mem::MaybeUninit;
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use common::{DEADLINE, completion_of, next_completion};
+use common::{DEADLINE, completion_of, flushed, next_completion};
 use editor_ffi::events::{QueueId, RawEvent, editor_ffi_events_next};
 use editor_ffi::processes::{
     RawStreamReply, editor_ffi_processes_cancel, editor_ffi_processes_close_input,
-    editor_ffi_processes_pending, editor_ffi_processes_read, editor_ffi_processes_take_stream,
-    editor_ffi_processes_write,
+    editor_ffi_processes_flush, editor_ffi_processes_pending, editor_ffi_processes_read,
+    editor_ffi_processes_take_stream, editor_ffi_processes_write,
 };
 use editor_ffi::text::editor_ffi_text_free;
 use open::{comes_to_be_held, open};
@@ -128,18 +128,6 @@ fn completed(wait: u64) -> Reply {
     take(wait).expect("a reply")
 }
 
-/// Whether `pending` comes to `count` within the deadline.
-fn pending_comes_to(count: u64) -> bool {
-    let end = Instant::now() + DEADLINE;
-    while Instant::now() < end {
-        if editor_ffi_processes_pending() == count {
-            return true;
-        }
-        thread::yield_now();
-    }
-    false
-}
-
 /// `count` numbered lines, as `sh`'s loop writes them.
 fn counted(count: usize) -> Vec<u8> {
     (0..count)
@@ -191,7 +179,12 @@ fn a_streaming_child_is_read_written_closed_and_cancelled_through_c_one_completi
     assert_eq!(completed(20).status, 10);
     assert!(comes_to_be_held(20, DEADLINE));
     assert!(editor_ffi_processes_cancel(20));
-    assert!(pending_comes_to(before), "the cancelled child is reaped");
+    flushed(21);
+    assert_eq!(
+        editor_ffi_processes_pending(),
+        before,
+        "the cancelled child is reaped"
+    );
 
     // One completion for a read however much its child writes, on the real
     // queue. The bound is all the child writes, so it is held once every
@@ -203,12 +196,23 @@ fn a_streaming_child_is_read_written_closed_and_cancelled_through_c_one_completi
     assert!(editor_ffi_processes_read(30, 31));
     assert!(comes_to_be_held(30, DEADLINE));
     assert_eq!(next_completion(), completion_of(31));
+    // The pull is left waiting: the next completion it takes is the
+    // flush's, below.
     let (sender, pulled) = mpsc::channel();
     thread::spawn(move || {
         let mut raw = MaybeUninit::<RawEvent>::uninit();
         // SAFETY: `raw` is writable for one record.
         let got = unsafe { editor_ffi_events_next(QueueId::Completion.tag(), raw.as_mut_ptr()) };
-        sender.send(got).ok();
+        let code = got.then(|| {
+            // SAFETY: the call returned true, so it filled the record, whose
+            // buffer came from the library and is handed back once.
+            unsafe {
+                let raw = raw.assume_init();
+                editor_ffi_text_free(raw.text, raw.text_len);
+                raw.code
+            }
+        });
+        sender.send(code).ok();
     });
     assert!(
         pulled.recv_timeout(Duration::from_millis(200)).is_err(),
@@ -223,5 +227,7 @@ fn a_streaming_child_is_read_written_closed_and_cancelled_through_c_one_completi
     }
     assert_eq!(whole, lines);
     assert!(editor_ffi_processes_cancel(30));
-    assert!(pending_comes_to(before));
+    assert!(editor_ffi_processes_flush(32));
+    assert_eq!(pulled.recv_timeout(DEADLINE), Ok(Some(32)));
+    assert_eq!(editor_ffi_processes_pending(), before);
 }

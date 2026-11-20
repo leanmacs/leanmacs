@@ -24,23 +24,8 @@
 #[path = "common/processes.rs"]
 mod common;
 
-use std::thread;
-use std::time::Instant;
-
-use common::{DEADLINE, ROOMY, Taken, completion_of, next_completion, run, run_input, take};
+use common::{ROOMY, Taken, completion_of, flushed, next_completion, run, run_input, take};
 use editor_ffi::processes::{editor_ffi_processes_cancel, editor_ffi_processes_pending};
-
-/// Whether `pending` comes to `count` within the deadline.
-fn pending_comes_to(count: u64) -> bool {
-    let end = Instant::now() + DEADLINE;
-    while Instant::now() < end {
-        if editor_ffi_processes_pending() == count {
-            return true;
-        }
-        thread::yield_now();
-    }
-    false
-}
 
 #[test]
 fn a_command_is_run_through_c_completed_on_the_completion_queue_and_taken_once_unless_cancelled() {
@@ -69,10 +54,12 @@ fn a_command_is_run_through_c_completed_on_the_completion_queue_and_taken_once_u
     // A run cancelled while its child sleeps is never completed: the next
     // completion is the marker's, started after it.
     assert!(run(2, "/bin/sleep 600", directory.path(), ROOMY));
-    assert!(pending_comes_to(before + 1));
+    assert_eq!(editor_ffi_processes_pending(), before + 1);
     assert!(editor_ffi_processes_cancel(2));
-    assert!(
-        pending_comes_to(before),
+    flushed(6);
+    assert_eq!(
+        editor_ffi_processes_pending(),
+        before,
         "the cancelled run's child is reaped"
     );
     assert!(run(3, "exit 0", directory.path(), ROOMY));

@@ -119,6 +119,7 @@
 //! | [`editor_ffi_processes_close_input`] | Closes a child's input |
 //! | [`editor_ffi_processes_take_stream`] | Fills a [`RawStreamReply`] and returns true, or returns false when the service keeps no reply for the wait |
 //! | [`editor_ffi_processes_held`] | Whether a child is held at its bound: 0 no, 1 yes, 2 no such child. A readout for tests |
+//! | [`editor_ffi_processes_flush`] | Asks for an id to be completed once every run before it has ended and every child cancelled before it has been reaped; keeps no reply. False for an id in use |
 //! | [`editor_ffi_processes_cancel`] | Cancels a run, a streaming child or a wait on one, killing the child's group, and says whether there was anything to cancel |
 //! | [`editor_ffi_processes_pending`] | Runs and streaming children whose child is not yet reaped, results not taken, and waits not answered or not taken |
 //! | [`editor_ffi_processes_shutdown`] | Kills every group, runs and streaming children alike, and returns once every child is reaped; a later run or open is refused as shut down |
@@ -592,6 +593,20 @@ pub unsafe extern "C" fn editor_ffi_processes_take(id: u64, out: *mut RawProcess
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_processes_cancel(id: u64) -> bool {
     PROCESSES.cancel(id)
+}
+
+/// Asks the process's service for the wait `id` to be completed once every
+/// run started before this call has ended, every open asked before it has
+/// been answered, and every streaming child cancelled or forgotten before
+/// it has been reaped ([`Service::flush`]), and returns whether it was
+/// accepted. It returns at once and never blocks. Its completion is queued
+/// from [`SERVICE`] behind those of the runs it waited for; it keeps no
+/// reply. A live streaming child and its pending read are not waited for.
+///
+/// Returns false, starting nothing, if `id` is in use.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_processes_flush(id: u64) -> bool {
+    PROCESSES.flush(id)
 }
 
 /// How many runs and streaming children are not over, a cancelled one

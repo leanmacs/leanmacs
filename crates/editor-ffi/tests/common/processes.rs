@@ -14,8 +14,8 @@ use std::{slice, thread};
 
 use editor_ffi::events::{EventKind, QueueId, RawEvent, SourceKind, editor_ffi_events_next};
 use editor_ffi::processes::{
-    RawProcessResult, SERVICE, editor_ffi_processes_run, editor_ffi_processes_run_input,
-    editor_ffi_processes_take,
+    RawProcessResult, SERVICE, editor_ffi_processes_flush, editor_ffi_processes_run,
+    editor_ffi_processes_run_input, editor_ffi_processes_take,
 };
 use editor_ffi::text::editor_ffi_text_free;
 
@@ -182,4 +182,13 @@ pub fn take(id: u64) -> Option<Taken> {
         stdout,
         stderr,
     })
+}
+
+/// Flushes the process's service as the wait `id`, and requires the flush's
+/// completion to be the next on the queue: once it is pulled, every run
+/// started before it has ended and every child cancelled before it has been
+/// reaped.
+pub fn flushed(id: u64) {
+    assert!(editor_ffi_processes_flush(id), "the flush's id is free");
+    assert_eq!(next_completion(), completion_of(id));
 }

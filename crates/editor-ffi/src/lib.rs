@@ -303,7 +303,9 @@
 //! [`processes::editor_ffi_processes_run_input`], a run whose child is fed
 //! the bytes it is lent as its standard input,
 //! [`processes::editor_ffi_processes_cancel`], which kills the run's
-//! process group, [`processes::editor_ffi_processes_shutdown`], and, as a
+//! process group, [`processes::editor_ffi_processes_flush`], completed
+//! once every run before it has ended and every child cancelled before it
+//! has been reaped, [`processes::editor_ffi_processes_shutdown`], and, as a
 //! readout for tests, [`processes::editor_ffi_processes_pending`]. A
 //! streaming child is opened ([`processes::editor_ffi_processes_open`]),
 //! then read ([`processes::editor_ffi_processes_read`]), written to
@@ -321,7 +323,8 @@
 //! `tests/processes.rs`, the wiring test, which runs
 //! a real command in a temporary directory it owns through the C functions,
 //! sees its completion and takes its result once, and sees that a
-//! cancelled run is never completed and its child is reaped;
+//! cancelled run is never completed and its child is reaped by the time a
+//! flush asked after the cancel is pulled;
 //! `tests/processes_stream.rs`, the streaming wiring test, which reads a
 //! real child's lines as it writes them, writes and closes its input, sees
 //! one completion on the real queue for a read while 10,000 lines are
