@@ -12,10 +12,13 @@
 //! A service reports that a request has finished through the port
 //! [`Completer`], so its logic is tested with no queue: [`RecordingCompleter`]
 //! is the published fake, and [`completer_contract`] is what the fake and
-//! the real completer, a [`Service`], are both held to.
+//! the real completer, a [`Service`], which posts to the process's
+//! completion queue ([`crate::queue::COMPLETION`]), are both held to.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, PoisonError};
+
+use crate::queue;
 
 /// The first id a [`Service`] is given. The ids from 1 to one less than
 /// this are the core's services', fixed in `editor-ffi`.
@@ -62,6 +65,21 @@ impl Service {
                 .push((self.name, id));
             id
         })
+    }
+
+    /// Queues the completion of the request `request` on the process's
+    /// completion queue, from the library's source with this service's id
+    /// ([`queue::complete`]), and returns whether it was accepted: a queue
+    /// that has been quit drops it.
+    pub fn complete(&self, request: u64) -> bool {
+        queue::complete(self.id(), request)
+    }
+}
+
+/// The real completer: a service reports to the completion queue.
+impl Completer for Service {
+    fn complete(&self, request: u64) -> bool {
+        Self::complete(self, request)
     }
 }
 

@@ -12,6 +12,12 @@ publish = false
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
+# The conventions every service keeps, which the crate of every package
+# that holds Rust shares: the two event queues and their events, the fake
+# source, a service's completion and the buffers that cross the boundary
+# (`src/events.rs` re-exports the queue; `src/text.rs` forwards to the
+# buffers).
+editor-service = { path = "../editor-service" }
 # The window port, its fake and its contract.
 editor-platform = { path = "../editor-platform" }
 # The real window. This is the crate that wires the library together, so it

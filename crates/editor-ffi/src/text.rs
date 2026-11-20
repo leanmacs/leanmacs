@@ -3,7 +3,8 @@
 
 use std::borrow::Cow;
 use std::ops::Range;
-use std::{ptr, slice};
+
+use editor_service::buffer;
 
 /// The byte offsets of the first occurrence of `needle` in `haystack` at or
 /// after the byte offset `start` (the beginning, if `None`).
@@ -77,21 +78,20 @@ pub unsafe extern "C" fn editor_ffi_text_find(
 /// `text` points to `len` readable bytes that stay unchanged for `'a`.
 pub(crate) unsafe fn borrow<'a>(text: *const u8, len: usize) -> Cow<'a, str> {
     // SAFETY: the caller guarantees the pointer, the length and the lifetime.
-    String::from_utf8_lossy(unsafe { slice::from_raw_parts(text, len) })
+    String::from_utf8_lossy(unsafe { buffer::borrow(text, len) })
 }
 
 /// Gives `text` up as a buffer for a result record: its pointer and its
 /// length in bytes. The caller hands both back to [`editor_ffi_text_free`].
 pub(crate) fn lend(text: String) -> (*mut u8, usize) {
-    let bytes = text.into_bytes().into_boxed_slice();
-    let len = bytes.len();
-    (Box::into_raw(bytes).cast(), len)
+    buffer::lend(text.into_bytes())
 }
 
 /// Takes back a buffer the library handed out in a result record, and
 /// frees it. It frees any such buffer, whatever it holds: every one is a
-/// boxed slice of bytes, a text and a buffer of words (the private module
-/// `words`) alike.
+/// boxed slice of bytes lent with [`buffer::lend`], a text and a buffer of
+/// words (the private module `words`) alike, and is reclaimed with
+/// [`buffer::reclaim`].
 ///
 /// # Safety
 ///
@@ -99,9 +99,9 @@ pub(crate) fn lend(text: String) -> (*mut u8, usize) {
 /// handed out, which has not been handed back and is not used again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_text_free(text: *mut u8, len: usize) {
-    // SAFETY: the caller guarantees these are the parts of a boxed slice
-    // the library gave up, taken back this once.
-    drop(unsafe { Box::from_raw(ptr::slice_from_raw_parts_mut(text, len)) });
+    // SAFETY: the caller guarantees these are the parts of a buffer the
+    // library lent, taken back this once.
+    unsafe { buffer::reclaim(text, len) };
 }
 
 #[cfg(test)]

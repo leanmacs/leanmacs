@@ -125,9 +125,7 @@ pub(crate) unsafe fn borrow<'a>(bytes: *const u8, len: usize) -> &'a [u8] {
 /// length. The caller hands both back to
 /// [`editor_ffi_text_free`](crate::text::editor_ffi_text_free).
 pub(crate) fn lend(bytes: Vec<u8>) -> (*mut u8, usize) {
-    let bytes = bytes.into_boxed_slice();
-    let len = bytes.len();
-    (Box::into_raw(bytes).cast(), len)
+    editor_service::buffer::lend(bytes)
 }
 
 #[cfg(test)]

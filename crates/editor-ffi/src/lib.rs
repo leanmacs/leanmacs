@@ -182,14 +182,23 @@
 //! event is plain data tagged with its source. The process has two queues:
 //! the editor queue, and the completion queue that a dedicated Lean task
 //! pulls. A fake event source, [`events::ScriptedSource`], is published for
-//! tests. The module docs of [`events`] have the detail.
+//! tests. The queues are `editor-service`'s ([`editor_service::queue`]),
+//! which [`events`] re-exports, so a package's crate posts to the same two.
+//! The module docs of [`events`] have the detail.
 //!
-//! Tests: the unit tests in `events.rs` (ordering, the blocking pull, quit,
-//! the scripted source), none of which needs Lean;
+//! Tests: the unit tests of `editor-service`'s `queue.rs` (ordering, the
+//! blocking pull, quit, the scripted source), none of which needs Lean;
 //! `the_process_wide_queues_carry_events_until_they_are_quit` in
 //! `tests/c_api.rs`; the three queue checks of `ffi-test` (`queueChecks`).
 //!
 //! ## Services and completions
+//!
+//! The rules below are `editor-service`'s, the crate every service's crate
+//! shares, this one's and each package's: a package's service registers
+//! with [`editor_service::Service`], which takes an id at or above
+//! [`editor_service::FIRST_PACKAGE_ID`], and reports through the port
+//! [`editor_service::Completer`]. The services here keep their fixed ids,
+//! below it, and report with `events::complete`.
 //!
 //! A service is work the library does for a Lean job that takes time: a
 //! timer ([`timers`]), a load or a save of a file ([`files`]), a

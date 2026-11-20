@@ -457,6 +457,7 @@ dependencies = [
  "editor-render-wgpu",
  "editor-search",
  "editor-search-regex",
+ "editor-service",
  "editor-shape-parley",
  "editor-syntax",
  "editor-syntax-treesitter",
