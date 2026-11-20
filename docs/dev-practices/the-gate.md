@@ -1940,6 +1940,19 @@ package's tests are by convention are in
   package name that is not the generated crate's, the build fails on
   `cargo clean`; with no clean at all, it fails with `cargo built
   editor-rust-echo but rustc wrote no …`; either way the step fails.
+- **A set's records and its install.** `ffi-test` requires the core's
+  identity beside the default set's editor (`editor.core`) to equal the
+  fixture set's, and on macOS the build environment beside it
+  (`editor.build`) to hold `LEAN_CC=/usr/bin/cc`. It then installs the
+  fixture set's editor into a temporary directory (`EDITOR_INSTALL_DIR=…
+  lake -d ../tests/packages build :editorInstall`), runs `greeting`'s
+  `hello` fixture from the copy with no `.olean` directory given, verifies
+  the copy's ad-hoc signature on macOS, and requires a second install into
+  the same directory to fail saying it exists
+  ([packages.md](../design/packages.md), "User package sets"). The editor
+  is up to date after `lean`, so the install builds nothing; it writes the
+  temporary directory, and runs Cargo's own up-to-date check under
+  `target/` as `:editorRust` does.
 
 ## The Rust bans check
 

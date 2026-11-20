@@ -110,6 +110,17 @@ def moduleLookupChecks : List Check :=
             read built [] == ([], [s!"{built}.oleans"]) &&
             read installed record == ([], [])) },
     { name :=
+        "a relative line of the record names a directory under the executable's own, so a per-user install can be renamed into place; an absolute line is kept as it is"
+      run :=
+        let reader (files : List (String × String)) (path : System.FilePath) : Id (Option String) :=
+          pure ((files.find? (·.1 == path.toString)).map (·.2))
+        let installedAt := "/d/editors/c0ffee/2/editor"
+        let record := [(s!"{installedAt}.oleans", "lib/lean\n/abs/lib\n")]
+        pure
+          (Id.run (ModuleLookup.recorded installedAt (reader record)) ==
+              ["/d/editors/c0ffee/2/lib/lean", "/abs/lib"] &&
+            ModuleLookup.recordedAt installedAt "lib/lean\n" == ["/d/editors/c0ffee/2/lib/lean"]) },
+    { name :=
         "the record of an executable's set is the file <executable>.set, and the directory it names is its first line that is not empty"
       run :=
         pure

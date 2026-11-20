@@ -842,6 +842,73 @@ directory. `tools/toolchain-check.sh`, first in `lean-test`, fails when a
 tracked copy differs from the pin, naming it. A bump of the pin
 (`AGENTS.md`, "Toolchains") changes every copy in the same commit.
 
+## User package sets
+
+A user's config directory is a Lake package, and its lakefile is the
+source of truth for the user's package set (packages phase 8). This
+section is how a set the user names becomes the editor they run.
+
+### The records beside a set's editor
+
+The package-set build (the facet `editor`) writes two records beside the
+executable it links, besides `editor.oleans` and `editor.set`:
+
+- **`editor.core`**: the core's identity, one line, 16 hex digits
+  (`coreIdentity` in `lean/lakefile.lean`). It mixes the traces of the
+  objects of every module of the core's two libraries (`Editor` and
+  `EditorCore`), the core's glue (`glue.o`), the core's Rust archive
+  (`rustlib`) and the version of the Lean toolchain. Two sets over one
+  core get the same identity, whatever their packages: `ffi-test` compares
+  the default set's and the fixture set's. The whole libraries are hashed,
+  not only the modules a set links, so a package that imports a core
+  module the default set does not link does not change the identity. A
+  per-user editor linked against another core is never started (see "The
+  launcher's choice", below). `tools/stage-bundle.sh` copies the record
+  beside the shipped default, `Contents/MacOS/editor.core`.
+- **`editor.build`**: the environment a rebuild must reproduce, one line
+  `NAME=value` for each of `LEAN_CC` and `MACOSX_DEPLOYMENT_TARGET` that
+  was set when the build ran (`buildRecordText`). In a checkout
+  `mise run lean` links with `LEAN_CC=/usr/bin/cc`; a user-set build run
+  without it could re-key Lake's traces of the core's C, rebuild shared
+  outputs in `lean/.lake`, or fail to link the system frameworks. The
+  record says what the last build of the facet ran with: it is written
+  whether or not the link itself had to run.
+
+### The install: a set's editor in one directory
+
+`EDITOR_INSTALL_DIR=<dir> lake -d <set> build :editorInstall` (the facet
+`editorInstall`) builds the set's editor and fills `<dir>`, which must not
+exist yet:
+
+```
+<dir>/
+  editor           a copy of the executable, signed ad hoc on macOS
+  editor.core      the core's identity, copied
+  editor.build     the build environment, copied
+  editor.oleans    one relative line: lib/lean
+  lib/lean/...     .olean, .olean.server and .olean.private of every module
+                   of the workspace the set's root imports
+```
+
+- **The modules are copied, not referenced.** A later build that fails
+  after compiling rewrites a package's `.olean` files in the set's
+  packages. The running editor and the previous install would then import
+  modules that no longer match their linked code. A copy keeps each
+  install self-contained, as the bundle is. The toolchain's own modules
+  (`Init`, `Std`, `Lean`) stay in the toolchain.
+- **`editor.oleans` is relative**, resolved against the executable's own
+  directory (`Editor/ModuleLookup.lean`, "The record"), so `<dir>` can be
+  renamed into place once it is complete.
+- **No `editor.set` is written**: a per-user editor's set is the config
+  directory itself.
+- **Its size.** Measured on macOS arm64 for the fixture set: the
+  executable is about 240 MB and the whole directory about 420 MB.
+
+`ffi-test` installs the fixture set into a temporary directory, runs the
+fixture package `greeting`'s headless fixture from it with no `.olean`
+directory given, verifies its signature on macOS, and checks that a second
+install into the same directory is refused.
+
 ## What a package may import
 
 The core's API is the set of core modules a package may name in an `import`

@@ -289,6 +289,28 @@ run = [
   # start with nothing of the compile mode `ConfigTest.shippedChecks`'.
   "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ShippedThemes.EditorPackage Compile.EditorPackage '",
   "{ IFS= read -r core && IFS= read -r themes && IFS= read -r compile && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans && test -f \"$core/Editor.olean\" && test -f \"$themes/ShippedThemes/EditorPackage.olean\" && test \"$themes\" = \"$(cd ../packages/shipped-themes && pwd)/.lake/build/lib/lean\" && test -f \"$compile/Compile/EditorPackage.olean\" && test \"$compile\" = \"$(cd ../packages/compile && pwd)/.lake/build/lib/lean\"",
+  # The two records the package-set build writes beside a set's editor for
+  # a user's set build (docs/design/packages.md, "User package sets"):
+  # `editor.core`, the core's identity, one line of hex, which is the same
+  # for every set over one core, so the default set's and the fixture
+  # set's are equal though their packages differ; and `editor.build`, the
+  # environment the link ran with, which on macOS holds the compiler
+  # `mise run lean` sets.
+  "cmp ../packages/.lake/build/bin/editor.core ../tests/packages/.lake/build/bin/editor.core && grep -qxE '[0-9a-f]{16}' ../packages/.lake/build/bin/editor.core",
+  "test \"$(uname)\" != Darwin || grep -qxF LEAN_CC=/usr/bin/cc ../packages/.lake/build/bin/editor.build",
+  # A set's editor installed into a directory of its own (the facet
+  # `editorInstall`): the fixture set's, into a fresh temporary directory,
+  # runs the fixture package `greeting`'s headless fixture with no `.olean`
+  # directory given, so every module it loads is found through the
+  # install's relative record (`lib/lean`) under the install's own
+  # directory; on macOS the copy's ad-hoc signature verifies; and a second
+  # install into the same directory is refused, saying it exists. The set's
+  # editor is up to date after `lean`, so this builds nothing; it writes
+  # only the temporary directory and the records beside the set's editor,
+  # which hold the same text, and it runs Cargo's own up-to-date check
+  # under target/, as `:editorRust` above does. LEAN_CC is set as `lean`
+  # sets it, so the link's environment record is unchanged.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/packages/greeting/tests/headless/hello && EDITOR_INSTALL_DIR=\"$dir/v\" LEAN_CC=/usr/bin/cc lake -d ../tests/packages build --wfail -q :editorInstall && test \"$(cat \"$dir/v/editor.oleans\")\" = lib/lean && out=$(\"$dir/v/editor\" headless \"$(lean --print-prefix)\" '' $f/config $f/script) && printf '%s\\n' \"$out\" | diff $f/expected - && { test \"$(uname)\" != Darwin || codesign --verify --strict \"$dir/v/editor\"; } && status=0 && { out=$(EDITOR_INSTALL_DIR=\"$dir/v\" LEAN_CC=/usr/bin/cc lake -d ../tests/packages build -q :editorInstall 2>&1) || status=$?; } && test \"$status\" -ne 0 && printf '%s\\n' \"$out\" | grep -qF \"$dir/v already exists\" || { printf '%s\\n' \"$out\"; echo 'ffi-test: the install of the fixture set did not run its fixture, or took a directory that exists'; exit 1; }",
   # The config base of a set is the set's (lean/Editor/Main.lean, "The
   # base"; the facet `editorBase`): `Editor`, the core's base, then the
   # entry module of each package of the set outside the core, so that

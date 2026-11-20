@@ -43,7 +43,11 @@ So no directory relative to the executable holds them. The build writes
 where they are beside the executable it links, in `<executable>.oleans`
 (`recordPath`): one directory a line, absolute, the core's first, then that
 of each other package of the set that holds a Lean library, in the order
-the set's packages register.
+the set's packages register. A relative line names a directory under the
+executable's own (`recordedAt`): a per-user install of a set
+(`docs/design/packages.md`, "User package sets") copies its modules into
+`lib/lean` beside the executable and records that one line, so the
+install's directory can be renamed into place.
 
 The elaborator searches all of them (`resolve`): the base config is
 elaborated on holds the entry module of each package of the set, whose
@@ -125,16 +129,27 @@ order. -/
 def recordedIn (text : String) : List String :=
   (text.splitOn "\n").filter (!·.isEmpty)
 
+/-- The directories a record's text names for the executable at `appPath`
+(`recordedIn`), a relative line resolved against the executable's own
+directory: a per-user install writes `lib/lean`, so its directory can be
+renamed into place ("The record", in the module docs). An absolute line is
+kept as it is. -/
+def recordedAt (appPath : String) (text : String) : List String :=
+  let directory := (System.FilePath.mk appPath).parent.getD "."
+  (recordedIn text).map fun line =>
+    if (System.FilePath.mk line).isAbsolute then line else (directory / line).toString
+
 /-- The directories recorded for the executable at `appPath`, read through
 `readFile`, the port, which answers a file's text or none when it cannot be
-read: those of the file `recordPath` names, and none when there is no such
-file. In a bundle nothing is read: the bundle's layout is the rule there.
-The edge passes the real file read, and the model tests a fake. -/
+read: those of the file `recordPath` names (`recordedAt`), and none when
+there is no such file. In a bundle nothing is read: the bundle's layout is
+the rule there. The edge passes the real file read, and the model tests a
+fake. -/
 def recorded {m : Type → Type} [Monad m] (appPath : String)
     (readFile : System.FilePath → m (Option String)) : m (List String) := do
   if (bundle? appPath).isSome then
     return []
-  return ((← readFile (recordPath appPath)).map recordedIn).getD []
+  return ((← readFile (recordPath appPath)).map (recordedAt appPath)).getD []
 
 /-- The directories for an executable at `appPath`, given `explicit` and
 the directories `recorded` for it by the build that linked it. The

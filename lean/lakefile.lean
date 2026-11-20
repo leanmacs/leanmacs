@@ -665,6 +665,60 @@ would change. -/
 def writeSetRecord (pkg : Package) (executable : FilePath) : FetchM Unit := do
   writeIfChanged (executable.toString ++ ".set") s!"{← IO.FS.realPath pkg.dir}\n"
 
+/-- The variables a rebuild of a set must run with as the link did, and
+which the record `<executable>.build` holds (`buildRecordText`): the C
+compiler Lake compiles and links with (`LEAN_CC`; `mise run lean` sets
+`/usr/bin/cc`) and the lowest macOS the link targets
+(`MACOSX_DEPLOYMENT_TARGET`). A user's set rebuilt without them could make
+the core's shared outputs out of date, or fail to link the system
+frameworks (`docs/design/packages.md`, "User package sets"). -/
+def buildVariables : Array String :=
+  #["LEAN_CC", "MACOSX_DEPLOYMENT_TARGET"]
+
+/-- The text of the record `<executable>.build`: one line `NAME=value` for
+each of `buildVariables` that is set, in that order, as the environment of
+this build holds it; nothing for one that is unset. -/
+def buildRecordText : IO String :=
+  buildVariables.foldlM
+    (fun text name => do
+      match ← IO.getEnv name with
+      | some value =>
+        return text ++ s!"{name}={value}\n"
+      | none =>
+        return text)
+    ""
+
+/-- The core's identity, as a job: a hash, in hex, of what an editor links
+of the core, so two editors over one core have the same identity whatever
+their sets hold, and any change to the core gives a new one
+(`docs/design/packages.md`, "User package sets"). It mixes the traces of
+the objects of every module of the core's two libraries (`Editor` and
+`EditorCore`; the whole libraries, so a package that imports a core module
+the default set does not link still has its core's identity), the core's
+glue (`glue.o`), the core's Rust archive (`rustlib`) and the version of the
+Lean toolchain Lake runs on. The objects' traces are Lake's input hashes,
+which change when a module's source, its imports or the compiler change. -/
+def coreIdentity : FetchM (Job String) := do
+  let some core := (← getWorkspace).findPackageByKey? __name__
+    | error "the core's package is not in the workspace"
+  let mut libraries : Array (Job (Array Module)) := #[]
+  for name in [`Editor, `EditorCore] do
+    let some lib := core.leanLibs.find? (·.name == name)
+      | error s!"the core's library {name} is not in the workspace"
+    libraries := libraries.push (← lib.modules.fetch)
+  let objects ←
+    (Job.collectArray libraries).bindM fun libraries => do
+        let jobs ← libraries.flatten.mapM (·.oExport.fetch)
+        return (Job.collectArray jobs).map fun _ => jobs.map (·.getTrace.hash)
+  let glueJob ← glue.o.fetch
+  let rustJob ← rustlib.fetch
+  let inputs :=
+    (objects.zipWith (fun hashes _ => hashes) glueJob).zipWith (fun hashes _ => hashes) rustJob
+  inputs.mapM fun hashes => do
+      let parts :=
+        hashes ++ #[glueJob.getTrace.hash, rustJob.getTrace.hash, pureHash Lean.versionString]
+      return (parts.foldl Hash.mix Hash.nil).hex
+
 /-- The editor of a package set: `lake -d <set dir> build :editor` gives
 `<set>/.lake/build/bin/editor`.
 
@@ -675,7 +729,11 @@ the set's root module (`setRoot`), builds it with every module it imports,
 each in its own package's build directory, and links it as the editor is
 linked (`linkAsEditor`). Beside the executable it records where the
 `.olean` files of the set's packages are (`writeModuleRecord`) and where
-the set itself is (`writeSetRecord`), which an editor run directly reads. It is defined here because the link's objects and
+the set itself is (`writeSetRecord`), which an editor run directly reads,
+and two records a user's set build reads (`docs/design/packages.md`, "User
+package sets"): `<executable>.core`, the core's identity (`coreIdentity`),
+one line, and `<executable>.build`, the environment the link ran with
+(`buildRecordText`). Each is written only when its text would change. It is defined here because the link's objects and
 arguments are the core's knowledge, and a lakefile cannot import another's
 definitions; a facet reaches every package of a workspace that holds this
 one.
@@ -687,7 +745,74 @@ package_facet editor pkg : FilePath := do
   let executable := pkg.binDir / "editor"
   writeModuleRecord pkg executable
   writeSetRecord pkg executable
-  linkAsEditor pkg (← setRoot pkg) executable
+  writeIfChanged (executable.toString ++ ".build") (← buildRecordText)
+  let identity ←
+    (← coreIdentity).mapM fun identity =>
+        writeIfChanged (executable.toString ++ ".core") s!"{identity}\n"
+  return (← linkAsEditor pkg (← setRoot pkg) executable).add identity
+
+/-- The variable `editorInstall` takes the directory it installs into from. -/
+def installDirVar : String :=
+  "EDITOR_INSTALL_DIR"
+
+/-- A set's editor installed into one directory of its own, for a user's
+package set (`EDITOR_INSTALL_DIR=<dir> lake -d <set dir> build
+:editorInstall`; `docs/design/packages.md`, "User package sets"). It builds
+the set's editor (`editor`), then fills `<dir>`, which must not exist yet:
+
+- `editor`, a copy of the executable, signed ad hoc on macOS (as
+  `editorApp` signs the bundle; the copy's signature is the linker's
+  otherwise);
+- `editor.core` and `editor.build`, copies of the records beside it;
+- `lib/lean/`, the `.olean`, `.olean.server` and `.olean.private` files of
+  every module of the workspace the set's root imports
+  (`editorRootTransImports`), from the directory each was built in;
+- `editor.oleans`, the one relative line `lib/lean`
+  (`Editor/ModuleLookup.lean`, "The record"), so `<dir>` can be renamed
+  into place afterwards.
+
+The modules are copied, not referenced, so a later build that rewrites a
+package's `.olean` files leaves this editor's modules matching its linked
+code. The toolchain's own modules stay in the toolchain. It prints the
+directory it filled. -/
+package_facet editorInstall pkg : FilePath := do
+  let exeJob ← fetch <| pkg.facet `editor
+  let root ← setRoot pkg
+  let importsJob ← root.transImports.fetch
+  (exeJob.zipWith Prod.mk importsJob).mapM fun (exe, imports) => do
+      let refused :=
+        s!"{installDirVar} must name the directory to install the editor into, which must not exist yet"
+      let dir : FilePath ←
+        match ← IO.getEnv installDirVar with
+        | some given =>
+          pure given
+        | none =>
+          error refused
+      if ← dir.pathExists then
+        error s!"{dir} already exists: the editor is installed only into a directory that does not"
+      let modules := dir / "lib" / "lean"
+      IO.FS.createDirAll modules
+      IO.FS.writeBinFile (dir / "editor") (← IO.FS.readBinFile exe)
+      IO.setAccessRights (dir / "editor")
+          { user := { read := true, write := true, execution := true }
+            group := { read := true, execution := true }
+            other := { read := true, execution := true } }
+      for record in [".core", ".build"] do
+        IO.FS.writeFile (dir / s!"editor{record}") (← IO.FS.readFile (exe.toString ++ record))
+      for mod in imports do
+        for kind in ["olean", "olean.server", "olean.private"] do
+          let source := mod.leanLibPath kind
+          if ← source.pathExists then
+            let copy := Lean.modToFilePath modules mod.name kind
+            if let some parent := copy.parent then
+              IO.FS.createDirAll parent
+            IO.FS.writeBinFile copy (← IO.FS.readBinFile source)
+      IO.FS.writeFile (dir / "editor.oleans") "lib/lean\n"
+      if Platform.isOSX then
+        proc (quiet := true)
+            { cmd := "/usr/bin/codesign",
+              args := #["--force", "--sign", "-", (dir / "editor").toString] }
+      return dir
 
 /-- The root module of a package set, written and not built:
 `lake -d <set dir> query :editorRoot` writes
