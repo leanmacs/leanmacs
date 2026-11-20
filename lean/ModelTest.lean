@@ -842,8 +842,10 @@ The config session's decisions are tested here too, with no elaborator:
   manifest a real `lake update` wrote, its path entries left out; the
   comparison, which ignores the set's name and a manifest's path entries;
   the record `editor.packages` and its read; the shipped default's
-  fingerprint, which a generated lakefile matches; and a `lakefile.lean`
-  known by its hash;
+  fingerprint, which a generated lakefile matches; a `lakefile.lean`
+  known by its hash; and the root's own-core require left out, by any path
+  that resolves to the running core against the config directory
+  (`namesCore`, which the edits and the build's core check share);
 - `packageSetRunningChecks`: what the running editor knows of its own
   package set (`Editor/PackageSet/Running.lean`): the records beside it,
   or in an app bundle's `Contents/Resources`, the shipped fingerprint with no `.packages` record and the recorded one
@@ -851,8 +853,9 @@ The config session's decisions are tested here too, with no elaborator:
 - `packageSetEditChecks`: the edits of a config's `lakefile.toml`
   (`Editor/PackageSet/Edit.lean`), on exact texts: where each require's
   table is, install of a path, a git and a Reservoir require, remove, the
-  default set expanded without one of its packages, a rev set, and each
-  refusal;
+  default set expanded without one of its packages, a rev set, each
+  refusal, and the core's require at the root, a relative path to the
+  running core taken for it as the fingerprint takes it;
 - `packageSetBuildChecks`: a user's package-set build and its commands
   (`Editor/PackageSet/Build.lean`, `Editor/PackageSet/Compiled.lean`):
   when a reload starts it and when it says it cannot, an editor in a
@@ -865,7 +868,8 @@ The config session's decisions are tested here too, with no elaborator:
   failing build shown, its staging directory removed and nothing
   published; macOS refusing a bundle's lake at lake update, lake query
   and lake build, decided in one place (`LakeFailure.of`); a failing
-  probe; a success that writes the record, publishes version 1 and
+  probe; the core check, a relative entry resolved against the config
+  directory; a success that writes the record, publishes version 1 and
   restarts into it; what is pruned, never the running
   editor's version; and the three commands'
   edits, their refusals and the reload after them;

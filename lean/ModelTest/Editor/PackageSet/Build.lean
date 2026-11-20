@@ -557,6 +557,17 @@ def packageSetBuildChecks : List Check :=
               refused elsewhere "the directory /elsewhere/lean" &&
               refused "{\"packages\": []}" "nothing" &&
               passes) },
+    { name :=
+        "the core check resolves a relative editor-core entry against the config directory, as the fingerprint and the edits do: ../lean from /w/x is the running core at /w/lean and passes, lean is refused"
+      run :=
+        let entry (directory : String) : String :=
+          s!"\{\"packages\": [\{\"type\": \"path\", \"name\": \"«editor-core»\", \"dir\": \"{directory}\", \"inherited\": false}]}"
+        pure
+          (coreRefusal? "/w/x" "/w/lean" (some (entry "../lean")) == none &&
+            ((coreRefusal? "/w/x" "/w/lean" (some (entry "lean"))).map
+                (·.startsWith
+                  "the package set resolves editor-core to the directory /w/x/lean,")) ==
+              some true) },
     { name := "a probe that fails removes the staging directory and publishes nothing"
       run :=
         let facts := lakefileWith #[hello]

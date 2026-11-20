@@ -145,7 +145,7 @@ def packageSetEditChecks : List Check :=
             setRev lakefile required "nope" "v2" == .error "the lakefile does not require nope") },
     { name :=
         "withCore writes the core's require by the running core's directory at the root, as its last require, after the set, of a lakefile that requires the set alone"
-      run := pure (withCore lakefile required core == .ok (repaired, repairedRequired)) },
+      run := pure (withCore "/c" lakefile required core == .ok (repaired, repairedRequired)) },
     { name :=
         "withCore takes out an editor-core table that names the core from git, or another directory, wherever it is, and writes the running core's last"
       run :=
@@ -167,18 +167,37 @@ def packageSetEditChecks : List Check :=
         let otherRequired : Array Require :=
           required.push { name := "editor-core", source := .path "/elsewhere/lean" }
         pure
-          (withCore git gitRequired core == .ok (repaired, repairedRequired) &&
-            withCore first firstRequired core == .ok (repaired, repairedRequired) &&
-            withCore other otherRequired core == .ok (repaired, repairedRequired)) },
+          (withCore "/c" git gitRequired core == .ok (repaired, repairedRequired) &&
+            withCore "/c" first firstRequired core == .ok (repaired, repairedRequired) &&
+            withCore "/c" other otherRequired core == .ok (repaired, repairedRequired)) },
     { name :=
         "withCore answers a lakefile whose last require is already the running core as it is, so a repaired lakefile is a fixed point; one with no table gets the core's at its end"
       run :=
         pure
-          (withCore repaired repairedRequired core == .ok (repaired, repairedRequired) &&
-            withCore "name = \"c\"" #[] core ==
+          (withCore "/c" repaired repairedRequired core == .ok (repaired, repairedRequired) &&
+            withCore "/c" "name = \"c\"" #[] core ==
               .ok
                 ("name = \"c\"\n\n[[require]]\nname = \"editor-core\"\npath = \"/w/lean\"\n",
                   #[{ name := "editor-core", source := .path core }])) },
+    { name :=
+        "the core's require is the running core's when its path resolves to it against the config directory, as the fingerprint decides: ../lean from /w/x, last, is a fixed point; lean is not the core and is replaced"
+      run :=
+        let at_ (directory : String) : Require :=
+          { name := "editor-core", source := .path directory }
+        let relative :=
+          "name = \"config\"\n\n" ++ tables_ ++
+            "[[require]]\nname = \"editor-core\"\npath = \"../lean\"\n\n" ++
+            library
+        let elsewhere :=
+          "name = \"config\"\n\n" ++ tables_ ++
+            "[[require]]\nname = \"editor-core\"\npath = \"lean\"\n\n" ++
+            library
+        pure
+          (isCoreAt "/w/x" core (at_ "../lean") && !isCoreAt "/w/x" core (at_ "lean") &&
+            withCore "/w/x" relative (required.push (at_ "../lean")) core ==
+              .ok (relative, required.push (at_ "../lean")) &&
+            withCore "/w/x" elsewhere (required.push (at_ "lean")) core ==
+              .ok (repaired, repairedRequired)) },
     { name :=
         "install, remove and set a rev, each made with the core's require taken out first and written back after, answer a text whose last require is the core, an installed package before it"
       run :=

@@ -73,7 +73,7 @@ def packageSetEditChecks (_ : Unit) : List Check :=
         let text :=
           "name = \"config\"\n\n[[require]]\nname = \"default-set\"\npath = \"/w/packages\"\n\n[[require]]\nname = \"editor-core\"\ngit = \"https://h/leanmacs\"\nsubDir = \"lean\"\nrev = \"nightly-1\"\n"
         let some required ← read text | return false
-        match withCore text required core with
+        match withCore "/c" text required core with
         | .ok (repaired, _) =>
           return (← read repaired) ==
               some #[{ name := "default-set", source := .path "/w/packages" }, own]

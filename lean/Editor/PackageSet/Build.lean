@@ -234,15 +234,16 @@ def resolveNames (required : Array Require) (manifest : Option String) (config :
 /-- Why the build of the set in the config directory `config` stops before
 it links, when its manifest, whose text is `manifest`, resolves
 `editor-core` to anything but the running editor's core at `core`: a path
-entry naming another directory (both normalised lexically), a git entry,
-or none ("The steps", in the module docs). None when it resolves that
+entry naming another directory (`namesCore`, as the fingerprint and the
+edits decide), a git entry, or none ("The steps", in the module docs).
+None when it resolves that
 core, whatever the entry's spelling: the root's own require, or the set's
 inherited `<set>/../lean`. -/
 def coreRefusal? (config core : String) (manifest : Option String) : Option String :=
   let resolved :=
     match manifest.bind Fingerprint.coreEntry? with
     | some (.path directory) =>
-      if normalise config directory == normalise "/" core then none
+      if namesCore config core directory then none
       else some s!"the directory {normalise config directory}"
     | some (.git url rev _) => some s!"git {url} at {rev}"
     | none => some "nothing"

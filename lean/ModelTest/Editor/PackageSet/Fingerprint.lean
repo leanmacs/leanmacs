@@ -151,6 +151,17 @@ def packageSetFingerprintChecks : List Check :=
             (Fingerprint.ofFacts config (factsOf #[own, set]) none none).map (·.required) ==
               some #["path editor-core /w/lean", "path default-set /w/packages"]) },
     { name :=
+        "a directory names the running core when it resolves to it against the config directory, however it is spelled, and the fingerprint leaves such a root require out: ../lean from /w/x names /w/lean, lean does not"
+      run :=
+        let at_ (directory : String) : Require :=
+          { name := "editor-core", source := .path directory }
+        pure
+          (namesCore "/w/x" "/w/lean" "../lean" && namesCore "/w/x" "/w/lean" "/w/./x/../lean" &&
+            !namesCore "/w/x" "/w/lean" "lean" &&
+            !namesCore "/w/x" "/w/lean" "/elsewhere/lean" &&
+            (at_ "../lean").ownCore "/w/x" (some "/w/lean") &&
+            !(at_ "lean").ownCore "/w/x" (some "/w/lean")) },
+    { name :=
         "the lakefile generated before the core was required at the root, and the one generated now, both fingerprint as the shipped default's, so neither starts a build"
       run :=
         let set : Require := { name := "default-set", source := .path "/w/packages" }

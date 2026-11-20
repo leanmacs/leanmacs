@@ -98,6 +98,16 @@ def normalise (base : String) (path : String) : String :=
       #[]
   "/" ++ "/".intercalate parts.toList
 
+/-- Whether `directory`, a path a lakefile or manifest of the config
+directory `config` writes, names the running editor's core directory
+`core`: a relative one resolved against `config`, and both normalised
+lexically (`normalise`). The one test of "is this the running core" that
+the fingerprint (`Require.ownCore`), the edits (`isCoreAt`,
+`Editor/PackageSet/Edit.lean`) and the build's core check
+(`coreRefusal?`, `Editor/PackageSet/Build.lean`) each make. -/
+def namesCore (config core directory : String) : Bool :=
+  normalise config directory == normalise "/" core
+
 /-- The value `value`, or `-` for none. -/
 def orDash (value : Option String) : String :=
   value.getD "-"
@@ -229,10 +239,11 @@ def textHash (text : String) : String :=
 
 /-- Whether `require` is the root's own-core require for the running
 editor whose core directory is `core`: `editor-core` by a path that names
-that directory, however it is spelled ("The parts", in the module docs). -/
+that directory, however it is spelled (`namesCore`; "The parts", in the
+module docs). -/
 def Require.ownCore (config : String) (core : Option String) (require : Require) : Bool :=
   match require.name, require.source, core with
-  | "editor-core", .path directory, some core => normalise config directory == normalise "/" core
+  | "editor-core", .path directory, some core => namesCore config core directory
   | _, _, _ => false
 
 /-- The fingerprint of the config in the directory `config` whose facts are

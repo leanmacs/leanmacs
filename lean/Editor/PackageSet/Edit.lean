@@ -219,12 +219,13 @@ module docs). -/
 def coreRequire (core : String) : Require :=
   { name := coreName, source := .path core }
 
-/-- Whether `require` is the core's require by the directory `core`, the
-path spelled absolute. -/
-def isCoreAt (core : String) (require : Require) : Bool :=
+/-- Whether `require`, of the lakefile in the config directory `config`, is
+the core's require by the directory `core`: `editor-core` by a path that
+names it, relative to `config` or absolute (`namesCore`, as the
+fingerprint and the build's core check decide). -/
+def isCoreAt (config : String) (core : String) (require : Require) : Bool :=
   match require.name, require.source with
-  | "editor-core", .path directory =>
-    directory.startsWith "/" && normalise "/" directory == normalise "/" core
+  | "editor-core", .path directory => namesCore config core directory
   | _, _ => false
 
 /-- The text with every `editor-core` table taken out, whatever its
@@ -258,10 +259,12 @@ whatever its source, and the core's added after the last `[[require]]`
 table, with one blank line before it; with no table, at the end, as
 `install` adds one. A lakefile whose last require is already the core by
 that directory, and has no other, is answered as it is. -/
-def withCore (text : String) (required : Array Require) (core : String) :
+def withCore (config : String) (text : String) (required : Array Require) (core : String) :
     Except String (String × Array Require) := do
   let others := required.filter (·.name != coreName)
-  if (required.back?.map (isCoreAt core)) == some true && others.size + 1 == required.size then
+  if
+      (required.back?.map (isCoreAt config core)) == some true &&
+        others.size + 1 == required.size then
     return (text, required)
   let (text, others) ← withoutCore text required
   return (appendCore text core, others.push (coreRequire core))
