@@ -223,6 +223,45 @@ machine, measured". Run it again when the Lean toolchain's pin moves, when
 the Rust library gains a system dependency, and when macOS or Xcode is
 upgraded.
 
+## User package sets, on demand
+
+`mise run user-sets-check` (`tools/user-sets-check.sh`) runs the checks of a
+user's package set that need git, Cargo or more builds than the gate's
+`user-sets-test` ([packages.md](../design/packages.md), "User package
+sets"). It writes in a temporary directory, with `HOME` and `XDG_*` inside
+it (Cargo's and rustup's homes kept, so the Rust set builds offline), but
+the fixture packages' own `.lake/` and, for the Rust set, the checkout's
+`target/`. It ends `user-sets-check: ok`.
+
+- **E, the first launch after an editor update.** A version 1 is built
+  from the shipped default. A copy of the shipped default with its
+  records, its `editor.core` another core's, is what `leanmacs --data …
+  --default <copy> -- --probe` starts, not version 1. Through the
+  launcher, the copy's start-up reload builds the set and restarts into
+  the new version, which answers `hello-init: initialize ran`. With a
+  lakefile naming `broken-elab`, the copy keeps running and the build
+  buffer shows Lean's `Type mismatch`.
+- **F, git update.** A package in a local repository (`file://`) is
+  installed and its pin recorded in `editor.packages`; after a new commit
+  `:package-update git-package` moves the pin and builds version 2;
+  `:package-update git-package <first rev>` writes `rev` into the
+  lakefile and builds version 3 at that pin. Each step runs on the version
+  the one before built, so its start-up reload builds nothing.
+- **G, Rust.** A set holding the fixture package `echo`, whose crate the
+  editor's Cargo workspace holds, builds with Cargo, and the new editor
+  passes its probe. (A crate outside the repository is refused; `ffi-test`
+  checks that, `tools/rust-outside-check.sh`.)
+- **H, a probe failure.** `init-throws`, whose `initialize` throws in an
+  executable called `editor` (Lean runs it when it compiles a module that
+  imports it, too, so it does not throw there), builds and links; the new
+  editor fails its probe, nothing is published, and the editor keeps
+  running.
+
+Measured on macOS arm64 (2026-11-20), the fixture packages and the core
+already built: E 10 s, F 17 s, G 5 s, H 6 s; 38 s in all. The gate's
+`user-sets-test` takes about 17 s on the same machine, its A's two
+successful builds and one failed link about 13 s together.
+
 ## The app bundle, on demand
 
 ```sh

@@ -1213,6 +1213,20 @@ dir = "lean"
 timeout = "600s"
 run = "sh ../tools/user-sets-test.sh"
 
+# Opt-in, never part of `ci`: the user package sets checks that need git,
+# Cargo or more builds than the gate's (tools/user-sets-check.sh;
+# docs/dev-practices/on-demand-checks.md, "User package sets, on demand"):
+# the first launch after an editor update, a package updated from a local
+# git repository, a set holding a Rust crate built with Cargo, and a probe
+# failure. Everything it writes is in a temporary directory, but the
+# fixture packages' own .lake/ and, for the Rust set, the checkout's
+# target/.
+[tasks.user-sets-check]
+description = "Opt-in, never part of ci: a user's package set after an editor update, updated from git, holding a Rust crate, and failing its probe (tools/user-sets-check.sh)"
+depends = ["lean", "launcher"]
+dir = "lean"
+run = "sh ../tools/user-sets-check.sh"
+
 # The build ID (crates/editor-release, `build_id`): LEANMACS_BUILD_ID when
 # it is set, else HEAD's committer time in UTC, the time landing sets. CI's
 # `build-id` job runs it once per run, so every job of a run names the same
