@@ -38,6 +38,22 @@ fn the_default_settings_leave_antialiasing_to_the_display_and_hint() {
 }
 
 #[test]
+fn the_core_text_settings_ask_for_plain_masks_and_no_hinting() {
+    // macOS draws no subpixel (LCD) text since 10.14, so the settings a
+    // program on macOS draws with ask for one coverage a pixel at every
+    // scale.
+    assert_eq!(
+        Settings::core_text(),
+        Settings {
+            antialiasing: Antialiasing::Grayscale,
+            hinting: false,
+            weight: Weight::CORE_TEXT,
+            ..Settings::default()
+        }
+    );
+}
+
+#[test]
 fn the_default_weight_is_linear_light_and_the_outline_as_it_is() {
     assert_eq!(Weight::default(), Weight::LINEAR);
     assert_eq!(

@@ -425,7 +425,13 @@ port that contains it.
   a native back end be added later if measurement says so.
 - **Low-resolution displays.** Zed carried complaints about blurry text on
   Linux for years. Subpixel antialiasing and gamma correction have to be
-  planned, not added. Gamma-correct blending makes dark text on a light
+  planned, not added. Subpixel text stays in scope, but not on macOS: the
+  platform has drawn none since 10.14, a probe on 2026-11-20 (macOS
+  27.2.1, `lcd.swift`, scratch) found Core Graphics' smoothed text in an
+  RGB context equal in red, green and blue at every pixel, and
+  WebRender's and Skia's macOS back ends rasterise plain masks there too.
+  So the macOS settings ask for plain masks at every scale
+  (`Settings::core_text()`). Gamma-correct blending makes dark text on a light
   ground thinner, and Pathfinder answers it with stem darkening: its
   outlines are expanded by `0.0121` of the size in pixels across and
   `0.0121 × 1.25` down, with a maximum of 0.3 device pixels each

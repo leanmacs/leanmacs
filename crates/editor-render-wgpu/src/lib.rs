@@ -461,9 +461,12 @@ impl Settings {
     /// The default settings, with text drawn as Core Text draws it: its
     /// weight ([`Weight::CORE_TEXT`]) and the hinting fitted with it,
     /// which is off: the fit came nearest Core Text's drawing with
-    /// outlines not fitted to the pixel grid.
+    /// outlines not fitted to the pixel grid. Glyphs are plain masks at
+    /// every scale ([`Antialiasing::Grayscale`]): macOS draws no subpixel
+    /// text.
     pub fn core_text() -> Self {
         Self {
+            antialiasing: Antialiasing::Grayscale,
             hinting: false,
             weight: Weight::CORE_TEXT,
             ..Self::default()

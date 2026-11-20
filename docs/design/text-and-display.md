@@ -3514,7 +3514,13 @@ bound submits nothing.
   render-gpu` and `mise run linux-render`.
 - **Antialiasing is a setting, and by default follows the scale:**
   subpixel masks below 2 physical pixels to a logical one, plain masks
-  from 2 up. The order of a display's colour stripes cannot be asked of
+  from 2 up. On macOS the program asks for plain masks at every scale
+  (`Settings::core_text()` gives `Antialiasing::Grayscale`, since
+  2026-11-20): macOS has drawn no subpixel (LCD) text since 10.14, and
+  Core Graphics drawing smoothed text into an RGB context gave no pixel
+  whose red, green and blue differ (macOS 27.2.1, a scratch probe,
+  `lcd.swift`). Subpixel masks stay in scope on other platforms, where
+  the default still follows the scale. The order of a display's colour stripes cannot be asked of
   the window system, so it is a setting too (red, green, blue unless
   told otherwise). Hinting is a setting, on by default and off at the
   macOS weight (`Settings::core_text()`). A renderer says which
