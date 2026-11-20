@@ -864,10 +864,11 @@ run = [
   # `windowHostRestartScenario`): config loaded at start from the same
   # fixture, a state directory and a launcher in a temporary directory, and
   # `restart` run once the restore has finished, into a probe script that
-  # prints `probe: ok`. The host must hand back the restart's plan once the
-  # shutdown has run and the window has closed, the record on disk the
-  # plan's; the plan's exec is recorded by a fake, so nothing is exec'd. It
-  # writes only in its temporary directory.
+  # prints `probe: ok`. The host is handed a recording exec that fails: the
+  # host must call it once, with `<launcher> --handover <record>`, only once
+  # the shutdown has run and the window has closed, then say the failed exec
+  # and end with status 1, the record on disk the plan's. Nothing is exec'd.
+  # It writes only in its temporary directory.
   ".lake/build/bin/ffi-test window-host-restart \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/title-bar/config",
   # The same wiring handed a config base that is not `Editor` alone, as the
   # editor's `main` hands the window mode its package set's (`Editor`, then

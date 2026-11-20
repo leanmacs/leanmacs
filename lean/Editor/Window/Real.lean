@@ -64,6 +64,12 @@ There is one editor loop; this module only wires it to a window:
   (`Ffi.WindowRan.nothingDrew`): it is
   `editor: nothing could draw in the window: <reason>` on stderr, said in
   the echo area too when the loop still runs, and status 1.
+- **A restart.** A loop that ended for a restart
+  (`Headless.Progress.handOver`) has `host` exec the plan once the closer
+  has shut down and closed the window, through the exec it was handed
+  (`replace`: `Restart.real` from `main`) and `Restart.Plan.exec`, the
+  headless mode's step too. An exec that succeeds never returns; one that
+  fails is said and the status is 1.
 - **`--report`** prints, to stderr once the window has closed
   (`reportLines`): what the surface offered, what the run asked for and
   what it was configured with (`Ffi.windowPresentation`), the counters,
@@ -82,8 +88,9 @@ handed in, so that `ffi-test` runs it on the library's scripted platform
 with a cells display and a clipboard of its own (`FfiTest`, the scenarios
 `window-host`, with a file and with none, `window-host-config`, which
 loads a config that keeps the standard title bar and waits for it with no
-bound, and `window-host-undrawn` on the scripted platform whose
-renderer cannot be made): nothing in the gate opens a window, reads the
+bound, `window-host-undrawn` on the scripted platform whose
+renderer cannot be made, and `window-host-restart`, which hands it a
+recording exec): nothing in the gate opens a window, reads the
 machine's fonts or touches the desktop's clipboard.
 
 It is imported by `Editor.Main` and `FfiTest` only: it links the Rust
@@ -219,23 +226,6 @@ def closeOnceEnded (platform : Ffi.Platform) (loop : Task (Except IO.Error Unit)
   Ffi.windowClose platform
   return ended matches .ok _
 
-/-- How the window mode's host ended: with an exit status, or with a
-restart to exec once the window has closed ("Restarting" in
-`Editor/Headless.lean`). -/
-inductive Outcome where
-  /-- Exit with this status. -/
-  | status (n : UInt32)
-  /-- Exec this plan, which the loop ended for: the window has closed and
-  everything is shut down. -/
-  | restart (plan : Restart.Plan)
-  deriving DecidableEq, Repr
-
-/-- The exit status of `outcome`, for a caller that runs no restart: a
-restart, which such a caller did not ask for, is 1. -/
-def Outcome.code : Outcome → UInt32
-  | .status n => n
-  | .restart _ => 1
-
 /-- Runs the editor in a window of `platform`, on `options.file` when one
 was given, drawn from `display` and with `clipboard` as its clipboard, and
 returns once the window has closed: the host is started with `packages` as
@@ -263,20 +253,24 @@ config directory's lakefile and toolchain file when they are absent: `main`
 hands its own, and with none, the default, nothing is written into the
 config directory.
 
-A loop that ended for a restart (`Headless.Progress.handOver`) is
-`Outcome.restart` with its plan, read once the closer has shut down and
-closed the window: the caller execs it. Every other end is
-`Outcome.status`. The restart hands on the options as given
+A loop that ended for a restart (`Headless.Progress.handOver`) has its
+plan exec'd once the closer has shut down and closed the window, through
+`replace` alone (`Headless.Collaborators.replace`, with
+`Restart.Plan.exec`): `main` hands `Restart.real`, a test a fake, and the
+default refuses. An exec that succeeds never returns; one that fails is
+said and the status is 1. The restart hands on the options as given
 (`Options.restartArguments`) and the launch it was started with
-(`options.launch`). `afterRestore` is a test's requests, sent right after the
-restore, which holds them until it has finished (`ffi-test
-window-host-restart` runs `restart` so). -/
+(`options.launch`). What the host says on stderr goes through `say`.
+`afterRestore` is a test's requests, sent right after the restore, which
+holds them until it has finished (`ffi-test window-host-restart` runs
+`restart` so). -/
 def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Platform)
     (options : Options) (plan : ConfigPlan) (display : Ffi.Display) (clipboard : ClipboardHandler)
     (said : Array String) (shutdown : IO Unit) (processes : Process.Host)
     (patience : Option Nat := some configPatience) (workingDirectory : System.FilePath := "/")
-    (generator : Option Config.Generator := none) (afterRestore : Array Headless.Request := #[]) :
-    IO Outcome := do
+    (generator : Option Config.Generator := none) (afterRestore : Array Headless.Request := #[])
+    (replace : Restart.Invocation → IO String := Restart.noExec)
+    (say : String → IO Unit := IO.eprintln) : IO UInt32 := do
   let shipped ←
     Headless.shipped packages base (options.sysroot.getD "") options.oleans (options.config.getD "")
         IO.eprintln processes (stateDirectory := options.stateDirectory)
@@ -284,7 +278,7 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
     { shipped with
       display := hostDisplay display platform
       clipboard := pure clipboard
-      generator, workingDirectory
+      generator, workingDirectory, replace
       home := processes.home
       launch := { options.launch with arguments := options.restartArguments } }
   display.present
@@ -306,7 +300,7 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
     catch _ =>
       pure ()
     shutdown
-  let closer ← IO.asTask (prio := .dedicated) (closeOnceEnded platform host.thread ending)
+  let closer ← IO.asTask (prio := .dedicated) (closeOnceEnded platform host.thread ending say)
   -- The title bar is chosen as the window opens, so config loaded at start
   -- is waited for first (`awaitConfig`), for at most `patience`.
   let titleBar ←
@@ -343,18 +337,18 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
   match ran with
   | .ok ran =>
     if let some reason := ran.nothingDrew then
-      IO.eprintln s!"editor: {nothingDrew reason}"
+      say s!"editor: {nothingDrew reason}"
     if options.report then
       for line in ← reportLines opened.toNat closed.toNat do
-        IO.eprintln line
-    -- The loop ended for a restart: the closer shut down and closed the
-    -- window, and the caller execs the plan.
-    if let some plan := (← host.progress.get).handOver then
-      return .restart plan
-    return .status (if ended && ran.nothingDrew.isNone then 0 else 1)
+        say line
+    -- The loop ended for a restart: the closer has shut down and closed the
+    -- window, so the plan is exec'd, through the collaborators' exec alone.
+    if let some restart := (← host.progress.get).handOver then
+      return ← restart.exec collaborators.replace say
+    return if ended && ran.nothingDrew.isNone then 0 else 1
   | .error reason =>
-    IO.eprintln s!"editor: the window could not be opened: {reason}"
-    return .status 1
+    say s!"editor: the window could not be opened: {reason}"
+    return 1
 
 /-- The window mode's shutdown, which `host` runs once the loop has ended
 and before it closes the window: every child the library started is killed
@@ -441,20 +435,11 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
       some <$> Headless.generatorAt origin appPath directory
     | none =>
       pure none
-  let outcome ←
+  -- A restart is exec'd by `host`, through the real exec.
+  let status ←
     host packages base .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown
         (.window home) (workingDirectory := environment.workingDirectory) (generator := generator)
-  match outcome with
-  | .status status =>
-    IO.Process.exit status.toUInt8
-  | .restart plan =>
-    -- The window has closed and everything is shut down: the restart's exec
-    -- answers only when it failed.
-    (← IO.getStderr).flush
-    let invocation := plan.invocation
-    let reason ← Restart.real invocation
-    IO.eprintln
-        s!"editor: the restart could not start {invocation.program}: {reason}; the session is kept and the next start restores it"
-    IO.Process.exit 1
+        (replace := Restart.real)
+  IO.Process.exit status.toUInt8
 
 end Editor.Window

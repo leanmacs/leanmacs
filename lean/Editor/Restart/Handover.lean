@@ -41,6 +41,16 @@ is not marked failed, with a watcher for the fallback. With none it execs
 the first candidate itself, with `--restore` and `--handed-over`, and
 there is no fallback (`Plan.invocation`).
 
+## The exec
+
+Both hosts, the headless mode's `main` and the window mode's `host`, exec a
+plan the same way, once they have shut down: through `Plan.exec`, handed
+the exec their collaborators hold (`Headless.Collaborators.replace`;
+`Restart.real` for the executable, a fake in a test, and `noExec` by
+default). An exec that succeeds never returns. One that fails is said
+(`couldNotStart`) and the host exits 1; the session it wrote is not ended,
+so the next start restores it.
+
 ## Where an addition goes
 
 | Addition | Where |
@@ -139,6 +149,31 @@ def Plan.invocation (plan : Plan) : Invocation :=
       arguments :=
         #["--restore", plan.handover.session.toString, "--handed-over", plan.record.toString] ++
           plan.handover.arguments.toArray }
+
+/-- The exec of a host that has none (`Headless.Collaborators.replace`'s
+default): it refuses every invocation, saying so. -/
+def noExec (_ : Invocation) : IO String :=
+  pure "no exec in this host"
+
+/-- What a host says when the restart's exec of `program` failed, for
+`reason` ("The exec", in the module docs). -/
+def couldNotStart (program : System.FilePath) (reason : String) : String :=
+  s!"editor: the restart could not start {program}: {reason}; the session is kept and the next start restores it"
+
+/-- What a host does with `plan` once it has shut down ("The exec", in the
+module docs): flushes stdout and stderr, so nothing said is lost to the
+exec, and execs `plan.invocation` through `replace`, once. `replace`
+answers only when the exec failed, with the reason: that is said with
+`say` (`couldNotStart`), and the answer is 1, the status the host exits
+with. -/
+def Plan.exec (plan : Plan) (replace : Invocation → IO String) (say : String → IO Unit) :
+    IO UInt32 := do
+  (← IO.getStdout).flush
+  (← IO.getStderr).flush
+  let invocation := plan.invocation
+  let reason ← replace invocation
+  say (couldNotStart invocation.program reason)
+  return 1
 
 /-- A restart in flight: from the probe's success until the exec, or until
 the hand-over is abandoned (`Kept.handing`). -/

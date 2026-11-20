@@ -472,8 +472,10 @@ install calls) another, with the session handed over:
    writes a new generation of every journal. Otherwise the host ends its
    loop, shuts down as at any end (the children, the watches, the searches,
    the bounded drain of the file service, the queues), the window mode
-   closes its window, and execs the plan (`Restart.real`, over
-   `Ffi.exec`): with a launcher, `<launcher> --handover <record>`; with
+   closes its window, and execs the plan through its collaborators' exec
+   alone (`Headless.Collaborators.replace` and `Restart.Plan.exec`, one
+   step both hosts share; `Restart.real`, over `Ffi.exec`, in the
+   executable, and a fake in `ffi-test window-host-restart`): with a launcher, `<launcher> --handover <record>`; with
    none, the first candidate with `--restore <index> --handed-over <record>`
    and the host's arguments. An exec that fails is said on stderr and the
    process exits 1; the session is restored at the next start.

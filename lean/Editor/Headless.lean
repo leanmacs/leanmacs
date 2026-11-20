@@ -393,10 +393,12 @@ yielded, and the loop goes on. Otherwise it ends its loop and keeps the
 plan (`Progress.handOver`). The headless mode then prints `restart: the
 session is handed over`, with ` (no launcher, so no fallback)` after it for
 a run no launcher started, shuts down as at an end and execs the plan
-(`Collaborators.replace`, `Restart.real` for the executable's hosts); the
-window mode closes its window first (`Editor/Window/Real.lean`). An exec
-that fails is said, `editor: the restart could not start <program>:
-<reason>; the session is kept and the next start restores it`, with status 1.
+through its collaborators' exec (`Collaborators.replace`, `Restart.real`
+for the executable's hosts), and nothing else; the window mode closes its
+window first (`Editor/Window/Real.lean`). Both exec with `Restart.Plan.exec`
+("The exec", in `Editor/Restart/Handover.lean`): an exec that fails is
+said, `editor: the restart could not start <program>: <reason>; the
+session is kept and the next start restores it`, with status 1.
 
 With `--restore` (`Restart.Launch.restore`), the restore request names the
 index handed over (`Request.restore`), which the restore takes in place of
@@ -1047,9 +1049,10 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   launch : Restart.Launch := {}
   /-- Execs a restart's plan in place of this process, once the host has shut
   down ("Restarting", in the module docs): it answers only when the exec
-  failed, with the reason. The executable's hosts are handed `Restart.real`;
-  the default refuses. -/
-  replace : Restart.Invocation → IO String := fun _ => pure "no exec in this host"
+  failed, with the reason. The hosts exec only through it
+  (`Restart.Plan.exec`). The executable's hosts are handed `Restart.real`;
+  the default refuses (`Restart.noExec`). -/
+  replace : Restart.Invocation → IO String := Restart.noExec
   /-- Removes what the collaborators left outside the process: the real
   ones' directory of the config files' module data, if a config with
   files under `Config/` had it made (`Editor/Config/Elaborate.lean`,
@@ -3243,14 +3246,13 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
   -- A restart hands the next run this command line, its `--resume` one
   -- more than this run's.
   let launch := { launch with arguments := "headless" :: handedOn arguments resume }
-  let (failure, handOver) ←
-    runAndDispose
-        { shipped with
-          generator, workingDirectory, launch, replace := Restart.real
-          display :=
-            if drawn then drawnDisplay else fun snapshots => Host.Display.recorder cells snapshots
-          render := if drawn then some Render.library else none }
-        directives settlePatience resume
+  let collaborators :=
+    { shipped with
+      generator, workingDirectory, launch, replace := Restart.real
+      display :=
+        if drawn then drawnDisplay else fun snapshots => Host.Display.recorder cells snapshots
+      render := if drawn then some Render.library else none }
+  let (failure, handOver) ← runAndDispose collaborators directives settlePatience resume
   if let some plan := handOver then
     IO.println
         s!"restart: the session is handed over{if plan.launcher.isSome then "" else " (no launcher, so no fallback)"}"
@@ -3272,16 +3274,10 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
   -- them, and the exit is explicit, because a task may still be blocked in
   -- the library.
   Ffi.quit
-  -- A restart's exec, once everything is shut down and flushed: it answers
-  -- only when it failed.
+  -- A restart's exec, once everything is shut down, through the
+  -- collaborators' exec: it returns only when it failed, said.
   if let some plan := handOver then
-    (← IO.getStdout).flush
-    (← IO.getStderr).flush
-    let invocation := plan.invocation
-    let reason ← Restart.real invocation
-    IO.eprintln
-        s!"editor: the restart could not start {invocation.program}: {reason}; the session is kept and the next start restores it"
-    IO.Process.exit 1
+    IO.Process.exit (← plan.exec collaborators.replace IO.eprintln).toUInt8
   IO.Process.exit (if failure.isNone then 0 else 1)
 
 end Editor.Headless
