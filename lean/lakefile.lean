@@ -852,6 +852,27 @@ would change. -/
 def writeSetRecord (pkg : Package) (executable : FilePath) : FetchM Unit := do
   writeIfChanged (executable.toString ++ ".set") s!"{← IO.FS.realPath pkg.dir}\n"
 
+/-- The record of where the core a set's editor links is, written beside
+the editor the set's build links, at `<executable>.coredir`: the directory
+of the workspace's `editor-core` package, the core Lake actually linked,
+absolute, on one line, as Lake spells it (made absolute against the
+working directory when Lake holds it relative; never resolved through
+links, so it is the same text a config's lakefile requires the core by).
+An editor run directly, outside a bundle, reads it
+(`Editor/ModuleLookup.lean`, "The core") to require the core at the root of
+the lakefiles it writes, and its package-set build holds the set's
+manifest to it. A per-user install copies it as `editor.coredir`
+(`editorInstall`). It is written only when its text would change. -/
+def writeCoreDirRecord (executable : FilePath) : FetchM Unit := do
+  let some core := (← getWorkspace).findPackageByKey? __name__
+    | error "the core's package is not in the workspace"
+  let directory ←
+    if core.dir.isAbsolute then
+      pure core.dir
+    else
+      (· / core.dir) <$> IO.currentDir
+  writeIfChanged (executable.toString ++ ".coredir") s!"{directory}\n"
+
 /-- The variables a rebuild of a set must run with as the link did, and
 which the record `<executable>.build` holds (`buildRecordText`): the C
 compiler Lake compiles and links with (`LEAN_CC`; `mise run lean` sets
@@ -917,7 +938,8 @@ the set's root module (`setRoot`), builds it with every module it imports,
 each in its own package's build directory, and links it as the editor is
 linked (`linkAsEditor`). Beside the executable it records where the
 `.olean` files of the set's packages are (`writeModuleRecord`) and where
-the set itself is (`writeSetRecord`), which an editor run directly reads,
+the set itself is (`writeSetRecord`) and where the core it links is
+(`writeCoreDirRecord`), which an editor run directly reads,
 and two records a user's set build reads (`docs/design/packages.md`, "User
 package sets"): `<executable>.core`, the core's identity (`coreIdentity`),
 one line, and `<executable>.build`, the environment the link ran with
@@ -933,6 +955,7 @@ package_facet editor pkg : FilePath := do
   let executable := pkg.binDir / "editor"
   writeModuleRecord pkg executable
   writeSetRecord pkg executable
+  writeCoreDirRecord executable
   writeIfChanged (executable.toString ++ ".build") (← buildRecordText)
   let identity ←
     (← coreIdentity pkg).mapM fun identity =>
@@ -951,7 +974,8 @@ the set's editor (`editor`), then fills `<dir>`, which must not exist yet:
 - `editor`, a copy of the executable, signed ad hoc on macOS (as
   `editorApp` signs the bundle; the copy's signature is the linker's
   otherwise);
-- `editor.core` and `editor.build`, copies of the records beside it;
+- `editor.core`, `editor.build` and `editor.coredir`, copies of the
+  records beside it;
 - `lib/lean/`, the `.olean`, `.olean.server` and `.olean.private` files of
   every module of the workspace the set's root imports
   (`editorRootTransImports`), from the directory each was built in;
@@ -985,7 +1009,7 @@ package_facet editorInstall pkg : FilePath := do
           { user := { read := true, write := true, execution := true }
             group := { read := true, execution := true }
             other := { read := true, execution := true } }
-      for record in [".core", ".build"] do
+      for record in [".core", ".build", ".coredir"] do
         IO.FS.writeFile (dir / s!"editor{record}") (← IO.FS.readFile (exe.toString ++ record))
       for mod in imports do
         for kind in ["olean", "olean.server", "olean.private"] do

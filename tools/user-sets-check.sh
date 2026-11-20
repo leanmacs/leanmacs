@@ -75,7 +75,7 @@ out=$("$shipped" headless --data "$tmp/e/data" "$sysroot" "$oleans" "$tmp/e/conf
 printf '%s\n' "$out" | grep -q "packages: built $tmp/e/data/editors/$core/1/editor; it starts at the next launch" ||
   { printf '%s\n' "$out"; fail "E did not build version 1"; }
 mkdir "$tmp/e/shipped"
-for file in "" .oleans .set .build; do
+for file in "" .oleans .set .build .coredir; do
   cp "$shipped$file" "$tmp/e/shipped/editor$file"
 done
 echo 0000000000000000 >"$tmp/e/shipped/editor.core"

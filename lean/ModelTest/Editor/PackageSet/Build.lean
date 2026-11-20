@@ -151,7 +151,8 @@ def packageSetBuildChecks : List Check :=
           Id.run (ModuleLookup.setDirectory? appPath (fun _ => pure none) fun _ => pure true)
         let running : Running :=
           Id.run
-            (PackageSet.at appPath "/c" (directory.map ("default-set", ·)) (some "/t") (some "/d")
+            (PackageSet.at appPath "/c" (directory.map ("default-set", ·))
+              (some "/A.app/Contents/Resources/lean/lean") (some "/t") (some "/d")
               (fun path => pure (if path == coreRecordPath appPath then some "c0\n" else none))
               fun _ => pure true)
         let generatedFor (directory : String) : Facts :=

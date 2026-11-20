@@ -874,7 +874,7 @@ with decoys of every tool first on the `PATH`.
 
 ### The records beside a set's editor
 
-The package-set build (the facet `editor`) writes two records beside the
+The package-set build (the facet `editor`) writes three records beside the
 executable it links, besides `editor.oleans` and `editor.set`:
 
 - **`editor.core`**: the core's identity, one line, 16 hex digits
@@ -901,6 +901,15 @@ executable it links, besides `editor.oleans` and `editor.set`:
   outputs in `lean/.lake`, or fail to link the system frameworks. The
   record says what the last build of the facet ran with: it is written
   whether or not the link itself had to run.
+- **`editor.coredir`**: the directory of the core the editor links, one
+  absolute line: the workspace's `editor-core` package directory, the core
+  Lake actually linked, as Lake spells it, never resolved through links.
+  The editor reads it (`ModuleLookup.coreDirectory?`, normalised
+  lexically, none when that directory is not there) into
+  `PackageSet.Running.coreDirectory`. In a bundle it is not read: the
+  directory is `Contents/Resources/lean/lean`, by the layout, as the set's
+  is. A per-user install copies it, so a per-user editor knows the core it
+  was built against.
 
 ### The install: a set's editor in one directory
 
@@ -913,6 +922,7 @@ exist yet:
   editor           a copy of the executable, signed ad hoc on macOS
   editor.core      the core's identity, copied
   editor.build     the build environment, copied
+  editor.coredir   the core's directory, copied
   editor.oleans    one relative line: lib/lean
   lib/lean/...     .olean, .olean.server and .olean.private of every module
                    of the workspace the set's root imports
@@ -977,8 +987,8 @@ read once at the edge into `EditorState.packageSet`) is:
   <set directory>` require and no pin. So a generated lakefile matches it
   and starts no build.
 
-The running editor also reads `editor.core` and `editor.build` beside
-itself, and knows its toolchain's `lake` (`<sysroot>/bin/lake`, when it is
+The running editor also reads `editor.core`, `editor.build` and
+`editor.coredir` beside itself, and knows its toolchain's `lake` (`<sysroot>/bin/lake`, when it is
 there).
 
 ### The lakefile's edits

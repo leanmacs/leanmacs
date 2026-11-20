@@ -3255,8 +3255,9 @@ def generatorAt (origin : Config.LakePackage.Origin) (appPath : String) (configD
 
 /-- What the executable at `appPath`, built as `origin` says, knows of its
 own package set (`PackageSet.at`), read at the edge with the real file
-read and test of existence: its records, the set directory it finds for
-itself (`ModuleLookup.setDirectory?`), the config directory `configDir`
+read and test of existence: its records, the set directory and the core
+directory it finds for itself (`ModuleLookup.setDirectory?`,
+`ModuleLookup.coreDirectory?`), the config directory `configDir`
 made absolute, the toolchain directory `sysroot` and the data directory
 `data`. Both executable hosts read theirs with it. -/
 def runningAt (origin : Config.LakePackage.Origin) (appPath : String) (configDir : String)
@@ -3273,13 +3274,15 @@ def runningAt (origin : Config.LakePackage.Origin) (appPath : String) (configDir
       return false
   let directory ←
     ModuleLookup.setDirectory? appPath (fun path => readFile path.toString) isDirectory
+  let coreDirectory ←
+    ModuleLookup.coreDirectory? appPath (fun path => readFile path.toString) isDirectory
   let config ←
     try
       pure (← IO.FS.realPath configDir).toString
     catch _ =>
       pure configDir
-  PackageSet.at appPath config (directory.map (origin.setName, ·)) sysroot data readFile fun path =>
-      System.FilePath.pathExists path
+  PackageSet.at appPath config (directory.map (origin.setName, ·)) coreDirectory sysroot data
+      readFile fun path => System.FilePath.pathExists path
 
 /-- The headless mode of the executable, handed the packages its host
 registers, the base config is elaborated on (`Editor/Main.lean`, "The

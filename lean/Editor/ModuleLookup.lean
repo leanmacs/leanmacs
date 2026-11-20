@@ -1,3 +1,5 @@
+import Editor.PackageSet.Fingerprint
+
 /-!
 # Where the editor's Lean modules are
 
@@ -87,6 +89,28 @@ in the config directory, finds the modules config imports.
   which `tools/stage-bundle.sh` stages there, so the lakefile an editor in
   the app generates names it.
 - A directory that is not there is none, in either case.
+
+## The core
+
+An editor also knows where the core it is linked from is, when that
+directory is there (`coreDirectory?`), by the same rule as the set's: the
+lakefile it writes for a config directory requires `editor-core` at its
+root by that directory (`Editor/Config/LakePackage.lean`,
+`Editor/PackageSet/Edit.lean`), so the user's set links the running
+editor's own core, whatever core a package names
+(`docs/design/packages.md`, "A config directory requires the core and the
+set").
+
+- **Outside a bundle** the build writes the core's directory beside the
+  executable it links, in `<executable>.coredir` (`coreDirRecordPath`):
+  one line, absolute, the directory of the `editor-core` package Lake
+  linked, as Lake spells it. A per-user install copies it as
+  `editor.coredir`, so a per-user editor knows the core it was built
+  against. An executable with no such record knows no core directory.
+- **In a bundle** it is `<bundle>/Contents/Resources/lean/lean`, by the
+  bundle's layout: the core the app ships.
+- The directory is normalised lexically (`PackageSet.normalise`), and one
+  that is not there is none, in either case.
 
 Nothing is read from the environment: `LEAN_PATH` and every other variable
 are ignored, as the elaborator ignores them. The executable's path is read
@@ -231,6 +255,35 @@ def setDirectory? {m : Type → Type} [Monad m] (appPath : String)
       pure (some (bundle / "Contents" / "Resources" / "lean" / "set").toString)
     | none =>
       pure ((← readFile (setRecordPath appPath)).bind setRecordedIn)
+  match named with
+  | some directory =>
+    return if ← isDirectory directory then some directory else none
+  | none =>
+    return none
+
+/-- The file the package-set build writes beside an executable it links, to
+say where the core it is linked from is ("The core", in the module docs):
+`<executable>.coredir`. -/
+def coreDirRecordPath (appPath : String) : System.FilePath :=
+  appPath ++ ".coredir"
+
+/-- The directory of the core the executable at `appPath` is linked from,
+when it is there ("The core", in the module docs): in a bundle,
+`Contents/Resources/lean/lean`, and outside one the first line of the
+record `coreDirRecordPath`, read through `readFile`, normalised lexically.
+`isDirectory` says whether a path is a directory that is there. The edge
+passes the real reads, and the model tests fakes. -/
+def coreDirectory? {m : Type → Type} [Monad m] (appPath : String)
+    (readFile : System.FilePath → m (Option String)) (isDirectory : System.FilePath → m Bool) :
+    m (Option String) := do
+  let named ←
+    match bundle? appPath with
+    | some bundle =>
+      pure (some (bundle / "Contents" / "Resources" / "lean" / "lean").toString)
+    | none =>
+      pure
+          (((← readFile (coreDirRecordPath appPath)).bind setRecordedIn).map
+            (PackageSet.normalise "/"))
   match named with
   | some directory =>
     return if ← isDirectory directory then some directory else none

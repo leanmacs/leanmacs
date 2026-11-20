@@ -5,7 +5,8 @@ import Editor.PackageSet.Fingerprint
 
 The facts a user's package-set build starts from that only the running
 executable knows (`docs/design/packages.md`, "User package sets"): which
-set it was linked from (its fingerprint), which core it links (`editor.core`),
+set it was linked from (its fingerprint), which core it links (`editor.core`) and from which directory
+(`ModuleLookup.coreDirectory?`, which the host reads and hands in),
 the environment its link ran with (`editor.build`), where its config and
 data directories are, and the `lake` of its toolchain. An executable host
 reads them once, at the edge, beside the executable (`at`, over a file read
@@ -46,6 +47,11 @@ structure Running where
   fingerprint : Option Fingerprint := none
   /-- The core's identity, from `<executable>.core`. -/
   core : Option String := none
+  /-- The directory of the core it is linked from, absolute and normalised
+  (`ModuleLookup.coreDirectory?`): what the lakefile's edits require
+  `editor-core` by, and what the build's core check holds the set's
+  manifest to; none when it is not known. -/
+  coreDirectory : Option String := none
   /-- The environment its link ran with, from `<executable>.build`. -/
   build : Array (String × String) := #[]
   /-- The Lean toolchain's directory, if one is known. -/
@@ -113,11 +119,12 @@ def buildIn (text : String) : Array (String × String) :=
 /-- What the executable at `appPath` knows of its set, read through
 `readFile`, which answers a file's text or none, and `exists`, which says
 whether a file is there: its records, the set it was built from (`set`,
-the set's Lake name and directory, when it knows them), its config
+the set's Lake name and directory, when it knows them), the directory of
+the core it is linked from (`coreDirectory`, when it knows one), its config
 directory `config`, its toolchain directory `sysroot` and its data
 directory `data`. -/
 def «at» {m : Type → Type} [Monad m] (appPath : String) (config : String)
-    (set : Option (String × String)) (sysroot data : Option String)
+    (set : Option (String × String)) (coreDirectory : Option String) (sysroot data : Option String)
     (readFile : String → m (Option String)) (exists_ : String → m Bool) : m Running := do
   let recorded := (← readFile (packagesRecordPath appPath)).bind Fingerprint.parse?
   let fingerprint := recorded <|> set.map fun (name, directory) => shipped name directory
@@ -130,7 +137,8 @@ def «at» {m : Type → Type} [Monad m] (appPath : String) (config : String)
       pure (if ← exists_ candidate then some candidate else none)
     | none =>
       pure none
-  return { executable := appPath, config, fingerprint, core, build, sysroot, lake, data }
+  return { executable := appPath, config, fingerprint, core, coreDirectory, build, sysroot, lake,
+           data }
 
 /-- The shipped set's Lake name, as the running editor knows it: its
 fingerprint's. -/

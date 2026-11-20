@@ -19,8 +19,9 @@ against its `Contents/Resources`; outside one no toolchain, and every `.olean` d
 recorded for the executable, or none; a directory argument read as
 directories joined with `:`, used before the recorded ones outside a bundle
 and in place of the bundle's in one; the record, read through a
-reader; and the directory of the set the executable was built from, by its
-own record outside a bundle and by the bundle's layout in one. -/
+reader; and the directories of the set the executable was built from and
+of the core it links, each by its own record outside a bundle and by the
+bundle's layout in one. -/
 def moduleLookupChecks : List Check :=
   let bundled (bundle : String) : ModuleLookup.Directories :=
     { sysroot := some s!"{bundle}/Contents/Resources/lean/toolchain", oleans := [] }
@@ -181,6 +182,35 @@ def moduleLookupChecks : List Check :=
                   fun path => pure (directories.contains path.toString)).run
               [])
         let inBundle := "/Applications/Leanmacs.app/Contents/Resources/lean/set"
+        pure
+          (directory [inBundle] == (some inBundle, []) && directory ["/elsewhere"] == (none, [])) },
+    { name :=
+        "the record of an executable's core directory is the file <executable>.coredir; outside a bundle the core directory is its first line, normalised lexically, when that is a directory that is there; with no record, or one naming a directory that is gone, there is none"
+      run :=
+        let directory (files : List (String × String)) (directories : List String) :
+          Option String :=
+          Id.run
+            (ModuleLookup.coreDirectory? built
+              (fun path => pure ((files.find? (·.1 == path.toString)).map (·.2))) fun path =>
+              pure (directories.contains path.toString))
+        let record := [(s!"{built}.coredir", "/w/packages/../lean/\n")]
+        pure
+          (ModuleLookup.coreDirRecordPath built == "/w/packages/.lake/build/bin/editor.coredir" &&
+            directory record ["/w/lean"] == some "/w/lean" &&
+            directory [] ["/w/lean"] == none &&
+            directory record [] == none) },
+    { name :=
+        "the core directory of an executable in a bundle is Contents/Resources/lean/lean when the bundle holds that directory, and none when it does not; no record is read"
+      run :=
+        let directory (directories : List String) : Option String × List String :=
+          Id.run
+            ((ModuleLookup.coreDirectory? (m := StateM (List String)) installed
+                  (fun path => do
+                    modify (· ++ [path.toString])
+                    return some "/elsewhere\n")
+                  fun path => pure (directories.contains path.toString)).run
+              [])
+        let inBundle := "/Applications/Leanmacs.app/Contents/Resources/lean/lean"
         pure
           (directory [inBundle] == (some inBundle, []) && directory ["/elsewhere"] == (none, [])) }]
 
