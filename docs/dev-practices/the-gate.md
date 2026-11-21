@@ -1658,7 +1658,7 @@ graph.
 
 | Importing module | May import, of the core's Lake package |
 |---|---|
-| A module of the package's library | The core's API: any module named `Editor.…` that is neither internal nor a test double |
+| A module of the package's library | The core's API: the core's interface libraries (`FilesApi`, `BuffersApi`, `ShellApi`, `ProjectApi`, `VcApi`) and any module named `Editor.…` that is neither internal nor a test double |
 | A test module (under `<P>Test`) | The API and the test doubles |
 | The root of the linked test (`<P>Test.Linked`) | The API, the test doubles, the real bindings of the ports (`….Real`), the headless host, the config base and the core's entry module |
 
@@ -1672,10 +1672,17 @@ graph.
   the modules of each of the package's libraries, so a library whose root
   does not import every module of it declares `globs` that hold them all,
   as `compile`'s does.
-- **The lists are in the script**, as names and patterns: the test
+- **The lists are in the script**, as names and patterns: the core's
+  interface libraries, which the core's Lake package holds outside
+  `Editor` (`FilesApi`, for good; `BuffersApi` and `ShellApi`, staged
+  until ex moves out; `ProjectApi` and `VcApi`, staged until they move
+  into interface packages), importable by every kind; the test
   doubles (a feature's test kit still in the core, `Editor.*.Kit` such as
   `Editor.Files.Kit`, among them, so a package's tests may import it and
-  its library may not), the linked test kit (`Editor.Test.Linked.…`, which only the
+  its library may not, and the core interfaces' test libraries,
+  `FilesApiTest.…`, `VcApiTest.…` and the rest), the linked test kit
+  (`Editor.Test.Linked.…`, and a core interface's `<I>Test.Linked.…` such
+  as `VcApiTest.Linked.Repositories`, which only the
   linked test's root and the modules under it may import), the internal
   modules, each with the reason printed for it, and what the linked
   test's root may import beyond the doubles. They are named,
@@ -1691,7 +1698,10 @@ graph.
   hands it `tests/package-imports/lines`, written by hand with a line for
   each branch of the rule, and requires exit 1 and exactly
   `tests/package-imports/expected`: every refused import with its reason,
-  and none of the allowed ones (a library importing an API module; a test
+  and none of the allowed ones (a library importing an API module and a
+  core interface, `FilesApi`; a test importing a core interface's fake,
+  `VcApiTest.Fake`; the linked test's root importing a core interface's
+  linked support, `VcApiTest.Linked.Repositories`; a test
   importing a model, a contract, the loop's driver beside the loop, and
   `Editor.Config.Packages` beside another module of the config session; a
   linked test importing a real binding, the headless host, the base and
@@ -1699,7 +1709,10 @@ graph.
   feature's kit, `Editor.Files.Kit`; the
   linked test's root and a module under it importing a module of the
   linked test kit). Among the refused: a plain test module and a library
-  importing the linked test kit, a library importing a feature's kit, and a module under the linked test's
+  importing the linked test kit, a plain test module importing a core
+  interface's linked support, a library importing a feature's kit and a
+  core interface's fake (`FilesApiTest.Fake`), a library importing a
+  module outside `Editor` that is no interface (`ModelTest.Check`), and a module under the linked test's
   root importing the headless host, a real binding or a raw binding,
   which only the root may, or none may. So a change
   to a list that lets an internal module through, or refuses an allowed

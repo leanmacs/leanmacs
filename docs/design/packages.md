@@ -1689,6 +1689,18 @@ interface packages import the core alone.
   importable module imports is visible to the package's code whether or not
   the package may name it; what the rule limits is what a package depends
   on by name, which is what a later rename or move can break.
+- **The core's interface libraries are part of the API**, though the
+  core's Lake package holds them outside `Editor`: `FilesApi`,
+  `BuffersApi`, `ShellApi`, `ProjectApi` and `VcApi`, each importable by
+  every module of a package, library or test. `FilesApi` is a core
+  interface for good: session restore, a core module, adopts files and
+  reads the load limit through it. `BuffersApi` and `ShellApi` are staged
+  until ex, which reaches them, moves out (phase 8), and `ProjectApi` and
+  `VcApi` until no core module imports them, when they move into interface
+  packages of their own (phase 6) and leave the list. The list is named,
+  never derived: a library staged in the core is added to it by hand.
+  Their test libraries are test doubles and the linked support under them
+  is of the linked test kit (below).
 - **A package's tests may also import the core's test doubles**: the pure
   models of the ports (`….Model`), the contracts and cases (`….Contract`,
   `….Cases`), the fakes (`Editor.Completion.Fake`, `Editor.Job.Fake`), the
@@ -1701,11 +1713,18 @@ interface packages import the core alone.
   core's own model tests are written on (`Editor.Test.…`, 20 modules); and
   a feature's test kit still in the core (`Editor.….Kit`, such as
   `Editor.Files.Kit`, the drivers of the real file commands), which moves
-  into that feature's test library when the feature moves out. A
-  package's tests are the modules under `<P>Test`.
+  into that feature's test library when the feature moves out; and the
+  test libraries of the core's interface libraries (`FilesApiTest`,
+  `BuffersApiTest`, `ShellApiTest`, `ProjectApiTest`, `VcApiTest`: their
+  fakes, contract checks and support, such as `VcApiTest.Fake`) but what
+  is under `<I>Test.Linked`. A package's tests are the modules under
+  `<P>Test`.
 - **A package's linked test may also import the linked test kit, and only
   it**: `Editor.Test.Linked` and every module under it (4 modules), the
-  rig of the core's checks over the real services. The linked test is the
+  rig of the core's checks over the real services, and the linked support
+  of a core interface's test library, `<I>Test.Linked` and every module
+  under it (such as `VcApiTest.Linked.Repositories`, the repositories
+  over the real job runner). The linked test is the
   root `<P>Test.Linked` and the modules under it, `<P>Test.Linked.…`,
   which that root imports and no other part of the package's tests does.
   A plain test module is refused the linked kit, and so is a library: the
@@ -1766,8 +1785,10 @@ interface packages import the core alone.
   the modules it uses, not the base. Nor is `EditorCore.EditorPackage`,
   which is no module of the core: it imports the packages, and no package
   imports it. Nor is any other module of the core's Lake package that is
-  not named `Editor.…`, such as the core's own test modules. The root of a
-  linked test alone names the base and the entry module, above.
+  not named `Editor.…`, such as the core's own test modules (`ModelTest.Check`
+  among them), but for the core's interface libraries and their test
+  libraries, above. The root of a linked test alone names the base and
+  the entry module, above.
 - **A feature still in the core is importable where its row says so.** The
   compile mode imports `Editor.Shell` and `Editor.Workspace.Modes`, which
   are features' modules; until those features move they are core modules a
@@ -1783,11 +1804,11 @@ interface packages import the core alone.
   the rule does not allow, each with its reason. It lists the modules of
   each of a package's libraries, so a library's globs must hold every
   module of it ("A package's tests and the gate's steps over them",
-  above). **The lists are in the script**: the test doubles, the linked
-  test kit, the internal modules, and what the linked test's root may
-  import beyond them, as names and patterns. No module lists the
-  API: a core module that is neither internal nor a test double is part
-  of it. A change to the rule changes the script, this section and the
+  above). **The lists are in the script**: the core's interface
+  libraries, the test doubles, the linked test kit, the internal modules,
+  and what the linked test's root may import beyond them, as names and
+  patterns. No module lists the rest of the API: a core module named
+  `Editor.…` that is neither internal nor a test double is part of it. A change to the rule changes the script, this section and the
   lines the gate holds the script to (`tests/package-imports/`).
 - **The layer imports check enforces the three-layer rule**
   (`tools/layer-imports-check.sh`, in `mise run ffi-test`;
