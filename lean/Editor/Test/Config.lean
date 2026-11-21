@@ -9,7 +9,6 @@ import Editor.FileWatch
 import Editor.FileWatch.Model
 import Editor.InputScheme
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Model
@@ -95,9 +94,13 @@ def loopLean (modified : Bool := true) (path : String := "lean/Editor/Loop.lean"
 
 /-- The context of a window on `buffer` in normal state, its cursor on row
 958 at column 4 of 2338 rows, selected when `selected` says, and modified
-when `buffer` is, as the loop reads a plain buffer (`Loop.contextOf`). -/
+when `buffer` is, as the loop reads a plain buffer (`Loop.contextOf`). Its
+reported state is the badge `NORMAL` in `mode-line.state.normal`, the face
+the core's vocabulary declares for it (`Editor/Face/Vocabulary.lean`), so
+the kit names no module of evil; that the Vim scheme's normal state reports
+that face is pinned by `ModelTest.vimStateChecks`. -/
 def loopContext (buffer : Buffer := loopLean) (selected : Bool := true) : ModeLine.Context :=
-  { buffer, reported := #[{ text := "NORMAL", face := Vim.stateFace "normal" }]
+  { buffer, reported := #[{ text := "NORMAL", face := ⟨"mode-line.state.normal"⟩ }]
     cursor := some ⟨958, 4⟩, lines := 2338, selected, modified := buffer.isModified }
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/

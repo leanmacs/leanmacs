@@ -1948,7 +1948,7 @@ those import them, and a kit that left them behind would not build.
 | `Editor.Test.Completion` | Candidates and completion styles written as data |
 | `Editor.Test.Geometry` | Rectangles, sample areas and window counts |
 | `Editor.Test.States` | Editor states a check starts from: windows, buffers, tabs, open prompts |
-| `Editor.Test.Config` | Config fixtures: registered commands, faces, themes, bindings, the loop's context |
+| `Editor.Test.Config` | Config fixtures: registered commands, faces, themes, bindings, the loop's context; since phase 6 it names no module of evil (the context's badge face is the vocabulary's `mode-line.state.normal`) |
 | `Editor.Test.Loop` | The command loop stepped on the editor's models, with keymaps and commands written in the test |
 | `Editor.Test.Driver` | The loop's driver over the editor's models and the job model, and what a check reads back from it |
 | `Editor.Test.Files` | The file commands' keys, files and driver |
@@ -1962,6 +1962,8 @@ those import them, and a kit that left them behind would not build.
 | `Editor.Test.AtPoint` | Added in the same phase: an at-point written over the API's completion at point, the package `at-point` with its nine commands and no source, and `names`; `at-point-api`'s fake |
 | `Editor.Test.Ex` | Added in the features-as-packages roadmap's phase 6: the kit's ex line (`exLinePackage`), a stand-in for the `ex` package that registers ex's command from the core's `Editor.Ex` and the ex names files' and the buffers' tests type (`w`, `e`, `autoread`, `b`, `ls`, `bd` and their bang forms) bound to `files-api`'s and `buffers-api`'s names, so those tests drive ex lines with no import of `Editor.Ex.Compiled` |
 | `Editor.Test.Modes` | Added in the same phase: the on-enter checks' command `enter` and its invocation (`entersMode`), what it says of a refusal, and the faces the syntax tree model last highlighted (`highlightedFaces`), moved from `ModelTest.Support.Modes` so the files feature's language checks need no core test support |
+| `Editor.Test.Excerpt` | Added in the same phase: what a check reads of an excerpt buffer (`excerptBufferNamed`, `excerptRead`, over any scheme's driver), and the stand-in for a project search's results (`excerptFiles`, the command `excerpt-files`), which names no module of evil or of project search |
+| `Editor.Evil.Kit` | Added in the same phase, evil's feature kit (`Editor.*.Kit`): the driver of evil's checks under the Vim scheme that ships (`EvilDriver`, `evilDriver`, `evilHanded`, `evilFed`, `evilShown`, `barred`), which the working sets' and the workspace's tests use until phase 7 moves it with evil |
 
 The linked kit:
 
@@ -2539,7 +2541,8 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Buffers` | 1 | feature: buffers | yes |
 | `Editor.Buffers.Compiled` | 1 | feature: buffers | no |
 | `Editor.Evil.Compiled` | 1 | feature: evil | no |
-| `Editor.Evil` and 12 of the modules under it (all but `.Compiled`); `Editor.InputScheme.Vim`, `.Vim.Default` | 15 | feature: evil | yes |
+| `Editor.Evil` and 12 of the modules under it (all but `.Compiled` and `.Kit`); `Editor.InputScheme.Vim`, `.Vim.Default` | 15 | feature: evil | yes |
+| `Editor.Evil.Kit`, the driver of evil's checks under the Vim scheme | 1 | feature: evil | in tests |
 | `Editor.Ex` | 1 | feature: ex | yes |
 | `Editor.Ex.Compiled` | 1 | feature: ex | no |
 | `Editor.Files`, `Editor.Completion.Paths` | 2 | feature: files | yes |

@@ -1,30 +1,42 @@
 import Editor.Api
 import Editor.File
 import Editor.File.Model
-import Editor.InputScheme.Vim.Default
+import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job.Model
+import Editor.Jumps.Go
 import Editor.Loop.Driver
 import Editor.ModeLine
 import Editor.ProjectSearch.Compiled
 import Editor.ProjectSearch.Run
+import Editor.Role
 import Editor.Scene
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Excerpt
 import Editor.Test.Hosted
+import Editor.Test.Keys
 import Editor.Test.Loop
-import Editor.WindowCommands.Compiled
+import Editor.Test.Models
 import FilesApi
 import FilesApiTest.Fake
 import ModelTest.Check
-import ModelTest.Support.Excerpt
 
 /-!
 # Model tests: `Editor/ProjectSearch/Run.lean`
 
 The model tests of `Editor/ProjectSearch/Run.lean`: `projectSearchRunChecks`,
-on the loop's driver over the editor's models and the job model, with evil's
-keys. The root module `ModelTest` runs them; its module doc says what each
-shows.
+on the loop's driver over the editor's models and the job model, under the
+test scheme (`Editor/InputScheme/Test.lean`), with no evil. What the checks
+did with Vim's keys they do with commands written here over the core's API:
+bound to the key a sentence names (`C-o`, a step back through the window's
+jump list, `Jumps.move`; `C-w v`, a split; `C-w C-w`, the other window), or
+invoked (`to-offset`, which puts the cursor at an offset, where Vim's `w` and
+`3 j` put it on a match; `replace-range`, which replaces a range of the
+window's text, as `c w` and a typed word do); and the results mode's
+activate role on the test scheme's key for it, where Vim's is `RET`. What
+those Vim keys do is evil's, pinned by evil's tests. The root module
+`ModelTest` runs them; its module doc says what each shows.
 -/
 
 namespace ModelTest
@@ -53,32 +65,74 @@ def opening (name text : String) : Config.Registration :=
         discard <| id.attachFile s!"/w/{name}" ⟨0, 0, text.utf8ByteSize⟩ .lf
         discard <| call.target.window.id.show id }
 
-/-- The commands of the checks: project search's, the window commands,
-opening `a.txt` with
+/-- The commands of the checks: project search's, opening `a.txt` with
 unsaved text, `b.txt` as on disk and `d.txt` as on disk in the load checks'
-world, and closing the results buffer. -/
+world, closing the results buffer, and, standing in for Vim's keys over the
+core's API: `jump-back` (`C-o`), a step back through the window's jump list
+(`Jumps.move`, the core's); `split` (`C-w v`), which splits the window and
+focuses the new one; `other-window` (`C-w C-w`), which focuses a window
+that is not the focused one; `to-offset`, which puts the window's cursor
+at the offset its argument names (`Jumps.placeCursor`); and
+`replace-range`, which replaces the window's text from its first argument
+to its second with its third. -/
 def registrations : Array Config.Registration :=
-  ProjectSearch.package.registered.commands ++ WindowCommands.package.registered.commands ++
+  ProjectSearch.package.registered.commands ++
     #[opening "a.txt" "x needle\nyy\n", opening "b.txt" "needle one\nb\nc\nd\ne\nf\nneedle two\n",
       opening "d.txt" "needle d\n", opening "sym.txt" "foo_bar x\nfoo_barx foo_bar\n",
       { name := "close-results"
         action :=
           .call fun _ => do
             let some id ← findBuffer "*search: needle in /w*" | return
-            discard <| id.remove }]
+            discard <| id.remove },
+      { name := "jump-back"
+        action := .call fun call => discard <| Jumps.move call.target.window.id (-1) },
+      { name := "split"
+        action :=
+          .call fun call => do
+            if let .ok made← call.target.window.id.split then
+              discard <| made.focus },
+      { name := "other-window"
+        action :=
+          .call fun call => do
+            let windows := (← editorState).windows
+            if let some other := windows.find? (·.id != call.target.window.id) then
+              discard <| other.id.focus },
+      { name := "to-offset"
+        action :=
+          .call fun call => do
+            let .nat offset :: _ := call.arguments | return
+            Jumps.placeCursor call.target.window.id offset },
+      { name := "replace-range"
+        action :=
+          .call fun call => do
+            let .nat start :: .nat stop :: .str text :: _ := call.arguments | return
+            call.target.buffer.text.replaceRange start stop text }]
 
-/-- Evil's keys with the commands of the checks, and project search's mode
-registered, as a host's registry holds it: its roles on their keys in the
-results buffer, and its name known to the loop that sets it; and the
-extension points as `files-api`'s fake registers them, so a loaded file is
-taken in through its `FilesApi.Files` value. -/
-def searchKeys : Loop.Keys Vim.Default.scheme :=
-  let handed := evilHanded registrations
+/-- The bindings of the checks under the test scheme: `C-o` (`jump-back`),
+`C-w v` (`split`) and `C-w C-w` (`other-window`). -/
+def bindings : List (String × Invocation) :=
+  [("C-o", invoke "jump-back"), ("C-w v", invoke "split"), ("C-w C-w", invoke "other-window")]
+
+/-- The test scheme's keys with the commands of the checks and `bindings`,
+and project search's mode registered, as a host's registry holds it: its
+roles on their keys in the results buffer, and its name known to the loop
+that sets it; and the extension points as `files-api`'s fake registers
+them, so a loaded file is taken in through its `FilesApi.Files` value. -/
+def searchKeys : Loop.Keys TestScheme.scheme :=
+  let handed : Loop.Keys TestScheme.scheme :=
+    { dispatchKeys bindings with
+      command? := fun name =>
+        match registrations.findRev? (·.name == name) with
+        | some { action := .call run, .. } =>
+          some fun call => do
+            run call
+            return none
+        | _ => none }
   let registry :=
     ({} : Config.Registry).replaceModes .compiled ProjectSearch.package.registered.modes
   { handed with
     maps := fun state view =>
-      registry.activeMaps Vim.Default.scheme state view ++ handed.maps state view
+      registry.activeMaps TestScheme.scheme state view ++ handed.maps state view
     registered :=
       { handed.registered with
         entering := fun name =>
@@ -89,14 +143,16 @@ def searchKeys : Loop.Keys Vim.Default.scheme :=
 def jobs (name : String) : Option (List Argument → Work) :=
   (ProjectSearch.package.registered.jobs.find? (·.name == name)).map (·.work)
 
+/-- `driver` once `command` is invoked with `arguments`. -/
+def invoked (driver : TestDriver) (command : String) (arguments : List Argument := []) :
+    TestDriver :=
+  (driver.stepped (driver.loop.invoke driver.handed { command, arguments })).1
+
 /-- A driver over `files` whose window shows `b.txt` and then `a.txt`, both
 open, `a.txt`'s text unsaved. -/
-def driverOver (files : FileModel := disk) : Option EvilDriver :=
-  (evilDriver "|" searchKeys).map fun driver =>
-    let driver :=
-      { driver with
-        registered := jobs, jobs := { files } }
-    excerptInvoked (excerptInvoked driver "open-b.txt") "open-a.txt"
+def driverOver (files : FileModel := disk) : Option TestDriver :=
+  (Loop.Driver.over searchKeys jobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver => invoked (invoked { driver with jobs := { files } } "open-b.txt") "open-a.txt"
 
 /-- The load checks' disk: `disk`, and `d.txt`, after `c.txt` in the walk,
 with one match. -/
@@ -105,21 +161,42 @@ def loadDisk : FileModel :=
 
 /-- A driver over `loadDisk` whose window shows `d.txt` and then `a.txt`,
 both open, `a.txt`'s text unsaved; `b.txt` is open in no buffer. -/
-def loadDriver : Option EvilDriver :=
-  (evilDriver "|" searchKeys).map fun driver =>
-    let driver :=
-      { driver with
-        registered := jobs, jobs := { files := loadDisk } }
-    excerptInvoked (excerptInvoked driver "open-d.txt") "open-a.txt"
+def loadDriver : Option TestDriver :=
+  (Loop.Driver.over searchKeys jobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver =>
+    invoked (invoked { driver with jobs := { files := loadDisk } } "open-d.txt") "open-a.txt"
 
-/-- `driver` once `command` is invoked with `arguments`. -/
-def invoked (driver : EvilDriver) (command : String) (arguments : List Argument := []) :
-    EvilDriver :=
-  (driver.stepped (driver.loop.invoke driver.handed { command, arguments })).1
+/-- `driver` fed a press of each key the key string `text` names. -/
+def fed (driver : TestDriver) (text : String) : TestDriver :=
+  (fedTo driver (presses text)).1
+
+/-- `driver` once the test scheme's key for the role `activate` is pressed:
+in the results buffer, the results mode's visit, where Vim's key is
+`RET`. -/
+def activated (driver : TestDriver) : TestDriver :=
+  (fedTo driver ((roleKeys Role.activate).map press)).1
+
+/-- `driver` once its window's cursor is put at `offset`. -/
+def placed (driver : TestDriver) (offset : Nat) : TestDriver :=
+  invoked driver "to-offset" [.nat offset]
+
+/-- `driver` once its window's text from `start` to `stop` is replaced with
+`text`. -/
+def replaced (driver : TestDriver) (start stop : Nat) (text : String) : TestDriver :=
+  invoked driver "replace-range" [.nat start, .nat stop, .str text]
+
+/-- The view `view` of the last scene `driver` published. -/
+def lastView (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option View := do
+  (← driver.model.display.scenes.back?).views.find? (·.id == view)
+
+/-- The selection of the view 0 of `driver`, as the text model has it. -/
+def selectionOf (driver : TestDriver) : Option Selection := do
+  let target ← driver.loop.state.target? ⟨0⟩
+  (target.selection.runModel driver.model.texts).1.toOption
 
 /-- `driver` once every post is delivered and every job finished, oldest
 first. -/
-def drained (driver : EvilDriver) : EvilDriver :=
+def drained (driver : TestDriver) : TestDriver :=
   (List.range 64).foldl
     (fun driver _ =>
       match driver.posting[0]? with
@@ -131,7 +208,7 @@ def drained (driver : EvilDriver) : EvilDriver :=
     driver
 
 /-- The name of the buffer the view 0 of `driver` shows. -/
-def shownName (driver : EvilDriver) : Option String := do
+def shownName (driver : TestDriver) : Option String := do
   let state := driver.loop.state
   let window ← state.window? ⟨0⟩
   return (← state.buffer? window.buffer).name
@@ -147,7 +224,7 @@ def resultsText : String :=
   "x needle\nyy\n" ++ "\n" ++ "needle one\nb\nc\n" ++ "\n" ++ "e\nf\nneedle two\n"
 
 /-- `driver` once a search of `needle` has run and settled. -/
-def searched (driver : EvilDriver) : EvilDriver :=
+def searched (driver : TestDriver) : TestDriver :=
   drained (invoked driver ProjectSearch.name [.str "needle"])
 
 end ProjectSearchTest
@@ -184,7 +261,7 @@ def projectSearchRunChecks : List Check :=
         pure <|
           match driverOver with
           | none => false
-          | some driver => shownName (evilFed (searched driver) "C-o") == some "a.txt" },
+          | some driver => shownName (fed (searched driver) "C-o") == some "a.txt" },
     { name :=
         "a search sets the last search to its pattern, forward, so the results view draws each match in search-match"
       run :=
@@ -231,7 +308,7 @@ def projectSearchRunChecks : List Check :=
           | none => false
           | some driver =>
             let done := searched driver
-            let changed := evilFed (excerptFed (evilFed done "w c w") [.commit "pin"]) "<Escape>"
+            let changed := replaced done 2 8 "pin"
             let marked := (lastView changed).any (·.status.any (·.text == ModeLine.modifiedMark))
             excerptRead changed "a.txt" == some "x pin\nyy\n" &&
               (excerptBufferNamed changed "a.txt").any (·.isModified) &&
@@ -244,7 +321,7 @@ def projectSearchRunChecks : List Check :=
           | some driver =>
             -- The second from `a.txt` again, so it searches the same root.
             let twice :=
-              invoked (evilFed (invoked driver ProjectSearch.name [.str "needle"]) "C-o")
+              invoked (fed (invoked driver ProjectSearch.name [.str "needle"]) "C-o")
                 ProjectSearch.name [.str "needle"]
             let live :=
               twice.pending.filter fun job =>
@@ -260,7 +337,7 @@ def projectSearchRunChecks : List Check :=
           | none => false
           | some driver =>
             let started := invoked driver ProjectSearch.name [.str "needle"]
-            let closed := invoked (evilFed started "C-o") "close-results"
+            let closed := invoked (fed started "C-o") "close-results"
             let done := drained closed
             (done.loop.state.findBuffer results).isNone && done.pending.isEmpty &&
               done.posting.isEmpty &&
@@ -336,7 +413,7 @@ def projectSearchRunChecks : List Check :=
           | none => false
           | some driver =>
             let done := searched driver
-            let changed := evilFed (excerptFed (evilFed done "3 j c w") [.commit "pin"]) "<Escape>"
+            let changed := replaced done 13 19 "pin"
             excerptRead changed "b.txt" == some "pin one\nb\nc\nd\ne\nf\nneedle two\n" &&
               (excerptBufferNamed changed "b.txt").any (·.isModified) },
     { name :=
@@ -346,10 +423,10 @@ def projectSearchRunChecks : List Check :=
           match driverOver with
           | none => false
           | some driver =>
-            let visited := evilFed (searched driver) "w RET"
-            let back := evilFed visited "C-o"
+            let visited := activated (placed (searched driver) 2)
+            let back := fed visited "C-o"
             shownName visited == some "a.txt" &&
-              (evilSelection visited).map (·.ranges.map (·.head)) == some #[2] &&
+              (selectionOf visited).map (·.ranges.map (·.head)) == some #[2] &&
               shownName back == some results },
     { name := "after C-w v, a visit in each window leaves the two windows on two matches"
       run :=
@@ -357,9 +434,9 @@ def projectSearchRunChecks : List Check :=
           match driverOver with
           | none => false
           | some driver =>
-            let split := evilFed (searched driver) "C-w v"
-            let first := evilFed split "w RET"
-            let second := evilFed (evilFed first "C-w C-w") "3 j RET"
+            let split := fed (searched driver) "C-w v"
+            let first := activated (placed split 2)
+            let second := activated (placed (fed first "C-w C-w") 13)
             let names :=
               second.loop.state.windows.filterMap fun window =>
                 (second.loop.state.buffer? window.buffer).map (·.name)
@@ -370,8 +447,7 @@ def projectSearchRunChecks : List Check :=
           match driverOver with
           | none => false
           | some driver =>
-            let done :=
-              drained (invoked (excerptInvoked driver "open-sym.txt") ProjectSearch.symbolName)
+            let done := drained (invoked (invoked driver "open-sym.txt") ProjectSearch.symbolName)
             done.loop.state.lastSearch == some { pattern := "\\<foo_bar\\>", forward := true } &&
               shownName done == some "*search: \\<foo_bar\\> in /w*" &&
               excerptRead done "*search: \\<foo_bar\\> in /w*" ==
