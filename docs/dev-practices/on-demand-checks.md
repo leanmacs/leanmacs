@@ -971,6 +971,29 @@ headless renderer's at the same settings, the worst by 1 of 255: on
 Metal the window's picture at the macOS weight is the headless
 renderer's.
 
+### The window with Core Text's glyphs
+
+Since 2026-11-20 both renderers of the second program, the one on the
+window and the headless one it is compared with, draw their glyphs with
+Core Text on macOS, and it prints `window: glyphs are drawn by Core Text,
+and swash for what it declines on the window, and Core Text, and swash
+for what it declines for the picture it is compared with`. A pass is
+exit 0, with both renderers reporting Core Text and the window's
+picture within 3 of 255 of the headless one's.
+
+It was run on 2026-11-20 on macOS 27.2.1 (26B131), Apple M5 Max (Metal),
+by the agent that wired it, with the screen locked and the display
+asleep. The first program passed (`window-contract: the winit platform
+keeps the window port's contract`; resizes 1600x1200 at scale 2,
+fullscreen false, corner 16, top 32). The second printed the line above,
+so both renderers drew with Core Text, but it exited 1. Its surface gave
+no texture (`Occluded`), so no frame was presented and no picture was
+compared. No key or pointer input arrived, because a pointer moved over
+a window on a locked screen sends none. The picture comparison with Core
+Text's glyphs is therefore still to be seen. It needs `mise run
+window-contract` on an unlocked desktop, with any key or click in the
+window.
+
 ## The window to try, on demand
 
 ```sh

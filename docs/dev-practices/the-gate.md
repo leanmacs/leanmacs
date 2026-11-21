@@ -404,12 +404,31 @@ needs none. What it checks:
   real condition variable; it and the tests of that wait read channels
   with a bound, and nothing sleeps.
 - **The painter and the glyph cache**, in `crates/editor-render-wgpu`, on
-  a hand-written rasteriser that reads no font: where each quad goes,
-  the drawing order, what is rasterised once, what is never evicted and
-  what the bound does.
-- **The rasteriser**, on the fixture fonts under `tests/fonts`, compiled
-  in, with glyph ids read from each font's own character map. Its tests
-  state relations only (more ink, wider, differs, the same twice).
+  the rasteriser port's published fake, which reads no font: where each
+  quad goes, the drawing order, what is rasterised once, what is never
+  evicted and what the bound does.
+- **The rasteriser.** The rasteriser port's contract
+  (`crates/editor-raster`, `contract`) runs on its published fake, plain
+  and reading luminance, and on a rasteriser written to break each
+  property, which must fail by that property's name; and on swash's
+  adapter (`crates/editor-render-wgpu/src/raster.rs`), on the fixture
+  fonts under `tests/fonts`, compiled in, with glyph ids read from each
+  font's own character map. The luminance bucket rule and `Fallback` are
+  tested on the fake. Every pure module of the Core Text adapter
+  (`crates/editor-raster-coretext`: the bitmap and the pen, the smoothing
+  decision on its published fake, what is declined, the fill grey, the
+  mask comparison) runs on both legs; no test calls Core Text, and on
+  macOS the gate builds the adapter and its example `check` and runs
+  neither (`mise run coretext-check` runs it on demand). The swash
+  rasteriser's own tests state relations only (more ink, wider, differs,
+  the same twice).
+- **Placement, against Core Text's.** The shaper's pen places of the
+  sentence of the Core Text captures, in the fixture font at 28 and 14
+  px, are within an eighth of a pixel of Core Text's
+  (`crates/editor-shape-parley/tests/core_text.rs`), and the painter
+  puts each of Core Text's places on Core Text's grid
+  (`crates/editor-render-wgpu/src/placement_tests.rs`), both over
+  `tests/coretext/positions.txt`, compiled in.
 - **The renderer's picture.** The headless adapter draws one frame of
   real text on the CPU, and no channel of any pixel may be further than 2
   of 255 from the reference image checked in at `tests/render/frame.png`

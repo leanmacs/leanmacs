@@ -3431,8 +3431,85 @@ bound submits nothing.
   added, counted, and given back at a later draw. A frame of another
   generation empties the cache. What cannot be drawn is counted: a glyph
   of a font with no bytes (the fake shaper's), a glyph id past 16 bits,
-  an image larger than a page. Rasterising is `swash`, packing the pages
-  is `etagere`.
+  an image larger than a page. Rasterising is the rasteriser port's
+  (below): Core Text on macOS, swash elsewhere and for what Core Text
+  declines. Packing the pages is `etagere`.
+- **On macOS Core Text draws each glyph, behind the rasteriser port.**
+  The owner's decision (2026-11-20, the text-rendering roadmap's phase
+  1): on macOS the renderer does what Core Text and native apps do, as
+  Zed, Ghostty, kitty, Chromium (Skia) and Firefox (WebRender) do
+  ([rendering-prior-art.md](rendering-prior-art.md), "Text on macOS").
+  - *The port.* `crates/editor-raster` owns the rasteriser port: the
+    `Rasterize` trait, what an image is kept by (`GlyphKey`) and asked
+    with (`GlyphRequest`), the image (`GlyphImage`, of a `Kind`), the
+    luminance bucket rule, a `Fallback` of two rasterisers, the
+    published fake and the contract every adapter is held to (the
+    image's shape, its kinds, the same request giving the same image,
+    each bin moving the ink by its offset, a capital on the baseline
+    and placed from the pen, and the luminance read only by a rasteriser
+    that says it reads it). It depends on `editor-layout` alone. Swash's
+    adapter stays in `editor-render-wgpu` and runs the contract in the
+    gate; the painter is written over the port.
+  - *The adapter.* `crates/editor-raster-coretext` loads a face from the
+    frame's bytes (nothing is registered on the system), and draws each
+    glyph with `CTFontDrawGlyphs` into an unscaled 8-bit alpha bitmap
+    (14 pt at scale 2 is the same drawing as 28 px at scale 1), with
+    antialiasing on, smoothing as the user's `AppleFontSmoothing` says
+    (only `0` turns it off, as in Zed and crossfont, read once through
+    the `FontDefaults` port), subpixel positioning on and quantisation
+    off, since the painter has already put the glyph on Core Text's grid
+    and the bin's offset is drawn as given. A subpixel mask asked for is
+    a plain one: macOS draws no LCD text. Core Text does not hint. It
+    declines, to swash, a face at variation coordinates other than the
+    default, synthetic bold or slant, and a colour font (rdm task
+    `editor-raster-coretext-variations-and-synthesis`).
+  - *The luminance bucket.* Core Text's smoothing dilates lighter text
+    more, in five levels of the text colour's luminance, measured on
+    macOS 27.2.1 by sweeping the fill grey: 0.3886, 0.6460, 0.8124,
+    0.9428 of the encoded Rec. 709 luminance. The bucket of a run's
+    colour is how many of those it reaches, it is part of the glyph key
+    when the rasteriser says it reads luminance (Core Text with
+    smoothing on), and the adapter fills each bucket in a grey well
+    inside its level (0, 0.5, 0.75, 0.875, 1). Zed's `round(4L)` is not
+    used: it put the default theme's text (`#d8dee9`, 0.869) in the
+    wrong level, 5% lighter than Core Text's own at 14 px. Glyphs
+    redrawn under a block cursor still keep their run's bucket (rdm task
+    `editor-render-cursor-glyph-bucket`).
+  - *The fallback.* A renderer draws with swash until it is handed a
+    rasteriser (`rasterizing_with`); then with that one, and swash, at
+    the settings' dilation, for each glyph it declines. `editor-ffi`
+    hands the process's window, and the example `window` both of its
+    renderers, Core Text on macOS (`window_rasteriser`, the one choice,
+    pinned in the gate). A renderer says what draws its glyphs
+    (`rasterizing()`), and the window example prints it.
+  - *Measured.* The adapter's masks, laid on Core Text's grid at Core
+    Text's own places, against Core Text's own drawings of the weight
+    sentence (`mise run coretext-check`, 2026-11-20): `sentence.png`
+    exactly (ink and dark pixels x1.0000, worst pixel 0.000), the
+    default theme's colours at 28 px x1.0017 / x1.0000 / 0.004, grey
+    x0.9972 / x1.0000 / 0.008, and at 14 px x1.0001 / x1.0000 / 0.020
+    black on white and x1.0035 / x1.0000 / 0.071 light on dark; each
+    control misses (light on dark at bucket 0: ink x0.89 and x0.85;
+    black on white not smoothed: x0.85; grey at its linear light's
+    bucket: x0.94). The thresholds and why are in
+    `docs/dev-practices/on-demand-checks.md`, "The Core Text rasteriser,
+    on demand".
+  - *Placement.* In the gate, the shaper's pen places of the sentence in
+    the fixture font are within an eighth of a pixel of Core Text's at
+    28 and 14 px (measured 0.0000 px; `editor-shape-parley`'s
+    `tests/core_text.rs`), and the painter puts each of Core Text's
+    places on Core Text's grid (`placement_tests.rs`). On demand, in
+    Menlo, the shaper's places are Core Text's to 0.0000 px at both
+    sizes, and Core Text applies no tracking or kerning to the sentence
+    (`mise run coretext-menlo`, 2026-11-20).
+  - *Shader sampling.* The shader reads the atlas with `textureLoad` at
+    whole texel coordinates from a page bound with `filterable: false`
+    and no sampler, and every quad is on whole pixels, so no glyph is
+    filtered bilinearly and the blur of Zed issue #57777 cannot occur;
+    `mise run render-gpu` compares the GPU's picture with the CPU
+    compositor's, which reads texels exactly.
+  - The contrast of 0.1 of the macOS weight still applies at blend time
+    to Core Text's masks; how text is blended is the roadmap's phase 2.
 - **Text is blended over what is under it, in linear light.** For each
   of red, green and blue, `out = text × coverage + under × (1 −
   coverage)`: nothing is composited against an assumed background. The
@@ -3456,7 +3533,10 @@ bound submits nothing.
   the GPU reads the same atlas). The default, `Weight::LINEAR`, is 0
   and 0, and draws every byte as before. The macOS setting is
   `Settings::core_text()`: `Weight::CORE_TEXT`, a contrast of 0.1 and a
-  dilation of 0.8 px, with hinting off, as the fit chose. The program
+  dilation of 0.8 px, with hinting off, as the fit chose. Since
+  2026-11-20 Core Text draws the glyphs on macOS (above), and
+  `Weight::CORE_TEXT`'s dilation is the swash fallback's, for the glyphs
+  Core Text declines; its fit below stands as that fallback's. The program
   picks it where it wires the renderer: `editor-ffi`'s example `window`
   asks `cfg!(target_os = "macos")` and nothing in the renderer or the
   core names a system. Whatever later makes the editor's own renderer
@@ -3503,15 +3583,22 @@ bound submits nothing.
   28 px. The dilation is a fixed number of pixels, where Pathfinder
   reads Core Text's stem darkening as growing with the size below about
   25 px ("Risks", in [rendering-prior-art.md](rendering-prior-art.md);
-  read, not verified): at other sizes the match is not measured (rdm
-  task `editor-render-weight-at-other-sizes`). The target is Core Text
+  read, not verified): at other sizes the match is not measured; the
+  rdm task `editor-render-weight-at-other-sizes` was answered on
+  2026-11-20 by having Core Text draw the glyphs on macOS, and the
+  measurement of 2026-11-20 found Core Text's dilation is about
+  `min(k(L) × px per em, 0.30)` px an edge, `k` from about 0.0058 for
+  black to 0.015 for white. The target is Core Text
   drawing offscreen into a bitmap, not TextEdit on screen. Beside
   TextEdit, by eye, the owner saw on 2026-11-14 that the window in Menlo
   14 pt is as heavy as TextEdit in Menlo Regular 14 pt at 100%, not
   lighter, compared in Menlo by the example `window` with `--family
   Menlo` (the display's scale not stated). Some of the
   spacing, and maybe the `w`, are not quite the same as TextEdit's: rdm
-  task `editor-render-glyph-spacing-and-shape-vs-core-text`.
+  task `editor-render-glyph-spacing-and-shape-vs-core-text`, taken into
+  the text-rendering roadmap's phase 1, which measured the places in
+  Menlo as Core Text's to 0.0000 px and put the glyphs on Core Text's
+  grid with Core Text's own masks (above).
 
   Pinned in `crates/editor-render-wgpu/src/weight_tests.rs`: the macOS
   setting within a tenth of both counts, and no worse than its
@@ -3539,10 +3626,12 @@ bound submits nothing.
   person, so nothing downstream matches on it. The window example prints
   it for each draw, which is how a change of antialiasing between two
   displays is seen.
-- **The scale changes what the renderer sizes, and nothing else.** A
+- **The scale changes what the renderer sizes, and the glyphs' grid.** A
   frame is in physical pixels and so is a target. What the renderer
   itself sizes is `max(1, round(scale))` pixels thick: an underline, a
-  strike-through, a bar or underline cursor, a hollow cursor's edge.
+  strike-through, a bar or underline cursor, a hollow cursor's edge. A
+  glyph is placed on Core Text's grid of the scale ("Where a glyph
+  goes", above).
   Rows built at one scale are built again at another. A theme's lengths
   are multiplied by the scale in layout, before shaping ("Layout and
   rendering", as built, "The scale"), so a frame reaches the renderer
