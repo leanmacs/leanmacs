@@ -2202,7 +2202,11 @@ the reload posted and the loop has not handled), and the fake clock holds
 no wait that is due ([`docs/design/concurrency.md`](../design/concurrency.md),
 "The idle signal"). Its milliseconds are only a guard against a hang: a
 wait that reaches its guard says the hang once on stderr and fails the run,
-never passes it.
+never passes it. What each wait waits for (`Wait.Kind`) and how each of its
+rounds is judged (`Round.judge`, `lean/Editor/Headless/Wait.lean`) are said
+once in the core, and the driver, a stepped host and the config tests all
+wait through them ([`docs/design/concurrency.md`](../design/concurrency.md),
+"One verdict, one set of kinds").
 
 | Wait | Ends on (the event) | Hang guard | At the guard |
 |---|---|---|---|

@@ -1188,6 +1188,19 @@ and a stall for an advance; when the count moved during the round it goes
 round again; and otherwise it blocks on the count's next change
 (`Activity.changedSince`) or the loop's end.
 
+**One verdict, one set of kinds.** That judgement of a round is one pure
+function, `Round.judge` (`lean/Editor/Headless/Wait.lean`, beside `Wait`),
+read through `Wait.Kind.judge` (`lean/Editor/Headless.lean`) by both
+drivers' waits, the real host's and a stepped host's ("Stepped hosts in
+tests", below), which differ only in how a round reaches the loop and what
+a block waits on. What each kind of wait waits for is one value too,
+`Wait.Kind`: `settle`, `join`, `advance clock ms` and `handled`, each
+carrying what is busy, the idle outcome, the hang outcome, its name and
+whether its marker publishes. `Host`, `Stepped`, the script runner and the
+config tests' `Driven` forward a kind to `waitWhile`, so a change to what a
+settle means, or to the idle rule, reaches every wait at once. The verdict
+is pinned by `ModelTest.waitRoundChecks`, on the model alone.
+
 **Wait guards.** The bound of a driver's wait is a wait guard (`waitGuard`
 and `answer`), named apart from the loop's end's (`guard`, `hung`, `grace`,
 `abandoned`), so the two cannot be wired together by mistake. A wait that
@@ -1282,17 +1295,25 @@ collaborators whose queue a stepper drains (`Queue.Puller`), so a host's
 posts and its pulls are never on two queues.
 
 **The wait's rounds, and the lost wake-up.** `Stepped.waitWhile` has
-`Host.waitWhile`'s signature and outcomes. A round takes the queue's
-next-push task (`Queue.Memory.arrived`) and the count's reading, drains the
-queue through the turn, then judges as the real wait does: `settled` once
-`busy` no longer holds; at idle (the count 0 at the round's epoch and no
-fake-clock wait due) the idle outcome; another round when the count moved;
-and otherwise a block on the first of the next push and the count's next
-change. The push matters: an event posted after the round found the queue
-empty, under no unit of its own (a request, an environment's report), with
-the count unchanged, would be missed by a wait on the count alone. Pinned by
-`ConfigTest.steppedChecks`' forced interleaving, shown failing on a variant
-that blocks on the count alone.
+`Host.waitWhile`'s signature, outcomes and kinds (`Wait.Kind`). A round
+takes the queue's next-push task (`Queue.Memory.arrived`) and the count's
+reading, drains the queue through the turn, then is judged by the verdict
+the real wait takes (`Round.judge`, above); its block is on the first of
+the next push and the count's next change. The push matters: an event
+posted after the round's drain found the queue empty, under no unit of its
+own (a request, an environment's report), with the count unchanged, would
+be missed by a wait on the count alone, or by one that armed the next-push
+task only as it blocked. Pinned by `ConfigTest.steppedChecks`' forced
+interleaving, a push from the busy of a settle with no marker, after the
+drain: shown failing on a variant that blocks on the count alone and on one
+that arms the next-push task at the block.
+
+**The stepped bracket's end.** Its wait for a reload still running is
+guarded as a real host's loop's end is: past `guard` the hang is said once
+through `hung`; with `grace` the bracket then gives up as a hang, handing
+the reload's task to `abandoned`, and with none it waits on. Pinned by a
+`ConfigTest.steppedChecks` check that holds the reload at a gate `endWaits`
+does not open, with a guard and grace of 0.
 
 **Scene counts match.** The first round enqueues the wait's marker, which
 publishes the scene a real host's marker does; later rounds enqueue nothing,
