@@ -1964,6 +1964,7 @@ uint8_t editor_ffi_window_run(uint8_t platform, bool composition,
                               uint32_t frame_latency,
                               editor_ffi_raw_refusal *out);
 bool editor_ffi_window_close(uint8_t platform);
+bool editor_ffi_window_await_parked(uint8_t platform, uint64_t bound_ms);
 bool editor_ffi_window_request(uint8_t platform, uint8_t request);
 uint64_t editor_ffi_input_clock_now(void);
 bool editor_ffi_window_post_input(uint8_t kind, uint64_t code,
@@ -2001,6 +2002,13 @@ lean_obj_res editor_glue_window_run(uint8_t platform, uint8_t composition,
 lean_obj_res editor_glue_window_close(uint8_t platform) {
   editor_ffi_window_close(platform);
   return lean_io_result_mk_ok(lean_box(0));
+}
+
+// `Editor.Ffi.windowAwaitParked : Platform → UInt64 → IO Bool`
+lean_obj_res editor_glue_window_await_parked(uint8_t platform,
+                                             uint64_t bound_ms) {
+  return lean_io_result_mk_ok(
+      lean_box(editor_ffi_window_await_parked(platform, bound_ms) ? 1 : 0));
 }
 
 // `Editor.Ffi.windowRequest : Platform → WindowRequest → IO Unit`. The library

@@ -139,6 +139,17 @@ and `windowRun` returns. -/
 @[extern "editor_glue_window_close"]
 opaque windowClose (platform : Platform) : IO Unit
 
+/-- Waits until the scripted window of `platform` is parked, its run waiting
+for its close with nothing to report and no close asked, and says whether
+it was: false at once for the real platform and for a scripted one that
+cannot open, and once `boundMs` milliseconds have passed first. With no run
+yet it waits for the run to start and park, so a test can start `windowRun`
+on a task and then wait. A readout for tests: it returns on the park, never
+by a window of time. `boundMs` is a hang guard: only a run that never parks
+reaches it. -/
+@[extern "editor_glue_window_await_parked"]
+opaque windowAwaitParked (platform : Platform) (boundMs : UInt64) : IO Bool
+
 /-- What Lean asks of the window (`editor_ffi_window_request`, its tags 0, 1,
 2, 4, 6 and 7: `WindowRequest.tag`). The title is not one: it is a field of
 the scene, and the tag 3 is the title's in what a scripted window was
@@ -197,6 +208,8 @@ inductive WindowAsked where
   | title (text : String)
   /-- A menu bar. -/
   | menu (menu : Menu)
+  /-- The close (`windowClose`), in its place among the requests. -/
+  | close
   deriving DecidableEq, Repr
 
 /-- The word of `modifiers` as the library reads it ("The window", in the
@@ -318,8 +331,9 @@ private opaque windowAskedRaw (platform : Platform) : IO RawWords
 
 /-- What the words of `windowAsked` spell from the index `at_` on, each
 thing asked in order: a request's tag, the tag 3, a count and the scalar
-values of a title's characters, or the tag 5 and a menu bar's layout
-(`AskedReader.menu`). `none` when they spell nothing. -/
+values of a title's characters, the tag 5 and a menu bar's layout
+(`AskedReader.menu`), or the tag 8 for the close. `none` when they spell
+nothing. -/
 private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
     (asked : Array WindowAsked := #[]) : Option (Array WindowAsked) :=
   if at_ >= words.size then some asked
@@ -331,6 +345,7 @@ private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
     | 4 => askedOf words (at_ + 1) (asked.push (.request .keepRunning))
     | 6 => askedOf words (at_ + 1) (asked.push (.request .lightAppearance))
     | 7 => askedOf words (at_ + 1) (asked.push (.request .darkAppearance))
+    | 8 => askedOf words (at_ + 1) (asked.push .close)
     | 3 => do
       let count := (← words[at_ + 1]?).toNat
       let scalars ← (List.range count).mapM fun index => words[at_ + 2 + index]?

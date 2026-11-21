@@ -1196,7 +1196,13 @@ built"):
   resize before it reports it; and that it is closing before its run
   returns. It records the options it was run with, and leaves the
   composition steps out when composition is not allowed. Everything above
-  the port is tested on it, on both sides of the Lean boundary.
+  the port is tested on it, on both sides of the Lean boundary. It records
+  what each run is asked, with the close in its place among the requests
+  (`asked_with_close`; tag 8 in `editor_ffi_window_asked`'s words), and
+  `wait_parked(bound)` (`editor_ffi_window_await_parked`) is a test readout
+  that returns once the run has reported all it has to and waits for its
+  close: notified as the run parks, never a poll, the bound only a hang
+  guard.
 - **The contract** (`editor_platform::contract`): `Opened` is the first
   input and names the platform; a close from another thread ends the run
   within a bound; nothing is reported once the run has returned; a close

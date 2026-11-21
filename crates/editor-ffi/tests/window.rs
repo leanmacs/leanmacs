@@ -22,8 +22,9 @@ use editor_ffi::log::RawWords;
 use editor_ffi::text::editor_ffi_text_free;
 use editor_ffi::window::{
     self, PlatformId, RawRefusal, SCRIPTED_FAILURE, SCRIPTED_NO_RENDERER, WINDOW_RAN,
-    WINDOW_REFUSED, WINDOW_UNDRAWN, editor_ffi_input_clock_now, editor_ffi_window_close,
-    editor_ffi_window_opened_with, editor_ffi_window_post_input, editor_ffi_window_run,
+    WINDOW_REFUSED, WINDOW_UNDRAWN, editor_ffi_input_clock_now, editor_ffi_window_asked,
+    editor_ffi_window_await_parked, editor_ffi_window_close, editor_ffi_window_opened_with,
+    editor_ffi_window_post_input, editor_ffi_window_request, editor_ffi_window_run,
 };
 use editor_platform::{Input, Key, LogicalKey, Modifiers, PhysicalKey, ScriptedPlatform};
 
@@ -31,8 +32,10 @@ use editor_platform::{Input, Key, LogicalKey, Modifiers, PhysicalKey, ScriptedPl
 /// broken code takes this long, and the test then fails instead of hanging.
 const DEADLINE: Duration = Duration::from_secs(5);
 
-/// How long the test waits to see that something does not happen.
-const SETTLE: Duration = Duration::from_millis(20);
+/// hang guard: the scripted run parks to wait for its close
+/// (`editor_ffi_window_await_parked`), in milliseconds; only a run that
+/// never parks takes this long.
+const PARKS_MS: u64 = 5_000;
 
 /// The tag of the editor queue.
 const EDITOR: u8 = QueueId::Editor.tag();
@@ -162,10 +165,23 @@ const STANDARD: u8 = 1;
 /// What `editor_ffi_window_opened_with` writes for the platform tagged
 /// `platform`: its status and its words.
 fn opened_with(platform: u8) -> (u64, Vec<u64>) {
+    // SAFETY: `out` is writable for one record.
+    words_written(|out| unsafe { editor_ffi_window_opened_with(platform, out) })
+}
+
+/// What `editor_ffi_window_asked` writes for the platform tagged
+/// `platform`: its status and its words.
+fn asked(platform: u8) -> (u64, Vec<u64>) {
+    // SAFETY: `out` is writable for one record.
+    words_written(|out| unsafe { editor_ffi_window_asked(platform, out) })
+}
+
+/// The status and the words `write` writes into a record it is handed,
+/// the buffer handed back.
+fn words_written(write: impl FnOnce(*mut RawWords)) -> (u64, Vec<u64>) {
     let mut raw = MaybeUninit::<RawWords>::uninit();
-    // SAFETY: `raw` is writable for one record.
-    unsafe { editor_ffi_window_opened_with(platform, raw.as_mut_ptr()) };
-    // SAFETY: the library filled it.
+    write(raw.as_mut_ptr());
+    // SAFETY: `write` filled it.
     let raw = unsafe { raw.assume_init() };
     // SAFETY: the buffer is `len` bytes, owned here until handed back.
     let bytes = unsafe { slice::from_raw_parts(raw.words, raw.len) }.to_vec();
@@ -248,12 +264,23 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     let done = run(SCRIPTED, true);
     assert_arrives(sample(true));
     assert!(
-        done.recv_timeout(SETTLE).is_err(),
-        "the run goes on until the window is closed"
+        editor_ffi_window_await_parked(SCRIPTED, PARKS_MS),
+        "the run goes on, waiting until the window is closed"
     );
+    // What it was asked crosses with the close in its place: a minimise
+    // asked before the close comes before it.
+    assert!(editor_ffi_window_request(SCRIPTED, 2));
     assert!(editor_ffi_window_close(SCRIPTED));
     // The recording renderer drew in it: there is no reason to give.
     assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(None)));
+    assert_eq!(asked(SCRIPTED), (0, vec![2, 8]));
+    // Nothing runs now: a wait for a park can only run out.
+    assert!(!editor_ffi_window_await_parked(SCRIPTED, 0));
+    // A tag that names no scripted platform has no run to park, nor has
+    // the one that cannot open a window: each says so at once.
+    for platform in [NO_PLATFORM, PlatformId::Winit.tag(), SCRIPTED_FAILING] {
+        assert!(!editor_ffi_window_await_parked(platform, PARKS_MS));
+    }
 
     // Run with composition not allowed, no composition event arrives: the
     // flag reaches the platform.

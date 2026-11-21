@@ -72,7 +72,7 @@ one. -/
 def requestsOf (asked : Array Editor.Ffi.WindowAsked) : Array Editor.Ffi.WindowRequest :=
   asked.filterMap fun
     | .request request => some request
-    | .title _ | .menu _ => none
+    | .title _ | .menu _ | .close => none
 
 /-- What the window mode's closer (`Editor.Window.closeOnceEnded`) did once a
 loop that ended with `ended` had: whether it said the loop ended well, the

@@ -6,6 +6,7 @@
 
 use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use crate::TitleBar;
@@ -73,7 +74,9 @@ impl Shown {
 /// all the same: a test cannot end its own process.
 ///
 /// It records what each run is asked ([`asked`](Self::asked)), while the
-/// run is in progress only, and carries each request out on its model,
+/// run is in progress only, with its close in its place among the requests
+/// ([`asked_with_close`](Self::asked_with_close)), and carries each request
+/// out on its model,
 /// [`Shown`], which it shows ([`shown`](Self::shown)). It has a menu bar:
 /// a menu asked is the menu it shows. A request that takes the window into fullscreen or out of it
 /// is told to the drawer and reported as a [`Input::Resized`] at the size
@@ -84,6 +87,9 @@ impl Shown {
 /// fullscreen (0 if none); its top inset is the same, 0 in fullscreen,
 /// where no title bar covers the window. Any other request reports
 /// nothing.
+///
+/// A test knows a run has reported all it has to and waits for its close
+/// with [`wait_parked`](Self::wait_parked), on the park itself.
 pub struct ScriptedPlatform {
     /// What a run reports after [`Input::Opened`], or the reason no window
     /// can be opened.
@@ -93,6 +99,19 @@ pub struct ScriptedPlatform {
     /// Signalled when a close is asked of a run in progress, or a request
     /// gives it something to report.
     changed: Condvar,
+    /// Signalled when the run parks to wait for its close: what
+    /// [`wait_parked`](Self::wait_parked) waits on. A Condvar of its own,
+    /// so a park wakes only the waits for it and never the run.
+    parks: Condvar,
+    /// Called on the run's thread, with the state unlocked, each time the
+    /// run is about to park. Set once, by a test.
+    #[cfg(test)]
+    before_park: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// Called each time [`wait_parked`](Self::wait_parked) reads whether
+    /// the run is parked, with what it read, under the lock. Set once, by a
+    /// test.
+    #[cfg(test)]
+    awaited: std::sync::OnceLock<Box<dyn Fn(bool) + Send + Sync>>,
 }
 
 /// What [`ScriptedPlatform::state`] guards.
@@ -102,6 +121,9 @@ struct State {
     running: bool,
     /// Whether the run in progress has been asked to close.
     close_asked: bool,
+    /// How many requests the latest run had been asked when it was first
+    /// asked to close; `None` until it is.
+    asked_before_close: Option<usize>,
     /// The options of every run so far, oldest first.
     runs: Vec<WindowOptions>,
     /// What the latest run has been asked, oldest first.
@@ -120,6 +142,9 @@ struct State {
     top: u32,
     /// What requests have given the run to report, oldest first.
     to_report: VecDeque<Resize>,
+    /// Whether the run is in its wait for a close: set just before it
+    /// waits, and cleared as it wakes.
+    parked: bool,
     /// Whether the run has reported [`Input::QuitRequested`] and not been
     /// asked [`Request::KeepRunning`] since.
     quit_pending: bool,
@@ -144,19 +169,25 @@ impl ScriptedPlatform {
 
     /// A platform whose window reports `script` after [`Input::Opened`].
     pub fn new(script: Vec<Input>) -> Self {
-        Self {
-            script: Ok(script),
-            state: Mutex::default(),
-            changed: Condvar::new(),
-        }
+        Self::with_script(Ok(script))
     }
 
     /// A platform that cannot open a window, for `reason`.
     pub fn failing(reason: impl Into<String>) -> Self {
+        Self::with_script(Err(reason.into()))
+    }
+
+    /// A platform whose runs report `script`, or fail for its reason.
+    fn with_script(script: Result<Vec<Input>, String>) -> Self {
         Self {
-            script: Err(reason.into()),
+            script,
             state: Mutex::default(),
             changed: Condvar::new(),
+            parks: Condvar::new(),
+            #[cfg(test)]
+            before_park: std::sync::OnceLock::new(),
+            #[cfg(test)]
+            awaited: std::sync::OnceLock::new(),
         }
     }
 
@@ -241,6 +272,17 @@ impl ScriptedPlatform {
         self.state().asked.clone()
     }
 
+    /// What the latest run was asked ([`asked`](Self::asked)), and where
+    /// its close came among it, read together: how many of those requests
+    /// it had been asked when it was first asked to close. The requests
+    /// after them were asked once the close was, while the run was still in
+    /// progress. The place is `None` before any run, and while the run has
+    /// not been asked to close.
+    pub fn asked_with_close(&self) -> (Vec<Request>, Option<usize>) {
+        let state = self.state();
+        (state.asked.clone(), state.asked_before_close)
+    }
+
     /// What its window shows now, as the requests of the run in progress
     /// have left it ([`Shown`]); once the run has returned, what that
     /// run's window last showed. Nothing before any run: a request asked
@@ -257,6 +299,55 @@ impl ScriptedPlatform {
     /// while a run is in progress.
     pub fn quit_let_go(&self) -> bool {
         self.state().quit_let_go
+    }
+
+    /// Waits until a run is parked, waiting for its close with nothing left
+    /// to report, and says whether one was: false only once `bound` has
+    /// passed first, and at once for a platform that cannot open a window,
+    /// whose runs never park. A readout for tests, which use it to know the
+    /// run has reported all it has to and waits, on an event and never a
+    /// poll: the run notifies it as it parks, under the lock its wait then
+    /// releases, after it has reported everything before the park.
+    ///
+    /// A request that gives the run something to report unparks it: from
+    /// then the wait is false until the run has reported that and parked
+    /// again. A close asked unparks it too. A wait begun before a run
+    /// starts waits for that run to park.
+    ///
+    /// `bound` is a hang guard: only a run that never parks reaches it.
+    pub fn wait_parked(&self, bound: Duration) -> bool {
+        if self.script.is_err() {
+            return false;
+        }
+        // A bound past what the clock can count is no bound.
+        let until = Instant::now().checked_add(bound);
+        let mut state = self.state();
+        loop {
+            let parked = state.parked && !state.close_asked && state.to_report.is_empty();
+            #[cfg(test)]
+            if let Some(hook) = self.awaited.get() {
+                hook(parked);
+            }
+            if parked {
+                return true;
+            }
+            state = match until {
+                None => self
+                    .parks
+                    .wait(state)
+                    .unwrap_or_else(PoisonError::into_inner),
+                Some(until) => {
+                    let left = until.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        return false;
+                    }
+                    self.parks
+                        .wait_timeout(state, left)
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .0
+                }
+            };
+        }
     }
 
     /// Locks the state. The lock is never held while other code runs, so a
@@ -281,12 +372,14 @@ impl Platform for ScriptedPlatform {
             let mut state = self.state();
             state.running = true;
             state.close_asked = false;
+            state.asked_before_close = None;
             state.asked.clear();
             state.shown = Shown::default();
             state.size = None;
             state.corner = 0;
             state.top = 0;
             state.to_report.clear();
+            state.parked = false;
             state.quit_pending = false;
             state.quit_let_go = false;
         }
@@ -324,15 +417,29 @@ impl Platform for ScriptedPlatform {
 
         // Until a close is asked, and then until nothing is left to
         // report: what a request gave it to report is reported before the
-        // window closes, and the lock is not held while it is.
+        // window closes, and the lock is not held while it is. While it
+        // waits it is parked (`wait_parked`).
         loop {
             let next = {
                 let mut state = self.state();
                 while !state.close_asked && state.to_report.is_empty() {
+                    #[cfg(test)]
+                    if let Some(hook) = self.before_park.get() {
+                        drop(state);
+                        hook();
+                        state = self.state();
+                        // What was asked while unlocked is seen first.
+                        if state.close_asked || !state.to_report.is_empty() {
+                            break;
+                        }
+                    }
+                    state.parked = true;
+                    self.parks.notify_all();
                     state = self
                         .changed
                         .wait(state)
                         .unwrap_or_else(PoisonError::into_inner);
+                    state.parked = false;
                 }
                 state.to_report.pop_front()
             };
@@ -357,6 +464,9 @@ impl Platform for ScriptedPlatform {
     fn close(&self) {
         let mut state = self.state();
         if state.running {
+            if !state.close_asked {
+                state.asked_before_close = Some(state.asked.len());
+            }
             state.close_asked = true;
             self.changed.notify_all();
         }
@@ -395,7 +505,7 @@ mod tests {
     use super::*;
     use crate::menu::{Action, Item, Menu, Submenu};
     use std::sync::Arc;
-    use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+    use std::sync::mpsc::{self, Receiver};
     use std::thread;
     use std::time::Duration;
 
@@ -404,11 +514,15 @@ mod tests {
     /// hanging.
     const DEADLINE: Duration = Duration::from_secs(5);
 
-    /// How long a test waits to see that something does not happen.
-    const SETTLE: Duration = Duration::from_millis(20);
+    /// hang guard: the run parks to wait for its close
+    /// ([`ScriptedPlatform::wait_parked`]); only a run that never parks
+    /// takes this long, and the test then fails instead of hanging.
+    const PARKS: Duration = Duration::from_secs(5);
 
     /// A run in progress on a thread of its own.
     struct Running {
+        /// The platform it runs on.
+        platform: Arc<ScriptedPlatform>,
         /// What the run has reported, in order.
         inputs: Receiver<Input>,
         /// The run's result, once it has returned.
@@ -468,11 +582,17 @@ mod tests {
                 .collect()
         }
 
-        /// Whether the run has neither reported anything more nor returned,
-        /// a moment from now.
-        fn is_waiting(&self) -> bool {
-            self.inputs.recv_timeout(SETTLE) == Err(RecvTimeoutError::Timeout)
-                && self.done.try_recv().is_err()
+        /// Whether the run has parked to wait for its close, with nothing
+        /// reported that [`next`](Self::next) has not taken: it reports all
+        /// it has to before it parks, so once it has parked it reports
+        /// nothing more until it is asked something or closed. Panics if it
+        /// has not parked by the hang guard.
+        fn parked(&self) -> bool {
+            assert!(
+                self.platform.wait_parked(PARKS),
+                "the run parks to wait for its close"
+            );
+            self.inputs.try_recv().is_err()
         }
 
         /// The run's result; panics if it has not returned by the deadline.
@@ -487,29 +607,52 @@ mod tests {
     /// detached, so a run that never returns cannot keep the test from
     /// ending.
     fn start(platform: &Arc<ScriptedPlatform>, options: WindowOptions) -> Running {
+        start_holding(platform, options, |_| {})
+    }
+
+    /// [`start`], with `hold` called on the run's thread with each thing the
+    /// run says to either listener, before it is passed on: a test holds
+    /// the run there.
+    fn start_holding(
+        platform: &Arc<ScriptedPlatform>,
+        options: WindowOptions,
+        hold: impl Fn(&Said) + Send + Sync + 'static,
+    ) -> Running {
         let (report, inputs) = mpsc::channel();
         let (finished, done) = mpsc::channel();
         let (say, said) = mpsc::channel();
+        let running = Arc::clone(platform);
         let platform = Arc::clone(platform);
+        let hold = Arc::new(hold);
         thread::spawn(move || {
             let report: Report = {
                 let say = say.clone();
+                let hold = Arc::clone(&hold);
                 Arc::new(move |input: Input| {
-                    let _ = say.send(Said::Reported(input.clone()));
+                    let said = Said::Reported(input.clone());
+                    hold(&said);
+                    let _ = say.send(said);
                     let _ = report.send(input);
                 })
             };
             let drawer: Drawer = {
                 let say = say.clone();
                 Arc::new(move |canvas| {
-                    let _ = say.send(Said::told(&canvas));
+                    let said = Said::told(&canvas);
+                    hold(&said);
+                    let _ = say.send(said);
                 })
             };
             let result = platform.run(options, report, drawer);
             let _ = say.send(Said::Returned);
             let _ = finished.send(result);
         });
-        Running { inputs, done, said }
+        Running {
+            platform: running,
+            inputs,
+            done,
+            said,
+        }
     }
 
     impl Running {
@@ -529,6 +672,205 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A hold of a run, the first time it reaches a place: the run says it
+    /// has reached it and waits there until the test lets it go.
+    struct Hold {
+        /// Where the run says it has reached the place, and is held.
+        reached: Receiver<()>,
+        /// What lets the run go.
+        release: mpsc::Sender<()>,
+    }
+
+    impl Hold {
+        /// A hold, and what the run calls at the place: it holds only the
+        /// first time.
+        fn new() -> (Self, impl Fn() + Send + Sync + 'static) {
+            let (reach, reached) = mpsc::channel();
+            let (release, released) = mpsc::channel::<()>();
+            let once = Mutex::new(Some((reach, released)));
+            let held = move || {
+                let first = once.lock().unwrap_or_else(PoisonError::into_inner).take();
+                if let Some((reach, released)) = first {
+                    let _ = reach.send(());
+                    let _ = released.recv();
+                }
+            };
+            (Self { reached, release }, held)
+        }
+
+        /// Waits for the run to reach the place; panics if it has not by the
+        /// deadline.
+        fn reached(&self, place: &str) {
+            self.reached
+                .recv_timeout(DEADLINE)
+                .unwrap_or_else(|_| panic!("the run reaches {place}"));
+        }
+
+        /// Lets the run go on.
+        fn release(&self) {
+            self.release.send(()).expect("the run is held");
+        }
+    }
+
+    /// Has `platform` call `held` on the run's thread each time the run is
+    /// about to park.
+    fn before_park(platform: &ScriptedPlatform, held: impl Fn() + Send + Sync + 'static) {
+        assert!(platform.before_park.set(Box::new(held)).is_ok(), "set once");
+    }
+
+    /// Where each reading [`ScriptedPlatform::wait_parked`] makes on
+    /// `platform` arrives.
+    fn readings_awaited(platform: &ScriptedPlatform) -> Receiver<bool> {
+        let (read, readings) = mpsc::channel();
+        let read = Mutex::new(read);
+        let hook = move |parked| {
+            let _ = read
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(parked);
+        };
+        assert!(platform.awaited.set(Box::new(hook)).is_ok(), "set once");
+        readings
+    }
+
+    /// `platform.wait_parked(PARKS)` on a thread of its own: where its
+    /// answer arrives.
+    fn start_wait(platform: &Arc<ScriptedPlatform>) -> Receiver<bool> {
+        let (answer, answered) = mpsc::channel();
+        let platform = Arc::clone(platform);
+        thread::spawn(move || {
+            let _ = answer.send(platform.wait_parked(PARKS));
+        });
+        answered
+    }
+
+    #[test]
+    fn wait_parked_returns_true_only_once_a_run_held_before_its_park_has_parked() {
+        let platform = Arc::new(ScriptedPlatform::new(vec![press("a")]));
+        let (hold, held) = Hold::new();
+        before_park(&platform, held);
+        let readings = readings_awaited(&platform);
+
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(2), [opened(), press("a")]);
+        hold.reached("its park");
+        let waited = start_wait(&platform);
+        assert_eq!(
+            readings.recv_timeout(DEADLINE),
+            Ok(false),
+            "the wait reads no park while the run is held before it"
+        );
+        hold.release();
+
+        // A wait that answered at its first reading never reads the park.
+        loop {
+            let parked = readings
+                .recv_timeout(DEADLINE)
+                .expect("the wait reads again once the run has parked");
+            if parked {
+                break;
+            }
+        }
+        assert_eq!(waited.recv_timeout(DEADLINE), Ok(true));
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
+    }
+
+    #[test]
+    fn a_report_queued_after_the_park_unparks_it() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+        let entered = Said::Reported(Input::Resized(opened_size(true)));
+        let (hold, held) = Hold::new();
+        let run = start_holding(&platform, COMPOSING, move |said| {
+            if *said == entered {
+                held();
+            }
+        });
+        assert_eq!(run.next(1), [opened()]);
+        assert!(
+            platform.wait_parked(PARKS),
+            "the run parks to wait for a close"
+        );
+
+        platform.request(Request::EnterFullscreen);
+        assert!(
+            !platform.wait_parked(Duration::ZERO),
+            "a report queued unparks the run, whether it has woken yet or not"
+        );
+        hold.reached("its report of the resize");
+        assert!(
+            !platform.wait_parked(Duration::ZERO),
+            "a run that is reporting is not parked"
+        );
+        let waited = start_wait(&platform);
+        hold.release();
+
+        assert_eq!(
+            waited.recv_timeout(DEADLINE),
+            Ok(true),
+            "the wait ends once the run has parked again"
+        );
+        assert_eq!(
+            run.inputs.try_recv(),
+            Ok(Input::Resized(opened_size(true))),
+            "the run reported the resize before it parked again"
+        );
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
+    }
+
+    #[test]
+    fn a_request_asked_while_the_run_is_held_before_its_park_is_reported_and_not_slept_through() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+        let (hold, held) = Hold::new();
+        before_park(&platform, held);
+
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(1), [opened()]);
+        hold.reached("its park");
+        platform.request(Request::EnterFullscreen);
+        hold.release();
+
+        assert_eq!(run.next(1), [Input::Resized(opened_size(true))]);
+        assert!(
+            platform.wait_parked(Duration::MAX),
+            "a bound past what the clock can count is no bound"
+        );
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
+    }
+
+    #[test]
+    fn a_close_asked_unparks_the_run_and_a_run_that_has_returned_is_not_parked() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(1), [opened()]);
+        assert!(platform.wait_parked(PARKS));
+
+        platform.close();
+        assert!(
+            !platform.wait_parked(Duration::ZERO),
+            "a run asked to close waits no more, whether it has woken yet or not"
+        );
+        assert_eq!(run.result(), Ok(()));
+        assert!(!platform.wait_parked(Duration::ZERO));
+    }
+
+    #[test]
+    fn wait_parked_says_no_once_its_bound_has_passed_and_at_once_for_a_platform_that_cannot_open() {
+        assert!(!ScriptedPlatform::new(Vec::new()).wait_parked(Duration::ZERO));
+
+        let failing = Arc::new(ScriptedPlatform::failing("no display"));
+        let readings = readings_awaited(&failing);
+        assert!(start(&failing, COMPOSING).result().is_err());
+        assert!(!failing.wait_parked(PARKS), "its runs never park");
+        assert_eq!(
+            readings.try_recv(),
+            Err(mpsc::TryRecvError::Empty),
+            "nothing was read"
+        );
     }
 
     /// The drawer was told the window opened as the scripted platform tells
@@ -656,7 +998,7 @@ mod tests {
 
         assert_eq!(run.next(1), [opened()]);
         assert_eq!(run.next(3), script);
-        assert!(run.is_waiting(), "the run waits for a close");
+        assert!(run.parked(), "the run waits for a close");
 
         platform.close();
 
@@ -686,7 +1028,7 @@ mod tests {
 
         assert_eq!(run.next(1), [opened()]);
         assert_eq!(run.next(3), script);
-        assert!(run.is_waiting(), "a quit asked ends nothing by itself");
+        assert!(run.parked(), "a quit asked ends nothing by itself");
         platform.close();
         assert_eq!(run.result(), Ok(()));
     }
@@ -752,10 +1094,7 @@ mod tests {
         let run = start(&platform, COMPOSING);
 
         assert_eq!(run.next(2), [opened(), press("a")]);
-        assert!(
-            run.is_waiting(),
-            "an earlier close does not end a later run"
-        );
+        assert!(run.parked(), "an earlier close does not end a later run");
         platform.close();
         assert_eq!(run.result(), Ok(()));
     }
@@ -780,7 +1119,7 @@ mod tests {
         for _ in 0..2 {
             let run = start(&platform, COMPOSING);
             assert_eq!(run.next(2), [opened(), press("a")]);
-            assert!(run.is_waiting(), "each run waits for a close of its own");
+            assert!(run.parked(), "each run waits for a close of its own");
             platform.close();
             assert_eq!(run.result(), Ok(()));
         }
@@ -864,7 +1203,7 @@ mod tests {
 
         let plain = start(&platform, NOT_COMPOSING);
         assert_eq!(plain.next(3), [opened(), press("a"), Input::CloseRequested]);
-        assert!(plain.is_waiting(), "nothing else is reported");
+        assert!(plain.parked(), "nothing else is reported");
         platform.close();
         assert_eq!(plain.result(), Ok(()));
     }
@@ -979,6 +1318,55 @@ mod tests {
     }
 
     #[test]
+    fn the_close_is_recorded_in_order_with_the_requests_asked_around_it() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+        assert_eq!(
+            platform.asked_with_close(),
+            (vec![], None),
+            "nothing before any run"
+        );
+        let (hold, held) = Hold::new();
+        let run = start_holding(&platform, COMPOSING, move |said| {
+            if *said == Said::Closing {
+                held();
+            }
+        });
+        assert_eq!(run.next(1), [opened()]);
+
+        let title = Request::Title("notes.txt".into());
+        platform.request(title.clone());
+        assert_eq!(
+            platform.asked_with_close(),
+            (vec![title.clone()], None),
+            "no close asked yet"
+        );
+        platform.close();
+        hold.reached("its close");
+        // The run is still in progress: what it is asked now is recorded,
+        // after the close, and a second close moves nothing.
+        platform.request(Request::Minimise);
+        platform.close();
+        hold.release();
+        assert_eq!(run.result(), Ok(()));
+
+        assert_eq!(
+            platform.asked_with_close(),
+            (vec![title, Request::Minimise], Some(1))
+        );
+
+        let second = start(&platform, COMPOSING);
+        assert_eq!(second.next(1), [opened()]);
+        assert_eq!(
+            platform.asked_with_close(),
+            (vec![], None),
+            "a run begins with nothing asked and no close"
+        );
+        platform.close();
+        assert_eq!(second.result(), Ok(()));
+        assert_eq!(platform.asked_with_close(), (vec![], Some(0)));
+    }
+
+    #[test]
     fn a_request_with_no_run_in_progress_is_not_recorded_and_ends_no_later_run() {
         let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
 
@@ -989,7 +1377,7 @@ mod tests {
 
         assert_eq!(run.next(1), [opened()]);
         assert!(
-            run.is_waiting(),
+            run.parked(),
             "an earlier request reports nothing and ends nothing"
         );
         assert_eq!(platform.asked(), []);
@@ -1138,7 +1526,7 @@ mod tests {
 
         platform.request(Request::Appearance(Appearance::Dark));
         platform.request(Request::Appearance(Appearance::Light));
-        assert!(run.is_waiting(), "an appearance reports nothing");
+        assert!(run.parked(), "an appearance reports nothing");
         assert_eq!(
             platform.asked(),
             [
@@ -1163,12 +1551,12 @@ mod tests {
         platform.request(Request::Title("notes.txt".into()));
         platform.request(Request::KeepRunning);
         platform.request(Request::Menu(Menu::default()));
-        assert!(run.is_waiting(), "none of these changes fullscreen");
+        assert!(run.parked(), "none of these changes fullscreen");
 
         platform.request(Request::EnterFullscreen);
         assert_eq!(run.next(1), [Input::Resized(opened_size(true))]);
         platform.request(Request::EnterFullscreen);
-        assert!(run.is_waiting(), "a window in fullscreen stays there");
+        assert!(run.parked(), "a window in fullscreen stays there");
 
         platform.close();
         assert_eq!(run.result(), Ok(()));
@@ -1203,7 +1591,7 @@ mod tests {
             platform.asked(),
             [Request::Menu(menu("File")), Request::Menu(menu("Edit"))]
         );
-        assert!(run.is_waiting(), "a menu reports nothing");
+        assert!(run.parked(), "a menu reports nothing");
         platform.close();
         assert_eq!(run.result(), Ok(()));
         assert_eq!(

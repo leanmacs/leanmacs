@@ -79,7 +79,10 @@
 //! publishes, and reaches the window from the presenter ([`crate::render`],
 //! "What reaches the window: the title and the menu"). What a scripted
 //! window was asked is read back
-//! for tests with [`editor_ffi_window_asked`] ([`asked_words`]).
+//! for tests with [`editor_ffi_window_asked`] ([`asked_words`]), the close
+//! in its place among the requests, and a test waits for a scripted run to
+//! have reported all it has to and park with
+//! [`editor_ffi_window_await_parked`].
 //!
 //! What draws in the process's window is a render session over the
 //! process's presenter (`run_on_this_thread`, [`crate::render`]): while
@@ -105,7 +108,7 @@
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use editor_platform::{
     Appearance, Button, CannotOpen, Composition, Drawer, Input, Key, LogicalKey, Modifiers,
@@ -169,6 +172,10 @@ const REQUEST_MENU: u64 = 5;
 /// which no request from Lean has.
 const REQUEST_APPEARANCE_LIGHT: u8 = 6;
 const REQUEST_APPEARANCE_DARK: u8 = 7;
+/// The tag of the close in what a scripted window was asked, in its place
+/// among the requests. No request from Lean has it: a close is asked with
+/// [`editor_ffi_window_close`].
+const ASKED_CLOSE: u64 = 8;
 
 /// The tags of a title bar, as `editor_ffi_window_run` takes them and
 /// `editor_ffi_window_opened_with` writes them.
@@ -1208,6 +1215,23 @@ pub extern "C" fn editor_ffi_window_close(platform: u8) -> bool {
     true
 }
 
+/// Waits until the run of the scripted platform `platform` is parked,
+/// waiting for its close with nothing left to report
+/// ([`ScriptedPlatform::wait_parked`]), and says whether it was: false once
+/// `bound_ms` milliseconds have passed first, and at once if `platform`
+/// names no scripted platform or the one that cannot open a window. A wait
+/// begun before the run starts waits for it to park. A readout for tests,
+/// which use it to know the window has reported all it has to and waits:
+/// it returns on the park, never by a poll.
+///
+/// `bound_ms` is a hang guard: only a run that never parks reaches it.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_window_await_parked(platform: u8, bound_ms: u64) -> bool {
+    PlatformId::from_tag(platform)
+        .and_then(PlatformId::scripted)
+        .is_some_and(|scripted| scripted.wait_parked(Duration::from_millis(bound_ms)))
+}
+
 /// The request Lean's tag `tag` names: 0 enter fullscreen, 1 leave
 /// fullscreen, 2 minimise, 4 keep running, 6 the light appearance and 7
 /// the dark one. No tag names a title or a menu bar, so 3 and 5 name
@@ -1242,12 +1266,14 @@ pub extern "C" fn editor_ffi_window_request(platform: u8, request: u8) -> bool {
 /// The words of what a window was asked, oldest first: for each request its
 /// tag, for a title the tag 3 followed by the count and the scalar values
 /// of its characters, and for a menu bar the tag 5 followed by its layout
-/// (`crate::menu`), each text in it written as a title's is.
+/// (`crate::menu`), each text in it written as a title's is. The close,
+/// when `before_close` says how many requests came before it
+/// ([`ScriptedPlatform::asked_with_close`]), is the tag 8 in its place.
 ///
 /// The match on [`WindowRequest`] is exhaustive on purpose: this crate must
 /// give every variant its words, since a request with none could not be
 /// read back by Lean's tests, and a new one would cross unseen.
-pub fn asked_words(asked: &[WindowRequest]) -> Vec<u64> {
+pub fn asked_words(asked: &[WindowRequest], before_close: Option<usize>) -> Vec<u64> {
     use crate::menu::Sink;
     /// The words, with each text as its count and its scalar values.
     struct Asked(Vec<u64>);
@@ -1260,7 +1286,10 @@ pub fn asked_words(asked: &[WindowRequest]) -> Vec<u64> {
         }
     }
     let mut words = Asked(Vec::new());
-    for request in asked {
+    for (place, request) in asked.iter().enumerate() {
+        if before_close == Some(place) {
+            words.word(ASKED_CLOSE);
+        }
         match request {
             WindowRequest::EnterFullscreen => words.word(u64::from(REQUEST_ENTER_FULLSCREEN)),
             WindowRequest::LeaveFullscreen => words.word(u64::from(REQUEST_LEAVE_FULLSCREEN)),
@@ -1282,11 +1311,15 @@ pub fn asked_words(asked: &[WindowRequest]) -> Vec<u64> {
             }
         }
     }
+    if before_close.is_some_and(|before| before >= asked.len()) {
+        words.word(ASKED_CLOSE);
+    }
     words.0
 }
 
 /// Writes to `out` what the scripted window of `platform` was asked in its
-/// latest run ([`ScriptedPlatform::asked`]): status 0 and the words of
+/// latest run, with its close in its place among the requests
+/// ([`ScriptedPlatform::asked_with_close`]): status 0 and the words of
 /// [`asked_words`]. For the real platform, which records nothing, and for
 /// a tag that names no platform, status 1 and no words. For tests.
 ///
@@ -1299,7 +1332,8 @@ pub unsafe extern "C" fn editor_ffi_window_asked(platform: u8, out: *mut crate::
     let raw = match scripted {
         None => crate::log::RawWords::with_status(1, Vec::new()),
         Some(scripted) => {
-            let asked = asked_words(&scripted.asked());
+            let (asked, before_close) = scripted.asked_with_close();
+            let asked = asked_words(&asked, before_close);
             let mut writer = words::Writer::with_capacity(asked.len());
             for word in asked {
                 writer.word(word);
@@ -1382,6 +1416,11 @@ mod tests {
     /// broken code takes this long, and the test then fails instead of
     /// hanging.
     const DEADLINE: Duration = Duration::from_secs(5);
+
+    /// hang guard: the scripted run parks to wait for its close
+    /// ([`ScriptedPlatform::wait_parked`]); only a run that never parks
+    /// takes this long.
+    const PARKS: Duration = Duration::from_secs(5);
 
     /// An event from the window, as it should arrive.
     fn from_window(kind: EventKind, code: u64, text: &str, stamp: u64) -> Event {
@@ -1941,16 +1980,19 @@ mod tests {
     #[test]
     fn what_a_scripted_window_was_asked_crosses_as_tags_and_a_titles_characters() {
         assert_eq!(
-            asked_words(&[
-                WindowRequest::EnterFullscreen,
-                WindowRequest::Minimise,
-                WindowRequest::Title("é😀".into()),
-                WindowRequest::LeaveFullscreen,
-                WindowRequest::Appearance(Appearance::Light),
-                WindowRequest::Title(String::new()),
-                WindowRequest::Appearance(Appearance::Dark),
-                WindowRequest::KeepRunning,
-            ]),
+            asked_words(
+                &[
+                    WindowRequest::EnterFullscreen,
+                    WindowRequest::Minimise,
+                    WindowRequest::Title("é😀".into()),
+                    WindowRequest::LeaveFullscreen,
+                    WindowRequest::Appearance(Appearance::Light),
+                    WindowRequest::Title(String::new()),
+                    WindowRequest::Appearance(Appearance::Dark),
+                    WindowRequest::KeepRunning,
+                ],
+                None
+            ),
             [0, 2, 3, 2, 0xe9, 0x1_f600, 1, 6, 3, 0, 7, 4]
         );
         // A scripted platform answers what its latest run was asked: this
@@ -1960,6 +2002,20 @@ mod tests {
         // no platform.
         assert_eq!(asked_of(PlatformId::Winit.tag()), (1, vec![]));
         assert_eq!(asked_of(4), (1, vec![]));
+    }
+
+    #[test]
+    fn the_close_crosses_as_tag_8_in_its_place_among_the_requests() {
+        let asked = [
+            WindowRequest::Minimise,
+            WindowRequest::Title("é".into()),
+            WindowRequest::EnterFullscreen,
+        ];
+        assert_eq!(asked_words(&asked, None), [2, 3, 1, 0xe9, 0]);
+        assert_eq!(asked_words(&asked, Some(0)), [8, 2, 3, 1, 0xe9, 0]);
+        assert_eq!(asked_words(&asked, Some(1)), [2, 8, 3, 1, 0xe9, 0]);
+        assert_eq!(asked_words(&asked, Some(3)), [2, 3, 1, 0xe9, 0, 8]);
+        assert_eq!(asked_words(&[], Some(0)), [8], "a close with nothing asked");
     }
 
     #[test]
@@ -2034,7 +2090,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            asked_words(&[WindowRequest::Menu(menu), WindowRequest::Minimise]),
+            asked_words(&[WindowRequest::Menu(menu), WindowRequest::Minimise], None),
             [
                 5, 3, // the tag, and three menus
                 1, 0x41, 1, 2, // "A", the app's, two items
@@ -2484,8 +2540,8 @@ mod tests {
         let done = start(&platform, options, &queue);
         assert_eq!(pull(&queue, 1).len(), 1);
         assert!(
-            done.recv_timeout(Duration::from_millis(20)).is_err(),
-            "the run goes on until the platform is asked to close"
+            platform.wait_parked(PARKS),
+            "the run goes on, waiting until the platform is asked to close"
         );
         platform.close();
 

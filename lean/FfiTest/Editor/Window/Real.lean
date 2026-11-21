@@ -147,7 +147,7 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
   let requests :=
     ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
       | .request request => some request
-      | .title _ | .menu _ => none
+      | .title _ | .menu _ | .close => none
   unless requests == #[.darkAppearance, .minimise] do
     IO.eprintln
         s!"ffi-test window-host: the window was asked {repr requests}, not the dark appearance and then the shutdown's minimise"
@@ -159,7 +159,7 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     let titles :=
       ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
         | .title text => some text
-        | .request _ | .menu _ => none
+        | .request _ | .menu _ | .close => none
     unless titles.back? == some "scratch" do
       IO.eprintln
           s!"ffi-test window-host: the window was last asked for the title {titles.back?}, not scratch"
@@ -170,7 +170,7 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     let menus :=
       ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
         | .menu menu => some menu
-        | .request _ | .title _ => none
+        | .request _ | .title _ | .close => none
     let compiled :=
       ({} : Editor.Config.Registry).replaceBindings .compiled
         (Editor.FrameCommands.package.registered.bindings ++
