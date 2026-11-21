@@ -616,17 +616,20 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// The default settings, with text drawn as Core Text draws it: its
-    /// weight ([`Weight::CORE_TEXT`]) and the hinting fitted with it,
-    /// which is off: the fit came nearest Core Text's drawing with
-    /// outlines not fitted to the pixel grid. Glyphs are plain masks at
-    /// every scale ([`Antialiasing::Grayscale`]): macOS draws no subpixel
-    /// text.
+    /// The default settings, with text drawn as Core Text draws it:
+    /// blended in sRGB-encoded values ([`Blending::Encoded`]), as Core
+    /// Graphics composites and as macOS's glyph masks are made for; with
+    /// the swash fallback's weight ([`Weight::CORE_TEXT`]) and the hinting
+    /// fitted with it, which is off: the fit came nearest Core Text's
+    /// drawing with outlines not fitted to the pixel grid. Glyphs are plain
+    /// masks at every scale ([`Antialiasing::Grayscale`]): macOS draws no
+    /// subpixel text.
     pub fn core_text() -> Self {
         Self {
             antialiasing: Antialiasing::Grayscale,
             hinting: false,
             weight: Weight::CORE_TEXT,
+            blending: Blending::Encoded,
             ..Self::default()
         }
     }
@@ -653,24 +656,29 @@ impl Weight {
         dilation: 0.0,
     };
 
-    /// Core Text's weight, with hinting off ([`Settings::core_text`]):
-    /// fitted to Core Text's drawing of a sentence of the fixture font
-    /// Noto Sans Mono at 28 pixels, black on white
-    /// (`tests/coretext/sentence.png`).
+    /// The swash fallback's weight on macOS, with hinting off and blended
+    /// encoded ([`Settings::core_text`]): what the glyphs Core Text
+    /// declines are drawn with (variable faces off their defaults,
+    /// synthetic bold and slant, colour fonts). Fitted, blended encoded,
+    /// to Core Text's drawing of a sentence of the fixture font Noto Sans
+    /// Mono at 28 pixels, black on white (`tests/coretext/sentence.png`).
     ///
-    /// Drawn with it, the sentence has 1910 pixels darker than mid-grey
-    /// against Core Text's 1891 (1.010 of them) and ink of 499078
-    /// against 503470 (0.991); the default draws 0.699 and 0.721 of
-    /// them. Of the amounts the fit swept, contrast and dilation each in
-    /// steps of 0.1 and hinting on and off, it is the nearest, and the
-    /// tests in `weight_tests` hold it to that and to within a tenth of
-    /// each count.
+    /// Drawn with it, the sentence has 1904 pixels darker than mid-grey
+    /// against Core Text's 1891 (1.007 of them) and ink of 496219
+    /// against 503470 (0.986); the outline as it is, blended encoded and
+    /// unhinted, draws 0.866 and 0.857 of them, as Core Text's own drawing
+    /// with smoothing off has 0.866 and 0.853. Of the dilations the fit
+    /// swept, from 0 to 1 pixel in steps of 0.1 at a contrast of 0, hinting
+    /// on and off, it is the nearest, and the tests in `weight_tests`
+    /// hold it to that and to within a tenth of each count. It has no
+    /// contrast: the contrast made up for linear light thinning dark
+    /// text, and encoded blending does not thin it.
     ///
     /// The dilation is a number of pixels whatever the size, fitted at
     /// one size: what it comes to at other sizes is not measured.
     pub const CORE_TEXT: Weight = Weight {
-        contrast: 0.1,
-        dilation: 0.8,
+        contrast: 0.0,
+        dilation: 0.4,
     };
 }
 

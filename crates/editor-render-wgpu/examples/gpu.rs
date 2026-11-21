@@ -250,14 +250,10 @@ fn main() -> ExitCode {
         held &= compared(&image, &on_the_cpu(&fixture, plain), masks);
     }
 
-    // The same frame at the macOS weight, blended as macOS blends: the
+    // The same frame at the macOS setting, blended as macOS blends: the
     // contrast and the blending reach the shader, the dilation the atlas,
     // and the GPU is held to the CPU drawing it with the same settings.
-    // Until `Settings::core_text` blends encoded itself, it is asked to.
-    let macos = Settings {
-        blending: Blending::Encoded,
-        ..Settings::core_text()
-    };
+    let macos = Settings::core_text();
     let macos_plain = Settings {
         antialiasing: Antialiasing::Grayscale,
         ..macos

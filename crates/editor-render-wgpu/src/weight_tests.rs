@@ -19,17 +19,28 @@
 //!
 //! # The fit
 //!
+//! On macOS Core Text rasterises the glyphs (`editor-raster-coretext`),
+//! and swash only those it declines: variable faces off their defaults,
+//! synthetic bold and slant, colour fonts. This fit is that fallback's,
+//! drawn as macOS draws it, blended in sRGB-encoded values.
+//!
 //! `Weight::CORE_TEXT`, with the hinting `Settings::core_text` gives it,
-//! was chosen by sweeping a grid ([`grid`]): the contrast from 0 to 1
-//! and the dilation from 0 to 0.8 pixels, each in steps of 0.1, with
+//! was chosen by sweeping a grid ([`grid`]), blended encoded: the
+//! dilation from 0 to 1 pixel in steps of 0.1, at a contrast of 0, with
 //! hinting on and off. Each point's error is the larger of the parts by
 //! which its dark pixels and its ink miss the reference's; the point of
-//! least error was taken, its error being under the tolerance of a tenth.
-//! A finer step of 0.05 around it was not tried: its error, 0.010,
-//! leaves no more than 0.01 to gain, which would fit the constant to one
-//! sentence. The macOS setting is held to the tolerance, and to being
-//! no worse than its neighbours on the grid and the default; the whole
-//! grid is swept again by setting [`FULL_SWEEP`].
+//! least error was taken, a dilation of 0.4 unhinted, its error 0.014
+//! (dark 1.007, ink 0.986), under the tolerance of a tenth. Undilated and
+//! unhinted, encoded swash draws 0.866 of the dark pixels and 0.857 of the
+//! ink, near Core Text's own drawing with smoothing off (0.866 and
+//! 0.853). The macOS setting is held to the tolerance, and to being no
+//! worse than its neighbours on the grid and the outline as it is; the
+//! whole grid is swept again by setting [`FULL_SWEEP`].
+//!
+//! It was fitted before, on 2026-11-14, blended in linear light, to a
+//! contrast of 0.1 and a dilation of 0.8: the contrast and part of the
+//! dilation made up for linear light thinning dark text
+//! (`docs/design/text-and-display.md`).
 //!
 //! The direction tests below draw each glyph over its own image, as if
 //! no two touched, and state relations only: dilating the outline,
@@ -221,11 +232,14 @@ fn drawn(settings: Settings) -> Vec<u8> {
 }
 
 /// The counts of the sentence drawn with `weight`, hinted as `hinting`
-/// says, and every other setting the default.
+/// says, blended as macOS blends ([`Blending::Encoded`]), and every other
+/// setting the default: how the swash fallback's glyphs are drawn on
+/// macOS.
 fn weighed(weight: Weight, hinting: bool) -> Counts {
     let settings = Settings {
         weight,
         hinting,
+        blending: Blending::Encoded,
         ..Settings::default()
     };
     weigh(drawn(settings), 0xff)
@@ -366,15 +380,17 @@ fn masks(hint: bool, growth: f32) -> Vec<GlyphImage> {
         .collect()
 }
 
-/// The first channel of `color`.
-fn red(color: Color) -> u8 {
-    color.0.to_be_bytes()[0]
-}
-
-/// Blending on the sRGB values themselves, as if they were light.
-fn gamma(color: Color, ground: u8, coverage: u8) -> u8 {
-    let (under, over) = (f32::from(ground), f32::from(red(color)));
-    (under + (over - under) * f32::from(coverage) / 255.0).round() as u8
+/// The renderer's blend, in sRGB-encoded values, as macOS blends.
+fn encoded(color: Color, ground: u8, coverage: u8) -> u8 {
+    let under = [ground, ground, ground, 255];
+    let source = blend::source_with(
+        QuadKind::Mask,
+        color,
+        [coverage, 0, 0, 0],
+        blend::CONTRAST,
+        Blending::Encoded,
+    );
+    blend::blend(under, &source, Blending::Encoded)[0]
 }
 
 /// The renderer's blend, with the coverage raised at `contrast`.
@@ -400,7 +416,7 @@ fn blending_in_srgb_values_darkens_dark_text_on_a_light_ground() {
     let masks = masks(true, 0.0);
     let (b, g) = (
         over_glyphs(&masks, WINDOW, linear),
-        over_glyphs(&masks, WINDOW, gamma),
+        over_glyphs(&masks, WINDOW, encoded),
     );
     assert!(g.ink > b.ink, "{g:?} {b:?}");
     assert!(g.dark >= b.dark, "{g:?} {b:?}");
@@ -459,7 +475,7 @@ fn error(counts: Counts, target: Counts) -> f64 {
 #[test]
 fn the_default_weight_is_lighter_than_core_texts() {
     let target = weigh(reference(), 0xff);
-    let default = weighed(Weight::LINEAR, true);
+    let default = weighed_with(Settings::default());
     let macos = weigh(drawn(Settings::core_text()), 0xff);
     println!("{SENTENCE:?}, Noto Sans Mono at {SIZE} px, black on white");
     println!(
@@ -506,20 +522,21 @@ fn the_macos_weight_matches_core_texts_reference() {
     );
 }
 
-/// The amounts the fit sweeps: each from 0 by 0.1, the contrast to 1,
-/// past which the adjustment is no longer a coverage, and the dilation
-/// to 0.8 pixels; and hinting on and off.
+/// The most the fit dilates a stem, in pixels.
+const MOST_DILATION: f32 = 1.0;
+
+/// The amounts the fit sweeps, blended encoded: the dilation from 0 by
+/// 0.1 to [`MOST_DILATION`], at a contrast of 0, which encoded blending
+/// needs none of; and hinting on and off.
 fn grid() -> Vec<(Weight, bool)> {
     let mut points = Vec::new();
     for hinting in [true, false] {
-        for dilation in 0..=8 {
-            for contrast in 0..=10 {
-                let weight = Weight {
-                    contrast: contrast as f32 / 10.0,
-                    dilation: dilation as f32 / 10.0,
-                };
-                points.push((weight, hinting));
-            }
+        for dilation in 0..=(MOST_DILATION * 10.0).round() as u32 {
+            let weight = Weight {
+                contrast: 0.0,
+                dilation: dilation as f32 / 10.0,
+            };
+            points.push((weight, hinting));
         }
     }
     points
@@ -527,31 +544,26 @@ fn grid() -> Vec<(Weight, bool)> {
 
 /// Whether [`the_core_text_weight_is_the_best_on_the_grid`] sweeps the
 /// whole grid, as the fit did, and prints its nearest points. The sweep
-/// draws the sentence 198 times, over 2 seconds in the debug profile, so
-/// the gate holds the macOS setting to its neighbours on the grid and to
-/// the default instead. Set it to `true` to fit again, and run
+/// draws the sentence 22 times, so the gate holds the macOS setting to
+/// its neighbours on the grid and to the outline as it is instead. Set it to `true` to fit again, and run
 /// `cargo test --locked -p editor-render-wgpu --lib weight_tests -- --nocapture`.
 const FULL_SWEEP: bool = false;
 
 /// The points of the grid next to the macOS setting: a step of 0.1 up or
-/// down in the contrast, in the dilation or in both, and the same with
-/// hinting the other way; and the default.
+/// down in the dilation, and the same with hinting the other way; the
+/// setting with hinting the other way; and the outline as it is.
 fn neighbours() -> Vec<(Weight, bool)> {
     let chosen = Settings::core_text();
     let (weight, hinting) = (chosen.weight, chosen.hinting);
     let mut points = vec![(Weight::LINEAR, true), (weight, !hinting)];
-    for contrast in [-0.1_f32, 0.0, 0.1] {
-        for dilation in [-0.1_f32, 0.0, 0.1] {
-            let next = Weight {
-                contrast: weight.contrast + contrast,
-                dilation: weight.dilation + dilation,
-            };
-            let on_grid = (0.0..=1.0).contains(&next.contrast)
-                && (0.0..=0.8 + f32::EPSILON).contains(&next.dilation);
-            if on_grid && next != weight {
-                points.push((next, hinting));
-                points.push((next, !hinting));
-            }
+    for dilation in [-0.1_f32, 0.1] {
+        let next = Weight {
+            dilation: weight.dilation + dilation,
+            ..weight
+        };
+        if (0.0..=MOST_DILATION + f32::EPSILON).contains(&next.dilation) {
+            points.push((next, hinting));
+            points.push((next, !hinting));
         }
     }
     points
