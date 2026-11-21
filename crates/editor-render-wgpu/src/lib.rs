@@ -517,6 +517,35 @@ pub enum Antialiasing {
     Subpixel(SubpixelOrder),
 }
 
+/// The space a quad is blended over what is under it in, the whole frame
+/// alike: fills, masks and colour images (the module `blend`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Blending {
+    /// In linear light: the target's sRGB values are made linear, blended
+    /// and encoded again, so half coverage of white on black is 188 of
+    /// 255. What every platform gets unless its program says otherwise.
+    #[default]
+    Linear,
+    /// In the sRGB-encoded values themselves, with no conversion either
+    /// way, so half coverage of white on black is 128: as Core Graphics
+    /// composites in an 8-bit sRGB bitmap, which is how macOS draws text
+    /// (`tests/coretext/blend.txt`).
+    Encoded,
+}
+
+/// The space for a person, to end a sentence that says how a renderer
+/// blends: `linear light`, or `sRGB-encoded values, as macOS blends`.
+/// Whatever prints a blending prints this, so that one added here needs
+/// no other crate changed.
+impl fmt::Display for Blending {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Linear => "linear light",
+            Self::Encoded => "sRGB-encoded values, as macOS blends",
+        })
+    }
+}
+
 /// What a renderer of this crate is told once, when it is made.
 ///
 /// The default draws text in linear light, its outlines as they are

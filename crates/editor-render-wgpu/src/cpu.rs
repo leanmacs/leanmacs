@@ -13,11 +13,11 @@
 //! the same quads wherever it runs, which is what lets one reference
 //! image be compared in the gate on any machine.
 
-use crate::Image;
 use crate::atlas::Atlas;
 use crate::blend::{blend, source_with};
 use crate::glyphs::Kind;
 use crate::quads::{Clip, Quad, QuadKind};
+use crate::{Blending, Image};
 
 /// What the target is cleared to before a frame is drawn: opaque black.
 pub const CLEAR: [u8; 4] = [0, 0, 0, 255];
@@ -83,7 +83,8 @@ pub fn composite(image: &mut Image, quads: &[Quad], atlas: &Atlas, contrast: f32
                 };
                 let over = blend(
                     [under[0], under[1], under[2], under[3]],
-                    &source_with(shown.kind, shown.color, texel, contrast),
+                    &source_with(shown.kind, shown.color, texel, contrast, Blending::Linear),
+                    Blending::Linear,
                 );
                 under.copy_from_slice(&over);
             }

@@ -52,7 +52,7 @@ use crate::glyphs::{GlyphImage, GlyphKey, GlyphRequest, Rasterize};
 use crate::quads::QuadKind;
 use crate::raster::SwashRasterizer;
 use crate::raster::measure::{advance_of, glyph_of};
-use crate::{HeadlessRenderer, Settings, Weight, blend};
+use crate::{Blending, HeadlessRenderer, Settings, Weight, blend};
 
 /// Noto Sans Mono, the stand-in for Menlo.
 const MONO: &[u8] = include_bytes!("../../../tests/fonts/NotoSansMono-Regular.subset.ttf");
@@ -322,6 +322,7 @@ fn linear(color: Color, ground: u8, coverage: u8) -> u8 {
     blend::blend(
         under,
         &blend::source(QuadKind::Mask, color, [coverage, 0, 0, 0]),
+        Blending::Linear,
     )[0]
 }
 
@@ -382,7 +383,14 @@ fn contrasted(contrast: f32) -> impl Fn(Color, u8, u8) -> u8 {
         let under = [ground, ground, ground, 255];
         blend::blend(
             under,
-            &blend::source_with(QuadKind::Mask, color, [coverage, 0, 0, 0], contrast),
+            &blend::source_with(
+                QuadKind::Mask,
+                color,
+                [coverage, 0, 0, 0],
+                contrast,
+                Blending::Linear,
+            ),
+            Blending::Linear,
         )[0]
     }
 }
