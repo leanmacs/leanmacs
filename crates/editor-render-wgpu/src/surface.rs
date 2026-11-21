@@ -78,6 +78,31 @@
 //! A surface that offers nothing has no format, and no renderer is made on
 //! it.
 //!
+//! # The alpha mode
+//!
+//! A window's surface is configured `Opaque` where it offers that
+//! ([`alpha_mode`]), and `Auto` where it does not, since wgpu-core refuses
+//! an alpha mode a surface does not offer. The window is opaque, and
+//! everything drawn on it is, the clear at alpha 255 among them, so nothing behind the window is to show through. On Metal
+//! this is what `Auto` resolved to already: wgpu-core 30.0.2 resolves
+//! `Auto` to `Opaque` where it is offered, else to `Inherit`
+//! (`wgpu-core-30.0.2/src/device/surface_config.rs`), and Metal offers
+//! `[Opaque, PostMultiplied]` (`wgpu-hal-30.0.2/src/metal/adapter.rs`).
+//! `wgpu-hal`'s `configure` sets the `CAMetalLayer`'s `opaque` from it.
+//! Naming it makes "the layer is opaque, as the window is" a decision
+//! pinned here, not a resolution inside wgpu.
+//!
+//! # What a surface is configured at
+//!
+//! The size of the last draw, whatever the surface answered between: a
+//! draw at another size configures it first, and a draw at the size of
+//! the one before, after a texture that was not presented, does not
+//! configure it again, since it is configured at that size already. The
+//! size is in pixels, so a change of scale alone changes nothing here:
+//! the window's own sequence for one is a resize at the size last known
+//! and the new scale, then winit's new size as a resize of its own, and
+//! only the second reaches the surface as a new size.
+//!
 //! # The present mode
 //!
 //! [`present::choose`] decides, from the modes a
@@ -219,6 +244,17 @@ impl Formats {
         } else {
             vec![self.target]
         }
+    }
+}
+
+/// How a surface that offers `offered` composites with what is behind it:
+/// opaque where it offers that, and wgpu's own choice otherwise
+/// (module docs, "The alpha mode").
+pub(crate) fn alpha_mode(offered: &[wgpu::CompositeAlphaMode]) -> wgpu::CompositeAlphaMode {
+    if offered.contains(&wgpu::CompositeAlphaMode::Opaque) {
+        wgpu::CompositeAlphaMode::Opaque
+    } else {
+        wgpu::CompositeAlphaMode::Auto
     }
 }
 
@@ -408,7 +444,7 @@ impl State {
                 height: 1,
                 present_mode: wgpu_mode(presentation.mode),
                 desired_maximum_frame_latency: presentation.frame_latency,
-                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                alpha_mode: alpha_mode(&offered.alpha_modes),
                 view_formats: formats.views(),
             },
             target: formats.target,
@@ -686,12 +722,111 @@ mod tests {
                 height: 600,
                 present_mode: wgpu::PresentMode::Fifo,
                 desired_maximum_frame_latency: present::FRAME_LATENCY,
-                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                alpha_mode: wgpu::CompositeAlphaMode::Opaque,
                 view_formats: Vec::new(),
             }]
         );
         // The pipeline is made for the format the surface has.
         assert_eq!(state.target(), Bgra8UnormSrgb);
+    }
+
+    #[test]
+    fn a_window_surface_is_configured_opaque_where_it_offers_that() {
+        let configured_with = |alpha_modes: &[wgpu::CompositeAlphaMode]| {
+            let offered = wgpu::SurfaceCapabilities {
+                alpha_modes: alpha_modes.to_vec(),
+                ..llvmpipe()
+            };
+            let mut state = State::new(&offered, Asked::NOTHING, Blending::Linear)
+                .expect("an offer with a format and a mode");
+            let mut surface = Scripted::answering(&[Answer::Success]);
+            assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
+            surface.configs[0].alpha_mode
+        };
+        // What Metal offers.
+        assert_eq!(
+            configured_with(&[
+                wgpu::CompositeAlphaMode::Opaque,
+                wgpu::CompositeAlphaMode::PostMultiplied
+            ]),
+            wgpu::CompositeAlphaMode::Opaque
+        );
+        // A surface that does not offer it, as some Wayland surfaces do
+        // not, keeps `Auto`: wgpu refuses a mode a surface does not offer.
+        assert_eq!(
+            configured_with(&[
+                wgpu::CompositeAlphaMode::PreMultiplied,
+                wgpu::CompositeAlphaMode::Inherit
+            ]),
+            wgpu::CompositeAlphaMode::Auto
+        );
+    }
+
+    /// Hypothesis 2 of text-rendering's phase 3, on the surface: that a
+    /// draw refused, or a texture that no longer fitted, leaves the surface
+    /// configured at another size than the last draw's.
+    #[test]
+    fn a_surface_is_configured_at_the_size_of_the_last_draw_whatever_it_answered_between() {
+        let (a, b, c) = ((800, 600), (801, 600), (1024, 768));
+        let mut state = State::new(&llvmpipe(), Asked::NOTHING, Blending::Linear)
+            .expect("an offer with a format and a mode");
+        let mut surface = Scripted::answering(&[
+            Answer::Success,
+            Answer::Occluded,
+            Answer::Timeout,
+            Answer::Outdated,
+            Answer::Success,
+            Answer::Suboptimal,
+            Answer::Success,
+            Answer::Success,
+        ]);
+        // Each draw's size, whether it was presented, and how many times
+        // it configured the surface.
+        let draws = [
+            (a, true, 1),
+            (b, false, 1),
+            // The same size again after a texture that was not presented:
+            // the surface is configured at it already.
+            (b, false, 0),
+            // Outdated: configured, then configured again and asked once
+            // more.
+            (c, true, 2),
+            // Suboptimal: drawn, and the next draw configures again.
+            (b, true, 1),
+            (a, true, 1),
+            (a, true, 0),
+        ];
+        for (i, ((width, height), presented, configures)) in draws.into_iter().enumerate() {
+            let before = surface.configs.len();
+            let got = state.acquire(&mut surface, width, height);
+            assert_eq!(got.is_ok(), presented, "draw {i}: {got:?}");
+            assert_eq!(surface.configs.len() - before, configures, "draw {i}");
+            let last = surface.configs.last().expect("configured");
+            assert_eq!((last.width, last.height), (width, height), "draw {i}");
+        }
+    }
+
+    /// The gate's half of "the layer's `contentsScale` is the backing scale
+    /// after a change of scale": the window's own sequence for one
+    /// (`editor-platform-winit`'s `translate`: the size last known at the
+    /// new scale, then winit's new size), as `editor-ffi`'s `render::target`
+    /// makes targets of it. The drawable is in pixels, so it changes only
+    /// with the size.
+    #[test]
+    fn a_change_of_scale_alone_configures_the_drawable_at_the_new_scales_size() {
+        let mut state = State::new(&llvmpipe(), Asked::NOTHING, Blending::Linear)
+            .expect("an offer with a format and a mode");
+        let mut surface = Scripted::answering(&[Answer::Success; 3]);
+        // 400 by 300 at scale 1, 400 by 300 at scale 2, 800 by 600 at 2.
+        for (width, height) in [(400, 300), (400, 300), (800, 600)] {
+            assert!(state.acquire(&mut surface, width, height).is_ok());
+        }
+        let sizes: Vec<(u32, u32)> = surface
+            .configs
+            .iter()
+            .map(|config| (config.width, config.height))
+            .collect();
+        assert_eq!(sizes, [(400, 300), (800, 600)]);
     }
 
     #[test]
