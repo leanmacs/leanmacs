@@ -2169,16 +2169,26 @@ for the cut:
   file commands are the files feature's kit, `Editor.Files.Kit`, a test
   double, which moves into its test library when it moves out.
 
+### Left for phase 6
+
 What phase 6 still has to cut, from the module graph ("What each feature
 would have to cross", below): the five import none of each other, and no
-core module imports `files` or `version-control` but the core's root, the
-list of the core's packages and the config base. Still importing them are
-features phase 6 moves too: evil (`Jumps.Go`), ex (`Files`, `Buffers`),
-the menu, project search (`Files`, `Jumps.Go`, `Workspace.FindFile`),
-restore (`Files`, `Workspace.Attach`) and the shell (`Files`); the kit's
-workspace modules; the compile package's tests; and the test support of
-session restore (`ModelTest.Support.Restore`, which imports
-`Files.Compiled`).
+module of the core proper imports `files` or `version-control`; the core's
+root, the list of the core's packages and the config base name features by
+design. What still imports the five is features phase 6 moves too, their
+tests, the kit and the compile package:
+
+| Importer | Imports | Why it is left |
+|---|---|---|
+| `Editor.Evil` | `Jumps.Go` | evil moves in phase 6 |
+| `Editor.Ex`, `Editor.Ex.Compiled` | `Files`; `Buffers` | ex moves in phase 6 and binds the files' and the buffers' ex names |
+| `Editor.Menu.Compiled` | `Files` | the menu moves in phase 6 |
+| `Editor.ProjectSearch.Run` | `Files`, `Jumps.Go`, `Workspace.FindFile` | project search moves in phase 6 |
+| `Editor.Restore.Run` | `Files`, `Workspace.Attach` | session restore's run adopts a restored file with `Files.adopt` and attaches its workspace itself; phase 6 has it reach them through `FilesApi` |
+| `Editor.Shell` | `Files` | the shell moves in phase 6 |
+| Their tests: `ModelTest.Editor.Ex`, `.Evil.Marks`, `.Menu`, `.Restore.Run`; `ConfigTest.Editor.Ex`; `ContractTest.Editor.ProjectSearch.Run`, `.Restore.Run` | `Files`, `Files.Kit`, `Files.Compiled`, `Workspace.Compiled` | the tests of the features above. `ModelTest.Editor.Restore.Run` registers the files feature's and the workspace's jobs (`runJobs`), which the run starts; the restore support it shares with the core's checks of the journal (`ModelTest.Support.Restore`) runs on `files-api`'s fake and the kit's attach |
+| The kit: `Editor.Test.Workspace`, `.Listing`, `.Linked.Rig` | `Workspace.Attach`, `.Model`, `.Modes`, `.Reach`; `Workspace.Compiled` | the workspace's part of the kit, which moves or is split with it |
+| `compile` (`packages/compile/`) and its tests | `Workspace.Modes`; `Files`, `Files.Kit`, `Workspace.Attach`, `.Model`, `.Modes` | a package outside the core, which names the workspace's modes and the files' kit until both move |
 
 ## Rust in a package
 
@@ -2675,7 +2685,7 @@ Computed again at the end of the features-as-packages roadmap's phase 5, which c
 - **Other features' modules that import it**: evil: `Evil` (`Jumps.Go`); ex: `Ex` (`Files`), `Ex.Compiled` (`Files`); menu: `Menu.Compiled` (`Files`); project-search: `ProjectSearch.Run` (`Files`, `Jumps.Go`); restore: `Restore.Run` (`Files`); shell: `Shell` (`Files`). Buffers, working-set, workspace and version-control reach it through `FilesApi` (`FilesApi.files?`, its hooks `Opened` and `Saved`, and its names).
 - **Other features it imports**: ex (`Ex`, `Ex.Compiled`), by `Files.Kit` alone. It runs `FilesApi.Opened` where it imported `Workspace.Attach` and `WorkingSet.Places`.
 - **Modules of packages outside the core that import it**: compile: `CompileTest.Compile` (`Files`), `CompileTest.Support.Compile` (`Files.Kit`), `CompileTest.Linked.Compile.Shipped` (`Files.Kit`).
-- **Test modules outside its own tests that import it** (7): `ModelTest`: `Ex`, `Evil.Marks`, `Menu`, `Support.Restore`; `ConfigTest`: `Ex`; `ContractTest`: `ProjectSearch.Run`, `Restore.Run`.
+- **Test modules outside its own tests that import it** (7): `ModelTest`: `Ex`, `Evil.Marks`, `Menu`, `Restore.Run`; `ConfigTest`: `Ex`; `ContractTest`: `ProjectSearch.Run`, `Restore.Run`.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): the `ex` package binds `w`, `w!`, `e`, `e!`, `autoread` and `noautoread` to its commands; the `menu` package's Open and Save; the workspace finder accepts through `open-file`, by `FilesApi.openFileName`; the default config binds `open-file`, `save-buffer` and `reload-buffer`.
 
@@ -2870,7 +2880,7 @@ Computed again at the end of the features-as-packages roadmap's phase 5, which c
 - **Other features' modules that import it**: project-search: `ProjectSearch.Run` (`Workspace.FindFile`); restore: `Restore.Run` (`Workspace.Attach`). Files reaches it through `FilesApi.Opened`, where its package registers the attach, and version-control through `ProjectApi.Workspaces`, which its package answers.
 - **Other features it imports**: none. It opens through `FilesApi` and reads a repository through `VcApi`.
 - **Modules of packages outside the core that import it**: compile: `Compile` (`Workspace.Modes`), `CompileTest.Compile` (`Workspace.Attach`, `Workspace.Model`, `Workspace.Modes`), `CompileTest.Compile.Shipped` (`Workspace.Model`, `Workspace.Modes`), `CompileTest.Linked.Compile.Shipped` (`Workspace.Modes`).
-- **Test modules outside its own tests that import it** (7): `ModelTest`: `Completion.Contract`, `ProjectMode.Listing`, `Support.Restore`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`; `ContractTest`: `Workspace`.
+- **Test modules outside its own tests that import it** (7): `ModelTest`: `Completion.Contract`, `ProjectMode.Listing`, `Restore.Run`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`; `ContractTest`: `Workspace`.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): the default config binds `find-file-in-workspace` and `find-file-in-project`; its package registers the job `compile-list`, which the compile mode, in its package, starts by name.
 

@@ -1,9 +1,7 @@
 import Editor.Ex.Compiled
-import Editor.Files.Compiled
 import Editor.Restore.Compiled
 import Editor.TabCommands.Compiled
 import Editor.WindowCommands.Compiled
-import Editor.Workspace.Compiled
 import ModelTest.Support.WorkingSet
 
 /-!
@@ -13,14 +11,19 @@ The session restore checks' world and driver: the working set checks' world
 (evil's keys over the editor's models, the files of the checks under `/r`,
 the file, buffer and workspace commands and jobs), with the `restore`
 package's commands, mode and jobs, the ex commands, the window commands and
-the tab commands, and the state directory `/state`. Session restore is a
-feature still in the core, left for phase 6 to cut: it adopts a restored
-file with the files feature (`Files.adopt`) and attaches its workspace
-(`Workspace.attach`), and its jump goes to a file through files' visit, so
-its driver has the files feature's jobs and the workspace's, before the
-working set checks' fake's. Shared by the test modules of
-`Editor/Restore.lean` and `Editor/Restore/Run.lean`; it holds no checks of
-its own.
+the tab commands, and the state directory `/state`. A file opens and saves
+through `files-api`'s fake and attaches its workspace through the kit's
+stand-in, as in the working set checks, so the support names no module of
+the files feature or the workspace's, and the core's checks of the
+journal's reconciler (`Editor/Restore.lean`, `Editor/Restore/Restart.lean`)
+run on it. Session restore's own run (`Editor/Restore/Run.lean`), a feature
+still in the core and left for phase 6 to cut, adopts a restored file with
+the files feature (`Files.adopt`) and attaches its workspace
+(`Workspace.attach`) itself, so its checks hand the drivers the files
+feature's jobs and the workspace's (`jobs`), which come before the fake's.
+Shared by the test modules of `Editor/Restore.lean`,
+`Editor/Restore/Restart.lean` and `Editor/Restore/Run.lean`; it holds no
+checks of its own.
 -/
 
 namespace ModelTest
@@ -37,18 +40,17 @@ def stateDirectory : System.FilePath :=
 
 /-- A driver of the checks over `files`, its state directory `state`, each
 step handed a log bound of `limit`, with `modes` registered beside the
-restore package's and the config generation `generation`; `none` if making
-the state was refused. -/
+restore package's, the config generation `generation` and `jobs` registered
+after the restore package's; `none` if making the state was refused. -/
 def restoreDriver (files : Option FileModel := none)
     (state : Option System.FilePath := some stateDirectory) (limit : Nat := Restore.bound)
-    (modes : Array Mode := #[]) (generation : Nat := 0) : Option EvilDriver :=
+    (modes : Array Mode := #[]) (generation : Nat := 0)
+    (jobs : Array Config.JobRegistration := #[]) : Option EvilDriver :=
   (driverWith
         (Restore.package.registered.commands ++ Ex.package.registered.commands ++
           WindowCommands.package.registered.commands ++
           TabCommands.package.registered.commands)
-        (Restore.package.registered.modes ++ modes)
-        (Restore.package.registered.jobs ++ Files.package.registered.jobs ++
-          Workspace.package.registered.jobs)).map
+        (Restore.package.registered.modes ++ modes) (Restore.package.registered.jobs ++ jobs)).map
     fun driver =>
     { driver with
       keys :=
@@ -65,8 +67,11 @@ def begun (driver : EvilDriver) : EvilDriver :=
 
 /-- A restored driver of the checks: `restoreDriver` with its restore run. -/
 def restoredDriver (files : Option FileModel := none) (limit : Nat := Restore.bound)
-    (modes : Array Mode := #[]) (generation : Nat := 0) : Option EvilDriver :=
-  (restoreDriver files (limit := limit) (modes := modes) (generation := generation)).map begun
+    (modes : Array Mode := #[]) (generation : Nat := 0)
+    (jobs : Array Config.JobRegistration := #[]) : Option EvilDriver :=
+  (restoreDriver files (limit := limit) (modes := modes) (generation := generation) (jobs :=
+        jobs)).map
+    begun
 
 /-- The bytes of the file at `path` in `driver`'s world. -/
 def bytesAt (driver : EvilDriver) (path : System.FilePath) : Option ByteArray :=
@@ -111,10 +116,13 @@ def bufferNamed (driver : EvilDriver) (name : String) : Option Buffer := do
   driver.loop.state.buffer? (← driver.loop.state.findBuffer name)
 
 /-- A fresh driver over the world `driver` left, as after an abort and a
-start: a new state over the same files, restored. -/
+start: a new state over the same files, restored, with `jobs` registered
+as `restoreDriver` registers them. -/
 def restarted (driver : EvilDriver) (modes : Array Mode := #[]) (generation : Nat := 0)
-    (change : FileModel → FileModel := id) : Option EvilDriver :=
+    (change : FileModel → FileModel := id) (jobs : Array Config.JobRegistration := #[]) :
+    Option EvilDriver :=
   restoredDriver (some (change driver.jobs.files)) (modes := modes) (generation := generation)
+    (jobs := jobs)
 
 /-- How many jobs called `name` are started and not delivered. -/
 def pendingNamed (driver : EvilDriver) (name : String) : Nat :=

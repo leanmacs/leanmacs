@@ -415,7 +415,7 @@ def journalReconcileChecks : List Check :=
           | some begun =>
             let edited := evilFed (opened begun "a.txt") "x"
             let index := indexNamed edited "a.txt"
-            let saved := ran edited Files.saveName
+            let saved := ran edited FilesApi.saveName
             journalFiles edited == filesOf index 1 &&
               journalText edited 1 index 1 == some (aText.drop 1).toString &&
               journalFiles saved == #[] &&
@@ -463,7 +463,7 @@ def journalReconcileChecks : List Check :=
           | some begun =>
             let edited := evilFed (opened begun "a.txt") "x"
             let index := indexNamed edited "a.txt"
-            let saving := evilFed (invoked edited Files.saveName) "x"
+            let saving := evilFed (invoked edited FilesApi.saveName) "x"
             let saved := drained saving
             let stamp := (bufferNamed saved "a.txt").bind (·.file.map (·.stamp))
             match liveOf saved index with
@@ -542,7 +542,8 @@ def journalReconcileChecks : List Check :=
                   "test-place" [.nat second.index, .nat 2, .nat 0, .nat 3, .nat 3, .nat 1]
               let third := ran placed WindowCommands.splitName
               let focused := third.loop.state.frame.focused
-              let opened := drained (invoked third Files.openName [.str (root / "a.txt").toString])
+              let opened :=
+                drained (invoked third FilesApi.openFileName [.str (root / "a.txt").toString])
               let document := indexOf opened 1
               let scratch :=
                 (document.bind (·.buffers.find? (·.name == EditorState.scratchName))).map (·.views)

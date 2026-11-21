@@ -181,7 +181,7 @@ def restartChecks : List Check :=
           | none => false
           | some driver =>
             let edited := evilFed (opened driver "a.txt") (typing "new ")
-            let saving := invoked edited Files.saveName
+            let saving := invoked edited FilesApi.saveName
             let probed := finishNamed (invoked saving restartName) probeJob
             let done := drained probed
             probed.loop.state.isSaving && probed.loop.state.restore.handing.isSome &&
