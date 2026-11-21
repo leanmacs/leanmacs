@@ -70,17 +70,21 @@ leaves a crash report on the machine.
 Each check pins what the C glue and the entry point do, as Lean sees it. What
 the Rust functions themselves compute is pinned by `editor-ffi`'s own tests.
 
-A check never waits without a bound: a pull runs on a dedicated task that the
-check polls (`pull`, `eventually`), so broken code fails a check within
-seconds instead of hanging the executable. A pull that ran out stays parked
+A check never waits without a bound, and never on time: a pull runs on a
+dedicated task the check waits on for its end (`pull`, `Job.awaitWithin`),
+and a park, a held child, a render loop's rest or a free is waited on
+through the readout that returns on it (`Ffi.awaitWaiting`,
+`Ffi.processesAwaitHeld`, `Ffi.windowAwaitParked`, `Ffi.renderAwaitRest`),
+each bounded only by the hang guard `patience`, so broken code fails a check
+as a hang instead of hanging the executable. A pull that ran out stays parked
 and is handed to the next pull of its queue (`pullTask`), so no event goes
 to a pull nothing waits for. The one wait with no deadline is a check's
 directory's end (`inOwnDirectory`): it waits for the event that a flush of
 each service the check names has been completed, the file service unless it
 names others (the process, watch and grep checks name theirs too), pulled
 through the same `pullTask`, behind everything the check handed out, and
-only says a hang on stderr, once, when that takes longer than the poll
-bound.
+only says a hang on stderr, once, when that takes longer than the hang
+guard.
 -/
 
 namespace FfiTest

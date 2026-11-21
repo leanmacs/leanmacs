@@ -202,7 +202,8 @@ def processChecks (_ : Unit) : List Check :=
           -- Every step runs whatever the one before it found, so the cancel
           -- always comes and no child is left writing.
           let opened ← streamReply 1170
-          let held ← eventually (return (← Editor.Ffi.processesHeld 1170) == 1)
+          -- The reader's park at the bound ends this wait, not a poll of it.
+          let held ← Editor.Ffi.processesAwaitHeld 1170 patience.toUInt64
           let unknown ← Editor.Ffi.processesHeld 1171
           let cancelled ← Editor.Ffi.processesCancel 1170
           -- A flush is completed once the cancelled child is reaped.

@@ -51,11 +51,7 @@ def runScriptedWhile (ask : IO Unit) (changes : Nat := 1) : IO AskedRun := do
     discard <| pull .editor
   let asked ← Editor.Ffi.windowAsked .scripted
   Editor.Ffi.windowClose .scripted
-  let result ←
-    if ← eventually (IO.hasFinished run) then
-      some <$> IO.ofExcept run.get
-    else
-      pure none
+  let result ← (← Editor.Job.awaitWithin patience run).mapM IO.ofExcept
   return { ran := { events := events.toList, stamped := true, waited := true, result }, after,
            asked }
 
@@ -102,7 +98,7 @@ def closedOnceEnded (ended : Except IO.Error Unit) : IO (Option Closed) := do
   let well ←
     Editor.Window.closeOnceEnded .scripted (Task.pure ended) (shutdowns.modify (· + 1)) (say :=
         fun line => said.modify (·.push line))
-  unless ← eventually (IO.hasFinished run) do
+  if (← Editor.Job.awaitWithin patience run).isNone then
     Editor.Ffi.windowClose .scripted
     return none
   let asked := requestsOf ((← Editor.Ffi.windowAsked .scripted).getD #[])
@@ -125,10 +121,10 @@ def checkOn (platform : Editor.Ffi.Platform) (composition : Bool) :
   let lines ← IO.mkRef #[]
   let window := Editor.WindowCheck.real platform fun line => lines.modify (·.push line)
   let task ← IO.asTask (prio := .dedicated) (Editor.WindowCheck.check window { composition })
-  unless ← eventually (IO.hasFinished task) do
+  let some status ← Editor.Job.awaitWithin patience task |
     Editor.Ffi.windowClose platform
     return none
-  let status ← IO.ofExcept task.get
+  let status ← IO.ofExcept status
   return some ((← lines.get).toList, status)
 
 /-- The lines of the keyboard check's report on the scripted platform; `none`
@@ -154,10 +150,10 @@ time, in which case the window is closed so that no run is left behind. -/
 def runUntilReturn (platform : Editor.Ffi.Platform) :
     IO (Option (Except String Editor.Ffi.WindowRan)) := do
   let run ← IO.asTask (prio := .dedicated) (Editor.Ffi.windowRun platform true)
-  unless ← eventually (IO.hasFinished run) do
+  let some ran ← Editor.Job.awaitWithin patience run |
     Editor.Ffi.windowClose platform
     return none
-  return some (← IO.ofExcept run.get)
+  return some (← IO.ofExcept ran)
 
 /-- Whether `result` is a run that returned and failed for exactly `reason`. -/
 def failedFor (reason : String) : Option (Except String Editor.Ffi.WindowRan) → Bool

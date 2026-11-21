@@ -46,7 +46,8 @@ structure WindowRun where
   the event was pulled. -/
   stamped : Bool
   /-- Whether `windowRun` was still running once every event had been pulled
-  and before the window was closed. -/
+  and the run had parked for its close (`Ffi.windowAwaitParked`), before the
+  window was closed. -/
   waited : Bool
   /-- What `windowRun` returned after the close; `none` if it did not return
   in time. -/
@@ -70,14 +71,12 @@ def runScripted (composition : Bool) (platform : Editor.Ffi.Platform := .scripte
     stamped := stamped && event.stamp > 0 && last <= event.stamp && event.stamp <= pulledAt
     last := event.stamp
     events := events.push event
-  IO.sleep 20
-  let waited := !(← IO.hasFinished run)
+  -- The run parked for its close, with nothing more to report: it has not
+  -- returned, and it waits, on the park itself, not after a moment.
+  let parked ← Editor.Ffi.windowAwaitParked platform patience.toUInt64
+  let waited := parked && !(← IO.hasFinished run)
   Editor.Ffi.windowClose platform
-  let result ←
-    if ← eventually (IO.hasFinished run) then
-      some <$> IO.ofExcept run.get
-    else
-      pure none
+  let result ← (← Editor.Job.awaitWithin patience run).mapM IO.ofExcept
   return { events := events.toList, stamped, waited, result }
 
 end FfiTest

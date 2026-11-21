@@ -42,9 +42,9 @@ completion, with no deadline: everything handed to the service before it
 has then been worked, a run ended, a start done. The completion queue is
 pulled through `pullTask`, so a pull a timed-out `pull` left parked is the
 one waited on, and no stray pull takes the flush's completion. A wait not
-over after `patience` polls is said on stderr as a hang, once, and still
-waited for; a flush the service refuses, or a quit, is said too, since
-nothing more will be worked. Other completions pulled meanwhile are a
+over after `patience` milliseconds is said on stderr as a hang, once, and
+still waited for (`IO.wait`), as `journalDrained` does; a flush the service
+refuses, or a quit, is said too, since nothing more will be worked. Other completions pulled meanwhile are a
 finished check's, and are dropped. -/
 def worked (target : Flushed) : IO Unit := do
   let id ← directoryFlushes.modifyGet fun id => (id, id + 1)
@@ -55,9 +55,11 @@ def worked (target : Flushed) : IO Unit := do
   let mut said := false
   repeat
     let task ← pullTask .completion
-    if !said && !(← eventually (IO.hasFinished task)) then
+    -- hang guard: the pull's return with the next completion; only a hang
+    -- reaches the bound, which is then said once and waited on.
+    if !said && (← Editor.Job.awaitWithin patience task).isNone then
       IO.eprintln
-          s!"ffi-test: a hang: the {target.name} service had not completed a directory's flush after {patience} polls; waiting for it"
+          s!"ffi-test: a hang: the {target.name} service had not completed a directory's flush after {patience} ms; waiting for it"
       said := true
     let event ← IO.ofExcept (← IO.wait task)
     if event.kind == .quit then

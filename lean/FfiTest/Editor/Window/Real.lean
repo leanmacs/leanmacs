@@ -21,6 +21,7 @@ import Editor.Window.Real
 import Editor.Workspace
 import EditorCore.EditorPackage
 import FfiTest.Check
+import FfiTest.Support.Queues
 
 /-!
 # FFI tests: `Editor/Window/Real.lean`
@@ -55,7 +56,9 @@ milliseconds after this was asked is said through `hung` as a hang, once,
 and still waited for. A scenario whose state directory is a temporary one
 of its own waits so before the window mode's shutdown, whose own wait is
 bounded by `Headless.drainPatience` and gives up, so that its directory is
-removed only once every journal order has been written. -/
+removed only once every journal order has been written.
+hang guard: the drain's flush completed; only a hang reaches `guard`, which
+is then said once and still waited on. -/
 def journalDrained (drained : Task Bool) (guard : Nat := Editor.Headless.drainPatience)
     (hung : String → IO Unit := IO.eprintln) : IO Bool := do
   if (← Editor.Job.awaitWithin guard drained).isNone then
@@ -86,6 +89,15 @@ def windowRealChecks (_ : Unit) : List Check :=
           return false
         return true }]
 
+/-- Whether the scripted window's record `asked` holds the shutdown's
+minimise before the close: the window records the close in its place among
+the requests, and records a request only while it runs, so a shutdown run
+after the close, or not at all, leaves no minimise before it. -/
+def shutBeforeClose (asked : Array Editor.Ffi.WindowAsked) : Bool :=
+  match asked.findIdx? (· == .request .minimise), asked.findIdx? (· == .close) with
+  | some minimised, some closed => minimised < closed
+  | _, _ => false
+
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
 scripted platform, on the absolute path `file`, or with no file, on the
 editor's one empty buffer, when it is `none`: a cells display bound to the
@@ -105,13 +117,12 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     { file, config := none, configGiven := false, sysroot := none, oleans := []
       composition := true, report := true }
   -- The window mode's shutdown, which first asks the window to minimise: a
-  -- scripted window records that only while it runs, and runs until it is
-  -- closed, so the record shows the shutdown ran before the close. It asks
-  -- a moment later, by which a window closed first has ended its run.
+  -- scripted window records that only while it runs, and records its close
+  -- in its place among the requests, so the record's order shows the
+  -- shutdown ran before the close (`shutBeforeClose`), with no wait.
   let shutdowns ← IO.mkRef 0
   let shutdown drained := do
     shutdowns.modify (· + 1)
-    IO.sleep 100
     Editor.Ffi.windowRequest .scripted .minimise
     Editor.Window.shutdown drained
   let status ←
@@ -124,7 +135,7 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
   unless (← shutdowns.get) == 1 do
     IO.eprintln s!"ffi-test window-host: the shutdown ran {← shutdowns.get} times, not once"
     return 1
-  unless ((← Editor.Ffi.windowAsked .scripted).getD #[]).contains (.request .minimise) do
+  unless shutBeforeClose ((← Editor.Ffi.windowAsked .scripted).getD #[]) do
     IO.eprintln "ffi-test window-host: the shutdown did not run before the window was closed"
     return 1
   let some counters ← Editor.Ffi.renderCounters |
@@ -199,6 +210,10 @@ def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 :=
   let status ←
     Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
         (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+        -- hang guard: none of its own; the start-up reload's end, which the window
+        -- mode's `awaitConfig` waits for over `Host.waitWhile`'s untracked branch
+        -- (follow-up window-mode-waits-poll-progress); only a hang reaches the
+        -- task's time limit, and the scenario then fails as a hang.
         (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
         none)
   unless status == 0 do
@@ -232,6 +247,10 @@ def windowHostBaseScenario (sysroot oleanDir configDir : String) : IO UInt8 := d
   let status ←
     Editor.Window.host EditorCore.EditorPackage.packages #[`Editor, `ConfigFixture] .scripted
         options (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+        -- hang guard: none of its own; the start-up reload's end, which the window
+        -- mode's `awaitConfig` waits for over `Host.waitWhile`'s untracked branch
+        -- (follow-up window-mode-waits-poll-progress); only a hang reaches the
+        -- task's time limit, and the scenario then fails as a hang.
         (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
         none)
   unless status == 0 do
@@ -270,6 +289,10 @@ def windowHostGenerateScenario (sysroot oleanDir configDir : String) : IO UInt8 
   let status ←
     Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
         (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+        -- hang guard: none of its own; the start-up reload's end, which the window
+        -- mode's `awaitConfig` waits for over `Host.waitWhile`'s untracked branch
+        -- (follow-up window-mode-waits-poll-progress); only a hang reaches the
+        -- task's time limit, and the scenario then fails as a hang.
         (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
         none) (generator := some generator)
   unless status == 0 do
@@ -318,6 +341,10 @@ def windowHostDirectScenario (editorPath sysroot configDir : String) : IO UInt8 
   let status ←
     Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options plan
         (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
+        -- hang guard: none of its own; the start-up reload's end, which the window
+        -- mode's `awaitConfig` waits for over `Host.waitWhile`'s untracked branch
+        -- (follow-up window-mode-waits-poll-progress); only a hang reaches the
+        -- task's time limit, and the scenario then fails as a hang.
         Editor.Window.shutdown .headless (patience := none)
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host-direct: the window mode ended with status {status}"
@@ -399,7 +426,14 @@ def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 :
     let shutdowns ← IO.mkRef 0
     let shutdown drained := do
       shutdowns.modify (· + 1)
-      IO.sleep 100
+      -- The loop ends with the hand-over, which can come before the window
+      -- has opened (config is loaded at start, so the window opens only once
+      -- the reload has ended or the loop has): a request or a close sent
+      -- then reaches no window, and the run would wait for good. So the
+      -- shutdown first waits for the window's run to park for its close, on
+      -- the park itself. Its minimise is then recorded before the close only
+      -- when the shutdown runs first (`shutBeforeClose`).
+      discard <| Editor.Ffi.windowAwaitParked .scripted patience.toUInt64
       Editor.Ffi.windowRequest .scripted .minimise
       -- The journal writes into `state`, under the directory removed below:
       -- its drain is waited for with no deadline (`journalDrained`), and the
@@ -419,6 +453,10 @@ def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 :
     let status ←
       Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
           (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+          -- hang guard: none of its own; the start-up reload's end, which the window
+          -- mode's `awaitConfig` waits for over `Host.waitWhile`'s untracked branch
+          -- (follow-up window-mode-waits-poll-progress); only a hang reaches the
+          -- task's time limit, and the scenario then fails as a hang.
           (← Editor.Clipboard.InProcess.new).handle #[] shutdown .headless (patience := none)
           (afterRestore := #[.run Editor.restartName]) (replace := replace) (say := fun line =>
           said.modify (·.push line))
@@ -430,7 +468,7 @@ def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 :
           s!"ffi-test window-host-restart: the exec was called {repr (← replaced.get)}, each with the shutdown count then, not once with {repr exec} after one shutdown"
       return 1
     let asked := (← Editor.Ffi.windowAsked .scripted).getD #[]
-    unless asked.contains (.request .minimise) do
+    unless shutBeforeClose asked do
       IO.eprintln
           "ffi-test window-host-restart: the shutdown did not run before the window was closed"
       return 1
