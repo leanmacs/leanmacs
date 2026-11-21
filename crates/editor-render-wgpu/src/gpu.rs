@@ -187,14 +187,15 @@ struct Window {
 
 impl Window {
     /// The surface, with what `surface::State` decides from what it offers
-    /// `adapter` and what the run `asked` for. The error says why nothing
-    /// can be drawn on it.
+    /// `adapter`, what the run `asked` for and the space it is to blend in.
+    /// The error says why nothing can be drawn on it.
     fn new(
         surface: wgpu::Surface<'static>,
         adapter: &wgpu::Adapter,
         asked: Asked,
+        blending: Blending,
     ) -> Result<Self, String> {
-        let state = State::new(&surface.get_capabilities(adapter), asked)?;
+        let state = State::new(&surface.get_capabilities(adapter), asked, blending)?;
         Ok(Self {
             surface,
             state,
@@ -325,20 +326,23 @@ impl Device {
 
     /// A device on an adapter of `instance` that can present to `surface`,
     /// and draws on it, presenting as `asked` says of each half the run
-    /// asked for (`present::choose`). It is refused, with the reason, when
-    /// no adapter can, or when the surface offers nothing to configure it
-    /// with.
+    /// asked for (`present::choose`), and blending in `blending`'s space
+    /// where the surface offers a format to, in linear light where it does
+    /// not (`surface::choose_format`; [`Device::blending`] says which). It
+    /// is refused, with the reason, when no adapter can, or when the
+    /// surface offers nothing to configure it with.
     pub fn on_surface(
         instance: &wgpu::Instance,
         surface: wgpu::Surface<'static>,
         asked: Asked,
         allow_per_channel: bool,
+        blending: Blending,
     ) -> Result<Self, Unavailable> {
         Self::build(
             instance,
             Some((surface, asked)),
             allow_per_channel,
-            Blending::Linear,
+            blending,
         )
     }
 
@@ -358,12 +362,16 @@ impl Device {
         .map_err(|error| Unavailable(format!("no adapter: {error}")))?;
         let info = adapter.get_info();
         let window = surface
-            .map(|(surface, asked)| Window::new(surface, &adapter, asked))
+            .map(|(surface, asked)| Window::new(surface, &adapter, asked, blending))
             .transpose()
             .map_err(|reason| Unavailable(format!("{reason} ({})", info.name)))?;
         let format = window
             .as_ref()
             .map_or(own_format(blending), |window| window.state.target());
+        // What the surface can blend in, when there is one.
+        let blending = window
+            .as_ref()
+            .map_or(blending, |window| window.state.blending());
         let dual = wgpu::Features::DUAL_SOURCE_BLENDING;
         let per_channel = allow_per_channel && adapter.features().contains(dual);
         let (device, queue) = wait(adapter.request_device(&wgpu::DeviceDescriptor {

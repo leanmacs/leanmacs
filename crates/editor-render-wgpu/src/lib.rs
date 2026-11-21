@@ -358,7 +358,13 @@ impl WgpuRenderer {
                 reason: format!("no surface on the window: {error}"),
             })?;
         Self::with(
-            gpu::Device::on_surface(instance, surface, settings.presentation, allow_per_channel),
+            gpu::Device::on_surface(
+                instance,
+                surface,
+                settings.presentation,
+                allow_per_channel,
+                settings.blending,
+            ),
             settings,
         )
     }
