@@ -15,9 +15,10 @@
 #   `WorkingSet/EditorPackage.lean`, which the package-set build reads. Its
 #   `globs` hold every module under `WorkingSet`, so the package imports
 #   check sees each one's imports. It implements the interface package
-#   `working-set-api`, which it requires, and reaches the files, the buffers
-#   and version control through the core's interface libraries `files-api`,
-#   `buffers-api` and `vc-api`.
+#   `working-set-api`, which it requires, and reaches the files and the buffers
+#   through the core's interface libraries `files-api` and `buffers-api`,
+#   and version control through the interface package `vc-api`, which it
+#   requires.
 # - `working-set-test` is its test driver (`lake test`): the tests that need
 #   no Rust library, rooted at `WorkingSetTest/Model.lean`. It is no default
 #   target, as the core's `model-test` is not: `mise run lean` links with the
@@ -55,6 +56,12 @@ leanOptions = { linter.all = true, warningAsError = true }
 [[require]]
 name = "working-set-api"
 path = "../working-set-api"
+
+# The interface package of version control: the backend a set's write asks
+# for the commit `HEAD` is at, and the model its tests run on.
+[[require]]
+name = "vc-api"
+path = "../vc-api"
 
 [[require]]
 name = "editor-core"

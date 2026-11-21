@@ -203,7 +203,7 @@ open Editor
 /-- The workspace package, as a host registers it: what a rig's checks of
 files in a workspace pass beside the file commands' package, which the
 rig does not name (the files feature's test kit hands it,
-`Editor/Files/Kit.lean`, `filesPackage`). -/
+`packages/files/FilesTest/Kit.lean`, `filesPackage`). -/
 def rigWorkspace : Package :=
   Workspace.package
 

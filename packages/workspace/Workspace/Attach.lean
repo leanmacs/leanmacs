@@ -11,7 +11,7 @@ How a buffer that holds a file comes to know its workspace, and the command
 that says it. Written over the editor API (`Editor/Api.lean`, "Workspaces")
 and the finder (`Workspace/Finder.lean`). A command may not wait and
 a job may, so finding a workspace is three programs, as opening a file is
-(`Editor/Files.lean`): a command that starts a job, the job, which runs the
+(`packages/files/Files.lean`): a command that starts a job, the job, which runs the
 finder, and the job's command, which records what it found.
 
 The files feature does not import this module: the workspace package

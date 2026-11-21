@@ -20,13 +20,13 @@ shipped ex name runs in its place until a reload drops it.
   - `ex` opens the ex line, and runs the line it is answered
     (`Ex.exCommand`). A host must be handed the minibuffer's commands too
     (`packages/minibuffer/Minibuffer/Compiled.lean`) for that prompt to be answered, and
-    the shell's package (`Editor/Shell/Compiled.lean`) for a `:!`
+    the shell's package (`packages/shell/Shell/Compiled.lean`) for a `:!`
     line or a filter to run.
   - `quit` asks the editor to quit, and says a refusal in the echo area
     (`Ex.quitCommand`).
   - `save-and-quit` saves the buffer of the window it was called with and
     asks the editor to quit if the save started (`Ex.saveQuitCommand`). A
-    host must be handed the save job too (`Editor/Files/Compiled.lean`).
+    host must be handed the save job too (`packages/files/Files/Compiled.lean`).
   - `reload-config` asks for the config to be reloaded
     (`Ex.reloadCommand`).
 - **The ex names** of the files, of the ex line itself and of the buffers
@@ -35,7 +35,7 @@ shipped ex name runs in its place until a reload drops it.
   buffers' commands are the interface libraries' (`FilesApi.saveName`,
   `.editName`, `.autoReloadName`; `BuffersApi.switchName`, `.listName`,
   `.closeName`): this module imports neither feature.
-  - `w` runs `save-buffer` (`Editor/Files.lean`) and takes nothing: it
+  - `w` runs `save-buffer` (`packages/files/Files.lean`) and takes nothing: it
     saves the buffer of the window the line was asked from. `w` with an
     argument is refused by the ex line (`Ex.noArgument`): saving under
     another name is not built, and the save command would ignore the name.
@@ -59,7 +59,7 @@ shipped ex name runs in its place until a reload drops it.
     window the line was asked from: no shipped command splits a window.
   - `wq` runs `save-and-quit` and takes nothing.
   - `reload` runs `reload-config` and takes nothing.
-  - `b` runs `switch-buffer` (`Editor/Buffers.lean`) and takes text: the
+  - `b` runs `switch-buffer` (`packages/buffers/Buffers.lean`) and takes text: the
     rest of the line names the buffer, exactly or by fuzzy match. `b` with
     no argument runs it with none, which asks, by that command's own rule,
     as `e` does. Vim's `b` refuses a pattern that matches more than one
@@ -74,7 +74,7 @@ shipped ex name runs in its place until a reload drops it.
   `compile-command`, `recompile`, `kill-compilation`, `next-error` and
   `previous-error`, in its package outside the core
   (`packages/compile/Compile/Compiled.lean`), and version control's twelve
-  `vc-…` names (`Editor/VersionControl/Compiled.lean`). The files'
+  `vc-…` names (`packages/version-control/VersionControl/Compiled.lean`). The files'
   and the buffers' names are bound here because both features are the
   core's, as this one is (`docs/design/packages.md`). The core's list
   registers this package before version control's

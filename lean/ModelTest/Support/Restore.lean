@@ -7,7 +7,6 @@ import Editor.Test.Workspace
 import Editor.WindowCommands.Compiled
 import FilesApiTest.Fake
 import ModelTest.Support.Evil
-import VcApiTest.Fake
 
 /-!
 # Model tests: support: Restore
@@ -93,11 +92,11 @@ def keysWith (commands : Array Config.Registration) (modes : Array Mode) :
         extensions := (hostedRegistry hooks).extensionsAt } }
 
 /-- `more`, then the jobs every driver of the checks has, the files fake's:
-a job of `more` comes before one of theirs of its name. -/
+a job of `more` comes before one of theirs of its name. A job is handed no
+value at any extension point: the restore registers no job over one. -/
 def jobsWith (more : Array Config.JobRegistration) (name : String) :
     Option (List Argument → Work) :=
-  ((more ++ FilesApiTest.fake.registered.jobs).find? (·.name == name)).map
-    (·.workWith (VcApiTest.backendValues #[]))
+  ((more ++ FilesApiTest.fake.registered.jobs).find? (·.name == name)).map (·.workWith fun _ => #[])
 
 /-- A driver of the checks: evil's keys over an empty scratch buffer, with
 `commands`, `modes` and `jobs` handed in, whose jobs meet the files of the

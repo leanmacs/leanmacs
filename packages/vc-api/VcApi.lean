@@ -6,11 +6,10 @@ import Editor.Program
 /-!
 # The interface library `vc-api`: the version-control interface
 
-The interface library `vc-api`, staged in the core's Lake package as its
-own `lean_lib` with the layout and names it will have as the package
-`packages/vc-api/` (`lean/lakefile.lean`, `lean_lib VcApi`): it moves there
-with a `git mv` and a lakefile in the phase where its last user in the core
-moves out. It imports only the core's API, and its test library
+The interface package `vc-api` (`packages/vc-api/`), staged in the core's
+Lake package until features-as-packages phase 6, when its last user in the
+core moved out, and moved here with a `git mv` and a lakefile, no import
+line in it changed. It imports only the core's API, and its test library
 (`VcApiTest`) only that, this library and the core's test kit.
 
 What the editor asks of a version-control system, in its own terms: which
@@ -22,8 +21,9 @@ compared.
 It is a port like the others (`Editor/Program.lean`): requests, a reply
 type for each, a pure model of a repository (`VcApiTest/Fake.lean`, the
 interface's fake) and a contract every implementation is held to
-(`VcApiTest/Contract.lean`). Git is one implementation
-(`Editor/VersionControl/Git.lean`), which runs git as jobs; jj would be
+(`VcApiTest/Contract.lean`). Git is one implementation (the
+`version-control` package's `VersionControl/Git.lean`), which runs git as
+jobs; jj would be
 another handler of the same requests (`docs/design/version-control.md`).
 
 An implementation runs inside a job: its handler answers each request in
@@ -148,7 +148,7 @@ both implementations behind it; none goes in ahead of them.
 | Addition | Where |
 |---|---|
 | Another question of the repository or another write. A file at a revision (`fileAt`) and what to watch (`watched`) are here (phase 2), staging and unstaging a hunk (`stageHunk`, `unstageHunk`) and committing (`commit`) (phase 3), and the worktrees (`worktrees`), the branches (`branches`), a branch's change against its base (`changes`) and making and removing a worktree (`addWorktree`, `removeWorktree`) (phase 4), and a branch's log (`log`), a file's blame (`blame`) and two ranges compared (`rangeDiff`) (phase 5) | A constructor of `Request`, its case in `Request.Reply`, an operation here, a clause of `Model.handle`, a clause of `Git.handler`, and a property of the contract |
-| Another way a file differs | A constructor of `FileState` (or of `Change` or `Conflict`), its case in the parser (`Editor/VersionControl/Porcelain.lean`), in the model's status and printer, and in the status buffer's view (`Editor/VersionControl/Status.lean`) |
+| Another way a file differs | A constructor of `FileState` (or of `Change` or `Conflict`), its case in the parser (`packages/version-control/VersionControl/Porcelain.lean`), in the model's status and printer, and in the status buffer's view (`packages/version-control/VersionControl/Status.lean`) |
 | Another way a request fails | A constructor of `Error`, with its sentence in `Error.describe`; one refused before anything runs is a case of `Request.invalid?` |
 | Another system (jj) | A handler of these requests, held to the contract; nothing here |
 
@@ -167,7 +167,7 @@ model build one the same way:
 - **A hunk is located** (`LineHunk.locate`) through a `Lines` of each
   text: the row of an offset, the offset of a row and a slice. The texts
   as strings (`Lines.ofText`, used by `LineHunk.ofTexts`) and as snapshots
-  (`Editor/VersionControl/Stage.lean`) are both one, so the one walk is
+  (`packages/version-control/VersionControl/Stage.lean`) are both one, so the one walk is
   pinned on strings.
 - **Rows** are counted in line feeds, from 0: `oldLine` and `newLine` are
   the rows of the first context line, in the old and the new text.
@@ -199,9 +199,10 @@ segment `review` (`VcApi.reviewSegmentName`), which the default order names.
 Its registration check (`VcApiTest.registrationChecks`) holds an
 implementation to them and to the backend `git`.
 
-Pinned by the contract, which `model-test` runs against the model, and
-`contract-test` against the git implementation over the real process
-service, in a temporary repository; and by `ModelTest.vcApiChecks`.
+Pinned by the contract, which this package's test driver,
+`vc-api-test`, runs against the model, and the `version-control` package's
+linked test against the git implementation over the real process service,
+in a temporary repository; and by `VcApiTest.vcApiChecks`.
 -/
 
 namespace Editor.VersionControl

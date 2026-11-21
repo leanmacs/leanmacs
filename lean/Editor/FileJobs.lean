@@ -26,7 +26,7 @@ and registered by the feature that works it (`Editor/Restore.lean`,
 The loop's gate is the registry: it starts a check or a follow only where a
 package registered the job under that name (`Loop.Registered.jobs`), so a
 set without the files feature starts neither. The files feature
-(`Editor/Files.lean`) registers both jobs and defines its own names from
+(`packages/files/Files.lean`) registers both jobs and defines its own names from
 these, so its callers are unchanged.
 
 Pinned by `ModelTest.fileJobChecks`; when the loop starts a check or a

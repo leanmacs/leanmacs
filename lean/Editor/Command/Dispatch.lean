@@ -196,26 +196,26 @@ from the next command.
     (`packages/binding-search/BindingSearch.lean`, `packages/execute-command/ExecuteCommand.lean`);
   - config's auto-reload setting (`autoReload`): whether auto-reload is in
     effect where no command chose (`Files.autoReloadOn`,
-    `Editor/Files.lean`), a command's choice being the state's;
+    `packages/files/Files.lean`), a command's choice being the state's;
   - the workspace settings (`workspaceSettings`, from
     `Loop.Registered.workspaceSettings`: config's workspace roots, the git
     program, the contributions' marker modes and config's workspace
     listers) and the config generation
     (`generation`): a file's open asks, for its directory's workspace
-    (`Editor/Workspace/Attach.lean`), and the version-control commands ask,
+    (`packages/workspace/Workspace/Attach.lean`), and the version-control commands ask,
     for the git program; the gutter's reconciler is handed the same
     (`Editor/Loop.lean`, `Stepped.published`);
   - config's display rules (`displayRules`), in order: `BufferId.display`
     asks, to decide where a buffer a command made goes
     (`Editor/DisplayRules.lean`, `EditorState.displaying`);
   - config's shell time limit (`shellTimeLimit`), or `none`: `:!` asks, for
-    its run's limit (`Editor/Shell.lean`); and its syntax refresh delay
+    its run's limit (`packages/shell/Shell.lean`); and its syntax refresh delay
     (`syntaxRefreshDelay`): a mode's entry asks, for the interval it hands
     the syntax service (`Editor/Highlight.lean`);
   - a path's language (`languageOf`): the name of the language the loop's
     table chooses (`Language.forPath` over `Loop.Registered.languages`), or
     `none`; a file's open asks, for the language its buffer records
-    (`Editor/Files.lean`);
+    (`packages/files/Files.lean`);
   - a language's indent unit (`indentUnitOf`): the unit of the first entry
     of that name in the table (config's entries first), or `none`; `=` and
     the commands that open a line ask (`Target.indentUnit`,
@@ -495,7 +495,7 @@ structure Loop.Registered where
   workspaceRoots : Array Workspace.ConfigRoot := #[]
   /-- The workspace listers config declares (`workspaceLister`,
   `projectLister`, `Editor/Setup.lean`), which choose what lists a
-  workspace's files (`Editor/Workspace/Lister.lean`). -/
+  workspace's files (`packages/workspace/Workspace/Lister.lean`). -/
   workspaceListers : Array Workspace.DeclaredLister := #[]
   /-- The git program (`Workspace.Settings.git`): a bare name, looked up on
   the `PATH`, or an absolute path. -/

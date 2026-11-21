@@ -28,7 +28,7 @@ core's name of the open command (`FileJobs.openFileCommand`), and what a
 check reads of a buffer's file and of its status line. Shared by several
 test modules under `ModelTest/Editor/`; it holds no checks of its own. It
 names no module of the files feature: the drivers that run the real file
-commands are that feature's (`Editor/Files/Kit.lean`), and the kit's own
+commands are that feature's (`packages/files/FilesTest/Kit.lean`), and the kit's own
 opener (`Editor/Test/Opener.lean`) opens and saves a file without it.
 
 Published for a package's tests: it is a module of the core's test kit, a

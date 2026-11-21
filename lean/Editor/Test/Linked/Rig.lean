@@ -58,7 +58,7 @@ runs with (`runSettled`'s `keys` and `jobs`), which `rigKeys` and `rigJobs`
 make of the packages it names, with no contribution told to the loop: a
 check of files in a workspace names the files package (the files feature's
 test kit hands it, `filesPackage`) and the workspace's (`rigWorkspace`, the workspace feature's kit's,
-`Editor/Workspace/Kit.lean`), the
+`packages/workspace/WorkspaceTest/Kit.lean`), the
 version-control checks theirs (`ContractTest/Support/VersionControl.lean`),
 and the compile mode's, in its package, the compile mode's commands and jobs
 and the shipped contributions

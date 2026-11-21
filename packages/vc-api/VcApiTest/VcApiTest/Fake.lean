@@ -1,5 +1,5 @@
-import ModelTest.Check
 import VcApi
+import VcApiTest.Check
 import VcApiTest.Contract
 import VcApiTest.Fake
 import VcApiTest.Repositories
@@ -10,11 +10,11 @@ import VcApiTest.Repositories
 The model tests of the fake of the interface library `vc-api`, the pure
 model of a repository (`VcApiTest/Fake.lean`): `versionControlModelChecks`.
 What git's half of the model prints is version control's
-(`ModelTest.gitModelChecks`). The root module `ModelTest` runs them; its module
-doc says what each shows.
+(`VersionControlTest.gitModelChecks`). The test driver's root,
+`VcApiTest/Model.lean`, runs them; its module doc says what each shows.
 -/
 
-namespace ModelTest
+namespace VcApiTest
 
 open Editor
 open VcApiTest
@@ -126,4 +126,4 @@ def versionControlModelChecks : List Check :=
             (logged.toOption.map fun entries => entries.map (·.authored.subject)) ==
               some #["  Subject line wraps here", "head"] }]
 
-end ModelTest
+end VcApiTest

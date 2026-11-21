@@ -29,7 +29,7 @@ ex command's (`Editor/Ex.lean`).
   (`Line.bang`): its name is `!`, and the rest of the line, with the white
   space round it dropped, is its argument, `none` when nothing is left.
   `:!cmd` is a shell command and `:{range}!cmd` a filter
-  (`Editor/Shell.lean`). Only a leading `!` starts it: `w!` is the name
+  (`packages/shell/Shell.lean`). Only a leading `!` starts it: `w!` is the name
   `w!`, as before.
 - **Otherwise the name is everything up to the first white space.** So a
   name may hold a hyphen or a digit after its first character, as a name

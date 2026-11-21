@@ -6,7 +6,7 @@ import Editor.Extension
 The interface library `buffers-api`, staged in the core's Lake package as
 its own `lean_lib` with the layout and names it will have as the package
 `packages/buffers-api/` (`lean/lakefile.lean`, `lean_lib BuffersApi`): the
-contract between the buffer commands (`Editor/Buffers.lean`), which
+contract between the buffer commands (`packages/buffers/Buffers.lean`), which
 implement it, and what others ask of closing a buffer. It imports only the
 core's API, and its test library (`BuffersApiTest`) only that, this
 library and the core's test kit.

@@ -11,13 +11,13 @@ each a path and its content. `Repository.status` answers a status as a pure
 function, and `Model.handle` answers each request of the version-control
 port. It knows nothing of git: what git prints of a repository and the job
 model that answers git's command lines are the git implementation's
-(`Editor/VersionControl/Git/Model.lean`). A consumer connects to it through
+(`packages/version-control/VersionControlTest/Git/Model.lean`). A consumer connects to it through
 `VcApiTest.backend`, a backend whose handler answers from the model, in
 place of any implementation's. `Model.readHandler` answers the
 port's requests inside a job from a repository as it is, for a read whose
 replies the job model's scripts do not print (the review's, the log's and
-the blame's reads, `Editor/VersionControl/Review.lean`,
-`Editor/VersionControl/Log.lean`, `Editor/VersionControl/Blame.lean`).
+the blame's reads, `packages/version-control/VersionControl/Review.lean`,
+`packages/version-control/VersionControl/Log.lean`, `packages/version-control/VersionControl/Blame.lean`).
 
 ## How it answers
 
@@ -86,7 +86,7 @@ the blame's reads, `Editor/VersionControl/Review.lean`,
 - **Who wrote a commit** (`authoredOf`): unless it says otherwise, `a` at
   2026-01-01T00:00:00Z (`fixedAuthored`), the writer's fixed author and
   time; an empty subject is the commit's id, and a tag's is its name, which
-  is what the writer's messages are (`ContractTest.writeGitRepository`).
+  is what the writer's messages are (`VcApiTest.Linked.writeGitRepository`).
   `HEAD`'s subject is `head`, the writer's message, until a commit makes
   another.
 - **A name resolves** (`resolve`) to `HEAD`'s commit for `HEAD` and the
@@ -892,7 +892,7 @@ def handle : (request : Request) → Repository → request.Reply × Repository
 answered as `handle` answers it in `repository`, the repository it gives
 back dropped. So a read that only asks runs over the model on the job
 model, as the review's read does in the model checks
-(`Editor/VersionControl/Review.lean`). -/
+(`packages/version-control/VersionControl/Review.lean`). -/
 def readHandler (repository : Repository) : Handler := fun request =>
   pure (handle request repository).1
 

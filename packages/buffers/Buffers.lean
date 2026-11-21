@@ -130,7 +130,7 @@ checks compare the echo area with that function, never with a sentence.
 - **The rule of what takes a closed buffer's place is `close`'s**, which
   checks nothing else; the close command calls it once its own checks
   pass, and a feature that removes a buffer of its own, such as the commit
-  message buffer (`Editor/VersionControl/Commit.lean`), calls it too.
+  message buffer (`packages/version-control/VersionControl/Commit.lean`), calls it too.
 - **Not built**: a buffer's last cursor, which Vim gives back when a window
   shows it again.
 

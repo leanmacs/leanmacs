@@ -19,7 +19,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
 ## The ex command
 
 - **`ex` asks for its line when it is given none** (`exCommand`), as the
-  open command asks for its path (`Editor/Files.lean`). With a string as
+  open command asks for its path (`packages/files/Files.lean`). With a string as
   its first argument it runs that line. With anything else first, or
   nothing, it asks with a prompt labelled `label`, whose continuation is
   `ex` itself with no argument of its own: when the prompt is accepted the
@@ -62,7 +62,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
      (`rangeAlone`);
   2. **a line of the bang form** (`:!cmd`, `Line.bang`) is handed to the
      shell, by the names of the interface library `shell-api`
-     (`ShellApi.lean`; the shell, `Editor/Shell.lean`, implements it). With
+     (`ShellApi.lean`; the shell, `packages/shell/Shell.lean`, implements it). With
      no range, the command
      `shell-command` is asked to run after this one with the text after
      the `!` and the line, trimmed (`invoke`). With a range, `:{range}!cmd`,
@@ -143,7 +143,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   `FilesApi.noImplementation saveQuitName` and does not quit.
 - **What the save says is the files implementation's.** The texts below
   (no file, a refusal, a save in flight) are its, the files feature's
-  (`Editor/Files.lean`) in the default set.
+  (`packages/files/Files.lean`) in the default set.
 - **The quit waits for the save**, by the rule above: the file is
   written, the save's result is delivered, and that step says stop. The
   order is fixed by the wait, not by timing.

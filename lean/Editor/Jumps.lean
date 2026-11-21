@@ -13,7 +13,7 @@ key: evil's commands (`Editor/Evil/Jumps.lean`, `Editor/Evil/Marks.lean`)
 call it, and so do the file commands, since opening a file is a jump.
 
 This is the lower of two modules. It imports the editor API only, so the
-file commands (`Editor/Files.lean`) can record a jump; what needs the file
+file commands (`packages/files/Files.lean`) can record a jump; what needs the file
 commands, going to a place in a closed file, is the upper module's
 (`Editor/Jumps/Go.lean`).
 
@@ -43,7 +43,7 @@ commands, going to a place in a closed file, is the upper module's
 - **Placing the cursor** (`placeCursor`, `offsetOn`): one bar at an
   offset, with the selection's shape kept, or at the first non-blank of
   the offset's line. Going to a held place places it so, and so does a
-  visit of a file (`Files.placeAt`, `Editor/Files.lean`), at its point.
+  visit of a file (`Files.placeAt`, `packages/files/Files.lean`), at its point.
 - **Detach** (`detach`): before a buffer is closed, every place held in it,
   in every window's jumps and in the global marks, becomes a place in its
   file, with its row and its column in characters; a buffer with no file

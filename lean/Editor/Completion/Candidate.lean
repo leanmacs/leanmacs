@@ -117,7 +117,7 @@ structure Query where
   place : Place := {}
   /-- What the command that opened the prompt hands its sources: plain
   arguments a source reads, such as the command that lists a workspace's
-  files (`Editor/Workspace/FindFile.lean`). Empty for every other prompt,
+  files (`packages/workspace/Workspace/FindFile.lean`). Empty for every other prompt,
   and for a session at point. -/
   context : List Argument := []
   deriving DecidableEq, Repr

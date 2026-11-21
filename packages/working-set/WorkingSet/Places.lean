@@ -26,8 +26,8 @@ kept in memory only (no state directory). The name of the set last used,
 and whether the memory-only sentence was said, are kept beside the sets.
 
 This module imports the editor API and the re-find ladder alone, so the
-file commands (`Editor/Files.lean`) and the buffer commands
-(`Editor/Buffers.lean`) can call its hooks, as they call `Jumps.detach` and
+file commands (`packages/files/Files.lean`) and the buffer commands
+(`packages/buffers/Buffers.lean`) can call its hooks, as they call `Jumps.detach` and
 `Jumps.attach`.
 
 - **Detach** (`detach`, called by `Buffers.closeInto` before a buffer is

@@ -16,7 +16,7 @@ The setup port registers contributions (`Editor/Setup.lean`), the registry
 holds them by owner (`Editor/Config/Registry.lean`, "Compile
 contributions"), the loop is told them (`Hook`, `Loop.Registered.compile`),
 and the workspace turns a contribution's minor mode on from its markers
-(`Editor/Workspace/Modes.lean`). So the vocabulary is the core's, and the
+(`packages/workspace/Workspace/Modes.lean`). So the vocabulary is the core's, and the
 compile mode, which is a package outside the core (`packages/compile/`;
 `docs/design/packages.md`), is one reader of it: what it makes of
 contributions is in `packages/compile/Compile/Contribution.lean`. The

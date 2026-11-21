@@ -62,7 +62,7 @@ import FilesApiTest.Fake
 
 The model tests of `Compile.lean`: `compileChecks`,
 `compileLocationChecks` and `compileHookChecks`. `compileHookChecks` are of the
-compile hook, which `Editor/Workspace/Modes.lean` and `Compile.lean`
+compile hook, which `packages/workspace/Workspace/Modes.lean` and `Compile.lean`
 share; they are here with the other compile checks. The test driver's root,
 `CompileTest/Model.lean`, runs them; its module doc says what each shows.
 -/

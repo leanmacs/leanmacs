@@ -853,7 +853,7 @@ is queued, and marks that event. What the loop does with the flag is here
 | `focus gained` | Sets whether the frame has the keyboard focus. A gain starts a check of every file buffer after the publish ("Files that changed on disk") |
 | `closeRequested` | Runs the quit rule (`Ex.closeRequested`) as a delivered command is run (`Loop.deliver`), labelled `quit`: it publishes a scene, and says stop only once the editor leaves ("Quit") |
 | `quit` | Nothing: the step says stop, and publishes nothing |
-| `openFiles paths` | Runs `open-file` (`FileJobs.openFileCommand`, `Editor/FileJobs.lean`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
+| `openFiles paths` | Runs `open-file` (`FileJobs.openFileCommand`, `Editor/FileJobs.lean`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`packages/files/Files.lean`, "Open"). With no path it does nothing |
 | `quitRequested` | Remembers that the system asked to quit (`EditorState.systemQuit`) and runs `quit` (`Ex.quitName`) with no arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The step says stop when the editor leaves; otherwise the publish asks the frame `keepRunning` once ("Quit") |
 | `menu name` | Tells the scheme that a menu item named the command `name`, with no arguments, for the focused view (`InputScheme.invoked`), and runs the invocation it hands back as one no key yielded, in the focused window, with the report of the scheme's state it hands back: guarded, rolled back and published as every command is, and config's command of the name runs in its place. A name no command is registered under says so, as an invocation does. The scheme's states are then as after a key: a command that runs to its end keeps the state handed back, which is the state at rest when nothing is pending, and one that does not puts the scheme back at rest. A scheme that treats no menu item apart hands back the invocation and the state as they were, so the command `name` runs |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
@@ -1053,7 +1053,7 @@ check, one stat a file, which the loop asks for at three moments, and a
 save's own check. The loop names the job and its order by the core's
 `Editor/FileJobs.lean` (`FileJobs.checkJob`, `FileJobs.Checked`), and the
 files feature registers and works it (`Files.checkWork`,
-`Editor/Files.lean`).
+`packages/files/Files.lean`).
 
 - **When.** After each publish, `Loop.fileJobs` compares the state with
   `Loop.seen`, what the last publish saw (`Loop.seenOf`: whether the frame

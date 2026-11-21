@@ -7,8 +7,8 @@ import Editor.Workspace
 
 The one rule every search of a workspace's files decides what it searches
 by, pure, from the editor state and the call: the finder of a workspace's
-files (`Editor/Workspace/FindFile.lean`, which adds the lister) and project
-search (`Editor/ProjectSearch/Run.lean`). It is a core module, so a search
+files (`packages/workspace/Workspace/FindFile.lean`, which adds the lister) and project
+search (`packages/project-search/ProjectSearch/Run.lean`). It is a core module, so a search
 reaches the rule through the core and imports no other feature for it.
 
 Its declarations are in `Editor.Workspace` (`Workspace.SearchRoot`,

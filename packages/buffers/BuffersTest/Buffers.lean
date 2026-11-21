@@ -66,8 +66,8 @@ def inactiveStatusOf (driver : TestDriver) (view : ViewId) (name : String) :
 def bufferNamed (driver : TestDriver) (name : String) : Option BufferId :=
   driver.loop.state.findBuffer name
 
-/-- The checks of the buffer commands (`Editor/Buffers.lean`,
-`Editor/Buffers/Compiled.lean`) and the ex names `b`, `ls` and `bd`, on the
+/-- The checks of the buffer commands (`packages/buffers/Buffers.lean`,
+`packages/buffers/Buffers/Compiled.lean`) and the ex names `b`, `ls` and `bd`, on the
 loop's driver over the editor's models, the model of files and the test
 scheme. Each message is read from the function that makes it, and an order
 the fuzzy matcher decides is computed with its model. -/

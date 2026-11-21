@@ -61,7 +61,7 @@ request of the editor's port (`EditorRequest.registry`,
 - `workspaceSettings` is answered config's workspace roots and the config
   generation: what the finder is handed. Its settings carry config's
   workspace listers too, which choose what lists a workspace's files
-  (`Editor/Workspace/Lister.lean`).
+  (`packages/workspace/Workspace/Lister.lean`).
 - `displayRules` is answered config's display rules, in order
   (`Editor/DisplayRules.lean`).
 - `shellTimeLimit` and `syntaxRefreshDelay` are answered config's shell

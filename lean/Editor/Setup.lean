@@ -484,7 +484,7 @@ A reload that installs takes the roots, and bumps the config generation, so
 the next file opened asks its directory's workspace again.
 
 Config chooses the command that lists a workspace's files, for
-`find-file-in-workspace` (`Editor/Workspace/Lister.lean`), for one root
+`find-file-in-workspace` (`packages/workspace/Workspace/Lister.lean`), for one root
 with `workspaceLister`, or for every workspace of a project, by its
 identity, with `projectLister`; a root's lister is used before its
 project's, and either before git's and the fallback's:
@@ -662,13 +662,13 @@ inductive SetupRequest where
   | workspace (root : System.FilePath) (project : Option String)
   /-- Declare `declared` the command that lists the files of a workspace
   root, or of every workspace of a project
-  (`Editor/Workspace/Lister.lean`). -/
+  (`packages/workspace/Workspace/Lister.lean`). -/
   | workspaceLister (declared : Workspace.DeclaredLister)
   /-- Add `rule` to the display rules, after the ones made before it
   (`Editor/DisplayRules.lean`). -/
   | displayRule (rule : DisplayRule)
   /-- Set how long a `:!` or a filter may run, in milliseconds, before it is
-  killed (`Editor/Shell.lean`). -/
+  killed (`packages/shell/Shell.lean`). -/
   | shellTimeLimit (milliseconds : Nat)
   /-- Set how long a text goes unchanged after an edit, in milliseconds,
   before it is parsed whole again (`Editor/Highlight.lean`). -/
@@ -1249,7 +1249,7 @@ def autoReload (on : Bool := true) : SetupM Unit :=
 
 /-- Sets how long a `:!` or a filter may run before its child is killed and
 the echo area says so, in milliseconds: 30 000 when config says nothing
-(`Shell.defaultTimeLimit`, `Editor/Shell.lean`). A reload changes it for
+(`Shell.defaultTimeLimit`, `packages/shell/Shell.lean`). A reload changes it for
 the next run. A second call in one `setup` is refused, as a second frame
 padding is. -/
 def shellTimeLimit (milliseconds : Nat) : SetupM Unit :=
@@ -1296,7 +1296,7 @@ def relativeLister (program : String) : String :=
   s!"a workspace lister's program must be a bare name or an absolute path: {program}; run a script of the project's own as `sh` with the script as its argument"
 
 /-- Declares the command that lists the files of the workspace whose root is
-`root` (`Editor/Workspace/Lister.lean`): `program` with `arguments`, run at
+`root` (`packages/workspace/Workspace/Lister.lean`): `program` with `arguments`, run at
 the root, its standard output the root-relative paths, one a line, or one
 a NUL-ended record with `nul`. It is used in place of git's and the
 fallback's, and of a lister its project declares. Refuses the `setup` for
@@ -1314,7 +1314,7 @@ def workspaceLister (root : System.FilePath) (program : String) (arguments : Arr
         (.workspaceLister { scope := .root root, program, arguments, nul }))
 
 /-- Declares the command that lists the files of every workspace of the
-project identified by `project` (`Editor/Workspace/Lister.lean`), as
+project identified by `project` (`packages/workspace/Workspace/Lister.lean`), as
 `workspaceLister` does for one root; a root's own lister is used before
 it. Refuses the `setup` for a program that names a relative path, and for
 a project given a lister twice. -/

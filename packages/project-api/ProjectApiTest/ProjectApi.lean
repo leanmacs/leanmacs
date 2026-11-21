@@ -1,6 +1,6 @@
 import Editor.Extension
-import ModelTest.Check
 import ProjectApi
+import ProjectApiTest.Check
 import ProjectApiTest.Contract
 import ProjectApiTest.Fake
 
@@ -8,12 +8,12 @@ import ProjectApiTest.Fake
 # Model tests: `ProjectApi.lean`
 
 `projectApiChecks`: the interface library `project-api`'s names, its fake
-held to its contract, and the contract biting on implementations that
-leave something out or whose reach hands nothing on. The root module
-`ModelTest` runs them; its module doc says what each shows.
+held to its contract, and the contract biting on implementations that leave
+something out or whose reach hands nothing on. The test driver's root,
+`ProjectApiTest/Model.lean`, runs them; its module doc says what each shows.
 -/
 
-namespace ModelTest
+namespace ProjectApiTest
 
 open Editor
 
@@ -78,4 +78,4 @@ def projectApiChecks : List Check :=
             (ProjectApi.workspacesIn
                 #[ProjectApiTest.workspacesOver ProjectApiTest.fakeFound, other]).isSome }]
 
-end ModelTest
+end ProjectApiTest

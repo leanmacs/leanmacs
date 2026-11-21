@@ -41,7 +41,7 @@ general `attachBy` and `attachByPackage`): `/r` is a
 main checkout on `main`, `/w` a linked worktree of it on `feature`, both
 with the origin `openOrigin`, and `/x` is in none. It names no module of the
 workspace feature: the workspace's world, finder jobs, commands, keys and
-driver are that feature's kit (`Editor/Workspace/Kit.lean`). Shared by
+driver are that feature's kit (`packages/workspace/WorkspaceTest/Kit.lean`). Shared by
 several test modules; it holds no checks of its own.
 
 Published for a package's tests: it is a module of the core's test kit, a

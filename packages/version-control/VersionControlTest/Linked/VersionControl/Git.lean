@@ -18,8 +18,8 @@ implementation of the version-control interface over real git, and
 `inLanesChecks` and `versionControlFailures`, the contract of the interface
 library `vc-api` (`VcApiTest/Contract.lean`) run against the git
 implementation over real git, the implementation version control registers
-as `vc-api`'s backend (D7 (c): the core keeps the model's run,
-`ModelTest.versionControlContractFailures`). The linked test's root,
+as `vc-api`'s backend (D7 (c): `vc-api` keeps the model's run,
+`VcApiTest.versionControlContractFailures`, in `vc-api`). The linked test's root,
 `VersionControlTest/Linked.lean`, runs them; its module doc says what each
 shows.
 -/

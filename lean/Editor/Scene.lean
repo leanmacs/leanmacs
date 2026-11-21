@@ -260,7 +260,7 @@ structure View where
   blocks : Array Block := #[]
   /-- Its gutter marks, drawn in its gutter column (`Padding.gutter`): the
   added, removed and changed lines of a tracked file
-  (`Editor/VersionControl/Gutter.lean`). None by default. -/
+  (`packages/version-control/VersionControl/Gutter.lean`). None by default. -/
   marks : Array GutterMark := #[]
   deriving DecidableEq, Repr
 

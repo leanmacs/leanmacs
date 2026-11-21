@@ -47,9 +47,11 @@
 #   module, adopts files and reads the load limit through it. `BuffersApi`
 #   and `ShellApi` are staged in the core until ex, which reaches them,
 #   moves out (the features-as-packages roadmap's phase 8). `ProjectApi` and
-#   `VcApi` are staged until no core module imports them, and leave this
-#   list when they move into interface packages of their own, in its
-#   phase 6.
+#   `VcApi`, staged here until no core module imported them, left this list
+#   when they moved into interface packages of their own
+#   (`packages/project-api/`, `packages/vc-api/`), in its phase 6: an
+#   interface package's modules are no modules of the core's Lake package,
+#   so the query names no import of them.
 #   Their test libraries (`<I>Test`, `FilesApiTest.Fake` and the like) are
 #   test doubles (`is_double`), and the linked support under them
 #   (`<I>Test.Linked…`) is of the linked test kit (`is_linked_kit`).
@@ -62,14 +64,14 @@
 #   kit still in the core (`Editor.*.Kit`, such as `Editor.Files.Kit`, the
 #   drivers of the real file commands), which moves into that feature's
 #   test library when it moves out; and the test libraries of the core
-#   interfaces (`FilesApiTest`, `BuffersApiTest`, `ShellApiTest`,
-#   `ProjectApiTest`, `VcApiTest`: their fakes, contract checks and
-#   support) but what is under `<I>Test.Linked`. A test module, of any of
+#   interfaces (`FilesApiTest`, `BuffersApiTest`, `ShellApiTest`: their
+#   fakes, contract checks and support) but what is under `<I>Test.Linked`. A test module, of any of
 #   the three test kinds, may import one; a library module may not.
 # - The linked test kit (`is_linked_kit`): `Editor.Test.Linked` and
 #   everything under it, the rig of the core's checks over the real
 #   services, and a core interface's linked support (`<I>Test.Linked` and
-#   everything under it, such as `VcApiTest.Linked.Repositories`). It runs
+#   everything under it; none has one since `vc-api`, whose
+#   `VcApiTest.Linked.Repositories` was one, moved out of the core). It runs
 #   over the Rust library and hands over the loop, the real bindings and
 #   the raw bindings, so only the linked test may import it: its root
 #   (`linked`) and the modules under it (`linked-test`). A
@@ -149,7 +151,7 @@ is_double() {
     Editor.*.Kit) return 0 ;;
     Editor.*.Model | Editor.*.Model.*) return 0 ;;
     Editor.*Contract | Editor.*.Cases) return 0 ;;
-    FilesApiTest.* | BuffersApiTest.* | ShellApiTest.* | ProjectApiTest.* | VcApiTest.*) return 0 ;;
+    FilesApiTest.* | BuffersApiTest.* | ShellApiTest.*) return 0 ;;
   esac
   return 1
 }
@@ -159,7 +161,7 @@ is_double() {
 # `internal_reason`, which would refuse it as no module of the editor.
 is_core_interface() {
   case $1 in
-    FilesApi | BuffersApi | ShellApi | ProjectApi | VcApi) return 0 ;;
+    FilesApi | BuffersApi | ShellApi) return 0 ;;
   esac
   return 1
 }

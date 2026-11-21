@@ -16,9 +16,9 @@ demo	DemoTest.Demo	test	Editor.Themes.Picture
 demo	DemoTest.Demo	test	Editor.Loop.Driver
 demo	DemoTest.Demo	test	Editor.Test.Driver
 demo	DemoTest.Demo	test	Editor.Files.Kit
-demo	DemoTest.Demo	test	VcApiTest.Fake
+demo	DemoTest.Demo	test	FilesApiTest.Fake
 demo	DemoTest.Demo	test	Editor.Test.Linked.Rig
-demo	DemoTest.Demo	test	VcApiTest.Linked.Repositories
+demo	DemoTest.Demo	test	FilesApiTest.Linked.Support
 demo	DemoTest.Demo	test	Editor.Loop
 demo	DemoTest.Demo	test	Editor.Config.Packages
 demo	DemoTest.Demo	test	Editor.Config.Reload
@@ -34,7 +34,7 @@ demo	DemoTest.Linked.Demo	linked-test	Editor.Headless
 demo	DemoTest.Linked.Demo	linked-test	Editor.Text.Real
 demo	DemoTest.Linked.Demo	linked-test	Editor.Ffi.Processes
 demo	DemoTest.Linked	linked	Editor.Test.Linked.Services
-demo	DemoTest.Linked	linked	VcApiTest.Linked.Repositories
+demo	DemoTest.Linked	linked	FilesApiTest.Linked.Support
 demo	DemoTest.Linked	linked	Editor.Text.Real
 demo	DemoTest.Linked	linked	Editor.Headless
 demo	DemoTest.Linked	linked	Editor

@@ -13,7 +13,7 @@ repository of `vc-api`'s model written out with git's plumbing
 (`writeGitRepository`), and a fresh home and repository directory for a
 check (`withRepository`). A command with its own `PATH` is the linked test
 kit's (`Editor/Test/Linked/Rig.lean`, `onChanged`). Shared by the
-version-control checks (`ContractTest/Support/Git.lean`), the workspace
+version-control checks (`VersionControlTest/Linked/Support/Git.lean`), the workspace
 lister's and the working sets'; it names no version-control
 implementation. It holds no checks of its own. Published with the fake as
 `vc-api`'s linked test support: a package's linked tests may import it, and

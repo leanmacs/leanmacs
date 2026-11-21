@@ -26,7 +26,7 @@ import Files.Paths
 # The files feature's test kit: the drivers of the real file commands
 
 The keys, jobs and drivers that run the files feature's own commands and
-jobs (`Editor/Files.lean`, `Editor/Files/Compiled.lean`) on the loop's
+jobs (`packages/files/Files.lean`, `packages/files/Files/Compiled.lean`) on the loop's
 driver over the models: what the files feature's tests, and the compile
 mode's, which still reach the real file commands, are written on. It names
 no other feature and no ex package: the ex lines its reload driver types

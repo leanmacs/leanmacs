@@ -151,12 +151,7 @@ import ModelTest.Editor.WindowCommands
 import ModelTest.Editor.Workspace
 import ModelTest.EditorCore.EditorPackage
 import ModelTest.FilesApi
-import ModelTest.ProjectApi
 import ModelTest.ShellApi
-import ModelTest.VcApi
-import ModelTest.VcApiTest.Contract
-import ModelTest.VcApiTest.Fake
-import VcApiTest.Contract
 
 /-!
 # The model tests
@@ -1126,25 +1121,14 @@ names a scheme's key:
   none. Evil's `*` and `#` hold the same through the keys
   (`evilSearchChecks`).
 
-The interface libraries the core stages, and what of version control is
-the core's, are checked with no git, on the model of a repository
-(`VcApiTest/Fake.lean`) and the job model (the version-control commands,
-their git implementation and the gutter's package are the
-`version-control` package's, `packages/version-control/`, whose test
-driver runs their checks, `VersionControlTest.versionControlParserChecks`
-and the rest, which were this driver's):
+The interface libraries the core stages are checked with no git, on the
+core's kit (version control is the `version-control` package's,
+`packages/version-control/`; the interface packages `vc-api` and
+`project-api`, staged here until phase 6, check their own,
+`VcApiTest.vcApiChecks`, `.versionControlModelChecks`,
+`.versionControlContractFailures` and `ProjectApiTest.projectApiChecks`,
+which were this driver's):
 
-- `versionControlModelChecks`: the model of a repository, the fake of the
-  interface library `vc-api` (`VcApiTest/Fake.lean`): its status of each
-  state, how it pairs renames, and what its writes do;
-- `vcApiChecks`: the interface library `vc-api` (`VcApi.lean`): the backend
-  point is a choice by the name `git`, so a consumer connects through the
-  latest backend of that name, config's after a package's, never through
-  one of another name, and with no `git` backend has no connection; its names are the core's
-  gutter jobs and the default order's `review`; the fake's backend answers
-  from the model; and its registration check holds of a package that
-  registers the backend `git`, the gutter jobs and the segment, and fails
-  one that leaves any of them out;
 - `filesApiChecks`: the interface library `files-api` (`FilesApi.lean`):
   its names; its fake (`FilesApiTest.fake`, the kit's opener with the
   hooks as its runners) keeps its contract; the contract fails a package
@@ -1165,14 +1149,6 @@ and the rest, which were this driver's):
   its contract; the contract fails a package lacking `keyboard-quit`, one
   that registers no codec for the history, and one whose `shell-command`
   records nothing; and `remember`'s rule;
-- `projectApiChecks`: the interface library `project-api` (`ProjectApi.lean`):
-  its names; its fake (`ProjectApiTest.fake`, a `Workspaces` value that
-  hands every continuation a given workspace) keeps its contract; the
-  contract fails a package lacking `find-file-in-project` and one whose
-  reach hands nothing on; and a job over the point with no value fails
-  naming its continuation's job;
-- `versionControlContractFailures`: the version-control contract
-  (`VcApiTest/Contract.lean`) against the model;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1549,12 +1525,9 @@ def checks : List Check :=
     formatDataChecks ++
     listingChecks ++
     turnOnModesChecks ++
-    versionControlModelChecks ++
-    vcApiChecks ++
     filesApiChecks ++
     buffersApiChecks ++
     shellApiChecks ++
-    projectApiChecks ++
     gutterCarryChecks ++
     gutterTrackChecks
 
@@ -1589,8 +1562,7 @@ def main : IO UInt32 := do
       (← ModelTest.clipboardFailures) ++
       (← ModelTest.fuzzyFailures) ++
       (← ModelTest.syntaxTreeFailures) ++
-      (← ModelTest.apiCaseFailures) ++
-      (← ModelTest.versionControlContractFailures)
+      (← ModelTest.apiCaseFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
@@ -1598,6 +1570,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.grepProperties.length} search properties of both, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {Editor.VersionControlContract.properties.length} properties of the version-control interface hold of its model"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.grepProperties.length} search properties of both, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
   (← IO.getStdout).flush
   IO.Process.exit 0

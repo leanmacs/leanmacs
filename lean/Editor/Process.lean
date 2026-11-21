@@ -45,7 +45,7 @@ Starting, waiting for, killing and reaping a child are the library's
   pipe holds cannot hold a child that writes as it reads. A child that
   does not read its input, or not all of it, is no refusal: the run
   answers what the child did. It is how a filter feeds lines to a command
-  (`Editor/Shell.lean`).
+  (`packages/shell/Shell.lean`).
 - **A run that keeps its head** (`ProcessRequest.runHead`) is a fed run
   whose standard output past its limit is not refused: the library keeps
   exactly its first `limit` bytes, kills the child's group, and the run

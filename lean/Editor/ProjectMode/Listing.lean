@@ -17,8 +17,8 @@ the listing (`listWork`), and the job's command, which keeps what it gave
 
 It is a core module: running a contribution's `listing` and keeping what
 it gave is upkeep of the core's own data, and the workspace starts a check
-when a mode turns on (`Editor/Workspace/Modes.lean`, which
-`Editor/Workspace/Attach.lean` imports). So it imports neither the
+when a mode turns on (`packages/workspace/Workspace/Modes.lean`, which
+`packages/workspace/Workspace/Attach.lean` imports). So it imports neither the
 compile mode, which is a package outside the core (`packages/compile/`;
 `docs/design/packages.md`), nor `Editor.Files`. The compile mode reads what is kept (`listedCommands`)
 and starts a check of its own (`refreshListings`); a set of packages
@@ -27,7 +27,7 @@ reads. The declarations keep their names in `Editor.Compile`
 (`Compile.refreshListings`, `Compile.listJob`, the store
 `compile-listings`), as the contribution's do (`Editor/ProjectMode.lean`),
 and the job `compile-list` is registered by the `workspace` package
-(`Editor/Workspace/Compiled.lean`), beside `find-mode-markers`, which
+(`packages/workspace/Workspace/Compiled.lean`), beside `find-mode-markers`, which
 starts it.
 
 ## The rules
@@ -71,7 +71,7 @@ starts it.
 What a buffer's on-modes come to once they are known (`Workspace.OnMode`,
 `Editor/Workspace.lean`, "Modes on markers"), in `Editor.Workspace`: the
 core's, so the workspace's marker job (`Workspace.modesFound`,
-`Editor/Workspace/Modes.lean`) and a test's stand-in for it turn modes on by
+`packages/workspace/Workspace/Modes.lean`) and a test's stand-in for it turn modes on by
 one rule, and the compile mode reads them back without the workspace.
 
 - **Turning them on** (`turnOnModes`): the on-modes, nearest first, are kept

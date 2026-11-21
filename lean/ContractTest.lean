@@ -34,7 +34,6 @@ import Editor.Test.Linked.Services
 import Editor.Text.Contract
 import Editor.UndoTree.Cases
 import Editor.Watch.Contract
-import VcApiTest.Contract
 
 /-!
 # The contract checks against the real bindings
@@ -256,7 +255,7 @@ whose linked test runs them (`VersionControlTest.Linked.inLanesChecks`,
 `versionControlFailures`, `versionControlChecks`, `statusBufferChecks`,
 `reviewBufferChecks` and `historyBufferChecks`, which were this
 executable's). The contract's run against the model is the core's
-(`ModelTest.versionControlContractFailures`).
+(`VcApiTest.versionControlContractFailures`, in the interface package `vc-api`).
 
 `filteringChecks` runs a source a command filters
 (`Editor/Completion/Filtering.lean`) over the real process service, with

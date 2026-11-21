@@ -38,7 +38,7 @@ before the first event (`Options.starts`). It reads nothing itself, so
   nothing; a given one is reloaded whether it exists or not, so that a
   directory that does not exist is a rejected reload, said in the echo area.
 - **`--state`** is the state directory, where what is kept across a
-  restart lives (the working sets, `Editor/WorkingSet/Disk.lean`). When not
+  restart lives (the working sets, `packages/working-set/WorkingSet/Disk.lean`). When not
   given it is `leanmacs` under `$XDG_STATE_HOME`, or under
   `$HOME/.local/state` when that is unset or empty; none when neither is
   set, and then nothing is kept across a restart. The host hands it to the

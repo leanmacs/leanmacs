@@ -6,7 +6,7 @@ import Editor.Api
 The interface library `shell-api`, staged in the core's Lake package as its
 own `lean_lib` with the layout and names it will have as the package
 `packages/shell-api/` (`lean/lakefile.lean`, `lean_lib ShellApi`): the
-contract between the shell (`Editor/Shell.lean`), which implements it, and
+contract between the shell (`packages/shell/Shell.lean`), which implements it, and
 what others take of it. Ex, still in the core, binds `:!` to the shell's
 commands by name and offers the history of the lines run on its prompt;
 the compile mode copies the history's store and its rule. So it stays

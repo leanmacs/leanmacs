@@ -107,7 +107,7 @@ names a snapshot.
 **The store's byte escape rule** is here, pure, for whatever must turn
 bytes that are not a text into one, or a text back into bytes, as the
 library does: the file model (`Editor/File/Model.lean`) and the shell's
-output and filters (`Editor/Shell.lean`). `File.decodeBytes` keeps each
+output and filters (`packages/shell/Shell.lean`). `File.decodeBytes` keeps each
 valid character as it is, each byte that starts none as its escape
 (`File.escape`, the character `U+10DC00` plus the byte) and a valid
 character that is itself an escape as the escapes of its bytes, so the way

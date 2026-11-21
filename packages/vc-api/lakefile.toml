@@ -1,0 +1,54 @@
+# The interface package of version control (docs/design/extension-points.md,
+# "Three layers"): the version-control port, in the editor's own terms, its
+# hunk helpers, the backend point `VcApi.Backend` that the default package
+# `version-control` registers git's implementation at, and the names others
+# reach. Its test library publishes the pure model of a repository, its
+# fake (`VcApiTest/Fake.lean`), the contract every implementation is held to
+# (`VcApiTest/Contract.lean`), and the repositories tests build over them,
+# of the model and, for linked tests alone, written out with real git
+# (`VcApiTest/Linked/Repositories.lean`). It registers no behaviour.
+#
+# It is an interface package: it declares the keyword `editor-interface`
+# below, so another package may import its modules, and the layer imports
+# check reads that keyword from Lake (tools/layer-imports-check.sh). It was
+# staged in the core's Lake package as its own `lean_lib` with this layout
+# and these names until features-as-packages phase 6, when its last user in
+# the core moved out, and moved here with `git mv`, no import line changed.
+#
+# - `VcApi` is the package's library: `VcApi.lean`.
+# - `VcApiTest` holds what it publishes for other packages' tests, as the
+#   owner of a port publishes its fake and its contract check (AGENTS.md,
+#   "Testing with hand-written mocks"), and its own tests, which were the
+#   core's model tests (`ModelTest.<name>`) until it moved.
+# - `vc-api-test` is its test driver (`lake test`), rooted at
+#   `VcApiTest/Model.lean`. It is no default target, as the core's
+#   `model-test` is not: `mise run lean` links with the system compiler,
+#   which this executable has no flags for.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/vc-api update --keep-toolchain
+# then the same for every package and set that reaches this package
+# (packages/version-control, packages/working-set, packages/workspace, packages/, tests/packages, tests/user-link,
+# tests/layer-imports), and commit each lake-manifest.json.
+name = "vc-api"
+keywords = ["editor-interface"]
+testDriver = "«vc-api-test»"
+defaultTargets = ["VcApi", "VcApiTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "VcApi"
+
+[[lean_lib]]
+name = "VcApiTest"
+globs = ["VcApiTest.+"]
+
+[[lean_exe]]
+name = "vc-api-test"
+root = "VcApiTest.Model"

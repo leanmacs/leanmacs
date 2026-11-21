@@ -12,7 +12,7 @@ journal's reconciler and its job's name are (`Editor/Restore.lean`). The
 state it keeps is the core's (`EditorState.tracked` and
 `EditorState.refWatches`, `Editor/State.lean`), and the jobs it starts are
 named here; version control registers and works them
-(`Editor/VersionControl/Gutter.lean`), and a set that does not register all
+(`packages/version-control/VersionControl/Gutter.lean`), and a set that does not register all
 three starts none of them.
 
 ## Which buffers
@@ -151,7 +151,7 @@ it is a tracked file ("Which buffers", in the module docs): it has a file,
 and its workspace is a local root that can run commands and is a
 repository, with the file under the root. The gutter tracks these
 buffers, and version control stages a hunk in them
-(`Editor/VersionControl/Stage.lean`). -/
+(`packages/version-control/VersionControl/Stage.lean`). -/
 def trackedFile? (state : EditorState) (id : BufferId) : Option (System.FilePath × String) := do
   let buffer ← state.buffer? id
   let file ← buffer.file

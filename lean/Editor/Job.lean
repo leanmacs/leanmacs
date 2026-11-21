@@ -53,7 +53,7 @@ its end and replies with how it ended and both its output streams, or a
 refusal: an `Except ProcessError`, a value, which the job matches on.
 `Process.runWithin` does so under a time limit, and `Process.runWithInput`
 also feeds the child its standard input, then end of file, as a filter
-does (`Editor/Shell.lean`); `Process.runHead` keeps only the head of what a
+does (`packages/shell/Shell.lean`); `Process.runHead` keeps only the head of what a
 fed child writes, and ends it there. `Process.start` starts a streaming child, which the job then reads
 (`Process.read`, a delivery of lines or bytes at a time), writes to
 (`Process.write`, `Process.writeLine`) and closes the input of

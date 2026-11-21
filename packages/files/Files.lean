@@ -17,7 +17,7 @@ never waits for a file.
 
 `Editor.lean` imports this module, so config calls `Files.open` and
 `Files.save`. The commands and the jobs as the `files` package registers
-them are in `Editor/Files/Compiled.lean`.
+them are in `packages/files/Files/Compiled.lean`.
 
 ## Open
 
@@ -46,7 +46,7 @@ them are in `Editor/Files/Compiled.lean`.
   interface library `files-api`'s hook `FilesApi.Opened`
   (`FilesApi.runOpened`), every value in registration order: the
   workspace's attaches the buffer to its workspace (`Workspace.attach`,
-  `Editor/Workspace/Attach.lean`: the cached workspace of the file's
+  `packages/workspace/Workspace/Attach.lean`: the cached workspace of the file's
   directory at once, otherwise the job `find-workspace`), and the working
   sets' places their ranges (`WorkingSet.attach`). Files names neither. A
   path a buffer already holds is shown and runs no hook.
@@ -59,7 +59,7 @@ them are in `Editor/Files/Compiled.lean`.
   recorded and no mode is set: the buffer opens with no major mode and the
   syntax tree port is asked nothing. A path a buffer already holds is shown,
   and nothing is chosen again. The minor modes a file's markers turn on
-  (`Editor/Workspace/Modes.lean`) come later, from the marker job that
+  (`packages/workspace/Workspace/Modes.lean`) come later, from the marker job that
   `Workspace.attach` starts, in that job's own command: setting the major
   mode leaves a buffer's minor modes alone and adding a minor mode leaves
   its major mode alone (`ModelTest.stateChecks`' mode checks), so a file
@@ -75,7 +75,7 @@ them are in `Editor/Files/Compiled.lean`.
   given its language and `code`, or the buffer that already holds the path,
   with no view; the open's command is `adopt` with the view it shows the
   buffer in. The review buffer takes in the files it shows so
-  (`Editor/VersionControl/Review.lean`).
+  (`packages/version-control/VersionControl/Review.lean`).
 - **The name** is the path's base name. When a buffer already has that
   name it is the base name followed by `<2>`, `<3>` and so on, the first
   that is free (`EditorState.freeName`), so a second file of one base name
@@ -168,7 +168,7 @@ them are in `Editor/Files/Compiled.lean`.
   with the shipped file source (`Completion.Paths.source`) as their
   default, so config adds to what it lists by registering a source in the
   category. The style the `files` package gives the category is the path style
-  (its `useStyleFor`, `Editor/Files/Compiled.lean`).
+  (its `useStyleFor`, `packages/files/Files/Compiled.lean`).
 - **The command resolves each path it is given** (`resolve`) before it
   opens it: a leading `~` under the home directory, an absolute path as it
   is, and anything else under the asking view's directory, with `.` and
@@ -216,7 +216,7 @@ them are in `Editor/Files/Compiled.lean`.
   (`saved`), after the save is ended; a refused save starts nothing, and
   its refusal is said as any save's is. `vc-stage-hunk` saves this way,
   so the hunk it stages is of the file as written
-  (`Editor/VersionControl/Stage.lean`). Starting a job is a state request,
+  (`packages/version-control/VersionControl/Stage.lean`). Starting a job is a state request,
   so the command still makes no request of the text store. A refused
   start is said in place of `wrote <path>`.
 - **A forced save** (`Files.save id true`) expects whatever is there
@@ -524,7 +524,7 @@ file (`EditorState.freeName`), holding the file, attached to its workspace,
 with the language the registry chooses for its name and the mode `code`.
 When `view` is given the buffer is shown in it first, and the mode is set
 through it, as an open does; with none it is shown nowhere, as the review
-buffer takes in a file (`Editor/VersionControl/Review.lean`). `none` when a
+buffer takes in a file (`packages/version-control/VersionControl/Review.lean`). `none` when a
 step is refused: a name, the file, or showing it. -/
 def adopt (path : System.FilePath) (loaded : File.Loaded) (view : Option ViewId := none) :
     EditorM (Option BufferId) := do

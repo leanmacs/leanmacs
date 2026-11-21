@@ -19,10 +19,10 @@
 #   and which lists both packages. It has no root module
 #   (`VersionControl.lean`), so its `globs` hold every module under
 #   `VersionControl` and none at the root, and the package imports check
-#   sees each one's imports. It implements the core's interface library
-#   `vc-api` (its backend `git`, the gutter's jobs and the segment) and
-#   reaches a path's workspace through `project-api`, both still the core's,
-#   so it requires no package but the core.
+#   sees each one's imports. It implements the interface package `vc-api`
+#   (its backend `git`, the gutter's jobs and the segment) and reaches a
+#   path's workspace through the interface package `project-api`, both of
+#   which it requires, beside the core.
 # - `version-control-test` is its test driver (`lake test`): the tests that
 #   need no Rust library, rooted at `VersionControlTest/Model.lean`. It is no
 #   default target, as the core's `model-test` is not: `mise run lean` links
@@ -52,6 +52,20 @@ name = "version-control"
 testDriver = "«version-control-test»"
 defaultTargets = ["VersionControl", "VersionControlTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+
+# The interface package of the workspaces: the reach of the workspace at a
+# path, which the worktree list's visit reaches through, and its fake.
+[[require]]
+name = "project-api"
+path = "../project-api"
+
+# The interface package this one implements: the version-control port, the
+# backend point git's implementation is registered at, and the gutter's and
+# the segment's names, with the model, the contract and the registration
+# check its tests run.
+[[require]]
+name = "vc-api"
+path = "../vc-api"
 
 [[require]]
 name = "editor-core"

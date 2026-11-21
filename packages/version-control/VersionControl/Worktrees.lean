@@ -14,7 +14,7 @@ buffer of generated text, one per workspace, whose `activate` opens the
 status buffer (`VersionControl/Status.lean`) of the worktree on the
 cursor's line. Written over the editor API (`Editor/Api.lean`), the job
 port (`Editor/Job.lean`), the workspace finder
-(`Editor/Workspace/Finder.lean`) and the version-control interface
+(`packages/workspace/Workspace/Finder.lean`) and the version-control interface
 (`Editor/VersionControl.lean`), through its git implementation. As the
 status buffer's, a read is the command that starts the job
 `vc-worktrees-read`, the job, which asks `worktrees`, and the command it

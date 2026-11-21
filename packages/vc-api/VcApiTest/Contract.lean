@@ -13,20 +13,20 @@ Properties every implementation of the version-control port must have,
 each a program over the port and the repository it starts from. One list,
 run three ways, so the model cannot drift from git:
 
-- by `model-test`, against the model (`Model.handle`, `VcApiTest/Fake.lean`),
-  from the property's repository;
-- by `model-test`, the git implementation's status read of each property's
-  repository, on the job model whose scripts print the model's status as
-  git would (`Repository.jobModel`, version control's
-  `Editor/VersionControl/Git/Model.lean`): the job model holds static
+- by this package's test driver, `vc-api-test`, against the model
+  (`Model.handle`, `VcApiTest/Fake.lean`), from the property's repository;
+- by the `version-control` package's test driver, the git implementation's
+  status read of each property's repository, on the job model whose scripts
+  print the model's status as git would (`Repository.jobModel`, version
+  control's `VersionControlTest/Git/Model.lean`): the job model holds static
   scripts, so only a read runs there;
-- by `contract-test`, against the git implementation over the library's
+- by that package's linked test, against the git implementation over the library's
   process service, each property in a temporary repository of its own,
   eight properties at a time, written from the property's
-  repository with git's plumbing (`ContractTest.writeGitRepository`),
+  repository with git's plumbing (`VcApiTest.Linked.writeGitRepository`),
   under a user config that asks for copies and for no untracked files,
   which the git implementation's command line pins away
-  (`ContractTest.pinnedAwayConfig`).
+  (`VersionControlTest.Linked.pinnedAwayConfig`, in the `version-control` package).
 
 Property 1 is the adapter test of the phase's first criterion: git and the
 model agree on a repository with a staged, an unstaged, an untracked, a
@@ -73,7 +73,7 @@ it holds, as the fixture interface package `greeting-api`'s
 
 A new request's behaviour is a new property here, with the repository that
 shows it; what it needs written to disk is the writer's, in
-`ContractTest`.
+`VcApiTest.Linked` (`VcApiTest/Linked/Repositories.lean`).
 -/
 
 namespace Editor.VersionControlContract

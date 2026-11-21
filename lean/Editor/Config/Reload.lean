@@ -153,7 +153,7 @@ the model tests run it with outcomes built by hand
   changes neither.
 - **An install replaces config's workspace listers**
   (`Registry.workspaceListers`): the next `find-file-in-workspace` lists
-  with them (`Editor/Workspace/Lister.lean`). A rejected outcome keeps
+  with them (`packages/workspace/Workspace/Lister.lean`). A rejected outcome keeps
   them.
 - **An install replaces config's compile contributions and project
   commands** (`Registry.replaceContributions`, `Registry.projectCommands`):

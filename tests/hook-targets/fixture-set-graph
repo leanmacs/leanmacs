@@ -4,13 +4,15 @@ greeting-loud	implementation	greeting greeting-api
 echo	implementation	-
 files	implementation	-
 buffers	implementation	-
-workspace	implementation	-
+project-api	interface	-
+vc-api	interface	-
+workspace	implementation	project-api vc-api
 project-search-api	interface	-
 project-search	implementation	project-search-api
 working-set-api	interface	-
-working-set	implementation	working-set-api
+working-set	implementation	working-set-api vc-api
 shell	implementation	-
-version-control	implementation	-
+version-control	implementation	project-api vc-api
 completion-api	interface	-
 completion	implementation	completion-api
 mode-line	implementation	-

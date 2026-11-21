@@ -21,7 +21,7 @@ registered in `Editor/Evil/Compiled.lean`,
 `packages/minibuffer/Minibuffer/Compiled.lean`, for `ex`, which `:` names and
 which opens the ex command line, `Editor/Ex/Compiled.lean`, and, for
 `keyboard-quit`, which `C-g` names and which cancels a running `:!`,
-`Editor/Shell/Compiled.lean`; a name with
+`packages/shell/Shell/Compiled.lean`; a name with
 nothing registered under it says so in the echo area when its key runs.
 The operators' entries are `Evil.operators`
 (`Editor/Evil/Operators.lean`), and the text objects' `Evil.objects`

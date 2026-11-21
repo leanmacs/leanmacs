@@ -21,9 +21,9 @@
 #   package-set build reads. It has no root module (`Workspace.lean`), so its
 #   `globs` hold every module under `Workspace` and none at the root, and
 #   the package imports check sees each one's imports. It implements the
-#   core's staged interface library `project-api` (`ProjectApi`) and reads
-#   version control through `vc-api` (`VcApi`), both still the core's, so it
-#   requires no package but the core.
+#   interface package `project-api` (`ProjectApi`) and reads version
+#   control through the interface package `vc-api` (`VcApi`), both of
+#   which it requires, beside the core.
 # - `workspace-test` is its test driver (`lake test`): the tests that need
 #   no Rust library, rooted at `WorkspaceTest/Model.lean`. It is no default
 #   target, as the core's `model-test` is not: `mise run lean` links with the
@@ -55,6 +55,20 @@ name = "workspace"
 testDriver = "«workspace-test»"
 defaultTargets = ["Workspace", "WorkspaceTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+
+# The interface package this one implements: it declares the reach of the
+# workspace at a path and the names others reach, and publishes the fake and
+# the contract check this package's tests run.
+[[require]]
+name = "project-api"
+path = "../project-api"
+
+# The interface package of version control: the port it reads a
+# repository through, the backend point and the names, and the model and
+# contract its tests run on.
+[[require]]
+name = "vc-api"
+path = "../vc-api"
 
 [[require]]
 name = "editor-core"

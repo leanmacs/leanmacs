@@ -189,7 +189,7 @@ def vocabulary : Array Entry :=
           "A tracked excerpt no scene has shown yet, such as a review buffer's hunk never on screen: drawn by the loop over its bytes (`ExcerptView.unexaminedFace`)." },
       { name := ⟨"working-set-drifted"⟩
         meaning :=
-          "The quote of a working set's range that was not found in its file, shown as it was stored: a span over the whole of its read-only buffer, drawn in the set's buffer through its excerpt (`Editor/WorkingSet/Run.lean`)." },
+          "The quote of a working set's range that was not found in its file, shown as it was stored: a span over the whole of its read-only buffer, drawn in the set's buffer through its excerpt (`packages/working-set/WorkingSet/Run.lean`)." },
       { name := ⟨"block-header"⟩
         meaning :=
           "The header drawn above an excerpt of an excerpt buffer, such as a review buffer's hunk header (`ExcerptView.headerFace`)." }]

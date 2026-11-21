@@ -48,31 +48,18 @@ editor: it is a library of its own, outside `Editor/`, that the generated
 root and the tests that need the list import. -/
 lean_lib EditorCore where roots := #[`EditorCore.EditorPackage]
 
-/-- The interface library `vc-api` (`VcApi.lean`): the version-control port,
-its hunk helpers, the backend point and the names others reach. It is
-staged in the core's Lake package with exactly the layout and names it will
-have as the package `packages/vc-api/` (decided 2026-11-21, the
-features-as-packages roadmap's phase 5): it imports only the core's API, so
-the phase where its last user in the core moves out moves it with a
-`git mv` and a lakefile, changing no import line in it. The core's modules
-import it as they import any library of this package; no package may yet
-(`tools/package-imports-check.sh` classes a module outside `Editor` as no
-module of the editor). -/
-lean_lib VcApi
-
-/-- The test library of `vc-api` (`VcApiTest/`): its fake, the pure model of
-a repository (`VcApiTest.Fake`), its contract check (`VcApiTest.Contract`),
-and the repositories tests build over them, of the model
-(`VcApiTest.Repositories`) and written out with real git
-(`VcApiTest.Linked.Repositories`, for linked tests alone). Staged here as
-`VcApi` is, it imports only the core's API, `VcApi` and the core's test kit,
-the linked kit among it. -/
-lean_lib VcApiTest where globs := #[.submodules `VcApiTest]
-
 /-- The interface library `files-api` (`FilesApi.lean`): the hooks around a
 buffer taking in and writing a file, what files does for others, and the
-names others reach. Staged here as `VcApi` is, and a core interface for
-good: session restore, which stays in the core, reaches files through it. -/
+names others reach. It is in the core's Lake package as its own `lean_lib`,
+outside `Editor`, with the layout and names an interface package has, and
+a core interface for good: session restore, which stays in the core,
+reaches files through it. It imports only the core's API, and its test
+library only that, this library and the core's test kit. The interface
+libraries the features-as-packages roadmap's phase 5 staged here as it is,
+`vc-api` and `project-api`, are interface packages since phase 6
+(`packages/vc-api/`, `packages/project-api/`): their last users left the
+core, and each moved with a `git mv` and a lakefile, no import line in it
+changed. -/
 lean_lib FilesApi
 
 /-- The test library of `files-api` (`FilesApiTest/`): its fake, the core's
@@ -82,7 +69,8 @@ lean_lib FilesApiTest where globs := #[.submodules `FilesApiTest]
 
 /-- The interface library `buffers-api` (`BuffersApi.lean`): the hook before
 a buffer closes, what the buffer commands do for others, and the names
-others reach. Staged here as `VcApi` is. -/
+others reach. Staged here as `FilesApi` is, until ex, which reaches it,
+moves out of the core (phase 8). -/
 lean_lib BuffersApi
 
 /-- The test library of `buffers-api` (`BuffersApiTest/`): its fake, a close
@@ -92,24 +80,14 @@ lean_lib BuffersApiTest where globs := #[.submodules `BuffersApiTest]
 
 /-- The interface library `shell-api` (`ShellApi.lean`): the names of the
 shell's commands, which ex binds `:!` to, and the history of the lines run,
-which ex's prompt offers and the compile mode copies. Staged here as `VcApi`
-is, until ex moves out of the core (phase 8). -/
+which ex's prompt offers and the compile mode copies. Staged here as
+`FilesApi` is, until ex moves out of the core (phase 8). -/
 lean_lib ShellApi
 
 /-- The test library of `shell-api` (`ShellApiTest/`): its fake, the three
 commands over the core's API with a `shell-command` that records its line
 (`ShellApiTest.Fake`), and its contract check (`ShellApiTest.Contract`). -/
 lean_lib ShellApiTest where globs := #[.submodules `ShellApiTest]
-
-/-- The interface library `project-api` (`ProjectApi.lean`): reaching the
-workspace at a path, what a caller hands the reach, and the names others
-reach. Staged here as `VcApi` is. -/
-lean_lib ProjectApi
-
-/-- The test library of `project-api` (`ProjectApiTest/`): its fake, a
-`Workspaces` value that hands every continuation a given workspace
-(`ProjectApiTest.Fake`), and its contract check (`ProjectApiTest.Contract`). -/
-lean_lib ProjectApiTest where globs := #[.submodules `ProjectApiTest]
 
 /-- Code that `ffi-test overflow` has Lean's interpreter run
 (`InterpretedFixture.lean`; `mise run ffi-overflow`). It is a library of its
@@ -1179,12 +1157,12 @@ def relativeUnder (dir file : FilePath) : Option String :=
 #guard relativeUnder "/r/lean" "/r/other/Api.lean" == none
 
 /-- The interface libraries staged in the core's Lake package, each with its
-test library (`lean_lib VcApi`, above): the config base imports them through
-the features still in the core, so the bundle ships them as it ships
-`Editor`. One moves out of this list when it moves to `packages/`. -/
+test library (`lean_lib FilesApi`, above): the config base imports them
+through the features still in the core, so the bundle ships them as it ships
+`Editor`. One moves out of this list when it moves to `packages/`, as
+`VcApi` and `ProjectApi` did in phase 6. -/
 def stagedInterfaceLibraries : List Lean.Name :=
-  [`VcApi, `VcApiTest, `FilesApi, `FilesApiTest, `BuffersApi, `BuffersApiTest, `ProjectApi,
-    `ProjectApiTest, `ShellApi, `ShellApiTest]
+  [`FilesApi, `FilesApiTest, `BuffersApi, `BuffersApiTest, `ShellApi, `ShellApiTest]
 
 /-- Whether a library of `pkg` ships its modules built in the bundle
 (`editorShipped`): of the core, `Editor` and `EditorCore`, the libraries

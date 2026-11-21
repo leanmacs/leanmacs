@@ -11,7 +11,7 @@ yet, such as a worktree of the focused workspace's repository, reaches it
 here and is handed it by its continuation (`Continuation`): what it does
 with the workspace's location, the job its find runs under, the name it
 says a refused start under, and what it says of a directory in no
-repository. `vc-worktrees-visit` (`Editor/VersionControl/Worktrees.lean`)
+repository. `vc-worktrees-visit` (`packages/version-control/VersionControl/Worktrees.lean`)
 and `find-file-in-project` (`Workspace/FindInProject.lean`) are its
 two continuations. Written over the editor API (`Editor/Api.lean`), the job
 port (`Editor/Job.lean`) and the finder, as `Workspace/Attach.lean`

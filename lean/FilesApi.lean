@@ -8,7 +8,7 @@ import Editor.FileJobs
 The interface library `files-api`, staged in the core's Lake package as its
 own `lean_lib` with the layout and names it will have as the package
 `packages/files-api/` (`lean/lakefile.lean`, `lean_lib FilesApi`): the
-contract between the files feature (`Editor/Files.lean`), which implements
+contract between the files feature (`packages/files/Files.lean`), which implements
 it, and what others ask of a file being taken in and written. It imports
 only the core's API, and its test library (`FilesApiTest`) only that, this
 library and the core's test kit. Session restore, which is core, will reach

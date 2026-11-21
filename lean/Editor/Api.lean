@@ -73,7 +73,7 @@ operation, such as `exBinding`, `runCommand` or `giveUp`, not the request.
 - `BufferId.hasUnsavedChanges id` is whether a buffer has unsaved changes
   (`Buffer.unsavedAt`), by a copy of its undo tree told the revision its
   text is at, so an edit made earlier in the same command counts. `quit`,
-  `list-buffers` and `close-buffer` all ask it (`Editor/Buffers.lean`).
+  `list-buffers` and `close-buffer` all ask it (`packages/buffers/Buffers.lean`).
 - `BufferId.text` is the buffer's text. Reading a buffer is the text
   port's reads on it (`TextId.read`, `rowContent`, `slice`, `byteLength`
   and the rest of `Editor/Text.lean`): there is no read request of the
@@ -608,7 +608,7 @@ arrived before it (`Editor/Loop.lean`, "Jobs from commands").
   cancelled, once the command has run to its end: it never runs its
   command, even one that has finished and not been delivered. A command
   that is refused or interrupted after asking cancels nothing. It is how
-  `:!` keeps one run a workspace and `C-g` ends it (`Editor/Shell.lean`).
+  `:!` keeps one run a workspace and `C-g` ends it (`packages/shell/Shell.lean`).
 - **A job may hand the editor a command while it runs** (`post`,
   `Editor/Job.lean`): an invocation, which its host runs on the editor
   thread with `runPosted`, as a delivery labelled `job <id> <name>`, before
@@ -764,7 +764,7 @@ point"; `Editor/Completion/AtPoint.lean`).
 ## Files
 
 Opening a file and saving a buffer are not operations here: each is a
-command that starts a job, in `Editor/Files.lean` (`Files.open`,
+command that starts a job, in `packages/files/Files.lean` (`Files.open`,
 `Files.save`), written over this API. What they need of the editor state is
 here:
 
@@ -1557,7 +1557,7 @@ keeps every excerpt it has: each kept excerpt's range of its source as it is
 now (`TextId.excerpts`), so its text, and an edit typed in it, stay, and its
 entry, its header and what was viewed of it included
 (`EditorState.setExcerptHistory`). It is how a list grows as results arrive
-(`Editor/ProjectSearch.lean`). Refused with `noSuchBuffer` for a buffer there
+(`packages/project-search/ProjectSearch.lean`). Refused with `noSuchBuffer` for a buffer there
 is none of, `id` or one `list` names, and `notExcerpts` for one that is not
 an excerpt buffer; what the store refuses is thrown. -/
 def insertExcerpts (id : BufferId) (index : Nat) (list : Array BufferExcerpt) :
@@ -2432,8 +2432,8 @@ end Workspace
 /-- A read-only buffer holding `content`, under the first free name of
 `name`, given the workspace at `location`; none when it cannot be made. The
 version-control buffers of generated text make theirs with it
-(`Editor/VersionControl/Views.lean`), and so do the working sets' drifted
-quotes (`Editor/WorkingSet/Run.lean`). -/
+(`packages/version-control/VersionControl/Views.lean`), and so do the working sets' drifted
+quotes (`packages/working-set/WorkingSet/Run.lean`). -/
 def readOnlyBufferOf (name content : String) (location : Location) : EditorM (Option BufferId) := do
   let .ok id ← createBuffer ((← editorState).freeName name) content | return none
   discard <| id.setReadOnly true

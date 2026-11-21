@@ -28,7 +28,7 @@ A shell command's child and its replies on the process model
 driver dispatches them (`dispatchedOf`), and what a check reads of a
 driver's buffers and views. It names no module of the shell: the shell
 checks' jobs, bindings and commands are the shell feature's kit
-(`Editor/Shell/Kit.lean`). Shared by several test modules; it holds no checks
+(`packages/shell/ShellTest/Kit.lean`). Shared by several test modules; it holds no checks
 of its own.
 
 Published for a package's tests: it is a module of the core's test kit, a

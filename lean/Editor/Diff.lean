@@ -7,13 +7,13 @@ import Editor.File
 The data of the diff requests a job can make: the line diff of two
 snapshots, answered with an edit script (`Diff.Script`,
 `Editor/Diff/Script.lean`), or with the hunks of whole lines that differ
-(`Diff.Hunks`), which a gutter marks (`Editor/VersionControl/Gutter.lean`). It is a request of the job port
+(`Diff.Hunks`), which a gutter marks (`packages/version-control/VersionControl/Gutter.lean`). It is a request of the job port
 (`Editor/Job.lean`, `JobRequest.diff`), not of the text port, because a diff
 is long computation and the editor thread never does that
 (`docs/design/concurrency.md`, the threads table): the library's diff service
 works it on a thread of its own, and only the script comes back, which a
 command applies with `TextId.applyScript`. That is how a reload of a file
-(`Files.reload`, `Editor/Files.lean`) turns the buffer's text into the
+(`Files.reload`, `packages/files/Files.lean`) turns the buffer's text into the
 file's as one edit that keeps the cursor and the markers.
 
 ## The rules

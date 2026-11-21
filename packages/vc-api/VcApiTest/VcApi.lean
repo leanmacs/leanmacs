@@ -1,7 +1,7 @@
 import Editor.Extension
 import Editor.Job.Model
-import ModelTest.Check
 import VcApi
+import VcApiTest.Check
 import VcApiTest.Contract
 import VcApiTest.Fake
 
@@ -10,13 +10,13 @@ import VcApiTest.Fake
 
 `vcApiChecks`: the interface library `vc-api`'s choice of a backend
 (`VcApi.connect?`), its names, its fake's backend over the model, and its
-registration check biting on packages that leave something out. The root
-module `ModelTest` runs them; its module doc says what each shows. The
-port's own contract over the model is `versionControlContractFailures`
-(`ModelTest/VcApiTest/Contract.lean`).
+registration check biting on packages that leave something out. The test
+driver's root, `VcApiTest/Model.lean`, runs them; its module doc says what
+each shows. The port's own contract over the model is
+`versionControlContractFailures` (`VcApiTest/VcApiTest/Contract.lean`).
 -/
 
-namespace ModelTest
+namespace VcApiTest
 
 open Editor
 
@@ -109,4 +109,4 @@ def vcApiChecks : List Check :=
             !vcKeeps #[vcRegistering "vc" [namedBackend "git" "main"] (jobs := false)] &&
             !vcKeeps #[vcRegistering "vc" [namedBackend "git" "main"] (segment := false)] }]
 
-end ModelTest
+end VcApiTest

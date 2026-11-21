@@ -162,7 +162,7 @@ def adoptDriver : Option TestDriver :=
     fun driver => { driver with jobs := { files := languageFiles } }
 
 /-- The checks of what opening a file does with its language
-(`Editor/Files.lean`, "Open"; `Editor/Language.lean`), on the loop's driver
+(`packages/files/Files.lean`, "Open"; `Editor/Language.lean`), on the loop's driver
 over the editor's models and the model of files. The syntax tree model
 knows one grammar, `json`, so every language here is parsed with it; Rust
 and Markdown are `FilesTest.Linked.languageChecks`'s, over the real binding. -/
@@ -1332,7 +1332,7 @@ def tracedTo (driver : TestDriver) (origin : Origin) : Bool :=
       | .error _ => false
 
 /-- The checks of reloading a buffer from its file (`Files.reload`,
-`Files.reloaded`, `Editor/Files.lean`), on the loop's driver over the
+`Files.reloaded`, `packages/files/Files.lean`), on the loop's driver over the
 editor's models and the model of files, with the commands and the jobs
 compiled code registers. -/
 def fileReloadChecks : List Check :=

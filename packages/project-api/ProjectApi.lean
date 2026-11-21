@@ -5,13 +5,14 @@ import Editor.ProjectMode.Listing
 /-!
 # The interface library `project-api`
 
-The interface library `project-api`, staged in the core's Lake package as
-its own `lean_lib` with the layout and names it will have as the package
-`packages/project-api/` (`lean/lakefile.lean`, `lean_lib ProjectApi`): the
-contract between the workspace feature (`Editor/Workspace/`), which
-implements it, and what others ask of the project and workspace a path is
-in. It imports only the core's API, and its test library (`ProjectApiTest`)
-only that, this library and the core's test kit.
+The interface package `project-api` (`packages/project-api/`), staged in
+the core's Lake package until features-as-packages phase 6, when its last
+user in the core moved out, and moved here with a `git mv` and a lakefile,
+no import line in it changed: the contract between the default package
+`workspace` (`packages/workspace/`), which implements it, and what others
+ask of the project and workspace a path is in. It imports only the core's
+API, and its test library (`ProjectApiTest`) only that, this library and the
+core's test kit.
 
 The project and the workspace a path is in are met three ways. For a path
 whose workspace is known, the core's state answers
@@ -22,7 +23,7 @@ workspace is the workspace's value at `files-api`'s hook `FilesApi.Opened`.
 ## What a caller builds
 
 What a caller hands a reach, which keeps the names the workspace's reach
-gave them (`Editor/Workspace/Reach.lean`): the order a find is started with
+gave them (`packages/workspace/Workspace/Reach.lean`): the order a find is started with
 (`Workspace.Reach.Order`, with its codec, over the root codecs
 `Workspace.rootArguments` and `Workspace.rootsOf?`), and the continuation
 (`Workspace.Reach.Continuation`): what is done with the workspace reached,

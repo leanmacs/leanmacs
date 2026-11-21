@@ -16,7 +16,7 @@ way, kept once so that no buffer's module reaches into another's for them:
 - **A read-only buffer** (`readOnlyBufferOf`): a buffer of generated text,
   under the first free name of the one asked for, read-only and given a
   workspace. It is the core's (`Editor/Api.lean`, "Workspaces"), so that
-  the working sets' drifted quotes (`Editor/WorkingSet/Run.lean`) make
+  the working sets' drifted quotes (`packages/working-set/WorkingSet/Run.lean`) make
   theirs the same way without importing a version-control module.
 - **Showing it** (`displayFor`): where the display rules say for an opener,
   asked from the view that started the read, or from the focused one when

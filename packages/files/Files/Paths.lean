@@ -10,7 +10,7 @@ vertico lists them. It is written against the interfaces as any package
 would write it: a source that answers later (`Editor/Completion/Later.lean`),
 asked again when the directory part changes, and nothing of its own in the
 minibuffer or the loop. `open-file` and `edit-file` ask with it
-(`Files.askPath`, `Editor/Files.lean`).
+(`Files.askPath`, `packages/files/Files.lean`).
 
 ## The source and its job
 

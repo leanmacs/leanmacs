@@ -206,7 +206,7 @@ def shippedHighlightRequests (grammar : String) (captures : List (String × Opti
       s!"compile {grammar}", "captureNames", ← shippedFaces grammar captures, "release"]
 
 /-- The checks of a file's language through the headless host
-(`Editor/Files.lean`, "Open"; `Editor/Language.lean`): the file commands
+(`packages/files/Files.lean`, "Open"; `Editor/Language.lean`): the file commands
 and the languages that ship as compiled code registers them, on real files,
 with the real elaborator and the real syntax binding. They share the file
 checks' table of waits (`Stage.overFiles`). -/
@@ -548,7 +548,7 @@ def placing (name : String) (offset : Nat) : Config.Registration :=
               ranges := #[⟨offset, offset⟩], primary := 0 } }
 
 /-- The checks of reloading a buffer from its file (`Files.reload`,
-`Editor/Files.lean`) through the headless host, on real files, with the
+`packages/files/Files.lean`) through the headless host, on real files, with the
 library's file and diff services. -/
 def reloadChecks (context : HostContext) : List Check :=
   [{  name :=

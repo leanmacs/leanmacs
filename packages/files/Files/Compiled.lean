@@ -67,7 +67,7 @@ starts, before any config (`Editor/Config/Packages.lean`).
   text. With no style registered under it, a file prompt is matched with
   the default.
 
-This module is apart from `Editor/Files.lean` because it is what a host is
+This module is apart from `packages/files/Files.lean` because it is what a host is
 handed, not what config calls: `Editor.lean` imports the commands, so that
 config calls them, and not this.
 

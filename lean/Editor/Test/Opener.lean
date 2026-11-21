@@ -19,7 +19,7 @@ import Editor.Test.Models
 
 A file opener of the kit's own, written over the core's API, so that the
 core's tests and the kit's drivers open and save a file without the files
-feature (`Editor/Files.lean`), as the kit's minibuffer answers a prompt
+feature (`packages/files/Files.lean`), as the kit's minibuffer answers a prompt
 without the minibuffer's package (`Editor/Test/Minibuffer.lean`).
 
 - **`open-file`** (the core's `FileJobs.openFileCommand`), given paths,

@@ -22,7 +22,7 @@ A contribution with a listing, `t-mode`, and its world: the repositories it
 is found in, what its listing prints in each, and what a driver is asked
 about it. The world it is found in (`listingWorld`, `listingJobModel`)
 names the workspace finder's model and is the workspace feature's kit's
-(`Editor/Workspace/Kit.lean`). It names core modules only, with stand-ins
+(`packages/workspace/WorkspaceTest/Kit.lean`). It names core modules only, with stand-ins
 written over the core's API for what the workspace does once a file opens:
 a listing file's workspace and on-modes (`listingFound`, `listingOn`,
 `listingOpened`, and `kubeOpened` for a workspace that cannot run
