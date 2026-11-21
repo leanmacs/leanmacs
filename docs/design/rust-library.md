@@ -756,7 +756,15 @@ C functions are `crates/editor-ffi/src/watches.rs`.
     after: notify's FSEvents drop joins its run-loop thread, which may be
     in the sink waiting for that lock.
   - **Threads**: one timer thread for the service, a short-lived one for
-    each start, and the adapter's for each registration.
+    each start, and the adapter's for each registration. **Dropping the
+    last handle joins the timer thread**: after the shutdown it tells the
+    timer to end and joins it, so a completion the timer is inside is
+    waited for and nothing of the service runs once the drop returns. The
+    service keeps the timer's `JoinHandle` itself rather than an
+    `editor_service::Worker`, since `editor-watch` depends on nothing of
+    the editor's; the rule is the same. A drop on the timer thread itself
+    does not join it. The starts' threads are waited for by their count,
+    not joined.
 - **The adapter** (`editor-watch-notify`) is over `notify`, pinned
   `=8.2.2` with only `macos_fsevent` on: inotify on Linux, FSEvents on
   macOS. `NotifyWatch::system()` is its one constructor, and no notify type

@@ -84,7 +84,11 @@
 //!   under the lock and dropped after it is released: an adapter's drop may
 //!   join a thread that is in the sink, waiting for that lock.
 //! - **Threads**: one timer thread for the service, a short-lived one for
-//!   each start, and the adapter's for each registration.
+//!   each start, and the adapter's for each registration. Dropping the
+//!   last handle, after the shutdown, tells the timer thread to end and
+//!   joins it: a completion it is inside is waited for, so nothing of the
+//!   service runs once the drop returns. A drop on the timer thread itself
+//!   does not join it.
 //! - **A flush is a barrier** ([`Service::flush`]): a wait of the
 //!   caller's, completed once every start asked before it is done:
 //!   registered or refused and its completion queued, or cancelled and
@@ -105,7 +109,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::batch::{Batch, Change};
@@ -334,6 +338,10 @@ struct Inner<W: Watch, C: Clock> {
     /// on before it checks that shutdown has not returned.
     #[cfg(test)]
     unfinished: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// Called, in a test, when dropping the last handle finds the timer
+    /// thread still running, just before it joins it.
+    #[cfg(test)]
+    drop_joins: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 /// The watch service over `W` on the clock `C`. A cheap handle: clones
@@ -351,17 +359,39 @@ impl<W: Watch, C: Clock> Clone for Service<W, C> {
     }
 }
 
-/// What a service's clones share; its drop shuts the service down.
+/// What a service's clones share; its drop shuts the service down and
+/// joins the timer thread.
 struct Handle<W: Watch, C: Clock> {
     /// The service.
     inner: Arc<Inner<W, C>>,
+    /// The timer thread, joined by the drop; `None` when the system
+    /// refused to start it.
+    timer: Option<JoinHandle<()>>,
 }
 
 impl<W: Watch, C: Clock> Drop for Handle<W, C> {
+    /// Shuts the service down, tells the timer thread to end and joins it,
+    /// so that the drop returns only once nothing of the service runs: a
+    /// completion the timer is inside is waited for. A drop on the timer
+    /// thread itself (its completion held the last handle) does not join
+    /// it, since a thread cannot wait for itself; it ends as it returns.
     fn drop(&mut self) {
         self.inner.shutdown();
         self.inner.state().stopped = true;
         self.inner.timer.notify_all();
+        let Some(timer) = self.timer.take() else {
+            return;
+        };
+        if timer.thread().id() == thread::current().id() {
+            return;
+        }
+        #[cfg(test)]
+        if !timer.is_finished()
+            && let Some(told) = self.inner.drop_joins.get()
+        {
+            told();
+        }
+        let _ = timer.join();
     }
 }
 
@@ -390,16 +420,18 @@ impl<W: Watch, C: Clock> Service<W, C> {
             finished: Condvar::new(),
             #[cfg(test)]
             unfinished: std::sync::OnceLock::new(),
+            #[cfg(test)]
+            drop_joins: std::sync::OnceLock::new(),
         });
-        let timer = Arc::clone(&inner);
+        let timing = Arc::clone(&inner);
         // Without its timer thread a window above 0 is never delivered; a
         // window of 0 still is, from the notice.
-        thread::Builder::new()
+        let timer = thread::Builder::new()
             .name("editor-watch-timer".into())
-            .spawn(move || timer.time())
+            .spawn(move || timing.time())
             .ok();
         Self {
-            handle: Arc::new(Handle { inner }),
+            handle: Arc::new(Handle { inner, timer }),
         }
     }
 
@@ -409,6 +441,16 @@ impl<W: Watch, C: Clock> Service<W, C> {
     pub(crate) fn when_shutdown_waits(&self, told: impl Fn() + Send + Sync + 'static) {
         assert!(
             self.inner().unfinished.set(Box::new(told)).is_ok(),
+            "set once"
+        );
+    }
+
+    /// Has `told` called when dropping the last handle finds the timer
+    /// thread still running, just before it joins it. Set once, by a test.
+    #[cfg(test)]
+    pub(crate) fn when_drop_joins(&self, told: impl Fn() + Send + Sync + 'static) {
+        assert!(
+            self.inner().drop_joins.set(Box::new(told)).is_ok(),
             "set once"
         );
     }
@@ -1740,6 +1782,45 @@ mod tests {
         );
         assert_eq!(service.pending(), 0);
         assert_eq!(fake.live(), []);
+    }
+
+    /// The timer thread is held inside completing a read it delivered,
+    /// holding its share of the service, when the last handle is dropped:
+    /// the drop returns only once that thread has returned. The hook the
+    /// drop calls before it joins lets the completion go, so no sleep is
+    /// used; a drop that did not join returns with the thread still held.
+    #[test]
+    fn dropping_the_last_handle_joins_the_timer_thread() {
+        let (fake, ground, clock) = fake();
+        let (service, completed, entered, release) = holding(&fake, &clock, 2);
+        let window = Coalescing {
+            window_ms: 300,
+            bound: 10,
+        };
+        started(&service, &completed, 1, file("/w/f"), window);
+        assert!(service.next(1, 2));
+        ground.write(Path::new("/w/f"), b"x");
+        clock.advance(300);
+        service.wake();
+        assert_eq!(
+            entered.recv_timeout(DEADLINE),
+            Ok(()),
+            "the timer thread delivers the read"
+        );
+        let opener = release.clone();
+        service.when_drop_joins(move || {
+            opener.send(()).ok();
+        });
+        let kept = Arc::downgrade(service.inner());
+
+        drop(service);
+        let alive = kept.upgrade().is_some();
+        // On a drop that does not join, the timer thread is still held:
+        // let it go, so it ends.
+        release.send(()).ok();
+
+        assert!(!alive, "the drop returned with the timer thread running");
+        assert_eq!(completed.try_recv(), Ok(2));
     }
 
     /// A watch port over the fake whose registrations, as each is dropped,
