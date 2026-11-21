@@ -20,6 +20,7 @@ import Editor.Window
 import Editor.Window.Real
 import Editor.Workspace
 import EditorCore.EditorPackage
+import FfiTest.Check
 
 /-!
 # FFI tests: `Editor/Window/Real.lean`
@@ -30,8 +31,10 @@ The tests of `Editor/Window/Real.lean`: the `window-host`, `window-host-config`,
 (`windowHostScenario`, `windowHostConfigScenario`,
 `windowHostBaseScenario`, `windowHostGenerateScenario`,
 `windowHostDirectScenario`, `windowHostUndrawnScenario`,
-`windowHostRestartScenario`), of `Window.host`. The
-root module `FfiTest` runs them, and each scenario's own doc says what it shows.
+`windowHostRestartScenario`), of `Window.host`, and `windowRealChecks`, of
+the end with no deadline the restart scenario gives the journal's drain
+(`journalDrained`). The root module `FfiTest` runs them, and each
+scenario's own doc says what it shows.
 
 It imports the config base, `Editor`, for the link alone: the window host
 elaborates config on that base (`Editor/Config/Elaborate.lean`, "The
@@ -45,6 +48,43 @@ set's packages.
 -/
 
 namespace FfiTest
+
+/-- Waits for the journal's drain `drained`, a flush of the file service, with
+no deadline, and says whether it drained: a drain not ended `guard`
+milliseconds after this was asked is said through `hung` as a hang, once,
+and still waited for. A scenario whose state directory is a temporary one
+of its own waits so before the window mode's shutdown, whose own wait is
+bounded by `Headless.drainPatience` and gives up, so that its directory is
+removed only once every journal order has been written. -/
+def journalDrained (drained : Task Bool) (guard : Nat := Editor.Headless.drainPatience)
+    (hung : String → IO Unit := IO.eprintln) : IO Bool := do
+  if (← Editor.Job.awaitWithin guard drained).isNone then
+    hung
+        s!"ffi-test: a hang: the journal had not drained {guard} ms after it was asked; waiting for it"
+  IO.wait drained
+
+/-- The checks of `journalDrained`, on a drain the check ends: with a guard of
+0, the drain is ended only from the hang report, so a wait that gave up at
+its guard is seen every run, with no sleep. -/
+def windowRealChecks (_ : Unit) : List Check :=
+  [{  name :=
+        "a scenario's wait for the journal's drain has no deadline: a drain not ended at its guard is said as a hang once and still waited for, and the wait returns only once the drain has ended"
+      run := do
+        let drain ← IO.Promise.new
+        let said ← IO.mkRef (#[] : Array String)
+        let drained := drain.result?.map (sync := true) (·.getD false)
+        let answered ←
+          journalDrained drained (guard := 0) (hung := fun line => do
+              said.modify (·.push line)
+              drain.resolve true)
+        let ended ← IO.hasFinished drained
+        -- A wait that gave up left the drain pending: end it.
+        drain.resolve false
+        let said ← said.get
+        unless answered && ended && said.size == 1 do
+          IO.eprintln s!"ffi-test: saw answered={answered} ended={ended} said={said}"
+          return false
+        return true }]
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
 scripted platform, on the absolute path `file`, or with no file, on the
@@ -340,12 +380,11 @@ directory, the probe as the shipped and the only candidate, and the
 options as given. 0 when all of that holds; 1 otherwise, saying why on
 stderr. -/
 def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 := do
-  -- No flush before the directory goes, on purpose: the window mode's own
-  -- shutdown (`Editor.Window.shutdown`, which this scenario's shutdown runs)
-  -- drains the journal, a flush of the file service behind every order it
-  -- handed out, before it quits the queues, and `Window.host` returns only
-  -- after the closer ran it. Once the queues are quit no completion can be
-  -- pulled, so no flush could be waited for here.
+  -- The directory goes only once the journal has drained: this scenario's
+  -- shutdown waits for the drain, a flush of the file service behind every
+  -- order the journal handed out, with no deadline (`journalDrained`)
+  -- before the window mode's shutdown quits the queues, and `Window.host`
+  -- returns only after the closer ran it.
   let dir ← IO.FS.createTempDir
   try
     let probe := dir / "probe"
@@ -362,7 +401,12 @@ def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 :
       shutdowns.modify (· + 1)
       IO.sleep 100
       Editor.Ffi.windowRequest .scripted .minimise
-      Editor.Window.shutdown drained
+      -- The journal writes into `state`, under the directory removed below:
+      -- its drain is waited for with no deadline (`journalDrained`), and the
+      -- window mode's shutdown, whose own wait is bounded, finds it done.
+      let drain ← drained
+      discard <| journalDrained drain
+      Editor.Window.shutdown (pure drain)
     -- What the exec was called with, and the shutdown count when it was.
     let replaced ← IO.mkRef (#[] : Array (Editor.Restart.Invocation × Nat))
     let replace (invocation : Editor.Restart.Invocation) : IO String := do

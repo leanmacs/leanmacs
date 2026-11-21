@@ -99,6 +99,7 @@ def checks (_ : Unit) : List Check :=
     markerChecks () ++
     inverseChecks () ++
     windowChecks () ++
+    windowRealChecks () ++
     displayChecks () ++
     sceneChecks () ++
     decodeChecks () ++
