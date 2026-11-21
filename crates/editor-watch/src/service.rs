@@ -329,6 +329,11 @@ struct Inner<W: Watch, C: Clock> {
     timer: Condvar,
     /// Told whenever a start's thread finishes.
     finished: Condvar,
+    /// Called, in a test, each time shutdown goes on waiting for a thread
+    /// that has not finished, with the state locked: the sign a test waits
+    /// on before it checks that shutdown has not returned.
+    #[cfg(test)]
+    unfinished: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 /// The watch service over `W` on the clock `C`. A cheap handle: clones
@@ -383,6 +388,8 @@ impl<W: Watch, C: Clock> Service<W, C> {
             }),
             timer: Condvar::new(),
             finished: Condvar::new(),
+            #[cfg(test)]
+            unfinished: std::sync::OnceLock::new(),
         });
         let timer = Arc::clone(&inner);
         // Without its timer thread a window above 0 is never delivered; a
@@ -394,6 +401,16 @@ impl<W: Watch, C: Clock> Service<W, C> {
         Self {
             handle: Arc::new(Handle { inner }),
         }
+    }
+
+    /// Has `told` called each time shutdown goes on waiting for a thread
+    /// that has not finished. Set once, by a test.
+    #[cfg(test)]
+    pub(crate) fn when_shutdown_waits(&self, told: impl Fn() + Send + Sync + 'static) {
+        assert!(
+            self.inner().unfinished.set(Box::new(told)).is_ok(),
+            "set once"
+        );
     }
 
     /// The service.
@@ -630,6 +647,17 @@ impl<W: Watch, C: Clock> Inner<W, C> {
         self.finished.notify_all();
     }
 
+    /// Whether shutdown, holding `state`, goes on waiting: a start's thread
+    /// has not finished. A test is told each time it does.
+    fn unfinished(&self, state: &State<W::Registration>) -> bool {
+        let unfinished = state.active > 0;
+        #[cfg(test)]
+        if unfinished && let Some(told) = self.unfinished.get() {
+            told();
+        }
+        unfinished
+    }
+
     /// Completes each of `waits`, in order, with no lock held.
     fn complete_all(&self, waits: Vec<u64>) {
         for wait in waits {
@@ -829,7 +857,7 @@ impl<W: Watch, C: Clock> Inner<W, C> {
         // from the port, and drops what it registered itself.
         let mut state = self
             .finished
-            .wait_while(self.state(), |state| state.active > 0)
+            .wait_while(self.state(), |state| self.unfinished(state))
             .unwrap_or_else(PoisonError::into_inner);
         let flushed = state.take_every_flush();
         drop(state);
@@ -1654,6 +1682,64 @@ mod tests {
         assert!(nothing, "the flush waits for the start's completion");
         assert_eq!(after, [1, 2]);
         assert_eq!(refusal(service.take(1)), Some(RefusalKind::NotAbsolute));
+    }
+
+    /// The start's thread, once the start is live, is held inside
+    /// completing the flush it was the last thing for. Shutdown, on a
+    /// thread of its own, is seen waiting for that thread and has not
+    /// returned while the completion is held; once it is let go, shutdown
+    /// returns with the flush completed.
+    #[test]
+    fn shutdown_returns_only_once_a_start_has_completed_the_flush_it_settled() {
+        let (fake, _ground, clock) = fake();
+        let (service, completed, entered, release) = holding(&fake, &clock, 2);
+        let (events, told) = mpsc::channel();
+        let waiting = events.clone();
+        service.when_shutdown_waits(move || {
+            waiting.send("waiting").ok();
+        });
+        fake.hold_watches();
+        assert!(service.start(1, file("/w/f"), AT_ONCE));
+        assert!(fake.until(DEADLINE, |record| record.parked == 1));
+        assert!(service.flush(2));
+        fake.release_watches();
+        assert_eq!(
+            entered.recv_timeout(DEADLINE),
+            Ok(()),
+            "the start's thread completes the flush"
+        );
+
+        let (first, early) = thread::scope(|scope| {
+            scope.spawn(|| {
+                service.shutdown();
+                events.send("returned").ok();
+            });
+            // Read while the completion is held, and checked once it is
+            // let go: a check that fails while it is held would leave
+            // shutdown waiting for it.
+            let first = told.recv_timeout(DEADLINE);
+            let early: Vec<_> = told.try_iter().collect();
+            drop(release);
+            (first, early)
+        });
+
+        assert_eq!(
+            first,
+            Ok("waiting"),
+            "shutdown waits for the start's thread"
+        );
+        assert!(
+            !early.contains(&"returned"),
+            "shutdown has not returned while the flush is held"
+        );
+        assert_eq!(completed.try_recv(), Ok(1));
+        assert_eq!(
+            completed.try_recv(),
+            Ok(2),
+            "completed before shutdown returned"
+        );
+        assert_eq!(service.pending(), 0);
+        assert_eq!(fake.live(), []);
     }
 
     /// A watch port over the fake whose registrations, as each is dropped,

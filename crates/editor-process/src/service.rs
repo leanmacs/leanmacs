@@ -529,6 +529,11 @@ struct Inner<P: Processes> {
     state: Mutex<State<P::Child>>,
     /// Told whenever a run's thread finishes.
     finished: Condvar,
+    /// Called, in a test, each time shutdown goes on waiting for a thread
+    /// that has not finished, with the state locked: the sign a test waits
+    /// on before it checks that shutdown has not returned.
+    #[cfg(test)]
+    unfinished: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 /// The process service over `P`. A cheap handle: clones share one service.
@@ -663,8 +668,20 @@ impl<P: Processes + 'static> Service<P> {
                     flushes: 0,
                 }),
                 finished: Condvar::new(),
+                #[cfg(test)]
+                unfinished: std::sync::OnceLock::new(),
             }),
         }
+    }
+
+    /// Has `told` called each time shutdown goes on waiting for a thread
+    /// that has not finished. Set once, by a test.
+    #[cfg(test)]
+    pub(crate) fn when_shutdown_waits(&self, told: impl Fn() + Send + Sync + 'static) {
+        assert!(
+            self.inner.unfinished.set(Box::new(told)).is_ok(),
+            "set once"
+        );
     }
 
     /// What starts the children.
@@ -891,7 +908,7 @@ impl<P: Processes + 'static> Service<P> {
         let mut state = self
             .inner
             .finished
-            .wait_while(state, |state| state.active > 0)
+            .wait_while(state, |state| self.inner.unfinished(state))
             .unwrap_or_else(PoisonError::into_inner);
         // Every child the service started has been reaped, so whatever a
         // flush still waits for has ended.
@@ -1367,6 +1384,17 @@ impl<P: Processes + 'static> Inner<P> {
             (self.complete)(id);
         }
         self.end(ticket);
+    }
+
+    /// Whether shutdown, holding `state`, goes on waiting: a thread has not
+    /// finished. A test is told each time it does.
+    fn unfinished(&self, state: &State<P::Child>) -> bool {
+        let unfinished = state.active > 0;
+        #[cfg(test)]
+        if unfinished && let Some(told) = self.unfinished.get() {
+            told();
+        }
+        unfinished
     }
 
     /// Ends a thread that holds `ticket` to its end: the ticket is done,
@@ -1951,6 +1979,61 @@ mod tests {
         assert_eq!(completed.try_recv(), Ok(2));
         let child = fake.record().spawned[0].0;
         assert!(!fake.alive(child));
+        assert_eq!(service.pending(), 0);
+    }
+
+    /// The run's thread, once the run has ended, is held inside completing
+    /// the flush it was the last thing for. Shutdown, on a thread of its
+    /// own, is seen waiting for that thread and has not returned while the
+    /// completion is held; once it is let go, shutdown returns with the
+    /// flush completed.
+    #[test]
+    fn shutdown_returns_only_once_a_run_has_completed_the_flush_it_settled() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).hold(Hold::UntilLetGo)),
+        )]);
+        let (service, completed, entered, release) = holding(&fake, 2);
+        let (events, told) = mpsc::channel();
+        let waiting = events.clone();
+        service.when_shutdown_waits(move || {
+            waiting.send("waiting").ok();
+        });
+        assert!(service.start(1, command("x"), ROOMY));
+        assert!(fake.until(DEADLINE, |record| record.waiting.len() == 1));
+        assert!(service.flush(2));
+        fake.let_go_all();
+        assert_eq!(
+            entered.recv_timeout(DEADLINE),
+            Ok(()),
+            "the run's thread completes the flush"
+        );
+
+        let (first, early) = thread::scope(|scope| {
+            scope.spawn(|| {
+                service.shutdown();
+                events.send("returned").ok();
+            });
+            // Read while the completion is held, and checked once it is
+            // let go: a check that fails while it is held would leave
+            // shutdown waiting for it.
+            let first = told.recv_timeout(DEADLINE);
+            let early: Vec<_> = told.try_iter().collect();
+            drop(release);
+            (first, early)
+        });
+
+        assert_eq!(first, Ok("waiting"), "shutdown waits for the run's thread");
+        assert!(
+            !early.contains(&"returned"),
+            "shutdown has not returned while the flush is held"
+        );
+        assert_eq!(completed.try_recv(), Ok(1));
+        assert_eq!(
+            completed.try_recv(),
+            Ok(2),
+            "completed before shutdown returned"
+        );
         assert_eq!(service.pending(), 0);
     }
 
