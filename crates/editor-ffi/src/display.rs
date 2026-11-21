@@ -1187,16 +1187,18 @@ pub extern "C" fn editor_ffi_display_live() -> u64 {
 mod tests {
     use std::sync::Arc;
 
+    use editor_platform::{Canvas, Resize};
     use editor_render::clock::FakeClock;
-    use editor_render::fake::RecordingRenderer;
+    use editor_render::fake::{RecordingRenderer, Request};
     use editor_render::port::Target;
     use editor_render::render_loop::{RecordingPark, RenderHandle, RenderLoop, Step};
 
     use editor_layout::face::{Color, Face, Underline, UnderlineStyle};
+    use editor_layout::frame::Frame;
 
     use super::{Display, WireFace, WireScene, WireView, text_ref};
     use crate::document::Document;
-    use crate::render::{Follows, Presenter};
+    use crate::render::{Follows, Presenter, leave_word};
     use crate::snapshot::Snapshot;
 
     /// A loop stepped by hand over the recording renderer, and its handle.
@@ -1248,6 +1250,121 @@ mod tests {
         // The frame drawn is the display's latest.
         let requests = render.renderer().requests();
         assert!(Arc::ptr_eq(&requests[0].frame, &display.latest()));
+    }
+
+    /// A scene of one view of `snapshot`, `width` by `height`, as Lean
+    /// publishes after the window says its size.
+    fn publish_sized(display: &Display, snapshot: &Snapshot, width: u64, height: u64) {
+        let wire = WireScene {
+            size: [width, height],
+            views: vec![WireView {
+                id: 1,
+                rect: [0, 0, width, height],
+                snapshot: Some(0),
+                ..WireView::default()
+            }],
+            ..WireScene::default()
+        };
+        let (words, strings) = wire.encode();
+        assert!(display.publish(&words, &strings, &[snapshot]));
+    }
+
+    /// Tells a display bound to a presenter, over a loop stepped by hand,
+    /// each of `sizes` as the window session does (the presenter's scale,
+    /// then the loop's word), publishing a scene of each size after it as
+    /// Lean does after every event; then steps the loop, a refresh apart,
+    /// until it is at rest. The requests the renderer was given, and the
+    /// frame a second display, not bound, lays the last scene out to at
+    /// the last scale.
+    fn resized_through(sizes: &[(u64, u64, f64)]) -> (Vec<Request>, Arc<Frame>) {
+        let clock = FakeClock::new();
+        let (mut render, handle) = RenderLoop::new(
+            RecordingRenderer::new(),
+            Arc::new(clock.clone()),
+            Arc::new(RecordingPark::new()),
+            Target {
+                width: 80,
+                height: 32,
+                scale: 1.0,
+            },
+        );
+        let presenter = Presenter::new();
+        presenter.start(handle.clone(), Follows::Window);
+        let display = Display::cells(8, 16);
+        display.present_to(Arc::clone(&presenter));
+        let snapshot = Snapshot::of(&Document::new("ab\ncd"));
+        for &(width, height, scale) in sizes {
+            let size = Resize {
+                width,
+                height,
+                scale,
+                fullscreen: false,
+                corner_clearance: 0,
+                top_inset: 0,
+            };
+            presenter.set_scale(scale as f32);
+            leave_word(&handle, &Canvas::Resized(size));
+            publish_sized(&display, &snapshot, width, height);
+            render.step();
+            clock.advance(1_000_000);
+        }
+        let mut rested = false;
+        for _ in 0..1000 {
+            render.step();
+            if handle.resting() {
+                rested = true;
+                break;
+            }
+            clock.advance(100_000_000);
+        }
+        assert!(rested, "the loop never came to rest: a hang");
+        let &(width, height, scale) = sizes.last().expect("a size");
+        let apart = Display::cells(8, 16);
+        apart.set_scale(scale as f32);
+        publish_sized(&apart, &snapshot, width, height);
+        (render.renderer().requests().to_vec(), apart.latest())
+    }
+
+    /// Hypothesis 1 of text-rendering's phase 3, at the presenter: that a
+    /// burst of resizes ends with a frame laid out at another size or
+    /// scale drawn last.
+    #[test]
+    fn a_bound_display_draws_its_last_frame_at_the_size_and_scale_the_window_last_said() {
+        let (requests, apart) =
+            resized_through(&[(400, 300, 1.0), (800, 600, 2.0), (802, 600, 2.0)]);
+        let last = requests.last().expect("a draw");
+        assert_eq!(
+            last.target,
+            Target {
+                width: 802,
+                height: 600,
+                scale: 2.0
+            }
+        );
+        assert_eq!(*last.frame, *apart);
+    }
+
+    /// The window's own sequence for a change of scale: the size last
+    /// known at the new scale, then the new size the platform reports
+    /// (`editor-platform-winit`'s `translate`).
+    #[test]
+    fn a_change_of_scale_ends_with_the_frame_laid_out_at_the_new_scale_on_the_new_size() {
+        let (requests, apart) =
+            resized_through(&[(400, 300, 1.0), (400, 300, 2.0), (800, 600, 2.0)]);
+        let last = requests.last().expect("a draw");
+        assert_eq!(
+            last.target,
+            Target {
+                width: 800,
+                height: 600,
+                scale: 2.0
+            }
+        );
+        assert_eq!(*last.frame, *apart);
+        // A frame laid out at scale 1 would not be it.
+        let at_one = Display::cells(8, 16);
+        publish_sized(&at_one, &Snapshot::of(&Document::new("ab\ncd")), 800, 600);
+        assert_ne!(*last.frame, *at_one.latest());
     }
 
     #[test]
