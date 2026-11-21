@@ -1129,6 +1129,11 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   ended (`loop`). A test's hook, to let a held reload go on the loop's own
   report that it waits for it, never on time; the default does nothing. -/
   endWaits : String → IO Unit := fun _ => pure ()
+  /-- What the real loop calls on its own thread before it takes its first
+  event (`loop`). A test's hook, to count the checks that run a loop thread;
+  a host stepped on its caller's thread never calls it. The default does
+  nothing. -/
+  loopStarted : IO Unit := pure ()
   /-- How this run was launched and what a restart hands on
   (`Restart.Launch`), which `start` writes into the editor state
   (`EditorState.launch`). The executable's hosts read it from the command
@@ -2505,6 +2510,7 @@ if that has not ended (`Running.reloadTask`), after telling
 `Collaborators.endWaits`: no reload outlives its loop. -/
 def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
     (progress : IO.Ref Progress) (reached : IO.Ref (Option (Nat × IO.Promise Unit))) : IO Unit := do
+  collaborators.loopStarted
   discard <| Event.setInterruptKey (some collaborators.interruptKey)
   let mut running ← Running.new collaborators
   repeat

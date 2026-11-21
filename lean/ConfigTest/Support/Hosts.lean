@@ -275,7 +275,9 @@ has the shipped styles, displays and segments, then `compiled.packages`,
 then the package `test` of its arrays (`Compiled.package`). A `compiled`
 whose arrays one `setup` would refuse fails the stage, naming why: such a
 host would start without them. Hosts follow one another on one queue: each gets source ids of its
-own, so none takes a late event of an earlier one for its own. Its jobs wait
+own, so none takes a late event of an earlier one for its own. A real loop
+over it counts itself in `Context.realLoops` as it starts
+(`Headless.Collaborators.loopStarted`). Its jobs wait
 in a table of waits of its own, unless it is handed one (`waits`), as a
 stage over a real service is. Its jobs ask the library's matcher
 (`Fuzzy.real`), as the executable's do, unless it is handed another
@@ -318,6 +320,7 @@ def Stage.new {β σ : Type} (context : Context) (elaborator : Config.Elaborator
             let emitted := (← output.get).size
             disposed.modify (·.push emitted)
           clock := some clock, tracksIdle := true
+          loopStarted := context.realLoops.modify (· + 1)
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
             match compiled.major with

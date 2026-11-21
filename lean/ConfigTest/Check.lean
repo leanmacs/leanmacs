@@ -63,6 +63,11 @@ structure Context where
   /-- The directory of the default config `mise run install` ships
   (`config/default`), which `defaultConfigChecks` read. -/
   defaultConfig : System.FilePath
+  /-- How many real editor loop threads the checks' hosts have started: a
+  stage's host bumps it on its loop's own thread
+  (`Headless.Collaborators.loopStarted`), so `inventory` names the checks
+  that ran one. -/
+  realLoops : IO.Ref Nat
 
 /-- The table of waits every host over the library's file service is staged
 over, with the process's one completion pump running over it. It is made,
@@ -95,14 +100,45 @@ def failures (checks : List Check) : IO (List String) :=
     catch error =>
       return some s!"{check.name} ({error})"
 
-/-- The checks of `failures` and `saw`: what a failing check saw is printed
-after its name. -/
+/-- Runs `checks` as `failures` does, and also names, sorted, the checks
+during which `realLoops` moved: those that started a real editor loop
+thread. -/
+def inventory (realLoops : IO.Ref Nat) (checks : List Check) : IO (List String × List String) := do
+  let mut failed := []
+  let mut real := #[]
+  for check in checks do
+    let before ← realLoops.get
+    failed := failed ++ (← failures [check])
+    if (← realLoops.get) != before then
+      real := real.push check.name
+  return (failed, (real.qsort (· < ·)).toList)
+
+/-- The checks of `failures`, `saw` and `inventory`: what a failing check
+saw is printed after its name, and the inventory names the checks during
+which a loop thread started. -/
 def checkChecks (_ : Unit) : List Check :=
   [{  name :=
         "a check that ends with saw of what does not hold fails with what it saw after its name, and saw of what holds holds"
       run := do
         let failed ← failures [{ name := "it holds", run := saw false "x" }]
-        return failed == ["it holds (saw x)"] && (← saw true "x") }]
+        return failed == ["it holds (saw x)"] && (← saw true "x") },
+    { name := "the inventory names, sorted, only the checks during which a loop thread started"
+      run := do
+        let loops ← IO.mkRef 0
+        let started : Check :=
+          { name := "b starts"
+            run := do
+              loops.modify (· + 1)
+              return true }
+        let quiet : Check := { name := "a starts none", run := pure true }
+        let also : Check :=
+          { name := "a also starts"
+            run := do
+              loops.modify (· + 2)
+              return false }
+        let (failed, real) ← inventory loops [started, quiet, also]
+        saw (failed == ["a also starts"] && real == ["a also starts", "b starts"])
+            s!"failed {failed}, real {real}" }]
 
 /-- The directories a directory argument of the executable names: one, or
 several joined with `:`, as the editor reads its own
@@ -130,9 +166,11 @@ failed, and returns the exit status, 0 when all hold and 1 otherwise.
 
 `sysroot` is the Lean toolchain's directory and `oleanDir` the directory
 holding the package's `.olean` files, or several joined with `:`
-(`oleanDirs`). -/
+(`oleanDirs`). With `realThreads`, it writes there the names of the checks
+that ran a real editor loop thread (`inventory`), sorted, one per line. -/
 def run (checks : Context → List Check) (sysroot oleanDir : String)
-    (syntaxFixtures defaultConfig : System.FilePath) : IO UInt8 := do
+    (syntaxFixtures defaultConfig : System.FilePath)
+    (realThreads : Option System.FilePath := none) : IO UInt8 := do
   -- Compiled code writes to the fixture's cell before the base is imported.
   let bumped ← ConfigFixture.bump
   -- The module data of the config files the checks elaborate is written in
@@ -147,11 +185,14 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
             files)
       -- The one import of the base, made before any check runs.
       discard <| elaborator.base none #[]
+      let realLoops ← IO.mkRef 0
       let context : Context :=
         { elaborator, bumped, ids := ← IO.mkRef 100, waits := ← IO.mkRef none, sysroot
-          oleanDirs := oleanDirs oleanDir, syntaxFixtures, defaultConfig }
+          oleanDirs := oleanDirs oleanDir, syntaxFixtures, defaultConfig, realLoops }
       let checks := checks context
-      let failed ← failures checks
+      let (failed, real) ← inventory realLoops checks
+      if let some file := realThreads then
+        IO.FS.writeFile file (String.join (real.map (· ++ "\n")))
       for name in failed do
         IO.eprintln s!"FAILED: {name}"
       unless failed.isEmpty do
@@ -162,7 +203,7 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: config-test <sysroot> <olean dir> <syntax fixtures> <default config> | config-test lsp <sysroot> <config dir> <line> <column> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-reload-directory <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-soak-modules <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples> | config-test bench-workspace-files <sysroot> <olean dir> <repository> <samples>"
+      "usage: config-test <sysroot> <olean dir> <syntax fixtures> <default config> [--real-threads <file>] | config-test lsp <sysroot> <config dir> <line> <column> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-reload-directory <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-soak-modules <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples> | config-test bench-workspace-files <sysroot> <olean dir> <repository> <samples>"
   return 2
 
 end ConfigTest
