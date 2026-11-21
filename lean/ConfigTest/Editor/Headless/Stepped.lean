@@ -255,6 +255,54 @@ def steppedChecks (context : Context) : List Check :=
               (← gate.inProgress.get) == 0)
             s!"wait {repr wait}, hung {hung}, ends {ends}" },
     { name :=
+        "a stepped host's end with a reload held past its guard, endWaits letting nothing go, says the hang once through hung and, with grace, gives up as a hang, the reload's task handed to abandoned; with no grace it waits on once the hang is said"
+      run := do
+        -- The end's guard and grace are 0, and the reload is held at a gate
+        -- only the check opens, so it cannot end within either: no timing.
+        let ending (grace : Option Nat) : IO (Option String × Array String × Bool × Nat) := do
+          let gate ← Gate.new Config.rootModule
+          let stage ← Stage.new context (gate.around context.elaborator) (memorySource emptyRoot)
+          let said ← IO.mkRef (#[] : Array String)
+          let left ← IO.mkRef (none : Option (Task (Except IO.Error Unit)))
+          let thrown ←
+            try
+              Headless.withStepped stage.collaborators (← Headless.Queue.Memory.new) (guard := 0)
+                  (grace := grace) (hung := fun line => do
+                  said.modify (·.push line)
+                  -- With no grace the end waits on: the hang said, the
+                  -- check lets the reload go.
+                  if grace.isNone then
+                    gate.open)
+                  (abandoned := fun task => left.set (some task)) fun stepped => do
+                  stepped.send .reload
+                  -- Handled, the reload started and held: nothing waited for.
+                  discard <| stepped.waitWhile hangGuard .handled
+              pure none
+            catch error =>
+              pure (some (toString error))
+          -- Let go, and waited for, so nothing of the reload outlives the
+          -- check.
+          gate.open
+          let abandoned := (← left.get).isSome
+          if let some task← left.get then
+            discard <| IO.wait task
+          return (thrown, ← said.get, abandoned, ← gate.inProgress.get)
+        let (thrown, said, abandoned, left) ← ending (some 0)
+        let (waited, saidWaiting, abandonedWaiting, leftWaiting) ← ending none
+        saw
+            (thrown.any
+                (fun text =>
+                  text.startsWith "a hang: the stepped host's end" &&
+                    (text.splitOn "giving up").length == 2) &&
+              said == #[Headless.hangLine 0] &&
+              abandoned &&
+              left == 0 &&
+              waited.isNone &&
+              saidWaiting == #[Headless.hangLine 0] &&
+              !abandonedWaiting &&
+              leftWaiting == 0)
+            s!"with grace: thrown {thrown}, said {said}, abandoned {abandoned}, {left} elaborating; with none: thrown {waited}, said {saidWaiting}, abandoned {abandonedWaiting}, {leftWaiting} elaborating" },
+    { name :=
         "a stepped host's bracket, on return and on throw, cancels its jobs, waits for a held reload after endWaits, and closes its queue: a post after it is refused, and the reload's late wake-up gave its unit back"
       run := do
         let ending (throws : Bool) : IO (Option String × Bool × Nat × Nat × Array String) := do

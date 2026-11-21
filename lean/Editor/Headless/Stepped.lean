@@ -27,8 +27,8 @@ logic, and a mutation of it kills the check as it would on a real loop.
   job cancelled, every pause and hint delay withdrawn, and the reload job,
   if one is running, waited for after `Collaborators.endWaits "reload"`. An
   end not over `guard` milliseconds after it began says the hang once, and
-  with `grace` gives up as a hang after that many more, as `withHost` does.
-  The body's error is the one thrown; when it returned, an error a turn
+  with `grace` gives up as a hang after that many more, handing the
+  reload's task to `abandoned`, as `withHost` does. The body's error is the one thrown; when it returned, an error a turn
   threw is.
 
 `Stepped.waitWhile` is `Host.waitWhile` over the stepped loop, with the same
@@ -169,11 +169,13 @@ caller hands a fresh one, and may build a poster over it before the bracket
 (an environments' report, `reportedEnvironments`). The end's wait for a reload still running is
 guarded by `guard`: past it the hang is said once through `hung`, and with
 `grace` the bracket gives up as a hang that many milliseconds later, the
-reload left running, as `withHost` does. When `body` threw, its error is the
+reload left running and its task handed to `abandoned`, so a check can let
+it go and wait for it, as `withHost` does. When `body` threw, its error is the
 one thrown; when it returned and a turn threw, that error is. -/
 def withStepped {α β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
     (memory : Queue.Memory Ffi.Event) (body : Stepped → IO α) (guard : Nat := settlePatience)
-    (hung : String → IO Unit := IO.eprintln) (grace : Option Nat := none) : IO α := do
+    (hung : String → IO Unit := IO.eprintln) (grace : Option Nat := none)
+    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) : IO α := do
   let collaborators ← ({ collaborators with queue := memory.queue Posted.toFfi }).prepared
   let ending ← IO.mkRef none
   let progress ← IO.mkRef ({} : Progress)
@@ -213,6 +215,7 @@ def withStepped {α β σ : Type} {scheme : InputScheme} (collaborators : Collab
           match grace with
           | some grace =>
             if (← Job.awaitWithin grace task).isNone then
+              abandoned task
               throw <|
                   IO.userError
                     s!"a hang: the stepped host's end had not ended {grace} ms after the hang was said ({guard} ms after it began); giving up"

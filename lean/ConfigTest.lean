@@ -126,7 +126,9 @@ show:
   handled (the forced lost wake-up); it publishes the scenes a real host
   does; a wait at its guard says the hang once; the bracket, on return and
   on throw, cancels the jobs, waits for a held reload after `endWaits` and
-  closes the queue; and a loop a step stopped, or a turn that threw, makes
+  closes the queue; its end with a reload held past its guard says the
+  hang once and, with a grace, gives up as a hang, handing the reload to
+  `abandoned`, or with none waits on; and a loop a step stopped, or a turn that threw, makes
   later waits answer ended, the turn's error thrown by the bracket;
 - `threadChecks`: the editor answers events while a file elaborates, reloads
   are serialised, and a replaced config is not retained;
