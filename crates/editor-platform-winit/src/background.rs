@@ -22,6 +22,13 @@ use winit::window::Window;
 
 /// The components AppKit is given for `rgb`: red, green and blue over 255,
 /// and alpha 1.
+#[cfg_attr(
+    all(not(target_os = "macos"), not(test)),
+    expect(
+        dead_code,
+        reason = "only AppKit is given a background; its tests run everywhere"
+    )
+)]
 pub(crate) fn components(rgb: Rgb) -> [f64; 4] {
     let over = |byte: u8| f64::from(byte) / 255.0;
     [over(rgb.red), over(rgb.green), over(rgb.blue), 1.0]
