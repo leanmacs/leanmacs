@@ -1,5 +1,6 @@
 # Completion at point's auto popup (docs/dev-practices/headless-mode.md), on
-# the shared config, under the Vim scheme that ships. The headless mode's job
+# `config/`, a copy of the shared config it ran on while it was the core's
+# (tests/headless/config), under the Vim scheme that ships. The headless mode's job
 # clock is fake: a pause of 240 ms fires only when the script advances it.
 reload
 settle

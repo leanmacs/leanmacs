@@ -1,52 +1,42 @@
+import AtPoint
+import AtPoint.Compiled
+import AtPointTest.Check
+import AtPointTest.Support.Words
 import Editor.Api
-import Editor.AtPoint
 import Editor.Command
 import Editor.Command.Call
-import Editor.Command.Dispatch
-import Editor.Command.Model
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Fake
-import Editor.Config.Registry
-import Editor.DisplayRules
-import Editor.Ex.Line
-import Editor.File
 import Editor.InputScheme.Vim.Default
-import Editor.Language
-import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Mode
-import Editor.Program
-import Editor.ProjectMode
-import Editor.Scene
 import Editor.State
 import Editor.Test.AtPoint
 import Editor.Test.Models
 import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
-import Editor.Workspace
-import ModelTest.Check
-import ModelTest.Support.AtPoint
-import ModelTest.Support.Evil
-import ModelTest.Support.Words
 
 /-!
-# Model tests: `Editor/AtPoint.lean`
+# Model tests: `AtPoint.lean`
 
-The model tests of `Editor/AtPoint.lean`: `atPointChecks`. The root module
-`ModelTest` runs them; its module doc says what each shows.
+The model tests of `AtPoint.lean`: `atPointChecks`, on a driver of the Vim
+scheme that ships over the models (`AtPointTest/Support/Words.lean`). The
+test driver's root, `AtPointTest/Model.lean`, runs them. They were the
+core's (`ModelTest.atPointChecks`) while completion at point was a module
+of the core, and moved here with their sentences and assertions as they
+were.
 -/
 
-namespace ModelTest
+namespace AtPointTest
 
 open Editor
 open Editor.Test
 
-/-- The checks of asking for completion at point (`Editor/Api.lean`,
-"Completion at point", `Editor/AtPoint.lean`), on the evil driver over the
-models. -/
+/-- The checks of asking for completion at point (the core's
+`lean/Editor/Api.lean`, "Completion at point", `AtPoint.lean`), on a driver
+of the Vim scheme that ships over the models. -/
 def atPointChecks : List Check :=
   let second : Completion.AtPoint :=
     .fixed "second" fun spot =>
@@ -194,4 +184,4 @@ def atPointChecks : List Check :=
               plain.texts.isEmpty
           | _, _ => false }]
 
-end ModelTest
+end AtPointTest

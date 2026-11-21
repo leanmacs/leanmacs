@@ -48,8 +48,9 @@ Its drivers complete at point through the kit's at-point package
 (`Editor.Test.AtPoint.package`, which `evilHanded` registers) and the
 sources written here, the one that answers later among them (`laterSource`,
 over the job model's `Completion.Later.batches`), so nothing of the package
-that ships is asked. What the checks of that package need of it is in
-`ModelTest/Support/Words.lean`.
+that ships is asked. That package is the default package `at-point`
+(`packages/at-point/`), whose own tests have their own copy of what they
+need of this module (`AtPointTest/Support/Words.lean`).
 -/
 
 namespace ModelTest

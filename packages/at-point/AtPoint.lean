@@ -1,5 +1,5 @@
+import AtPointApi
 import Editor.Api
-import Editor.Completion.AtPoint
 
 /-!
 # Completion at point's commands
@@ -7,10 +7,10 @@ import Editor.Completion.AtPoint
 The commands that ask for completion at point, move its choice, accept it
 and quit it (`docs/design/keymaps-and-modes.md`, "Completion at point"),
 after Doom Emacs's corfu module. The Vim scheme binds them in insert state
-(`Editor/InputScheme/Vim/Default.lean`); they work under any scheme. Each is
+(the core's `lean/Editor/InputScheme/Vim/Default.lean`); they work under any scheme. Each is
 given what it was called with (`Action.call`), and acts on the session open
 in the target's window, if there is one (`EditorState.atPoint`), through
-the operations of `Editor/Api.lean`, "Completion at point".
+the operations of the core's `lean/Editor/Api.lean`, "Completion at point".
 
 | Command | With a session open in the target's view | With none |
 |---|---|---|
@@ -24,10 +24,12 @@ the operations of `Editor/Api.lean`, "Completion at point".
 | `at-point-triggered` (a character) | Nothing | `completeAtPoint (.trigger c)`, silent when nothing answers and when the session closes having shown no row |
 | `at-point-paused` (a view and milliseconds) | Nothing | When the view is focused and no prompt is open, `completeAtPoint (.pause ms)`, silent when nothing answers and when the session closes having shown no row |
 
-The last two names are the core's (`Completion.AtPoint.triggeredCommand`,
-`.pausedCommand`, `Editor/Completion/AtPoint.lean`): the loop runs the
-first and the host and the driver the second, and neither names this
-module. When a session closes having never shown a row, the loop says the
+Every name is the interface package `at-point-api`'s (`AtPointApi.names`),
+which the Vim scheme's insert table and the core reach as text. The last
+two are the core's (`Completion.AtPoint.triggeredCommand`, `.pausedCommand`,
+the core's `lean/Editor/Completion/AtPoint.lean`), which the interface
+declares from: the loop runs the first and the host and the driver the
+second, and neither names this module. When a session closes having never shown a row, the loop says the
 core's `Completion.AtPoint.noCompletions`.
 
 `insert-tab` and `insert-newline` run by name, so config's commands of those
@@ -38,57 +40,58 @@ change's recording through `retype`, and only when they ran.
 
 | Addition | Where |
 |---|---|
-| A new key's command | A command here, its registration in `AtPoint.package` (`Editor/AtPoint/Compiled.lean`), and its row in `Vim.Default.insertCommands` |
-| A new way to ask | An `Occasion` (`Editor/Completion/Candidate.lean`), and a command here that asks with it |
+| A new key's command | A command here, its name in `at-point-api` (`AtPointApi.names`), its registration in `AtPoint.package` (`AtPoint/Compiled.lean`), and its row in `Vim.Default.insertCommands` |
+| A new way to ask | An `Occasion` (the core's `lean/Editor/Completion/Candidate.lean`), and a command here that asks with it |
 
-Pinned by `ModelTest.atPointChecks` (asking and what these commands say,
-on the evil driver over the models) and by the headless fixture `at-point`
-(the pause, the preview and the accept through the host). The loop's
-checks (`atPointLoopChecks`, `atPointRepeatChecks`, `atPointAskChecks`,
-`atPointByItselfChecks`) and `ConfigTest.atPointChecks` run the same keys on
-the core's test kit's implementation (`Editor/Test/AtPoint.lean`), so they
-do not depend on this one.
+Pinned by `AtPointTest.atPointChecks` (asking and what these commands say,
+on a driver of the Vim scheme over the models, `AtPointTest/AtPoint.lean`)
+and by the package's headless fixture `at-point` (the pause, the preview
+and the accept through the host). The core's loop checks
+(`atPointLoopChecks`, `atPointRepeatChecks`, `atPointAskChecks`,
+`atPointByItselfChecks`) and `ConfigTest.atPointChecks` run the same keys
+on the core's test kit's implementation (`lean/Editor/Test/AtPoint.lean`),
+so they do not depend on this one.
 -/
 
 namespace Editor.AtPoint
 
 /-- The name of the command that asks: `C-SPC` in insert state. -/
 def completeName : String :=
-  "at-point-complete"
+  AtPointApi.completeName
 
 /-- The name of the command that moves the choice down, or asks: `C-n`. -/
 def nextName : String :=
-  "at-point-next"
+  AtPointApi.nextName
 
 /-- The name of the command that moves the choice up, or asks: `C-p`. -/
 def previousName : String :=
-  "at-point-previous"
+  AtPointApi.previousName
 
 /-- The name of `TAB`'s command in insert state. -/
 def tabName : String :=
-  "at-point-tab"
+  AtPointApi.tabName
 
 /-- The name of `S-TAB`'s command in insert state. -/
 def backtabName : String :=
-  "at-point-backtab"
+  AtPointApi.backtabName
 
 /-- The name of `RET`'s command in insert state. -/
 def returnName : String :=
-  "at-point-return"
+  AtPointApi.returnName
 
 /-- The name of `C-g`'s command in insert state. -/
 def quitName : String :=
-  "at-point-quit"
+  AtPointApi.quitName
 
 /-- The name of the command a typed trigger character runs: the one the
 loop runs (`Completion.AtPoint.triggeredCommand`). -/
 def triggeredName : String :=
-  Completion.AtPoint.triggeredCommand
+  AtPointApi.triggeredName
 
 /-- The name of the command a pause that fired runs: the one the headless
 host and the loop's driver run (`Completion.AtPoint.pausedCommand`). -/
 def pausedName : String :=
-  Completion.AtPoint.pausedCommand
+  AtPointApi.pausedName
 
 /-- What the echo area says when a key asks and no at-point source
 answers. -/

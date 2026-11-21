@@ -21,6 +21,10 @@ name = "binding-search"
 path = "@REPO@/packages/binding-search"
 
 [[require]]
+name = "at-point"
+path = "@REPO@/packages/at-point"
+
+[[require]]
 name = "languages"
 path = "@REPO@/packages/languages"
 

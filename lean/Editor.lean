@@ -1,8 +1,6 @@
 import Editor.Api.Theorems
-import Editor.AtPoint
 import Editor.Command.Append
 import Editor.Completion.Filtering
-import Editor.Completion.Words
 import Editor.Evil.Clipboard
 import Editor.Evil.Jumps
 import Editor.Evil.Operators
@@ -134,7 +132,14 @@ calls it with `ExecuteCommand.executeCommand`, over `commandNames`, which
 is here. Nor is the binding search, `search-bindings`: it is the package
 `packages/binding-search/`, which config reaches with `import
 BindingSearch` the same way, and a command of config's calls it with
-`BindingSearch.searchBindings`, over `keyBindings`, which is here.
+`BindingSearch.searchBindings`, over `keyBindings`, which is here. Nor
+is completion at point: its commands and the source that ships, `words`,
+are the package `packages/at-point/`, and config tunes `words` with
+`import AtPoint.Words` the same way, defining it again under its name
+(`defineAtPoint (Completion.AtPoint.words (pause := 100))`). An at-point
+source of config's own is a `Completion.AtPoint`
+(`Editor/Completion/AtPoint.lean`), which is here, registered with
+`defineAtPoint` and used with `useAtPoint`.
 
 How a key becomes an invocation is here too, so config can come to write
 bindings: input schemes (`Editor/InputScheme.lean`), with the keymaps they

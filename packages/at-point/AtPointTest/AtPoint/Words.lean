@@ -1,34 +1,27 @@
+import AtPoint.Words
+import AtPointTest.Check
+import AtPointTest.Support.Words
 import Editor.Command
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.AtPointContract
 import Editor.Completion.Candidate
 import Editor.Completion.Later
-import Editor.Completion.Words
-import Editor.File.Model
-import Editor.FileWatch
-import Editor.FileWatch.Model
-import Editor.Invocation
 import Editor.Job
 import Editor.Job.Model
-import Editor.Process
-import Editor.Process.Environment
-import Editor.Process.Model
-import Editor.Scene
 import Editor.Test.Jobs
 import Editor.Text
-import Editor.Text.Model
-import ModelTest.Check
-import ModelTest.Support.Words
 
 /-!
-# Model tests: `Editor/Completion/Words.lean`
+# Model tests: `AtPoint/Words.lean`
 
-The model tests of `Editor/Completion/Words.lean`: `wordsChecks`. The root
-module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `AtPoint/Words.lean`: `wordsChecks`. The test driver's
+root, `AtPointTest/Model.lean`, runs them. They were the core's
+(`ModelTest.wordsChecks`) while the source `words` was a module of the
+core, and moved here with their sentences and assertions as they were.
 -/
 
-namespace ModelTest
+namespace AtPointTest
 
 open Editor
 open Editor.Test
@@ -47,11 +40,12 @@ def wordsContractSubjects : List Completion.AtPoint :=
   Completion.AtPoint.shipped.toList ++
     [Completion.AtPoint.words (least := 1), Completion.AtPoint.words (pause := 100)]
 
-/-- The checks of the words of the open buffers
-(`Editor/Completion/Words.lean`): the rule, the at-point source and the job
-on the job model, and the at-point sources' contract
-(`Editor/Completion/AtPointContract.lean`) on every shipped at-point source
-and on `words` tuned, under the sentences of `atPointContractChecks`. -/
+/-- The checks of the words of the open buffers (`AtPoint/Words.lean`):
+the rule, the at-point source and the job on the job model, and the
+at-point sources' contract (the core's
+`lean/Editor/Completion/AtPointContract.lean`) on every shipped at-point
+source and on `words` tuned, under the sentences of the core's
+`atPointContractChecks`. -/
 def wordsChecks : List Check :=
   (wordsContractSubjects.flatMap fun atPoint =>
       Completion.AtPointContract.properties.map fun property =>
@@ -127,4 +121,4 @@ def wordsChecks : List Check :=
               Completion.Words.source.later ==
                 some { job := Completion.Words.job, reask := .never, readsTexts := true } }]
 
-end ModelTest
+end AtPointTest

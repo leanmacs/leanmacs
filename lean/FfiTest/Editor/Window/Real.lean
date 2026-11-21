@@ -16,6 +16,7 @@ import Editor.Menu
 import Editor.Menu.Compiled
 import Editor.Process.Environment
 import Editor.ProjectMode
+import Editor.Test.AtPoint
 import Editor.Test.Shipped
 import Editor.Window
 import Editor.Window.Real
@@ -50,9 +51,13 @@ namespace FfiTest
 /-- The packages the window host is handed in these scenarios, as the
 default editor's root hands them: the core's Lake package's, then the
 kit's stand-ins for the default packages whose data the core keeps
-(`Editor.Test.Shipped`, `Editor/Test/Shipped.lean`). -/
+(`Editor.Test.Shipped`, `Editor/Test/Shipped.lean`), then the kit's
+implementation of the default package `at-point`'s commands
+(`Editor.Test.AtPoint`, `Editor/Test/AtPoint.lean`), which insert state's
+`RET`, `TAB` and `C-g` run. -/
 def shippedPackages : Array Editor.Package :=
-  EditorCore.EditorPackage.packages ++ Editor.Test.Shipped.packages
+  EditorCore.EditorPackage.packages ++ Editor.Test.Shipped.packages ++
+    #[Editor.Test.AtPoint.package]
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
 scripted platform, on the absolute path `file`, or with no file, on the

@@ -1086,7 +1086,8 @@ def useDisplayFor (category name : String) : SetupM Unit :=
 under its name (`Editor/Completion/AtPoint.lean`): a mode's list and
 `useAtPoint` can then name it. Config's at-point source of a package's one's
 name is used in that one's place, so `defineAtPoint
-(Completion.AtPoint.words (pause := 100))` tunes the shipped `words`. The
+(Completion.AtPoint.words (pause := 100))`, with `import AtPoint.Words`,
+tunes the default package `at-point`'s `words`. The
 editor refuses the `setup` for a name defined twice. -/
 def defineAtPoint (atPoint : Completion.AtPoint) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.atPoint atPoint))

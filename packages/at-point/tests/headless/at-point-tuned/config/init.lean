@@ -1,5 +1,5 @@
 import Editor
-import Editor.Completion.Words
+import AtPoint.Words
 open Editor
 
 -- A config that tunes the shipped at-point source `words`: it defines it

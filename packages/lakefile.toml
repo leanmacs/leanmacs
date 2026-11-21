@@ -15,8 +15,8 @@
 # requires), the mode line's segments (mode-line/), the shipped themes (shipped-themes/), the command prompt
 # (execute-command/, with its interface package execute-command-api/,
 # which it requires), the binding search (binding-search/, with
-# binding-search-api/), the compile mode (compile/), then the languages
-# (languages/). They register in that order, after the core's. Every other
+# binding-search-api/), the compile mode (compile/), completion at point
+# (at-point/, with at-point-api/), then the languages (languages/). They register in that order, after the core's. Every other
 # feature is still a package of the core's Lake package
 # (lean/EditorCore/EditorPackage.lean). This is also the lakefile a user's
 # package set starts from.
@@ -71,7 +71,14 @@ path = "binding-search"
 name = "compile"
 path = "compile"
 
-# The languages that ship and the `code` mode: the seventh default package.
+# Completion at point, its commands and the source `words`: the seventh
+# default package. It requires its interface package, at-point-api, which
+# so is in the set too and registers nothing.
+[[require]]
+name = "at-point"
+path = "at-point"
+
+# The languages that ship and the `code` mode: the eighth default package.
 [[require]]
 name = "languages"
 path = "languages"

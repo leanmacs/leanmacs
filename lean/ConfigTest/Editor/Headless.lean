@@ -6,18 +6,15 @@ import ConfigTest.Support.Lines
 import ConfigTest.Support.Syntax
 import Editor.Api
 import Editor.Appearance
-import Editor.AtPoint.Compiled
 import Editor.Buffers
 import Editor.Buffers.Compiled
 import Editor.Clipboard.InProcess
 import Editor.Command
 import Editor.Command.Call
 import Editor.Completion
-import Editor.Completion.AtPoint
 import Editor.Completion.Display
 import Editor.Completion.Paths
 import Editor.Completion.Style
-import Editor.Completion.Words
 import Editor.Config.Diagnostic
 import Editor.Config.Directory
 import Editor.Config.Elaborate
@@ -2655,20 +2652,18 @@ def shippedChecks (_ : Unit) : List Check :=
             global.find? (keysOf "C-x") == none &&
             !global.continues (keysOf "C-x") },
     { name :=
-        "the executable's hosts start with the source words registered by the at-point package in the category word, its job words registered by it, the at-point source words registered by it, and a modeless buffer's at-point chain is words"
+        "the executable's hosts start with nothing of the at-point package: no command at-point-complete, at-point-next, at-point-previous, at-point-tab, at-point-backtab, at-point-return, at-point-quit, at-point-triggered or at-point-paused, no source words and none in the category word, no job words, no at-point source, and a modeless buffer's at-point chain is empty, registered by a package of the core's Lake package"
       run := do
         let registry := shippedRegistry
-        return registry.sources.any
-              (fun entry => entry.source.name == "words" && entry.owner == AtPoint.package.owner) &&
-            registry.sourcesIn Completion.Words.category == #["words"] &&
-            registry.jobs.any
-              (fun entry =>
-                entry.registration.name == Completion.Words.job &&
-                  entry.owner == AtPoint.package.owner) &&
-            registry.atPoints.any
-              (fun entry =>
-                entry.atPoint.name == "words" && entry.owner == AtPoint.package.owner) &&
-            registry.atPointNames none #[] == #["words"] &&
+        return ["at-point-complete", "at-point-next", "at-point-previous", "at-point-tab",
+                  "at-point-backtab", "at-point-return", "at-point-quit", "at-point-triggered",
+                  "at-point-paused"].all
+              (fun name => (registry.find? name).isNone) &&
+            !registry.sources.any (·.source.name == "words") &&
+            registry.sourcesIn "word" == #[] &&
+            !registry.jobs.any (·.registration.name == "words") &&
+            registry.atPoints.isEmpty &&
+            registry.atPointNames none #[] == #[] &&
             registry.unknownAtPoints == #[] },
     { name :=
         "the executable's hosts start with nothing of the languages package: no mode code and no language is registered by a package of the core's Lake package"

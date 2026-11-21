@@ -15,7 +15,6 @@ import ModelTest.Check
 import ModelTest.Editor.Api
 import ModelTest.Editor.Api.Cases
 import ModelTest.Editor.Appearance
-import ModelTest.Editor.AtPoint
 import ModelTest.Editor.Buffers
 import ModelTest.Editor.Clipboard.Contract
 import ModelTest.Editor.Clipboard.Model
@@ -34,7 +33,6 @@ import ModelTest.Editor.Completion.Later
 import ModelTest.Editor.Completion.Paths
 import ModelTest.Editor.Completion.Style
 import ModelTest.Editor.Completion.StyleContract
-import ModelTest.Editor.Completion.Words
 import ModelTest.Editor.Config.Elaborator.Model
 import ModelTest.Editor.Config.LakePackage
 import ModelTest.Editor.Config.Lakefile
@@ -1594,10 +1592,8 @@ def checks : List Check :=
     sourceContractChecks ++
     keyHintSourceChecks ++
     atPointContractChecks ++
-    wordsChecks ++
     atPointStateChecks ++
     keyHintStateChecks ++
-    atPointChecks ++
     atPointRepeatChecks ++
     atPointLoopChecks ++
     atPointAskChecks ++

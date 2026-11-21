@@ -11,5 +11,7 @@ execute-command	implementation	execute-command-api
 binding-search-api	interface	-
 binding-search	implementation	binding-search-api
 compile	implementation	-
+at-point-api	interface	-
+at-point	implementation	at-point-api
 languages	implementation	-
 word-count	implementation	-

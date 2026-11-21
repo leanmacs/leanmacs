@@ -117,8 +117,8 @@ published table of snapshots as it is then (`Editor/Text/Real.lean`), a
 value that never changes. An id that names no snapshot, or one that was
 released, is answered `none`, so a job that reads after the command that
 took the snapshot gave it up goes on with nothing. It is how the `words`
-source gathers the open buffers' words off the editor thread
-(`Editor/Completion/Words.lean`). Its model is the job model's table of
+source gathers the open buffers' words off the editor thread (the default
+package `at-point`'s `packages/at-point/AtPoint/Words.lean`). Its model is the job model's table of
 published snapshots (`FileModel.snapshots`), the runner's port is
 `Job.Services.snapshots`, and its contract is
 `JobContract.snapshotProperties`.

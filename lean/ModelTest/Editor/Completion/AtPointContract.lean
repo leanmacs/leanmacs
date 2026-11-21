@@ -28,8 +28,8 @@ def atPointModel : Completion.AtPoint :=
     some { start := spot.offset, stop := spot.offset, sources := [.source "say"] }
 
 /-- The at-point sources the contract is run on: the model and one that
-never answers. The shipped ones are run on it by their own checks
-(`wordsChecks`). -/
+never answers. The shipped ones are run on it by their own checks, the
+default package `at-point`'s (`AtPointTest.wordsChecks`). -/
 def atPointSubjects : List Completion.AtPoint :=
   [atPointModel, Completion.AtPoint.silent "silent"]
 

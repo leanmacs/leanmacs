@@ -5,16 +5,17 @@ import Std.Data.HashSet
 /-!
 # Words from the open buffers
 
-The first completion source that ships for completion at point
-(`Editor/Completion/AtPoint.lean`): the words of the open buffers, as Vim's
-`C-n` and Emacs's dabbrev complete. It answers later, as a job, so gathering
-words never holds a key (`docs/design/concurrency.md`, "Prompts").
+The first completion source that ships for completion at point (the
+core's `lean/Editor/Completion/AtPoint.lean`): the words of the open
+buffers, as Vim's `C-n` and Emacs's dabbrev complete. It answers later,
+as a job, so gathering words never holds a key
+(`docs/design/concurrency.md`, "Prompts").
 
 ## The rule
 
-- **A word** is a maximal run of word characters (`wordCharacter`, `Editor/Text.lean`:
-  letters, digits, `_` and every character past ASCII), as Vim's `iskeyword`
-  goes by default. `Words.of` lists a text's words in order, each once,
+- **A word** is a maximal run of word characters (`wordCharacter`, the
+  core's `lean/Editor/Text.lean`: letters, digits, `_` and every
+  character past ASCII), as Vim's `iskeyword` goes by default. `Words.of` lists a text's words in order, each once,
   leaving out a run that overlaps the region being completed, so the text
   typed is never a candidate of its own.
 - **The order** (`Words.ordered`) is Vim's `C-n` order: the asking buffer's
@@ -45,8 +46,10 @@ words never holds a key (`docs/design/concurrency.md`, "Prompts").
   tunes it by defining it again under its name: `defineAtPoint
   (Completion.AtPoint.words (pause := 100))`.
 
-Pinned by `ModelTest.wordsChecks`, on the job model and the editor's
-models, and by `ModelTest.atPointContractChecks`.
+Pinned by `AtPointTest.wordsChecks` (`AtPointTest/AtPoint/Words.lean`), on
+the job model and the editor's models, which also runs the at-point
+sources' contract over every at-point source that ships, under the
+sentences of the core's `ModelTest.atPointContractChecks`.
 -/
 
 namespace Editor.Completion

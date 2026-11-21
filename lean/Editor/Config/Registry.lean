@@ -365,8 +365,9 @@ lineage, nearest first; for each mode, config's uses of it (`useAtPointIn`,
 own list (`Mode.atPoint`); and last the uses for every buffer (`useAtPoint`),
 config's then the packages'. Each name is kept once, at its first place.
 Uses are held by owner too, in an `AtPointUse` (`replaceAtPointUses`). The
-use of the shipped `words` for every buffer is the `at-point` package's
-(`Editor/AtPoint/Compiled.lean`), so no core code names it. A name in
+use of the shipped `words` for every buffer is the default package
+`at-point`'s (`packages/at-point/AtPoint/Compiled.lean`), so no core code
+names it. A name in
 a chain no at-point source is registered under is reported at install
 (`unknownAtPoints`, `Report.unknownAtPoints`), and never asked.
 

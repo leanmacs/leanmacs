@@ -1,18 +1,21 @@
-import Editor.AtPoint
-import Editor.Completion.Words
+import AtPoint
+import AtPoint.Words
 import Editor.Package
 
 /-!
 # The `at-point` package: completion at point
 
 What a host registers for completion at point: the package `at-point`
-(`AtPoint.package`, `Editor/Package.lean`), for the owner `at-point`, when
-its loop starts, before any config (`Editor/Config/Packages.lean`).
+(`AtPoint.package`, the core's `lean/Editor/Package.lean`), which the entry
+module `AtPoint/EditorPackage.lean` lists. A host registers it for the
+owner `at-point` when its loop starts, before any config (the core's
+`lean/Editor/Config/Packages.lean`).
 
-- **The commands** (`Editor/AtPoint.lean`), which the Vim scheme's insert
-  state binds.
+- **The commands** (`AtPoint.lean`), which the Vim scheme's insert
+  state binds, under the names the interface package `at-point-api`
+  declares (`AtPointApi.names`).
 - **The job** of the shipped `words` source (`Completion.Words.job`,
-  `Editor/Completion/Words.lean`): it is the package's, so a reload does
+  `AtPoint/Words.lean`): it is the package's, so a reload does
   not cancel it.
 - **The shipped source** (`Completion.Words.shipped`) and **the shipped
   at-point source** (`Completion.AtPoint.shipped`), and **the use of

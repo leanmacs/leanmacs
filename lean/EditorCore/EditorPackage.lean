@@ -1,4 +1,3 @@
-import Editor.AtPoint.Compiled
 import Editor.Buffers.Compiled
 import Editor.Evil.Compiled
 import Editor.Ex.Compiled
@@ -116,7 +115,10 @@ completion styles' and displays' package, which was first here, is the
 default package `completion` (`packages/completion/`), and is the first
 default package to register: its styles and displays are still the first
 registered in the default set, so `fuzzy` and `minibuffer` are still its
-defaults (`Config.Registry.styleEntry`, `displayEntry`).
+defaults (`Config.Registry.styleEntry`, `displayEntry`). Completion at
+point's package, which was seventeenth here, after `shell`, is the default
+package `at-point` (`packages/at-point/`), and registers after the compile
+mode's: its commands follow compile's in the command prompt.
 -/
 
 namespace EditorCore.EditorPackage
@@ -129,7 +131,6 @@ def packages : Array Package :=
   #[Files.package, Minibuffer.package, Evil.package, Ex.package, Buffers.package,
     FrameCommands.package, Menu.package, WindowCommands.package, TabCommands.package,
     Themes.package, Workspace.package, ProjectSearch.package, WorkingSet.package, Restore.package,
-    PackageSet.package, Shell.package, AtPoint.package, VersionControl.package,
-    VersionControl.gutterPackage]
+    PackageSet.package, Shell.package, VersionControl.package, VersionControl.gutterPackage]
 
 end EditorCore.EditorPackage

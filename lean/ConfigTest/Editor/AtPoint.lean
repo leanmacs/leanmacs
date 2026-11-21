@@ -12,16 +12,20 @@ import Editor.Job.Runner
 import Editor.Scene
 
 /-!
-# Config tests: `Editor/AtPoint.lean`
+# Config tests: completion at point
 
-The tests of `Editor/AtPoint.lean`: `atPointChecks`, through the headless host.
+The tests of completion at point through the headless host:
+`atPointChecks`. Completion at point's commands are the default package
+`at-point`'s (`packages/at-point/AtPoint.lean`); these test what the core
+does with an at-point package's commands and config's sources.
 The root module `ConfigTest` runs them; its module doc says what each shows.
 
 They complete at point through the core's test kit's at-point package
 (`Editor/Test/AtPoint.lean`, by `withKitAtPoint`) and the sources config
 defines, so nothing of the package that ships is asked: what its `words`
-answers is pinned by `ModelTest.wordsChecks`, and its commands by
-`ModelTest.atPointChecks` and the headless fixture `at-point`.
+answers is pinned by that package's `AtPointTest.wordsChecks`, and its
+commands by its `AtPointTest.atPointChecks` and its headless fixture
+`at-point`.
 -/
 
 namespace ConfigTest
@@ -85,8 +89,8 @@ def noneChosen (lines : Array String) : Bool :=
 
 /-- The checks of completion at point through the headless host of the Vim
 scheme that ships (`withVimHost`), with the real elaborator, the real text
-binding, the recorder and the stage's fake clock (`Editor/AtPoint.lean`,
-`docs/design/keymaps-and-modes.md`, "Completion at point"), on the kit's
+binding, the recorder and the stage's fake clock
+(`docs/design/keymaps-and-modes.md`, "Completion at point"), on the kit's
 at-point package (`withKitAtPoint`). -/
 def atPointChecks (context : Context) : List Check :=
   let packages := withKitAtPoint shippedPackages
