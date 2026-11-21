@@ -161,33 +161,48 @@ def steppedChecks (context : Context) : List Check :=
               hung.isEmpty)
             s!"join {repr joined}, advance 5 {repr short}, advance 10 {repr due}, {waiting} waiting, hung {hung}" },
     { name :=
-        "a stepped wait handles an event posted after its round found the queue empty, with the activity count unchanged: a request sent from another thread at the first block is handled while a reload is held, and the next block lets the reload go"
+        "a stepped wait handles an event pushed after its round's drain found the queue empty, in a round that posts no marker, with the activity count unchanged: it wakes on that push, handles it while a reload is held, and only its next block lets the reload go"
       run := do
         let gate ← Gate.new Config.rootModule
         let stage ← Stage.new context (gate.around context.elaborator) (memorySource emptyRoot)
-        let blocks ← IO.mkRef 0
+        let pushed ← IO.mkRef false
+        let blocks ← IO.mkRef (#[] : Array Bool)
         let wait ←
           Headless.withStepped stage.collaborators (← Headless.Queue.Memory.new) (guard := patience)
               (grace := some hangGuard) fun stepped => do
               stepped.send .reload
-              stepped.await hangGuard (waitBlocked := fun _ => do
-                  let block ← blocks.modifyGet fun count => (count + 1, count + 1)
-                  if block == 1 then
-                    -- After the round's drain, from another thread, under no
-                    -- unit: only the queue's next push says it came.
-                    let sent ← IO.asTask (prio := .dedicated) (stepped.send .show)
-                    IO.ofExcept (← IO.wait sent)
-                  else
+              -- A settle with no marker: no round of it pushes anything of
+              -- its own. Its busy runs after the round's drain has found
+              -- the queue empty, the reload started and held at the gate:
+              -- the first one pushes a request, under no unit, so the
+              -- count does not move again and only the push can wake the
+              -- block. Had the wait armed its next-push task only after
+              -- that, the block would last to the guard.
+              let kind : Headless.Wait.Kind :=
+                { Headless.Wait.Kind.settle with
+                  marker := false
+                  busy := fun progress => do
+                    unless ← pushed.get do
+                      pushed.set true
+                      stepped.send .show
+                    Headless.Wait.Kind.settle.busy progress }
+              stepped.waitWhile hangGuard kind (waitBlocked := fun _ => do
+                  let shown := (← stage.output.get).any (·.startsWith "commands:")
+                  let block ← blocks.modifyGet fun blocks => (blocks.size, blocks.push shown)
+                  if block > 0 then
                     gate.open)
         let output ← stage.output.get
         let shown := output.findIdx? (·.startsWith "commands:")
         let installed := output.findIdx? (·.startsWith "reload 1: installed")
+        let blocks ← blocks.get
+        -- The first block came before the push was handled, and the second
+        -- after it, with the gate still shut: the push woke the first.
         saw
-            (wait == .settled && (← blocks.get) == 2 &&
+            (wait == .settled && blocks.size ≥ 2 && blocks[0]! == false && blocks[1]! == true &&
               (match shown, installed with
               | some shown, some installed => shown < installed
               | _, _ => false))
-            s!"wait {repr wait}, {← blocks.get} blocks, output {output}" },
+            s!"wait {repr wait}, blocks {blocks}, output {output}" },
     { name :=
         "a stepped host publishes the scenes a real host does: a settle one, and a join's later rounds none"
       run := do

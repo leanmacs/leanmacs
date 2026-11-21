@@ -121,7 +121,8 @@ show:
   reload held at a gate settles only after the install, the gate let go
   from the wait's block; a join with a job asleep on the fake clock answers
   working at idle, as an advance's wait with nothing due does; an event
-  posted after a round found the queue empty, the count unchanged, is
+  pushed after a round's drain found the queue empty, in a round that
+  posts no marker, the count unchanged, wakes the wait's block and is
   handled (the forced lost wake-up); it publishes the scenes a real host
   does; a wait at its guard says the hang once; the bracket, on return and
   on throw, cancels the jobs, waits for a held reload after `endWaits` and
