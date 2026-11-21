@@ -137,6 +137,14 @@
 # `mise run lint` fails with "use of a disallowed method
 # `editor_grep_ripgrep::RipgrepFiles::new`".
 #
+# A ninth place is marked, for this machine's GPU:
+# `editor_render_wgpu::WgpuRenderer::on_this_machine` is on the list, as it
+# is on that crate's own, since what it finds differs from machine to
+# machine. Its one caller here is `gpu` in the example
+# `examples/coretext/main.rs`, the composited sentence against Core Text's,
+# run on demand on macOS (`mise run coretext-check`), under its own
+# `expect`. No test calls it.
+#
 # What this does not hold is what `crates/editor-text/clippy.toml` says of
 # its own list: it is a list of names.
 
@@ -153,6 +161,8 @@ disallowed-methods = [
   { path = "editor_platform_arboard::SystemClipboard::open", reason = "no test reads or writes the desktop's clipboard: the process's clipboard is opened in one place, for Lean's window mode; every test is on `MemoryClipboard`" },
   # A renderer on a window: it needs a window, and a real adapter.
   { path = "editor_render_wgpu::WgpuRenderer::on_window", reason = "no test makes a renderer on a window: the gate opens none; it is done for the process's window, which Lean's window mode runs (`window_renderer`), and in the example `window`" },
+  # A renderer on this machine's GPU: what it finds differs from machine to machine.
+  { path = "editor_render_wgpu::WgpuRenderer::on_this_machine", reason = "no test asks for this machine's GPU: the example `coretext` does, in one place, run on demand on macOS" },
   # The user's font smoothing: it differs from machine to machine.
   { path = "editor_raster_coretext::SystemDefaults::new", allow-invalid = true, reason = "no test reads this machine's defaults: a window's Core Text rasteriser reads them in one place (`core_text` in `src/window.rs`), on macOS, for the process's window and the example `window`" },
   # The fonts of the machine: they differ from machine to machine.

@@ -2015,22 +2015,38 @@ run = "swift tools/coretext/capture.swift tests/fonts/NotoSansMono-Regular.subse
 # were made on, so it is no part of a gate that must give the same answer
 # everywhere.
 #
-# It runs the Core Text adapter's example (`crates/editor-raster-coretext/
-# examples/check/`): the adapter held to the rasteriser port's contract,
-# smoothed and not, at 14 and 28 pixels; what `AppleFontSmoothing` holds
-# and what was decided from it; and the adapter's masks, laid at the
-# painter's bins of Core Text's own positions, against Core Text's drawings
-# under `tests/coretext/`, each within its thresholds, with the controls
-# that must miss them. A pass is exit 0: every property holds, every
-# capture is within the thresholds of its scale and every control is
-# outside them. The gate builds the example and never runs it.
+# It runs two examples, and each must exit 0.
 #
-# Run it when macOS's major version changes, when a binding's pin moves,
-# and when the adapter changes, and record its figures, dated, in
+# First the Core Text adapter's (`crates/editor-raster-coretext/examples/
+# check/`): the adapter held to the rasteriser port's contract, smoothed
+# and not, at 14 and 28 pixels; what `AppleFontSmoothing` holds and what
+# was decided from it; and the adapter's masks, laid at the painter's bins
+# of Core Text's own positions, against Core Text's drawings under
+# `tests/coretext/`, each within its thresholds, with the controls that
+# must miss them.
+#
+# Then the blending's (`crates/editor-ffi/examples/coretext/`): the
+# sentence drawn through the real renderers, the headless one and the wgpu
+# one on this machine's GPU, with `Settings::core_text()` and the Core Text
+# rasteriser, against what macOS composited (`tests/coretext/composited/`),
+# each within its thresholds and the GPU within 3 of 255 of the CPU, with
+# the controls that must miss: linear light, in the direction that is why
+# macOS blends encoded, and the old contrast of 0.1. It opens no window.
+#
+# A pass is exit 0 from both: every property holds, every capture is
+# within the thresholds of its scale and every control is outside them.
+# The gate builds both examples and never runs them.
+#
+# Run it when macOS's major version changes, when a binding's pin or the
+# wgpu pin moves, when the adapter changes, and when the blend, the shader
+# or the surface changes, and record its figures, dated, in
 # `docs/dev-practices/on-demand-checks.md`.
 [tasks.coretext-check]
-description = "Opt-in, never part of ci; macOS only: hold the Core Text rasteriser to the rasteriser port's contract and compare its masks with Core Text's own drawings under tests/coretext/"
-run = "cargo run --locked -p editor-raster-coretext --example check"
+description = "Opt-in, never part of ci; macOS only: hold the Core Text rasteriser to the rasteriser port's contract and compare its masks with Core Text's own drawings, then the renderers' composite of the sentence with what macOS composited, under tests/coretext/. Needs a GPU, opens no window"
+run = [
+  "cargo run --locked -p editor-raster-coretext --example check",
+  "cargo run --locked -p editor-ffi --example coretext",
+]
 
 # Opt-in: run it by hand, on macOS, and do not add it to `ci` or to
 # hk.pkl. It reads a font of the machine, Menlo, whose licence keeps it out
