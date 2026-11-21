@@ -109,7 +109,7 @@ The model tests of `Editor/Loop.lean`: `loopChecks`, `commitChecks`,
 `searchDecorationChecks`, `viewChecks`, `floatViewChecks`,
 `atPointRepeatChecks`, `atPointLoopChecks`, `atPointAskChecks`,
 `atPointByItselfChecks` and `pressedChecks`. `searchDecorationChecks` are of the loop's
-decorations under the Vim scheme, and `modeDispatchChecks` of modes in the
+decorations under the test scheme, and `modeDispatchChecks` of modes in the
 loop. `directoryChecks` also cover the reasking of a source
 (`Editor/Completion/Candidate.lean`) and what the state lists while it is
 asked again (`Editor/State.lean`), through the loop's reconciler of a
@@ -5652,16 +5652,44 @@ def wrappingText : String :=
   String.join
     ((List.range 60).map fun _ => String.join ((List.range 50).map fun _ => "foo ") ++ "\n")
 
-/-- A state of the decoration checks: `evilState` of `contents`, with the
+/-- A state of the decoration checks: `barState` of `contents`, with the
 cursor at 0, in a frame of 80 by 40, where a row of the display model is
 one high and a cell one wide, so a view shows a few dozen rows. -/
 def decorationState (contents : String) : TextM EditorState := do
-  let state ← evilState contents 0
+  let state ← barState contents 0
   return { state with frame := { state.frame with size := ⟨80, 40⟩ } }
 
-/-- A driver of the decoration checks over `decorationState`. -/
-def decorationDriver (contents : String) : Option EvilDriver :=
-  (Loop.Driver.over evilHanded (fun _ => none) (decorationState contents) editorModel).toOption
+/-- What a step of the decoration checks is handed, under the test scheme:
+the kit's editing keys and commands (`Editor/Test/Editing.lean`), and two
+commands of the checks' own, on keys that print nothing. `search` keeps its
+argument, a text, as the last search, going forward, as a scheme's search
+command does once its pattern is typed (`setLastSearch`): `C-s f` searches
+for `foo`, `C-s w` for `foo` as a whole word (`Text.Word.wholePattern`),
+`C-s x` for `xyz` and `C-s r` for a pattern the syntax refuses. `ask`
+(`C-s a`) opens a prompt, so the next keys type in the minibuffer's
+view. -/
+def decorationKeys : Loop.Keys TestScheme.scheme :=
+  let search (pattern : String) : Invocation := { command := "search", arguments := [.str pattern] }
+  dispatchKeys
+    (editingBindings ++
+      [("C-s f", search "foo"), ("C-s w", search (Text.Word.wholePattern "foo")),
+        ("C-s x", search "xyz"), ("C-s r", search "\\("), ("C-s a", invoke "ask")])
+    (editingDispatched ++
+      [("search", fun call => do
+          if let [.str pattern] := call.arguments then
+            setLastSearch { pattern, forward := true }
+          return none),
+        ("ask", fun _ => do
+          discard <| prompt "/" asked
+          return none)])
+
+/-- A driver of the decoration checks over the state `start` makes, by
+default `decorationState` of `contents`, each step handed
+`decorationKeys`. -/
+def decorationDriver (contents : String) (start : Option (TextM EditorState) := none) :
+    Option TestDriver :=
+  (Loop.Driver.over decorationKeys (fun _ => none) (start.getD (decorationState contents))
+      editorModel).toOption
 
 /-- The matches of `needle` in `contents`, found by hand, row by row: from
 each row's start, each occurrence, and the walk goes on from its end. With
@@ -5705,7 +5733,7 @@ the last scene `driver` published, for the matches of `needle` in
 through `height / heights.text` rows on is decorated, and every
 decoration is in `search-match` and is a match that starts in a row
 through one more, which is what the loop reads (`Loop.decorationsOf`). -/
-def decorationsWrong (driver : EvilDriver) (contents needle : String) (whole : Bool := false)
+def decorationsWrong (driver : TestDriver) (contents needle : String) (whole : Bool := false)
     (view : ViewId := ⟨0⟩) : Option String := do
   let some scene := driver.model.display.scenes.back? | some "no scene"
   let some shown := scene.views.find? (·.id == view) | some "no view"
@@ -5741,11 +5769,11 @@ def decorationsWrong (driver : EvilDriver) (contents needle : String) (whole : B
 
 /-- The decorations of the view `view` in the last scene `driver`
 published. -/
-def decorationsOfScene (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option (Array Decoration) :=
+def decorationsOfScene (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option (Array Decoration) :=
   driver.model.display.scenes.back?.bind fun scene =>
     (scene.views.find? (·.id == view)).map (·.decorations)
 
-/-- A state of the decoration checks: `evilState` of `contents`, with a
+/-- A state of the decoration checks: `decorationState` of `contents`, with a
 second window on the same buffer below the first, whose anchor is at the
 byte offset `second`. -/
 def twoViewState (contents : String) (second : Nat) : TextM EditorState := do
@@ -5753,7 +5781,7 @@ def twoViewState (contents : String) (second : Nat) : TextM EditorState := do
   let some buffer := state.buffers[0]?.join | throw .noSuchText
   let scroll ← buffer.text.mark (.anchor { offset := second, bias := .before })
   let selection ←
-    buffer.text.mark (.selection { ranges := #[⟨second, second⟩], shape := .inclusive })
+    buffer.text.mark (.selection { ranges := #[⟨second, second⟩], shape := .exclusive })
   return {
       state with
       windows := state.windows.push { id := ⟨1⟩, buffer := ⟨0⟩, scroll, selection }
@@ -5765,50 +5793,51 @@ def twoViewState (contents : String) (second : Nat) : TextM EditorState := do
 /-- The checks of the decorations of a view (`Editor/Loop.lean`,
 "Decorations"): the matches of the last search, in `search-match`, on the
 loop's driver over the editor's models and the display recorder, under the
-Vim scheme that ships. -/
+test scheme, the last search kept by a command of the checks'
+(`decorationKeys`). That a scheme's own search keys keep the last search is
+the scheme's: evil's `/`, `?`, `*` and `#` are pinned by
+`ModelTest.evilSearchChecks`. -/
 def searchDecorationChecks : List Check :=
-  let fed (fixture typed : String) : Option EvilDriver :=
-    (decorationDriver (barred fixture).1).map (evilFed · typed)
+  let fed (contents typed : String) : Option TestDriver :=
+    (decorationDriver contents).map (keysFed · typed)
   [{  name :=
-        "after / f o o RET every match in the rows the view shows is drawn in search-match, and every decoration is a match of the rows the loop reads, food among none"
+        "once a command keeps foo as the last search, every match in the rows the view shows is drawn in search-match, and every decoration is a match of the rows the loop reads, food among none"
       run :=
         pure <|
-          match fed ("|" ++ decoratedText) "/ f o o RET" with
+          match fed decoratedText "C-s f" with
           | none => false
           | some driver => decorationsWrong driver decoratedText "foo" == none },
-    { name := "after C-f the decorations follow the rows the view shows from its new anchor"
+    { name :=
+        "once the cursor goes to the text's end the decorations follow the rows the view shows from its new anchor"
       run :=
         pure <|
-          match fed ("|" ++ decoratedText) "/ f o o RET C-f",
-            fed ("|" ++ decoratedText) "/ f o o RET" with
-          | some paged, some first =>
-            decorationsWrong paged decoratedText "foo" == none &&
-              decorationsOfScene paged != decorationsOfScene first
+          match fed decoratedText "C-s f C-<End>", fed decoratedText "C-s f" with
+          | some moved, some first =>
+            decorationsWrong moved decoratedText "foo" == none &&
+              decorationsOfScene moved != decorationsOfScene first
           | _, _ => false },
     { name :=
         "in rows that wrap, every match the view shows is decorated, and every decoration is a match"
       run :=
         pure <|
-          match fed ("|" ++ wrappingText) "/ f o o RET" with
+          match fed wrappingText "C-s f" with
           | none => false
           | some driver => decorationsWrong driver wrappingText "foo" == none },
     { name := "a second view of the buffer has the decorations of its own rows by the same rule"
       run :=
         pure <|
-          match
-            (Loop.Driver.over evilHanded (fun _ => none) (twoViewState decoratedText 300)
-                editorModel).toOption with
+          match decorationDriver decoratedText (some (twoViewState decoratedText 300)) with
           | none => false
           | some driver =>
-            let driver := evilFed driver "/ f o o RET"
+            let driver := keysFed driver "C-s f"
             decorationsWrong driver decoratedText "foo" == none &&
               decorationsWrong driver decoratedText "foo" (view := ⟨1⟩) == none &&
               decorationsOfScene driver ⟨1⟩ != decorationsOfScene driver ⟨0⟩ },
     { name :=
-        "the minibuffer's view has no decorations while the prompt is open, and with no search no view has any"
+        "the minibuffer's view has no decorations while the prompt is open, though its text holds a match, and with no search no view has any"
       run :=
         pure <|
-          match fed ("|" ++ decoratedText) "/ f o o RET / f", fed ("|" ++ decoratedText) "l" with
+          match fed decoratedText "C-s f C-s a f o o", fed decoratedText "<ArrowRight>" with
           | some asking, some unsearched =>
             let minibuffer := asking.loop.state.prompt.map (·.view)
             (asking.model.display.scenes.back?.map fun scene =>
@@ -5816,23 +5845,28 @@ def searchDecorationChecks : List Check :=
                     some view.id != minibuffer || view.decorations.isEmpty) ==
                 some true &&
               minibuffer.isSome &&
+              minibufferText asking == some "foo" &&
+              decorationsWrong asking decoratedText "foo" == none &&
               (unsearched.model.display.scenes.back?.map fun scene =>
                   scene.views.all (·.decorations.isEmpty)) ==
                 some true
           | _, _ => false },
-    { name := "after * on foo, food is not decorated: the pattern is the whole word"
+    { name :=
+        "once the last search is foo as a whole word, food is not decorated: the pattern's matches are what is drawn"
       run :=
         pure <|
-          match fed ("|" ++ decoratedText) "*" with
+          match fed decoratedText "C-s w" with
           | none => false
           | some driver => decorationsWrong driver decoratedText "foo" (whole := true) == none },
     { name := "a pattern with no match, and one the syntax refuses, draws nothing"
       run :=
         pure <|
-          match fed ("|" ++ decoratedText) "/ x y z RET",
-            fed ("|" ++ decoratedText) "/ \\ ( RET" with
+          match fed decoratedText "C-s x", fed decoratedText "C-s r" with
           | some missing, some refused =>
-            decorationsOfScene missing == some #[] && decorationsOfScene refused == some #[]
+            missing.loop.state.lastSearch == some { pattern := "xyz", forward := true } &&
+              refused.loop.state.lastSearch == some { pattern := "\\(", forward := true } &&
+              decorationsOfScene missing == some #[] &&
+              decorationsOfScene refused == some #[]
           | _, _ => false },
     { name :=
         "a buffer's spans within a covered range are kept, clipped to it, in order, and those outside it and those left empty are dropped"
@@ -5850,9 +5884,9 @@ def searchDecorationChecks : List Check :=
         let spanned : TextM EditorState := do
           let state ← decorationState decoratedText
           return { state with buffers := state.buffers.modify 0 (·.map ({ · with spans })) }
-        let driver := (Loop.Driver.over evilHanded (fun _ => none) spanned editorModel).toOption
+        let driver := decorationDriver decoratedText (some spanned)
         pure <|
-          match driver.map (evilFed · "l"), driver.map (evilFed · "/ f o o RET") with
+          match driver.map (keysFed · "<ArrowRight>"), driver.map (keysFed · "C-s f") with
           | some unsearched, some searched =>
             let found := (decorationsOfScene searched).map (·.extract 1 1000)
             decorationsOfScene unsearched == some #[{ start := 0, stop := 3, face }] &&
