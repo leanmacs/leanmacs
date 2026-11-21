@@ -65,6 +65,7 @@ import Editor.SyntaxTree
 import Editor.TabBar
 import Editor.Test.Completion
 import Editor.Test.Driver
+import Editor.Test.Editing
 import Editor.Test.Files
 import Editor.Test.Geometry
 import Editor.Test.Keys
@@ -214,7 +215,7 @@ def loopChecks : List Check :=
         "while a restart hands the session over, a key and a committed text change no text and say the hand-over again; a resize is handled"
       run :=
         pure <|
-          match evilDriver "a|b" with
+          match editingDriver "a|b" with
           | none => false
           | some driver =>
             let plan : Restart.Plan := { record := "/s/session/handover", handover := default }
@@ -223,12 +224,15 @@ def loopChecks : List Check :=
                 loop :=
                   { driver.loop with
                     state := { driver.loop.state with restore := { handing := some { plan } } } } }
-            let fed (driver : EvilDriver) (event : Event) : EvilDriver :=
+            let fed (driver : TestDriver) (event : Event) : TestDriver :=
               (driver.feed { event, stamp := 0 }).1
-            let keyed := evilFed handing "i x"
+            -- A key that types under the test scheme: with no hand-over it
+            -- inserts, as the first conjunct shows.
+            let keyed := keysFed handing "x"
             let committed := fed handing (.commit "y")
             let resized := fed handing (.resize { width := 641, height := 479, scale := 2.0 })
-            evilText keyed == some "ab" && evilText committed == some "ab" &&
+            driverText (keysFed driver "x") == some "axb" && driverText keyed == some "ab" &&
+              driverText committed == some "ab" &&
               keyed.loop.state.echo == Restart.handingLine false &&
               committed.loop.state.echo == Restart.handingLine false &&
               resized.loop.state.frame.size == ⟨641, 479⟩ },
@@ -236,7 +240,7 @@ def loopChecks : List Check :=
         "while a restart hands the session over, a pointer press and a preedit leave the selection, the focus and the preedit as they were and say the hand-over again"
       run :=
         pure <|
-          match evilDriver "a|b" with
+          match editingDriver "a|b" with
           | none => false
           | some driver =>
             let plan : Restart.Plan := { record := "/s/session/handover", handover := default }
@@ -247,10 +251,10 @@ def loopChecks : List Check :=
                     state :=
                       { driver.loop.state with
                         echo := "", restore := { handing := some { plan } } } } }
-            let fed (driver : EvilDriver) (event : Event) : EvilDriver :=
+            let fed (driver : TestDriver) (event : Event) : TestDriver :=
               (driver.feed { event, stamp := 0 }).1
-            let unchanged (after : EvilDriver) : Bool :=
-              evilSelection after == evilSelection handing &&
+            let unchanged (after : TestDriver) : Bool :=
+              selectionOf after == selectionOf handing &&
                 after.loop.state.frame.focused == handing.loop.state.frame.focused &&
                 after.loop.state.preedit == none &&
                 after.loop.state.echo == Restart.handingLine false
@@ -265,11 +269,10 @@ def loopChecks : List Check :=
         pure <|
           let program : EditorM (Layout × Layout × Layout) := do
             let state ← windowsUnder 2 Layout.default
-            let held : Loop Vim.Default.scheme :=
-              { state := { state with restore := { heldLayout := some 0 } } }
+            let held : TestLoop := { state := { state with restore := { heldLayout := some 0 } } }
             let same ← held.publish (layout := some .monocle) (generation := 0)
             let after ← held.publish (layout := some .monocle) (generation := 1)
-            let unheld ← ({ state } : Loop Vim.Default.scheme).publish (layout := some .monocle)
+            let unheld ← ({ state } : TestLoop).publish (layout := some .monocle)
             return (same.state.frame.layout, after.state.frame.layout, unheld.state.frame.layout)
           (program.runModel editorModel).1.toOption ==
             some (Layout.default.fits 2, .monocle, .monocle) },
@@ -426,15 +429,20 @@ def loopChecks : List Check :=
                 #[some ModeLine.activeFace, some ModeLine.inactiveFace, some ModeLine.inactiveFace]
           | _ => false },
     { name :=
-        "two windows on one buffer under the Vim scheme: the focused one's mode line has the NORMAL badge and its row in mode-line.active, and the other's has no badge, every field and its row in mode-line.inactive"
+        "three windows under a scheme that reports a badge of every view: the focused one's mode line has the badge and its row in mode-line.active, and the others' have no badge, every field and its row in mode-line.inactive"
       run :=
         pure <|
-          let program : EditorM (Loop Vim.Default.scheme) := do
-            let loop : Loop Vim.Default.scheme := { state := ← threeWindows }
+          let badge : Array StatusField :=
+            #[{ text := "NORMAL", face := ⟨"mode-line.state.normal"⟩ }]
+          -- A scheme written here: the test scheme, reporting the badge of
+          -- every view, as a scheme with states reports its state's.
+          let badged : InputScheme :=
+            { TestScheme.scheme with report := fun _ _ => { status := badge } }
+          let program : EditorM (Loop badged) := do
+            let loop : Loop badged := { state := ← threeWindows }
             return (← loop.step {} pressF5).loop
           match program.runModel editorModel with
           | (.ok _, model) =>
-            let badge := #[{ text := "NORMAL", face := Vim.stateFace "normal" }]
             match model.display.scenes with
             | #[scene] =>
               scene.views.map (·.status) ==

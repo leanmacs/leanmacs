@@ -1,4 +1,3 @@
-import Editor.Api
 import Editor.Command.Call
 import Editor.Config.Packages
 import Editor.Event
@@ -7,29 +6,28 @@ import Editor.InputScheme.Vim.Default
 import Editor.Loop.Driver
 import Editor.State
 import Editor.Test.AtPoint
-import Editor.Test.Keys
+import Editor.Test.Editing
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Text
-import Editor.Text.Model
-import Editor.UndoTree
 
 /-!
 # Evil's test kit
 
 The driver of evil's checks under the Vim scheme that ships, moved from the
 core's evil test support (`ModelTest/Support/Evil.lean`, which imports it):
-a fixture's text with its cursor written as a bar (`barred`, `withBar`), the
-loop and the driver over the Vim scheme (`EvilLoop`, `EvilDriver`), what a
+the loop and the driver over the Vim scheme (`EvilLoop`, `EvilDriver`), what a
 step is handed (`evilHanded`: evil's commands, the kit's minibuffer's and
 at-point's, and a check's own), the state and the driver over a fixture
 (`evilState`, `evilDriver`), keys fed to it (`evilFed`), and what a view of
-it shows (`evilSelection`, `evilShown`).
+it shows (`evilSelection`, `evilShown`). A fixture writes its text with the
+cursor as a bar, the notation of the core's kit (`barred`, `withBar`,
+`Editor/Test/Editing.lean`), which these are written on.
 
-It is evil's feature kit: a test double, which a package's test modules may
-import and its library may not (`docs/design/packages.md`, "What a package
-may import"). The working sets' and the workspace's tests drive their
+It is evil's feature kit: a test double, which a package's test modules
+may import, and its library may not (`docs/design/packages.md`, "What a
+package may import"). The working sets' and the workspace's tests drive their
 commands under evil's keys through it until the features-as-packages
 roadmap's phase 7, which moves it with evil. Project search's tests do not
 (that phase's third criterion): they run on the test scheme.
@@ -38,25 +36,6 @@ roadmap's phase 7, which moves it with evil. Project search's tests do not
 namespace Editor.Test
 
 open Editor
-
-/-- A fixture of the evil checks, which writes the cursor into the text as
-a bar: the text without the bar, and the bar's byte offset. A fixture with
-no bar has its cursor at 0. -/
-def barred (fixture : String) : String × Nat :=
-  match fixture.splitOn "|" with
-  | [before, after] => (before ++ after, before.utf8ByteSize)
-  | _ => (fixture, 0)
-
-/-- `contents` with a bar written before the character at the byte offset
-`offset`, or at its end. An offset that is no character's start, and none
-past the end, writes no bar, so a fixture's expectation does not match. -/
-def withBar (contents : String) (offset : Nat) : String :=
-  let (shown, walked) :=
-    contents.foldl
-      (fun (shown, walked) char =>
-        ((if walked == offset then shown.push '|' else shown).push char, walked + char.utf8Size))
-      ("", 0)
-  if walked == offset then shown.push '|' else shown
 
 /-- The loop the evil checks run: one over the Vim scheme that ships. -/
 abbrev EvilLoop :=
@@ -97,16 +76,8 @@ holding `contents`, so that nothing is pending in its history, and one
 window on it, focused, in a frame of 640 by 480, whose selection is one
 cursor at the byte offset `head`, of the shape the Vim scheme that ships
 reports of a view before any key. -/
-def evilState (contents : String) (head : Nat) : TextM EditorState := do
-  let text ← createText contents
-  let scroll ← text.mark (.anchor { offset := 0, bias := .before })
-  let shape := (Vim.Default.scheme.report Vim.Default.scheme.init ⟨0⟩).shape
-  let selection ← text.mark (.selection { ranges := #[⟨head, head⟩], shape })
-  let history ← UndoTree.over text
-  return {
-      buffers := #[some { name := "scratch", text, history }]
-      windows := #[{ id := ⟨0⟩, buffer := ⟨0⟩, scroll, selection }]
-      frame := { size := ⟨640, 480⟩, windows := #[⟨0⟩], focused := ⟨0⟩ } }
+def evilState (contents : String) (head : Nat) : TextM EditorState :=
+  barState contents head (Vim.Default.scheme.report Vim.Default.scheme.init ⟨0⟩).shape
 
 /-- A driver of the evil checks over the state the fixture `fixture` says
 (`evilState`), each step handed `handed`, with no job registered; `none` if
@@ -119,23 +90,16 @@ def evilDriver (fixture : String) (handed : Loop.Keys Vim.Default.scheme := evil
 /-- `driver` fed a press of each key the key string `text` names, in
 order. -/
 def evilFed (driver : EvilDriver) (text : String) : EvilDriver :=
-  (keys text).foldl (fun driver key => (driver.feed { event := press key, stamp := 0 }).1) driver
+  keysFed driver text
 
 /-- The selection of the view `view` of `driver`, as the text model has
 it. -/
-def evilSelection (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option Selection := do
-  let target ← driver.loop.state.target? view
-  (target.selection.runModel driver.model.texts).1.toOption
+def evilSelection (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option Selection :=
+  selectionOf driver view
 
 /-- What the view `view` of `driver` shows, as a fixture writes it: its
 buffer's text with a bar at the head of its selection's primary range. -/
 def evilShown (driver : EvilDriver) (view : ViewId := ⟨0⟩) : String :=
-  match driver.loop.state.target? view, evilSelection driver view with
-  | some target, some selection =>
-    match (driver.model.texts.texts[target.buffer.text.index]?).join,
-      selection.ranges[selection.primary]? with
-    | some content, some range => withBar content.contents range.head
-    | _, _ => "no text"
-  | _, _ => "no view"
+  shownOf driver view
 
 end Editor.Test

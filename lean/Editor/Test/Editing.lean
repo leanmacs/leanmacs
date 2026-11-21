@@ -2,10 +2,15 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.InputScheme.Test
 import Editor.Invocation
+import Editor.Loop.Driver
 import Editor.Package
 import Editor.Setup
+import Editor.Test.Driver
 import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
+import Editor.Text.Model
+import Editor.UndoTree
 
 /-!
 # The kit's editing commands: a stand-in for a scheme's, on the test scheme
@@ -37,6 +42,12 @@ text and moves the cursor with these, and drives no key of a real scheme.
 `editingKeys` puts them on keys that print nothing, so none is ever the
 test scheme's self-insert: the arrows, `<Backspace>`, `RET`, `<Home>`,
 `C-<Home>`, `C-<End>`, the arrows with shift, `C-z` and `C-Z`.
+
+`editingDriver` is a driver of the test scheme with these, over a state a
+fixture writes with its cursor as a bar (`barred`, `barState`), and
+`keysFed`, `selectionOf` and `shownOf` feed a driver of any scheme keys and
+read back its selection and its text with the bar (`withBar`): the
+fixture notation evil's kit uses too.
 
 Its names are its own: nothing outside a test registers or runs them. It
 grows only by what a check needs, and it holds no checks (the kit's rule):
@@ -212,5 +223,73 @@ def editingPackage : Package :=
         commandWith name run
       for (text, name) in editingKeys do
         bindKey text name }
+
+/-- A fixture that writes the cursor into the text as a bar: the text
+without the bar, and the bar's byte offset. A fixture with no bar has its
+cursor at 0. -/
+def barred (fixture : String) : String × Nat :=
+  match fixture.splitOn "|" with
+  | [before, after] => (before ++ after, before.utf8ByteSize)
+  | _ => (fixture, 0)
+
+/-- `contents` with a bar written before the character at the byte offset
+`offset`, or at its end. An offset that is no character's start, and none
+past the end, writes no bar, so a fixture's expectation does not match. -/
+def withBar (contents : String) (offset : Nat) : String :=
+  let (shown, walked) :=
+    contents.foldl
+      (fun (shown, walked) char =>
+        ((if walked == offset then shown.push '|' else shown).push char, walked + char.utf8Size))
+      ("", 0)
+  if walked == offset then shown.push '|' else shown
+
+/-- A state of one buffer, `scratch`, over a text made holding `contents`,
+so that nothing is pending in its history, and one window on it, focused,
+in a frame of 640 by 480, whose selection is one cursor at the byte offset
+`head`, of the shape `shape`. -/
+def barState (contents : String) (head : Nat) (shape : Shape := .exclusive) : TextM EditorState :=
+  do
+  let text ← createText contents
+  let scroll ← text.mark (.anchor { offset := 0, bias := .before })
+  let selection ← text.mark (.selection { ranges := #[⟨head, head⟩], shape })
+  let history ← UndoTree.over text
+  return {
+      buffers := #[some { name := "scratch", text, history }]
+      windows := #[{ id := ⟨0⟩, buffer := ⟨0⟩, scroll, selection }]
+      frame := { size := ⟨640, 480⟩, windows := #[⟨0⟩], focused := ⟨0⟩ } }
+
+/-- `driver` fed a press of each key the key string `text` names, in
+order. -/
+def keysFed {scheme : InputScheme} (driver : Loop.Driver scheme) (text : String) :
+    Loop.Driver scheme :=
+  (keys text).foldl (fun driver key => (driver.feed { event := press key, stamp := 0 }).1) driver
+
+/-- The selection of the view `view` of `driver`, as the text model has
+it. -/
+def selectionOf {scheme : InputScheme} (driver : Loop.Driver scheme) (view : ViewId := ⟨0⟩) :
+    Option Selection := do
+  let target ← driver.loop.state.target? view
+  (target.selection.runModel driver.model.texts).1.toOption
+
+/-- What the view `view` of `driver` shows, as a fixture writes it: its
+buffer's text with a bar at the head of its selection's primary range. -/
+def shownOf {scheme : InputScheme} (driver : Loop.Driver scheme) (view : ViewId := ⟨0⟩) : String :=
+  match driver.loop.state.target? view, selectionOf driver view with
+  | some target, some selection =>
+    match (driver.model.texts.texts[target.buffer.text.index]?).join,
+      selection.ranges[selection.primary]? with
+    | some content, some range => withBar content.contents range.head
+    | _, _ => "no text"
+  | _, _ => "no view"
+
+/-- A driver of the test scheme over the state the fixture `fixture` says
+(`barred`, `barState`), with the kit's editing keys and commands, then
+`bindings` and `commands`, and no job registered; `none` if making the
+state was refused. -/
+def editingDriver (fixture : String) (bindings : List (String × Invocation) := [])
+    (commands : List (String × Dispatched) := []) : Option TestDriver :=
+  let (contents, head) := barred fixture
+  (Loop.Driver.over (dispatchKeys (editingBindings ++ bindings) (editingDispatched ++ commands))
+      (fun _ => none) (barState contents head) editorModel).toOption
 
 end Editor.Test
