@@ -178,9 +178,9 @@ def withRealVimHost (context : Context) (files : List (String × String))
   IO.FS.withTempDir fun directory => do
     let (stage, collaborators) ←
       vimStaged context directory files fileModel realFiles workingDirectory home emitting
-    Headless.withHost collaborators (guard := patience) (grace := some hangGuard) fun host => do
+    Headless.withHost collaborators (guard := hangGuard) (grace := some hangGuard) fun host => do
         let held ← check (RealSession.ofStage host directory stage)
-        let wait ← host.await patience
+        let wait ← host.await hangGuard
         return held && (wait == .settled || wait == .ended)
 
 end ConfigTest

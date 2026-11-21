@@ -130,10 +130,10 @@ def dispatchChecks (context : Context) : List Check :=
             session.type "C-c l"
             -- The loop has taken the key that runs the command: it is in the
             -- command, or about to be.
-            unless ← eventually (return (← session.output.get).contains "key arrived: l - -") do
+            unless ← session.outputReaches (·.contains "key arrived: l - -") do
               return false
             session.host.press Watch.interruptKey
-            unless ← session.host.settle patience do
+            unless ← session.host.settle hangGuard do
               return false
             let interrupted ← session.scene
             let lowered ← Ffi.interruptRaised
@@ -237,15 +237,15 @@ def dispatchChecks (context : Context) : List Check :=
             -- dedicated task, joined below, while the check lets each read go.
             let asked ← IO.asTask (prio := .dedicated) (session.ask [])
             try
-              unless ← eventually (return (← session.clock.held) == 1) do
+              unless ← clockReaches session.clock (.held 1) do
                 return false
               let first ← hold
               step.resolve ()
-              unless ← eventually (return (← session.clock.held) == 2) do
+              unless ← clockReaches session.clock (.held 2) do
                 return false
               let second ← hold
               first.resolve ()
-              unless ← eventually (return (← session.clock.held) == 3) do
+              unless ← clockReaches session.clock (.held 3) do
                 return false
               session.clock.advance 60
               second.resolve ()
@@ -387,14 +387,19 @@ def rewriteFromOutside (path : System.FilePath) (text : String) : IO Bool := do
 
 /-- The checks of auto-reload through the headless host on real files, with
 the library's watch service (`Editor/Loop.lean`, "Auto-reload"): criteria 9
-and 10. Measured on 2026-11-16 on macOS (FSEvents), over six runs: the
-rewrite was shown 66 to 83 ms after the other process exited, a median of
-about 80 ms, and the edited buffer marked in 78 to 84 ms; the 50 ms
-coalescing window is most of it. The bound is a second, and every wait is
-polled, never a fixed sleep. -/
+and 10, that the rewrite is shown and the edited buffer marked, each seen on
+the scene asked at each job line the follow job and the reload it starts
+print (`Session.shownOn`), with `hangGuard` against a hang only. How soon
+they are shown, the criteria's "within a second", is real time and is
+measured, not pass or fail here: `config-bench`'s auto-reload row prints
+the rewrite-to-shown latency over real watches with its budget beside it.
+Measured on 2026-11-16 on macOS (FSEvents), over six runs: the rewrite was
+shown 66 to 83 ms after the other process exited, a median of about 80 ms,
+and the edited buffer marked in 78 to 84 ms; the 50 ms coalescing window is
+most of it. -/
 def autoReloadChecks (context : Context) : List Check :=
   [{  name :=
-        "criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown within a second; once the buffer is edited, another rewrite leaves its text and marks its status line within a second"
+        "criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown; once the buffer is edited, another rewrite leaves its text and marks its status line"
       run :=
         withFiles context (targets := [.files, .fileWatches]) fun files => do
           let path := files / "note.txt"
@@ -405,34 +410,35 @@ def autoReloadChecks (context : Context) : List Check :=
                 return false
               -- With no argument the command toggles: off, so on.
               session.ask [.run Files.autoReloadName]
-              let armed ←
-                eventually do
-                    return (← session.output.get).any fun line =>
-                        line.startsWith "job " && line.endsWith s!" {Files.followJob}: started"
+              -- The command starts the follow job, which says so as it starts:
+              -- read once the ask has waited for the command.
+              let armed :=
+                (← session.output.get).any fun line =>
+                  line.startsWith "job " && line.endsWith s!" {Files.followJob}: started"
               unless armed do
                 return false
               unless ← rewriteFromOutside path new do
                 return false
-              -- "Within a second" is the criterion under test, over the real
-              -- watch service's coalescing window: real time on purpose, and
-              -- the poll's to move in phase 6. The session's own settles wait
-              -- for the reload's end (`Session.ask`).
-              let (shown, saw) ← session.within 1000 (·.contains (viewLine new 0))
-              unless shown.isSome do
-                throw (IO.userError s!"the rewrite was not shown within a second: {saw}")
+              -- The watch's delivery wakes the follow job, whose command starts
+              -- the reload: the scene is asked again at each of their lines,
+              -- never after a time. How soon is `config-bench`'s to measure.
+              let jobLine (line : String) : Bool := line.startsWith "job "
+              let (shown, saw) ← session.shownOn jobLine (·.contains (viewLine new 0))
+              unless shown do
+                throw (IO.userError s!"the rewrite was not shown: {saw}")
               unless ← Event.post (.commit "x") do
                 return false
               unless ← rewriteFromOutside path again do
                 return false
               let edited := "x" ++ new
               let (marked, last) ←
-                session.within 1000 fun lines =>
+                session.shownOn jobLine fun lines =>
                     lines ==
                       #[viewLine edited 1,
                         statusOf (name := "note.txt") (modified := true) (cursor := ⟨0, 1⟩)
                           (lines := 3) (file := some path) (changed := true)]
-              unless marked.isSome do
-                throw (IO.userError s!"the edited buffer was not marked within a second: {last}")
+              unless marked do
+                throw (IO.userError s!"the edited buffer was not marked: {last}")
               return (← IO.FS.readBinFile path) == again.toUTF8 }]
 
 end ConfigTest

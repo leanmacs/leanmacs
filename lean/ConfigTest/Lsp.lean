@@ -1,3 +1,4 @@
+import Editor.Job.Runner
 import Lean.Data.Lsp
 
 /-!
@@ -41,8 +42,10 @@ namespace ConfigTest.Lsp
 
 open Lean
 
-/-- How long the check waits for the server, in milliseconds. A first run
-takes a few seconds; only a server that hangs takes this long. -/
+/-- hang guard: the exchange's end, the server's diagnostics of the file
+read; only a hang reaches the bound, and the check then fails as a hang.
+In milliseconds: a first run takes a few seconds; only a server that hangs
+takes this long. -/
 def patience : Nat :=
   180000
 
@@ -148,17 +151,14 @@ def run (sysroot configDir : String) (line column : Nat) : IO UInt8 := do
     IO.asTask (prio := .dedicated)
         (exchange (IO.FS.Stream.ofHandle server.stdin) (IO.FS.Stream.ofHandle server.stdout)
           directory path text)
-  let mut waited := 0
-  while !(← IO.hasFinished task) && waited < patience do
-    IO.sleep 20
-    waited := waited + 20
-  let finished ← IO.hasFinished task
+  -- The exchange's end is waited on (`Job.awaitWithin`), never polled.
+  let finished ← Editor.Job.awaitWithin patience task
   server.kill
   discard <| server.wait
-  unless finished do
-    IO.eprintln s!"config-test lsp: the language server did not answer within {patience} ms"
+  let some answered := finished |
+    IO.eprintln s!"config-test lsp: a hang: the language server did not answer within {patience} ms"
     return 1
-  match task.get with
+  match answered with
   | .error error =>
     IO.eprintln s!"config-test lsp: {error}"
     return 1

@@ -33,7 +33,7 @@ plain names are the stepped helpers (`lean/ConfigTest/Support/Hosts.lean`).
 | A4 | The library's editor queue: a Rust poster (`Ffi.feedScript`), the interrupt key's mark, and the flag raised as a key arrives while a command runs | Needs the library queue and a command running concurrently |
 | A5 | The library's syntax service, whose parses come back over the library's editor queue (`Event.parsed`) and are waited for with `Ffi.syntaxSettle` | A stepped host never pulls the library queue, and a stray `parsed` would reach the next real host |
 | A6 | The window mode's wiring (`Editor.Window.host` and its start-up wait) | It is the window mode's edge |
-| A7 | The library's watch service on real files and real time (`Session.within`) | Background deliveries on the library's clock |
+| A7 | The library's watch service on real files (`Session.shownOn`, the scene asked at each job line) | Background deliveries on the library's clock |
 
 ## config-test: 70 checks
 
@@ -165,12 +165,12 @@ the window mode's wait for its start-up config, past its patience with the reloa
 
 ### A7: 2 checks
 
-The library's watch service on real files and real time (`Session.within`).
+The library's watch service on real files (`Session.shownOn`: the scene asked again at each job line, never after a time).
 
 Lists: `autoReloadChecks`, `gutterChecks`.
 
 ```checks
-criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown within a second; once the buffer is edited, another rewrite leaves its text and marks its status line within a second
+criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown; once the buffer is edited, another rewrite leaves its text and marks its status line
 criterion 6 through the host over real git: a tracked file with a line changed shows a changed mark, and after git commit -a run by another process its gutter has no mark
 ```
 ## FfiTest

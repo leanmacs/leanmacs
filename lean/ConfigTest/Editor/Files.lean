@@ -343,8 +343,11 @@ def fileChecks (context : Context) : List Check :=
                 -- The loop delivered the job's command, so it has a frame: the
                 -- one snapshot more is the one its scene holds of the scratch
                 -- buffer's text, which is text 0.
-                let freed ← eventually (return (← Ffi.Snapshot.live) == snapshots + 1)
-                let wait ← host.await patience
+                -- Waited on the free itself, then read once.
+                let freed :=
+                  (← Ffi.Snapshot.awaitLive (snapshots + 1) hangGuard.toUInt64) &&
+                    (← Ffi.Snapshot.live) == snapshots + 1
+                let wait ← host.await hangGuard
                 let stopped := wait == .settled || wait == .ended
                 return opened == .settled && missed == .settled && freed && stopped &&
                     (← stage.collaborators.held.size) == 0 &&

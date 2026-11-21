@@ -121,28 +121,46 @@ def gutterChecks (context : Context) : List Check :=
           let processes :=
             Job.realProcesses services.completions (← Job.RefusedRuns.new) services.timers
               (← Job.TimedRuns.new)
+          -- The watch job runs git before it starts its watch, so the watch
+          -- may be registered after the mark is shown: its first `next` is
+          -- asked only once its start has been answered, the watch
+          -- registered, and resolves `armed`, which the commit waits for.
+          let armed ← IO.Promise.new
+          let watches := services.fileWatches
+          let fileWatches :=
+            { watches with
+              start := fun id request => do
+                watches.start id request
+                if request matches .next _ then
+                  armed.resolve () }
           let stage :=
             { stage with
               collaborators :=
                 { collaborators with
-                  services := { services with processes := isolatedProcesses processes home } } }
+                  services :=
+                    { services with
+                      processes := isolatedProcesses processes home, fileWatches } } }
           onRealStage stage fun host stage => do
               let session : Session := (RealSession.ofStage host configDir stage)
               -- The watch job never ends, so the host's jobs never settle: the
-              -- open is asked for, and its outcome polled.
+              -- open is asked for, and the scene asked again at each line a
+              -- gutter job's result or post prints (`Session.shownOn`).
               session.ask [.run "open-a"]
               let changed := "marks 0: ~ diff.changed 2..4"
-              let (marked, saw) ← session.within 5000 (·.contains changed)
-              unless marked.isSome do
+              let gutterLine (line : String) : Bool := line.startsWith "job "
+              let (marked, saw) ← session.shownOn gutterLine (·.contains changed)
+              unless marked do
                 throw (IO.userError s!"the changed mark was not shown: {saw}")
+              unless (← Job.awaitWithin hangGuard armed.result?).isSome do
+                throw (IO.userError "a hang: the repository's watch was not registered")
               discard <|
                   gitOutside home repo
                     #["-c", "commit.gpgsign=false", "commit", "-q", "-a", "-m", "two"]
               let (cleared, last) ←
-                session.within 5000 fun lines =>
+                session.shownOn gutterLine fun lines =>
                     !lines.any (·.startsWith "marks 0:") &&
                       lines.any fun line => line.startsWith "view 0" && line.endsWith " gutter 12"
-              unless cleared.isSome do
+              unless cleared do
                 throw (IO.userError s!"the mark was not cleared after the commit: {last}")
               return true }]
 

@@ -33,14 +33,15 @@ def type (session : Session) (text : String) : IO Unit := do
     session.press key
 
 /-- Sends a press of each key the key string `text` names, and waits until
-the editor thread has handled them. Throws if that takes longer than
-`patience`. -/
+the editor thread has handled them (`Session.ask`). Throws a hang if that
+reaches `hangGuard`. -/
 def typed (session : Session) (text : String) : IO Unit := do
   session.type text
   session.ask []
 
 /-- Sends a press of each of `keys`, in order, and waits until the editor
-thread has handled them. Throws if that takes longer than `patience`. -/
+thread has handled them (`Session.ask`). Throws a hang if that reaches
+`hangGuard`. -/
 def pressKeys (session : Session) (keys : List Key) : IO Unit := do
   for key in keys do
     session.press key

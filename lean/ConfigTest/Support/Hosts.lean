@@ -47,9 +47,8 @@ printed (`Session`, with `Session.scene` and `Session.shown`, and
 `RealSession` for a real host), a host started over a stage or over files,
 stepped on the check's thread (`onStage`, `staged`, `withHost`) or on a loop
 thread of its own (`onRealStage`, `stagedReal`, `withRealHost`), the guard of a check's waits for
-its host (`hangGuard`, `settled`), and polling with a bound (`patience`,
-`eventually`, `Session.within`). Shared by several test modules; it holds no
-checks of its own.
+its host (`hangGuard`, `settled`). Shared by several test modules; it holds
+no checks of its own.
 -/
 
 namespace ConfigTest
@@ -150,16 +149,13 @@ config file: with its header (`headed`). -/
 def writeConfig (directory : System.FilePath) (files : List (String × String)) : IO Unit :=
   writeFiles directory (files.map fun (path, text) => (path, headed text))
 
-/-- How long a check waits, in milliseconds, for something that should happen
-at once. Only broken code takes this long, and the check then fails instead
-of hanging. A check's waits for its host's reload or jobs have `hangGuard`
-in its place (`Session.ask`, `settled`); the polls (`eventually`) and the
-raw `host.settle patience` sites keep it, to move in a later sweep. -/
-def patience : Nat :=
-  5000
+/-- hang guard: the event each of a check's waits ends on (its host's
+answer, a reload's or a job's end, idle, a promise a hold resolves); only a
+hang reaches the bound, and the check then fails as a hang.
 
-/-- The guard of a check's waits for its host (`Headless.Host.waitWhile`), in
-milliseconds: only a real hang trips it, even under heavy load. A check that
+The guard of a check's waits for its host (`Headless.Host.waitWhile`), its
+brackets and its `Job.awaitWithin`s, in milliseconds: only a real hang
+trips it, even under heavy load. A check that
 reaches it fails, reported as a hang, never as a timing result; a check
 that pins a bound of the headless mode on purpose holds a reload or the
 editor thread for good and gives a short guard of its own.
@@ -173,6 +169,14 @@ real reload whose root first imports `Lean` (`moduleHostChecks`) took
 def hangGuard : Nat :=
   120000
 
+/-- Waits until the fake clock `clock` has reached `arrival`
+(`Job.FakeClock.arrivedAt`): on the step that makes it, on whichever thread
+takes it, never by a poll of the readout. Whether it came before
+`hangGuard`, which only a hang reaches. -/
+def clockReaches (clock : Job.FakeClock) (arrival : Job.FakeClockArrival) : IO Bool := do
+  let reached ← clock.arrivedAt arrival
+  return (← Job.awaitWithin hangGuard reached.result?).isSome
+
 /-- What a check hands a host of its own: the collaborators, and what the
 check keeps of them. The host's output goes to a buffer, with the thread
 that emitted each line; its jobs wait on a fake clock the check moves; and it
@@ -185,6 +189,10 @@ structure Stage (β σ : Type) where
   output : IO.Ref (Array String)
   /-- The thread that emitted each line of `output`. -/
   threads : IO.Ref (Array UInt64)
+  /-- What checks wait for the output to come to (`Session.outputReaches`):
+  each a test of the whole output and the promise the emit resolves once
+  the test holds, after the line that makes it is in `output`. -/
+  outputWaits : IO.Ref (Array ((Array String → Bool) × IO.Promise Unit))
   /-- The clock the host's jobs wait on, and the loop times a command on. -/
   clock : Job.FakeClock
   /-- The watch service the host's jobs watch through: a fake over a model
@@ -298,6 +306,7 @@ def Stage.new {β σ : Type} (context : Context) (elaborator : Config.Elaborator
     throw (IO.userError s!"the stage's registrations are refused: {reason}")
   let output ← IO.mkRef #[]
   let threads ← IO.mkRef #[]
+  let outputWaits : IO.Ref (Array ((Array String → Bool) × IO.Promise Unit)) ← IO.mkRef #[]
   let log ← IO.mkRef #[]
   let disposed ← IO.mkRef #[]
   let completions ←
@@ -315,7 +324,13 @@ def Stage.new {β σ : Type} (context : Context) (elaborator : Config.Elaborator
         { elaborator, source,
           emit := fun line => do
             threads.modify (·.push (← IO.getTID))
-            output.modify (·.push line),
+            let lines ← output.modifyGet fun lines => (lines.push line, lines.push line)
+            -- After the line is in `output`: a wait armed later reads it.
+            let reached ←
+              outputWaits.modifyGet fun waits =>
+                  (waits.filter (·.1 lines), waits.filter (!·.1 lines))
+            for (_, promise) in reached do
+              promise.resolve (),
           services :=
             { completions, timers := clock.timers, fileWatches := watches.fileWatches, fuzzy
               snapshots := Job.realSnapshots published.reader }
@@ -337,7 +352,8 @@ def Stage.new {β σ : Type} (context : Context) (elaborator : Config.Elaborator
               return { loop with state := (loop.state.setMajorMode ⟨0⟩ name).2 }
             | none =>
               return loop },
-      output, threads, clock, watches, log, disposed, memory := ← Headless.Queue.Memory.new }
+      output, threads, outputWaits, clock, watches, log, disposed
+      memory := ← Headless.Queue.Memory.new }
 
 /-- A host as a check drives it, whichever kind it is: a real one, whose loop
 runs on a thread of its own (`Headless.Host`, `Driven.ofHost`), or one
@@ -413,36 +429,58 @@ def resize (driven : Driven) (width height : Nat) : IO Unit :=
   driven.input (.resize { width, height, scale := 1.0 })
 
 /-- `Headless.Host.await` on the driven host: a `settle`'s wait
-(`Headless.Wait.Kind.settle`). -/
+(`Headless.Wait.Kind.settle`).
+hang guard: `waitGuard`, the caller's, on the event the wait ends on. -/
 def await (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
+  -- hang guard: the caller's `waitGuard`; only a hang reaches it.
   driven.waitWhile waitGuard .settle answer line waitHung waitBlocked
 
 /-- `Headless.Host.join` on the driven host: a `join`'s wait
-(`Headless.Wait.Kind.join`). -/
+(`Headless.Wait.Kind.join`).
+hang guard: `waitGuard`, the caller's, on the event the wait ends on. -/
 def join (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard) (line : Option Nat := none)
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
+  -- hang guard: the caller's `waitGuard`; only a hang reaches it.
   driven.waitWhile waitGuard .join answer line waitHung waitBlocked
 
-/-- `Headless.Host.settle` on the driven host. -/
+/-- `Headless.Host.settle` on the driven host.
+hang guard: `waitGuard`, the caller's, on the event the wait ends on. -/
 def settle (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+  -- hang guard: the caller's `waitGuard`; only a hang reaches it.
   return (← driven.await waitGuard answer line waitHung waitBlocked) == .settled
 
 /-- A wait only until the host has handled everything sent so far
-(`Headless.Wait.Kind.handled`), publishing nothing. -/
+(`Headless.Wait.Kind.handled`), publishing nothing.
+hang guard: `waitGuard`, the caller's, on the event the wait ends on. -/
 def handled (driven : Driven) (waitGuard : Nat) : IO Headless.Wait :=
+  -- hang guard: the caller's `waitGuard`; only a hang reaches it.
   driven.waitWhile waitGuard .handled waitGuard none IO.eprintln fun _ => pure ()
 
 /-- A `join`'s wait that publishes nothing (its marker is a probe): what
 replaces a poll for a state the host reaches by itself, such as a job in
-its sleep, so the scene count stays the poll's. -/
+its sleep, so the scene count stays the poll's.
+hang guard: `waitGuard`, the caller's, on the event the wait ends on. -/
 def idle (driven : Driven) (waitGuard : Nat) : IO Headless.Wait :=
+  -- hang guard: the caller's `waitGuard`; only a hang reaches it.
   driven.waitWhile waitGuard { Headless.Wait.Kind.join with marker := false } waitGuard none
     IO.eprintln fun _ => pure ()
+
+/-- A wait until the host is idle (`docs/design/concurrency.md`, "The idle
+signal": everything sent handled, nothing that can end by itself running,
+no fake-clock wait due), publishing nothing: what it waits for always
+holds, so it answers only at idle, `settled`. What replaces a poll for a
+state work reaches by itself after the jobs table has let it go, such as a
+cancelled job's end. hang guard: `waitGuard`, the caller's, on idle. -/
+def quiet (driven : Driven) (waitGuard : Nat) : IO Headless.Wait :=
+  -- hang guard: the caller's `waitGuard`; only a hang reaches it.
+  driven.waitWhile waitGuard
+    { what := "idle", busy := fun _ => pure true, still := some .settled, hung := .busy
+      marker := false } waitGuard none IO.eprintln fun _ => pure ()
 
 end Driven
 
@@ -462,6 +500,8 @@ structure Session where
   output : IO.Ref (Array String)
   /-- The thread that emitted each line of `output`. -/
   threads : IO.Ref (Array UInt64)
+  /-- What the check waits for the output to come to (`Stage.outputWaits`). -/
+  outputWaits : IO.Ref (Array ((Array String → Bool) × IO.Promise Unit))
   /-- The clock the host's jobs wait on, which the check moves. -/
   clock : Job.FakeClock
   /-- The watch service the host's jobs watch through, which the check
@@ -494,8 +534,9 @@ instance : Coe RealSession Session :=
 def Session.ofStage {β σ : Type} (drive : Driven) (directory : System.FilePath) (stage : Stage β σ)
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : Session :=
-  { drive, directory, output := stage.output, threads := stage.threads, clock := stage.clock
-    watches := stage.watches, log := stage.log, waitHung, waitBlocked }
+  { drive, directory, output := stage.output, threads := stage.threads
+    outputWaits := stage.outputWaits, clock := stage.clock, watches := stage.watches
+    log := stage.log, waitHung, waitBlocked }
 
 /-- The session of the real host `host` over `stage`. -/
 def RealSession.ofStage {β σ : Type} (host : Headless.Host) (directory : System.FilePath)
@@ -571,6 +612,11 @@ check waits on in place of a poll for a job in its sleep. -/
 def idle (session : Session) : IO Headless.Wait :=
   session.drive.idle hangGuard
 
+/-- Waits until the host is idle, with `hangGuard`, publishing nothing
+(`Driven.quiet`): whether it came to idle. -/
+def quiet (session : Session) : IO Bool :=
+  return (← session.drive.quiet hangGuard) == .settled
+
 /-- Waits until the host has handled everything sent so far, with
 `hangGuard`, and publishes nothing (`Driven.handled`): whether it did. -/
 def handled (session : Session) : IO Bool :=
@@ -627,7 +673,7 @@ def stepping {β σ : Type} {scheme : InputScheme} (collaborators : Headless.Col
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
   leavingLibraryQueue <|
-    Headless.withStepped collaborators memory (guard := patience) (grace := some hangGuard)
+    Headless.withStepped collaborators memory (guard := hangGuard) (grace := some hangGuard)
       fun stepped => do
       let drive := Driven.ofStepped stepped
       let held ← check drive
@@ -645,7 +691,7 @@ def hostingReal {β σ : Type} {scheme : InputScheme}
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
   -- A loop not ended `hangGuard` after its hang was said is given up on,
   -- and the check fails as a hang: the suite always finishes.
-  Headless.withHost collaborators (guard := patience) (grace := some hangGuard) fun host => do
+  Headless.withHost collaborators (guard := hangGuard) (grace := some hangGuard) fun host => do
     let held ← check host
     let wait ← host.await hangGuard (waitHung := waitHung) (waitBlocked := waitBlocked)
     return held && (wait == .settled || wait == .ended)
@@ -657,7 +703,7 @@ fails it if the library's editor queue grew across it
 of `Headless.withHost`. -/
 def onSteppedStage {α β σ : Type} (stage : Stage β σ) (body : Driven → IO α) : IO α :=
   leavingLibraryQueue <|
-    Headless.withStepped stage.collaborators stage.memory (guard := patience) (grace :=
+    Headless.withStepped stage.collaborators stage.memory (guard := hangGuard) (grace :=
       some hangGuard) fun stepped => body (Driven.ofStepped stepped)
 
 /-- Runs `check` against a host started on `stage`, stepped on the check's
@@ -756,11 +802,6 @@ def withFiles {α : Type} (context : Context) (body : System.FilePath → IO α)
   let services ← Editor.Test.Linked.Services.over (← context.fileWaits)
   Editor.Test.Linked.withFiles services.jobs body targets
 
-/-- Polls `condition` until it holds; `false` if it still does not after
-`patience` milliseconds. -/
-def eventually (condition : IO Bool) : IO Bool :=
-  Headless.within patience condition
-
 /-- Asks the host for the scene, and returns every line it printed for it:
 the scene's line, then each view's line followed by its status line. -/
 def Session.sceneLines (session : Session) : IO (Array String) := do
@@ -842,22 +883,33 @@ def Session.viewsAndStatus (session : Session) : IO (String × Array String) := 
   let (echo, _) ← session.scene
   return (echo, (← session.output.get).extract (before + 1))
 
-/-- Polls the scene every 10 ms, with `settle` and no fixed sleep as the
-assertion, until `done` holds of its view and status lines or `bound`
-milliseconds have passed: how long it took, and the lines it last saw. -/
-def Session.within (session : Session) (bound : Nat) (done : Array String → Bool) :
-    IO (Option Nat × Array String) := do
-  let start ← IO.monoMsNow
-  let mut lines := #[]
+/-- Waits until the host's output holds of `done`: on the emit of the line
+that makes it hold (`Stage.outputWaits`), never by a poll. The wait is armed
+before the output is read, so a line emitted in between is not missed.
+Whether it came before `hangGuard`, which only a hang reaches. -/
+def Session.outputReaches (session : Session) (done : Array String → Bool) : IO Bool := do
+  let reached ← IO.Promise.new
+  session.outputWaits.modify (·.push (done, reached))
+  if done (← session.output.get) then
+    return true
+  return (← Job.awaitWithin hangGuard reached.result?).isSome
+
+/-- Asks for the scene until `done` holds of its view and status lines, and
+between two asks waits for the next line of the host's output that `cue`
+accepts (`outputReaches`): the line of what changes the scene, such as a
+job's result, so each ask is made on an event and never after a time. A
+cue that was emitted before the scene was asked only makes the next ask at
+once. Whether it held, and the lines it last saw; a cue that never comes
+is a hang, at `hangGuard`. -/
+def Session.shownOn (session : Session) (cue : String → Bool) (done : Array String → Bool) :
+    IO (Bool × Array String) := do
   repeat
+    let start := (← session.output.get).size
     let (_, seen) ← session.viewsAndStatus
-    lines := seen
-    let took := (← IO.monoMsNow) - start
     if done seen then
-      return (some took, lines)
-    if took > bound then
-      break
-    IO.sleep 10
-  return (none, lines)
+      return (true, seen)
+    unless ← session.outputReaches fun lines => (lines.extract start lines.size).any cue do
+      return (false, seen)
+  return (false, #[])
 
 end ConfigTest

@@ -78,7 +78,9 @@ for a reload to its report, on Lean's monotonic clock. -/
 
 namespace Bench
 
-/-- How long a measurement waits, in milliseconds, for one reload. -/
+/-- hang guard: a measurement's reload, settle or join; only a hang reaches
+the bound, and the measurement then fails as a hang. In milliseconds, for
+one reload. -/
 def patience : Nat :=
   120000
 
@@ -746,8 +748,8 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
               unless (← host.join patience) == .settled do
                 throw (IO.userError "a listing was not delivered")
             else
-              -- Typing cadence: the next key comes a moment later, whatever
-              -- the match is doing.
+              -- real time under test: the typing cadence the row measures at,
+              -- the next key a moment later whatever the match is doing.
               IO.sleep cadence.toUInt32
           return (keyTimes, listingTimes)
     finally
@@ -1054,6 +1056,7 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
           if joinEach then
             joined "a key's listing"
           else
+            -- real time under test: the finder row's typing cadence.
             IO.sleep finderCadence.toUInt32
         joined "the row"
         host.send (.run Minibuffer.cancelName)

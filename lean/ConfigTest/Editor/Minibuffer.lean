@@ -678,8 +678,9 @@ def promptChecks (context : Context) : List Check :=
               try
                 session.ask [.reload]
                 session.ask [.run "ask-many"]
-                unless
-                  ← eventually (return (matchJobs (← session.output.get) "started").size == 1) do
+                -- The scene after the command starts the match: read once the
+                -- ask has waited for it.
+                unless (matchJobs (← session.output.get) "started").size == 1 do
                   return false
                 session.write "init.lean" (slowStyleText "orderless")
                 session.ask [.reload]

@@ -788,25 +788,27 @@ def threadChecks (context : Context) : List Check :=
             try
               -- The reload job is now inside the elaboration of `Config/Slow.lean`,
               -- and stays there until the gate opens.
-              unless ← eventually gate.holding.get do
+              unless (← Job.awaitWithin hangGuard gate.arrived.result?).isSome do
                 return false
               let some fed ← Ffi.feedScript .editor 77 100 hangGuard.toUInt64 | return false
+              -- The feed's thread has pushed its last event once it is joined:
+              -- all 100 are on the editor queue, and the run is sent after
+              -- them, so a wait that only asks the editor thread to answer
+              -- (`handled`, which waits for no reload) answers once all of
+              -- them are handled. With the job on the editor thread it never
+              -- answers while the file is held: the wait reaches its guard and
+              -- the check fails as a hang.
+              let joined := (← Job.awaitWithin hangGuard fed) matches some (.ok true)
               session.host.send (.run "greet")
-              -- With the job on the editor thread these lines never come while
-              -- the file is held: the wait runs out and the check fails.
-              let answered ←
-                eventually do
-                    let lines ← session.output.get
-                    return lines.size == 102 && lines.contains "run greet: ok"
+              let handled ← session.handled
               let lines ← session.output.get
+              let answered := handled && lines.size == 102 && lines.contains "run greet: ok"
               -- The file is still being elaborated: all of that was answered
               -- while it was held.
               let held := (← gate.inProgress.get) == 1
               gate.open
               session.ask []
               let after ← session.output.get
-              -- The feed's thread has ended before the check returns.
-              let joined := (← IO.wait fed) matches .ok true
               return answered && held && joined &&
                   lines.extract 0 1 == #["reload 1: installed, 2 files, 1 commands"] &&
                   (lines.filter (·.startsWith "event ")) == eventLines 77 100 &&
@@ -826,7 +828,7 @@ def threadChecks (context : Context) : List Check :=
             try
               unless ← session.handled do
                 return false
-              unless ← eventually gate.holding.get do
+              unless (← Job.awaitWithin hangGuard gate.arrived.result?).isSome do
                 return false
               session.write "Config/Greet.lean" (greetText "v2")
               session.send .reload
@@ -864,12 +866,11 @@ def threadChecks (context : Context) : List Check :=
                 unless ← host.settle hangGuard do
                   return false
               -- The base and the handles of three files. A finished job's
-              -- task may still be going away, so this is polled.
-              eventually do
-                  return (← Ffi.Counter.live) == before + 4
-        let freed ←
-          eventually do
-              return (← Ffi.Counter.live) == before
+              -- task may still be going away, so its free is waited on, and
+              -- the count then read once.
+              return (← Ffi.Counter.awaitLive (before + 4) hangGuard.toUInt64) &&
+                  (← Ffi.Counter.live) == before + 4
+        let freed ← Ffi.Counter.awaitLive before hangGuard.toUInt64
         return loaded && freed }]
 
 /-- A config with three jobs, and the `setup` that registers them beside
@@ -925,46 +926,58 @@ def setup : SetupM Unit := do
 whose syntax tree collaborator is the real binding over the library's syntax
 service with every request recorded (`recordedRequest`) in the array handed
 back, and which after an attach waits, with a bound, for the attached text's
-tree to be delivered; and how many scenes the host's display has had
+tree to be delivered; how many scenes the host's display has had
 published to it, read from the display the host's collaborator made, with no
-request of the driver's. -/
+request of the driver's; and a wait for the library to deliver a tree of the
+text the first view of the last scene published shows (`Ffi.syntaxSettle`,
+with `hangGuard`): whether it did. -/
 def recordedStage (context : Context) (directory : System.FilePath) :
-    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle × IO.Ref (Array String) × IO Nat) := do
+    IO
+      (Stage Config.Elaborate.Base Config.Elaborate.Handle ×
+        IO.Ref (Array String) × IO Nat × IO Bool) :=
+  do
   writeConfig directory [("init.lean", highlightText)]
   let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
   let asked ← IO.mkRef #[]
   let syntaxTree := recordingSyntaxTree asked
-  let made : IO.Ref (Option Headless.Host.Display) ← IO.mkRef none
+  let made : IO.Ref (Option (Headless.Host.Display × SnapshotReader)) ← IO.mkRef none
   let display (snapshots : SnapshotReader) : IO Headless.Host.Display := do
     let shown ← Headless.Host.Display.recorder Headless.cells snapshots
-    made.set (some shown)
+    made.set (some (shown, snapshots))
     return shown
   let published : IO Nat := do
     match ← made.get with
-    | some shown =>
+    | some (shown, _) =>
       shown.count.get
     | none =>
       return 0
+  let settleShown : IO Bool := do
+    let some (shown, snapshots) ← made.get | return false
+    let some scene ← shown.last? | return false
+    let some view := scene.views[0]? | return false
+    let some found ← snapshots.find? view.snapshot | return false
+    Ffi.syntaxSettle found hangGuard.toUInt64
   return ({ stage with
         collaborators :=
           { stage.collaborators with
             syntaxTree, display } },
-      asked, published)
+      asked, published, settleShown)
 
 /-- Runs `check` against a stepped host over `recordedStage`'s stage. -/
 def withRecordedSyntaxTree (context : Context)
     (check : Session → IO.Ref (Array String) → IO Nat → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    let (stage, asked, published) ← recordedStage context directory
+    let (stage, asked, published, _) ← recordedStage context directory
     onStage stage fun drive stage => check (Session.ofStage drive directory stage) asked published
 
-/-- `withRecordedSyntaxTree` with a real host (`onRealStage`). -/
+/-- `withRecordedSyntaxTree` with a real host (`onRealStage`), handed the
+stage's wait for the shown text's tree too. -/
 def withRealRecordedSyntaxTree (context : Context)
-    (check : RealSession → IO.Ref (Array String) → IO Nat → IO Bool) : IO Bool :=
+    (check : RealSession → IO.Ref (Array String) → IO Nat → IO Bool → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    let (stage, asked, published) ← recordedStage context directory
+    let (stage, asked, published, settleShown) ← recordedStage context directory
     onRealStage stage fun host stage =>
-        check (RealSession.ofStage host directory stage) asked published
+        check (RealSession.ofStage host directory stage) asked published settleShown
 
 /-- The thread that emitted the first line of the host's output that is
 `line`, if there is one. -/
@@ -972,42 +985,6 @@ def Session.threadOf (session : Session) (line : String) : IO (Option UInt64) :=
   let lines ← session.output.get
   let threads ← session.threads.get
   return (lines.idxOf? line).bind fun index => threads[index]?
-
-/-- Runs `check` with a point to hold a thread at: the first thread to reach
-it is held there, and let go `milliseconds` after it arrived, from a task of
-its own, whatever the check's waits do; a thread that reaches it later
-passes. The thread is let go, and that task waited for, before this
-returns. -/
-def holdingOnce {α : Type} (milliseconds : UInt32) (check : BaseIO Unit → IO α) : IO α := do
-  let release ← IO.Promise.new
-  let entered ← IO.mkRef false
-  let releaser ←
-    IO.asTask (prio := .dedicated) do
-        if ← eventually entered.get then
-          IO.sleep milliseconds
-        release.resolve ()
-  try
-    check do
-        unless ← entered.modifyGet fun entered => (entered, true) do
-          discard <| IO.wait release.result?
-  finally
-    release.resolve ()
-    discard <| IO.wait releaser
-
-/-- Runs `check` on `collaborators` whose output port holds the editor thread
-inside the first line `holds` accepts, and lets it go `milliseconds` after
-it arrived (`holdingOnce`): the editor thread is inside an event for that
-long, whatever the check's waits do. -/
-def holdingLine {α β σ : Type} {scheme : InputScheme}
-    (collaborators : Headless.Collaborators β σ scheme) (holds : String → Bool)
-    (milliseconds : UInt32) (check : Headless.Collaborators β σ scheme → IO α) : IO α :=
-  holdingOnce milliseconds fun hold =>
-    check
-      { collaborators with
-        emit := fun line => do
-          if holds line then
-            hold
-          collaborators.emit line }
 
 /-- Runs `check` with `hold`, which holds the first thread that calls it until
 `letGo`, and `letGo`; lets go before it returns, whatever `check` did. A
@@ -1112,7 +1089,7 @@ def withdrawingHeld {β σ : Type} (stage : Stage β σ) (hold : BaseIO Unit) (w
   { staged with
     emit := fun line => do
       if line == "spawn count: job 1" then
-        discard <| eventually (return (← stage.clock.waiting) == 1)
+        discard <| clockReaches stage.clock (.waiting 1)
       staged.emit line
     services :=
       { staged.services with
@@ -1150,7 +1127,7 @@ def bracketChecks (context : Context) : List Check :=
                   letGo) fun host => do
                   kept.set (some host.thread)
                   host.send .show
-                  discard <| Job.awaitWithin patience entered.result?
+                  discard <| Job.awaitWithin hangGuard entered.result?
               match ← kept.get with
               | some thread =>
                 IO.hasFinished thread
@@ -1181,7 +1158,7 @@ def bracketChecks (context : Context) : List Check :=
                       letGo) fun host => do
                       kept.set (some host.thread)
                       host.send .show
-                      discard <| Job.awaitWithin patience entered.result?
+                      discard <| Job.awaitWithin hangGuard entered.result?
                       throw (IO.userError "the body broke")
                   pure none
                 catch error =>
@@ -1263,7 +1240,7 @@ def bracketChecks (context : Context) : List Check :=
                 host.send .reload
                 -- The reload is inside the elaboration of the held file when
                 -- the body returns.
-                eventually gate.holding.get
+                return (← Job.awaitWithin hangGuard gate.arrived.result?).isSome
           let inProgress ← gate.inProgress.get
           let waited ← waited.get
           saw (held && waited == #["reload"] && inProgress == 0)
@@ -1321,7 +1298,8 @@ def bracketChecks (context : Context) : List Check :=
         let before ← context.realLoops.get
         let refused ←
           try
-            Headless.withHost stepper (guard := patience) (grace := some hangGuard) fun _ => pure ()
+            Headless.withHost stepper (guard := hangGuard) (grace := some hangGuard) fun _ =>
+                pure ()
             pure none
           catch error =>
             pure (some (toString error))
@@ -1342,7 +1320,7 @@ def bracketChecks (context : Context) : List Check :=
             loopStarted := do
               stage.collaborators.loopStarted
               threads.modify (·.push (← IO.getTID)) }
-        Headless.withHost counted (guard := patience) (grace := some hangGuard) fun host => do
+        Headless.withHost counted (guard := hangGuard) (grace := some hangGuard) fun host => do
             host.send .show
             discard <| host.await hangGuard
         let started ← threads.get
@@ -1546,20 +1524,29 @@ def jobChecks (context : Context) : List Check :=
         -- Seen to bite once by hand: a host whose `handle` returns at once
         -- for an event from the library's source publishes nothing for the
         -- parse, and the count stays at the edit's.
-        withRealRecordedSyntaxTree context fun session _ published => do
+        withRealRecordedSyntaxTree context fun session _ published settleShown => do
           session.ask [.reload]
           session.ask [.spawn "highlight"]
-          unless ← eventually (return (← session.clock.waiting) == 1) do
+          unless ← clockReaches session.clock (.waiting 1) do
             return false
           session.clock.advance 10
-          unless (← session.host.join patience) == .settled do
+          unless (← session.host.join hangGuard) == .settled do
             return false
           let before ← published
-          -- Sent with no marker after it, which would publish a scene of its
-          -- own: the edit's command publishes one, and a publish beyond it is
-          -- a delivered parse's.
+          -- Waited on with no marker that publishes: the edit's command
+          -- publishes one scene, and a publish beyond it is a delivered
+          -- parse's. Once the library has delivered a tree of the edited
+          -- text (`syntaxSettle`), its `parsed` event is on the editor queue
+          -- (the library queues it before it records the delivery), so a
+          -- second wait that publishes nothing sees it handled.
           session.host.send (.run "edit")
-          eventually (return (← published) > before + 1) }]
+          unless ← session.handled do
+            return false
+          unless ← settleShown do
+            return false
+          unless ← session.handled do
+            return false
+          return (← published) > before + 1 }]
 
 /-- `host`'s activity count once it reads `running`, waited for on the
 count's own changes (`Job.Activity.changedSince`), never on time. The bound
@@ -1571,10 +1558,10 @@ def countReaches (host : Headless.Host) (running : Nat) : IO Job.Activity.Seen :
     let seen ← host.activitySeen
     if seen.running == running then
       return seen
-    let some () ← Job.awaitWithin patience (← host.activity.changedSince seen.epoch) |
+    let some () ← Job.awaitWithin hangGuard (← host.activity.changedSince seen.epoch) |
       throw <|
           IO.userError
-            s!"a hang: the host's count stayed at {seen.running}, not {running}, for {patience} ms"
+            s!"a hang: the host's count stayed at {seen.running}, not {running}, for {hangGuard} ms"
   throw <| IO.userError "unreachable"
 
 /-- `collaborators`, with the editor thread held (`hold`) inside the first line
@@ -1591,11 +1578,11 @@ def enteringLine {β σ : Type} {scheme : InputScheme}
       collaborators.emit line }
 
 /-- Waits for `entered`, a promise the check's hold resolves: a hang thrown
-past `patience`. -/
+past `hangGuard`. -/
 def reached (entered : IO.Promise Unit) (what : String) : IO Unit := do
   let some _ ←
-    Job.awaitWithin patience
-        entered.result? | throw <| IO.userError s!"a hang: {what} had not been reached within {patience} ms"
+    Job.awaitWithin hangGuard
+        entered.result? | throw <| IO.userError s!"a hang: {what} had not been reached within {hangGuard} ms"
 
 /-- The scene count the last `published <n>` line of `lines` says
 (`Headless.Request.published`), if one says it. -/
@@ -1650,10 +1637,10 @@ def idleChecks (context : Context) : List Check :=
                 fun host stage => do
                 try
                   host.send .reload
-                  unless ← host.settle patience do
+                  unless ← host.settle hangGuard do
                     return false
                   host.send (.spawn "count")
-                  unless ← host.settle patience do
+                  unless ← host.settle hangGuard do
                     return false
                   discard <| countReaches host 0
                   stage.clock.advance 10
@@ -1664,7 +1651,7 @@ def idleChecks (context : Context) : List Check :=
                   let atLine ← countReaches host 1
                   let printed := (← stage.output.get).contains "job 1 count: ok"
                   letGo
-                  unless ← host.settle patience do
+                  unless ← host.settle hangGuard do
                     return false
                   let after ← host.activitySeen
                   saw
@@ -1696,7 +1683,7 @@ def idleChecks (context : Context) : List Check :=
                 session.clock.advance 240
                 let queued ← session.host.activitySeen
                 letGo
-                unless (← session.host.join patience) == .settled do
+                unless (← session.host.join hangGuard) == .settled do
                   return false
                 let after ← session.host.activitySeen
                 saw
@@ -2348,7 +2335,7 @@ wait 2" with
           withRealHostOver context slowConfig gate.around id fun session => do
               session.host.send .reload
               try
-                unless ← eventually gate.holding.get do
+                unless (← Job.awaitWithin hangGuard gate.arrived.result?).isSome do
                   return false
                 return (←
                       session.host.await 200 (waitHung := fun line => said.modify (·.push line))) ==
@@ -2360,26 +2347,26 @@ wait 2" with
         -- does not return until the check lets it: it never reaches the
         -- marker.
         let block ← IO.Promise.new
-        let entered ← IO.mkRef false
+        let entered ← IO.Promise.new
         let stage ← Stage.new context context.elaborator (memorySource [])
-        Headless.withHost (scheme := TestScheme.scheme) (guard := patience)
+        Headless.withHost (scheme := TestScheme.scheme) (guard := hangGuard)
             { stage.collaborators with
               emit := fun _ => do
-                entered.set true
+                entered.resolve ()
                 discard <| IO.wait block.result? }
             fun host => do
             -- Let go before the bracket ends the loop, whatever the body
             -- did: the bracket waits for the loop with no deadline.
             try
               host.send .show
-              let inside ← eventually entered.get
+              let inside := (← Job.awaitWithin hangGuard entered.result?).isSome
               said.set #[]
               -- The editor thread is held for good inside the show: only the
               -- answer's guard ends the wait, said as a hang once.
               let wait ← host.await 200 (waitHung := fun line => said.modify (·.push line))
               let saidUnanswered ← said.get
               block.resolve ()
-              let after ← host.await patience
+              let after ← host.await hangGuard
               saw
                   (reloading && saidReloading.size == 1 && inside && wait == .unanswered &&
                     saidUnanswered.size == 1 &&
@@ -2571,7 +2558,7 @@ wait 2" with
       run := do
         let stage ← Stage.new context context.elaborator (memorySource [])
         leavingLibraryQueue <|
-            Headless.withStepped stage.collaborators stage.memory (guard := patience) (grace :=
+            Headless.withStepped stage.collaborators stage.memory (guard := hangGuard) (grace :=
               some hangGuard) fun stepped => do
               stepped.input .closeRequested
               return (← stepped.await hangGuard) == .ended },
@@ -2817,7 +2804,7 @@ wait 2" with
           let (failure, _) ←
             holdingUntil fun hold letGo =>
                 Headless.runAndDispose (withdrawingHeld stage hold withdrew order) jobScript
-                  hangGuard (guard := 0) (grace := some patience) (hung := fun line => do
+                  hangGuard (guard := 0) (grace := some hangGuard) (hung := fun line => do
                   said.modify (·.push line)
                   letGo) (abandoned := fun task => left.set (some task))
           let abandoned := (← left.get).isSome
@@ -2998,7 +2985,7 @@ def hostLoopChecks (context : Context) : List Check :=
             session.ask []
             session.host.send (.run "spin")
             session.host.press Watch.interruptKey
-            unless ← session.host.settle patience do
+            unless ← session.host.settle hangGuard do
               return false
             return ((← session.output.get).filter (·.startsWith "run ")) ==
                   #["run spin: interrupted"] &&
@@ -3141,7 +3128,7 @@ def hostLoopChecks (context : Context) : List Check :=
           unless ← Event.post (.commit "ab") do
             return false
           session.ask [.spawn "spinner"]
-          unless ← eventually (return (← session.clock.waiting) == 1) do
+          unless ← clockReaches session.clock (.waiting 1) do
             return false
           -- The loop reads the clock just before a command it runs: held
           -- there, the editor thread is inside the delivery, and the
@@ -3149,12 +3136,12 @@ def hostLoopChecks (context : Context) : List Check :=
           let arrivals ← session.clock.held
           let hold ← session.clock.holdReads
           session.clock.advance 10
-          unless ← eventually (return (← session.clock.held) == arrivals + 1) do
+          unless ← clockReaches session.clock (.held (arrivals + 1)) do
             hold.resolve ()
             return false
           session.host.press Watch.interruptKey
           hold.resolve ()
-          unless ← session.host.settle patience do
+          unless ← session.host.settle hangGuard do
             return false
           return (← session.output.get).contains "job 1 spinner: interrupted" &&
               !(← Ffi.interruptRaised) &&
@@ -3307,7 +3294,7 @@ def exScriptChecks (context : Context) : List Check :=
           let ran (name : String) : IO (Option (Headless.Wait × Array String)) := do
             let stage ← Stage.new context context.elaborator (memorySource []) compiled
             leavingLibraryQueue <|
-                Headless.withStepped stage.collaborators stage.memory (guard := patience) (grace :=
+                Headless.withStepped stage.collaborators stage.memory (guard := hangGuard) (grace :=
                   some hangGuard) fun stepped => do
                   stepped.send (.run name)
                   let joined ← stepped.join hangGuard
@@ -3324,14 +3311,14 @@ def exScriptChecks (context : Context) : List Check :=
         "a wait on a host whose loop a command ended answers that the loop has ended, a settle and a join alike, which is no failure of a script, and halting the host then answers that it stopped"
       run := do
         let stage ← Stage.new context context.elaborator (memorySource []) exCompiled
-        Headless.withHost stage.collaborators (guard := patience) fun host => do
+        Headless.withHost stage.collaborators (guard := hangGuard) fun host => do
             host.send (.run Ex.quitName)
-            let ended ← eventually (IO.hasFinished host.thread)
-            let awaited ← host.await patience
-            let joined ← host.join patience
+            let ended := (← Job.awaitWithin hangGuard host.thread).isSome
+            let awaited ← host.await hangGuard
+            let joined ← host.join hangGuard
             return ended && awaited == .ended && joined == .ended &&
                 Headless.Wait.ended.failure (some 3) == none &&
-                (← host.halt patience) &&
+                (← host.halt hangGuard) &&
                 (← stage.output.get) == #[s!"run {Ex.quitName}: ok"] }]
 
 /-- A config whose `greet` does not elaborate: a number where `message` takes
@@ -3714,18 +3701,20 @@ def watchReloadChecks (context : Context) : List Check :=
         withHost context followConfig fun session => do
           session.ask [.reload]
           session.ask [.spawn "follow"]
-          unless ← eventually (return (← session.watches.watching) == 1) do
+          unless (← session.idle) == .working && (← session.watches.watching) == 1 do
             return false
           let firstWatch := ((← session.watches.started)[0]?.map (·.1.toNat)).getD 0
           session.write "init.lean" (overGreet (followText "v2"))
           session.ask [.reload]
-          let oldEnded ←
-            eventually do
-                return (← session.watches.watching) == 0 &&
-                    (← session.watches.ended) == #[firstWatch]
+          -- The jobs table let the old job go at the cancel; its end, which
+          -- ends its watch, runs on its own thread, under a unit of the
+          -- host's activity: at idle it has ended. Read once.
+          let oldEnded :=
+            (← session.quiet) && (← session.watches.watching) == 0 &&
+              (← session.watches.ended) == #[firstWatch]
           let afterReload ← session.output.get
           session.ask [.spawn "follow"]
-          unless ← eventually (return (← session.watches.watching) == 1) do
+          unless (← session.idle) == .working && (← session.watches.watching) == 1 do
             return false
           session.watches.change "/watched/f" #[.written]
           let joined ← session.join
@@ -3745,7 +3734,7 @@ def watchReloadChecks (context : Context) : List Check :=
         withHost context followConfig fun session => do
           session.ask [.reload]
           session.ask [.spawn "follow"]
-          unless ← eventually (return (← session.watches.watching) == 1) do
+          unless (← session.idle) == .working && (← session.watches.watching) == 1 do
             return false
           session.write "Config/Greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
           session.ask [.reload]
@@ -4001,7 +3990,7 @@ running. A write the host started after the last one rendered, for a change
 its publish had not seen yet, is waited for too. -/
 def indexWritten {β σ : Type} (host : Driven) (stage : Stage β σ) : IO Bool := do
   for _ in [0:4] do
-    unless ← Headless.within patience (stage.clock.dueWithin Restore.writeDelay) do
+    unless ← Headless.within hangGuard (stage.clock.dueWithin Restore.writeDelay) do
       return false
     stage.clock.advance Restore.writeDelay
     if
@@ -4179,7 +4168,7 @@ def restoreOrderChecks (context : Context) : List Check :=
           host.send (.open notes.toString)
           host.send (.say "held words")
           host.send .reload
-          let waited ← host.await patience
+          let waited ← host.await hangGuard
           let joined ← host.join hangGuard
           host.send .scene
           host.send .show
@@ -4335,18 +4324,18 @@ def journalFailureChecks (context : Context) : List Check :=
 whose pump runs, and returns the hold's id once the worker has reached it:
 nothing handed to the service afterwards is worked until `Ffi.filesCancel`
 of the id lets it go. Throws when the service refuses the hold, and reports a
-hang when the worker has not reached it within `patience`. -/
+hang when the worker has not reached it within `hangGuard`. -/
 def holdFiles (completions : Job.Completions) : IO UInt64 := do
   let (id, wait) ← completions.register
   unless ← Ffi.filesHold id do
     completions.finish id .cancelled
     throw <| IO.userError "the file service did not take the hold"
-  let reached ← Job.awaitWithin patience (wait.resultD .cancelled)
+  let reached ← Job.awaitWithin hangGuard (wait.resultD .cancelled)
   unless reached == some .completed do
     discard <| Ffi.filesCancel id
     throw <|
         IO.userError
-          s!"a hang: the file service's worker had not reached the hold within {patience} ms"
+          s!"a hang: the file service's worker had not reached the hold within {hangGuard} ms"
   return id
 
 /-- The checks of the host's journal over the library's file service
@@ -4375,7 +4364,7 @@ def journalDrainChecks (context : Context) : List Check :=
                     let drained ← journal.drained
                     let waiting := !(← IO.hasFinished drained)
                     discard <| Ffi.filesCancel hold
-                    let ended ← Job.awaitWithin patience drained
+                    let ended ← Job.awaitWithin hangGuard drained
                     return (waiting, ended, ← stale.pathExists))
                   (discard <| Ffi.filesCancel hold)
             saw (waiting && ended == some true && !there)
