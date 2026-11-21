@@ -3,10 +3,13 @@
 //!
 //! Core Text gives a glyph's bounds as a rectangle in pixels from the pen,
 //! y up (`CTFontGetBoundingRectsForGlyphs`). Its smoothing moves each edge
-//! out by up to 0.3 pixels and a bin moves the glyph right by up to three
-//! quarters of one, so the bitmap is the rectangle on whole pixels,
-//! expanded by a pixel on each side, and by a column more on the right
-//! when the glyph is drawn past a whole pixel.
+//! out by up to 0.3 pixels and a bin moves the glyph right by its offset
+//! (`GlyphKey::offset`), under a whole pixel: up to eleven twelfths of
+//! one with twelve bins, though the painter's grid puts a glyph only at 0,
+//! a third and two thirds at scale 1 and at 0 and a half at scale 2. So the
+//! bitmap is the rectangle on whole pixels, expanded by a pixel on each
+//! side, and by a column more on the right when the glyph is drawn past a
+//! whole pixel, which holds any offset under one.
 
 /// A glyph's bitmap.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,10 +59,29 @@ impl Frame {
 
 #[cfg(test)]
 mod tests {
+    use editor_raster::{GlyphKey, ResolvedFontId, SUBPIXEL_BINS};
+
     use super::Frame;
 
     /// An `H`: upright, from 1.5 to 9.5 across and 20 up.
     const H: [f64; 4] = [1.5, 0.0, 9.5, 20.0];
+
+    /// The offset of every bin, as the adapter draws at it
+    /// ([`GlyphKey::offset`]): from 0 to the last bin's, eleven twelfths
+    /// of a pixel with twelve bins, past every place the painter's grid
+    /// puts a glyph.
+    fn offsets() -> impl Iterator<Item = f64> {
+        (0..SUBPIXEL_BINS).map(|bin| {
+            let key = GlyphKey {
+                font: ResolvedFontId(0),
+                glyph: 0,
+                bin,
+                subpixel: false,
+                bucket: 0,
+            };
+            f64::from(key.offset())
+        })
+    }
 
     #[test]
     fn a_glyph_is_on_whole_pixels_a_pixel_out_on_each_side() {
@@ -98,7 +120,7 @@ mod tests {
     #[test]
     fn a_glyph_past_a_whole_pixel_is_one_column_wider_and_its_pen_moves_with_it() {
         let at = Frame::of(H, 0.0);
-        for offset in [0.25, 0.5, 0.75] {
+        for offset in offsets().skip(1) {
             let moved = Frame::of(H, offset);
             assert_eq!(moved.width, at.width + 1, "{offset}");
             assert_eq!(
@@ -112,7 +134,7 @@ mod tests {
     #[test]
     fn the_pen_and_the_dilated_glyph_stay_inside_the_bitmap() {
         for rect in [H, [-2.3, -4.2, 6.0, 12.5], [0.1, 0.1, 0.2, 0.2]] {
-            for offset in [0.0, 0.25, 0.5, 0.75] {
+            for offset in offsets() {
                 let frame = Frame::of(rect, offset);
                 let (x, y) = frame.origin;
                 let (width, height) = (f64::from(frame.width), f64::from(frame.height));
