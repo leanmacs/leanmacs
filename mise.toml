@@ -1670,6 +1670,17 @@ description = "Opt-in, never part of ci; macOS on arm64 only: link an editor fro
 depends = ["lean"]
 run = "tools/user-link-check.sh lean"
 
+# Opt-in, never part of `ci` or hk.pkl: AGENTS.md forbids a test that scans
+# source text, and this is a review aid, not a test. It lists every wait
+# with a bound left in the Lean and Rust tests and test support and whether
+# its comment says which bound it is: a hang guard, a hang guard run out on
+# purpose, or real time under test (AGENTS.md, "Deterministic concurrency in
+# tests"; tools/wait-inventory.sh; docs/dev-practices/on-demand-checks.md,
+# "The wait inventory, on demand"). It exits 1 on an unexplained site.
+[tasks.wait-inventory]
+description = "Opt-in, never part of ci: list the waits with a bound left in the tests and test support, and fail on one whose comment does not say which bound it is (tools/wait-inventory.sh)"
+run = "sh tools/wait-inventory.sh"
+
 # Opt-in: run it by hand on a quiet machine, and do not add it to `ci` or to
 # hk.pkl. It measures and asserts nothing: its numbers depend on the machine
 # and on what else the machine is doing, so none of them is a pass or a fail.

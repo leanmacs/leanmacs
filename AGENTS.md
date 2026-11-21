@@ -173,6 +173,12 @@ or given a longer timeout. Threads, queues and the clock are described in
   idle signal exists yet, add one.
 - A timeout is only a guard against a hang. When it runs out, the test reports
   a hang. It is not a result, and the test does not pass or fail on time.
+- A bound left in a test says which it is, in a comment on its line, among
+  the three lines above it, or at the head of the doc of the constant it
+  names, in one of these words: `hang guard: <the event the wait ends on>`,
+  `hang guard, run out on purpose: <what is held for good>`, or
+  `real time under test: <the timing that is the subject>`.
+  `mise run wait-inventory` lists the ones that do not.
 - Pin results that do not depend on scheduling. Check the final state, or
   what was published last, and not how many times something happened when
   that count changes with timing.

@@ -1020,6 +1020,43 @@ Run it when the pin of Parley or fontique moves, and when
 family was Courier of 557 families and every property held. It has not
 been run on Linux: the container of `linux-ci` has no fonts installed.
 
+## The wait inventory, on demand
+
+```sh
+mise run wait-inventory
+```
+
+A wait with a bound left in a test says which kind of bound it is
+(AGENTS.md, "Deterministic concurrency in tests"), in a comment on its line
+or among the three lines above it, or at the head of the doc of the
+constant or function it passes as its bound, in one of three forms:
+
+- `hang guard: <the event the wait ends on>; only a hang reaches the bound, and the check then fails as a hang.`
+- `hang guard, run out on purpose: <what is held for good>; the check pins the hang.`
+- `real time under test: <the timing that is the subject>.`
+
+This task (`tools/wait-inventory.sh`) lists the sites that do not. It reads
+the Lean test roots and test support (the four roots, `lean/Editor/Test/`,
+the contract checks `lean/Editor/**/*Contract.lean`, the packages' `*Test`
+trees, and the headless driver's waits in `lean/Editor/Headless.lean`,
+`Window/Real.lean` and `Job/Pool.lean`), and the Rust tests, examples and
+benches, the published test support (`contract`, `fake`, `scripted`,
+`tests.rs`, `tests/`) and each other source file from its first
+`#[cfg(test)]`. It drops comments and string literals, then takes as a site
+each line whose code holds a wait: in Lean `IO.sleep`, `eventually`,
+`within`, `monoMsNow` or a name holding `patience` or ending in `Guard`; in
+Rust a `sleep(` call, `recv_timeout`, `wait_timeout*`, `park_timeout`,
+`yield_now`, `is_finished()`, `try_wait()`, `Instant::now() +` or
+`.elapsed()`. It prints the explained count by kind, then the unexplained
+count and each such `file:line`, and exits 1 when there is one; `--list`
+prints every site with its kind.
+
+It is a review aid, never part of the gate or hk: a check that scans source
+text breaks on changes that do not matter (AGENTS.md, "Test behaviour, never
+text"). It matches a named bound by its last dotted segment, so it points a
+reviewer at sites and proves nothing about them. What shows the tests do not
+depend on time is the stress loop (below) and the forced-interleaving checks.
+
 ## The gate on Linux, on demand
 
 ```sh
