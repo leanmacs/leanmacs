@@ -1124,6 +1124,11 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   idle (`Host.waitWhile`). The headless mode's hosts and a test stage's keep
   one; the window mode's does not, and its steps of the count do nothing. -/
   tracksIdle : Bool := false
+  /-- What the loop's end calls, naming what it is about to wait for, when it
+  finds work of the loop's still running: `"reload"` for a reload job not
+  ended (`loop`). A test's hook, to let a held reload go on the loop's own
+  report that it waits for it, never on time; the default does nothing. -/
+  endWaits : String → IO Unit := fun _ => pure ()
   /-- How this run was launched and what a restart hands on
   (`Restart.Launch`), which `start` writes into the editor state
   (`EditorState.launch`). The executable's hosts read it from the command
@@ -1329,6 +1334,9 @@ structure Running (β σ : Type) (scheme : InputScheme) where
   jobs : Job.Jobs
   /-- Where the reload job that is running will leave its outcome. -/
   job : Option (IO.Promise (Config.Outcome β σ)) := none
+  /-- The task of the last reload job started: the loop's end waits for it,
+  so no reload outlives the loop that started it. -/
+  reloadTask : Option (Task (Except IO.Error Unit)) := none
   /-- How many markers the loop has reached. -/
   markers : Nat := 0
   /-- Whether the driver has ended the loop. -/
@@ -1478,8 +1486,10 @@ def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ
       -- The reload can run from here: it holds a unit of the host's
       -- activity until it has posted its wake-up (`reloadJob`).
       collaborators.services.activity.begin
-      discard <| IO.asTask (prio := .dedicated) (reloadJob collaborators base files promise)
-      running := { running with job := some promise }
+      let task ← IO.asTask (prio := .dedicated) (reloadJob collaborators base files promise)
+      running :=
+        { running with
+          job := some promise, reloadTask := some task }
     | .themed =>
       -- `retheme` above has handed the display the theme.
       pure ()
@@ -2492,7 +2502,9 @@ chose.
 Before the first event it registers the packages it is handed
 (`Running.new`), and tells the library its interrupt key; when it ends it leaves the library with
 none, so that no key raises the flag while no loop takes keys off the
-queue. -/
+queue. Its end cancels every job and waits for the reload job it started,
+if that has not ended (`Running.reloadTask`), after telling
+`Collaborators.endWaits`: no reload outlives its loop. -/
 def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
     (progress : IO.Ref Progress) (reached : IO.Ref (Option (Nat × IO.Promise Unit))) : IO Unit := do
   discard <| Event.setInterruptKey (some collaborators.interruptKey)
@@ -2541,6 +2553,13 @@ def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β
   running.jobs.cancelAll
   running ← running.withdrawPauses collaborators
   discard <| running.withdrawHints collaborators
+  -- The reload job is the loop's: the loop ends once it has, so the host's
+  -- bracket, which waits for the loop, waits for it too. Its wake-up to a
+  -- queue that has been quit is refused, and gives its unit back.
+  if let some task := running.reloadTask then
+    unless ← IO.hasFinished task do
+      collaborators.endWaits "reload"
+      discard <| IO.wait task
   -- Nor will anything take a key off the queue, so none is to raise the flag.
   discard <| Event.setInterruptKey none
 
@@ -2946,20 +2965,28 @@ once the host's loop has ended, whether `body` returned or threw: a loop
 still running is asked to stop (`Signal.stop`), and its task is waited for
 with no deadline. A loop that has not ended `guard` milliseconds after it
 was asked is said through `hung` as a hang, once, and still waited for: the
-guard reports a hang, it never ends the wait. When `body` threw, its error
-is the one thrown, once the loop has ended. With what `body` returned, the
+guard reports a hang, it never ends the wait, unless `grace` is given: a
+loop still running `grace` milliseconds after the hang was said is handed
+to `abandoned`, and this throws a hang (`a hang: the editor loop had not
+ended …; giving up`), as a check's bracket does (ConfigTest's `onStage`),
+so a suite always finishes. When `body` threw, its error is the one thrown,
+once the loop has ended. With what `body` returned, the
 result the loop ended with, for a caller that says a loop's error itself:
 the window mode, whose exit status says it (`Window.host`). `withHost`
 throws it. -/
 def withHostEnding {α β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (body : Host → IO α) (guard : Nat := settlePatience) (hung : String → IO Unit := IO.eprintln) :
+    (body : Host → IO α) (guard : Nat := settlePatience) (hung : String → IO Unit := IO.eprintln)
+    (grace : Option Nat := none)
+    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) :
     IO (α × Except IO.Error Unit) := do
-  match ← hostedWithin collaborators body guard none hung fun _ => pure () with
+  match ← hostedWithin collaborators body guard grace hung abandoned with
   | some ended =>
     return ended
   | none =>
-    -- With no grace the loop is waited for until it ends.
-    throw (IO.userError "a host's bracket gave up on its loop with no grace to give up after")
+    -- Only with a grace: without one the loop is waited for until it ends.
+    throw <|
+        IO.userError
+          s!"a hang: the editor loop had not ended {grace.getD 0} ms after the hang was said ({guard} ms after it was asked to stop); giving up"
 
 /-- Runs `body` against a host started on `collaborators`, and returns only
 once the host's loop has ended, whether `body` returned or threw, as
@@ -2969,9 +2996,10 @@ is the one thrown. The way to have a host: a host's loop never outlives its
 bracket, and `Host.halt`, `Host.stop` and the waits inside `body` answer
 what they answer, the bracket ends the loop whatever they did. -/
 def withHost {α β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (body : Host → IO α) (guard : Nat := settlePatience) (hung : String → IO Unit := IO.eprintln) :
-    IO α := do
-  let (result, ended) ← withHostEnding collaborators body guard hung
+    (body : Host → IO α) (guard : Nat := settlePatience) (hung : String → IO Unit := IO.eprintln)
+    (grace : Option Nat := none)
+    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) : IO α := do
+  let (result, ended) ← withHostEnding collaborators body guard hung grace abandoned
   IO.ofExcept ended
   return result
 

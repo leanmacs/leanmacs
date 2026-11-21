@@ -152,7 +152,7 @@ def withVimHost (context : Context) (files : List (String × String)) (check : S
         wakeups := staged.wakeups, jobs := staged.jobs, environment := staged.environment
         posts := staged.posts, pauseEvents := staged.pauseEvents, log := staged.log, syntaxTree
         clock := staged.clock, workingDirectory, home }
-    Headless.withHost collaborators (guard := patience) fun host => do
+    Headless.withHost collaborators (guard := patience) (grace := some hangGuard) fun host => do
         let held ←
           check {
                 host, directory, output := stage.output, threads := stage.threads,

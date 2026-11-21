@@ -111,7 +111,9 @@ show:
   hang once, throws the body's error, or the loop's when the body returned,
   and hands back the loop's end without throwing it (`withHostEnding`);
   the hold is let go by the bracket's own report of the hang, never by
-  time;
+  time; a reload held at a gate when the body returns is waited for by the
+  loop's end, which says so (`endWaits`) and is what lets it go; and a
+  bracket given a grace fails as a hang on a loop held past it;
 - `threadChecks`: the editor answers events while a file elaborates, reloads
   are serialised, and a replaced config is not retained;
 - `jobChecks`: jobs from config through the host: a handler receives a job's

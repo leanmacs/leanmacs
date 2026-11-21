@@ -2213,7 +2213,7 @@ never passes it.
 | `journalled` | The file service's flush | 30 s | The run fails as `unanswered` |
 | `indexed [<seconds>]` | Still a poll of the index's write with a deadline, to move onto idle in a later change | 30 s, or the seconds given | The run fails as `unanswered` |
 | `restarted [<seconds>]` | The loop's task ending | 30 s, or the seconds given | The run fails as `notRestarted` |
-| The loop's end | Its task | 30 s, then `Headless.hangGrace` (5 s) | Its hang line, then the run fails as `hung`, exit 1 |
+| The loop's end | Its task, which ends once a reload it started has ended | 30 s, then `Headless.hangGrace` (5 s) | Its hang line, then the run fails as `hung`, exit 1 |
 | `idle <ms>` | Real milliseconds of the render loop's, not a job-clock wait | | |
 
 ## A package's fixtures

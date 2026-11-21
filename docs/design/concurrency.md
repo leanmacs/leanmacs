@@ -1237,10 +1237,15 @@ under load, not the count.
 wait's end, a wait due at once, a cancel in a park and a real-service
 wait), the handle's contract on both file ports
 (`Editor/Job/HandleContract.lean`, `handleCounts` and `jobLoadCounts`),
-and `ConfigTest.idleChecks` (what holds a unit through a host, that a
+`ConfigTest.idleChecks` (what holds a unit through a host, that a
 wait's later rounds publish nothing, and that a late event just before
 idle, a job's start of its sleep held or its result on its way, does not
-make idle early).
+make idle early), and the forced settles of `ConfigTest.moduleHostChecks`
+and `scriptChecks` ("a settle after a reload whose root first imports Lean
+waits for the reload's end", "a run's settle waits for the reload's end"),
+whose reload is held at a gate only the wait's `waitBlocked` opens. The
+loop's end waiting for its reload, and a check's bracket's grace, are in
+"Structured lifetimes".
 
 ### Prompts
 
@@ -2046,9 +2051,27 @@ outlives it (AGENTS.md, "Deterministic concurrency in tests"):
   what its `stop` does). Each is pinned by a test whose thread is held by a
   hook the drop calls before it joins, so a drop that did not join is seen
   every time.
-- **Not yet in a scope** (tasks filed, `tech-debt`): the reload job, a
-  dedicated task the loop abandons when it ends
-  (`reload-job-outlives-host-loop`); pool jobs, which `cancelAll` cancels
+- **The reload job is the loop's** (deterministic-test-concurrency phase
+  4): the loop keeps its task (`Running.reloadTask`) and its end waits for
+  it, after `cancelAll`, so the host's bracket, which waits for the loop,
+  waits for the reload too. A reload's wake-up to a queue that has been quit
+  is refused and gives its unit back. Before it waits, the loop's end calls
+  `Collaborators.endWaits` with `"reload"`: a test's hook, which a check
+  that holds a reload at a gate lets it go on. The window mode pays for it:
+  a quit during a reload waits for that elaboration to end. Pinned by
+  `ConfigTest.bracketChecks`' "a host's bracket returns only once its
+  reload job has ended".
+- **A check's bracket gives up on a hung loop**: with D3 a reload that
+  really hangs keeps the loop's end waiting, so `withHost` and
+  `withHostEnding` take the `grace` and `abandoned` that `hostedWithin` has,
+  and ConfigTest's `onStage` (every check host) and `withVimHost` pass
+  `grace := some ConfigTest.hangGuard`: a loop still running `hangGuard`
+  after its hang was said is handed to `abandoned`, and the check fails as a
+  hang (`a hang: the editor loop had not ended …; giving up`). The window
+  mode, the bench and the CLI keep what they had (`none`, `none`, `some
+  hangGrace`). Pinned by `ConfigTest.bracketChecks`' "a check's bracket
+  whose loop is held past its guard and its grace fails as a hang".
+- **Not yet in a scope** (tasks filed, `tech-debt`): pool jobs, which `cancelAll` cancels
   and does not wait for (`pool-jobs-outlive-host-loop`); the Rust service
   threads that are waited for by a count and not joined
   (`rust-service-threads-joined-by-count`); and the test threads left

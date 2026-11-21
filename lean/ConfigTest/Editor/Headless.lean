@@ -647,6 +647,10 @@ imports after `Config/Greet.lean`. -/
 def slowConfig : List (String × String) :=
   [("Config/Greet.lean", greetText "v1"), ("Config/Slow.lean", slowText), ("init.lean", overSlow)]
 
+/-- `slowConfig` as modules held in memory (`memorySource`). -/
+def slowModules : List (String × String) :=
+  [("Config.Greet", greetText "v1"), ("Config.Slow", slowText), ("init", overSlow)]
+
 /-- `elaborator`, noting in `elaborated` the module of each file it
 elaborates, the root's too, in order. -/
 def noting {β σ : Type} (elaborated : IO.Ref (Array String)) (elaborator : Config.Elaborator β σ) :
@@ -1243,7 +1247,73 @@ def bracketChecks (context : Context) : List Check :=
           | .error error => some (toString error)
           | .ok () => none
         saw (answered == 7 && error == some "no display here")
-            s!"answered={answered} error={error}" }]
+            s!"answered={answered} error={error}" },
+    { name :=
+        "a host's bracket returns only once its reload job has ended: a reload held at the gate inside elaboration when the body returns is waited for by the loop's end, which says so once (`endWaits`), and the gate is let go only then"
+      run := do
+        let gate ← Gate.new
+        let waited ← IO.mkRef (#[] : Array String)
+        let stage ← Stage.new context (gate.around context.elaborator) (memorySource slowModules)
+        try
+          let held ←
+            Headless.withHost
+                { stage.collaborators with
+                  endWaits := fun what => do
+                    waited.modify (·.push what)
+                    gate.open }
+                fun host => do
+                host.send .reload
+                -- The reload is inside the elaboration of the held file when
+                -- the body returns.
+                eventually gate.holding.get
+          let inProgress ← gate.inProgress.get
+          let waited ← waited.get
+          saw (held && waited == #["reload"] && inProgress == 0)
+              s!"held={held} waited={waited} inProgress={inProgress}"
+        finally
+          gate.open },
+    { name :=
+        "a check's bracket whose loop is held past its guard and its grace fails as a hang, saying the loop's hang once, and hands the loop it left to `abandoned`"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeConfig directory jobsConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- Held in the withdrawal as the loop ends, and let go only by the
+          -- check, once the bracket has given up: a grace of 0 runs out on
+          -- a held loop every time.
+          let withdrew ← IO.mkRef false
+          let order ← IO.mkRef #[]
+          let said ← IO.mkRef (#[] : Array String)
+          let left ← IO.mkRef (none : Option (Task (Except IO.Error Unit)))
+          let thrown ←
+            holdingUntil fun hold letGo => do
+                let thrown ←
+                  try
+                    Headless.withHost (withdrawingHeld stage hold withdrew order) (guard := 0)
+                        (grace := some 0) (hung := fun line => said.modify (·.push line))
+                        (abandoned := fun task => left.set (some task)) fun host => do
+                        host.send .reload
+                        unless ← settled host do
+                          throw (IO.userError "the reload did not settle")
+                        host.send (.spawn "count")
+                        unless ← settled host do
+                          throw (IO.userError "the spawn did not settle")
+                    pure none
+                  catch error =>
+                    pure (some (toString error))
+                letGo
+                return thrown
+          let abandoned := (← left.get).isSome
+          if let some task← left.get then
+            discard <| IO.wait task
+          let said ← said.get
+          saw
+              (thrown.any
+                  (fun text =>
+                    text.startsWith "a hang:" && (text.splitOn "giving up").length == 2) &&
+                said.size == 1 &&
+                abandoned)
+              s!"thrown={thrown} said={said} abandoned={abandoned}" }]
 
 /-- The checks of jobs through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue and the real text binding. The
@@ -1352,7 +1422,8 @@ def jobChecks (context : Context) : List Check :=
             Headless.run stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩, ⟨5, .join⟩,
                   ⟨6, .request .show⟩]
-                hangGuard (waitHung := fun line => said.modify (·.push line))
+                hangGuard (grace := some hangGuard) (waitHung := fun line =>
+                said.modify (·.push line))
           -- The loop has ended: the job it left is cancelled, with its wait.
           let withdrawn ← stage.clock.withdrawn
           let waiting ← stage.clock.waiting
@@ -1376,8 +1447,9 @@ def jobChecks (context : Context) : List Check :=
         let failure ←
           meetingAnswer fun hold blocked letGo =>
               Headless.run (heldAtLine stage.collaborators (· == "spawn count: job 1") hold)
-                #[⟨3, .request (.spawn "count")⟩, ⟨4, .join⟩] hangGuard (hung := fun _ => letGo)
-                (waitHung := fun line => said.modify (·.push line)) (waitBlocked := blocked)
+                #[⟨3, .request (.spawn "count")⟩, ⟨4, .join⟩] hangGuard (grace := some hangGuard)
+                (hung := fun _ => letGo) (waitHung := fun line => said.modify (·.push line))
+                (waitBlocked := blocked)
         let output ← stage.output.get
         let said ← said.get
         saw
@@ -1843,7 +1915,7 @@ wait 2" with
             Headless.run stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩,
                   ⟨4, .advance 10⟩, ⟨5, .join⟩]
-                hangGuard
+                hangGuard (grace := some hangGuard)
           let output ← stage.output.get
           -- Nothing is due, so the advance finds the host idle and stalls;
           -- its guard is a hang guard only, and nothing reaches it.
@@ -1851,13 +1923,14 @@ wait 2" with
           let stalled ← Stage.new context context.elaborator (Config.Directory.source directory)
           let ranOut ←
             Headless.run stalled.collaborators
-                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .advance 5⟩] hangGuard (waitHung :=
-                fun line => said.modify (·.push line))
+                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .advance 5⟩] hangGuard (grace :=
+                some hangGuard) (waitHung := fun line => said.modify (·.push line))
           let stalledOutput ← stalled.output.get
           let real ← Stage.new context context.elaborator (Config.Directory.source directory)
           let refused ←
             Headless.run { real.collaborators with clock := none } #[⟨1, .settle⟩, ⟨2, .advance 1⟩]
-                hangGuard (waitHung := fun line => said.modify (·.push line))
+                hangGuard (grace := some hangGuard) (waitHung := fun line =>
+                said.modify (·.push line))
           let said ← said.get
           saw
               (joined.isNone && output.contains "job 1 count: ok" &&
@@ -1956,7 +2029,7 @@ wait 2" with
                       { logical := .character "a", physical := .code "KeyA"
                         modifiers := { shift := true, control := true } }⟩,
                   ⟨4, .request (.run "greet")⟩, ⟨5, .key { logical := .named .escape }⟩]
-                hangGuard
+                hangGuard (grace := some hangGuard)
           return failure == none &&
               (← stage.output.get) ==
                 #["reload 1: installed, 2 files, 1 commands", "key arrived: a KeyA shift+control",
@@ -1974,10 +2047,10 @@ wait 2" with
               -- Only the settle's block on the running reload opens the gate:
               -- the reload then installs, however long it takes.
               let failure ←
-                Headless.run stage.collaborators
+                Headless.run { stage.collaborators with endWaits := fun _ => gate.open }
                     #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.run "greet")⟩] hangGuard
-                    (waitHung := fun line => said.modify (·.push line)) (waitBlocked := fun what =>
-                    do
+                    (grace := some hangGuard) (waitHung := fun line => said.modify (·.push line))
+                    (waitBlocked := fun what => do
                     if what == "running work" then
                       gate.open)
               let output ← stage.output.get
@@ -2000,7 +2073,7 @@ wait 2" with
           let failure ←
             Headless.run stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .commit "ab"⟩, ⟨4, .request .scene⟩]
-                hangGuard
+                hangGuard (grace := some hangGuard)
           let output ← stage.output.get
           return failure == none &&
               output.filter (fun line => !line.startsWith "scene " && !line.startsWith "view ") ==
@@ -2022,7 +2095,7 @@ wait 2" with
             Headless.run stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.run "greet")⟩,
                   ⟨4, .request .show⟩]
-                hangGuard
+                hangGuard (grace := some hangGuard)
           return failure == none &&
               (← stage.output.get) ==
                 #["reload 1: installed, 2 files, 1 commands", "run greet: ok", "commands: greet",
@@ -2043,14 +2116,15 @@ wait 2" with
               -- second, can end its wait, and it says the hang once. `run`
               -- then ends its loop at once, so the next host starts on a
               -- queue nobody else is pulling.
+              -- The loop's end waits for the reload it started, and lets
+              -- the gate go as it does (`endWaits`).
               let failure ←
-                Headless.run stage.collaborators
+                Headless.run { stage.collaborators with endWaits := fun _ => gate.open }
                     #[⟨3, .request .reload⟩, ⟨7, .settle⟩, ⟨8, .request .show⟩] 200 (waitHung :=
                     fun line => said.modify (·.push line))
-              -- The reload was held at the gate, which is why nothing settled.
-              -- The job outlives the loop, so on a slow machine it may only
-              -- now be reaching the gate: this is polled.
-              let held ← eventually gate.holding.get
+              -- The reload was held at the gate, which is why nothing settled,
+              -- and the loop's end waited for it there.
+              let held ← gate.holding.get
               let said ← said.get
               saw
                   (failure == some (.reloading (some 7)) && held && (← output.get).isEmpty &&
@@ -2074,7 +2148,7 @@ wait 2" with
               -- open for good. The run's guard is a minute, so a failure now
               -- is the settle's own fifth of a second, said as a hang once.
               let failure ←
-                Headless.run stage.collaborators
+                Headless.run { stage.collaborators with endWaits := fun _ => gate.open }
                     #[⟨3, .request .reload⟩, ⟨7, .settleWithin 200⟩, ⟨8, .request .show⟩] 60000
                     (waitHung := fun line => said.modify (·.push line))
               let said ← said.get
@@ -2094,7 +2168,7 @@ wait 2" with
             Headless.run stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩,
                   ⟨5, .join (some 1)⟩, ⟨6, .request .show⟩]
-                hangGuard
+                hangGuard (grace := some hangGuard)
           let output ← stage.output.get
           saw (failure == some (.waited 1000 (.working (some 5))))
               s!"failure={repr failure} output={output}" },
@@ -2106,7 +2180,9 @@ wait 2" with
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           -- No restart is asked for, so none comes: its own patience of
           -- none at all runs out at once, where the run's would be long.
-          let failure ← Headless.run stage.collaborators #[⟨1, .restarted (some 0)⟩] hangGuard
+          let failure ←
+            Headless.run stage.collaborators #[⟨1, .restarted (some 0)⟩] hangGuard (grace :=
+                some hangGuard)
           saw (failure == some (.waited 0 (.notRestarted 1))) s!"failure={repr failure}" },
     { name :=
         "a script that ends while a reload cannot finish fails at its end, with a reload still running and no line"
@@ -2122,8 +2198,8 @@ wait 2" with
               -- good, so only the guard ends the wait at the script's end,
               -- and it says the hang once.
               let failure ←
-                Headless.run stage.collaborators #[⟨1, .request .reload⟩] 200 (waitHung :=
-                    fun line => said.modify (·.push line))
+                Headless.run { stage.collaborators with endWaits := fun _ => gate.open }
+                    #[⟨1, .request .reload⟩] 200 (waitHung := fun line => said.modify (·.push line))
               let said ← said.get
               saw (failure == some (.reloading none) && said.size == 1)
                   s!"failure={repr failure} said={said}"
@@ -2220,7 +2296,7 @@ wait 2" with
             Headless.run stage.collaborators
                 #[⟨1, .resize 640 480⟩, ⟨2, .request .scene⟩, ⟨3, .resize 320 200⟩,
                   ⟨4, .request .scene⟩]
-                hangGuard
+                hangGuard (grace := some hangGuard)
           return failure == none &&
               (← stage.output.get) ==
                 #["scene 640x480, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
@@ -2237,7 +2313,7 @@ wait 2" with
             Headless.run stage.collaborators
                 #[⟨1, .request .scene⟩, ⟨2, .commit "héllo"⟩, ⟨3, .request .scene⟩,
                   ⟨4, .commit " world"⟩, ⟨5, .request .scene⟩]
-                hangGuard
+                hangGuard (grace := some hangGuard)
           return failure == none &&
               (← stage.output.get) ==
                 #["scene: none",
@@ -2274,7 +2350,7 @@ wait 2" with
             Headless.run stage.collaborators
                 #[⟨1, .key { logical := .named ⟨"F5"⟩ }⟩, ⟨2, .request .scene⟩, ⟨3, .commit "a"⟩,
                   ⟨4, .request .scene⟩]
-                hangGuard
+                hangGuard (grace := some hangGuard)
           return failure == none && statusOf != statusOf (modified := true) &&
               (← stage.output.get) ==
                 #["key arrived: <F5> - -",
@@ -2438,7 +2514,7 @@ wait 2" with
             Headless.runAndDispose stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩,
                   ⟨4, .advance 10⟩, ⟨5, .join⟩]
-                hangGuard
+                hangGuard (grace := some hangGuard)
           let output ← stage.output.get
           return failure.isNone && output.contains "job 1 count: ok" &&
               (← stage.disposed.get) == #[output.size] },
@@ -2453,7 +2529,8 @@ wait 2" with
           let (failure, _) ←
             Headless.runAndDispose stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩, ⟨4, .join⟩]
-                hangGuard (waitHung := fun line => said.modify (·.push line))
+                hangGuard (grace := some hangGuard) (waitHung := fun line =>
+                said.modify (·.push line))
           let disposed ← stage.disposed.get
           let output ← stage.output.get
           let said ← said.get
@@ -2475,7 +2552,8 @@ wait 2" with
           meetingAnswer fun hold blocked letGo =>
               Headless.runAndDispose
                 (heldAtLine stage.collaborators (·.startsWith "commands:") hold)
-                #[⟨1, .request .show⟩, ⟨2, .advance 5⟩] hangGuard (guard := 0) (hung := fun _ => do
+                #[⟨1, .request .show⟩, ⟨2, .advance 5⟩] hangGuard (grace := some hangGuard)
+                (guard := 0) (hung := fun _ => do
                 printedAtStall.set (some ((← stage.output.get).any (·.startsWith "commands:")))
                 letGo) (waitHung := fun line => said.modify (·.push line)) (waitBlocked := blocked)
         let disposed ← stage.disposed.get
@@ -2504,8 +2582,8 @@ wait 2" with
           holdingUntil fun hold letGo =>
               Headless.runAndDispose
                 (heldAtLine stage.collaborators (·.startsWith "commands:") hold) script hangGuard
-                (answer := 200) (guard := 0) (hung := fun _ => letGo) (waitHung := fun line =>
-                said.modify (·.push line))
+                (grace := some hangGuard) (answer := 200) (guard := 0) (hung := fun _ => letGo)
+                (waitHung := fun line => said.modify (·.push line))
         let disposed ← stage.disposed.get
         let output ← stage.output.get
         let said ← said.get
@@ -2531,7 +2609,7 @@ wait 2" with
           let (failure, _) ←
             holdingUntil fun hold letGo =>
                 Headless.runAndDispose (withdrawingHeld stage hold withdrew order) jobScript
-                  hangGuard (guard := 0) (hung := fun _ => letGo)
+                  hangGuard (grace := some hangGuard) (guard := 0) (hung := fun _ => letGo)
           let withdrawn ← stage.clock.withdrawn
           let disposed ← stage.disposed.get
           let output ← stage.output.get
@@ -2951,7 +3029,8 @@ def ranScript (context : Context) (directives : List Headless.Directive) :
             jobs := Files.package.registered.jobs
             modes := Minibuffer.package.registered.modes
             ex := Ex.package.registered.ex }
-    let failure ← Headless.run stage.collaborators (scriptOf directives) hangGuard
+    let failure ←
+      Headless.run stage.collaborators (scriptOf directives) hangGuard (grace := some hangGuard)
     return (failure, ← stage.output.get)
 
 /-- The checks of a script that a command ends (`Editor/Headless.lean`,

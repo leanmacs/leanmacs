@@ -401,7 +401,9 @@ guard against a hang (`waitHung`, `waitBlocked`). -/
 def onStage {β σ : Type} (stage : Stage β σ) (check : Headless.Host → Stage β σ → IO Bool)
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
-  Headless.withHost stage.collaborators (guard := patience) fun host => do
+  -- A loop not ended `hangGuard` after its hang was said is given up on,
+  -- and the check fails as a hang: the suite always finishes.
+  Headless.withHost stage.collaborators (guard := patience) (grace := some hangGuard) fun host => do
     let held ← check host stage
     let wait ← host.await hangGuard (waitHung := waitHung) (waitBlocked := waitBlocked)
     return held && (wait == .settled || wait == .ended)
