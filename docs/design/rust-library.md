@@ -49,9 +49,16 @@ registering of a service and its completion (`Service`, whose id a
 process-wide counter gives from 1024 up; the core's services keep their
 fixed ids below it and report with `events::complete`), the port a service
 reports through (`Completer`, with the fake `RecordingCompleter` and the
-contract `completer_contract`), and the buffers that cross the boundary
-(`buffer`). A package's crate depends on it and on nothing else of the
-editor's ([packages.md](packages.md), "Rust in a package").
+contract `completer_contract`), the buffers that cross the boundary
+(`buffer`), and the owner of a thread a service starts for a scope
+(`Worker`, in `worker`): dropping it runs the `stop` it was given, once,
+and joins the thread, on every path, a panicking test's included, so a
+thread a test starts has ended before the test does. A worker dropped on
+its own thread does not join itself. The process's own services are
+statics that are never dropped: their threads live for the process and end
+with it, and they are no workers. A package's crate depends on it and on
+nothing else of the editor's ([packages.md](packages.md), "Rust in a
+package").
 
 ## Timers
 

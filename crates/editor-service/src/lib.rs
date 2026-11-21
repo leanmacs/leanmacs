@@ -11,6 +11,9 @@
 //!   contract ([`completer_contract`]).
 //! - [`buffer`]: the plain-data buffers that cross the boundary, lent,
 //!   borrowed and reclaimed.
+//! - [`worker`]: a thread and the owner that ends it ([`Worker`]), whose
+//!   drop asks the thread to stop and joins it on every path, so a thread a
+//!   test starts never outlives the test.
 //!
 //! A package's crate depends on this crate and on nothing else of the
 //! editor's. All of the editor is linked from one Rust archive, generated
@@ -25,11 +28,14 @@
 //! | A new thing to report, or a new origin | A variant of [`queue::EventKind`] or [`queue::SourceKind`] | The unit tests of [`queue`] |
 //! | A rule of how a service is named or numbered | [`service`] | Its unit tests |
 //! | A rule every completer keeps | A property of [`completer_contract`] | Its tests, on the fake and on completers written to break it, and `tests/queue.rs` on the real one |
+//! | A thread a service starts and must end | [`worker::Worker`] | The unit tests of [`worker`] |
 
 pub mod buffer;
 pub mod queue;
 pub mod service;
+pub mod worker;
 
 pub use service::{
     Completer, FIRST_PACKAGE_ID, RecordingCompleter, Service, completer_contract, registered,
 };
+pub use worker::Worker;
