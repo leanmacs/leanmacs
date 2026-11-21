@@ -184,6 +184,14 @@ ended once that task has. `awaitWithin` is the one hang-guarded wait of a
 task: its value, or `none` past a patience, which is a hang and never a
 result. The flush contract is `Editor/Job/FlushContract.lean`.
 
+A caller that is not a job hands one file request to the port through
+`Services.fileWorked`, which returns the task of its reply: a handle. The
+wait is registered with an action (`registerWith`) that takes the reply
+through the port when the wait ends and then resolves the task, so a caller
+that drops the task leaves the service keeping nothing. A handle is for one
+request's reply; a flush is for everything handed before. The handle's
+contract is `Editor/Job/HandleContract.lean`.
+
 `Environments` is the port of the environments a host's jobs share, which
 answers at once and registers no wait (`Environments.inherited`, the
 default, and `sharedEnvironments`, state behind a reference).
@@ -343,6 +351,22 @@ def Files.absentReply : (request : FileRequest) → request.Reply
   | .makeDirectory .. => .error (.failed "this runner has no file service")
   | .append .. => .error (.failed "this runner has no file service")
   | .remove .. => .error (.failed "this runner has no file service")
+
+/-- The reply of a file request handed through the services
+(`Services.fileWorked`) whose wait was withdrawn before the service worked
+it: refused as failed. -/
+def Files.withdrawnReply : (request : FileRequest) → request.Reply
+  | .load .. => .error (.failed "the request was withdrawn")
+  | .save .. => .error (.failed "the request was withdrawn")
+  | .stamp .. => .error (.failed "the request was withdrawn")
+  | .list .. => .error (.failed "the request was withdrawn")
+  | .makeDirectory .. => .error (.failed "the request was withdrawn")
+  | .append .. => .error (.failed "the request was withdrawn")
+  | .remove .. => .error (.failed "the request was withdrawn")
+
+/-- Every reply type has a value, so a promise of one can be made. -/
+instance (request : FileRequest) : Nonempty request.Reply :=
+  ⟨Files.absentReply request⟩
 
 /-- No file service: every request completes at once, refused as failed,
 through the table `completions`. It is what a runner has when it was given
@@ -555,6 +579,39 @@ def Services.flushed (services : Services) (target : Service) : BaseIO (Task Com
   -- A map run on the resolving thread, so the task has ended once the wait
   -- has: `IO.hasFinished` of it says whether the flush has been completed.
   return wait.resultD .cancelled
+
+/-- Hands `request` to the file port as a wait of its own, and returns the task
+of its reply: a handle of the one request. The reply is taken through the
+port when the wait ends, on the thread that ends it (the pump, a fake's
+`letGo`, or the port's own `start` when it refuses the request at once), and
+handed to `noted` before the task ends, whether or not the task is still
+held. So a caller that does not need the reply drops the task (`discard`),
+and the service keeps nothing of the request. A wait withdrawn
+(`cancelled`) ends with `Files.withdrawnReply request`, and nothing is taken.
+
+The take is the port's, as a job's is (`Files.take`): an append, a remove
+and a save are decoded and taken, and a load's reply names a snapshot the
+port then holds, as a job's load does, until it is released. A handle is
+for one request's reply; to wait for everything handed to the service
+before, flush it (`Services.flushed .files`). -/
+def Services.fileWorked (services : Services) (request : FileRequest)
+    (noted : request.Reply → BaseIO Unit := fun _ => pure ()) : BaseIO (Task request.Reply) := do
+  let reply ← IO.Promise.new
+  -- The take hangs off the wait's action, which the table holds, and not off
+  -- the task handed back: a mapped task still waiting when its last
+  -- reference goes is deactivated and never runs.
+  let id ←
+    services.completions.registerWith fun id completion => do
+        let answer ←
+          match completion with
+          | .completed =>
+            services.files.take id request
+          | .cancelled =>
+            pure (Files.withdrawnReply request)
+        noted answer
+        reply.resolve answer
+  services.files.start id request
+  return reply.resultD (Files.withdrawnReply request)
 
 /-- `task`'s value, or `none` if it has not ended within `patience`
 milliseconds. It is a guard against a hang, never a result: a caller that

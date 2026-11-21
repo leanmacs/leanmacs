@@ -19,6 +19,7 @@ import Editor.Extension
 import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Contract
 import Editor.Job.FlushContract
+import Editor.Job.HandleContract
 import Editor.Language.Compiled
 import Editor.Main
 import Editor.Menu.Compiled

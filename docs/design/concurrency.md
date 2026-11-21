@@ -2021,12 +2021,14 @@ involved, so a burst of job I/O does not delay typing.
 As built:
 
 - **The table of waits** (`Job.Completions`) holds, for each wait in
-  flight, an id and a promise. An id is a counter from 1, never used again
-  in a process. `finish` with an id removes the entry and resolves its
-  promise, and does nothing for an id that is not there. That is the whole
-  matching rule: a request carries its id to the service, the completion
-  carries it back, and a completion for a wait that was cancelled meanwhile
-  is dropped.
+  flight, an id and the action that ends it: for `register`, resolving the
+  wait's promise; for `registerWith`, the caller's own (deterministic-test-concurrency
+  phase 2). An id is a counter from 1, never used again in a process.
+  `finish` with an id removes the entry in one atomic step and runs its
+  action outside it, once, on the thread that finishes it, and does nothing
+  for an id that is not there. That is the whole matching rule: a request
+  carries its id to the service, the completion carries it back, and a
+  completion for a wait that was cancelled meanwhile is dropped.
 - **The clock port** (`Job.Timers`) is what the runner's waits are made of:
   read the clock, start a wait with an id and a deadline, withdraw a wait.
   Its fake (`lean/Editor/Job/Fake.lean`) is a clock a test moves by hand;
@@ -2092,6 +2094,23 @@ As built:
   and on the real ports in `contract-test`, the real file service held by
   its in-process hold (`Ffi.filesHold`), a request that parks its worker
   until it is cancelled.
+- **A file request's handle** (`Services.fileWorked`, deterministic-test-concurrency
+  phase 2) is the task of one file request's reply, for a caller that is
+  not a job. It registers the request's wait with `registerWith`, whose
+  action takes the reply through the port (`Files.take`), hands it to the
+  caller's `noted` and then resolves the task; a wait withdrawn ends with
+  `Files.withdrawnReply`. The take runs when the wait ends, not off the
+  task: in Lean's runtime a mapped task that is still waiting when its last
+  reference goes is deactivated and never runs, so a take hung off the task
+  would never happen for a caller that dropped it, and the service would
+  keep the result for ever. As built, a caller may drop the task
+  (`discard`) and the service keeps nothing of the request. **A handle is
+  for one request's reply; a flush is for everything handed before.** The
+  contract (`lean/Editor/Job/HandleContract.lean`) runs on the fake file
+  service in `model-test` and on the real file port in `contract-test`,
+  held by the same in-process hold: a held request's handle has not ended
+  until the worker is let go, then ends with its reply, and the service
+  keeps nothing of it, dropped or not.
 - **Cancelling a job cancels the request**: the timer leaves the library's
   schedule, a file request leaves the file service, a run's child is
   killed with its process group, and a pending watch read is withdrawn.

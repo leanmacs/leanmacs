@@ -89,6 +89,7 @@ import ModelTest.Editor.InputScheme.Vim.Default
 import ModelTest.Editor.Invocation
 import ModelTest.Editor.Job.Contract
 import ModelTest.Editor.Job.FlushContract
+import ModelTest.Editor.Job.HandleContract
 import ModelTest.Editor.Job.Jobs
 import ModelTest.Editor.Job.Model
 import ModelTest.Editor.Job.Pool
@@ -697,6 +698,11 @@ The job system is tested here with no Rust library:
   work has not ended until it is let go, and the fake clock and watches
   idle; and the contract biting on a file service whose flush completes at
   its call;
+- `handleContractChecks`: the contract of a file request's handle
+  (`Editor/Job/HandleContract.lean`) on the fake file service, held by its
+  held completions: a held request's handle has not ended until it is let
+  go, then ends with its reply, and a dropped handle's reply is still
+  taken, so the service keeps nothing;
 - `tableChecks`: the job table (`Editor/Job/Table.lean`), which is pure;
 - `ownerChecks`: the shell over the table and the runner
   (`Editor/Job/Jobs.lean`): removing an owner cancels its jobs;
@@ -1459,6 +1465,7 @@ def checks : List Check :=
     waitChecks ++
     runnerChecks ++
     flushContractChecks ++
+    handleContractChecks ++
     tableChecks ++
     ownerChecks ++
     fileRunnerChecks ++

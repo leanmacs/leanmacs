@@ -9,8 +9,10 @@ asks the service for a hold (`Ffi.filesHold`) under a wait of the table, and
 returns once the worker has reached it, so nothing handed to the service
 afterwards is worked until `FileHold.release` lets the worker go
 (`Ffi.filesCancel`). It needs no file, no named pipe and no other process.
-Its users are `ContractTest/Editor/Restore/Run.lean` and
-`ContractTest/Editor/Job/FlushContract.lean`; it holds no checks of its own.
+Its users are `ContractTest/Editor/Restore/Run.lean`,
+`ContractTest/Editor/Job/FlushContract.lean` and
+`ContractTest/Editor/Job/HandleContract.lean`; it holds no checks of its
+own.
 -/
 
 namespace ContractTest

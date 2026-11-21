@@ -593,7 +593,27 @@ each on a fake of the file service of its own (`Job.FakeFiles`,
 controls (the service's completions, its takes, a clock) and polls only as
 the bound after which it fails. -/
 def fileRunnerChecks : List Check :=
-  [{
+  [{  name :=
+        "a file request handed through the services whose wait is withdrawn ends with the withdrawn reply, and nothing is taken for it"
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        files.holdCompletions
+        let request : FileRequest := .append (fileRoot / "a.txt") "w".toUTF8
+        let task ← rig.services.fileWorked request
+        -- The id of the request's wait, as the fake recorded its start.
+        let some (id, _) := (← files.started).back? | return false
+        let early ← IO.hasFinished task
+        rig.services.completions.finish id .cancelled
+        let some reply ← Job.awaitWithin 10000 task | return false
+        files.letGo
+        let withdrawn :=
+          match (reply : Except FileError Unit),
+            (Job.Files.withdrawnReply request : Except FileError Unit) with
+          | .error (.failed said), .error (.failed expected) => said == expected
+          | _, _ => false
+        -- The fake's take was never asked: the request is still its pending.
+        return !early && withdrawn && (← files.waiting) == 1 },
+    {
       name :=
         "cancelling a job in a file wait withdraws the wait and ends the job cancelled, and its save never happens: no file is written, then or when the service lets go",
       run := do
