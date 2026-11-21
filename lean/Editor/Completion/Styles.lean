@@ -47,7 +47,8 @@ matched**, so it never ranks a candidate. A text that ends in `/` has an
 empty last component, and lists every candidate in order. It is the style
 the `files` package gives the category `file` (`Editor/Files/Compiled.lean`).
 
-Pinned by `ModelTest.styleChecks` and `styleContractChecks`.
+Pinned by `ModelTest.shippedStyleChecks`, over the fuzzy model, and
+against the real matcher by `ContractTest.shippedStyleFailures`.
 -/
 
 namespace Editor.Completion
@@ -158,16 +159,6 @@ def path : Style :=
 def shipped : Array Style :=
   #[fuzzy, orderless, path]
 
-/-- What the report says of a style chosen under `name` that no style is
-registered under. -/
-def unknown (name : String) : String :=
-  s!"no completion style is registered under `{name}`"
-
 end Styles
-
-/-- The matching a host hands when config chooses nothing: the fuzzy style
-for every prompt. -/
-def Matching.standard : Matching :=
-  { default := Styles.fuzzy }
 
 end Editor.Completion

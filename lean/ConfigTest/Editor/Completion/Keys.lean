@@ -2,8 +2,8 @@ import ConfigTest.Check
 import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
+import ConfigTest.Support.Listings
 import ConfigTest.Support.Syntax
-import Editor.Completion.Displays
 import Editor.Completion.Keys
 import Editor.ModeLine
 
@@ -45,8 +45,8 @@ def leaderHints : Array KeyHint :=
 /-- The rows `display` draws of `hints` as the key hints' list: a listing of
 their candidates (`Completion.Keys.candidates`) of the category `key`, with
 nothing chosen. -/
-def hintSheetRows (hints : Array KeyHint)
-    (display : Completion.Display := Completion.Displays.minibuffer) : List String :=
+def hintSheetRows (hints : Array KeyHint) (display : Completion.Display := rowsDisplay) :
+    List String :=
   (display.sheet
         { listed := (Completion.Keys.candidates hints).map (Completion.Listed.of ·)
           category := some Completion.Keys.category }).rows.toList.map

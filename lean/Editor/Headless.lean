@@ -1179,8 +1179,8 @@ def reportLines (report : Config.Report) : Array String :=
   #[outcome] ++ diagnostics ++
     report.unknownTheme.toArray.map (fun name => s!"theme: {Theme.unknown name}") ++
     report.unknownSegments.map (fun name => s!"segment: {ModeLine.unknown name}") ++
-    report.unknownStyles.map (fun name => s!"style: {Completion.Styles.unknown name}") ++
-    report.unknownDisplays.map (fun name => s!"display: {Completion.Displays.unknown name}") ++
+    report.unknownStyles.map (fun name => s!"style: {Completion.Style.unknown name}") ++
+    report.unknownDisplays.map (fun name => s!"display: {Completion.Display.unknown name}") ++
     report.unknownAtPoints.map (fun name => s!"at-point: {Completion.AtPoint.unknown name}") ++
     report.unusableRules.map fun sentence => s!"rule: {sentence}"
 

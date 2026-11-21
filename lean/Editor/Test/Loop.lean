@@ -3,7 +3,6 @@ import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Command.Model
 import Editor.Completion.Display
-import Editor.Completion.Displays
 import Editor.Completion.Keys
 import Editor.Config.Stores
 import Editor.Display.Model
@@ -242,8 +241,7 @@ def afterPrefix : Array KeyHint :=
 
 /-- The text the candidate list's view shows of `hints` drawn by `display`:
 its sheet's text over their listing, of the category `key`. -/
-def hintRows (hints : Array KeyHint)
-    (display : Completion.Display := Completion.Displays.minibuffer) : String :=
+def hintRows (hints : Array KeyHint) (display : Completion.Display) : String :=
   (display.sheet
       { listed := (Completion.Keys.candidates hints).map (Completion.Listed.of ·)
         category := some Completion.Keys.category }).text

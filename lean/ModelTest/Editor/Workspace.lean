@@ -6,7 +6,6 @@ import Editor.Command.Model
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
-import Editor.Completion.Styles
 import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.File

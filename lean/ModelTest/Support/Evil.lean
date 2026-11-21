@@ -7,8 +7,6 @@ import Editor.Command.Dispatch
 import Editor.Command.Model
 import Editor.Completion
 import Editor.Completion.AtPoint
-import Editor.Completion.Displays
-import Editor.Completion.Styles
 import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry

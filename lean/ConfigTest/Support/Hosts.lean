@@ -1,8 +1,8 @@
 import ConfigTest.Check
+import ConfigTest.Support.Listings
 import Editor.Clipboard
 import Editor.Clipboard.InProcess
 import Editor.Completion
-import Editor.Completion.Compiled
 import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Config.Packages
@@ -251,8 +251,10 @@ def Compiled.package (compiled : Compiled) : Package :=
         useStyleFor category name }
 
 /-- A stage for a host over `elaborator` and `source`, with what `compiled`
-hands it: the packages `completion` and `mode-line`, so every stage's host
-has the shipped styles, displays and segments, then `compiled.packages`,
+hands it: the package `listings`, so every stage's host has a style and a
+display written for these tests (`ConfigTest/Support/Listings.lean`), and
+the package `mode-line`, so it has the shipped segments, then
+`compiled.packages`,
 then the package `test` of its arrays (`Compiled.package`). A `compiled`
 whose arrays one `setup` would refuse fails the stage, naming why: such a
 host would start without them. Hosts follow one another on one queue: each gets source ids of its
@@ -293,7 +295,7 @@ def Stage.new {β σ : Type} (context : Context) (elaborator : Config.Elaborator
           jobs := requests + 2, environment := requests + 3
           posts := requests + 4, pauseEvents := requests + 5
           packages :=
-            #[Completion.package, Test.Shipped.modeLine] ++ compiled.packages ++ #[compiled.package]
+            #[listingsPackage, Test.Shipped.modeLine] ++ compiled.packages ++ #[compiled.package]
           log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter
           dispose := do
             let emitted := (← output.get).size

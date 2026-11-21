@@ -3,11 +3,9 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Model
 import Editor.Completion.Candidate
-import Editor.Completion.Displays
 import Editor.Completion.Later
 import Editor.Completion.Paths
 import Editor.Completion.Style
-import Editor.Completion.Styles
 import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
@@ -1419,13 +1417,34 @@ def fileNameFiles : FileModel :=
       "/w/src/.env" "env\n".toUTF8 |>.withDirectory
     "/w/src/.cache"
 
+/-- The byte offset and the text of the last component of the path `text`:
+what follows its last `/`, a trailing `/` not counted. -/
+def lastPart (text : String) : Nat × String :=
+  let trimmed := if text.endsWith "/" then String.ofList text.toList.dropLast else text
+  let (directory, last) := TypedPath.split trimmed
+  (directory.utf8ByteSize, last)
+
+/-- A style written for the file name checks, `last`, not the one that
+ships: the fuzzy port's ranking of the text's last component against the
+candidates' (`lastPart`), in its order, each hit with one range, its whole
+last component. -/
+def lastStyle : Completion.Style :=
+  { name := "last"
+    hits := fun text candidates => do
+      let lasts := candidates.map lastPart
+      let ranked ← Fuzzy.rank (TypedPath.split text).2 (lasts.map (·.2))
+      return ranked.map fun index =>
+          let (offset, last) := (lasts[index]?).getD (0, "")
+          { index, ranges := #[⟨offset, offset + last.utf8ByteSize⟩] } }
+
 /-- What a step of the file name checks is handed: `C-o o` runs the open
 command with no path, `TAB` the minibuffer's insert, `C-n` its next,
 `C-u` its delete to the start, `<Backspace>` its delete backward and `RET`
 its accept, and a key that prints is typed; the commands are the ones
 compiled code registers for files and the minibuffer; the category `file`
-is matched with the path style; and a prompt over more than `inline`
-candidates is matched by a job. -/
+is matched with a style written here (`lastStyle`) and every other with the
+core's own; and a prompt over more than `inline` candidates is matched by
+a job. -/
 def fileNameKeys (inline : Nat := Loop.inlineMatches) : Loop.Keys TestScheme.scheme :=
   let compiled : List (String × Dispatched) :=
     (Files.package.registered.commands ++ Minibuffer.package.registered.commands).toList.filterMap
@@ -1451,9 +1470,9 @@ def fileNameKeys (inline : Nat := Loop.inlineMatches) : Loop.Keys TestScheme.sch
   { keys with
     inlineMatches := inline
     matching :=
-      { default := Completion.Styles.fuzzy
+      { default := .unregistered
         byCategory := fun category =>
-          if category == Completion.Paths.category then some Completion.Styles.path else none } }
+          if category == Completion.Paths.category then some lastStyle else none } }
 
 /-- A driver of the file name checks over the initial state with `directory`
 (`/w` unless given) as the working directory and `home` as the home
@@ -1504,7 +1523,7 @@ def fileNameChecks : List Check :=
   let labels := #["notes/", "src/", "alpha.txt", "alps.md", "beta.txt"]
   let lasts := #["notes", "src", "alpha.txt", "alps.md", "beta.txt"]
   [{  name :=
-        "AC 1 on the model: C-o o opens the prompt with /w/ and lists notes/, src/, alpha.txt, alps.md, beta.txt once the job is finished; typing al lists the fuzzy model's order over the last components, each with its matched range on its label"
+        "AC 1 on the model: C-o o opens the prompt with /w/ and lists notes/, src/, alpha.txt, alps.md, beta.txt once the job is finished; typing al lists the fuzzy model's order over the last components, each with the style's range starting where its label does"
       run :=
         pure <|
           match fileNameDriver, opened? with
@@ -1514,7 +1533,11 @@ def fileNameChecks : List Check :=
             minibufferText asked == some "/w/" && fileLabels opened == labels &&
               fileLabels typed == (FuzzyModel.rank "al" lasts).filterMap (labels[·]?) &&
               (candidatesOf typed).map
-                  (·.listed.all fun listed => !(Completion.Displays.labelRanges listed).isEmpty) ==
+                  (·.listed.all fun listed =>
+                    let label := listed.candidate.label.getD listed.text
+                    listed.text.endsWith label &&
+                      listed.ranges.any
+                        (·.start == listed.text.utf8ByteSize - label.utf8ByteSize)) ==
                 some true
           | _, _ => false },
     { name :=

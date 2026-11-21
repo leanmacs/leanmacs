@@ -1,45 +1,36 @@
 import Editor.Completion.Candidate
 import Editor.Completion.Display
+import Editor.Completion.DisplayContract
 import Editor.Completion.Displays
 import Editor.Completion.Keys
+import Editor.Face.Vocabulary
 import Editor.Scene
 import ModelTest.Check
+import ModelTest.Editor.Completion.Display
 
 /-!
 # Model tests: `Editor/Completion/Displays.lean`
 
-The model tests of `Editor/Completion/Displays.lean`: `completionDisplayChecks`.
-The root module `ModelTest` runs them; its module doc says what each shows.
+The model tests of the display that ships, which the `completion` package
+registers (`Editor/Completion/Displays.lean`): `minibufferDisplayChecks`.
+The model and the choice are `completionDisplayChecks`
+(`ModelTest/Editor/Completion/Display.lean`). The root module `ModelTest`
+runs them; its module doc says what each shows.
 -/
 
 namespace ModelTest
 
 open Editor
 
-/-- A listed candidate of `text` for the display checks, with `ranges`, and
-a label, an annotation and a group when given. -/
-def listedOf (text : String) (ranges : Array Completion.Span := #[])
-    (label annotation group : Option String := none) : Completion.Listed :=
-  { candidate := { text, label, annotation, group }, ranges }
-
-/-- The listing of a candidate of each of `texts`, with no ranges. -/
-def listingOf (texts : Array String) : Array Completion.Listed :=
-  texts.map (listedOf ·)
-
 /-- The sheet the minibuffer display at `rows` rows answers for `showing`. -/
 def minibufferSheet (showing : Completion.Showing) (rows : Nat := Completion.Displays.rows) :
     Completion.Sheet :=
   (Completion.Displays.minibuffer rows).sheet showing
 
-/-- The texts of `sheet`'s rows. -/
-def rowTexts (sheet : Completion.Sheet) : Array String :=
-  sheet.rows.map (·.text)
-
-/-- The checks of the completion display interface
-(`Editor/Completion/Display.lean`) and the shipped minibuffer display
+/-- The checks of the shipped minibuffer display
 (`Editor/Completion/Displays.lean`): its rule, pure, over listings written
-here. -/
-def completionDisplayChecks : List Check :=
+here, the display contract on it, and its faces in the vocabulary. -/
+def minibufferDisplayChecks : List Check :=
   let texts := (Array.range 15).map (s!"c{·}")
   [{  name :=
         "the minibuffer display shows at most its rows, one candidate a row from the top in the listing's order, and fewer when fewer are listed"
@@ -178,37 +169,7 @@ def completionDisplayChecks : List Check :=
             minibufferSheet { first := 4 } == {} &&
             (Completion.Display.plain "p").sheet {} == {} },
     { name :=
-        "a sheet's text joins its rows with line feeds and puts a space for a line feed in a row; whether a listing is grouped is whether two of its groups differ"
-      run :=
-        pure <|
-          ({ rows := #[{ text := "a\nb" }, { text := "c" }] } : Completion.Sheet).text ==
-              "a b\nc" &&
-            ({} : Completion.Sheet).text == "" &&
-            Completion.grouped
-              #[listedOf "a" (group := some "A"), listedOf "b" (group := some "B")] &&
-            !Completion.grouped
-                #[listedOf "a" (group := some "A"), listedOf "b" (group := some "A")] &&
-            !Completion.grouped #[] &&
-            ((Completion.Display.plain "plain").sheet
-                  { listed := listingOf #["w", "wq"], chosen := some 1 }).text ==
-              "  w\n> wq" },
-    { name :=
-        "displaying picks a category's display when it has one and the default otherwise, and with no category the default; the standard displaying is the minibuffer display; the shipped displays are the minibuffer's"
-      run :=
-        pure <|
-          let displaying : Completion.Displaying :=
-            { default := Completion.Displays.minibuffer
-              byCategory := fun category =>
-                if category == "pick" then some (Completion.Display.plain "plain") else none }
-          (displaying.displayFor (some "pick")).name == "plain" &&
-            (displaying.displayFor (some "other")).name == "minibuffer" &&
-            (displaying.displayFor none).name == "minibuffer" &&
-            (Completion.Displaying.standard.displayFor (some "pick")).name == "minibuffer" &&
-            Completion.Displays.shipped.map (·.name) == #["minibuffer"] &&
-            Completion.Displays.unknown "nope" ==
-              "no completion display is registered under `nope`" },
-    { name :=
-        "a listing of the key category with nothing chosen and no typed text is drawn by the display chosen for key, and the minibuffer display starts its window at 0 and shows the annotations in their column"
+        "the minibuffer display starts its window at 0 for a listing of the key category with nothing chosen and no typed text, and shows the annotations in their column; the shipped displays are the minibuffer's"
       run :=
         pure <|
           let hints : Array KeyHint :=
@@ -217,14 +178,32 @@ def completionDisplayChecks : List Check :=
           let showing : Completion.Showing :=
             { listed := (Completion.Keys.candidates hints).map (Completion.Listed.of ·)
               category := some Completion.Keys.category }
-          let displaying : Completion.Displaying :=
-            { default := Completion.Displays.minibuffer
-              byCategory := fun category =>
-                if category == "key" then some (Completion.Display.plain "fake") else none }
-          let chosen := displaying.displayFor showing.category
           let shipped := Completion.Displays.minibuffer.sheet showing
-          chosen.name == "fake" && rowTexts (chosen.sheet showing) == #["  f", "  s"] &&
-            shipped.first == 0 &&
-            rowTexts shipped == #["f  +file (1)", "s  Save"] }]
+          shipped.first == 0 && rowTexts shipped == #["f  +file (1)", "s  Save"] &&
+            Completion.Displays.shipped.map (·.name) == #["minibuffer"] },
+    { name :=
+        "every property of the display contract holds of the minibuffer display at 0, 1, 3 and 10 rows, over every showing of its table"
+      run :=
+        pure <|
+          [0, 1, 3, 10].all fun rows =>
+            (Completion.DisplayContract.failures (Completion.Displays.minibuffer rows)).isEmpty },
+    { name :=
+        "the five faces the minibuffer display draws, of a candidate's row, the chosen one's, a matched range, an annotation and a group's header, are in the face vocabulary, and each is drawn on a grouped listing with an annotation, ranges and a choice"
+      run :=
+        let listed : Array Completion.Listed :=
+          #[{ candidate := { text := "ab", annotation := some "note", group := some "A" }
+              ranges := #[⟨0, 1⟩] },
+            { candidate := { text := "b", group := some "B" }, ranges := #[⟨0, 1⟩] }]
+        let drawn :=
+          (Completion.Displays.minibuffer.sheet
+                { listed, chosen := some 1, grouped := Completion.grouped listed }).rows.flatMap
+            fun row => row.decorations.map (·.face)
+        let faces :=
+          [Completion.Displays.candidateFace, Completion.Displays.chosenFace,
+            Completion.Displays.matchFace, Completion.Displays.annotationFace,
+            Completion.Displays.groupFace]
+        pure
+          (drawn.all Face.vocabularyNames.contains &&
+            faces.all fun face => drawn.contains face && Face.vocabularyNames.contains face) }]
 
 end ModelTest

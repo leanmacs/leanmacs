@@ -791,9 +791,10 @@ category) is matched with ("Styles", in the module docs): the latest entry
 registered under the name config chose for the category, when one is; else
 under the name a package gives the category (`styleDefaults`, the latest
 of the category), when one
-is; else under the name chosen for the default, when one is; else under `fuzzy`, so
-config's style of that name is used in the shipped one's place; else, for
-a registry where none is, the core's own fuzzy style, as the owner `compiled`'s. The one
+is; else under the name chosen for the default, when one is; else under
+the name of the style registered first, so config's style of that name is
+used in its place; else, for a registry where none is, the core's own
+style (`Completion.Style.unregistered`), as the owner `compiled`'s. The one
 lookup both the style and its owner are read from (`matching`). -/
 def styleEntry (registry : Registry) (category : Option String) : StyleEntry :=
   let named (name : String) : Option StyleEntry := registry.styles.findRev? (·.style.name == name)
@@ -802,8 +803,9 @@ def styleEntry (registry : Registry) (category : Option String) : StyleEntry :=
   let defaulted (category : String) : Option StyleEntry :=
     (registry.styleDefaults.findRev? (·.1 == category)).bind fun (_, name) => named name
   ((category.bind fun category => chosen (some category)) <|>
-        category.bind defaulted <|> chosen none <|> named Completion.Styles.fuzzy.name).getD
-    { owner := .compiled, style := Completion.Styles.fuzzy }
+        category.bind defaulted <|>
+        chosen none <|> (registry.styles[0]?).bind fun first => named first.style.name).getD
+    { owner := .compiled, style := Completion.Style.unregistered }
 
 /-- The styles a prompt is matched with ("Styles", in the module docs), each
 with who registered it, both read from the one entry a category resolves
@@ -839,18 +841,19 @@ def display? (registry : Registry) (name : String) : Option Completion.Display :
 /-- The display entry a prompt of `category` (`none` for one with no
 category) is shown with ("Displays", in the module docs): the latest entry
 registered under the name config chose for the category, when one is; else
-under the name chosen for the default, when one is; else under
-`minibuffer`, so config's display of that name is used in the shipped
-one's place; else, for a registry where none is, the core's own minibuffer
-display, as the owner `compiled`'s. `styleEntry`'s rule. -/
+under the name chosen for the default, when one is; else under the name of
+the display registered first, so config's display of that name is used in
+its place; else, for a registry where none is, the core's own display
+(`Completion.Display.unregistered`), as the owner `compiled`'s.
+`styleEntry`'s rule. -/
 def displayEntry (registry : Registry) (category : Option String) : DisplayEntry :=
   let named (name : String) : Option DisplayEntry :=
     registry.displays.findRev? (·.display.name == name)
   let chosen (category : Option String) : Option DisplayEntry :=
     (registry.displayChoices.find? (·.1 == category)).bind fun (_, name) => named name
   ((category.bind fun category => chosen (some category)) <|>
-        chosen none <|> named Completion.Displays.minibuffer.name).getD
-    { owner := .compiled, display := Completion.Displays.minibuffer }
+        chosen none <|> (registry.displays[0]?).bind fun first => named first.display.name).getD
+    { owner := .compiled, display := Completion.Display.unregistered }
 
 /-- The displays a prompt is shown with ("Displays", in the module docs):
 the default is the entry's for no category, and a category's the entry's

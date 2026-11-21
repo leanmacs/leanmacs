@@ -4,7 +4,6 @@ import Editor.Command.Call
 import Editor.Completion
 import Editor.Completion.Candidate
 import Editor.Completion.Style
-import Editor.Completion.Styles
 import Editor.Config.Owner
 import Editor.Event
 import Editor.InputScheme
@@ -41,6 +40,13 @@ open Editor.Test
 /-- The windows of each tab of `state`, as indices, in order. -/
 def tabOrder (state : EditorState) : List (List Nat) :=
   state.frame.tabs.toList.map fun tab => tab.windows.toList.map (·.index)
+
+/-- A style written for the tab checks, `every-part`, not one that ships:
+it keeps the candidates that hold every space-separated part of the text as
+a run of their characters, in their order, with no ranges. -/
+def everyPart : Completion.Style :=
+  .keeping "every-part" fun text candidate =>
+    (text.splitOn " ").all fun part => part.isEmpty || (candidate.splitOn part).length > 1
 
 /-- The checks of the tab commands (`Editor/TabCommands.lean`), by key, on
 the loop's driver over the editor's models, under the Vim scheme that
@@ -134,16 +140,15 @@ def tabCommandChecks : List Check :=
               [labelled, exact, fuzzy, labelOverNumber, exactOverLabel].all (·.prompt.isNone)
           | _, _, _, _, _ => false },
     { name :=
-        "with orderless chosen for the category tab, a typed text that is no candidate, label or number selects the first tab the prompt lists for it: from tab 1, scratch 2, which the fuzzy matcher matches with no candidate, lists 2 scratch alone and selects tab 2"
+        "with a style chosen for the category tab that keeps the candidates holding every space-separated part of the text, a typed text that is no candidate, label or number selects the first tab the prompt lists for it: from tab 1, scratch 2, which the fuzzy matcher matches with no candidate, lists 2 scratch alone and selects tab 2"
       run :=
         pure <|
           let handed : Loop.Keys Vim.Default.scheme :=
             { tabHanded with
               matching :=
-                { default := Completion.Styles.fuzzy
+                { default := .unregistered
                   byCategory := fun category =>
-                    if category == TabCommands.source.category then some Completion.Styles.orderless
-                    else none } }
+                    if category == TabCommands.source.category then some everyPart else none } }
           let after (typed : String) : Option EvilDriver :=
             (windowDriver 1 Layout.default (handed := handed)).map (evilFed · typed)
           let typed := "C-w c C-w p C-w w s c r a t c h SPC 2"
@@ -151,7 +156,7 @@ def tabCommandChecks : List Check :=
           | some asking, some chosen =>
             asking.loop.state.prompt.map (·.candidates.listed.map (·.text)) ==
                 some #["2 scratch"] &&
-              styled Completion.Styles.fuzzy "scratch 2" #["1 scratch", "2 scratch"] == #[] &&
+              styled .unregistered "scratch 2" #["1 scratch", "2 scratch"] == #[] &&
               chosen.frame.tabIndex == 1 &&
               chosen.prompt.isNone
           | _, _ => false },

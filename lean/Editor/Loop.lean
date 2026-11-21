@@ -3,10 +3,8 @@ import Editor.AtPoint
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
-import Editor.Completion.Displays
 import Editor.Completion.Keys
 import Editor.Completion.Later
-import Editor.Completion.Styles
 import Editor.Config.Owner
 import Editor.Config.Stores
 import Editor.Event
@@ -323,8 +321,10 @@ loop has little of its own to do.
   answer, followed by the candidates filtered sources passed
   (`EditorState.listCandidates`, `Editor/State.lean`, "Prompts"). Nothing
   else asks a style for a prompt. With nothing chosen by config the style
-  is the fuzzy matcher's (`Completion.Styles.fuzzy`), which asks
-  `Fuzzy.rank` once (`Editor/Fuzzy.lean`).
+  is the one registered first, in the default set the fuzzy matcher's,
+  `fuzzy`, from the `completion` package (`packages/completion/`), which
+  asks `Fuzzy.rank` once (`Editor/Fuzzy.lean`); with none registered, the
+  core's own (`Completion.Style.unregistered`).
   - **The candidates listed are those that answer the typed text**
     (`Candidates.answering`, in `Candidates.listing`): an asking source's
     answer for another directory, and a candidate the text does not
@@ -376,10 +376,12 @@ loop has little of its own to do.
   category (`Loop.Keys.displaying`, `Completion.Displaying.displayFor`,
   `Editor/Completion/Display.lean`) is handed the whole listing, the
   choice and where its window started last, and answers its rows: by
-  default the minibuffer display's (`Completion.Displays.minibuffer`), at
-  most ten (`Completion.Displays.rows`, as Emacs's vertico and ivy list
-  ten), in a window round the choice, so moving the choice past the last
-  row shown scrolls the list. The listing is handed over as it is and
+  default the display registered first, in the default set the minibuffer
+  display, `minibuffer`, from the `completion` package, at most ten rows
+  (as Emacs's vertico and ivy list ten), in a window round the choice, so
+  moving the choice past the last row shown scrolls the list; with none
+  registered, the core's own (`Completion.Display.unregistered`), which
+  shows every candidate. The listing is handed over as it is and
   never copied, so each publish builds text for at most the display's
   rows, whatever the listing's size. The state keeps what it answered on
   the prompt (`Prompt.sheet`) and draws it in the candidate list's view
@@ -1542,22 +1544,22 @@ structure Loop.Keys (scheme : InputScheme) where
   menu : Option Menu := none
   /-- The styles a prompt's candidates are listed with, chosen by its
   category (`Editor/Completion/Style.lean`): the host hands the registry's,
-  config's choices or the fuzzy style for every category
+  config's choices or the style registered first for every category
   (`Config.Registry.matching`, `Headless.keys`). It is looked up for each
   step and never kept in the state, so a reload changes it from the next
   listing. -/
-  matching : Completion.Matching := Completion.Matching.standard
+  matching : Completion.Matching := Completion.Matching.unregistered
   /-- How many candidates a prompt may have to match for its listing to be
   made in the publish, on the editor thread; more are matched by a job of
   the loop's own ("Prompts", in the module docs). -/
   inlineMatches : Nat := Loop.inlineMatches
   /-- The displays a prompt's listing is shown with, chosen by its category
   (`Editor/Completion/Display.lean`): the host hands the registry's,
-  config's choices or the minibuffer display for every category
+  config's choices or the display registered first for every category
   (`Config.Registry.displaying`, `Headless.Running.keys`). It is looked up
   for each step and never kept in the state, so a reload changes it from
   the next scene. -/
-  displaying : Completion.Displaying := Completion.Displaying.standard
+  displaying : Completion.Displaying := Completion.Displaying.unregistered
   /-- How long a prefix is pending before its key hints are shown ("Key
   hints", in the module docs). The host hands config's setting
   (`keyHintDelay`, `Editor/Setup.lean`) or the editor's own,
@@ -2129,7 +2131,7 @@ revision gone by, and is no longer in flight, so the reconciler cancels it.
 A state with no prompt, or a prompt with no candidates, is as it was, and
 nothing is read or asked. It is not refused: a refusal of the read is
 handed back, with the state as it was. -/
-def listed (state : EditorState) (matching : Completion.Matching := .standard)
+def listed (state : EditorState) (matching : Completion.Matching := .unregistered)
     (inlineMatches : Nat := Loop.inlineMatches) :
     EditorM (EditorState × Option String × Option TextError) := do
   let some completing := state.completing? | return (state, none, none)
@@ -2530,8 +2532,8 @@ text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
 def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (padding : Nat := 0)
     (layout : Option Layout := none) (tabBar : Option TabBar.Shown := none)
-    (matching : Completion.Matching := .standard) (inlineMatches : Nat := Loop.inlineMatches)
-    (displaying : Completion.Displaying := .standard) (now : Nat := 0)
+    (matching : Completion.Matching := .unregistered) (inlineMatches : Nat := Loop.inlineMatches)
+    (displaying : Completion.Displaying := .unregistered) (now : Nat := 0)
     (keyHints : Array KeyHint := #[]) (generation : Nat := 0) : EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The marks follow the event's line deletions and undo, now that the

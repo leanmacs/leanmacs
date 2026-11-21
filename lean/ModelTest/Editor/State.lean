@@ -7,8 +7,6 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Display
-import Editor.Completion.Displays
-import Editor.Completion.Styles
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Display
@@ -60,6 +58,7 @@ import ModelTest.Check
 import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
 import ModelTest.Support.Frame
+import ModelTest.Support.Listings
 import ModelTest.Support.Views
 
 /-!
@@ -387,7 +386,7 @@ def spoilings : List (String × (EditorState → EditorState)) :=
 /-- `state` with its open prompt's choice moved by each of `steps`, and the
 display asked after each, as the loop's publishes would. -/
 def choseShown (state : EditorState) (steps : List Candidates.Step)
-    (displaying : Completion.Displaying := .standard) : EditorState :=
+    (displaying : Completion.Displaying := windowedDisplaying) : EditorState :=
   steps.foldl (fun state step => (state.chooseCandidate step).2.displayed displaying) state
 
 /-- The texts of the rows of the sheet the open prompt of `state` keeps. -/
@@ -410,7 +409,8 @@ def displayStateChecks : List Check :=
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
           | none => false
           | some state =>
-            let listing := (listingIn (prompted state).2 texts (Array.range 15)).displayed .standard
+            let listing :=
+              (listingIn (prompted state).2 texts (Array.range 15)).displayed windowedDisplaying
             let down := choseShown listing (List.replicate 11 .next)
             let up := choseShown down (List.replicate 10 .previous)
             let last := choseShown listing [.previous]
@@ -419,7 +419,7 @@ def displayStateChecks : List Check :=
               first down == some 1 &&
               sheetTexts down == texts.extract 1 11 &&
               (down.prompt.bind (·.sheet.rows.back?)).bind (·.decorations[0]?) ==
-                some { start := 0, stop := 3, face := Completion.Displays.chosenFace } &&
+                some { start := 0, stop := 3, face := windowedChosen } &&
               first up == some 0 &&
               sheetTexts up == texts.extract 0 10 &&
               last.prompt.bind (·.candidates.chosen) == some 14 &&
@@ -430,12 +430,16 @@ def displayStateChecks : List Check :=
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
           | none => false
           | some state =>
-            let five := (listingIn (prompted state).2 texts (Array.range 5)).displayed .standard
-            let two := ((five.listCandidates "c1" #[.ofIndex 1, .ofIndex 10]).2).displayed .standard
+            let five :=
+              (listingIn (prompted state).2 texts (Array.range 5)).displayed windowedDisplaying
+            let two :=
+              ((five.listCandidates "c1" #[.ofIndex 1, .ofIndex 10]).2).displayed windowedDisplaying
             let seven :=
-              ((two.listCandidates "c" ((Array.range 7).map .ofIndex)).2).displayed .standard
+              ((two.listCandidates "c" ((Array.range 7).map .ofIndex)).2).displayed
+                windowedDisplaying
             let twelve :=
-              ((seven.listCandidates "" ((Array.range 12).map .ofIndex)).2).displayed .standard
+              ((seven.listCandidates "" ((Array.range 12).map .ofIndex)).2).displayed
+                windowedDisplaying
             let (_, closed) := twelve.closePrompt none
             let (_, again) := prompted closed 8
             let tallest (state : EditorState) : Option Nat := state.prompt.map (·.tallest)
@@ -448,7 +452,7 @@ def displayStateChecks : List Check :=
               two.candidateListRect? == five.candidateListRect? &&
               two.tiled == five.tiled &&
               tallest seven == some 7 &&
-              tallest twelve == some Completion.Displays.rows &&
+              tallest twelve == some windowedRows &&
               closed.minibufferPlace == heights.message &&
               closed.candidateListRect? == none &&
               tallest again == some 0 &&
@@ -462,7 +466,7 @@ def displayStateChecks : List Check :=
           | some state =>
             let (_, asking) := prompted state
             let three :=
-              { (listingIn asking texts (Array.range 3)).displayed .standard with
+              { (listingIn asking texts (Array.range 3)).displayed windowedDisplaying with
                 candidateList := some drawn }
             let heights := three.heights
             let strip := 3 * heights.text + heights.text + heights.message
@@ -489,7 +493,7 @@ def displayStateChecks : List Check :=
             onTextModel (EditorState.initial ⟨640, 20⟩) with
           | some tall, some short =>
             let listed (state : EditorState) : EditorState :=
-              (listingIn (prompted state).2 texts (Array.range 5)).displayed .standard
+              (listingIn (prompted state).2 texts (Array.range 5)).displayed windowedDisplaying
             let tall := listed tall
             let short := listed short
             let below := tall.heights.text + tall.heights.message
@@ -519,7 +523,8 @@ def displayStateChecks : List Check :=
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
           | none => false
           | some state =>
-            let listing := (listingIn (prompted state).2 texts (Array.range 3)).displayed .standard
+            let listing :=
+              (listingIn (prompted state).2 texts (Array.range 3)).displayed windowedDisplaying
             { listing with candidateList := some drawn }.wellFormed &&
               !{ listing with candidateList := some { drawn with view := ⟨0⟩ } }.wellFormed },
     { name := "displaying with no prompt open leaves the state as it was"
@@ -527,7 +532,7 @@ def displayStateChecks : List Check :=
         pure <|
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
           | none => false
-          | some state => state.displayed .standard == state }]
+          | some state => state.displayed windowedDisplaying == state }]
 
 /-- States of the quit checks, each `twoBuffers` with its histories set by
 hand. -/
@@ -3910,12 +3915,12 @@ def atPointStateChecks : List Check :=
           | none => false
           | some state =>
             let texts := (Array.range 8).map (s!"a{·}")
-            let five := (sessionListing state texts (Array.range 5)).displayed .standard
+            let five := (sessionListing state texts (Array.range 5)).displayed windowedDisplaying
             let two :=
               (five.replaceCandidatesIn ⟨0⟩
                     (((five.candidatesIn? ⟨0⟩).getD {}).list "a1"
                       #[.ofIndex 1, .ofIndex 2])).displayed
-                .standard
+                windowedDisplaying
             let (_, closed) := two.closeAtPoint
             let heights := five.heights
             let rows (state : EditorState) := state.atPoint.map (·.sheet.rows.size)
@@ -3968,8 +3973,9 @@ def keyHintStateChecks : List Check :=
           match atPointBase with
           | none => false
           | some state =>
-            let due := (hintsOver state #["f", "s", "w"]).displayed .standard
-            let waiting := (hintsOver state #["f", "s", "w"] (due := false)).displayed .standard
+            let due := (hintsOver state #["f", "s", "w"]).displayed windowedDisplaying
+            let waiting :=
+              (hintsOver state #["f", "s", "w"] (due := false)).displayed windowedDisplaying
             let heights := due.heights
             due.hinting?.isSome && due.listRows == 3 &&
               due.minibufferPlace == 3 * heights.text + heights.message &&
@@ -3992,7 +3998,7 @@ def keyHintStateChecks : List Check :=
           | none => false
           | some state =>
             let (_, asking) := prompted (hintsOver state #["f", "s", "w"])
-            let shown := (picking asking).displayed .standard
+            let shown := (picking asking).displayed windowedDisplaying
             shown.hinting?.isNone &&
               shown.candidateSheet?.map (·.1) == shown.prompt.map (·.sheet) &&
               shown.listRows == 3 &&
@@ -4015,8 +4021,9 @@ def keyHintStateChecks : List Check :=
           match atPointBase with
           | none => false
           | some state =>
-            let three := (hintsOver state #["f", "s", "w"]).displayed .standard
-            let one := (three.listKeyHints #[Completion.Candidate.ofText "t"]).displayed .standard
+            let three := (hintsOver state #["f", "s", "w"]).displayed windowedDisplaying
+            let one :=
+              (three.listKeyHints #[Completion.Candidate.ofText "t"]).displayed windowedDisplaying
             let closed := { one with keyHints := none }
             one.keyHints.map (·.sheet.rows.size) == some 1 && one.listRows == 3 &&
               one.minibufferPlace == three.minibufferPlace &&

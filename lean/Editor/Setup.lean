@@ -1,10 +1,10 @@
 import Editor.Command.Call
 import Editor.Completion
 import Editor.Completion.AtPoint
-import Editor.Completion.Displays
+import Editor.Completion.Display
 import Editor.Completion.Keys
 import Editor.Completion.Later
-import Editor.Completion.Styles
+import Editor.Completion.Style
 import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.Face
@@ -302,13 +302,17 @@ def setup : SetupM Unit := do
 ```
 
 `defineStyle` registers a style for this config; the shipped styles,
-`fuzzy` and `orderless` (`Completion.Styles.shipped`), are registered by
-the `completion` package, which the executable's hosts are handed. `useStyleFor category name` chooses the style of the prompts of
+`fuzzy`, `orderless` and `path` (`Completion.Styles.shipped`), are
+registered by the `completion` package, which the default set's hosts are
+handed. `useStyleFor category name` chooses the style of the prompts of
 `category`, and `useStyle name` the default for the others; with none
-chosen the default is `fuzzy`. A name no style is registered under is not
-refused: it is looked up at install, the category falls to the default
-(the default to `fuzzy`), and the echo area says so
-(`Completion.Styles.unknown`). A `setup` that defines a style name twice
+chosen the default is the style registered first, in registration order
+(packages by dependency, then config), looked up by name, so config's
+style of that name is used in its place: in the default set, `fuzzy`.
+With no style registered at all it is the core's own
+(`Completion.Style.unregistered`). A name no style is registered under is
+not refused: it is looked up at install, the category falls to the
+default, and the echo area says so (`Completion.Style.unknown`). A `setup` that defines a style name twice
 is refused (`Config.Registrations.styleTwice`), and so is one that
 chooses the style of one category, or the default, twice
 (`Config.Registrations.styleChosenTwice`).
@@ -332,10 +336,12 @@ above replaces the shipped `minibuffer` with one that shows at most 15
 rows, which is how config sets the most rows the minibuffer's list shows
 (10 unless it does, `Completion.Displays.rows`). `useDisplayFor category
 name` chooses the display of the prompts of `category`, and `useDisplay
-name` the default for the others; with none chosen the default is
-`minibuffer`. A name no display is registered under is not refused: it is
-looked up at install, the category falls to the default (the default to
-`minibuffer`), and the echo area says so (`Completion.Displays.unknown`).
+name` the default for the others; with none chosen the default is the
+display registered first, by the rule of styles: in the default set,
+`minibuffer`, and with none registered the core's own
+(`Completion.Display.unregistered`). A name no display is registered under
+is not refused: it is looked up at install, the category falls to the
+default, and the echo area says so (`Completion.Display.unknown`).
 A `setup` that defines a display name twice is refused
 (`Config.Registrations.displayTwice`), and so is one that chooses the
 display of one category, or the default, twice

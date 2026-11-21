@@ -6,10 +6,8 @@ import Editor.Command.Model
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
-import Editor.Completion.Displays
 import Editor.Completion.Fake
 import Editor.Completion.Later
-import Editor.Completion.Styles
 import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
@@ -44,6 +42,7 @@ import Editor.Test.Prompts
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
+import ModelTest.Support.Listings
 
 /-!
 # Model tests: support: Candidates
@@ -99,8 +98,8 @@ asked. -/
 def filteredSource : Completion.Source :=
   { Completion.Source.ofTexts "fixed" "other" #["zz", "w"] with filtered := true }
 
-/-- Fifteen candidates' texts, `c0` to `c14`: more than the minibuffer
-display shows (`Completion.Displays.rows`). -/
+/-- Fifteen candidates' texts, `c0` to `c14`: more than the display written
+for the core's tests shows (`windowedRows`). -/
 def manyTexts : Array String :=
   (Array.range 15).map (s!"c{·}")
 
@@ -184,20 +183,23 @@ def candidateCommands : List (String × Dispatched) :=
 every view, the minibuffer's among them, that binds a key sequence under
 `C-c` to each command of `candidateCommands` but the self-insert and
 `picked`, which no key runs. No key of it prints, so a key that prints is
-a self-insert. -/
+a self-insert. Prompts are matched and shown by the style and the display
+written for the core's tests (`marking`, `windowed`). -/
 def candidateKeys : Loop.Keys TestScheme.scheme :=
-  dispatchKeys
-    [("C-c a", invoke "ask-pick"), ("C-c w", invoke "ask-pick-w"), ("C-c p", invoke "ask-plain"),
-      ("C-c y", invoke "accept"), ("C-c n", invoke "cancel"), ("C-c s", invoke "still"),
-      ("C-c f", invoke "edit-then-fail"), ("C-c 2", invoke "ask-two"),
-      ("C-c g", invoke "ask-grouped"), ("C-c r", invoke "ask-refusing"),
-      ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named"), ("C-c 5", invoke "ask-filtered"),
-      ("C-c 7", invoke "ask-category"), ("C-c 6", invoke "ask-other"),
-      ("C-c 8", invoke "ask-only-filtered"), ("C-c l", invoke "ask-later"),
-      ("C-c t", invoke "ask-echo-later"), ("C-c b", invoke "delete-backward"),
-      ("C-c 9", invoke "ask-many"), ("C-c d", invoke "ask-dir"),
-      ("C-c x", invoke "ask-dir-refusing")]
-    candidateCommands
+  {
+    dispatchKeys
+      [("C-c a", invoke "ask-pick"), ("C-c w", invoke "ask-pick-w"), ("C-c p", invoke "ask-plain"),
+        ("C-c y", invoke "accept"), ("C-c n", invoke "cancel"), ("C-c s", invoke "still"),
+        ("C-c f", invoke "edit-then-fail"), ("C-c 2", invoke "ask-two"),
+        ("C-c g", invoke "ask-grouped"), ("C-c r", invoke "ask-refusing"),
+        ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named"),
+        ("C-c 5", invoke "ask-filtered"), ("C-c 7", invoke "ask-category"),
+        ("C-c 6", invoke "ask-other"), ("C-c 8", invoke "ask-only-filtered"),
+        ("C-c l", invoke "ask-later"), ("C-c t", invoke "ask-echo-later"),
+        ("C-c b", invoke "delete-backward"), ("C-c 9", invoke "ask-many"),
+        ("C-c d", invoke "ask-dir"), ("C-c x", invoke "ask-dir-refusing")]
+      candidateCommands with
+    matching := markingMatching, displaying := windowedDisplaying }
 
 /-- A driver over the initial state, with the commands of the candidate
 checks and the jobs of the driver checks, on the models `model`; `none` if
@@ -231,7 +233,8 @@ def pickKeys : Loop.Keys TestScheme.scheme :=
         some fun call => do
           run call
           return none
-      | _ => (candidateCommands.find? (·.1 == name)).map (·.2) }
+      | _ => (candidateCommands.find? (·.1 == name)).map (·.2)
+    matching := markingMatching, displaying := windowedDisplaying }
 
 /-- A driver of those checks over the initial state, with the jobs of the
 driver checks; `none` if making the state was refused. -/
@@ -240,15 +243,15 @@ def pickDriver : Option TestDriver :=
 
 /-- What a prompt asked with `pickCandidates` holds once they are listed
 for `pattern`, with `chosen` as its choice: its category is `pick`, and the
-listing is what the fuzzy model answers for the pattern, each with its
-in-order spans, so no order is written out here. -/
+listing is what the fuzzy model answers for the pattern, each with the
+ranges `marking` gives it, so no order is written out here. -/
 def pickListed (pattern : String) (chosen : Option Nat := none) : Candidates :=
   { all := pickOffered, category := some pickSource.category, listedFor := some pattern
     place := rootPlace
     listed :=
       (FuzzyModel.rank pattern pickCandidates).filterMap fun index =>
         (pickOffered[index]?).map fun candidate =>
-          .of candidate (Completion.Styles.inOrderSpans pattern candidate.text)
+          .of candidate (markedSpans pattern candidate.text)
     chosen }
 
 /-- What a source's job is started with in the checks of sources that

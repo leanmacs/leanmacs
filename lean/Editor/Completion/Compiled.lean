@@ -17,10 +17,11 @@ before any config (`Editor/Config/Packages.lean`).
   `Editor/Completion/Displays.lean`): `minibuffer`, which config replaces
   by defining a display of that name, to set its rows.
 
-A host that is not handed it still matches and shows a prompt: the registry
-falls back to the fuzzy style and the minibuffer display
-(`Config.Registry.styleEntry`, `Config.Registry.displayEntry`), but a
-config's choice of `orderless` or `path` then names no style.
+A host that is not handed it still matches and shows a prompt: with no
+style or display registered, the registry falls back to the core's own
+(`Completion.Style.unregistered`, `Completion.Display.unregistered`;
+`Config.Registry.styleEntry`, `Config.Registry.displayEntry`), and a
+config's choice of `fuzzy`, `orderless` or `path` then names no style.
 
 The data stays in the core modules, which name no package; this module is
 what a host is handed.

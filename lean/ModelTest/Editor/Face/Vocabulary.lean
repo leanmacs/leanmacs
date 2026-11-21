@@ -1,6 +1,5 @@
 import Editor.Completion.Candidate
 import Editor.Completion.Display
-import Editor.Completion.Displays
 import Editor.Face
 import Editor.Face.Vocabulary
 import Editor.InputScheme
@@ -37,9 +36,9 @@ them, not from their text: the cursors and status fields the shipped Vim
 scheme reports in each of its states, its cursor face of each default
 state, the cursor of a scheme that names no face, and the status fields the
 loop gives a modified buffer and a prompt with candidates listed, one of
-them chosen, and the faces of a status row and of a divider; and the faces
-of the minibuffer display's rows for a listing with a choice, matched
-ranges, an annotation and two groups. -/
+them chosen, and the faces of a status row and of a divider. The shipped
+minibuffer display's faces are checked with it
+(`ModelTest.minibufferDisplayChecks`). -/
 def drawnFaces : Array FaceName :=
   let scheme := Vim.Default.scheme
   let fed (text : String) : Vim.State := (scheme.feed (fun _ => []) ⟨0⟩ scheme.init (keys text)).1
@@ -60,14 +59,7 @@ def drawnFaces : Array FaceName :=
     (ModeLine.standard.fields context).map (·.face) ++
     (ModeLine.standard.fields { context with selected := false }).map (·.face) ++
     (Loop.promptStatus asked).map (·.face) ++
-    #[ModeLine.activeFace, ModeLine.inactiveFace, Loop.dividerFace] ++
-    let listed : Array Completion.Listed :=
-      #[{ candidate := { text := "ab", annotation := some "note", group := some "A" }
-          ranges := #[⟨0, 1⟩] },
-        { candidate := { text := "b", group := some "B" }, ranges := #[⟨0, 1⟩] }]
-    (Completion.Displays.minibuffer.sheet
-          { listed, chosen := some 1, grouped := Completion.grouped listed }).rows.flatMap
-      fun row => row.decorations.map (·.face)
+    #[ModeLine.activeFace, ModeLine.inactiveFace, Loop.dividerFace]
 
 /-- The checks of the face vocabulary (`Editor/Face/Vocabulary.lean`), of a
 theme written from a palette (`Palette.theme`, `Editor/Face.lean`) and of
@@ -84,15 +76,12 @@ def faceVocabularyChecks : List Check :=
                 (List.range later).all fun earlier => names[later]? != names[earlier]?) &&
             Face.vocabulary.all (!·.meaning.isEmpty)) },
     { name :=
-        "the vocabulary lists every face the shipped Vim scheme, the mode line, the loop, the minibuffer display and a scheme that names no cursor face draw, and the mode line's, the prompt's, the five faces of the minibuffer's list, the selected window's row and the divider among them"
+        "the vocabulary lists every face the shipped Vim scheme, the mode line, the loop and a scheme that names no cursor face draw, and the mode line's, the prompt's, the selected window's row and the divider among them"
       run :=
         pure
           (drawnFaces.all Face.vocabularyNames.contains &&
             [ModeLine.bufferFace, ModeLine.modifiedFace, ModeLine.secondaryFace,
-                  ModeLine.inactiveFace, ModeLine.activeFace, Loop.promptFace,
-                  Completion.Displays.candidateFace, Completion.Displays.chosenFace,
-                  Completion.Displays.matchFace, Completion.Displays.annotationFace,
-                  Completion.Displays.groupFace, Loop.dividerFace].all
+                  ModeLine.inactiveFace, ModeLine.activeFace, Loop.promptFace, Loop.dividerFace].all
               drawnFaces.contains) },
     { name :=
         "the vocabulary holds the badge face of every state of the shipped Vim scheme, read from the scheme, and no status. face"

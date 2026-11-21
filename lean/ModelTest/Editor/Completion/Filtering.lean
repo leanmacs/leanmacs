@@ -2,7 +2,6 @@ import Editor.Api
 import Editor.Completion.Candidate
 import Editor.Completion.Filtering
 import Editor.Completion.Later
-import Editor.Completion.Styles
 import Editor.Job
 import Editor.Job.Model
 import Editor.Loop
@@ -18,6 +17,7 @@ import Editor.Test.Prompts
 import ModelTest.Check
 import ModelTest.Editor.Completion.Later
 import ModelTest.Support.Candidates
+import ModelTest.Support.Listings
 
 /-!
 # Model tests: `Editor/Completion/Filtering.lean`
@@ -138,11 +138,15 @@ def jobs (name : String) : Option (List Argument → Work) :=
   | _ => none
 
 /-- A driver whose `C-c f` asks with `files` and `C-c g` with `missing`, its
-jobs run on a job model with `driverScripts`; `none` if making the state
+jobs run on a job model with `driverScripts`, its prompts matched with the
+style written for the core's tests (`marking`); `none` if making the state
 was refused. -/
 def driver : Option TestDriver :=
   (Loop.Driver.over
-        (dispatchKeys [("C-c f", invoke "ask-files"), ("C-c g", invoke "ask-missing")] commands)
+        {
+          dispatchKeys [("C-c f", invoke "ask-files"), ("C-c g", invoke "ask-missing")]
+            commands with
+          matching := markingMatching }
         jobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => { driver with jobs := { processes := { scripts := driverScripts } } }
 
@@ -305,7 +309,7 @@ def filteringChecks : List Check :=
               | some second =>
                 let (answered, _) := stale.posted second.id
                 let marked (text : String) : Array Completion.Span :=
-                  if text == "zz" then #[] else Completion.Styles.inOrderSpans "a" text
+                  if text == "zz" then #[] else markedSpans "a" text
                 listedTexts one == some #["ab", "xa", "zz"] &&
                   stepped.map (·.cancels) == some #[Loop.sourceKey view "files"] &&
                   started.map (fun order => (order.query.text, order.generation, order.pause)) ==
@@ -314,7 +318,7 @@ def filteringChecks : List Check :=
                   listedTexts answered == some #["xa", "ab", "zz"] &&
                   (candidatesOf answered).map (·.listed.map (·.ranges)) ==
                     some (#["xa", "ab", "zz"].map marked) &&
-                  !(Completion.Styles.inOrderSpans "a" "xa").isEmpty
+                  !(markedSpans "a" "xa").isEmpty
             | _, _ => false },
     { name :=
         "through the loop: a source whose filter is not there fails, saying the source and the program in the echo area, and lists nothing; one whose filter answers no matches for the typed text lists nothing once its batch arrives, and says nothing"

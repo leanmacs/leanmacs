@@ -1,7 +1,7 @@
 import Editor.Command
 import Editor.Completion
 import Editor.Completion.AtPoint
-import Editor.Completion.Styles
+import Editor.Completion.Style
 import Editor.Highlight
 import Editor.Language
 import Editor.Mode
@@ -535,7 +535,7 @@ structure Loop.Registered where
   a text as a prompt of a category lists it
   (`ControlRequest.matchCandidates`). The loop fills it from the styles it
   lists prompts with (`Loop.Keys.matching`). -/
-  matching : Completion.Matching := Completion.Matching.standard
+  matching : Completion.Matching := Completion.Matching.unregistered
   /-- The at-point source registered under a name
   (`Editor/Completion/AtPoint.lean`), for a command that asks it
   (`ControlRequest.askAtPoint`). `none` for a name none is registered

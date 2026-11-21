@@ -1,6 +1,7 @@
 import ConfigTest.Support.Candidates
 import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
+import ConfigTest.Support.Listings
 import ConfigTest.Support.Shipped
 import Editor.Api
 import Editor.AtPoint.Compiled
@@ -9,7 +10,6 @@ import Editor.Clipboard.InProcess
 import Editor.Command
 import Editor.Completion
 import Editor.Completion.AtPoint
-import Editor.Completion.Compiled
 import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Config.Packages
@@ -709,7 +709,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             jobs := requests + 2, environment := requests + 3, posts := requests + 4,
             pauseEvents := requests + 5,
             packages :=
-              #[Completion.package, Test.Shipped.modeLine, Minibuffer.package,
+              #[listingsPackage, Test.Shipped.modeLine, Minibuffer.package,
                 Compiled.package
                   {
                     commands :=
@@ -857,7 +857,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             wakeups := requests + 1, jobs := requests + 2, environment := requests + 3,
             posts := requests + 4, pauseEvents := requests + 5,
             packages :=
-              #[Completion.package, Test.Shipped.modeLine, Files.package, Minibuffer.package,
+              #[listingsPackage, Test.Shipped.modeLine, Files.package, Minibuffer.package,
                 Compiled.package { commands := #[{ name := "noop", action := .plain (pure ()) }] }]
             workingDirectory := "/big" }
     try
@@ -1003,7 +1003,7 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
           source := memorySource [], emit, services, published, held, requests := 1
           wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
           packages :=
-            #[Completion.package, Test.Shipped.modeLine, Files.package, Minibuffer.package,
+            #[listingsPackage, Test.Shipped.modeLine, Files.package, Minibuffer.package,
               Workspace.package,
               Compiled.package
                 {

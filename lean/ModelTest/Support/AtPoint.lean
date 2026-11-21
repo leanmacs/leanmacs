@@ -9,7 +9,6 @@ import Editor.Completion.AtPointContract
 import Editor.Completion.Candidate
 import Editor.Completion.Display
 import Editor.Completion.Later
-import Editor.Completion.Styles
 import Editor.Completion.Words
 import Editor.Config.Registry
 import Editor.Display.Model
@@ -36,6 +35,7 @@ import Editor.Text
 import Editor.Text.Model
 import Editor.Workspace
 import ModelTest.Support.Evil
+import ModelTest.Support.Listings
 
 /-!
 # Model tests: support: AtPoint
@@ -94,11 +94,13 @@ def atPointSources : List Completion.Source :=
 /-- What a step of the at-point loop checks is handed: `evilHanded`, told
 that a buffer's chain is `chain`, that the at-point sources are `atPoints`
 and the shipped `words`, and that the sources are `atPointSources`, by name
-and by category. -/
+and by category; its listings matched and shown by the style and the
+display written for the core's tests (`marking`, `windowed`). -/
 def atPointHanded (chain : Array String) (atPoints : List Completion.AtPoint)
     (more : Array Config.Registration := #[]) : Loop.Keys Vim.Default.scheme :=
   let handed := evilHanded more
   { handed with
+    matching := markingMatching, displaying := windowedDisplaying
     registered :=
       { handed.registered with
         atPoint := fun name => (atPoints ++ [Completion.AtPoint.words]).find? (·.name == name)

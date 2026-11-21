@@ -248,8 +248,8 @@ nothing, so a working config does not cover what a command said, unless its
 config named a theme, listed segments or chose completion styles or
 displays nobody registered, or made display rules whose targets do not
 exist: then `reload: ` and the sentences, `Theme.unknown`'s, then each
-`ModeLine.unknown`, then each `Completion.Styles.unknown`, then each
-`Completion.Displays.unknown`, then each `Completion.AtPoint.unknown` and
+`ModeLine.unknown`, then each `Completion.Style.unknown`, then each
+`Completion.Display.unknown`, then each `Completion.AtPoint.unknown` and
 then each rule left out
 (`unusableRules`), joined by `; `. The whole report is the host's to
 print. -/
@@ -258,8 +258,8 @@ def Report.echo (report : Report) : Option String :=
     let sentences :=
       report.unknownTheme.toArray.map Theme.unknown ++
         report.unknownSegments.map ModeLine.unknown ++
-        report.unknownStyles.map Completion.Styles.unknown ++
-        report.unknownDisplays.map Completion.Displays.unknown ++
+        report.unknownStyles.map Completion.Style.unknown ++
+        report.unknownDisplays.map Completion.Display.unknown ++
         report.unknownAtPoints.map Completion.AtPoint.unknown ++
         report.unusableRules
     if sentences.isEmpty then none else some s!"reload: {"; ".intercalate sentences.toList}"

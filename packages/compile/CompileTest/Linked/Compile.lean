@@ -7,8 +7,6 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Completion
 import Editor.Completion.AtPoint
-import Editor.Completion.Displays
-import Editor.Completion.Styles
 import Editor.Config.Packages
 import Editor.Display
 import Editor.DisplayRules

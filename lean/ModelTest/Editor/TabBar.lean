@@ -1,5 +1,4 @@
 import Editor.Command.Model
-import Editor.Completion.Displays
 import Editor.Display
 import Editor.Display.Model
 import Editor.Floating
@@ -92,7 +91,7 @@ def tabBarChecks : List Check :=
           | none => false
           | some one =>
             let (_, asking) := prompted (withTabs one 2)
-            let listing := (listingIn asking #["a", "b", "c"] #[0, 1, 2]).displayed .standard
+            let listing := (listingIn asking #["a", "b", "c"] #[0, 1, 2]).displayed .unregistered
             match listing.tabBarRect?, listing.candidateListRect?,
               listing.minibufferView?.bind listing.rect? with
             | some bar, some list, some minibuffer =>

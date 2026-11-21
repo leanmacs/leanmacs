@@ -9,11 +9,9 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Display
-import Editor.Completion.Displays
 import Editor.Completion.Fake
 import Editor.Completion.Later
 import Editor.Completion.Style
-import Editor.Completion.Styles
 import Editor.Completion.Words
 import Editor.Config.Owner
 import Editor.Config.Packages
@@ -92,6 +90,7 @@ import ModelTest.Support.AtPoint
 import ModelTest.Support.Candidates
 import ModelTest.Support.Display
 import ModelTest.Support.Evil
+import ModelTest.Support.Listings
 import ModelTest.Support.Modes
 import ModelTest.Support.Views
 import ModelTest.Support.Vim
@@ -1031,11 +1030,13 @@ def keyHintLoopChecks : List Check :=
               #[afterPrefix, #[{ key := "t", leads := .binding (some "Rectangle") }], #[]] &&
             listsShown hintedKeys (presses "C-x r t") ==
               some
-                #[#[some (hintRows afterPrefix)],
-                  #[some (hintRows #[{ key := "t", leads := .binding (some "Rectangle") }])],
+                #[#[some (hintRows afterPrefix .unregistered)],
+                  #[some
+                      (hintRows #[{ key := "t", leads := .binding (some "Rectangle") }]
+                        .unregistered)],
                   #[]] &&
             listsShown hintedKeys (presses "C-x C-s") ==
-              some #[#[some (hintRows afterPrefix)], #[]]) },
+              some #[#[some (hintRows afterPrefix .unregistered)], #[]]) },
     { name :=
         "with a delay of 500 the step after a prefix hands the delay to arm for generation 1 and its scene shows no hints; the step that completes the sequence hands its withdrawal"
       run :=
@@ -1047,18 +1048,20 @@ def keyHintLoopChecks : List Check :=
               scenes.map (·.views.size) == #[1, 1]
           | none => false },
     { name :=
-        "the hints are drawn by the display chosen for the key category: a fake display's rows, not the minibuffer display's"
+        "the hints are drawn by the display chosen for the key category: a fake display's rows, not the default display's"
       run :=
+        let starred : Completion.Display :=
+          { name := "fake"
+            sheet := fun showing =>
+              { rows := showing.listed.map fun listed => { text := s!"* {listed.text}" } } }
         let fake : Loop.Keys TestScheme.scheme :=
           { hintedKeys with
             displaying :=
-              { default := Completion.Displays.minibuffer
-                byCategory := fun category =>
-                  if category == "key" then some (Completion.Display.plain "fake") else none } }
+              { default := .unregistered
+                byCategory := fun category => if category == "key" then some starred else none } }
         pure
-          (listsShown fake (presses "C-x") ==
-              some #[#[some (hintRows afterPrefix (Completion.Display.plain "fake"))]] &&
-            hintRows afterPrefix (Completion.Display.plain "fake") != hintRows afterPrefix) },
+          (listsShown fake (presses "C-x") == some #[#[some (hintRows afterPrefix starred)]] &&
+            hintRows afterPrefix starred != hintRows afterPrefix .unregistered) },
     { name :=
         "the selected window's status line holds the keys pending in mode-line.secondary while a sequence is pending, and none once it completes; no other window's holds them"
       run :=
@@ -2404,9 +2407,9 @@ def dispatchStateChecks : List Check :=
           let registered : Loop.Registered :=
             {
               matching :=
-                { default := Completion.Styles.fuzzy
+                { default := .unregistered
                   byCategory := fun category =>
-                    if category == "buffer" then some Completion.Styles.orderless else none } }
+                    if category == "buffer" then some containing else none } }
           let candidates := #["wq", "edit", "rewrite", "w"]
           let asks (category : Option String) : Option (Guarded (Array Completion.Hit) × Bool) :=
             let program : EditorM (Guarded (Array Completion.Hit) × Bool) := do
@@ -2417,8 +2420,8 @@ def dispatchStateChecks : List Check :=
                     registered start
               return (outcome, state == start)
             (program.runModel editorModel).1.toOption
-          let orderless := styled Completion.Styles.orderless "w" candidates
-          let fuzzy := styled Completion.Styles.fuzzy "w" candidates
+          let orderless := styled containing "w" candidates
+          let fuzzy := styled Completion.Style.unregistered "w" candidates
           orderless != fuzzy && asks (some "buffer") == some (.finished orderless, true) &&
             asks (some "other") == some (.finished fuzzy, true) &&
             asks none == some (.finished fuzzy, true) },
@@ -3664,7 +3667,7 @@ candidate list is drawn: for the checks that count what the listing alone
 costs. -/
 def unshownDriver (model : EditorModel := editorModel) : Option TestDriver :=
   (Loop.Driver.over
-      { candidateKeys with displaying := { default := Completion.Displays.minibuffer 0 } }
+      { candidateKeys with displaying := { default := { windowed with sheet := fun _ => {} } } }
       driverJobs (EditorState.initial ⟨640, 480⟩) model).toOption
 
 /-- `candidateDriver` whose prompts are matched by a job over more than
@@ -3681,7 +3684,7 @@ face. -/
 def laterFields (pattern : String) (texts : Array String) : Array StatusField :=
   #[{ text := pickLabel, face := Loop.promptFace }] ++
     (FuzzyModel.rank pattern texts).filterMap fun index =>
-      (texts[index]?).map fun text => { text, face := Completion.Displays.candidateFace }
+      (texts[index]?).map fun text => { text, face := windowedRow }
 
 /-- The ids of the jobs `driver` holds, at a post or finished and not
 delivered, each with its name. -/
@@ -3735,9 +3738,7 @@ def pickFields (pattern : String) (chosen : Option Nat := none) : Array StatusFi
   #[{ text := pickLabel, face := Loop.promptFace }] ++
     (pickListed pattern).listed.mapIdx fun index candidate =>
       { text := candidate.text
-        face :=
-          if chosen == some index then Completion.Displays.chosenFace
-          else Completion.Displays.candidateFace }
+        face := if chosen == some index then windowedChosen else windowedRow }
 
 /-- The editor's models, but that every read of a whole text is refused
 with `noSuchText` and changes nothing: a fake written for the one check
@@ -3756,14 +3757,67 @@ loop does when the listing's read is refused. What is listed is compared
 with what the fuzzy model answers for the same pattern and candidates. -/
 def candidateChecks : List Check :=
   [{  name :=
+        "a prompt matched by a style and drawn by a display written here, neither shipped, lists the candidates the style keeps in its order, draws the display's rows in the candidate list's view, and accepting takes the chosen one"
+      run :=
+        pure <|
+          let reversing : Completion.Style :=
+            { name := "reversing"
+              hits := fun text candidates =>
+                pure <|
+                  ((Array.range candidates.size).filter fun index =>
+                        (candidates[index]?).any (·.startsWith text)).reverse.map
+                    Completion.Hit.ofIndex }
+          let bracketed : Completion.Display :=
+            { name := "bracketed"
+              sheet := fun showing =>
+                {
+                  rows :=
+                    showing.listed.mapIdx fun index listed =>
+                      {
+                        text :=
+                          if showing.chosen == some index then s!"[{listed.text}]"
+                          else listed.text } } }
+          let written : Config.Owner := { name := "written" }
+          let registry : Config.Registry :=
+            ((minibufferRegistry.replaceStyles written #[reversing]).replaceDisplays written
+                  #[bracketed]).replaceBindings
+              .config
+              ((minibufferBindings ++ [("C-c l", "ask-letters")]).toArray.map fun (text, command) =>
+                .ofKeys (keys text) command)
+          let asking : Dispatched := fun _ => do
+            discard <|
+                prompt "Letter: " asked "" [.given (.ofTexts "letters" "letter" #["ab", "b", "ac"])]
+            return none
+          let keys : Loop.Keys TestScheme.scheme :=
+            { minibufferKeys with
+              maps := registry.activeMaps TestScheme.scheme
+              matching := registry.matching
+              displaying := registry.displaying
+              command? := fun name =>
+                if name == "ask-letters" then some asking else minibufferKeys.command? name }
+          match
+            (Loop.Driver.over keys driverJobs (EditorState.initial ⟨640, 480⟩)
+                editorModel).toOption with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c l a")
+            let (chosen, _) := fedTo typed (rolePresses Role.nextItem)
+            let (accepted, _) := fedTo chosen (presses "C-c 1")
+            (registry.matching.styleFor (some "letter")).name == "reversing" &&
+              (registry.displaying.displayFor (some "letter")).name == "bracketed" &&
+              (candidatesOf typed).map (·.listed.map (·.text)) == some #["ac", "ab"] &&
+              listText typed == some "ac\nab" &&
+              listText chosen == some "[ac]\nab" &&
+              promptEcho accepted == greeted [.str "ac", .nat 7] &&
+              accepted.loop.state.prompt.isNone },
+    { name :=
         "a filtered source's candidates are listed in the order it gave, none dropped, each with the style's ranges where it matches: passed c, ab and xyz for b list c, ab and xyz, with ranges on ab alone; for the empty text no style marks them"
       run :=
         pure <|
           let passed := offered #["c", "ab", "xyz"]
           let candidates : Candidates := { passed }
-          let listing (pattern : String) :=
-            ranked (candidates.listing pattern Completion.Styles.fuzzy)
-          let hitRanges := ((styled Completion.Styles.fuzzy "b" #["ab"])[0]?).map (·.ranges)
+          let listing (pattern : String) := ranked (candidates.listing pattern marking)
+          let hitRanges := ((styled marking "b" #["ab"])[0]?).map (·.ranges)
           let marked := listing "b"
           marked.map (·.text) == #["c", "ab", "xyz"] &&
             marked.map (·.ranges) == #[#[], hitRanges.getD #[], #[]] &&
@@ -3807,8 +3861,7 @@ def candidateChecks : List Check :=
                 driver
             let order := (FuzzyModel.rank "" manyTexts).filterMap (manyTexts[·]?)
             let window (first : Nat) : Option String :=
-              some
-                ("\n".intercalate (order.extract first (first + Completion.Displays.rows)).toList)
+              some ("\n".intercalate (order.extract first (first + windowedRows)).toList)
             let down := stepped asking (List.replicate 11 .next)
             let up := stepped down (List.replicate 10 .previous)
             let last := stepped asking [.previous]
@@ -3836,15 +3889,15 @@ def candidateChecks : List Check :=
               (viewRect cancelled ⟨0⟩).map (·.height) ==
                 some (480 - cancelled.loop.state.heights.message) },
     { name :=
-        "with the loop handed orderless for the category pick and the fuzzy style for the rest, after w is typed a pick prompt lists the orderless style's hits, in the candidates' order with w last, and a prompt of another category lists the fuzzy model's, with w first"
+        "with the loop handed a style that keeps the candidates holding the text for the category pick and marking for the rest, after w is typed a pick prompt lists the first's hits, in the candidates' order with w last, and a prompt of another category lists the fuzzy model's, with w first"
       run :=
         pure <|
           let keys : Loop.Keys TestScheme.scheme :=
             { candidateKeys with
               matching :=
-                { default := Completion.Styles.fuzzy
+                { default := marking
                   byCategory := fun category =>
-                    if category == "pick" then some Completion.Styles.orderless else none } }
+                    if category == "pick" then some containing else none } }
           match
             (Loop.Driver.over keys driverJobs (EditorState.initial ⟨640, 480⟩)
                 editorModel).toOption with
@@ -3857,8 +3910,7 @@ def candidateChecks : List Check :=
                 ((pickCandidates[hit.index]?).getD "", hit.ranges)
             let listed (driver : TestDriver) : Option (Array (String × Array Completion.Span)) :=
               (candidatesOf driver).map (·.listed.map fun listed => (listed.text, listed.ranges))
-            listed pick == some (listing Completion.Styles.orderless) &&
-              listed other == some (listing Completion.Styles.fuzzy) &&
+            listed pick == some (listing containing) && listed other == some (listing marking) &&
               (listed pick).bind (·.back?.map (·.1)) == some "w" &&
               (listed other).bind (·[0]?.map (·.1)) == some "w" },
     { name :=
@@ -3885,7 +3937,7 @@ def candidateChecks : List Check :=
                 some #[(Completion.Candidate.ofText "only").inGroup "pick", xw]
           | _, _, _ => false },
     { name :=
-        "a prompt asked with a source and one that has filtered already keeps the first's candidates to match and the filtered one's apart, in its group, and the first source's category; after a text is typed it lists the matches in the fuzzy model's order, each with its in-order spans, then the filtered source's candidates in the order it gave them, though one does not match, the one that matches with its in-order spans"
+        "a prompt asked with a source and one that has filtered already keeps the first's candidates to match and the filtered one's apart, in its group, and the first source's category; after a text is typed it lists the matches in the fuzzy model's order, each with the style's ranges, then the filtered source's candidates in the order it gave them, though one does not match, the one that matches with the style's ranges"
       run :=
         pure <|
           match candidateDriver with
@@ -3900,7 +3952,7 @@ def candidateChecks : List Check :=
               passed.map fun candidate =>
                 .of candidate
                   (if pattern.isEmpty || candidate.text == "zz" then #[]
-                  else Completion.Styles.inOrderSpans pattern candidate.text)
+                  else markedSpans pattern candidate.text)
             let withPassed (listed : Candidates) : Candidates :=
               let pattern := listed.listedFor.getD ""
               { listed with
@@ -3910,11 +3962,11 @@ def candidateChecks : List Check :=
               (candidatesOf asking).map (·.all) == some pickOffered &&
               (candidatesOf asking).map (·.category) == some (some "pick") &&
               candidatesOf typed == some (withPassed (pickListed "w")) &&
-              (Completion.Styles.inOrderSpans "w" "w").size == 1 &&
+              (markedSpans "w" "w").size == 1 &&
               (candidatesOf typed).map (fun listed => (listed.listed.map (·.text)).toList.drop 3) ==
                 some ["zz", "w"] },
     { name :=
-        "a prompt asked with only a source that has filtered already holds no candidate to match, the filtered one's apart in its group, and that source's category; after a text is typed it lists them in the order the source gave, the one the style matches with its in-order spans, and the listing asks the style once, for its ranges: its step costs the read of the minibuffer and one ranking, as a prompt with candidates to match does, shown by a display of no rows"
+        "a prompt asked with only a source that has filtered already holds no candidate to match, the filtered one's apart in its group, and that source's category; after a text is typed it lists them in the order the source gave, the one the style matches with the style's ranges, and the listing asks the style once, for its ranges: its step costs the read of the minibuffer and one ranking, as a prompt with candidates to match does, shown by a display of no rows"
       run :=
         pure <|
           match unshownDriver countingModel with
@@ -3935,7 +3987,7 @@ def candidateChecks : List Check :=
                   passed.map fun candidate =>
                     .of candidate
                       (if pattern.isEmpty || candidate.text == "zz" then #[]
-                      else Completion.Styles.inOrderSpans pattern candidate.text)
+                      else markedSpans pattern candidate.text)
                 place := rootPlace }
             candidatesOf asking == some (listing "") &&
               (candidatesOf asking).map (·.all) == some #[] &&
@@ -4037,8 +4089,7 @@ def candidateChecks : List Check :=
               (pickShown asking).map (·.size) == some (1 + pickCandidates.size) &&
               pickShown typed == some (pickFields "e") &&
               (pickShown typed).map (·.size) == some 3 &&
-              (statusIn typed ⟨0⟩).map (·.any (·.face == Completion.Displays.candidateFace)) ==
-                some false },
+              (statusIn typed ⟨0⟩).map (·.any (·.face == windowedRow)) == some false },
     { name :=
         "where a candidate is the typed text and others match it too, its row is the first of the list, though it is the last of the candidates"
       run :=
@@ -4075,10 +4126,9 @@ def candidateChecks : List Check :=
             let (second, _) := fedTo (chose typed [.next, .next]) (presses "C-c s")
             let (unchosen, _) := fedTo (chose second [.next, .next]) (presses "C-c s")
             pickShown second == some (pickFields "w" (some 1)) &&
-              ((pickShown second).map fun fields =>
-                  fields.map (·.face == Completion.Displays.chosenFace)) ==
+              ((pickShown second).map fun fields => fields.map (·.face == windowedChosen)) ==
                 some #[false, false, true, false] &&
-              Completion.Displays.chosenFace != Completion.Displays.candidateFace &&
+              windowedChosen != windowedRow &&
               candidatesOf unchosen == some (pickListed "w") &&
               pickShown unchosen == some (pickFields "w") },
     { name :=
@@ -4323,9 +4373,8 @@ def promptLoop (candidates : Candidates) (typed : Option String := none)
 one job registered, the config generation is `generation`, a prompt over
 more than `inline` candidates is matched by a job, and the style is
 `style`, which config owns when `owned`. -/
-def jobKeys (generation : Nat := 0) (inline : Nat := 2)
-    (style : Completion.Style := Completion.Styles.fuzzy) (owned : Bool := false) :
-    Loop.Keys TestScheme.scheme :=
+def jobKeys (generation : Nat := 0) (inline : Nat := 2) (style : Completion.Style := marking)
+    (owned : Bool := false) : Loop.Keys TestScheme.scheme :=
   { registered := { jobs := (· == "later-pick"), generation }, inlineMatches := inline
     matching :=
       { default := style
@@ -4548,7 +4597,7 @@ def completionJobChecks : List Check :=
           | none => false
           | some (loop, view) =>
             let key := Loop.matchKey view
-            let keys := jobKeys (generation := 2) (style := Completion.Styles.orderless)
+            let keys := jobKeys (generation := 2) (style := containing)
             let (after, _, cancels, spawns) :=
               { loop with state := { loop.state with completionKeys := #[key] } }.completionJobs
                 keys
@@ -4558,7 +4607,7 @@ def completionJobChecks : List Check :=
               (spawns[0]?.bind (matchedBy after ·)).map (·.listed.map (·.text)) ==
                 some #["wq", "rewrite", "w"] },
     { name :=
-        "a listing of 15 shows 10 rows, the first of the listing, the chosen one among them in the chosen face, and one of 4 shows 4; the minibuffer's status line is the label alone"
+        "a listing of 15 drawn by the core's own display shows every row, in the listing's order, the chosen one marked, and one of 4 shows 4; the minibuffer's status line is the label alone"
       run :=
         pure <|
           let texts := (Array.range 15).map (s!"c{·}")
@@ -4569,12 +4618,11 @@ def completionJobChecks : List Check :=
                   chosen := some 2 } }
           let sheet (count : Nat) : Completion.Sheet :=
             let candidates := (prompt count).candidates
-            (Completion.Displaying.standard.displayFor none).sheet
+            (Completion.Displaying.unregistered.displayFor none).sheet
               { listed := candidates.listed, chosen := candidates.chosen }
           let rows := (sheet 15).rows
-          rows.map (·.text) == texts.extract 0 10 &&
-            rows.map (fun row => row.decorations.any (·.face == Completion.Displays.chosenFace)) ==
-              #[false, false, true] ++ Array.replicate 7 false &&
+          rows.map (·.text) ==
+              texts.mapIdx (fun index text => (if index == 2 then "> " else "  ") ++ text) &&
             (sheet 4).rows.size == 4 &&
             (Loop.promptStatus (prompt 15)).map (·.text) == #["L: "] }]
 

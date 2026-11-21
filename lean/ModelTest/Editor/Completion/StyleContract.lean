@@ -1,7 +1,6 @@
 import Editor.Completion.Candidate
 import Editor.Completion.Style
 import Editor.Completion.StyleContract
-import Editor.Completion.Styles
 import Editor.Fuzzy
 import Editor.Program
 import Editor.Test.Completion
@@ -26,16 +25,15 @@ def styleBroken (style : Completion.Style) : IO (List String) :=
   Completion.StyleContract.failures (fun program => pure (ranked program)) style
 
 /-- The checks of the completion styles' contract
-(`Editor/Completion/StyleContract.lean`): it holds of the shipped styles
+(`Editor/Completion/StyleContract.lean`): it holds of the core's own style
 and of the model, and bites on a style written here that answers an index
-twice and on one with a range past its candidate's end. -/
+twice and on one with a range past its candidate's end. The shipped
+styles' are `shippedStyleChecks`. -/
 def styleContractChecks : List Check :=
   [{  name :=
-        "every property of the style contract holds of the fuzzy style over the fuzzy model, of the orderless style and of a style that keeps what its predicate says"
+        "every property of the style contract holds of the core's own style over the fuzzy model and of a style that keeps what its predicate says"
       run := do
-        return (← styleBroken Completion.Styles.fuzzy).isEmpty &&
-            (← styleBroken Completion.Styles.orderless).isEmpty &&
-            (← styleBroken Completion.Styles.path).isEmpty &&
+        return (← styleBroken Completion.Style.unregistered).isEmpty &&
             (←
                 styleBroken
                     (.keeping "starts" fun text candidate => candidate.startsWith text)).isEmpty &&

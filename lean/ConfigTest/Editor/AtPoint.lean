@@ -2,9 +2,9 @@ import ConfigTest.Check
 import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
+import ConfigTest.Support.Listings
 import ConfigTest.Support.Syntax
 import Editor.Completion.Candidate
-import Editor.Completion.Displays
 import Editor.Completion.Words
 import Editor.File.Model
 import Editor.Headless
@@ -49,8 +49,7 @@ def dotsText : String :=
 chosen candidate: nothing is chosen in the candidate list. -/
 def noneChosen (lines : Array String) : Bool :=
   !lines.any fun line =>
-      line.startsWith "decorations " &&
-        (line.splitOn Completion.Displays.chosenFace.name).length > 1
+      line.startsWith "decorations " && (line.splitOn listedChosenFace.name).length > 1
 
 /-- The checks of completion at point through the headless host of the Vim
 scheme that ships (`withVimHost`), with the real elaborator, the real text

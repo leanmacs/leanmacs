@@ -3,7 +3,6 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Display
 import Editor.Completion.Style
-import Editor.Completion.Styles
 import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
@@ -257,7 +256,7 @@ def packageChecks : List Check :=
             state.registry.styleDefaults == #[("pick", "one-style"), ("pick", "two-style")] &&
             state.registry.styleChoices.isEmpty &&
             styleOf state "pick" == ("two-style", "two") &&
-            (styleOf state "other").1 == Completion.Styles.fuzzy.name &&
+            styleOf state "other" == ("one-style", "one") &&
             styleOf defaulted "pick" == ("two-style", "two") &&
             styleOf defaulted "other" == ("mine", "config") &&
             styleOf overridden "pick" == ("mine", "config") &&

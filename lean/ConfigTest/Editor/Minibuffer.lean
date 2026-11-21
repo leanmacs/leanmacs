@@ -4,6 +4,7 @@ import ConfigTest.Support.Configs
 import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
+import ConfigTest.Support.Listings
 import Editor.Api
 import Editor.Buffers
 import Editor.Buffers.Compiled
@@ -12,9 +13,7 @@ import Editor.Command.Call
 import Editor.Completion
 import Editor.Completion.Candidate
 import Editor.Completion.Display
-import Editor.Completion.Displays
 import Editor.Completion.Later
-import Editor.Completion.Styles
 import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Display
@@ -157,12 +156,12 @@ def styleText (choices : List String) : String :=
     asks "pick" "pick" ++
     asks "other" "other"
 
-/-- A config whose `setup` chooses the orderless style for the category
+/-- A config whose `setup` chooses the hosts' style `parts` for the category
 `buffer`, so `switch-buffer` lists its candidates in their own order,
 registers the sources `defines` (lines of `setup`, each indented), and
 registers `make`, which makes a buffer of each of `names`, in order. -/
 def bufferStyleText (defines : List String) (names : List String := ["alpha", "beta"]) : String :=
-  "def setup : SetupM Unit := do\n  useStyleFor \"buffer\" \"orderless\"\n" ++
+  "def setup : SetupM Unit := do\n  useStyleFor \"buffer\" \"parts\"\n" ++
     "  command \"make\" do\n" ++
     String.join (names.map (s!"    discard <| createBuffer {·.quote}\n")) ++
     String.join (defines.map (s!"  {·}\n"))
@@ -228,12 +227,19 @@ def annotatedCompiled : Compiled :=
 def fiveTexts : Array String :=
   #["wq", "edit", "rewrite", "w", "we"]
 
-/-- A config whose `setup` defines the minibuffer display showing at most
-three rows, in the shipped one's place, and `pick`, which asks `Pick: `
-with a source given as a value over `fiveTexts`. -/
+/-- A config whose `setup` defines a display of its own under the hosts'
+display's name, `rows`, in its place: the first three candidates, each a
+row in `test.row`, or `test.chosen` for the chosen one; and `pick`, which
+asks `Pick: ` with a source given as a value over `fiveTexts`. -/
 def rowsText : String :=
-  "def setup : SetupM Unit := do\n" ++
-    "  defineDisplay (Completion.Displays.minibuffer (rows := 3))\n" ++
+  "def three : Completion.Display :=\n" ++ "  { name := \"rows\"\n" ++
+    "    sheet := fun showing =>\n" ++
+    "      { rows := (showing.listed.extract 0 3).mapIdx fun index listed =>\n" ++
+    "          { text := listed.text\n" ++
+    "            decorations := #[{ start := 0, stop := listed.text.utf8ByteSize\n" ++
+    "                               face := if showing.chosen == some index then ⟨\"test.chosen\"⟩ else ⟨\"test.row\"⟩ }] } } }\n\n" ++
+    "def setup : SetupM Unit := do\n" ++
+    "  defineDisplay three\n" ++
     "  command \"pick\" (discard <| prompt \"Pick: \" { command := \"picked\" }\n" ++
     s!"    (sources := [.given (.ofTexts \"picks\" \"pick\" #[{", ".intercalate (fiveTexts.toList.map (·.quote))}])]))\n"
 
@@ -260,14 +266,15 @@ def matchJobs (lines : Array String) (what : String) : Array String :=
     | _ => none
 
 /-- A config whose `setup` defines the style `slow`, which asks the matcher
-and then answers what the orderless style answers, and chooses `chosen` as
-the default style. -/
+and then keeps the candidates that hold the text, in their order, and
+chooses `chosen` as the default style. -/
 def slowStyleText (chosen : String) : String :=
   "def slow : Completion.Style :=
   { name := \"slow\"
     hits := fun text candidates => do
       discard <| Fuzzy.rank text candidates
-      Completion.Styles.orderless.hits text candidates }
+      (Completion.Style.keeping \"kept\" fun text candidate =>
+          text.isEmpty || (candidate.splitOn text).length > 1).hits text candidates }
 
 def setup : SetupM Unit := do
   defineStyle slow
@@ -462,9 +469,9 @@ def promptChecks (context : Context) : List Check :=
                   !(← session.output.get).any (·.startsWith "loop: refused"))
             { minibufferCompiled with packages := #[Themes.package] } },
     { name :=
-        "criterion 3: a config that chooses orderless for the category pick lists a pick prompt by it and every other by the default: after `w` is committed the pick prompt lists `wq`, `rewrite` and `w`, the candidates' own order, and a prompt of another category lists the same three with `w` first, the library's matcher's; reloaded with a config that chooses no style, the pick prompt lists `w` first too"
+        "criterion 3: a config that chooses the hosts' style parts for the category pick lists a pick prompt by it and every other by the default: after `w` is committed the pick prompt lists `wq`, `rewrite` and `w`, the candidates' own order, and a prompt of another category lists the same three with `w` first, the library's matcher's; reloaded with a config that chooses no style, the pick prompt lists `w` first too"
       run :=
-        withHost context [("init.lean", styleText ["useStyleFor \"pick\" \"orderless\""])]
+        withHost context [("init.lean", styleText ["useStyleFor \"pick\" \"parts\""])]
           (fun session => do
             let asked (command : String) : IO (Array String) := do
               session.ask [.reload]
@@ -486,7 +493,7 @@ def promptChecks (context : Context) : List Check :=
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
     { name :=
-        "a category's compiled default sits between config's two choices, through the real elaborator: with compiled code giving pick the orderless style and config choosing nothing, the pick prompt lists `wq`, `rewrite` and `w` and another prompt `w` first; config's `useStyle \"fuzzy\"` leaves pick on orderless; config's `useStyleFor \"pick\" \"fuzzy\"` lists `w` first"
+        "a category's compiled default sits between config's two choices, through the real elaborator: with compiled code giving pick the style parts and config choosing nothing, the pick prompt lists `wq`, `rewrite` and `w` and another prompt `w` first; config's `useStyle \"library\"` leaves pick on parts; config's `useStyleFor \"pick\" \"library\"` lists `w` first"
       run :=
         withHost context [("init.lean", styleText [])]
           (fun session => do
@@ -503,15 +510,15 @@ def promptChecks (context : Context) : List Check :=
                 listsAfter lines "Pick: " ["w", "rewrite", "wq"]
             let pick ← asked "pick"
             let other ← asked "other"
-            session.write "init.lean" (styleText ["useStyle \"fuzzy\""])
+            session.write "init.lean" (styleText ["useStyle \"library\""])
             let defaulted ← asked "pick"
-            session.write "init.lean" (styleText ["useStyleFor \"pick\" \"fuzzy\""])
+            session.write "init.lean" (styleText ["useStyleFor \"pick\" \"library\""])
             let chosen ← asked "pick"
             return listsAfter pick "Pick: " ["wq", "rewrite", "w"] && exactFirst other &&
                 listsAfter defaulted "Pick: " ["wq", "rewrite", "w"] &&
                 exactFirst chosen &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
-          { minibufferCompiled with styleDefaults := #[("pick", "orderless")] } },
+          { minibufferCompiled with styleDefaults := #[("pick", partsStyle.name)] } },
     { name :=
         "a style config defines and chooses as the default lists every prompt: after `w` both prompts list `wq` and `w`, the candidates that begin with it; a config that also chooses a style nobody registered for pick says so in the echo area and on a report line, and pick falls to the default"
       run :=
@@ -535,8 +542,8 @@ def promptChecks (context : Context) : List Check :=
             let (echo, _) ← session.scene
             let fallen ← asked "pick"
             return listsAfter pick "Pick: " ["wq", "w"] && listsAfter other "Pick: " ["wq", "w"] &&
-                echo == s!"reload: {Completion.Styles.unknown "nope"}".quote &&
-                (← session.output.get).contains s!"style: {Completion.Styles.unknown "nope"}" &&
+                echo == s!"reload: {Completion.Style.unknown "nope"}".quote &&
+                (← session.output.get).contains s!"style: {Completion.Style.unknown "nope"}" &&
                 listsAfter fallen "Pick: " ["wq", "w"] &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
@@ -550,14 +557,14 @@ def promptChecks (context : Context) : List Check :=
                 (styleText ["useStyleFor \"pick\" \"gone\"", "useDisplay \"nope\""])
             session.ask [.reload]
             let lines ← session.output.get
-            let style := lines.findIdx? (· == s!"style: {Completion.Styles.unknown "gone"}")
-            let display := lines.findIdx? (· == s!"display: {Completion.Displays.unknown "nope"}")
+            let style := lines.findIdx? (· == s!"style: {Completion.Style.unknown "gone"}")
+            let display := lines.findIdx? (· == s!"display: {Completion.Display.unknown "nope"}")
             return match style, display with
               | some style, some display => style < display
               | _, _ => false)
           minibufferCompiled },
     { name :=
-        "criterion 5: a source config registers in the category buffer adds its candidates to switch-buffer's list, after the shipped source's buffer names; one registered under the shipped source's name replaces it; with neither the shipped names alone are listed; while two sources list, each group's rows follow a header of its name (config chooses orderless for buffer, so the empty text lists the candidates in their own order and not by the library's scores)"
+        "criterion 5: a source config registers in the category buffer adds its candidates to switch-buffer's list, after the shipped source's buffer names; one registered under the shipped source's name replaces it; with neither the shipped names alone are listed (config chooses the hosts' style parts for buffer, so the empty text lists the candidates in their own order and not by the library's scores)"
       run :=
         let more := "defineSource (.ofTexts \"more\" \"buffer\" #[\"zz-extra\"])"
         let mine := "defineSource (.ofTexts \"buffers\" \"buffer\" #[\"mine\"])"
@@ -577,11 +584,9 @@ def promptChecks (context : Context) : List Check :=
             session.write "init.lean" (bufferStyleText [])
             let shipped ← asked
             let names := ["alpha", "beta", EditorState.scratchName]
-            -- Two sources list two groups, so each group's rows follow a
-            -- header of its name (`Completion.Displays.minibuffer`).
+            -- The hosts' display draws no group header.
             return listsAfter shipped Buffers.switchPrompt names &&
-                listsAfter added Buffers.switchPrompt
-                  ([Buffers.source.name] ++ names ++ ["more", "zz-extra"]) &&
+                listsAfter added Buffers.switchPrompt (names ++ ["zz-extra"]) &&
                 listsAfter replaced Buffers.switchPrompt ["mine"] &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           { minibufferCompiled with
@@ -589,7 +594,7 @@ def promptChecks (context : Context) : List Check :=
               Minibuffer.package.registered.commands ++ Buffers.package.registered.commands,
             sources := Buffers.package.registered.sources } },
     { name :=
-        "with config choosing orderless for buffer, a text of two components that is no buffer's name, typed into switch-buffer and accepted with nothing chosen, shows the first buffer the prompt lists for it, though the fuzzy matcher matches it with no name"
+        "with config choosing the hosts' style parts for buffer, a text of two parts that is no buffer's name, typed into switch-buffer and accepted with nothing chosen, shows the first buffer the prompt lists for it, though the fuzzy matcher matches it with no name"
       run :=
         withHost context [("init.lean", bufferStyleText [] ["mars.txt", "main.rs"])]
           (fun session => do
@@ -671,7 +676,7 @@ def promptChecks (context : Context) : List Check :=
                 unless (← session.host.join patience) == .settled do
                   return false
                 let listed ← session.sceneLines
-                let expected := (← realOrder typed (manyPaths 100000)).take Completion.Displays.rows
+                let expected := (← realOrder typed (manyPaths 100000)).take listedRows
                 return handled && held.size == 1 &&
                     (matchJobs (← session.output.get) "started").size == 2 &&
                     listsAfter listed "Pick: " expected &&
@@ -691,7 +696,7 @@ def promptChecks (context : Context) : List Check :=
                 unless
                   ← eventually (return (matchJobs (← session.output.get) "started").size == 1) do
                   return false
-                session.write "init.lean" (slowStyleText "orderless")
+                session.write "init.lean" (slowStyleText "parts")
                 session.ask [.reload]
                 let reloaded ← session.output.get
                 gate.resolve ()
@@ -708,14 +713,13 @@ def promptChecks (context : Context) : List Check :=
                     | some cancelled, some reported => cancelled < reported
                     | _, _ => false) &&
                     matchJobs output "ok" == started.extract 1 2 &&
-                    listsAfter listed "Pick: "
-                      ((manyPaths 2000).toList.take Completion.Displays.rows) &&
+                    listsAfter listed "Pick: " ((manyPaths 2000).toList.take listedRows) &&
                     !output.any (·.startsWith "loop: refused")
               finally
                 gate.resolve ())
             (manyCompiled 2000) (heldMatcher gate) },
     { name :=
-        "criterion 1: a prompt lists its candidates one a row in a view of their own, up to the rows config's display sets, the chosen one in its face: at 640 by 480, with config's minibuffer display of three rows, a prompt of five lists the library's first three, each row in the candidate face, the minibuffer's status line the label alone; after the next-item key the first row is in the chosen face"
+        "criterion 1: a prompt lists its candidates one a row in a view of their own, up to the rows config's display sets, the chosen one in its face: at 640 by 480, with config's display of three rows in the hosts' one's place, a prompt of five lists the library's first three, each row in the candidate face config's display draws, the minibuffer's status line the label alone; after the next-item key the first row is in its chosen face"
       run :=
         withHost context [("init.lean", rowsText)]
           (fun session => do
@@ -731,7 +735,7 @@ def promptChecks (context : Context) : List Check :=
               let (spans, _) :=
                 rows.foldl
                   (fun (spans, offset) row =>
-                    let face := if offset == 0 then first else Completion.Displays.candidateFace
+                    let face := if offset == 0 then first else listedRowFace
                     (spans ++ [s!"{face.name} {offset}..{offset + row.utf8ByteSize}"],
                       offset + row.utf8ByteSize + 1))
                   (([] : List String), 0)
@@ -740,9 +744,9 @@ def promptChecks (context : Context) : List Check :=
               lines.any fun printed =>
                 printed.startsWith "decorations " && afterId printed == afterId line
             return nextItemKeys.length > 0 && listsAfter asking "Pick: " rows &&
-                decorated asking (faced Completion.Displays.candidateFace) &&
+                decorated asking (faced listedRowFace) &&
                 listsAfter chosen "Pick: " rows &&
-                decorated chosen (faced Completion.Displays.chosenFace) &&
+                decorated chosen (faced listedChosenFace) &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
     { name :=
@@ -791,7 +795,7 @@ def promptChecks (context : Context) : List Check :=
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
     { name :=
-        "criterion 5: a display config chooses for one category shows that category's prompts, the default the others', and a reload that drops the choice redraws the open prompt with the default at the install's scene: after `w` the pick prompt's list is the plain display's rows, built from the model, and the other prompt's the minibuffer display's; with the pick prompt open, a reload of a config without the choice, with no key typed, draws the minibuffer display's rows"
+        "criterion 5: a display config chooses for one category shows that category's prompts, the default the others', and a reload that drops the choice redraws the open prompt with the default at the install's scene: after `w` the pick prompt's list is the plain display's rows, built from the model, and the other prompt's the hosts' display's; with the pick prompt open, a reload of a config without the choice, with no key typed, draws the hosts' display's rows"
       run :=
         let choosing :=
           styleText
@@ -826,7 +830,7 @@ def promptChecks (context : Context) : List Check :=
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
     { name :=
-        "criterion 4: a candidate's annotation is drawn in a column beside its text and its matched ranges in their face: after `al` is committed the list shows the library's order of the candidates it matches, each padded to the longest one's length and the gap with its annotation after, `zz` not among them; each row is in the candidate face, its in-order spans in the match face and its annotation in the annotation face"
+        "criterion 4: a candidate's annotation reaches the display, which draws it: after `al` is committed the list shows the library's order of the candidates it matches, each with its annotation two spaces after it, as the hosts' display writes it, `zz` not among them, and each row in that display's face"
       run :=
         withHost context []
           (fun session => do
@@ -837,22 +841,11 @@ def promptChecks (context : Context) : List Check :=
             let listed ← realOrder "al" (annotatedCandidates.map (·.text))
             let annotationOf (text : String) : String :=
               ((annotatedCandidates.find? (·.text == text)).bind (·.annotation)).getD ""
-            -- The column is computed from the texts listed, never written
-            -- out: the longest one's characters and the gap.
-            let column := (listed.map (·.length)).foldl max 0 + Completion.Displays.gap
-            let padded (text : String) : String := text.pushn ' ' (column - text.length)
-            let rows := listed.map fun text => padded text ++ annotationOf text
+            let rows := listed.map fun text => s!"{text}  {annotationOf text}"
             let spans :=
-              (listed.foldl
-                  (fun (spans, offset) text =>
-                    let row := padded text ++ annotationOf text
-                    let shift (span : Completion.Span) : String :=
-                      s!"{Completion.Displays.matchFace.name} {offset + span.start}..{offset + span.stop}"
-                    let start := offset + (padded text).utf8ByteSize
-                    (spans ++
-                        [s!"{Completion.Displays.candidateFace.name} {offset}..{offset + row.utf8ByteSize}"] ++
-                        (Completion.Styles.inOrderSpans "al" text).toList.map shift ++
-                        [s!"{Completion.Displays.annotationFace.name} {start}..{start + (annotationOf text).utf8ByteSize}"],
+              (rows.foldl
+                  (fun (spans, offset) row =>
+                    (spans ++ [s!"{listedRowFace.name} {offset}..{offset + row.utf8ByteSize}"],
                       offset + row.utf8ByteSize + 1))
                   (([] : List String), 0)).1
             let decorations := s!"decorations 0: {" ".intercalate spans}"

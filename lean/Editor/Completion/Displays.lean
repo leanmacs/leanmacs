@@ -53,11 +53,11 @@ input (`Loop.candidateListView`, `Editor/Loop.lean`; `EditorState`'s
 
 | Addition | Where |
 |---|---|
-| A new display | A value here, in `shipped` if compiled, and run by `ModelTest.displayContractChecks` |
+| A new display | A value here, in `shipped`, and run by `ModelTest.minibufferDisplayChecks` |
 | A face the minibuffer display draws | A definition here, an entry of the vocabulary (`Editor/Face/Vocabulary.lean`) and a definition of `Palette.theme` (`Editor/Face.lean`) |
 
-Pinned by `ModelTest.completionDisplayChecks`, `displayContractChecks` and
-`faceVocabularyChecks`.
+Pinned by `ModelTest.minibufferDisplayChecks`: its rule, the display
+contract on it and its faces in the vocabulary.
 -/
 
 namespace Editor.Completion
@@ -246,16 +246,6 @@ def minibuffer (rows : Nat := Displays.rows) : Display :=
 def shipped : Array Display :=
   #[minibuffer]
 
-/-- What the report says of a display chosen under `name` that no display
-is registered under. -/
-def unknown (name : String) : String :=
-  s!"no completion display is registered under `{name}`"
-
 end Displays
-
-/-- The displaying a host hands when config chooses nothing: the minibuffer
-display for every listing. -/
-def Displaying.standard : Displaying :=
-  { default := Displays.minibuffer }
 
 end Editor.Completion

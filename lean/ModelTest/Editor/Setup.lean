@@ -5,7 +5,6 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Display
-import Editor.Completion.Displays
 import Editor.Completion.Keys
 import Editor.Completion.Later
 import Editor.Completion.Style
@@ -651,7 +650,7 @@ def setupChecks : List Check :=
           defineDisplay (Completion.Display.plain "plain")
           useDisplayFor "pick" "plain"
           useDisplay "minibuffer"
-          defineDisplay (Completion.Displays.minibuffer (rows := 3))
+          defineDisplay (Completion.Display.plain "minibuffer")
         let twice : SetupM Unit := do
           defineDisplay (Completion.Display.plain "plain")
           defineDisplay (Completion.Display.plain "plain")

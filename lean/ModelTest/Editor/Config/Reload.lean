@@ -5,9 +5,7 @@ import Editor.Command.Dispatch
 import Editor.Command.Model
 import Editor.Completion.AtPoint
 import Editor.Completion.Display
-import Editor.Completion.Displays
 import Editor.Completion.Style
-import Editor.Completion.Styles
 import Editor.Completion.Words
 import Editor.Config.Diagnostic
 import Editor.Config.Display
@@ -397,7 +395,9 @@ def reloadChecks : List Check :=
       run :=
         let styled : ModelState :=
           { themed with
-            registry := themed.registry.replaceStyles .compiled Completion.Styles.shipped }
+            registry :=
+              themed.registry.replaceStyles .compiled
+                #[.keeping "fuzzy" fun _ _ => true, .keeping "orderless" fun _ _ => true] }
         let choosing : SetupM Unit := do
           useStyleFor "pick" "orderless"
           useStyle "nope"
@@ -429,7 +429,8 @@ def reloadChecks : List Check :=
       run :=
         let shown : ModelState :=
           { themed with
-            registry := themed.registry.replaceDisplays .compiled Completion.Displays.shipped }
+            registry :=
+              themed.registry.replaceDisplays .compiled #[Completion.Display.plain "minibuffer"] }
         let choosing : SetupM Unit := do
           useDisplayFor "pick" "minibuffer"
           useDisplay "nope"

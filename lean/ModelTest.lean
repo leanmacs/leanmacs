@@ -27,6 +27,7 @@ import ModelTest.Editor.Command.Registry
 import ModelTest.Editor.Completion.AtPointContract
 import ModelTest.Editor.Completion.Compiled
 import ModelTest.Editor.Completion.Contract
+import ModelTest.Editor.Completion.Display
 import ModelTest.Editor.Completion.DisplayContract
 import ModelTest.Editor.Completion.Displays
 import ModelTest.Editor.Completion.Filtering
@@ -35,6 +36,7 @@ import ModelTest.Editor.Completion.Later
 import ModelTest.Editor.Completion.Paths
 import ModelTest.Editor.Completion.Style
 import ModelTest.Editor.Completion.StyleContract
+import ModelTest.Editor.Completion.Styles
 import ModelTest.Editor.Completion.Words
 import ModelTest.Editor.Config.Elaborator.Model
 import ModelTest.Editor.Config.LakePackage
@@ -282,26 +284,33 @@ ignores case, one that does not put an exact match first, and locators
 that answer nothing or a span with more errors than the fewest.
 
 The completion style interface (`Editor/Completion/Style.lean`) is checked
-over the fuzzy model (`styleChecks`): the fuzzy style answers the model's
-order with its in-order spans, the orderless style matches exactly the
-candidates that hold every component of the text, as a property over every
-short text and candidate of a small alphabet, the model keeps what its
+over the fuzzy model (`styleChecks`): the core's own style, `ranked`,
+answers the model's order with no ranges, the model keeps what its
 predicate says, and a category picks its style. Its contract
-(`Editor/Completion/StyleContract.lean`) is run against the shipped styles
-and the model (`styleContractChecks`), and seen to bite on a style that
-answers an index twice and on one with a range past its candidate's end;
-`contract-test` runs it against the fuzzy style over the real binding.
+(`Editor/Completion/StyleContract.lean`) is run against the core's own
+style and the model (`styleContractChecks`), and seen to bite on a style
+that answers an index twice and on one with a range past its candidate's
+end; `contract-test` runs it against the core's own style over the real
+binding. The styles that ship (`Editor/Completion/Styles.lean`) are checked
+over the fuzzy model (`shippedStyleChecks`): the fuzzy style answers the
+model's order with its in-order spans, the orderless style matches exactly
+the candidates that hold every component of the text, as a property over
+every short text and candidate of a small alphabet, the path style ranks
+by the last component, and the contract holds of each.
 
-The completion display interface (`Editor/Completion/Display.lean`) has
-its contract (`Editor/Completion/DisplayContract.lean`) run against the
-model, `Display.plain`, and the shipped minibuffer display at 0, 1, 3 and
-10 rows (`displayContractChecks`), and seen to bite on a display with a
-decoration past its row's end. The minibuffer display's rule
-(`Editor/Completion/Displays.lean`) is checked pure
-(`completionDisplayChecks`): the row cap, the faces of the chosen row and
+The completion display interface (`Editor/Completion/Display.lean`) is
+checked pure (`completionDisplayChecks`): a sheet's text, whether a listing
+is grouped, the model, the core's own display, and a category's display
+chosen. Its contract (`Editor/Completion/DisplayContract.lean`) is run
+against the model, `Display.plain`, and the core's own display
+(`displayContractChecks`), and seen to bite on a display with a decoration
+past its row's end. The minibuffer display's rule
+(`Editor/Completion/Displays.lean`), the one that ships, is checked pure
+(`minibufferDisplayChecks`): the row cap, the faces of the chosen row and
 the others, the matched ranges and their offsets in the sheet, a label in
 place of the text, the annotation column, the group headers, the window
-round the choice, and a category's display chosen.
+round the choice, the contract at 0, 1, 3 and 10 rows, and its five faces
+in the vocabulary.
 
 The layouts (`Editor/Layout.lean`) are pure functions, checked by
 enumeration (`layoutChecks`): master-and-stack's rectangles tile the area
@@ -524,7 +533,13 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   the loop is handed: the phase's acceptance criteria, with the accept key
   and the cancel key read from the test scheme's role table;
 - `candidateChecks`: a prompt's candidates on that driver, with commands
-  written here: the listing the loop makes before each scene, for the
+  written here: first, that a prompt matched by a style and drawn by a
+  display written here, neither shipped, registered in a registry the loop
+  is handed, lists what the style keeps, draws the display's rows and
+  accepts the chosen one; then, matched and drawn by the style and the
+  display written for the core's tests (`marking` and `windowed`,
+  `ModelTest/Support/Listings.lean`), the listing the loop makes before
+  each scene, for the
   initial text and for the text typed so far, what a command that fails
   is rolled back to, what the listing costs in requests, and that a
   refusal of the listing's read refuses no step, leaves the listing and
@@ -723,9 +738,11 @@ The config session's decisions are tested here too, with no elaborator:
   among the open prompt's minibuffer view's active keymaps and out of the
   global keymap and the menu bar's, and a sequence bound twice in one
   category, which is refused; its menus, replaced by owner, and the
-  menu bar they make (`menuBar?`); and its store codecs across a restart,
+  menu bar they make (`menuBar?`); its store codecs across a restart,
   the latest owner's found, and the jobs reported by one, as the loop is
-  told them;
+  told them; and the style and the display a prompt gets with no choice:
+  the one registered first, config's of that name in its place, or with
+  none registered the core's own, owned by `compiled`;
 - `registryHintChecks`: a binding's description on the registry's keymap,
   and its prefix names, by owner, expanded against the leaders in force,
   and two names a scheme's leaders make one prefix, which are refused;
@@ -1499,8 +1516,10 @@ def checks : List Check :=
     fuzzyChecks ++
     styleChecks ++
     styleContractChecks ++
+    shippedStyleChecks ++
     displayContractChecks ++
     completionDisplayChecks ++
+    minibufferDisplayChecks ++
     displayStateChecks ++
     syntaxTreeChecks ++
     guardChecks ++

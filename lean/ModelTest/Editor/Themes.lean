@@ -5,7 +5,6 @@ import Editor.Command.Dispatch
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
-import Editor.Completion.Styles
 import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores

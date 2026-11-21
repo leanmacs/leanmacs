@@ -7,7 +7,6 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Paths
-import Editor.Completion.Styles
 import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
@@ -53,6 +52,7 @@ import Editor.Text
 import Editor.Value
 import Editor.Workspace
 import ModelTest.Check
+import ModelTest.Support.Listings
 
 /-!
 # Model tests: `Editor/Ex.lean`
@@ -78,7 +78,8 @@ def exTestBindings : Array Ex.Binding :=
 candidates are listed for `pattern`, with `chosen` as its choice: the
 bound names, in the group of the source of the ex names, its category
 `ex-line`, and of them what the fuzzy model answers for the pattern, each
-with its in-order spans. -/
+with the ranges the style written for the core's tests gives it
+(`marking`). -/
 def exListed (pattern : String) (chosen : Option Nat := none)
     (bindings : Array Ex.Binding := exTestBindings) : Candidates :=
   let names := exNamesOf bindings
@@ -86,8 +87,7 @@ def exListed (pattern : String) (chosen : Option Nat := none)
   { all, category := some Ex.namesSource.category, listedFor := some pattern, place := rootPlace
     listed :=
       (FuzzyModel.rank pattern names).filterMap fun index =>
-        (all[index]?).map fun candidate =>
-          .of candidate (Completion.Styles.inOrderSpans pattern candidate.text)
+        (all[index]?).map fun candidate => .of candidate (markedSpans pattern candidate.text)
     chosen }
 
 /-- What a step of the ex checks is handed. The commands are the ones
@@ -105,7 +105,9 @@ runs it with the arguments the Vim scheme gives a command a key is bound
 to, a count and a register, `C-e l` runs it with the line `say hello there`
 as its first argument, `C-e y` and `C-e n` run the minibuffer's accept and
 cancel commands, `C-e t` runs its command that moves to the next
-candidate, and `C-e o` runs `other`. -/
+candidate, and `C-e o` runs `other`. Prompts are matched and shown by the
+style and the display written for the core's tests (`marking`,
+`windowed`). -/
 def exKeys (bindings : Array Ex.Binding := exTestBindings) : Loop.Keys TestScheme.scheme :=
   let compiled : List (String × Dispatched) :=
     (Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
@@ -125,6 +127,8 @@ def exKeys (bindings : Array Ex.Binding := exTestBindings) : Loop.Keys TestSchem
         ("C-e y", invoke Minibuffer.acceptName), ("C-e n", invoke Minibuffer.cancelName),
         ("C-e t", invoke Minibuffer.nextName), ("C-e o", invoke "other")]
       (compiled ++ promptCommands) with
+    matching := markingMatching,
+    displaying := windowedDisplaying
     registered :=
       { ex := fun name => bindings.findRev? (·.name == name), exNames := exNamesOf bindings } }
 
