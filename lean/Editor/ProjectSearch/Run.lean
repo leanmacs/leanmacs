@@ -1,12 +1,12 @@
 import Editor.Api
 import Editor.Command.Call
-import Editor.Evil.Motions
-import Editor.Files
 import Editor.Grep
 import Editor.Job
-import Editor.Jumps.Go
+import Editor.Jumps
 import Editor.ProjectSearch
-import Editor.Workspace.FindFile
+import Editor.SearchRoot
+import Editor.Text.Word
+import FilesApi
 
 /-!
 # `project-search`
@@ -24,7 +24,7 @@ port (`Editor/Grep.lean`).
 of `/`.
 
 - **What is searched** is decided as `find-file-in-workspace` decides it
-  (`Workspace.FindFile.searched`): the location's workspace, else the
+  (`Workspace.searchRoot`, the core's, `Editor/SearchRoot.lean`): the location's workspace, else the
   workspace of the buffer of the window it was called with, else the
   directory a command run for that buffer would use; a location that cannot
   read files and run commands is refused, naming `project-search`.
@@ -73,12 +73,15 @@ windows on two matches.
 
 ## Loading
 
-The load job loads its files in order (`File.load`, under `Files.limit`).
-Its command takes each loaded file into a buffer shown nowhere
-(`Files.adopt`, as the review takes in a file) and places it as an open
+The load job loads its files in order (`File.load`, under `files-api`'s
+`FilesApi.loadLimit`). Its command takes each loaded file into a buffer
+shown nowhere, through the files implementation's `adopt` (`files-api`,
+`FilesApi.files?`, as the review takes in a file), and places it as an open
 buffer is placed, at its slot in walk order, so a load that finishes after a
 later delivery's open file was placed does not reorder the results. A
-refused load is dropped and said (`cannot open <path>: ...`); a file whose
+refused load is dropped and said (`cannot open <path>: ...`,
+`FilesApi.notOpened`); with no files implementation each loaded file is
+dropped, and the search says `FilesApi.noImplementation` once a delivery; a file whose
 text holds no match once loaded is dropped. A file that is no longer
 pending in the record (the results were rebuilt by another search) is left
 alone.
@@ -169,8 +172,8 @@ def Order.ofArguments? : List Argument → Option Order
 the first text when there is no location. -/
 def patternOf (arguments : List Argument) : String :=
   match Location.of? arguments with
-  | some (_, rest) => Workspace.FindFile.typedOf rest
-  | none => Workspace.FindFile.typedOf arguments
+  | some (_, rest) => Workspace.typedOf rest
+  | none => Workspace.typedOf arguments
 
 /-- Whether `path` is under the directory `root`. -/
 def under (root path : String) : Bool :=
@@ -249,8 +252,7 @@ def command (call : Call) : EditorM Unit := do
     unless answer.trimAscii.isEmpty do
       run call root label answer
   | _ =>
-    let (settings, _) ← RegistryRequest.ask .workspaceSettings
-    match Workspace.FindFile.searched (← editorState) settings call name with
+    match Workspace.searchRoot (← editorState) call name with
     | .error said =>
       message said
     | .ok searched =>
@@ -348,7 +350,7 @@ def LoadOrder.ofArguments? : List Argument → Option LoadOrder
   | _ => none
 
 /-- The command a finished load hands the loop ("Loading", in the module
-docs): each file loaded taken into a buffer shown nowhere (`Files.adopt`)
+docs): each file loaded taken into a buffer shown nowhere (`FilesApi.files?`'s `adopt`)
 and placed, each refused load dropped and said, while the results buffer is
 there and the file still pending in its record. -/
 def loaded (order : LoadOrder) (loads : Array (Nat × String × Except FileError File.Loaded)) :
@@ -357,6 +359,8 @@ def loaded (order : LoadOrder) (loads : Array (Nat × String × Except FileError
   let some record := recordOf (← editorState) results | return
   let mut record := record
   let wasEmpty := record.files.all fun file => !(file.state matches .placed ..)
+  let files ← FilesApi.files?
+  let mut unsaid := true
   for (sequence, path, reply) in loads do
     let pendingHere :=
       record.files.any fun file =>
@@ -366,9 +370,15 @@ def loaded (order : LoadOrder) (loads : Array (Nat × String × Except FileError
     match reply with
     | .error error =>
       record := record.set sequence .dropped
-      message s!"{name}: {Files.notOpened path error}"
+      message s!"{name}: {FilesApi.notOpened path error}"
     | .ok loaded =>
-      match ← Files.adopt path loaded with
+      let some files := files |
+        record := record.set sequence .dropped
+        if unsaid then
+          message (FilesApi.noImplementation name)
+          unsaid := false
+        continue
+      match ← files.adopt path loaded none with
       | some buffer =>
         record ← place results record sequence path buffer
       | none =>
@@ -380,14 +390,14 @@ def loaded (order : LoadOrder) (loads : Array (Nat × String × Except FileError
         Jumps.placeCursor window.id 0
 
 /-- The load job: loads each file of its order, in order, unless it is longer
-than `Files.limit` bytes, and finishes with what the loads come to
+than `FilesApi.loadLimit` bytes, and finishes with what the loads come to
 (`loaded`). It fails only for arguments that are not a load order. -/
 def loadWork (arguments : List Argument) : Work := fun _ => do
   let some order :=
     LoadOrder.ofArguments? arguments | throw s!"{loadJob}: its arguments are not a load order"
   let mut loads := #[]
   for (sequence, path) in order.files do
-    loads := loads.push (sequence, path, ← File.load path Files.limit)
+    loads := loads.push (sequence, path, ← File.load path FilesApi.loadLimit)
   return loaded order loads
 
 /-- `project-search-found` ("The job and the deliveries", in the module
@@ -485,13 +495,14 @@ def visitCommand (call : Call) : EditorM Unit := do
 
 /-- `project-search-symbol` ("The command", in the module docs): searches
 the word under the cursor as a whole word, the pattern `*` builds
-(`Evil.starPattern`), where `project-search` would search. -/
+(`Text.Word.wholePattern`, the core's, as Vim's `*` builds it), where
+`project-search` would search. -/
 def symbolCommand (call : Call) : EditorM Unit := do
   let selection ← call.target.selection
-  let some range := selection.ranges[selection.primary]? | message Evil.noStringUnderCursor
-  let cells ← (Evil.lineCells call.target.buffer.text range.head : TextM (Array (Nat × String)))
-  let some (_, word) := Evil.starWord cells range.head | message Evil.noStringUnderCursor
-  command { call with arguments := [.str (Evil.starPattern word)] }
+  let some range := selection.ranges[selection.primary]? | message Text.Word.noneUnderCursor
+  let cells ← (Text.Word.cells call.target.buffer.text range.head : TextM (Array (Nat × String)))
+  let some (_, word) := Text.Word.underCursor cells range.head | message Text.Word.noneUnderCursor
+  command { call with arguments := [.str (Text.Word.wholePattern word)] }
 
 /-- The results buffer's mode: the scheme's activate key (`RET` in the Vim
 scheme's normal state) visits the match under the cursor. -/

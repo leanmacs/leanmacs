@@ -1,4 +1,5 @@
 import Editor.WorkingSet.Compiled
+import FilesApi
 import ModelTest.Check
 import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
@@ -246,7 +247,7 @@ def workingSetDiskChecks : List Check :=
           | some driver =>
             let added := addedOn (opened driver "d.txt") "2 G"
             let edited := evilFed added s!"g g O {typed "top"} <Escape>"
-            let saved := ran edited Files.saveName
+            let saved := ran edited FilesApi.saveName
             let gone := closed saved "d.txt"
             (storedDemo added).map (·.start.line) == #[2] &&
               (storedDemo saved).map (·.start.line) == #[3] &&

@@ -12,7 +12,10 @@ import Editor.ProjectSearch.Compiled
 import Editor.ProjectSearch.Run
 import Editor.Scene
 import Editor.State
+import Editor.Test.Hosted
 import Editor.WindowCommands.Compiled
+import FilesApi
+import FilesApiTest.Fake
 import ModelTest.Check
 import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
@@ -67,7 +70,9 @@ def registrations : Array Config.Registration :=
 
 /-- Evil's keys with the commands of the checks, and project search's mode
 registered, as a host's registry holds it: its roles on their keys in the
-results buffer, and its name known to the loop that sets it. -/
+results buffer, and its name known to the loop that sets it; and the
+extension points as `files-api`'s fake registers them, so a loaded file is
+taken in through its `FilesApi.Files` value. -/
 def searchKeys : Loop.Keys Vim.Default.scheme :=
   let handed := evilHanded registrations
   let registry :=
@@ -78,7 +83,8 @@ def searchKeys : Loop.Keys Vim.Default.scheme :=
     registered :=
       { handed.registered with
         entering := fun name =>
-          (ProjectSearch.package.registered.modes.find? (·.name == name)).map ([·]) } }
+          (ProjectSearch.package.registered.modes.find? (·.name == name)).map ([·])
+        extensions := (Test.hostedRegistry #[FilesApiTest.fake]).extensionsAt } }
 
 /-- The jobs of the checks: project search's. -/
 def jobs (name : String) : Option (List Argument → Work) :=
@@ -290,6 +296,19 @@ def projectSearchRunChecks : List Check :=
               shownName done == some results &&
               windows == 1 &&
               done.loop.state.echo == "project-search: 4 matches in 3 files" },
+    { name :=
+        "with no files implementation, a file no buffer holds is dropped from the results, nothing takes it in, and the search says it has no files implementation"
+      run :=
+        pure <|
+          match loadDriver with
+          | none => false
+          | some driver =>
+            let bare := { driver with keys := Test.withoutExtension FilesApi.Files driver.keys }
+            let done := searched bare
+            let echoes := done.model.display.scenes.map (·.echo)
+            excerptRead done results == some ("x needle\nyy\n" ++ "\n" ++ "needle d\n") &&
+              (done.loop.state.findBuffer "b.txt").isNone &&
+              echoes.contains (FilesApi.noImplementation ProjectSearch.name) },
     { name := "a file whose text holds no match once it is loaded is dropped"
       run :=
         pure <|

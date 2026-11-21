@@ -7,6 +7,7 @@ import Editor.Invocation
 import Editor.Job.Runner
 import Editor.Loop
 import Editor.ProjectSearch.Compiled
+import Editor.Test.Hosted
 import Editor.Test.Linked.Rig
 
 /-!
@@ -51,7 +52,8 @@ def searchExtras : Array Config.Registration :=
           discard <| id.replaceRange at' (at' + 6) "pin" }]
 
 /-- The keys of the checks: none bound; the commands by name; the jobs
-registered. -/
+registered; and the extension points as the files feature registers them,
+so a loaded file is taken in through its `FilesApi.Files` value. -/
 def searchKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
       ((Files.package.registered.commands ++ ProjectSearch.package.registered.commands ++
@@ -64,7 +66,9 @@ def searchKeys : Loop.Keys TestScheme.scheme :=
             run call
             return none
         | _ => none
-    registered := { jobs := fun name => searchJobs.any (·.name == name) } }
+    registered :=
+      { jobs := fun name => searchJobs.any (·.name == name)
+        extensions := (Editor.Test.hostedRegistry #[Files.package]).extensionsAt } }
 
 /-- The checks of project search over the real bindings
 (`Editor/ProjectSearch/Run.lean`), in a fresh temporary directory: a
