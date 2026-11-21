@@ -3,12 +3,14 @@ import Compile.Errors
 import Editor.Api
 import Editor.Command.Call
 import Editor.File
+import Editor.Jumps
 import Editor.Mode
 import Editor.ProjectMode
 import Editor.ProjectMode.Format
 import Editor.ProjectMode.Listing
-import Editor.Shell
-import Editor.Workspace.Modes
+import Editor.Workspace
+import FilesApi
+import ShellApi
 
 /-!
 # The compile mode: `compile` into a workspace's compilation buffer
@@ -207,13 +209,18 @@ first. Three commands visit a location and make it the current one:
   buffer` (`gotoCommand`).
 - **A visit** (`visitLocation`) makes the location current, puts the
   cursor of every view of the kept compilation buffer at the start of the
-  location's first row, and visits its file (`Files.visit`) at its line
+  location's first row, and visits its file through the files
+  implementation's `visit` (`files-api`, `FilesApi.files?`), recording a
+  jump, at its line
   and column, both as printed: row `line - 1` and the column less the
   format's column base, in characters, or the row's start with no column.
   The visiting view (`visitingView`) is the asking view, unless that shows
   the scope's compilation buffer: then the first other view that is not
   the minibuffer's, else a new view split from the asking one, placed as
-  the layout places a split, else the asking view.
+  the layout places a split, else the asking view. With no files
+  implementation the location is made current all the same, and the
+  command says `FilesApi.noImplementation` under its name and visits
+  nothing.
 - **Focus.** `compile-goto-error` focuses the visiting view, as Emacs's
   `RET`; `next-error` and `previous-error` asked from a compilation buffer
   (by the ex line) keep the focus there, as Emacs's
@@ -1150,9 +1157,10 @@ def visitingView (asking : ViewId) (compilation : Option BufferId) : EditorM Vie
 `asking` ("Stepping", in the module docs): it becomes the current location,
 every view of the kept compilation buffer has its cursor put at the start of
 the location's first row, and its file is visited at its line and column in
-the visiting view (`visitingView`), which is focused with `focus`. -/
-def visitLocation (asking : ViewId) (place : Place) (record : Record) (index : Nat) (focus : Bool) :
-    EditorM Unit := do
+the visiting view (`visitingView`), which is focused with `focus`. With no
+files implementation it says so under `name`, the command's. -/
+def visitLocation (name : String) (asking : ViewId) (place : Place) (record : Record) (index : Nat)
+    (focus : Bool) : EditorM Unit := do
   let some site := record.locations[index]? | return
   setRecord place { record with current := some index }
   let state ← editorState
@@ -1162,9 +1170,10 @@ def visitLocation (asking : ViewId) (place : Place) (record : Record) (index : N
       let offset ← text.offsetOf ⟨site.first, 0⟩
       for view in viewsOf state id do
         Jumps.placeCursor view offset
+  let some files ← FilesApi.files? | message (FilesApi.noImplementation name)
   let visiting ← visitingView asking compilation
-  Files.visit visiting site.file
-      { row := site.line - 1, column := (site.column.map (· - site.columnBase)).getD 0 } focus
+  files.visit visiting site.file
+      { row := site.line - 1, column := (site.column.map (· - site.columnBase)).getD 0 } focus true
 
 /-- `next-error` (`forward`) and `previous-error` ("Stepping", in the module
 docs), registered under `name`: one location on in the list of the focused
@@ -1188,7 +1197,7 @@ def stepCommand (name : String) (forward : Bool) (call : Call) : EditorM Unit :=
       | _ => none
   match index with
   | some index =>
-    visitLocation call.target.window.id scope.place record index false
+    visitLocation name call.target.window.id scope.place record index false
   | none =>
     message (if forward then noMore scope.label else noEarlier scope.label)
 
@@ -1208,7 +1217,7 @@ def gotoCommand (call : Call) : EditorM Unit := do
   let row := (← call.target.buffer.text.pointOf head).row
   match record.locations.findIdx? fun site => site.first ≤ row && row ≤ site.last with
   | some index =>
-    visitLocation call.target.window.id scope.place record index true
+    visitLocation gotoName call.target.window.id scope.place record index true
   | none =>
     message noLocationHere
 

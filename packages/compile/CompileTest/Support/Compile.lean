@@ -158,7 +158,8 @@ def compileKeysOf (bindings : List (String × Invocation)) : Loop.Keys TestSchem
         exNames := compileExBindings.map (·.name)
         -- The files feature runs `files-api`'s hook `FilesApi.Opened` once a
         -- buffer holds a file: the workspace's attach is registered there.
-        extensions := (hostedRegistry #[workspaceAttachPackage]).extensionsAt } }
+        -- A location is visited through the files' `FilesApi.Files` value.
+        extensions := (hostedRegistry #[workspaceAttachPackage, Files.package]).extensionsAt } }
 
 /-- `driver` once every post is delivered and every pending job finished,
 oldest first, a post before a job's end; bounded. -/

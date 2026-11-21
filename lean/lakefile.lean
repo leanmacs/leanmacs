@@ -87,6 +87,17 @@ over the core's API (`BuffersApiTest.Fake`), and its contract check
 (`BuffersApiTest.Contract`). -/
 lean_lib BuffersApiTest where globs := #[.submodules `BuffersApiTest]
 
+/-- The interface library `shell-api` (`ShellApi.lean`): the names of the
+shell's commands, which ex binds `:!` to, and the history of the lines run,
+which ex's prompt offers and the compile mode copies. Staged here as `VcApi`
+is, until ex moves out of the core (phase 8). -/
+lean_lib ShellApi
+
+/-- The test library of `shell-api` (`ShellApiTest/`): its fake, the three
+commands over the core's API with a `shell-command` that records its line
+(`ShellApiTest.Fake`), and its contract check (`ShellApiTest.Contract`). -/
+lean_lib ShellApiTest where globs := #[.submodules `ShellApiTest]
+
 /-- The interface library `project-api` (`ProjectApi.lean`): reaching the
 workspace at a path, what a caller hands the reach, and the names others
 reach. Staged here as `VcApi` is. -/
@@ -1170,7 +1181,7 @@ the features still in the core, so the bundle ships them as it ships
 `Editor`. One moves out of this list when it moves to `packages/`. -/
 def stagedInterfaceLibraries : List Lean.Name :=
   [`VcApi, `VcApiTest, `FilesApi, `FilesApiTest, `BuffersApi, `BuffersApiTest, `ProjectApi,
-    `ProjectApiTest]
+    `ProjectApiTest, `ShellApi, `ShellApiTest]
 
 /-- Whether a library of `pkg` ships its modules built in the bundle
 (`editorShipped`): of the core, `Editor` and `EditorCore`, the libraries

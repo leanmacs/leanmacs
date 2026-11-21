@@ -49,6 +49,7 @@ import Editor.Text.Real
 import Editor.Watch
 import Editor.Workspace.Compiled
 import Editor.Workspace.FindFile
+import ShellApi
 
 /-!
 # Config tests: the benchmark

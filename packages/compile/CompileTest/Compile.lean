@@ -831,6 +831,19 @@ def compileLocationChecks : List Check :=
               headsOf past ⟨0⟩ == headsOf fourth ⟨0⟩ &&
               echoOf unstepped == some "next-error: no locations in r@main" },
     { name :=
+        "with no files implementation, next-error makes the first location current and says so under its name, and visits no file"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let bare := { ran with keys := Test.withoutExtension FilesApi.Files ran.keys }
+            let stepped := drained (pressedOn bare "C-k n")
+            echoOf stepped == some (FilesApi.noImplementation Compile.nextName) &&
+              currentOf stepped placeR == some 0 &&
+              fileOf stepped ⟨0⟩ == fileOf ran ⟨0⟩ },
+    { name :=
         "locations criterion 5: with compilations in two worktrees of one repository, next-error in a buffer of each visits that workspace's own first location, in its own checkout's file"
       run :=
         pure <|

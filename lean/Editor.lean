@@ -9,8 +9,10 @@ import Editor.Evil.Scroll
 import Editor.Evil.Theorems
 import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
+import Editor.Files
 import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
+import Editor.Shell
 import Editor.TabCommands
 import Editor.Themes
 import Editor.VersionControl.Commit
@@ -101,8 +103,9 @@ command line is here too (`Editor/Ex.lean`, with an ex line as data in
 handed the target it was called with, and `setup` binds an ex name to a command with `exCommand`
 (`Editor/Setup.lean`). The registrations of the ex line's commands and the
 ex names that ship (`Editor/Ex/Compiled.lean`) are not imported. The file
-commands come with `Editor/Ex.lean`, whose save-and-quit command calls
-`Files.save`. The buffer commands are here too (`Editor/Buffers.lean`):
+commands are imported here (`Editor/Files.lean`): the ex line reaches them
+through `files-api` since the features-as-packages roadmap's phase 6, so
+they no longer come with it. The buffer commands are here too (`Editor/Buffers.lean`):
 `Buffers.switchCommand`, `Buffers.listCommand` and `Buffers.closeCommand`,
 which switch a window to another buffer, list the open buffers and close
 one; their registrations (`Editor/Buffers/Compiled.lean`) are not
@@ -238,7 +241,8 @@ comes with the attach). Its model and its contract
 (`Editor/Workspace/Model.lean`, `Editor/Workspace/Contract.lean`) are for
 tests, and are not imported.
 
-`:!` is here too (`Editor/Shell.lean`, which comes with the ex line): a
+`:!` is here too (`Editor/Shell.lean`, imported here: the ex line reaches
+it through `shell-api`, `ShellApi.lean`, since phase 6): a
 shell command run in the buffer's workspace as a job, and what comes of it
 said in the echo area or shown in the workspace's output buffer. Its
 registrations (`Editor/Shell/Compiled.lean`) name the registry and are not

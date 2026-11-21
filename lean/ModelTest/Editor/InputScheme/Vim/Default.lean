@@ -9,7 +9,6 @@ import Editor.InputScheme.Vim.Default
 import Editor.Keymap
 import Editor.Role
 import Editor.Scene
-import Editor.Shell
 import Editor.TabCommands
 import Editor.TabCommands.Compiled
 import Editor.Test.AtPoint
@@ -20,6 +19,7 @@ import Editor.WindowCommands
 import Editor.WindowCommands.Compiled
 import ModelTest.Check
 import ModelTest.Support.Vim
+import ShellApi
 
 /-!
 # Model tests: `Editor/InputScheme/Vim/Default.lean`
@@ -135,7 +135,7 @@ def vimDefaultChecks : List Check :=
         pure
           ((vimDefaultCommand "C-g").map
               (fun command => (command.name, command.changes, command.enters)) ==
-            some (Shell.interruptName, false, none)) },
+            some (ShellApi.interruptName, false, none)) },
     { name := "every row of each default table binds its keys, and no table is empty"
       run :=
         pure <|

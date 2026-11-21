@@ -1,8 +1,8 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.Ex.Line
-import Editor.Shell
 import FilesApi
+import ShellApi
 
 /-!
 # The ex command line
@@ -33,7 +33,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
 - **The prompt's candidates are the `:!` lines of the buffer's scope, then
   the ex names that are bound**: the history of the asking buffer's project,
   or the editor-wide one for a buffer outside any workspace, newest first
-  (`Shell.history`, `Editor/Shell.lean`), then the bound names (`exNames`,
+  (`Shell.history`, `shell-api`'s, `ShellApi.lean`), then the bound names (`exNames`,
   `Editor/Api.lean`), which the loop answers from the registry as it is
   when the line is asked for. So while a line is being typed the scene
   lists the lines and names it matches, a key of the minibuffer chooses
@@ -61,7 +61,9 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
      runs; so is a range alone, which in Vim goes to a line
      (`rangeAlone`);
   2. **a line of the bang form** (`:!cmd`, `Line.bang`) is handed to the
-     shell (`Editor/Shell.lean`). With no range, the command
+     shell, by the names of the interface library `shell-api`
+     (`ShellApi.lean`; the shell, `Editor/Shell.lean`, implements it). With
+     no range, the command
      `shell-command` is asked to run after this one with the text after
      the `!` and the line, trimmed (`invoke`). With a range, `:{range}!cmd`,
      the range is resolved against the view the line was asked from
@@ -69,7 +71,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
      line, `$` its buffer's last (`linesOf`). A range that resolves to no
      lines is said, `<line>: ` and why; otherwise `shell-filter` is asked
      to run with the first and the last line, the text and the line. `:!`
-     with nothing after it is said (`Shell.noCommand`). No binding is asked
+     with nothing after it is said (`ShellApi.noCommand`). No binding is asked
      of a bang line;
   3. the command asks which command the name is bound to (`exBinding`),
      which the loop answers from the registry as it is at this step. A
@@ -249,9 +251,9 @@ def run (target : Target) (line : String) : EditorM Unit := do
   if parsed.bang then
     match parsed.range, parsed.argument with
     | _, none =>
-      message Shell.noCommand
+      message ShellApi.noCommand
     | none, some text =>
-      invoke { command := Shell.commandName, arguments := [.str text, .str typed] }
+      invoke { command := ShellApi.commandName, arguments := [.str text, .str typed] }
     | some range, some text =>
       let (count, current) ← linesOf target
       match range.resolve current count with
@@ -259,7 +261,7 @@ def run (target : Target) (line : String) : EditorM Unit := do
         message s!"{typed}: {why}"
       | .ok (first, last) =>
         invoke
-            { command := Shell.filterName
+            { command := ShellApi.filterName
               arguments := [.nat first, .nat last, .str text, .str typed] }
     return
   if parsed.range.isSome then

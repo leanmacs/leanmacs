@@ -1,7 +1,8 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.File
-import Editor.Files
+import Editor.Job
+import ShellApi
 
 /-!
 # `:!`, in the buffer's workspace
@@ -134,6 +135,11 @@ resolves the range against the view it was asked from (`Range.resolve`,
   another revision is dropped, `<line>: dropped: the buffer changed while
   it ran`.
 
+The names others reach the shell by, and its history (`Scope`,
+`historyStore`, `history`, `remember`, `record`), are the interface library
+`shell-api`'s (`ShellApi.lean`), in this namespace, so ex and the compile
+mode reach them without this module.
+
 Pinned by `ModelTest.shellChecks`, on the loop's driver over the editor's
 models, the job model and the process model, and over the real process
 service by `ContractTest.shellChecks`.
@@ -141,9 +147,10 @@ service by `ContractTest.shellChecks`.
 
 namespace Editor.Shell
 
-/-- The name the command that runs a shell command is registered under. -/
+/-- The name the command that runs a shell command is registered under:
+`shell-api`'s (`ShellApi.commandName`). -/
 def commandName : String :=
-  "shell-command"
+  ShellApi.commandName
 
 /-- The name the job that runs the child is registered under. -/
 def runJob : String :=
@@ -157,51 +164,11 @@ def defaultTimeLimit : Nat :=
 def outputLimit : Nat :=
   16 * 1024 * 1024
 
-/-- How many lines a scope's history keeps. -/
-def historyLimit : Nat :=
-  100
-
 /-! ## The scope and its stores -/
-
-/-- Where a run belongs: a workspace and its project, or outside any. -/
-inductive Scope where
-  /-- The focused buffer's workspace and its project. -/
-  | workspace (workspace : Workspace) (project : Project)
-  /-- The buffer has no workspace, and so no project. -/
-  | outside
-  deriving DecidableEq, Repr
-
-/-- The scope of the buffer `buffer` in `state`. -/
-def Scope.of (state : EditorState) (buffer : BufferId) : Scope :=
-  match state.workspaceOf? buffer with
-  | some (found, project) => .workspace found project
-  | none => .outside
-
-/-- The location of a scope's workspace, `none` outside any. -/
-def Scope.location? : Scope → Option Location
-  | .workspace found _ => some found.location
-  | .outside => none
-
-/-- The job key of the scope whose workspace is at `location`, or of the one
-outside any workspace ("The scope", in the module docs). -/
-def keyOf : Option Location → String
-  | some location => s!"shell {location.describe}"
-  | none => "shell outside"
 
 /-- The scope's job key (`keyOf`). -/
 def Scope.jobKey (scope : Scope) : String :=
   keyOf scope.location?
-
-/-- The ex lines run in a scope, newest first, each once. -/
-def historyStore : Store (Array String) :=
-  { name := "shell-history", version := 1, initial := #[]
-    encode := fun lines => .list (lines.toList.map .str)
-    decode := fun
-      | .list items =>
-        items.toArray.mapM fun
-          | .str line => some line
-          | _ => none
-      | _ => none }
 
 /-- An optional number as a tree: `null` for none. -/
 def optionalNat : Store (Option Nat) :=
@@ -240,29 +207,6 @@ def scopedValue {α : Type} (state : EditorState) (store : Store α) : Option Lo
 def setScoped {α : Type} (store : Store α) (value : α) : Option Location → EditorM Unit
   | some location => discard <| Workspace.set store location value
   | none => Workspace.setUnscoped store value
-
-/-- The history of the buffer `buffer`'s scope: its project's, or the
-unscoped store's ("The scope", in the module docs). -/
-def history (state : EditorState) (buffer : BufferId) : Array String :=
-  match Scope.of state buffer with
-  | .workspace _ project => state.workspaces.getOfProject historyStore project.identity
-  | .outside => state.workspaces.getUnscoped historyStore
-
-/-- `lines` with `line` first, and no other copy of it, cut at
-`historyLimit`. -/
-def remember (line : String) (lines : Array String) : Array String :=
-  (#[line] ++ lines.filter (· != line)).extract 0 historyLimit
-
-/-- Records `line` in the history of `scope`: its project's, or the unscoped
-store's. -/
-def record (scope : Scope) (line : String) : EditorM Unit := do
-  let state ← editorState
-  match scope with
-  | .workspace _ project =>
-    let lines := state.workspaces.getOfProject historyStore project.identity
-    discard <| Project.set historyStore project.identity (remember line lines)
-  | .outside =>
-    Workspace.setUnscoped historyStore (remember line (state.workspaces.getUnscoped historyStore))
 
 /-! ## The order -/
 
@@ -358,9 +302,10 @@ def Order.command (order : Order) : Process.Command :=
 
 /-! ## What is said -/
 
-/-- What the echo area says for `:!` with nothing after it. -/
+/-- What the echo area says for `:!` with nothing after it: `shell-api`'s
+(`ShellApi.noCommand`). -/
 def noCommand : String :=
-  "!: no command"
+  ShellApi.noCommand
 
 /-- What the echo area says when the workspace `workspace`'s location cannot
 run commands. -/
@@ -478,9 +423,9 @@ def command (call : Call) : EditorM Unit := do
     message noCommand
 
 /-- The name the command that filters lines through a shell command is
-registered under. -/
+registered under: `shell-api`'s (`ShellApi.filterName`). -/
 def filterName : String :=
-  "shell-filter"
+  ShellApi.filterName
 
 /-- `shell-filter`: filters the lines from the first of its arguments to the
 second, numbers from 1 the ex line resolved, through the shell text that is
@@ -561,9 +506,9 @@ def finished (order : Order) (reply : Except ProcessError Process.Ran) : EditorM
     message (filteredText filter.lines)
 
 /-- The name the interrupt command is registered under: the Vim scheme binds
-`C-g` to it. -/
+`C-g` to it. `shell-api`'s (`ShellApi.interruptName`). -/
 def interruptName : String :=
-  "keyboard-quit"
+  ShellApi.interruptName
 
 /-- What the interrupt command says with nothing running in the scope. -/
 def quitText : String :=

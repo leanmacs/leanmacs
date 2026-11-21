@@ -33,9 +33,11 @@
 # layers"): it declares no `keywords`, so no package may import its modules,
 # and the layer imports check holds it to that (tools/layer-imports-check.sh).
 #
-# It imports two features that are still core modules, the shell
-# (`Editor.Shell`) and the workspace's modes (`Editor.Workspace.Modes`).
-# When either moves into a package, this one requires that package.
+# It requires no feature. It reaches the shell's history through the core's
+# interface library `shell-api` (`ShellApi`), visits a location's file
+# through `files-api` (`FilesApi`), and reads a buffer's on-modes from the
+# core (`Workspace.onModesOf`, `Editor.ProjectMode.Listing`), since the
+# features-as-packages roadmap's phase 6.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/compile update --keep-toolchain

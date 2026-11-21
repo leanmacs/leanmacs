@@ -1,6 +1,6 @@
 import Editor.Restore.Value
-import Editor.Shell
 import ModelTest.Check
+import ShellApi
 
 /-!
 # Model tests: `Editor/Restore/Value.lean`

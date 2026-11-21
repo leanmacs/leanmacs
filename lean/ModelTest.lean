@@ -192,6 +192,7 @@ import ModelTest.Editor.Workspace.Reach
 import ModelTest.EditorCore.EditorPackage
 import ModelTest.FilesApi
 import ModelTest.ProjectApi
+import ModelTest.ShellApi
 import ModelTest.VcApi
 import ModelTest.VcApiTest.Contract
 import ModelTest.VcApiTest.Fake
@@ -1222,6 +1223,12 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   its names; its fake (`BuffersApiTest.fake`, a close over the core's API)
   keeps its contract; the contract fails a package lacking `close-buffer`
   and one whose close runs no hook;
+- `shellApiChecks`: the interface library `shell-api` (`ShellApi.lean`): its
+  names and the history's store; its fake (`ShellApiTest.fake`, the three
+  commands over the core's API, `shell-command` recording its line) keeps
+  its contract; the contract fails a package lacking `keyboard-quit`, one
+  that registers no codec for the history, and one whose `shell-command`
+  records nothing; and `remember`'s rule;
 - `projectApiChecks`: the interface library `project-api` (`ProjectApi.lean`):
   its names; its fake (`ProjectApiTest.fake`, a `Workspaces` value that
   hands every continuation a given workspace) keeps its contract; the
@@ -1766,6 +1773,7 @@ def checks : List Check :=
     vcApiChecks ++
     filesApiChecks ++
     buffersApiChecks ++
+    shellApiChecks ++
     projectApiChecks ++
     versionControlGitChecks ++
     versionControlWorktreeGitChecks ++
