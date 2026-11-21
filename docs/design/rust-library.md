@@ -733,8 +733,9 @@ C functions are `crates/editor-ffi/src/watches.rs`.
     returned from the port (registered and completed, refused and
     completed, or cancelled and what it registered dropped); at once when
     no start is in flight. A start leaves `Starting` before its completion
-    is queued, so each start holds a ticket until its thread has finished
-    and a flush and shutdown wait on the tickets. A start's thread, after
+    is queued, so each start holds a ticket until then and a flush waits
+    on the tickets; shutdown waits for every start's thread to finish, its
+    flushes completed. A start's thread, after
     its own completion, completes each flush it was the last thing for, in
     the order asked, and shutdown completes the rest. **A pending
     read is not covered**: it waits on the disk, not on the service.

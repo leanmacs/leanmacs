@@ -1370,15 +1370,13 @@ impl<P: Processes + 'static> Inner<P> {
     }
 
     /// Ends a thread that holds `ticket` to its end: the ticket is done,
-    /// shutdown is told, and each flush it was the last thing for is
-    /// completed.
+    /// each flush it was the last thing for is completed, and only then is
+    /// shutdown told, so it returns with every flush it covers completed.
     fn end(&self, ticket: u64) {
-        let mut state = self.state();
-        state.active -= 1;
-        let flushed = state.settle(ticket);
-        drop(state);
-        self.finished.notify_all();
+        let flushed = self.state().settle(ticket);
         self.complete_all(flushed);
+        self.state().active -= 1;
+        self.finished.notify_all();
     }
 
     /// The streaming child `id`'s thread, its waiter: the module docs'

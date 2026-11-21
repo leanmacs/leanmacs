@@ -76,8 +76,9 @@
 //!   every watch and every start in flight, and drops every registration,
 //!   in one step, so a start held in the port does not keep the live
 //!   watches' registrations; then waits for every start's thread to
-//!   finish, each dropping what it registered. It is
-//!   idempotent, and dropping the last handle of a service does it.
+//!   finish, each dropping what it registered and completing the flushes
+//!   it was the last thing for. It is idempotent, and dropping the last
+//!   handle of a service does it.
 //! - **Locks**: a registration is never dropped, and the closure never
 //!   called, while the service's lock is held. A registration is taken out
 //!   under the lock and dropped after it is released: an adapter's drop may
@@ -85,12 +86,12 @@
 //! - **Threads**: one timer thread for the service, a short-lived one for
 //!   each start, and the adapter's for each registration.
 //! - **A flush is a barrier** ([`Service::flush`]): a wait of the
-//!   caller's, completed once the thread of every start asked before it
-//!   has finished: registered or refused and its completion queued, or
-//!   cancelled and what it registered dropped. A start leaves `Starting`
-//!   before then, so the flush waits on a ticket each start holds until
-//!   its thread finishes, not on the watch. It is completed at once, on
-//!   the caller's thread, when no start's thread is running. A start's
+//!   caller's, completed once every start asked before it is done:
+//!   registered or refused and its completion queued, or cancelled and
+//!   what it registered dropped. A start leaves `Starting` before then, so
+//!   the flush waits on a ticket each start holds until it is done, not on
+//!   the watch. It is completed at once, on the caller's thread, when no
+//!   start holds a ticket. A start's
 //!   thread, after its own completion, completes each flush it was the
 //!   last thing for, in the order they were asked; shutdown, which waits
 //!   for every start's thread, completes the rest.
@@ -227,11 +228,14 @@ struct State<R> {
     registrations: HashMap<Key, Shared<R>>,
     /// The next registration's serial.
     serial: u64,
-    /// The ticket of each start whose thread has not finished: it has yet
-    /// to come back from the port, drop what it registered if it was
-    /// cancelled, and queue its completion if it was not. A start leaves
-    /// `watches` before then, so a flush and shutdown wait on these.
+    /// The ticket of each start not yet done: it has yet to come back from
+    /// the port, drop what it registered if it was cancelled, and queue its
+    /// completion if it was not. A start leaves `watches` before then, so a
+    /// flush waits on these.
     starts: HashSet<u64>,
+    /// How many starts' threads have not finished: done, and each flush
+    /// they were the last thing for completed. Shutdown waits for none.
+    active: usize,
     /// The next start's ticket. A ticket, not the start's id, since the id
     /// of a cancelled start is free again before its thread is done.
     tickets: u64,
@@ -373,6 +377,7 @@ impl<W: Watch, C: Clock> Service<W, C> {
                 registrations: HashMap::new(),
                 serial: 0,
                 starts: HashSet::new(),
+                active: 0,
                 tickets: 0,
                 flushes: 0,
             }),
@@ -433,6 +438,7 @@ impl<W: Watch, C: Clock> Service<W, C> {
         let ticket = state.tickets;
         state.tickets += 1;
         state.starts.insert(ticket);
+        state.active += 1;
         drop(state);
         let starting = Arc::clone(inner);
         let started = thread::Builder::new()
@@ -442,6 +448,7 @@ impl<W: Watch, C: Clock> Service<W, C> {
         if !started {
             let mut state = inner.state();
             state.watches.remove(&id);
+            state.active -= 1;
             let flushed = state.settle(ticket);
             drop(state);
             inner.finished.notify_all();
@@ -616,8 +623,11 @@ impl<W: Watch, C: Clock> Inner<W, C> {
             (self.complete)(id);
         }
         let flushed = self.state().settle(ticket);
-        self.finished.notify_all();
         self.complete_all(flushed);
+        // Only now, so shutdown returns with every flush it covers
+        // completed.
+        self.state().active -= 1;
+        self.finished.notify_all();
     }
 
     /// Completes each of `waits`, in order, with no lock held.
@@ -819,7 +829,7 @@ impl<W: Watch, C: Clock> Inner<W, C> {
         // from the port, and drops what it registered itself.
         let mut state = self
             .finished
-            .wait_while(self.state(), |state| !state.starts.is_empty())
+            .wait_while(self.state(), |state| state.active > 0)
             .unwrap_or_else(PoisonError::into_inner);
         let flushed = state.take_every_flush();
         drop(state);
@@ -1715,9 +1725,9 @@ mod tests {
 
     /// Start 1 is cancelled while it is in the port, and its thread, back
     /// from the port, is held inside the drop of what it registered: a
-    /// flush asked now waits for that drop. Shutdown waits on the same
-    /// tickets (`State::starts`), so it too returns only once a cancelled
-    /// start has dropped what it registered.
+    /// flush asked now waits for that drop. Shutdown waits for the start's
+    /// thread to finish, after the drop, so it too returns only once a
+    /// cancelled start has dropped what it registered.
     #[test]
     fn a_flush_asked_while_a_cancelled_start_drops_its_registration_is_completed_after_the_drop() {
         let (fake, _ground, clock) = fake();
