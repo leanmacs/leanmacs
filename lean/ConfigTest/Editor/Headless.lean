@@ -1768,22 +1768,24 @@ wait 2" with
         let block ← IO.Promise.new
         let entered ← IO.mkRef false
         let stage ← Stage.new context context.elaborator (memorySource [])
-        let host ←
-          Headless.start (scheme := TestScheme.scheme)
-              { stage.collaborators with
-                emit := fun _ => do
-                  entered.set true
-                  discard <| IO.wait block.result? }
-        try
-          host.send .show
-          let inside ← eventually entered.get
-          let wait ← host.await 200
-          block.resolve ()
-          let stopped ← host.stop patience
-          return reloading && inside && wait == .unanswered && stopped
-        finally
-          block.resolve ()
-          discard <| host.halt patience },
+        Headless.withHost (scheme := TestScheme.scheme) (guard := patience)
+            { stage.collaborators with
+              emit := fun _ => do
+                entered.set true
+                discard <| IO.wait block.result? }
+            fun host => do
+            -- Let go before the bracket ends the loop, whatever the body
+            -- did: the bracket waits for the loop with no deadline.
+            try
+              host.send .show
+              let inside ← eventually entered.get
+              let wait ← host.await 200
+              block.resolve ()
+              let after ← host.await patience
+              return reloading && inside && wait == .unanswered &&
+                  (after == .settled || after == .ended)
+            finally
+              block.resolve () },
     { name :=
         "a scene directive asks for the last scene, and a commit directive commits the rest of its line"
       run :=
@@ -1965,15 +1967,11 @@ wait 2" with
     { name := "a window's close request with nothing unsaved ends the host's loop"
       run := do
         let stage ← Stage.new context context.elaborator (memorySource [])
-        let host ← Headless.start stage.collaborators
-        try
-          unless ← Event.post .closeRequested do
-            return false
-          let ended ← eventually (IO.hasFinished host.thread)
-          return ended && (← host.halt patience)
-        catch error =>
-          discard <| host.halt patience
-          throw error },
+        Headless.withHost stage.collaborators (guard := patience) fun host => do
+            unless ← Event.post .closeRequested do
+              return false
+            let ended ← eventually (IO.hasFinished host.thread)
+            return ended && (← host.halt patience) },
     { name := "each failure is described differently, and a settle's names its line"
       run :=
         let reloading := Headless.Failure.describe 30000 (.reloading (some 12))
@@ -2564,16 +2562,12 @@ def exScriptChecks (context : Context) : List Check :=
           let started := s!"job 1 {Files.loadJob}: started"
           let ran (name : String) : IO (Option (Headless.Wait × Array String)) := do
             let stage ← Stage.new context context.elaborator (memorySource []) compiled
-            let host ← Headless.start stage.collaborators
-            try
-              host.send (.run name)
-              let joined ← host.join patience
-              let halted ← host.halt patience
-              let output ← stage.output.get
-              return if halted then some (joined, output) else none
-            catch error =>
-              discard <| host.halt patience
-              throw error
+            Headless.withHost stage.collaborators (guard := patience) fun host => do
+                host.send (.run name)
+                let joined ← host.join patience
+                let halted ← host.halt patience
+                let output ← stage.output.get
+                return if halted then some (joined, output) else none
           let left ← ran s!"hand-{Ex.quitName}"
           let went ← ran "hand-other"
           return left == some (.ended, #[s!"run hand-{Ex.quitName}: ok"]) &&
@@ -2585,19 +2579,15 @@ def exScriptChecks (context : Context) : List Check :=
         "a wait on a host whose loop a command ended answers that the loop has ended, a settle and a join alike, which is no failure of a script, and halting the host then answers that it stopped"
       run := do
         let stage ← Stage.new context context.elaborator (memorySource []) exCompiled
-        let host ← Headless.start stage.collaborators
-        try
-          host.send (.run Ex.quitName)
-          let ended ← eventually (IO.hasFinished host.thread)
-          let awaited ← host.await patience
-          let joined ← host.join patience
-          return ended && awaited == .ended && joined == .ended &&
-              Headless.Wait.ended.failure (some 3) == none &&
-              (← host.halt patience) &&
-              (← stage.output.get) == #[s!"run {Ex.quitName}: ok"]
-        catch error =>
-          discard <| host.halt patience
-          throw error }]
+        Headless.withHost stage.collaborators (guard := patience) fun host => do
+            host.send (.run Ex.quitName)
+            let ended ← eventually (IO.hasFinished host.thread)
+            let awaited ← host.await patience
+            let joined ← host.join patience
+            return ended && awaited == .ended && joined == .ended &&
+                Headless.Wait.ended.failure (some 3) == none &&
+                (← host.halt patience) &&
+                (← stage.output.get) == #[s!"run {Ex.quitName}: ok"] }]
 
 /-- A config whose `greet` does not elaborate: a number where `message` takes
 a string, on its first line. -/

@@ -311,34 +311,31 @@ def fileChecks (context : Context) : List Check :=
             writeConfig config [("init.lean", openText files)]
             let stage ← Stage.overFiles context (Config.Directory.source config)
             let snapshots ← Ffi.Snapshot.live
-            let host ← Headless.start stage.collaborators
-            try
-              let ask (requests : List Headless.Request) : IO Unit := do
-                for request in requests do
-                  host.send request
-                unless ← host.settle patience do
-                  throw (IO.userError "the editor thread did not settle")
-              ask [.reload]
-              ask [.spawn "open"]
-              let opened ← host.join patience
-              ask [.spawn "missing"]
-              let missed ← host.join patience
-              ask [.show]
-              -- The loop delivered the job's command, so it has a frame: the
-              -- one snapshot more is the one its scene holds of the scratch
-              -- buffer's text, which is text 0.
-              let freed ← eventually (return (← Ffi.Snapshot.live) == snapshots + 1)
-              let stopped ← host.stop patience
-              return opened == .settled && missed == .settled && freed && stopped &&
-                  (← stage.collaborators.held.size) == 0 &&
-                  (← stage.output.get) ==
-                    #["reload 1: installed, 1 files, 0 commands", "spawn open: job 1",
-                      "job 1 open: ok", "spawn missing: job 2",
-                      "job 2 missing: failed: nothing is at the path", "commands:", "text 0: \"\"",
-                      "text 1: \"héllo\\n\""]
-            catch error =>
-              discard <| host.halt patience
-              throw error },
+            Headless.withHost stage.collaborators (guard := patience) fun host => do
+                let ask (requests : List Headless.Request) : IO Unit := do
+                  for request in requests do
+                    host.send request
+                  unless ← host.settle patience do
+                    throw (IO.userError "the editor thread did not settle")
+                ask [.reload]
+                ask [.spawn "open"]
+                let opened ← host.join patience
+                ask [.spawn "missing"]
+                let missed ← host.join patience
+                ask [.show]
+                -- The loop delivered the job's command, so it has a frame: the
+                -- one snapshot more is the one its scene holds of the scratch
+                -- buffer's text, which is text 0.
+                let freed ← eventually (return (← Ffi.Snapshot.live) == snapshots + 1)
+                let wait ← host.await patience
+                let stopped := wait == .settled || wait == .ended
+                return opened == .settled && missed == .settled && freed && stopped &&
+                    (← stage.collaborators.held.size) == 0 &&
+                    (← stage.output.get) ==
+                      #["reload 1: installed, 1 files, 0 commands", "spawn open: job 1",
+                        "job 1 open: ok", "spawn missing: job 2",
+                        "job 2 missing: failed: nothing is at the path", "commands:",
+                        "text 0: \"\"", "text 1: \"héllo\\n\""] },
     { name :=
         "the open command on a file in a temporary directory: the host says the load job started and ended, and the focused view shows a buffer whose text is the file's, with its cursor at the start, and whose status line is the file's base name alone"
       run :=

@@ -284,73 +284,79 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
       launch := { options.launch with arguments := options.restartArguments }
       packageSet, package := package.getD shipped.package }
   display.present
-  let host ← Headless.start collaborators
-  for start in options.starts plan said do
-    host.send start.request
-    -- A test's requests go right after the restore, which holds them.
-    if start matches .restore _ then
-      for request in afterRestore do
-        host.send request
-  -- The loop ends by itself, once `:q` or a close request can leave (one
-  -- refused for unsaved changes leaves the loop running): the window is then
-  -- closed, once what was published last is drawn.
-  -- With the shutdown goes the directory of the config files' module data, if
-  -- one was made: the close that follows may end the process.
-  let ending : IO Unit := do
-    try
-      shipped.dispose
-    catch _ =>
-      pure ()
-    shutdown collaborators.journal.drained
-  let closer ← IO.asTask (prio := .dedicated) (closeOnceEnded platform host.thread ending say)
-  -- The title bar is chosen as the window opens, so config loaded at start
-  -- is waited for first (`awaitConfig`), for at most `patience`.
-  let titleBar ←
-    match plan with
-    | .load _ =>
-      do
-        let settled ← awaitConfig host patience
-        pure (titleBarAtOpen settled (← host.progress.get).titleBar)
-    | .skip _ =>
-      pure (titleBarAtOpen true none)
-  let opened ← Ffi.inputClock
-  let ran ←
-    Ffi.windowRun platform options.composition (options.presentMode.map PresentMode.library)
-        options.frameLatency (titleBar := titleBar.library)
-  let closed ← Ffi.inputClock
-  -- Nothing drew in the window: a loop still running says why in the echo
-  -- area before it ends.
-  if let .ok { nothingDrew := some reason } := ran then
-    unless ← IO.hasFinished host.thread do
-      -- The loop may end, and the shutdown quit the queues, in between.
-      try
-        host.send (.say (nothingDrew reason))
-      catch _ =>
-        pure ()
-  -- The window has closed, or never opened: a loop still running is ended.
-  -- A loop that ended with an error was said by the closer, which reads the
-  -- same result.
-  let ended ←
-    try
-      host.halt Headless.settlePatience
-    catch _ =>
-      pure false
-  discard <| IO.wait closer
-  match ran with
-  | .ok ran =>
-    if let some reason := ran.nothingDrew then
-      say s!"editor: {nothingDrew reason}"
-    if options.report then
-      for line in ← reportLines opened.toNat closed.toNat do
-        say line
-    -- The loop ended for a restart: the closer has shut down and closed the
-    -- window, so the plan is exec'd, through the collaborators' exec alone.
-    if let some restart := (← host.progress.get).handOver then
-      return ← restart.exec collaborators.replace say
-    return if ended && ran.nothingDrew.isNone then 0 else 1
-  | .error reason =>
-    say s!"editor: the window could not be opened: {reason}"
-    return 1
+  -- The host lives in its bracket, which returns only once the loop has
+  -- ended. The loop's end is the closer's to say, and the halt below throws
+  -- an error the loop ended with, which makes the status 1: so the bracket
+  -- hands it back (`withHostEnding`) rather than throwing it.
+  let (status, _) ←
+    Headless.withHostEnding collaborators (guard := Headless.settlePatience) fun host => do
+        for start in options.starts plan said do
+          host.send start.request
+          -- A test's requests go right after the restore, which holds them.
+          if start matches .restore _ then
+            for request in afterRestore do
+              host.send request
+        -- The loop ends by itself, once `:q` or a close request can leave (one
+        -- refused for unsaved changes leaves the loop running): the window is then
+        -- closed, once what was published last is drawn.
+        -- With the shutdown goes the directory of the config files' module data, if
+        -- one was made: the close that follows may end the process.
+        let ending : IO Unit := do
+          try
+            shipped.dispose
+          catch _ =>
+            pure ()
+          shutdown collaborators.journal.drained
+        let closer ← IO.asTask (prio := .dedicated) (closeOnceEnded platform host.thread ending say)
+        -- The title bar is chosen as the window opens, so config loaded at start
+        -- is waited for first (`awaitConfig`), for at most `patience`.
+        let titleBar ←
+          match plan with
+          | .load _ =>
+            do
+              let settled ← awaitConfig host patience
+              pure (titleBarAtOpen settled (← host.progress.get).titleBar)
+          | .skip _ =>
+            pure (titleBarAtOpen true none)
+        let opened ← Ffi.inputClock
+        let ran ←
+          Ffi.windowRun platform options.composition (options.presentMode.map PresentMode.library)
+              options.frameLatency (titleBar := titleBar.library)
+        let closed ← Ffi.inputClock
+        -- Nothing drew in the window: a loop still running says why in the echo
+        -- area before it ends.
+        if let .ok { nothingDrew := some reason } := ran then
+          unless ← IO.hasFinished host.thread do
+            -- The loop may end, and the shutdown quit the queues, in between.
+            try
+              host.send (.say (nothingDrew reason))
+            catch _ =>
+              pure ()
+        -- The window has closed, or never opened: a loop still running is ended.
+        -- A loop that ended with an error was said by the closer, which reads the
+        -- same result.
+        let ended ←
+          try
+            host.halt Headless.settlePatience
+          catch _ =>
+            pure false
+        discard <| IO.wait closer
+        match ran with
+        | .ok ran =>
+          if let some reason := ran.nothingDrew then
+            say s!"editor: {nothingDrew reason}"
+          if options.report then
+            for line in ← reportLines opened.toNat closed.toNat do
+              say line
+          -- The loop ended for a restart: the closer has shut down and closed the
+          -- window, so the plan is exec'd, through the collaborators' exec alone.
+          if let some restart := (← host.progress.get).handOver then
+            return ← restart.exec collaborators.replace say
+          return if ended && ran.nothingDrew.isNone then 0 else 1
+        | .error reason =>
+          say s!"editor: the window could not be opened: {reason}"
+          return 1
+  return status
 
 /-- The window mode's shutdown, which `host` runs once the loop has ended
 and before it closes the window, handed the journal's drain

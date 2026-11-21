@@ -121,11 +121,12 @@ structure Rig where
 
 namespace Rig
 
-/-- Starts a host over `elaborator` and a source in memory, or, with
-`directory`, over that config directory, which each reload then writes its
-config into and reads it back from. -/
-def start (elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle)
-    (directory : Option System.FilePath := none) : IO Rig := do
+/-- Runs `body` against a host over `elaborator` and a source in memory, or,
+with `directory`, over that config directory, which each reload then writes
+its config into and reads it back from; the host lives in its bracket
+(`Headless.withHost`), so this returns only once its loop has ended. -/
+def «with» {α : Type} (elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle)
+    (directory : Option System.FilePath) (body : Rig → IO α) : IO α := do
   let files ← IO.mkRef ([] : Files)
   let reported ← IO.mkRef none
   let others ← IO.mkRef #[]
@@ -143,12 +144,11 @@ def start (elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate
     | none =>
       sourceOver do
         return (← files.get).map fun (module, text) => (module, headed text)
-  let host ←
-    Headless.start (scheme := TestScheme.scheme)
-        { elaborator, source, emit, services := { completions, timers := clock.timers },
-          published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests := 1,
-          wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6 }
-  return { host, files, directory, reported, others }
+  Headless.withHost (scheme := TestScheme.scheme) (guard := patience)
+      { elaborator, source, emit, services := { completions, timers := clock.timers },
+        published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2,
+        jobs := 3, environment := 4, posts := 5, pauseEvents := 6 }
+      fun host => body { host, files, directory, reported, others }
 
 /-- Makes `config` the source's files, asks for a reload, and returns the
 nanoseconds from the request to the report. Throws unless the reload was
@@ -262,11 +262,11 @@ def start (sysroot oleanDir : String) (modules : List String) : IO UInt8 := do
   let before ← IO.monoNanosNow
   let base ← real.base none #[]
   let imported := (← IO.monoNanosNow) - before
-  let rig ← Rig.start (over base real)
-  let first ← rig.reload (twentyLines 0)
-  IO.println
-      s!"bench-start {modules}: import {milliseconds imported} ms, first load {milliseconds first} ms"
-  return 0
+  Rig.with (over base real) none fun rig => do
+      let first ← rig.reload (twentyLines 0)
+      IO.println
+          s!"bench-start {modules}: import {milliseconds imported} ms, first load {milliseconds first} ms"
+      return 0
 
 /-- `bench-reload`: twenty reloads of each of the three configs of one
 file, each reload with the text changed, and of the config of two files
@@ -274,21 +274,21 @@ with the imported file changed, and prints the median and the maximum of
 each. -/
 def reload (sysroot oleanDir : String) : IO UInt8 := do
   let (real, files) ← measured sysroot oleanDir
-  let rig ← Rig.start real
-  -- The first load makes the base; it is not one of the twenty.
-  discard <| rig.reload (oneLine 0)
-  let configs :=
-    [("one-line root", oneLine), ("20-line config", twentyLines),
-      ("50 definitions and a simp proof", fiftyDefinitions),
-      ("50 definitions in an imported file, on a base with Lean", fiftyInAModule)]
-  for (name, config) in configs do
-    -- The first load of a config may grow the base; it is not one of the
-    -- twenty either.
-    discard <| rig.reload (config 0)
-    let mut times := #[]
-    for round in [1:21] do
-      times := times.push (← rig.reload (config round))
-    IO.println s!"bench-reload: {name}: {medianAndMaximum times}"
+  Rig.with real none fun rig => do
+      -- The first load makes the base; it is not one of the twenty.
+      discard <| rig.reload (oneLine 0)
+      let configs :=
+        [("one-line root", oneLine), ("20-line config", twentyLines),
+          ("50 definitions and a simp proof", fiftyDefinitions),
+          ("50 definitions in an imported file, on a base with Lean", fiftyInAModule)]
+      for (name, config) in configs do
+        -- The first load of a config may grow the base; it is not one of the
+        -- twenty either.
+        discard <| rig.reload (config 0)
+        let mut times := #[]
+        for round in [1:21] do
+          times := times.push (← rig.reload (config round))
+        IO.println s!"bench-reload: {name}: {medianAndMaximum times}"
   files.remove
   return 0
 
@@ -301,17 +301,17 @@ each. -/
 def reloadDirectory (sysroot oleanDir : String) : IO UInt8 :=
   IO.FS.withTempDir fun directory => do
     let (real, files) ← measured sysroot oleanDir
-    let rig ← Rig.start real (some directory)
-    let configs :=
-      [("one-line root", oneLine), ("50 definitions and a simp proof", fiftyDefinitions),
-        ("50 definitions in an imported file, on a base with Lean", fiftyInAModule)]
-    for (name, config) in configs do
-      -- The first load makes or grows the base; it is not one of the twenty.
-      discard <| rig.reload (config 0)
-      let mut times := #[]
-      for round in [1:21] do
-        times := times.push (← rig.reload (config round))
-      IO.println s!"bench-reload-directory: {name}: {medianAndMaximum times}"
+    Rig.with real (some directory) fun rig => do
+        let configs :=
+          [("one-line root", oneLine), ("50 definitions and a simp proof", fiftyDefinitions),
+            ("50 definitions in an imported file, on a base with Lean", fiftyInAModule)]
+        for (name, config) in configs do
+          -- The first load makes or grows the base; it is not one of the twenty.
+          discard <| rig.reload (config 0)
+          let mut times := #[]
+          for round in [1:21] do
+            times := times.push (← rig.reload (config round))
+          IO.println s!"bench-reload-directory: {name}: {medianAndMaximum times}"
     files.remove
     return 0
 
@@ -330,12 +330,12 @@ load that is not counted, and `name` with the mean time of one on stdout. -/
 def soaked (name : String) (config : Nat → Files) (sysroot oleanDir : String) (count : Nat) :
     IO UInt8 := do
   let (real, files) ← measured sysroot oleanDir
-  let rig ← Rig.start real
-  discard <| rig.reload (config 0)
-  let mut total := 0
-  for round in [1:count + 1] do
-    total := total + (← rig.reload (config round))
-  IO.println s!"{name}: {count} reloads, mean {milliseconds (total / count)} ms per reload"
+  Rig.with real none fun rig => do
+      discard <| rig.reload (config 0)
+      let mut total := 0
+      for round in [1:count + 1] do
+        total := total + (← rig.reload (config round))
+      IO.println s!"{name}: {count} reloads, mean {milliseconds (total / count)} ms per reload"
   files.remove
   return 0
 
@@ -498,38 +498,36 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
     -- Hosts follow one another on one queue: each has source ids of its own.
     let requests ← ids.modifyGet fun next => (next, next + 6)
     reloads.set #[]
-    let host ←
-      Headless.start (scheme := TestScheme.scheme)
+    try
+      Headless.withHost (scheme := TestScheme.scheme) (guard := patience)
           { elaborator, source := memorySource jobsConfig, emit,
             services := { completions, timers := counted }, published := ← Snapshots.new,
             held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
             jobs := requests + 2, environment := requests + 3, posts := requests + 4
-            pauseEvents := requests + 5 }
-    try
-      host.send .reload
-      unless ← host.settle patience do
-        throw (IO.userError "the config did not load")
-      let lines ← reloads.get
-      unless lines.any fun line => (line.splitOn "installed").length > 1 do
-        throw (IO.userError ("the config was not installed: " ++ "; ".intercalate lines.toList))
-      for _ in [0:count] do
-        host.send (.spawn job)
-      unless ← host.settle patience do
-        throw (IO.userError "the editor thread did not answer")
-      going
-      let waitsBefore ← waits.get
-      let began ← IO.monoNanosNow
-      let mut times := #[]
-      for _ in [0:samples] do
-        let sample ← IO.Promise.new
-        slot.set (some sample)
-        let asked ← IO.monoNanosNow
-        host.send (.run "noop")
-        let some ran ← IO.wait sample.result? | throw (IO.userError "a sample was lost")
-        times := times.push (ran - asked)
-      return (times, (← waits.get) - waitsBefore, (← IO.monoNanosNow) - began)
+            pauseEvents := requests + 5 } fun host => do
+          host.send .reload
+          unless ← host.settle patience do
+            throw (IO.userError "the config did not load")
+          let lines ← reloads.get
+          unless lines.any fun line => (line.splitOn "installed").length > 1 do
+            throw (IO.userError ("the config was not installed: " ++ "; ".intercalate lines.toList))
+          for _ in [0:count] do
+            host.send (.spawn job)
+          unless ← host.settle patience do
+            throw (IO.userError "the editor thread did not answer")
+          going
+          let waitsBefore ← waits.get
+          let began ← IO.monoNanosNow
+          let mut times := #[]
+          for _ in [0:samples] do
+            let sample ← IO.Promise.new
+            slot.set (some sample)
+            let asked ← IO.monoNanosNow
+            host.send (.run "noop")
+            let some ran ← IO.wait sample.result? | throw (IO.userError "a sample was lost")
+            times := times.push (ran - asked)
+          return (times, (← waits.get) - waitsBefore, (← IO.monoNanosNow) - began)
     finally
-      discard <| host.halt patience
       discard <| Job.Pool.warm pool 5000
   -- Waits until the clock has been read `count` more times: so many jobs
   -- have reached a request, so the pool is computing.
@@ -701,8 +699,8 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   let row (count inline : Nat) (listing : Bool) (joined : Bool := true) :
     IO (Array Nat × Array Nat) := do
     let requests ← ids.modifyGet fun next => (next, next + 6)
-    let host ←
-      Headless.start (scheme := TestScheme.scheme)
+    try
+      Headless.withHost (scheme := TestScheme.scheme) (guard := patience)
           { elaborator, source := memorySource [], emit,
             services := { completions, timers, fuzzy := Fuzzy.real }, published := ← Snapshots.new,
             held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
@@ -714,42 +712,41 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
                   {
                     commands :=
                       #[askingMany count, { name := "noop", action := .plain (pure ()) }] }]
-            inlineMatches := inline }
-    try
-      let ask : IO Unit := do
-        host.send (.run "ask-many")
-        unless (← host.join patience) == .settled do
-          throw (IO.userError "the prompt did not open")
-      ask
-      let mut keyTimes := #[]
-      let mut listingTimes := #[]
-      for sample in [0:samples] do
-        let index := sample % keys.length
-        if index == 0 && sample > 0 then
-          host.send (.run Minibuffer.cancelName)
+            inlineMatches := inline } fun host => do
+          let ask : IO Unit := do
+            host.send (.run "ask-many")
+            unless (← host.join patience) == .settled do
+              throw (IO.userError "the prompt did not open")
           ask
-        let ran ← IO.Promise.new
-        let listed ← IO.Promise.new
-        ranSlot.set (some ran)
-        listedSlot.set (if listing then some listed else none)
-        let asked ← IO.monoNanosNow
-        host.commit (keys[index]?.getD "x")
-        host.send (.run "noop")
-        let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
-        keyTimes := keyTimes.push (handled - asked)
-        if listing then
-          let some delivered ← IO.wait listed.result? | throw (IO.userError "a listing was lost")
-          listingTimes := listingTimes.push (delivered - asked)
-        if joined then
-          unless (← host.join patience) == .settled do
-            throw (IO.userError "a listing was not delivered")
-        else
-          -- Typing cadence: the next key comes a moment later, whatever
-          -- the match is doing.
-          IO.sleep cadence.toUInt32
-      return (keyTimes, listingTimes)
+          let mut keyTimes := #[]
+          let mut listingTimes := #[]
+          for sample in [0:samples] do
+            let index := sample % keys.length
+            if index == 0 && sample > 0 then
+              host.send (.run Minibuffer.cancelName)
+              ask
+            let ran ← IO.Promise.new
+            let listed ← IO.Promise.new
+            ranSlot.set (some ran)
+            listedSlot.set (if listing then some listed else none)
+            let asked ← IO.monoNanosNow
+            host.commit (keys[index]?.getD "x")
+            host.send (.run "noop")
+            let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
+            keyTimes := keyTimes.push (handled - asked)
+            if listing then
+              let some delivered ←
+                IO.wait listed.result? | throw (IO.userError "a listing was lost")
+              listingTimes := listingTimes.push (delivered - asked)
+            if joined then
+              unless (← host.join patience) == .settled do
+                throw (IO.userError "a listing was not delivered")
+            else
+              -- Typing cadence: the next key comes a moment later, whatever
+              -- the match is doing.
+              IO.sleep cadence.toUInt32
+          return (keyTimes, listingTimes)
     finally
-      discard <| host.halt patience
       discard <| Job.Pool.warm pool 5000
   let lifted := 1000000000
   let idle := Row.of "no candidates" (← row 0 lifted false).1
@@ -794,47 +791,46 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
     let shipped :=
       Headless.shippedOver packages #[`Editor] sysroot (ModuleLookup.searchPath oleanDir) "" emit
         services published (← Job.HeldSnapshots.new) (← Config.Elaborate.ModuleFiles.temporary)
-    let host ←
-      Headless.start
+    try
+      Headless.withHost (guard := patience)
           { shipped with
             source := memorySource [], requests, wakeups := requests + 1
             jobs := requests + 2, environment := requests + 3, posts := requests + 4
             pauseEvents := requests + 5, clock := some clock, log := fun _ => pure () }
-    try
-      host.send (.run "make-buffers")
-      unless (← host.join patience) == .settled do
-        throw (IO.userError "the buffers were not made")
-      let timed (key : String) : IO Nat := do
-        let ran ← IO.Promise.new
-        ranSlot.set (some ran)
-        let asked ← IO.monoNanosNow
-        for pressed in keysOf key do
-          host.press pressed
-        host.send (.run "noop")
-        let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
-        return handled - asked
-      let untimed (text : String) : IO Unit := do
-        for pressed in keysOf text do
-          host.press pressed
-        unless (← host.join patience) == .settled do
-          throw (IO.userError "the keys were not handled")
-      let mut times := #[]
-      for _ in [0:(samples + 5) / 6] do
-        untimed "i"
-        for key in ["w", "o"] do
-          times := times.push (← timed key)
-        if atPoint then
-          unless ← clock.dueWithin 240 do
-            throw (IO.userError "no pause was armed")
-          clock.advance 240
+          fun host => do
+          host.send (.run "make-buffers")
           unless (← host.join patience) == .settled do
-            throw (IO.userError "the words were not gathered")
-        for key in ["r", "d", "1", "_"] do
-          times := times.push (← timed key)
-        untimed "<Escape> u"
-      return times
+            throw (IO.userError "the buffers were not made")
+          let timed (key : String) : IO Nat := do
+            let ran ← IO.Promise.new
+            ranSlot.set (some ran)
+            let asked ← IO.monoNanosNow
+            for pressed in keysOf key do
+              host.press pressed
+            host.send (.run "noop")
+            let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
+            return handled - asked
+          let untimed (text : String) : IO Unit := do
+            for pressed in keysOf text do
+              host.press pressed
+            unless (← host.join patience) == .settled do
+              throw (IO.userError "the keys were not handled")
+          let mut times := #[]
+          for _ in [0:(samples + 5) / 6] do
+            untimed "i"
+            for key in ["w", "o"] do
+              times := times.push (← timed key)
+            if atPoint then
+              unless ← clock.dueWithin 240 do
+                throw (IO.userError "no pause was armed")
+              clock.advance 240
+              unless (← host.join patience) == .settled do
+                throw (IO.userError "the words were not gathered")
+            for key in ["r", "d", "1", "_"] do
+              times := times.push (← timed key)
+            untimed "<Escape> u"
+          return times
     finally
-      discard <| host.halt patience
       discard <| Job.Pool.warm pool 5000
   -- The file row: a host of the test scheme whose jobs reach a fake file
   -- service over one directory of `count` files, `/big`, its working
@@ -849,8 +845,8 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
         (fun (model : FileModel) index => model.withFile ("/big" / s!"f{10000 + index}") .empty)
         (({} : FileModel).withDirectory "/big")
     let files ← Job.FakeFiles.new completions model
-    let host ←
-      Headless.start (scheme := TestScheme.scheme)
+    try
+      Headless.withHost (scheme := TestScheme.scheme) (guard := patience)
           { elaborator, source := memorySource [], emit,
             services := { completions, timers, fuzzy := Fuzzy.real, files := files.files }
             published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests,
@@ -859,33 +855,31 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             packages :=
               #[Completion.package, ModeLine.package, Files.package, Minibuffer.package,
                 Compiled.package { commands := #[{ name := "noop", action := .plain (pure ()) }] }]
-            workingDirectory := "/big" }
-    try
-      let ask : IO Unit := do
-        host.send (.run Files.openName)
-        unless (← host.join patience) == .settled do
-          throw (IO.userError "the file prompt did not list its directory")
-      ask
-      let fileKeys := ["f", "1", "2", "3", "4", "5"]
-      let mut keyTimes := #[]
-      for sample in [0:samples] do
-        let index := sample % fileKeys.length
-        if index == 0 && sample > 0 then
-          host.send (.run Minibuffer.cancelName)
+            workingDirectory := "/big" } fun host => do
+          let ask : IO Unit := do
+            host.send (.run Files.openName)
+            unless (← host.join patience) == .settled do
+              throw (IO.userError "the file prompt did not list its directory")
           ask
-        let ran ← IO.Promise.new
-        ranSlot.set (some ran)
-        listedSlot.set none
-        let asked ← IO.monoNanosNow
-        host.commit (fileKeys[index]?.getD "x")
-        host.send (.run "noop")
-        let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
-        keyTimes := keyTimes.push (handled - asked)
-        unless (← host.join patience) == .settled do
-          throw (IO.userError "a listing was not delivered")
-      return keyTimes
+          let fileKeys := ["f", "1", "2", "3", "4", "5"]
+          let mut keyTimes := #[]
+          for sample in [0:samples] do
+            let index := sample % fileKeys.length
+            if index == 0 && sample > 0 then
+              host.send (.run Minibuffer.cancelName)
+              ask
+            let ran ← IO.Promise.new
+            ranSlot.set (some ran)
+            listedSlot.set none
+            let asked ← IO.monoNanosNow
+            host.commit (fileKeys[index]?.getD "x")
+            host.send (.run "noop")
+            let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
+            keyTimes := keyTimes.push (handled - asked)
+            unless (← host.join patience) == .settled do
+              throw (IO.userError "a listing was not delivered")
+          return keyTimes
     finally
-      discard <| host.halt patience
       discard <| Job.Pool.warm pool 5000
   let fileTenThousand := Row.of "open-file, 10,000 entries" (← fileRow 10000)
   let plainInsert := Row.of "insert, no at-point" (← insertRow false)
@@ -997,117 +991,113 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
       failures.modify (·.push line)
     else if line.startsWith "loop: refused" then
       refused.modify (· + 1)
-  let host ←
-    Headless.start (scheme := TestScheme.scheme)
-        { elaborator := (← measured sysroot oleanDir).1
-          source := memorySource [], emit, services, published, held, requests := 1
-          wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
-          packages :=
-            #[Completion.package, ModeLine.package, Files.package, Minibuffer.package,
-              Workspace.package,
-              Compiled.package
-                {
-                  commands :=
-                    #[{ name := "noop", action := .plain (pure ()) },
-                      { name := "ask-plain"
-                        action :=
-                          .plain (discard <| Editor.prompt "Plain: " { command := "noop" } "") }] }]
-          workingDirectory := repository }
-  try
-    let joined (what : String) : IO Unit := do
-      unless (← host.join patience) == .settled do
-        throw (IO.userError s!"{what} did not settle")
-      unless (← failures.get).isEmpty do
-        throw (IO.userError s!"the source failed: {(← failures.get)[0]!}")
-    -- The file opens, and the finder runs git for its directory.
-    host.send (.open (repository / "src" / "m0" / "f0.rs").toString)
-    joined "the open"
-    let keys := ["m", "1", "2", "f", "3", "4"]
-    -- One row: `ask` opens the prompt, joined and untimed; each key is
-    -- committed and followed by `noop`, and timed to the editor thread's
-    -- line for `noop`, and, when `listing`, to the post of the batch for
-    -- its text. After the sixth key the prompt is cancelled and asked again,
-    -- untimed. `joined` joins after each key; otherwise the next key comes
-    -- `finderCadence` ms later.
-    let row (ask : String) (listing joinEach : Bool) : IO (Array Nat × Array Nat) := do
-      let opens : IO Unit := do
-        host.send (.run ask)
-        joined s!"{ask}'s prompt"
-      opens
-      let mut keyTimes := #[]
-      let mut listingTimes := #[]
-      for sample in [0:samples] do
-        let index := sample % keys.length
-        if index == 0 && sample > 0 then
-          joined "the keys"
-          host.send (.run Minibuffer.cancelName)
-          joined "the cancel"
-          opens
-        let ran ← IO.Promise.new
-        let listed ← IO.Promise.new
-        ranSlot.set (some ran)
-        listedSlot.set (if listing then some listed else none)
-        let asked ← IO.monoNanosNow
-        host.commit (keys[index]?.getD "x")
-        host.send (.run "noop")
-        let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
-        keyTimes := keyTimes.push (handled - asked)
-        if listing then
-          let some delivered ← IO.wait listed.result? | throw (IO.userError "a listing was lost")
-          listingTimes := listingTimes.push (delivered - asked)
-        if joinEach then
-          joined "a key's listing"
-        else
-          IO.sleep finderCadence.toUInt32
-      joined "the row"
+  Headless.withHost (scheme := TestScheme.scheme) (guard := patience)
+      { elaborator := (← measured sysroot oleanDir).1
+        source := memorySource [], emit, services, published, held, requests := 1
+        wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
+        packages :=
+          #[Completion.package, ModeLine.package, Files.package, Minibuffer.package,
+            Workspace.package,
+            Compiled.package
+              {
+                commands :=
+                  #[{ name := "noop", action := .plain (pure ()) },
+                    { name := "ask-plain"
+                      action :=
+                        .plain (discard <| Editor.prompt "Plain: " { command := "noop" } "") }] }]
+        workingDirectory := repository } fun host => do
+      let joined (what : String) : IO Unit := do
+        unless (← host.join patience) == .settled do
+          throw (IO.userError s!"{what} did not settle")
+        unless (← failures.get).isEmpty do
+          throw (IO.userError s!"the source failed: {(← failures.get)[0]!}")
+      -- The file opens, and the finder runs git for its directory.
+      host.send (.open (repository / "src" / "m0" / "f0.rs").toString)
+      joined "the open"
+      let keys := ["m", "1", "2", "f", "3", "4"]
+      -- One row: `ask` opens the prompt, joined and untimed; each key is
+      -- committed and followed by `noop`, and timed to the editor thread's
+      -- line for `noop`, and, when `listing`, to the post of the batch for
+      -- its text. After the sixth key the prompt is cancelled and asked again,
+      -- untimed. `joined` joins after each key; otherwise the next key comes
+      -- `finderCadence` ms later.
+      let row (ask : String) (listing joinEach : Bool) : IO (Array Nat × Array Nat) := do
+        let opens : IO Unit := do
+          host.send (.run ask)
+          joined s!"{ask}'s prompt"
+        opens
+        let mut keyTimes := #[]
+        let mut listingTimes := #[]
+        for sample in [0:samples] do
+          let index := sample % keys.length
+          if index == 0 && sample > 0 then
+            joined "the keys"
+            host.send (.run Minibuffer.cancelName)
+            joined "the cancel"
+            opens
+          let ran ← IO.Promise.new
+          let listed ← IO.Promise.new
+          ranSlot.set (some ran)
+          listedSlot.set (if listing then some listed else none)
+          let asked ← IO.monoNanosNow
+          host.commit (keys[index]?.getD "x")
+          host.send (.run "noop")
+          let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
+          keyTimes := keyTimes.push (handled - asked)
+          if listing then
+            let some delivered ← IO.wait listed.result? | throw (IO.userError "a listing was lost")
+            listingTimes := listingTimes.push (delivered - asked)
+          if joinEach then
+            joined "a key's listing"
+          else
+            IO.sleep finderCadence.toUInt32
+        joined "the row"
+        host.send (.run Minibuffer.cancelName)
+        joined "the cancel"
+        return (keyTimes, listingTimes)
+      -- The finder's first listing, untimed, and its prompt's status line.
+      host.send (.run Workspace.FindFile.name)
+      joined "the first listing"
+      host.send .scene
+      joined "the scene"
       host.send (.run Minibuffer.cancelName)
       joined "the cancel"
-      return (keyTimes, listingTimes)
-    -- The finder's first listing, untimed, and its prompt's status line.
-    host.send (.run Workspace.FindFile.name)
-    joined "the first listing"
-    host.send .scene
-    joined "the scene"
-    host.send (.run Minibuffer.cancelName)
-    joined "the cancel"
-    let idle := Row.of "no candidates" (← row "ask-plain" false true).1
-    let (finderKeys, finderListings) ← row Workspace.FindFile.name true true
-    let finder := Row.of "workspace finder, each key joined" finderKeys
-    let listed := Row.of "  key to the updated list" finderListings
-    let cadence :=
-      Row.of s!"workspace finder, keys {finderCadence} ms apart"
-        (← row Workspace.FindFile.name false false).1
-    -- The lister and the filter alone, outside the editor.
-    let lister := Workspace.Lister.git "git"
-    let mut listerTimes := #[]
-    let mut filterTimes := #[]
-    let mut listedCount := 0
-    for _ in [0:20] do
-      let (time, output) ← timedRun lister.program lister.arguments repository
-      listerTimes := listerTimes.push time
-      listedCount := (Completion.Filtering.records .nul output.toUTF8 false).size
-      let (time, _) ←
-        timedRun "fzf" #["--read0", "--print0", "--filter", "m12"] repository (some output)
-      filterTimes := filterTimes.push time
-    IO.println
-        s!"pool: {pool} threads; {samples} keys a row, of m, 1, 2, f, 3 and 4 committed into the prompt; {repository}: git lists {listedCount} files; the prompt's {(← labelLine.get).getD "status line was not printed"}"
-    IO.println
-        "latency of a key, from sending it to the editor thread having handled it and published its scene, and of the list, from sending a key to the post of its batch, in µs: median / 99th percentile / maximum"
-    for row in [idle, finder, listed, cadence] do
-      IO.println row.line
-    IO.println
-        s!"alone, median of 20 runs, in µs: git ls-files -z --cached --others --exclude-standard {microseconds (median listerTimes)}; fzf --read0 --print0 --filter m12 fed its output {microseconds (median filterTimes)}"
-    IO.println
-        ("within bound (median within twice the no-candidates median, 99th percentile under 1 ms): " ++
-          "; ".intercalate
-            ([finder, cadence].map fun row =>
-              s!"{row.name}: {if row.keyWithinBound idle then "yes" else "no"}"))
-    if (← refused.get) > 0 then
-      IO.println s!"refused steps: {← refused.get}"
-    (← IO.getStdout).flush
-    return 0
-  finally
-    discard <| host.halt patience
+      let idle := Row.of "no candidates" (← row "ask-plain" false true).1
+      let (finderKeys, finderListings) ← row Workspace.FindFile.name true true
+      let finder := Row.of "workspace finder, each key joined" finderKeys
+      let listed := Row.of "  key to the updated list" finderListings
+      let cadence :=
+        Row.of s!"workspace finder, keys {finderCadence} ms apart"
+          (← row Workspace.FindFile.name false false).1
+      -- The lister and the filter alone, outside the editor.
+      let lister := Workspace.Lister.git "git"
+      let mut listerTimes := #[]
+      let mut filterTimes := #[]
+      let mut listedCount := 0
+      for _ in [0:20] do
+        let (time, output) ← timedRun lister.program lister.arguments repository
+        listerTimes := listerTimes.push time
+        listedCount := (Completion.Filtering.records .nul output.toUTF8 false).size
+        let (time, _) ←
+          timedRun "fzf" #["--read0", "--print0", "--filter", "m12"] repository (some output)
+        filterTimes := filterTimes.push time
+      IO.println
+          s!"pool: {pool} threads; {samples} keys a row, of m, 1, 2, f, 3 and 4 committed into the prompt; {repository}: git lists {listedCount} files; the prompt's {(← labelLine.get).getD "status line was not printed"}"
+      IO.println
+          "latency of a key, from sending it to the editor thread having handled it and published its scene, and of the list, from sending a key to the post of its batch, in µs: median / 99th percentile / maximum"
+      for row in [idle, finder, listed, cadence] do
+        IO.println row.line
+      IO.println
+          s!"alone, median of 20 runs, in µs: git ls-files -z --cached --others --exclude-standard {microseconds (median listerTimes)}; fzf --read0 --print0 --filter m12 fed its output {microseconds (median filterTimes)}"
+      IO.println
+          ("within bound (median within twice the no-candidates median, 99th percentile under 1 ms): " ++
+            "; ".intercalate
+              ([finder, cadence].map fun row =>
+                s!"{row.name}: {if row.keyWithinBound idle then "yes" else "no"}"))
+      if (← refused.get) > 0 then
+        IO.println s!"refused steps: {← refused.get}"
+      (← IO.getStdout).flush
+      return 0
 
 /-- A text of about `size` bytes in lines of 52, as `milestone-bench`
 generates its file: `%07d the quick brown fox jumps over the lazy dog`. -/

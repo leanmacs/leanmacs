@@ -358,18 +358,16 @@ def lines (session : Session) : IO (Array String) :=
 
 end Session
 
-/-- Runs `check` against a host started on `stage`, and stops the host.
-`false` if the check did not hold or the host did not stop. -/
+/-- Runs `check` against a host started on `stage`, inside the host's bracket
+(`Headless.withHost`), which returns only once the host's loop has ended,
+whether the check returned or threw. `false` if the check did not hold or
+the host did not settle after it. -/
 def onStage {β σ : Type} (stage : Stage β σ) (check : Headless.Host → Stage β σ → IO Bool) :
-    IO Bool := do
-  let host ← Headless.start stage.collaborators
-  try
+    IO Bool :=
+  Headless.withHost stage.collaborators (guard := patience) fun host => do
     let held ← check host stage
-    let stopped ← host.stop patience
-    return held && stopped
-  catch error =>
-    discard <| host.halt patience
-    throw error
+    let wait ← host.await patience
+    return held && (wait == .settled || wait == .ended)
 
 /-- Runs `check` against a host started on a stage of its own over
 `elaborator` and `source`, with what `compiled` hands it, and stops the

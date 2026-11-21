@@ -100,8 +100,10 @@ handed the packages of the core's Lake package
 with the real elaborator, a config directory of `files` and the services of
 a stage of its own; its syntax tree is the real binding over the library's
 syntax service, which after an attach, and before a question of a text's
-captures, waits, with a bound, for the text's tree to be delivered. Stops the host; `false` if the check did not
-hold or the host did not stop. The directory is removed. -/
+captures, waits, with a bound, for the text's tree to be delivered. The host
+lives in its bracket (`Headless.withHost`), which returns once its loop has
+ended; `false` if the check did not hold or the host did not settle after
+it. The directory is removed. -/
 def withVimHost (context : Context) (files : List (String × String)) (check : Session → IO Bool)
     (fileModel : Option FileModel := none) (realFiles : Bool := false)
     (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none) : IO Bool :=
@@ -147,17 +149,13 @@ def withVimHost (context : Context) (files : List (String × String)) (check : S
         wakeups := staged.wakeups, jobs := staged.jobs, environment := staged.environment
         posts := staged.posts, pauseEvents := staged.pauseEvents, log := staged.log, syntaxTree
         clock := staged.clock, workingDirectory, home }
-    let host ← Headless.start collaborators
-    try
-      let held ←
-        check {
-              host, directory, output := stage.output, threads := stage.threads,
-              clock := stage.clock
-              watches := stage.watches, log := stage.log }
-      let stopped ← host.stop patience
-      return held && stopped
-    catch error =>
-      discard <| host.halt patience
-      throw error
+    Headless.withHost collaborators (guard := patience) fun host => do
+        let held ←
+          check {
+                host, directory, output := stage.output, threads := stage.threads,
+                clock := stage.clock
+                watches := stage.watches, log := stage.log }
+        let wait ← host.await patience
+        return held && (wait == .settled || wait == .ended)
 
 end ConfigTest
