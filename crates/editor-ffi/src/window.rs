@@ -967,11 +967,53 @@ impl Renderer for WindowRenderer<'_> {
     }
 }
 
+/// What draws the glyphs of a window's text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rasteriser {
+    /// Core Text, with swash for what it declines.
+    CoreText,
+    /// Swash.
+    Swash,
+}
+
+/// What draws a window's glyphs where `macos` says whether it is macOS:
+/// Core Text there, as macOS's own apps draw, and swash elsewhere. Both
+/// the process's window ([`window_renderer`]) and the example `window`,
+/// for its renderer and the one it compares it with, take their
+/// rasteriser from this answer.
+pub fn window_rasteriser(macos: bool) -> Rasteriser {
+    if macos {
+        Rasteriser::CoreText
+    } else {
+        Rasteriser::Swash
+    }
+}
+
+/// The Core Text rasteriser, made from the user's font-smoothing
+/// preference, when `rasteriser` is Core Text; none for swash, which every
+/// renderer already falls back to.
+#[cfg(target_os = "macos")]
+pub fn core_text(rasteriser: Rasteriser) -> Option<editor_raster_coretext::CoreTextRasterizer> {
+    match rasteriser {
+        Rasteriser::CoreText => {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "a window draws with the user's font smoothing: this is the one place it is read, for the process's window and the example `window`; no test runs it"
+            )]
+            let defaults = editor_raster_coretext::SystemDefaults::new();
+            Some(editor_raster_coretext::CoreTextRasterizer::from_defaults(
+                &defaults,
+            ))
+        }
+        Rasteriser::Swash => None,
+    }
+}
+
 /// The renderer for the process's window on `platform`, presenting as
 /// `presentation` asks: the recording fake for a scripted platform, none
 /// for the one whose window nothing can draw in, and the wgpu renderer on
 /// the native window for the real one, in the platform's weight of text
-/// (Core Text's on macOS).
+/// and with its rasteriser (Core Text's on macOS, [`window_rasteriser`]).
 fn window_renderer<'a>(
     platform: PlatformId,
     window: Option<&NativeWindow>,
@@ -1003,6 +1045,14 @@ fn window_renderer<'a>(
                 reason = "the process's window draws with the wgpu renderer; no test runs the winit platform"
             )]
             let made = unsafe { WgpuRenderer::on_window(window, settings) };
+            let rasteriser = window_rasteriser(cfg!(target_os = "macos"));
+            #[cfg(target_os = "macos")]
+            let made = made.map(|renderer| match core_text(rasteriser) {
+                Some(core_text) => renderer.rasterizing_with(core_text),
+                None => renderer,
+            });
+            #[cfg(not(target_os = "macos"))]
+            let _ = rasteriser;
             made.map(|renderer| WindowRenderer::Wgpu(Box::new(renderer), slot))
                 .map_err(|error| error.to_string())
         }
@@ -2802,6 +2852,12 @@ mod tests {
             let tag = u8::try_from(mode_tag(mode)).expect("a tag is small");
             assert_eq!(asked_presentation(tag, 1).mode, Some(mode));
         }
+    }
+
+    #[test]
+    fn a_window_on_macos_draws_its_glyphs_with_core_text_and_elsewhere_with_swash() {
+        assert_eq!(window_rasteriser(true), Rasteriser::CoreText);
+        assert_eq!(window_rasteriser(false), Rasteriser::Swash);
     }
 
     #[test]

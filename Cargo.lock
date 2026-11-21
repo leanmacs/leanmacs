@@ -460,6 +460,7 @@ dependencies = [
  "editor-platform-winit",
  "editor-process",
  "editor-process-std",
+ "editor-raster-coretext",
  "editor-render",
  "editor-render-wgpu",
  "editor-search",

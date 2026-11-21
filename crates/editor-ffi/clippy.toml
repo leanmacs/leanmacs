@@ -87,6 +87,16 @@
 # and with the `expect` taken off, it fails with "use of a disallowed
 # method `editor_platform_arboard::SystemClipboard::open`".
 #
+# Another place is marked, for the user's font-smoothing preference:
+# `editor_raster_coretext::SystemDefaults::new` is on the list, since what
+# it reads is this machine's and this user's. Its one caller here is
+# `core_text` in `src/window.rs`, under its own `expect`, which the
+# process's window and the example `window` both reach on macOS. No test
+# calls it: the choice of rasteriser is the pure `window_rasteriser`,
+# tested in the gate. Seen to bite once by hand, on 2026-11-20: with the
+# `expect` taken off, `mise run lint` fails with "use of a disallowed
+# method `editor_raster_coretext::SystemDefaults::new`".
+#
 # A sixth place is marked, for real processes:
 # `editor_process_std::StdProcesses::system` is on the list. Its one caller
 # is the static `PROCESSES` in `src/processes.rs`, the process's process
@@ -143,6 +153,8 @@ disallowed-methods = [
   { path = "editor_platform_arboard::SystemClipboard::open", reason = "no test reads or writes the desktop's clipboard: the process's clipboard is opened in one place, for Lean's window mode; every test is on `MemoryClipboard`" },
   # A renderer on a window: it needs a window, and a real adapter.
   { path = "editor_render_wgpu::WgpuRenderer::on_window", reason = "no test makes a renderer on a window: the gate opens none; it is done for the process's window, which Lean's window mode runs (`window_renderer`), and in the example `window`" },
+  # The user's font smoothing: it differs from machine to machine.
+  { path = "editor_raster_coretext::SystemDefaults::new", allow-invalid = true, reason = "no test reads this machine's defaults: a window's Core Text rasteriser reads them in one place (`core_text` in `src/window.rs`), on macOS, for the process's window and the example `window`" },
   # The fonts of the machine: they differ from machine to machine.
   { path = "editor_shape_parley::FontSet::system", reason = "no test reads the machine's fonts: the process's display, made for Lean's window mode, does in one place (`editor_ffi_display_new_system`), and the example `window` in one place, when a person asks for a family of them (`--family`); every test is on the fixture fonts or the fake shaper" },
   # Every free function of `std::fs`.

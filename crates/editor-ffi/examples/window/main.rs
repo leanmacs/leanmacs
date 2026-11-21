@@ -207,6 +207,9 @@ static PLATFORM: WinitPlatform = WinitPlatform::new(on_main_thread);
 struct Shared {
     /// The adapter's name and back end, once a renderer is made.
     adapter: Mutex<Option<String>>,
+    /// What draws the glyphs of the renderer on the window and of the one
+    /// it is compared with, once they are made.
+    rasterizing: Mutex<Option<String>>,
     /// What each presented frame's picture was found to be, in order.
     pictures: Mutex<Vec<Picture>>,
     /// Why a draw was not presented, for each that was not.
@@ -228,6 +231,7 @@ impl Shared {
     fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             adapter: Mutex::default(),
+            rasterizing: Mutex::default(),
             pictures: Mutex::default(),
             refusals: Mutex::default(),
             mislaid: Mutex::default(),
@@ -354,6 +358,9 @@ fn report(session: &Session<Watched>, shared: &Shared, options: &Options) -> Vec
     match locked(&shared.adapter).as_deref() {
         Some(adapter) => println!("window: the renderer is on {adapter}"),
         None => println!("window: no renderer was made"),
+    }
+    if let Some(rasterizing) = locked(&shared.rasterizing).as_deref() {
+        println!("window: glyphs are drawn by {rasterizing}");
     }
     if let Some(reason) = session.failure() {
         failures.push(format!("nothing draws in the window: {reason}"));

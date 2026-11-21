@@ -6,6 +6,7 @@
 use std::sync::{Arc, Mutex};
 
 use editor_ffi::render::target;
+use editor_ffi::window::{Rasteriser, window_rasteriser};
 use editor_layout::frame::Frame;
 use editor_platform::{Canvas, Drawer, NativeWindow};
 use editor_render::clock::Clock;
@@ -281,6 +282,46 @@ fn settings(per_channel: bool, matches_core_text: bool) -> Settings {
     }
 }
 
+/// What draws the glyphs of the renderer on the window and of the one
+/// it is compared with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Compared {
+    /// The renderer on the window's.
+    pub window: Rasteriser,
+    /// The headless renderer's, whose picture it is compared with.
+    pub picture: Rasteriser,
+}
+
+/// What draws the glyphs of each renderer where `macos` says whether it
+/// is macOS: the window's own rasteriser for both
+/// ([`window_rasteriser`]), so the pictures compared are drawn alike.
+fn compared(macos: bool) -> Compared {
+    Compared {
+        window: window_rasteriser(macos),
+        picture: window_rasteriser(macos),
+    }
+}
+
+/// `renderer`, handed the rasteriser `rasteriser` names through
+/// `handing`, the renderer's own `rasterizing_with`.
+#[cfg(target_os = "macos")]
+fn handed<R>(
+    renderer: R,
+    rasteriser: Rasteriser,
+    handing: fn(R, editor_raster_coretext::CoreTextRasterizer) -> R,
+) -> R {
+    match editor_ffi::window::core_text(rasteriser) {
+        Some(core_text) => handing(renderer, core_text),
+        None => renderer,
+    }
+}
+
+/// `renderer` as it is: off macOS no rasteriser but swash is chosen.
+#[cfg(not(target_os = "macos"))]
+fn handed<R, H>(renderer: R, _: Rasteriser, _: H) -> R {
+    renderer
+}
+
 /// A renderer on `window`, checked: each frame it presents is read back
 /// and compared when `read` says so. The error is why there is none.
 pub fn renderer(
@@ -302,7 +343,12 @@ pub fn renderer(
         reason = "this example is the one place a renderer is made on a window: it is the window's check, run on demand"
     )]
     let made = unsafe { WgpuRenderer::on_window(window, settings(true, macos)) };
-    let mut gpu = made.map_err(|error| error.to_string())?;
+    let rasterisers = compared(macos);
+    let mut gpu = handed(
+        made.map_err(|error| error.to_string())?,
+        rasterisers.window,
+        WgpuRenderer::rasterizing_with,
+    );
     // A run that reads no picture asks the renderer to keep none: a draw
     // then costs what the editor's own would, and not a read-back more.
     let copies = read && gpu.keep_picture();
@@ -314,12 +360,22 @@ pub fn renderer(
     // An adapter that cannot blend by a coverage for each channel draws
     // plain masks whatever it is asked: so must what it is compared with,
     // at the same weight.
-    let compared = settings(gpu.per_channel(), macos);
+    let alike = settings(gpu.per_channel(), macos);
+    let headless = handed(
+        HeadlessRenderer::new(alike),
+        rasterisers.picture,
+        HeadlessRenderer::rasterizing_with,
+    );
+    *locked(&shared.rasterizing) = Some(format!(
+        "{} on the window, and {} for the picture it is compared with",
+        gpu.rasterizing(),
+        headless.rasterizing()
+    ));
     Ok(Checked {
         gpu,
         read,
         copies,
-        headless: HeadlessRenderer::new(compared),
+        headless,
         shared: Arc::clone(shared),
     })
 }
@@ -340,7 +396,9 @@ mod tests {
     use editor_render::port::{DrawRequest, Renderer};
     use editor_render_wgpu::{Antialiasing, Masks, Settings, SubpixelOrder};
 
-    use super::{Entered, Ledger, entering, happened, settings};
+    use editor_ffi::window::{Rasteriser, window_rasteriser};
+
+    use super::{Compared, Entered, Ledger, compared, entering, happened, settings};
     use crate::tally::Happened;
     use crate::testing::{LARGE, MS, SMALL, began, presented_as};
 
@@ -354,6 +412,20 @@ mod tests {
         assert_eq!(settings(false, false), plain(Settings::default()));
         assert_eq!(settings(true, true), Settings::core_text());
         assert_eq!(settings(false, true), plain(Settings::core_text()));
+    }
+
+    #[test]
+    fn the_window_and_the_picture_it_is_compared_with_draw_glyphs_alike() {
+        for macos in [true, false] {
+            assert_eq!(
+                compared(macos),
+                Compared {
+                    window: window_rasteriser(macos),
+                    picture: window_rasteriser(macos),
+                }
+            );
+        }
+        assert_eq!(compared(true).window, Rasteriser::CoreText);
     }
 
     #[test]
