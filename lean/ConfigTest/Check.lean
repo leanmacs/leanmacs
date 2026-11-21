@@ -108,7 +108,7 @@ failed, and returns the exit status, 0 when all hold and 1 otherwise.
 holding the package's `.olean` files, or several joined with `:`
 (`oleanDirs`). -/
 def run (checks : Context → List Check) (sysroot oleanDir : String)
-    (syntaxFixtures defaultConfig : System.FilePath) : IO UInt8 := do
+    (syntaxFixtures defaultConfig : System.FilePath) (packages : Array Package) : IO UInt8 := do
   -- Compiled code writes to the fixture's cell before the base is imported.
   let bumped ← ConfigFixture.bump
   -- The module data of the config files the checks elaborate is written in
@@ -125,7 +125,7 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
       discard <| elaborator.base none #[]
       let context : Context :=
         { elaborator, bumped, ids := ← IO.mkRef 100, waits := ← IO.mkRef none, sysroot
-          oleanDirs := oleanDirs oleanDir, syntaxFixtures, defaultConfig }
+          oleanDirs := oleanDirs oleanDir, packages, syntaxFixtures, defaultConfig }
       let checks := checks context
       let failed ← failures checks
       for name in failed do

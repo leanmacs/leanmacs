@@ -1,10 +1,10 @@
 import ConfigTest.Check
-import ConfigTest.Support.Keys
-import ConfigTest.Support.Lines
 import ConfigTest.Support.Syntax
 import Editor.Completion.Keys
 import Editor.ModeLine
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
+import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Listings
 
 /-!

@@ -1,10 +1,10 @@
 import ConfigTest.Check
-import ConfigTest.Support.Keys
-import ConfigTest.Support.Lines
 import ConfigTest.Support.Syntax
 import Editor.File.Model
 import Editor.Headless
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
+import Editor.Test.Linked.Lines
 
 /-!
 # Config tests: `Editor/Evil/TreeObjects.lean`
@@ -15,6 +15,8 @@ of the Vim scheme that ships over the real syntax tree binding. The root module
 -/
 
 namespace ConfigTest
+
+open Editor.Test.Linked
 
 /-- A config whose `setup` defines the mode `rust-test`, whose text is
 parsed with the grammar `rust` and drawn by the shipped default, and the

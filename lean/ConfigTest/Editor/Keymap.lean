@@ -1,7 +1,7 @@
 import ConfigTest.Check
-import ConfigTest.Support.Keys
 import ConfigTest.Support.Syntax
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
 
 /-!
 # Config tests: `Editor/Keymap.lean`

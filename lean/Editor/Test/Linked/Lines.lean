@@ -11,17 +11,19 @@ import Editor.UndoTree
 import Editor.Value
 
 /-!
-# Config tests: support: Lines
+# The linked test kit: Lines
 
 What a printed scene's lines say: offsets, a view's line and its status line, a
 line after its view's id, a list view's lines and rectangle, a prompt's line and
 status, a prompt that lists given fields (`listsAfter`), and which view has the
 focus; and the order the library's matcher ranks
 texts in (`realOrder`), which a list view shows. Shared by several test modules;
-it holds no checks of its own.
+it holds no checks of its own. Published for a package's linked tests, in the
+namespace `Editor.Test.Linked`, beside the hosts
+(`Editor/Test/Linked/Host.lean`).
 -/
 
-namespace ConfigTest
+namespace Editor.Test.Linked
 
 open Editor
 
@@ -145,4 +147,4 @@ def promptStatus (label : String := "Name: ") : String :=
 def focuses (line : String) (view : Nat) : Bool :=
   (line.splitOn s!", focused {view}, ").length == 2
 
-end ConfigTest
+end Editor.Test.Linked

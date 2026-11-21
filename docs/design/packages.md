@@ -1971,6 +1971,9 @@ The linked kit:
 | `Editor.Test.Linked.Trees` | Temporary directories of a check's own, and files written into them |
 | `Editor.Test.Linked.Host` | Hosts over the real elaborator, as the config tests start them: the context a harness is handed (`HostContext`), config text, a stage and what compiled code hands it, a session and what it printed, polling with a bound. Its hosts take their packages as an argument: it imports neither the config base nor `EditorCore.EditorPackage` |
 | `Editor.Test.Linked.Listings` | The styles and the display every stage of `Editor.Test.Linked.Host` hands its host (`listingsPackage`), written for the tests |
+| `Editor.Test.Linked.Keys` | Keys typed into a host's session (`Session.type`, `.typed`, `.pressKeys`), a binding of them, and the test scheme's role keys |
+| `Editor.Test.Linked.Lines` | What a host's printed scene lines say: a view's line and its status line, a prompt's, a list view's, and the library matcher's order |
+| `Editor.Test.Linked.Shipped` | A host made as the executable's are (`withVimHost`, handed the harness's packages, `HostContext.packages`, unless a check hands others), and the real syntax binding with its requests recorded |
 | `Editor.Test.Linked.Rig` | The loop over the real services, as a check drives it: its jobs, commands and keys, runs settled until every job has run, and a child's `PATH` |
 | `Editor.Test.Linked.Services` | New: the library's real job services over one table of waits, that table with the completion pump started, the shutdown, and how many children are not yet reaped. `contract-test`'s `main` held the first three inline, and the compile checks read the last from the raw binding |
 

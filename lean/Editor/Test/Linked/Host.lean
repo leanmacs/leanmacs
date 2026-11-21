@@ -40,7 +40,8 @@ import Editor.Watch
 
 Hosts over the real elaborator: the context a harness of hosts is handed
 (`HostContext`: the elaborator, the source ids, the shared table of waits,
-the toolchain's directory and the `.olean` directories), a config file's
+the toolchain's directory, the `.olean` directories and the packages its set
+hands its editor), a config file's
 header, a config held in memory and built once, files written into a
 directory, a stage and what compiled code hands it, a session of a host and
 what it printed (`Session`, with `Session.scene` and `Session.shown`), a
@@ -79,6 +80,10 @@ structure HostContext where
   /-- The directories of the `.olean` files the base was imported from, as
   the executable was handed them. -/
   oleanDirs : List System.FilePath
+  /-- The packages the set the harness stands for hands its editor: what a
+  host made as the executable's are (`withVimHost`) is handed when a check
+  names no others. -/
+  packages : Array Package
 
 /-- The table of waits every host over the library's file service is staged
 over, with the process's one completion pump running over it. It is made,
@@ -544,5 +549,10 @@ def Session.within (session : Session) (bound : Nat) (done : Array String → Bo
       break
     IO.sleep 10
   return (none, lines)
+
+/-- The text of the file `note.txt` of the file checks: two lines, with
+two-byte characters. -/
+def noteText : String :=
+  "héllo\nwörld\n"
 
 end Editor.Test.Linked

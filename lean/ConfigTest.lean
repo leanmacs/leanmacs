@@ -491,6 +491,8 @@ def main (args : List String) : IO UInt32 := do
       ConfigTest.usage
   | [sysroot, oleanDir, syntaxFixtures, defaultConfig] =>
     IO.Process.exit
-        (← ConfigTest.run ConfigTest.checks sysroot oleanDir syntaxFixtures defaultConfig)
+        (←
+          ConfigTest.run ConfigTest.checks sysroot oleanDir syntaxFixtures defaultConfig
+              ConfigTest.shippedPackages)
   | _ =>
     ConfigTest.usage

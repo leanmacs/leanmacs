@@ -1,5 +1,4 @@
 import ConfigTest.Check
-import ConfigTest.Support.Keys
 import ConfigTest.Support.Themes
 import Editor.Completion
 import Editor.Config.Directory
@@ -21,6 +20,7 @@ import Editor.Language
 import Editor.Loop
 import Editor.Scene
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
 import Editor.Test.Minibuffer
 import Editor.Text.Real
 import Editor.Themes

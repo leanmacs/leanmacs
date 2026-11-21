@@ -1,6 +1,4 @@
 import ConfigTest.Check
-import ConfigTest.Support.Keys
-import ConfigTest.Support.Lines
 import ConfigTest.Support.Shipped
 import ConfigTest.Support.Syntax
 import Editor.File.Model
@@ -9,6 +7,8 @@ import Editor.Job.Fake
 import Editor.Job.Runner
 import Editor.Scene
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
+import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Listings
 
 /-!

@@ -1,13 +1,13 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Keys
-import ConfigTest.Support.Lines
 import Editor.Event
 import Editor.Event.Queue
 import Editor.Ex
 import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
+import Editor.Test.Linked.Lines
 import Editor.Test.Opener
 import Editor.Text
 import FilesApi

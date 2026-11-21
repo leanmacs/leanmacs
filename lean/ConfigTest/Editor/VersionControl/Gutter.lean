@@ -82,7 +82,7 @@ library's process service, the library's watch service and its diff
 engine, in a repository the check writes in a temporary directory of its
 own, every git kept from the user's and the system's config. Every wait is
 polled, never a fixed sleep. -/
-def gutterChecks (context : Context) : List Check :=
+def gutterChecks (context : HostContext) : List Check :=
   [{  name :=
         "criterion 6 through the host over real git: a tracked file with a line changed shows a changed mark, and after git commit -a run by another process its gutter has no mark"
       run :=

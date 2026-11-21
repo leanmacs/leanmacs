@@ -1,7 +1,5 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Keys
-import ConfigTest.Support.Lines
 import Editor.Command
 import Editor.Completion
 import Editor.Config.Elaborate
@@ -23,6 +21,8 @@ import Editor.Program
 import Editor.Role
 import Editor.Scene
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
+import Editor.Test.Linked.Lines
 import Editor.Text
 import Editor.Watch
 

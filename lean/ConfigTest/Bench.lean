@@ -1,6 +1,5 @@
 import ConfigTest.Support.Candidates
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Keys
 import ConfigTest.Support.Shipped
 import Editor.Api
 import Editor.Clipboard
@@ -40,6 +39,7 @@ import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Listings
 import Editor.Test.Minibuffer
 import Editor.Test.Shipped

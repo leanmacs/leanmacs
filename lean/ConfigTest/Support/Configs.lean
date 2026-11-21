@@ -1,5 +1,4 @@
 import ConfigTest.Check
-import ConfigTest.Support.Keys
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
@@ -26,6 +25,7 @@ import Editor.Program
 import Editor.Scene
 import Editor.State
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
 import Editor.Test.Minibuffer
 import Editor.Text
 import EditorCore.EditorPackage
@@ -159,10 +159,5 @@ def nappingCompiled : Compiled :=
           work := fun _ =>
             Work.of (fun _ => sleep 10) fun _ =>
               discard <| (⟨0⟩ : ViewId).insertAtSelections "napped" }] }
-
-/-- The text of the file `note.txt` of the file checks: two lines, with
-two-byte characters. -/
-def noteText : String :=
-  "héllo\nwörld\n"
 
 end ConfigTest

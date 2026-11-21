@@ -1,8 +1,6 @@
 import ConfigTest.Check
 import ConfigTest.Support.Candidates
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Keys
-import ConfigTest.Support.Lines
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
@@ -27,6 +25,8 @@ import Editor.Program
 import Editor.Scene
 import Editor.State
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
+import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Listings
 import Editor.Test.Minibuffer
 import Editor.Text

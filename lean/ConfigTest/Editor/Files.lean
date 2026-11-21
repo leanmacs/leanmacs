@@ -1,39 +1,29 @@
 import ConfigTest.Check
-import ConfigTest.Support.Configs
-import ConfigTest.Support.Keys
-import ConfigTest.Support.Lines
-import ConfigTest.Support.Syntax
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
 import Editor.Completion
 import Editor.Completion.Paths
-import Editor.Config.Directory
-import Editor.Config.Elaborate
 import Editor.Config.Packages
-import Editor.Config.Registry
 import Editor.Event
-import Editor.Event.Queue
 import Editor.Ex.Line
 import Editor.Face
-import Editor.Ffi.Snapshot
 import Editor.File
 import Editor.File.Model
 import Editor.Files
 import Editor.Files.Compiled
-import Editor.Headless
 import Editor.InputScheme.Test
-import Editor.Job.Real
 import Editor.Language
-import Editor.Loop
 import Editor.Mode
 import Editor.Program
 import Editor.Scene
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
+import Editor.Test.Linked.Lines
+import Editor.Test.Linked.Shipped
 import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.Text.Model
-import EditorCore.EditorPackage
 
 /-!
 # Config tests: `Editor/Files.lean`
@@ -78,7 +68,7 @@ kit's minibuffer's commands and its mode (`Test.Minibuffer.package.registered.co
 for each name and path of `opens`, a command of that name that opens that
 path (`opening`). Stops the host: `false` if the check did not hold or the
 host did not stop. -/
-def withFileHost (context : Context) (opens : List (String × System.FilePath))
+def withFileHost (context : HostContext) (opens : List (String × System.FilePath))
     (check : Session → IO Bool) (extra : Array Config.Registration := #[]) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     let stage ←
@@ -165,8 +155,9 @@ name that opens that path (`opening`). Its syntax tree is the real binding
 with every request recorded in the array `check` is handed
 (`recordingSyntaxTree`). The config is loaded before `check` runs. Stops the
 host: `false` if the check did not hold or the host did not stop. -/
-def withLanguageHost (context : Context) (more : String) (opens : List (String × System.FilePath))
-    (check : Session → IO.Ref (Array String) → IO Bool) : IO Bool :=
+def withLanguageHost (context : HostContext) (more : String)
+    (opens : List (String × System.FilePath)) (check : Session → IO.Ref (Array String) → IO Bool) :
+    IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeConfig directory [("init.lean", languageReportText more)]
     let asked ← IO.mkRef #[]
@@ -216,7 +207,7 @@ def shippedHighlightRequests (grammar : String) (captures : List (String × Opti
 and the languages that ship as compiled code registers them, on real files,
 with the real elaborator and the real syntax binding. They share the file
 checks' table of waits (`Stage.overFiles`). -/
-def languageChecks (context : Context) : List Check :=
+def languageChecks (context : HostContext) : List Check :=
   [{  name :=
         "opening a .rs file gives its buffer the language rust and the major mode code, and its text is attached with rust and highlighted with Rust's shipped query in the default faces, with no refusal said"
       run :=
@@ -349,7 +340,7 @@ The first is a job from config. The others are the file commands and their
 jobs as compiled code registers them (`Editor/Files/Compiled.lean`), on real
 files: each check writes its files' bytes itself, in a temporary directory
 it makes, and hands its host the paths (`withFileHost`). -/
-def fileChecks (context : Context) : List Check :=
+def fileChecks (context : HostContext) : List Check :=
   [{
       name :=
         "a job loads a file through the host and its handler makes a text of it, with its two-byte character: the job's line says ok, show prints the text, and the library then holds no snapshot more than before but the one of the loop's scene; a job whose file is not there fails with the refusal's description",
@@ -556,7 +547,7 @@ def placing (name : String) (offset : Nat) : Config.Registration :=
 /-- The checks of reloading a buffer from its file (`Files.reload`,
 `Editor/Files.lean`) through the headless host, on real files, with the
 library's file and diff services. -/
-def reloadChecks (context : Context) : List Check :=
+def reloadChecks (context : HostContext) : List Check :=
   [{  name :=
         "criterion 1: a file rewritten behind its buffer is reloaded by e: the reload job ends ok, show prints the new text, the scene's view shows it with the cursor on the same character of the unchanged second row, and the status line has neither the modified field nor any other"
       run :=
@@ -645,7 +636,7 @@ def listingsStarted (output : Array String) : Nat :=
 /-- Runs `check` on a host under the Vim scheme over `promptFiles`, with
 `open-file` run, its listing of `/` waited for, `w/` committed after its
 `/`, and the listing of `/w/` waited for. -/
-def atW (context : Context) (check : Session → IO Bool) : IO Bool :=
+def atW (context : HostContext) (check : Session → IO Bool) : IO Bool :=
   withVimHost context [] (fileModel := some promptFiles) fun session => do
     session.ask [.run Files.openName]
     unless (← session.host.join patience) == .settled do
@@ -658,7 +649,7 @@ def atW (context : Context) (check : Session → IO Bool) : IO Bool :=
 
 /-- The checks of the file prompt and of putting a candidate into the
 minibuffer, over the recorder, under the Vim scheme that ships. -/
-def filePromptChecks (context : Context) : List Check :=
+def filePromptChecks (context : HostContext) : List Check :=
   [{  name :=
         "AC 1 over the recorder: the file prompt at /w/ lists locked/, notes/, alpha.txt, alps.md, beta.txt, directories first, notes/ annotated directory and no .hidden; after a l it lists the library's order of alpha.txt and alps.md"
       run :=
@@ -812,7 +803,7 @@ def filePromptChecks (context : Context) : List Check :=
       run := do
         let (state, _) :
           Config.State Config.Elaborate.Base Config.Elaborate.Handle × Array String :=
-          Config.State.ofPackages EditorCore.EditorPackage.packages
+          Config.State.ofPackages context.packages
         let registry := state.registry
         return registry.sources.any
               (fun entry => entry.source.name == "files" && entry.owner == Files.package.owner) &&
@@ -843,7 +834,7 @@ rewrite was shown 66 to 83 ms after the other process exited, a median of
 about 80 ms, and the edited buffer marked in 78 to 84 ms; the 50 ms
 coalescing window is most of it. The bound is a second, and every wait is
 polled, never a fixed sleep. -/
-def autoReloadChecks (context : Context) : List Check :=
+def autoReloadChecks (context : HostContext) : List Check :=
   [{  name :=
         "criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown within a second; once the buffer is edited, another rewrite leaves its text and marks its status line within a second"
       run :=
