@@ -1415,8 +1415,15 @@ the first two held:
    no colour glyph: blended encoded, against the CPU drawing it alike,
    and then the control, against the CPU blending it in linear light,
    which must miss, or the check prints `WITHIN: the comparison cannot
-   see how a colour image is blended` and fails. Each renderer prints the
-   space it blends in;
+   see how a colour image is blended` and fails. Then the clear: a frame
+   of no views on the ground `#2e3440`, in either blending, read back,
+   must be that colour within 1 of 255 in every pixel, and the CPU's
+   exactly that colour; and a control that must miss, the same frame on
+   a black ground, which must differ from it by more than 1, or the check
+   prints `WITHIN: the comparison cannot see the clear` and fails. A miss
+   of the clear in linear light only means the view format and
+   `blend::to_linear` disagree. Each renderer prints the space it blends
+   in;
 3. prints how long a first frame, a frame with a row edited and a frame
    that differs only in its cursor took, with the rows each built. The
    times are of one run of a debug build: nothing is asserted of them and
@@ -1476,6 +1483,17 @@ of 255. With the shader's encoded colour image left multiplied by its
 alpha (the division by it taken out, a change made for the run and
 undone), the colour comparison failed, 1914 pixels differing, the worst
 by 74: so the check sees that path of the shader.
+
+Run on 2026-11-20 on the same machine (macOS 27.2.1, 26B131), with the
+clear made the frame's ground (text-rendering phase 3, step 6): exit
+status 0; all 9 properties held; every figure above as before (113 and
+70 pixels from the reference image and the plain masks, the worst by 1;
+0 pixels at the macOS setting, for the grey text and for the colour
+images; the controls 1556 pixels, the worst by 73, and 1914, the worst by
+53). The CPU's clear to `#2e3440` was exactly that colour in either
+blending. The GPU's was 0 pixels from it in linear light and 0 in
+encoded values. The control, the same frame on black, missed in each: all
+24576 pixels differed, the worst by 64 of 255.
 
 ## The renderer on Linux, on demand
 
@@ -1687,6 +1705,12 @@ Run again on 2026-11-20 on the same machine, once control (a) was made
 to miss by its ink itself (a review of phase 2 found it had counted any
 miss with its ink on the due side of 1): exit 0, and every figure in
 both tables as above; each control (a) missed by its ink the way due.
+
+Run again on 2026-11-20 on the same machine, with the target cleared to
+the frame's ground (text-rendering phase 3, step 6): exit 0, the mask
+check's figures and every figure in both tables as above. The sentence's
+view covers its whole target, so the clear does not show in it, as
+expected.
 
 The GPU renderer is made again for each capture: the frames are built by
 hand, all of generation 0 with a font of another size under the same id,

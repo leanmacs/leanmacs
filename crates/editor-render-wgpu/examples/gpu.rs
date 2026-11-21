@@ -37,8 +37,13 @@
 //!    this example's ([`InColour`]), blended encoded: the GPU against the
 //!    CPU, then the control, against the CPU blending in linear light,
 //!    which must miss. The fixture's fonts have no colour glyph, so this
-//!    is where the shader's colour image is drawn. Each renderer says
-//!    which space it blends in;
+//!    is where the shader's colour image is drawn. Then the clear: a
+//!    frame of no views on the ground `#2e3440`, in either blending, must
+//!    be read back as that colour within 1 of 255 in every pixel, and the
+//!    CPU's exactly that colour; with a control that must miss, the same
+//!    frame on a black ground, which must differ from it by more than 1,
+//!    or the comparison cannot see the clear (`WITHIN`, and exit 1). Each
+//!    renderer says which space it blends in;
 //! 3. prints how long a first frame, a frame with a row edited and a
 //!    frame that differs only in its cursor took, with the rows each
 //!    built. The times are for a person to read: nothing is asserted of
@@ -68,6 +73,13 @@ const REFERENCE_PNG: &[u8] = include_bytes!("../../../tests/render/frame.png");
 /// conversion and its blend round as its driver chooses (Metal and
 /// llvmpipe were one level apart on one blend).
 const TOLERANCE: u8 = 3;
+
+/// How far any channel of the GPU's clear may be from the frame's ground:
+/// 1 of 255, for the rounding of a clear made linear and encoded again.
+const CLEAR_TOLERANCE: u8 = 1;
+
+/// The ground of the clear's comparison: a paper far from black.
+const PAPER: Color = Color::rgb(0x2e, 0x34, 0x40);
 
 /// A renderer on this machine's adapter.
 fn on_this_machine(settings: Settings) -> Result<WgpuRenderer, NoAdapter> {
@@ -206,6 +218,12 @@ fn held_to_the_cpu(frame: &Arc<Frame>, settings: Settings, against: &str) -> boo
 /// which is `against`: whether no channel of any pixel differs by more
 /// than [`TOLERANCE`].
 fn compared(image: &Image, expected: &Image, against: &str) -> bool {
+    compared_within(image, expected, against, TOLERANCE)
+}
+
+/// [`compared`], with no channel of any pixel to differ by more than
+/// `tolerance`.
+fn compared_within(image: &Image, expected: &Image, against: &str, tolerance: u8) -> bool {
     let Some((worst, differing)) = common::difference(image, expected) else {
         println!(
             "render-gpu: the frame read back is {} by {} pixels, and {against} is {} by {}",
@@ -213,10 +231,10 @@ fn compared(image: &Image, expected: &Image, against: &str) -> bool {
         );
         return false;
     };
-    let within = worst <= TOLERANCE;
+    let within = worst <= tolerance;
     let verdict = if within { "within" } else { "PAST" };
     println!(
-        "render-gpu: the frame read back is {} by {} pixels; against {against}, {differing} pixels differ, the worst by {worst} of 255: {verdict} the tolerance of {TOLERANCE}",
+        "render-gpu: the frame read back is {} by {} pixels; against {against}, {differing} pixels differ, the worst by {worst} of 255: {verdict} the tolerance of {tolerance}",
         image.width, image.height
     );
     within
@@ -232,6 +250,49 @@ fn grey_text(layout: &mut editor_layout::Layout<editor_shape_parley::ParleyShape
         }
     }
     Arc::new(layout.frame(&scene))
+}
+
+/// A frame of no views on `ground`.
+fn grounded(ground: Color) -> Arc<Frame> {
+    Arc::new(Frame {
+        ground,
+        ..Frame::default()
+    })
+}
+
+/// Whether the clear holds with `settings`: the CPU's picture of a frame
+/// of no views on [`PAPER`] is exactly that colour, the GPU's is within
+/// [`CLEAR_TOLERANCE`] of it, and the control, the GPU's picture of the
+/// same frame on black, misses it.
+fn clear_held(settings: Settings) -> bool {
+    let paper = grounded(PAPER);
+    let expected = on_the_cpu(&paper, settings, Glyphs::Fonts);
+    let [red, green, blue, _] = PAPER.0.to_be_bytes();
+    let exact = expected
+        .rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|pixel| *pixel == [red, green, blue, 0xff]);
+    println!(
+        "render-gpu: the CPU's clear to #2e3440, {}: {}",
+        settings.blending,
+        if exact { "exactly it" } else { "NOT it" }
+    );
+    let against = format!("the frame's ground #2e3440 ({})", settings.blending);
+    let Some(image) = on_the_gpu(&paper, settings, Glyphs::Fonts) else {
+        return false;
+    };
+    let mut held = exact & compared_within(&image, &expected, &against, CLEAR_TOLERANCE);
+    let Some(black) = on_the_gpu(&grounded(Color::rgb(0, 0, 0)), settings, Glyphs::Fonts) else {
+        return false;
+    };
+    let control = format!("{against}, drawn on black (the control, which must miss)");
+    if compared_within(&black, &expected, &control, CLEAR_TOLERANCE) {
+        held = false;
+        println!("render-gpu: WITHIN: the comparison cannot see the clear");
+    }
+    held
 }
 
 fn main() -> ExitCode {
@@ -407,6 +468,14 @@ fn main() -> ExitCode {
             }
         }
         None => held = false,
+    }
+
+    // The clear: a frame of no views is its ground, in either space.
+    for blending in [Blending::Linear, Blending::Encoded] {
+        held &= clear_held(Settings {
+            blending,
+            ..macos_plain
+        });
     }
 
     // 3. The times, for a person.

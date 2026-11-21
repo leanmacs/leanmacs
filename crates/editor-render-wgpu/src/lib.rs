@@ -57,6 +57,7 @@ mod weight_tests;
 use std::error::Error;
 use std::fmt;
 
+use editor_layout::face::Color;
 use editor_platform::NativeWindow;
 use editor_raster::{Fallback, GlyphImage, GlyphRequest, Rasterize};
 use editor_render::port::{DrawRequest, Drawn, Renderer};
@@ -192,7 +193,7 @@ impl HeadlessRenderer {
         let rasterizer = rasterizers(Box::new(Declines), settings.weight.dilation);
         Self {
             painter: Painter::new(rasterizer, &settings, true, PAGE_SIZE),
-            image: cpu::cleared(0, 0),
+            image: cpu::cleared(0, 0, Color(0)),
             contrast: settings.weight.contrast,
             blending: settings.blending,
         }
@@ -471,7 +472,7 @@ impl WgpuRenderer {
     pub fn read_back(&mut self) -> Image {
         self.device.read_back().unwrap_or_else(|refused| {
             self.refused = Some(refused);
-            cpu::cleared(0, 0)
+            cpu::cleared(0, 0, Color(0))
         })
     }
 }
@@ -485,6 +486,7 @@ impl Renderer for WgpuRenderer {
             self.painter.atlas(),
             target.width,
             target.height,
+            request.frame.ground,
         );
         self.refused = sent.err();
         if self.refused.is_some() {
@@ -506,7 +508,7 @@ impl Renderer for HeadlessRenderer {
     fn draw(&mut self, request: &DrawRequest<'_>) -> Drawn {
         let target = request.target;
         let drawn = self.painter.paint(request.frame, target);
-        self.image = cpu::cleared(target.width, target.height);
+        self.image = cpu::cleared(target.width, target.height, request.frame.ground);
         cpu::composite(
             &mut self.image,
             self.painter.quads(),

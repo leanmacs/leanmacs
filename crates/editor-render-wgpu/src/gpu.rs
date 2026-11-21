@@ -97,8 +97,10 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use editor_layout::face::Color;
+
 use crate::atlas::{Atlas, PageView};
-use crate::cpu::CLEAR;
+use crate::blend::to_linear;
 use crate::glyphs::Kind;
 use crate::present::{Asked, Offered};
 use crate::quads::{Quad, QuadKind};
@@ -321,6 +323,25 @@ fn globals(width: u32, height: u32, contrast: f32, blending: Blending) -> [u8; 1
         bytes[at * 4..at * 4 + 4].copy_from_slice(&value.to_ne_bytes());
     }
     bytes
+}
+
+/// What a target that blends in `blending`'s space is cleared to for the
+/// frame's ground `ground`, at full opacity whatever its alpha: the
+/// ground's bytes over 255 where the target holds the encoded values as
+/// they are, and each made linear where the target is drawn through an
+/// sRGB view, since the GPU encodes a clear made on one as it stores it.
+fn clear_color(ground: Color, blending: Blending) -> wgpu::Color {
+    let [red, green, blue, _] = ground.0.to_be_bytes();
+    let channel = |byte: u8| match blending {
+        Blending::Encoded => f64::from(byte) / 255.0,
+        Blending::Linear => f64::from(to_linear(byte)),
+    };
+    wgpu::Color {
+        r: channel(red),
+        g: channel(green),
+        b: channel(blue),
+        a: 1.0,
+    }
 }
 
 /// Waits for `future`, which wgpu resolves without an executor.
@@ -587,20 +608,23 @@ impl Device {
     }
 
     /// Draws `quads`, in order, over a target `width` by `height` cleared
-    /// first, reading glyph quads from `atlas`: on the window's surface,
-    /// which is then presented, or on the device's own target. The error
-    /// is wgpu's, when it refuses a call of the draw, or says that the
-    /// window's surface gave no texture to draw on.
+    /// first to `ground` at full opacity (the frame's ground,
+    /// [`clear_color`]), reading glyph quads from `atlas`: on the window's
+    /// surface, which is then presented, or on the device's own target.
+    /// The error is wgpu's, when it refuses a call of the draw, or says
+    /// that the window's surface gave no texture to draw on.
     pub fn draw(
         &mut self,
         quads: &[Quad],
         atlas: &Atlas,
         width: u32,
         height: u32,
+        ground: Color,
     ) -> Result<(), String> {
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let sent = self.send_pages(atlas);
-        let drawn = self.draw_on(quads, width.max(1), height.max(1));
+        let clear = clear_color(ground, self.blending);
+        let drawn = self.draw_on(quads, width.max(1), height.max(1), clear);
         if let Some(error) = wait(scope.pop()) {
             return Err(error.to_string());
         }
@@ -654,8 +678,15 @@ impl Device {
     }
 
     /// The calls of one draw, on a target `width` by `height`, neither of
-    /// them 0. The error says why the window's surface gave no texture.
-    fn draw_on(&mut self, quads: &[Quad], width: u32, height: u32) -> Result<(), String> {
+    /// them 0, cleared to `clear`. The error says why the window's surface
+    /// gave no texture.
+    fn draw_on(
+        &mut self,
+        quads: &[Quad],
+        width: u32,
+        height: u32,
+        clear: wgpu::Color,
+    ) -> Result<(), String> {
         let (view, presented) = self.canvas(width, height)?;
         let written = globals(width, height, self.contrast, self.blending);
         self.queue.write_buffer(&self.globals, 0, &written);
@@ -681,12 +712,6 @@ impl Device {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         if let Some((buffer, _)) = &self.instances {
             self.queue.write_buffer(buffer, 0, &bytes);
-            let clear = wgpu::Color {
-                r: f64::from(CLEAR[0]) / 255.0,
-                g: f64::from(CLEAR[1]) / 255.0,
-                b: f64::from(CLEAR[2]) / 255.0,
-                a: f64::from(CLEAR[3]) / 255.0,
-            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("frame"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {

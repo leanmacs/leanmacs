@@ -1465,7 +1465,7 @@ fn composited(frame: &Frame) -> crate::Image {
     let mut painter = painter();
     let target = target(1.0);
     painter.paint(frame, target);
-    let mut image = crate::cpu::cleared(target.width, target.height);
+    let mut image = crate::cpu::cleared(target.width, target.height, frame.ground);
     crate::cpu::composite(
         &mut image,
         painter.quads(),
@@ -1515,8 +1515,9 @@ fn a_divider_between_two_views_is_filled_in_its_colour_and_the_views_are_as_they
     assert_eq!(pixel_at(&image, 199, 99), red);
     assert_eq!(pixel_at(&image, 197, 50), [0xff, 0xff, 0xff, 0xff]);
     assert_eq!(pixel_at(&image, 200, 50), [0, 0xff, 0, 0xff]);
-    // Below the views and the divider the target is as it was cleared.
-    assert_eq!(pixel_at(&image, 198, 100), crate::cpu::CLEAR);
+    // Below the views and the divider the target is as it was cleared:
+    // the frame's ground.
+    assert_eq!(pixel_at(&image, 198, 100), [0xff, 0xff, 0xff, 0xff]);
     // Every pixel of the views is what it is with no divider.
     let plain = composited(&frame(views));
     for y in 0..100 {

@@ -25,7 +25,7 @@ use editor_platform::NativeWindow;
 use editor_render::contract;
 use editor_render::port::{DrawRequest, Renderer, Target};
 
-use super::{Device, INSTANCE_BYTES, Run, Window, globals, instances};
+use super::{Device, INSTANCE_BYTES, Run, Window, clear_color, globals, instances};
 use crate::atlas::Atlas;
 use editor_raster::fake::FakeRasterizer;
 
@@ -34,6 +34,10 @@ use crate::painter::Painter;
 use crate::quads::{Quad, QuadKind};
 use crate::surface::handles;
 use crate::{Antialiasing, Blending, Settings, SubpixelOrder, Weight, WgpuRenderer};
+
+/// The ground the tests' targets are cleared to: a paper that is not
+/// black, so the clear is a colour like any other.
+const GROUND: Color = Color::rgb(0x2e, 0x34, 0x40);
 
 /// An instance whose one adapter is wgpu's no-op back end.
 fn noop() -> wgpu::Instance {
@@ -147,7 +151,7 @@ fn every_kind_of_quad_and_of_page_is_drawn_with_no_validation_error() {
             vec![QuadKind::Fill, QuadKind::Subpixel, QuadKind::Color]
         );
         assert_eq!(
-            device.draw(painter.quads(), painter.atlas(), 200, 64),
+            device.draw(painter.quads(), painter.atlas(), 200, 64, GROUND),
             Ok(()),
             "{blending:?}"
         );
@@ -158,7 +162,7 @@ fn every_kind_of_quad_and_of_page_is_drawn_with_no_validation_error() {
             vec![QuadKind::Fill, QuadKind::Mask, QuadKind::Color]
         );
         assert_eq!(
-            device.draw(painter.quads(), painter.atlas(), 200, 64),
+            device.draw(painter.quads(), painter.atlas(), 200, 64, GROUND),
             Ok(()),
             "{blending:?}"
         );
@@ -196,7 +200,7 @@ fn a_device_without_dual_source_blending_draws_plain_masks_through_its_own_blend
             vec![QuadKind::Fill, QuadKind::Mask, QuadKind::Color]
         );
         assert_eq!(
-            device.draw(painter.quads(), painter.atlas(), 200, 64),
+            device.draw(painter.quads(), painter.atlas(), 200, 64, GROUND),
             Ok(()),
             "{blending:?}"
         );
@@ -227,7 +231,7 @@ fn a_device_that_blends_encoded_draws_on_its_own_target_in_the_non_srgb_format()
     assert_eq!(linear.blending(), Blending::Linear);
     // And what it draws on is of that format, and is read back.
     let mut encoded = encoded;
-    assert_eq!(encoded.draw(&[], &Atlas::new(64), 20, 10), Ok(()));
+    assert_eq!(encoded.draw(&[], &Atlas::new(64), 20, 10, GROUND), Ok(()));
     assert_eq!(
         encoded
             .target
@@ -328,7 +332,7 @@ fn the_target_read_back_is_the_size_last_drawn_at() {
     assert_eq!((none.width, none.height), (0, 0));
     for (width, height) in [(200, 64), (50, 20), (300, 7)] {
         assert_eq!(
-            device.draw(&[], &crate::atlas::Atlas::new(64), width, height),
+            device.draw(&[], &crate::atlas::Atlas::new(64), width, height, GROUND),
             Ok(())
         );
         let image = device.read_back().expect("the target read back");
@@ -356,7 +360,7 @@ fn a_target_of_no_size_is_drawn_on_and_not_refused() {
     let atlas = Atlas::new(64);
     for (width, height) in [(0, 0), (0, 64), (200, 0)] {
         assert_eq!(
-            device.draw(&[], &atlas, width, height),
+            device.draw(&[], &atlas, width, height, GROUND),
             Ok(()),
             "{width} by {height}"
         );
@@ -390,7 +394,7 @@ fn a_page_the_atlas_drops_is_dropped_by_the_device() {
     let mut painter = painter(Antialiasing::Grayscale, true);
     painter.paint(&dressed(), target(1.0));
     assert_eq!(
-        device.draw(painter.quads(), painter.atlas(), 200, 64),
+        device.draw(painter.quads(), painter.atlas(), 200, 64, GROUND),
         Ok(())
     );
     assert_eq!(device.pages.len(), 2);
@@ -403,7 +407,7 @@ fn a_page_the_atlas_drops_is_dropped_by_the_device() {
     painter.paint(&later, target(1.0));
     assert_eq!(painter.atlas().pages().count(), 0);
     assert_eq!(
-        device.draw(painter.quads(), painter.atlas(), 200, 64),
+        device.draw(painter.quads(), painter.atlas(), 200, 64, GROUND),
         Ok(())
     );
     assert!(device.pages.is_empty());
@@ -412,7 +416,7 @@ fn a_page_the_atlas_drops_is_dropped_by_the_device() {
 /// Draws what `painter` last painted on `device`, on a target of 200 by
 /// 64 pixels.
 fn draw(device: &mut Device, painter: &Painter<FakeRasterizer>) -> Result<(), String> {
-    device.draw(painter.quads(), painter.atlas(), 200, 64)
+    device.draw(painter.quads(), painter.atlas(), 200, 64, GROUND)
 }
 
 /// For each page of `atlas`, in order, whether `device` takes its texture
@@ -484,11 +488,11 @@ fn a_texture_of_another_kind_than_its_page_is_made_again() {
     // and then the other: the texture it holds under that number is of
     // the first one's kind.
     let masks = one_page(Kind::Mask, 1);
-    assert_eq!(device.draw(&[], &masks, 200, 64), Ok(()));
+    assert_eq!(device.draw(&[], &masks, 200, 64, GROUND), Ok(()));
     assert_eq!(format(&device, &masks), Some(wgpu::TextureFormat::R8Unorm));
     // As many images written, in colour.
     let colours = one_page(Kind::Color, 1);
-    assert_eq!(device.draw(&[], &colours, 200, 64), Ok(()));
+    assert_eq!(device.draw(&[], &colours, 200, 64, GROUND), Ok(()));
     assert_eq!(
         format(&device, &colours),
         Some(wgpu::TextureFormat::Rgba8Unorm)
@@ -497,7 +501,7 @@ fn a_texture_of_another_kind_than_its_page_is_made_again() {
     // And back, with more written: the page's bytes are not sent to a
     // texture of four bytes a pixel.
     let masks = one_page(Kind::Mask, 2);
-    assert_eq!(device.draw(&[], &masks, 200, 64), Ok(()));
+    assert_eq!(device.draw(&[], &masks, 200, 64, GROUND), Ok(()));
     assert_eq!(format(&device, &masks), Some(wgpu::TextureFormat::R8Unorm));
     assert_eq!(sent(&device, &masks), vec![true]);
 }
@@ -508,7 +512,7 @@ fn after_a_draw_that_is_refused_no_page_is_taken_as_sent() {
     let mut painter = painter(Antialiasing::Grayscale, true);
     painter.paint(&dressed(), target(1.0));
     // A target wider than the device makes one: the draw is refused.
-    let refused = device.draw(painter.quads(), painter.atlas(), 1_000_000, 64);
+    let refused = device.draw(painter.quads(), painter.atlas(), 1_000_000, 64, GROUND);
     assert!(refused.is_err(), "{refused:?}");
     // What reached the GPU in a draw it refused is not known.
     assert_eq!(sent(&device, painter.atlas()), vec![false, false]);
@@ -621,17 +625,20 @@ fn a_list_of_more_quads_than_the_buffer_holds_is_given_a_larger_one() {
         (held / INSTANCE_BYTES) as usize
     };
     // A few quads first: a buffer is made for them.
-    assert_eq!(device.draw(&[fill; 3], &atlas, 200, 64), Ok(()));
+    assert_eq!(device.draw(&[fill; 3], &atlas, 200, 64, GROUND), Ok(()));
     let first = room(&device);
     assert!(first >= 3);
     // Then one more than it holds, and then many times more: wgpu
     // refuses the quads written past the end of a buffer.
     for count in [first + 1, first * 8] {
-        assert_eq!(device.draw(&vec![fill; count], &atlas, 200, 64), Ok(()));
+        assert_eq!(
+            device.draw(&vec![fill; count], &atlas, 200, 64, GROUND),
+            Ok(())
+        );
         assert!(room(&device) >= count, "{count} quads");
     }
     // A shorter list after a longer one is drawn as well.
-    assert_eq!(device.draw(&[fill; 3], &atlas, 200, 64), Ok(()));
+    assert_eq!(device.draw(&[fill; 3], &atlas, 200, 64, GROUND), Ok(()));
 }
 
 #[test]
@@ -701,6 +708,34 @@ fn an_instance_is_a_quads_box_its_source_and_its_colour() {
         ],
         [0, 1, 2, 3]
     );
+}
+
+#[test]
+fn the_clear_is_the_ground_in_the_space_the_device_blends_in() {
+    let half = Color::rgba(0x2e, 0x34, 0x40, 0x80);
+    for ground in [GROUND, half] {
+        // Drawn on as it is: the bytes themselves.
+        assert_eq!(
+            clear_color(ground, Blending::Encoded),
+            wgpu::Color {
+                r: f64::from(0x2e_u8) / 255.0,
+                g: f64::from(0x34_u8) / 255.0,
+                b: f64::from(0x40_u8) / 255.0,
+                a: 1.0,
+            }
+        );
+        // Drawn on through an sRGB view, which encodes the clear as it
+        // stores it.
+        assert_eq!(
+            clear_color(ground, Blending::Linear),
+            wgpu::Color {
+                r: f64::from(crate::blend::to_linear(0x2e)),
+                g: f64::from(crate::blend::to_linear(0x34)),
+                b: f64::from(crate::blend::to_linear(0x40)),
+                a: 1.0,
+            }
+        );
+    }
 }
 
 #[test]

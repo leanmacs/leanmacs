@@ -26,7 +26,9 @@
 //! 7. its cursors.
 //!
 //! Nothing is drawn outside a view or a divider: the device clears the
-//! target first.
+//! target to the frame's ground first (`Frame::ground`, the theme's
+//! paper), so a pixel no view covers, and a target larger than the frame,
+//! is the paper.
 //!
 //! # Where a glyph goes
 //!
