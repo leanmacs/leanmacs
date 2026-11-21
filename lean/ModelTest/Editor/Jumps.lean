@@ -1,5 +1,5 @@
+import Editor.Test.Editing
 import ModelTest.Check
-import ModelTest.Support.Evil
 import ModelTest.Support.Jumps
 
 /-!
@@ -28,7 +28,7 @@ markers its mark history says were decided, and whether `A` is still set. -/
 def deletedRows (first last : Nat) (keepFirst : Bool := false) :
     Option (List Char × List Nat × Bool) :=
   let start : TextM EditorState := do
-    let state ← evilState "ab\ncd\nef" 0
+    let state ← barState "ab\ncd\nef" 0
     let text : TextId := ⟨0⟩
     let marks ←
       [('a', 0), ('b', 3), ('c', 7)].toArray.mapM fun (char, offset) => do
