@@ -24,6 +24,13 @@ nothing else: the reply is taken from the service when the request's wait
 ends, whether or not the task is still held, so a dropped task leaves the
 service keeping nothing, and a held one ends with the reply.
 
+Two properties pin the host's activity count over the port
+(`Editor/Job/Runner.lean`, "Activity"), each on a count of its own: a
+handle's request holds a unit from its start until its `noted` has run
+(`handleCounts`), and a job's load holds the job's unit while the service
+holds it (`jobLoadCounts`). The count's end is waited for on its own change,
+never on time.
+
 **A deadline here is a hang guard, never a result**: a task is awaited with
 `Job.awaitWithin`, and one that has not ended within `patience` is reported
 as a hang. That a task has *not* ended while the service's work is held is
@@ -193,9 +200,88 @@ def refusedAtStart : Property where
           IO.userError s!"the save came to {said}, and the service kept {after}, {before} before"
     return true
 
+/-- The rig's services keeping a count of their activity of their own
+(`Activity.counting`), and that count. -/
+def HandleRig.counted (rig : HandleRig) : BaseIO (Services × Activity) := do
+  let activity ← Activity.counting
+  return ({ rig.services with activity }, activity)
+
+/-- The count `activity` reads at its next change after `seen`, waited for on
+the change itself; a hang thrown past `patience`. -/
+def changedAfter (activity : Activity) (seen : Activity.Seen) : IO Activity.Seen := do
+  discard <| awaited s!"a change of the count from {repr seen}" (← activity.changedSince seen.epoch)
+  activity.seen
+
+/-- A handle's request holds a unit of the host's activity from its start
+until its `noted` has run: one while the service's work is held, one when
+`noted` is handed the reply, and none at the count's next change. -/
+def handleCounts : Property where
+  name :=
+    "a handle's request holds a unit of the host's activity from its start, while the service holds it and when `noted` is handed its reply, and none once it has ended"
+  holds rig := do
+    let (services, activity) ← rig.counted
+    let atNoted ← IO.mkRef (none : Option Nat)
+    let release ← rig.held
+    let task ←
+      services.fileWorked (.append (rig.directory / "counted-log") "c".toUTF8) (noted := fun _ => do
+          atNoted.set (some (← activity.seen).running))
+    let held ← activity.seen
+    release
+    let ended ← changedAfter activity held
+    let reply : Except FileError Unit ← awaited "the counted append" task
+    rig.flushedFiles
+    let noted ← atNoted.get
+    unless
+      held.running == 1 && noted == some 1 && ended.running == 0 && (← activity.refused) == 0 do
+      throw <|
+          IO.userError
+            s!"the count read {held.running} with the request held, {noted} at `noted` and {ended.running} once it had ended, the append coming to {saidUnit reply}"
+    return true
+
+/-- A job's load on the file port holds the job's unit while the service
+holds the load, and none once the service has been let go and the job has
+ended. -/
+def jobLoadCounts : Property where
+  name :=
+    "a job's load holds the job's unit of the host's activity while the service holds it, and none once it has been let go and the job has ended"
+  holds rig := do
+    let (services, activity) ← rig.counted
+    let started ← IO.Promise.new
+    let services :=
+      { services with
+        files :=
+          { services.files with
+            start := fun id request => do
+              services.files.start id request
+              started.resolve () } }
+    let release ← rig.held
+    let job : Work :=
+      Work.of (fun _ => File.load (rig.directory / "no-such-file") 100) fun _ => pure ()
+    let handle ← spawn services job (pure ())
+    try
+      discard <| awaited "the load's start" started.result?
+      let held ← activity.seen
+      release
+      let ended ← changedAfter activity held
+      let outcome ← awaited "the job" handle.outcome.result?
+      handle.settle
+      rig.flushedFiles
+      let finished :=
+        match outcome with
+        | some (.finished _) => true
+        | _ => false
+      unless held.running == 1 && ended.running == 0 && finished && (← activity.refused) == 0 do
+        throw <|
+            IO.userError
+              s!"the count read {held.running} with the load held and {ended.running} once the job had ended, the job {if finished then "finished" else "not finished"}"
+      return true
+    finally
+      handle.cancel
+      release
+
 /-- Every property, in the order they run. -/
 def properties : List Property :=
-  [heldSeenOnlyThroughHandle, notedBeforeEnd, dropped, refusedAtStart]
+  [heldSeenOnlyThroughHandle, notedBeforeEnd, dropped, refusedAtStart, handleCounts, jobLoadCounts]
 
 /-- Runs every property on each of `rigs`, and returns the failures, each
 named `<rig>: <property>`, with what it saw. -/

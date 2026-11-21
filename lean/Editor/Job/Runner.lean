@@ -119,10 +119,15 @@ while it can run, and none while it is in a wait only a test ends.
   file, process, diff, grep or watch request, a fake one a test holds on
   purpose. The job is not idle while it waits on something that ends by
   itself.
+- **A handle** (`Services.fileWorked`) holds a unit from its start until its
+  `noted` has run and its task has ended. A flush (`Services.flushed`)
+  holds none: it is its observer's, not the program's.
 
 A runner given no count has `Activity.untracked`, whose steps do nothing.
 `ModelTest.activityRunnerChecks` pin the accounting on the fake clock and
-the fake files.
+the fake files; the handle's contract (`Editor/Job/HandleContract.lean`,
+`handleCounts` and `jobLoadCounts`) pins a handle's and a job's load on the
+fake file service and on the library's.
 
 ## Posting a command
 
@@ -646,7 +651,11 @@ The take is the port's, as a job's is (`Files.take`): an append, a remove
 and a save are decoded and taken, and a load's reply names a snapshot the
 port then holds, as a job's load does, until it is released. A handle is
 for one request's reply; to wait for everything handed to the service
-before, flush it (`Services.flushed .files`). -/
+before, flush it (`Services.flushed .files`).
+
+The request holds a unit of the host's activity (`Services.activity`) from
+its start until its reply has been handed to `noted` and the task has ended:
+it is work that ends by itself ("Activity", in the module docs). -/
 def Services.fileWorked (services : Services) (request : FileRequest)
     (noted : request.Reply → BaseIO Unit := fun _ => pure ()) : BaseIO (Task request.Reply) := do
   let reply ← IO.Promise.new
@@ -663,6 +672,10 @@ def Services.fileWorked (services : Services) (request : FileRequest)
             pure (Files.withdrawnReply request)
         noted answer
         reply.resolve answer
+        -- The request was work that ends by itself: its unit goes once its
+        -- reply has been handed over.
+        services.activity.done
+  services.activity.begin
   services.files.start id request
   return reply.resultD (Files.withdrawnReply request)
 
