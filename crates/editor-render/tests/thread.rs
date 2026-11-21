@@ -21,8 +21,9 @@ use editor_render::fake::RecordingRenderer;
 use editor_render::port::{DrawRequest, Drawn, Renderer, Target};
 use editor_render::render_loop::{CondvarPark, RenderLoop};
 
-/// How long a word from the other thread is waited for before the test
-/// fails.
+/// hang guard: a word from the other thread, the draw or the loop's
+/// return; only a hang reaches the bound, and the test then fails as a
+/// hang.
 const BOUND: Duration = Duration::from_secs(10);
 
 /// The recording renderer, which also says on a channel that it drew.

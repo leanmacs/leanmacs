@@ -91,8 +91,10 @@ pub struct Flaws {
 /// with [`Flaws::live_late`].
 const LATE_SERIAL: u64 = 20;
 
-/// How long the contract waits, on the fake, for what should happen at
-/// once. The fake tells its notices before its ground returns, so only a
+/// hang guard: the notice or completion each wait of the contract ends
+/// on, on the fake; only a hang reaches the bound, and the check then fails
+/// as a hang. How long the contract waits, on the fake, for what should
+/// happen at once. The fake tells its notices before its ground returns, so only a
 /// flawed fake, or a service that breaks a rule, takes this long.
 const FAKE_DEADLINE: Duration = Duration::from_secs(1);
 
@@ -385,6 +387,8 @@ impl FakeWatch {
         let (state, _) = self
             .shared
             .changed
+            // hang guard: the change that makes `ready` hold; only a hang
+            // reaches the bound, and the caller then fails as a hang.
             .wait_timeout_while(self.shared.state(), deadline, |state| !ready(&state.record))
             .unwrap_or_else(PoisonError::into_inner);
         ready(&state.record)
@@ -695,6 +699,8 @@ mod tests {
     use super::{FakeWatch, Flaws, Record};
     use crate::{Depth, Kind, Notice, Refusal, RefusalKind, Sink, Watch};
 
+    /// hang guard: the change of the record or the notice each wait ends
+    /// on; only a hang reaches the bound, and the test then fails as a hang.
     /// How long a test waits for what should happen at once.
     const DEADLINE: Duration = Duration::from_secs(5);
 

@@ -16,7 +16,8 @@
 //! completion queue ([`crate::queue::COMPLETION`]), are both held to.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
+use std::time::Duration;
 
 use crate::queue;
 
@@ -108,10 +109,26 @@ impl<C: Completer + ?Sized> Completer for &C {
 }
 
 /// The fake completer: it accepts every report and records it, in order.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct RecordingCompleter {
     /// The requests reported and not yet taken.
     requests: Mutex<Vec<u64>>,
+    /// Signalled, under [`RecordingCompleter::requests`], at each report:
+    /// what [`RecordingCompleter::wait_for`] waits on.
+    reported: Condvar,
+    /// Called each time [`RecordingCompleter::wait_for`] reads how many
+    /// reports it holds, with the count, under the lock. Set once, by a
+    /// test.
+    #[cfg(test)]
+    read: OnceLock<Box<dyn Fn(usize) + Send + Sync>>,
+}
+
+impl std::fmt::Debug for RecordingCompleter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RecordingCompleter")
+            .field("requests", &self.requests)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RecordingCompleter {
@@ -124,6 +141,29 @@ impl RecordingCompleter {
     pub fn take(&self) -> Vec<u64> {
         std::mem::take(&mut *self.requests.lock().unwrap_or_else(PoisonError::into_inner))
     }
+
+    /// Waits until at least `count` reports are held, made since the last
+    /// take, and says whether they were: false only once `bound` has
+    /// passed first. A test waits for reports made on other threads with
+    /// it, on each report and never by a poll, then takes them.
+    ///
+    /// `bound` is a hang guard: only reports that never come reach it.
+    pub fn wait_for(&self, count: usize, bound: Duration) -> bool {
+        let requests = self.requests.lock().unwrap_or_else(PoisonError::into_inner);
+        let (_requests, waited) = self
+            .reported
+            // hang guard: a report; only reports that never come reach the
+            // bound, and the caller then fails as a hang.
+            .wait_timeout_while(requests, bound, |requests| {
+                #[cfg(test)]
+                if let Some(read) = self.read.get() {
+                    read(requests.len());
+                }
+                requests.len() < count
+            })
+            .unwrap_or_else(PoisonError::into_inner);
+        !waited.timed_out()
+    }
 }
 
 impl Completer for RecordingCompleter {
@@ -132,6 +172,7 @@ impl Completer for RecordingCompleter {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(request);
+        self.reported.notify_all();
         true
     }
 }
@@ -175,8 +216,70 @@ pub fn completer_contract(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Barrier;
+    use std::sync::mpsc::{self, Receiver};
+    use std::sync::{Arc, Barrier};
     use std::thread;
+
+    /// hang guard: the report or the reading each wait ends on; only a
+    /// hang reaches the bound, and the test then fails as a hang.
+    const BOUND: Duration = Duration::from_secs(10);
+
+    /// Where each count [`RecordingCompleter::wait_for`] reads arrives.
+    fn readings(completer: &RecordingCompleter) -> Receiver<usize> {
+        let (read, readings) = mpsc::channel();
+        let read = Mutex::new(read);
+        let hook = move |count| {
+            let _ = read
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(count);
+        };
+        assert!(completer.read.set(Box::new(hook)).is_ok(), "set once");
+        readings
+    }
+
+    #[test]
+    fn a_wait_for_reports_answers_only_once_a_report_made_on_another_thread_after_it_began_is_held()
+    {
+        let completer = Arc::new(RecordingCompleter::new());
+        let readings = readings(&completer);
+        let waited = {
+            let completer = Arc::clone(&completer);
+            thread::spawn(move || completer.wait_for(1, BOUND))
+        };
+        assert_eq!(
+            readings.recv_timeout(BOUND),
+            Ok(0),
+            "the wait begins with no report held"
+        );
+        let reporter = {
+            let completer = Arc::clone(&completer);
+            thread::spawn(move || completer.complete(7))
+        };
+        assert!(reporter.join().expect("the report's thread"));
+
+        // A wait that answered at its first reading never reads the report.
+        assert_eq!(
+            readings.recv_timeout(BOUND),
+            Ok(1),
+            "the wait reads the reports again once one is made"
+        );
+        assert!(waited.join().expect("the wait's thread"));
+        assert_eq!(completer.take(), [7]);
+    }
+
+    #[test]
+    fn a_wait_for_reports_says_no_once_its_bound_has_passed_with_too_few() {
+        let completer = RecordingCompleter::new();
+        assert!(!completer.wait_for(1, Duration::ZERO));
+        assert!(completer.complete(3));
+        assert!(completer.wait_for(1, Duration::ZERO));
+        assert_eq!(completer.take(), [3]);
+        assert!(
+            !completer.wait_for(1, Duration::ZERO),
+            "taken, it holds none"
+        );
+    }
 
     static FIRST: Service = Service::named("first");
     static SECOND: Service = Service::named("second");

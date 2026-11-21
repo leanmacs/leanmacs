@@ -24,7 +24,9 @@ use editor_text::{Revision, Text};
 /// How many edits the test makes.
 const EDITS: u64 = 200;
 
-/// The longest the test waits for one delivery.
+/// hang guard: a delivery, or the session's tree of a revision; only a
+/// hang reaches the bound, and the test then fails as a hang. The longest
+/// the test waits for one delivery.
 const BOUND: Duration = Duration::from_secs(10);
 
 /// The worker's idle interval.
@@ -167,13 +169,16 @@ struct Monotonic(Instant);
 
 impl Clock for Monotonic {
     fn now_ms(&self) -> u64 {
+        // real time under test: the clock whose refresh deadline wakes the
+        // parked loop by itself.
         u64::try_from(self.0.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
 }
 
-/// The idle interval of the test on [`Monotonic`]: long enough that a
-/// round of the fake ends well before it, so the loop parks with the
-/// deadline still ahead, and short enough to keep the test quick.
+/// real time under test: a parked loop wakes by itself at a real refresh
+/// deadline. The idle interval of the test on [`Monotonic`]: long enough
+/// that a round of the fake ends well before it, so the loop parks with
+/// the deadline still ahead, and short enough to keep the test quick.
 const REAL_REFRESH_AFTER: Duration = Duration::from_millis(20);
 
 #[test]

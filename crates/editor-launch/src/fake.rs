@@ -508,12 +508,12 @@ mod tests {
 
     #[test]
     fn the_clock_moves_only_when_waited_on_and_clones_share_it() {
-        let mut clock = FakeClock::new();
-        let other = clock.clone();
-        clock.sleep_ms(30);
+        let mut fake_clock = FakeClock::new();
+        let other = fake_clock.clone();
+        fake_clock.sleep_ms(30);
         assert_eq!(other.now_ms(), 30);
         other.advance_to(10);
-        assert_eq!(clock.now_ms(), 30);
+        assert_eq!(fake_clock.now_ms(), 30);
     }
 
     #[test]
@@ -532,11 +532,11 @@ mod tests {
 
     #[test]
     fn files_are_a_map_and_a_scripted_removal_happens_at_its_time() {
-        let mut clock = FakeClock::new();
-        let mut files = FakeFiles::new(&clock).with("/a", "x");
+        let mut fake_clock = FakeClock::new();
+        let mut files = FakeFiles::new(&fake_clock).with("/a", "x");
         files.remove_at(200, "/a");
         assert!(files.exists(Path::new("/a")));
-        clock.sleep_ms(200);
+        fake_clock.sleep_ms(200);
         assert!(!files.exists(Path::new("/a")));
         assert_eq!(files.read(Path::new("/a")), Err(FileError::NotFound));
         files.write_atomic(Path::new("/a"), b"y").unwrap();
@@ -554,8 +554,10 @@ mod tests {
 
     #[test]
     fn a_directory_is_made_or_a_files_parent_and_stays_when_its_files_go() {
-        let mut clock = FakeClock::new();
-        let mut files = FakeFiles::new(&clock).with("/a/b/f", "x").with_dir("/e");
+        let mut fake_clock = FakeClock::new();
+        let mut files = FakeFiles::new(&fake_clock)
+            .with("/a/b/f", "x")
+            .with_dir("/e");
         files.remove_at(100, "/a/b/g");
         files = files.with("/a/b/g", "y");
         assert_eq!(files.list(Path::new("/")), Ok(vec!["a".into(), "e".into()]));
@@ -563,7 +565,7 @@ mod tests {
             files.list(Path::new("/a/b")),
             Ok(vec!["f".into(), "g".into()])
         );
-        clock.sleep_ms(100);
+        fake_clock.sleep_ms(100);
         assert_eq!(files.list(Path::new("/a/b")), Ok(vec!["f".into()]));
         files.remove(Path::new("/a/b/f")).unwrap();
         assert_eq!(files.list(Path::new("/a/b")), Ok(Vec::new()));
@@ -577,7 +579,7 @@ mod tests {
             files.write_atomic(Path::new("/x/y"), b"z"),
             Err(FileError::NotFound)
         );
-        let mut with_file = FakeFiles::new(&clock).with("/f", "x");
+        let mut with_file = FakeFiles::new(&fake_clock).with("/f", "x");
         assert!(matches!(
             with_file.list(Path::new("/f")),
             Err(FileError::Other(_))

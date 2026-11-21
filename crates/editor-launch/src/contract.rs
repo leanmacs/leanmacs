@@ -106,7 +106,10 @@ pub const REPORTED: [&str; 3] = [SET, UNSET, crate::launch::CF_PROCESS_PATH];
 /// The program of [`EXEC_NOT_FOUND`]: an absolute path nothing is at.
 pub const NO_SUCH_PROGRAM: &str = "/nonexistent/leanmacs-launch-contract";
 
-/// How long the check waits for a helper's report.
+/// hang guard: the helper's report renamed into place
+/// (`Files::write_atomic`); only a hang reaches the bound, and the check
+/// then fails as a hang. How long the check waits for a helper's report,
+/// on the `Clock` port.
 const REPORT_PATIENCE_MS: u64 = 10_000;
 
 /// What a helper reported of itself.
@@ -250,6 +253,8 @@ pub fn check_var(platform: &dyn Platform) -> Vec<&'static str> {
 /// Runs the clock's property and returns its name when it fails.
 pub fn check_clock(clock: &mut dyn Clock) -> Vec<&'static str> {
     let before = clock.now_ms();
+    // real time under test: the clock's sleep, a lower bound: the clock
+    // moves forward by at least what was slept.
     clock.sleep_ms(20);
     if clock.now_ms() < before + 20 {
         vec![CLOCK_SLEEPS]
@@ -258,12 +263,23 @@ pub fn check_clock(clock: &mut dyn Clock) -> Vec<&'static str> {
     }
 }
 
+/// The helper's report at `path`, read again every 10 ms on the `Clock`
+/// port until it is there, up to [`REPORT_PATIENCE_MS`]; `None` past it.
+///
+/// The helper writes each report with `Files::write_atomic`, a temporary
+/// file then a rename, so a read finds no file or the whole report, never
+/// part of one, and the outcome is decided by the file appearing: load
+/// only makes the read come later. It is only for a report that must come:
+/// a check that a report does not come must not use it. On the fakes the
+/// retry is instant.
 fn await_report(world: &mut World<'_>, path: &Path) -> Option<Report> {
     let start = world.clock.now_ms();
     while world.clock.now_ms().saturating_sub(start) < REPORT_PATIENCE_MS {
         if let Ok(bytes) = world.files.read(path) {
             return read_report(&String::from_utf8_lossy(&bytes));
         }
+        // hang guard: the report renamed into place, by REPORT_PATIENCE_MS;
+        // only a hang reaches the bound, and the check then fails as a hang.
         world.clock.sleep_ms(10);
     }
     None

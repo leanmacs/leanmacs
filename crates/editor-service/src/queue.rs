@@ -379,6 +379,8 @@ impl Queue {
             }
             state = self
                 .parked
+                // hang guard: a pull's park; only a pull that never parks
+                // reaches the bound, and the caller then fails as a hang.
                 .wait_timeout(state, left)
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
@@ -521,11 +523,12 @@ mod tests {
     use std::sync::Arc;
     use std::sync::mpsc::{self, Receiver, TryRecvError};
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
-    /// How long a test waits for something that should happen at once. Only
-    /// a broken queue takes this long, and the test then fails instead of
-    /// hanging.
+    /// hang guard: the return, the park or the reading each wait ends on;
+    /// only a hang reaches the bound, and the test then fails as a hang.
+    /// How long a test waits for something that should happen at once:
+    /// only a broken queue takes this long.
     const DEADLINE: Duration = Duration::from_secs(5);
 
     /// Starts `blocking` on a detached thread and returns where its result
@@ -558,18 +561,14 @@ mod tests {
         finish(&start_pull(queue), "a pull")
     }
 
-    /// Waits until `pulls` pulls are parked on `queue`; panics if they are
-    /// not by the deadline.
+    /// Waits until `pulls` pulls are parked on `queue`, on the park itself
+    /// ([`Queue::await_waiting`]); panics if they are not by the deadline.
     fn wait_for_parked(queue: &Queue, pulls: usize) {
-        let deadline = Instant::now() + DEADLINE;
-        while queue.waiting() != pulls {
-            assert!(
-                Instant::now() < deadline,
-                "{} pulls were parked after {DEADLINE:?}, not {pulls}",
-                queue.waiting()
-            );
-            thread::sleep(Duration::from_millis(1));
-        }
+        assert!(
+            queue.await_waiting(pulls, DEADLINE),
+            "{} pulls were parked after {DEADLINE:?}, not {pulls}",
+            queue.waiting()
+        );
     }
 
     /// A message event from the scripted source `id`.

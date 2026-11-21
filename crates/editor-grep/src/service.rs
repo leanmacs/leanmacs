@@ -529,6 +529,8 @@ where
         self.inner().state().held_back
     }
 
+    /// hang guard: the search held back that brings [`Service::held_back`]
+    /// to `count`; `timeout` is the caller's, and only a hang reaches it.
     /// Waits up to `timeout` for [`Service::held_back`] to be `count`, and
     /// says whether it came to be: how a test sees a search held back
     /// without sleeping.
@@ -537,6 +539,7 @@ where
         let state = inner.state();
         let (state, _) = inner
             .room
+            // hang guard: the search held back; the caller's bound.
             .wait_timeout_while(state, timeout, |state| state.held_back != count)
             .unwrap_or_else(PoisonError::into_inner);
         state.held_back == count

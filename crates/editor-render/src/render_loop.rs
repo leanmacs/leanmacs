@@ -247,6 +247,8 @@ impl Park for CondvarPark {
                     self.told_waits();
                     notified = self
                         .wake
+                        // real time under test: the real park's own wait
+                        // for its deadline, not a test's bound.
                         .wait_timeout(notified, Duration::from_nanos(left))
                         .unwrap_or_else(PoisonError::into_inner)
                         .0;
@@ -402,6 +404,8 @@ impl RenderHandle {
         // clock.
         let (_rest, waited) = shared
             .rested
+            // hang guard: the step that records rest; only a loop that
+            // never comes to rest reaches the bound, and the caller fails.
             .wait_timeout_while(locked(&shared.rest_lock), bound, |_| {
                 let resting = self.resting();
                 #[cfg(test)]
@@ -1941,6 +1945,8 @@ mod tests {
     #[test]
     fn a_wait_ends_at_its_deadline_by_the_clock_it_was_given() {
         // Two milliseconds of the clock away, and nobody notifies.
+        // real time under test: the park really waits out a deadline
+        // computed from a fake clock that does not move, and it ends.
         let clock = FakeClock::new();
         let park = condvar_park(&clock);
         assert!(ends(&waiting(&park, Some(clock.peek() + 2_000_000))));

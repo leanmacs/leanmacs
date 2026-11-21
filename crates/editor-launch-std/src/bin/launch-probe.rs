@@ -137,6 +137,8 @@ fn contract(args: &[OsString]) -> ExitCode {
             return ExitCode::from(1);
         }
     }
+    // real time under test: `--sleep`, the child's lifetime, which the
+    // contract starts on purpose and ends by kill or exit.
     std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
     ExitCode::SUCCESS
 }

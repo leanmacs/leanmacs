@@ -14,7 +14,9 @@ use editor_watch::clock::Clock;
 use editor_watch::contract::{self, Ground};
 use editor_watch_notify::NotifyWatch;
 
-/// How long the contract waits for what should happen at once. Only an
+/// hang guard: the notice or completion each wait of the contract ends
+/// on; only a hang reaches the bound, and the check then fails as a hang.
+/// How long the contract waits for what should happen at once: only an
 /// adapter that breaks a rule takes this long.
 const DEADLINE: Duration = Duration::from_secs(10);
 
@@ -30,6 +32,8 @@ struct Monotonic {
 
 impl Clock for Monotonic {
     fn now_ms(&self) -> u64 {
+        // real time under test: the service's coalescing window, which
+        // passes on this clock.
         let elapsed = self.began.get_or_init(Instant::now).elapsed();
         u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
     }

@@ -26,7 +26,7 @@ pub mod zlib;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 use editor_service::{Completer, Service};
 
@@ -76,6 +76,9 @@ struct State {
 pub struct Echo<C> {
     /// What the service and its workers share.
     shared: Arc<Shared<C>>,
+    /// The workers started and not yet joined: one that has ended is
+    /// joined at the next start, so no worker is left detached.
+    workers: Mutex<Vec<JoinHandle<()>>>,
 }
 
 /// What [`Echo`] and its workers share.
@@ -102,7 +105,13 @@ impl<C: Completer + 'static> Echo<C> {
                 completer,
                 state: Mutex::new(State::default()),
             }),
+            workers: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The workers, locked. A poisoned lock still guards a list of handles.
+    fn workers(&self) -> MutexGuard<'_, Vec<JoinHandle<()>>> {
+        self.workers.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Starts the request `id` of `text`, and returns whether it started: it
@@ -125,11 +134,30 @@ impl<C: Completer + 'static> Echo<C> {
         let worker = thread::Builder::new()
             .name("echo".into())
             .spawn(move || shared.finish(id, start, Reply::to(&text)));
-        if worker.is_err() {
+        let Ok(worker) = worker else {
             self.shared.state().requests.remove(&id);
             return false;
+        };
+        let mut workers = self.workers();
+        let (ended, running): (Vec<_>, Vec<_>) =
+            workers.drain(..).partition(JoinHandle::is_finished);
+        for ended in ended {
+            let _ = ended.join();
         }
+        *workers = running;
+        workers.push(worker);
         true
+    }
+
+    /// Joins every worker started so far: once it returns, each request
+    /// started has been worked, and reported unless it was cancelled
+    /// first. For tests, which use it to know a worker is done.
+    #[cfg(test)]
+    fn join_workers(&self) {
+        let workers = std::mem::take(&mut *self.workers());
+        for worker in workers {
+            worker.join().expect("an echo worker");
+        }
     }
 
     /// Cancels the request `id`, and returns whether it was in use. Its reply
@@ -168,9 +196,11 @@ impl<C: Completer> Shared<C> {
 mod tests {
     use super::*;
     use editor_service::RecordingCompleter;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
-    /// How long a test waits for something that should happen at once.
+    /// hang guard: the reports each wait ends on; only a hang reaches the
+    /// bound, and the test then fails as a hang. How long a test waits for
+    /// something that should happen at once.
     const DEADLINE: Duration = Duration::from_secs(5);
 
     /// A service over a recording completer of its own, which lives as long
@@ -180,20 +210,16 @@ mod tests {
     }
 
     /// The requests reported, once `count` of them have been, in the order
-    /// they were; panics if they are not by the deadline.
+    /// they were, waited for on each report
+    /// ([`RecordingCompleter::wait_for`]); panics if they are not by the
+    /// deadline.
     fn reported(echo: &Echo<&'static RecordingCompleter>, count: usize) -> Vec<u64> {
-        let deadline = Instant::now() + DEADLINE;
-        let mut seen = Vec::new();
-        while seen.len() < count {
-            seen.extend(echo.shared.completer.take());
-            assert!(
-                Instant::now() < deadline,
-                "{} of {count} were reported",
-                seen.len()
-            );
-            thread::sleep(Duration::from_millis(1));
-        }
-        seen
+        let completer = echo.shared.completer;
+        assert!(
+            completer.wait_for(count, DEADLINE),
+            "fewer than {count} were reported after {DEADLINE:?}"
+        );
+        completer.take()
     }
 
     #[test]
@@ -259,8 +285,9 @@ mod tests {
         assert!(echo.start(2, "late"));
         assert!(echo.cancel(2));
         assert_eq!(echo.take(2), None);
-        // Whether its report arrived or not, the reply is held for nobody.
-        thread::sleep(Duration::from_millis(20));
+        // Once its worker has worked the reply, the reply is held for
+        // nobody.
+        echo.join_workers();
         assert_eq!(echo.take(2), None);
         // A reply worked for the cancelled start cannot fill a later one.
         echo.shared.state().requests.insert(

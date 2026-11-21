@@ -942,6 +942,8 @@ impl<W: Watch, C: Clock> Inner<W, C> {
             state = match next {
                 Some(deadline) => {
                     self.timer
+                        // real time under test: the timer thread's own wait
+                        // for its next deadline, not a test's bound.
                         .wait_timeout(state, Duration::from_millis(deadline - now))
                         .unwrap_or_else(PoisonError::into_inner)
                         .0
@@ -979,9 +981,10 @@ mod tests {
     use crate::fake::{FakeGround, FakeWatch, Flaws};
     use crate::{Depth, Kind, Refusal, RefusalKind, Sink, Watch};
 
-    /// How long a test waits for something that should happen at once.
-    /// Only a broken service takes this long, and the test then fails
-    /// instead of hanging.
+    /// hang guard: the completion, notice or count each wait ends on; only
+    /// a hang reaches the bound, and the test then fails as a hang. How
+    /// long a test waits for something that should happen at once: only a
+    /// broken service takes this long.
     const DEADLINE: Duration = Duration::from_secs(5);
 
     /// No window, and room for every test's paths.

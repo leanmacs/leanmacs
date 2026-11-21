@@ -27,7 +27,9 @@ use editor_syntax::{
 };
 use editor_text::{InputEdit, Revision, Snapshot, Text};
 
-/// The longest any step waits: far above any real wait.
+/// hang guard: the step of the other thread each wait ends on; only a
+/// hang reaches the bound, and the test then fails as a hang. The longest
+/// any step waits: far above any real wait.
 const BOUND: Duration = Duration::from_secs(10);
 
 /// The worker's idle interval. Its clock never moves, so no refresh runs.

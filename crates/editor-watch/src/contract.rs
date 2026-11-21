@@ -22,9 +22,12 @@
 //! ground advances the [`ManualClock`](crate::clock::ManualClock) it is
 //! on, and the property then wakes the service; a real ground does
 //! nothing, and the property waits for the delivery up to its deadline,
-//! while real time passes. So the property is deterministic on the fake,
-//! and on a real adapter needs only that five writes take less than the
-//! window.
+//! while real time passes. So the property is deterministic on the fake.
+//! On a real adapter it needs the platform's notices of the five writes to
+//! reach the service before the first delivery is taken: a delivery holds
+//! every change noticed up to its take ([`Service::take`]), so how fast
+//! the writes were made does not matter, and a notice the platform tells
+//! later than that does.
 //!
 //! Seen to bite once by hand, on 2026-11-15, on the fake
 //! (`tests/contract.rs`): with the service's router keeping every entry of
@@ -99,7 +102,9 @@ pub trait Ground {
     /// passing by itself while the check waits.
     fn let_pass(&self, ms: u64);
 
-    /// How long the check waits for what should happen at once.
+    /// hang guard: the notice or completion each wait of the check ends
+    /// on; only a hang reaches the bound, and the check then fails as a
+    /// hang. How long the check waits for what should happen at once.
     fn deadline(&self) -> Duration;
 
     /// Holds every later call of the port's `watch` inside the port, until
@@ -327,6 +332,8 @@ impl Listener {
         mut matches: impl FnMut(&Notice) -> bool,
     ) -> bool {
         loop {
+            // hang guard: the next notice; only a hang reaches the bound,
+            // and the check then fails as a hang.
             match self.notices.recv_timeout(deadline) {
                 Ok(notice) if matches(&notice) => return true,
                 Ok(_) => {}
@@ -383,6 +390,8 @@ impl<W: Watch, C: Clock> Served<W, C> {
             return true;
         }
         loop {
+            // hang guard: the next completion; only a hang reaches the
+            // bound, and the check then fails as a hang.
             match self.completed.recv_timeout(deadline) {
                 Ok(seen) if seen == id => return true,
                 Ok(seen) => self.seen.push(seen),
@@ -495,7 +504,8 @@ impl<W: Watch + Clone, C: Clock + Clone, G: Ground> Check<'_, W, C, G> {
         dir
     }
 
-    /// The deadline of each wait.
+    /// hang guard: the ground's [`Ground::deadline`], the deadline of each
+    /// wait; only a hang reaches it, and the check then fails as a hang.
     fn deadline(&self) -> Duration {
         self.ground.deadline()
     }
@@ -607,6 +617,10 @@ impl<W: Watch + Clone, C: Clock + Clone, G: Ground> Check<'_, W, C, G> {
             return false;
         }
         let file = sub.join("f");
+        // hang guard: the file's notice in the new subdirectory; each try's
+        // share of the deadline only triggers a rewrite (inotify may watch
+        // the subdirectory only after the first write), so only a hang
+        // reaches the whole deadline, and the check then fails as a hang.
         let each = self.deadline() / NEW_SUBDIRECTORY_TRIES;
         (0..NEW_SUBDIRECTORY_TRIES).any(|_| {
             self.ground.write(&file, b"x");
@@ -892,6 +906,8 @@ impl<W: Watch + Clone, C: Clock + Clone, G: Ground> Check<'_, W, C, G> {
         let waited = !held || served.completed.try_recv().is_err();
         self.ground.release_starts();
         let deadline = self.deadline();
+        // hang guard: the start's and the flush's completions; only a hang
+        // reaches the bound, and the check then fails as a hang.
         let order = [
             served.completed.recv_timeout(deadline).ok(),
             served.completed.recv_timeout(deadline).ok(),

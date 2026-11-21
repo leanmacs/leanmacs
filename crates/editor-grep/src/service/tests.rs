@@ -14,7 +14,9 @@ use crate::{
     Files, Flow, Found, Limits, Match, Read, Refusal, RefusalKind, Request, Row, Source, Summary,
 };
 
-/// How long a test waits for what should happen at once.
+/// hang guard: a read entering the gate, or a completion; only a hang
+/// reaches the bound, and the test then fails as a hang. How long a test
+/// waits for what should happen at once.
 const DEADLINE: Duration = Duration::from_secs(10);
 
 /// What a gate holds: permits to read a file, and the reads entered.
