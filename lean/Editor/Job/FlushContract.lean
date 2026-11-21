@@ -15,11 +15,13 @@ ways:
 - against the fakes (`Editor/Job/Fake.lean`), by `model-test`
   (`ModelTest.flushContractChecks`): the files and the diffs held by the fake
   file service's held completions, the processes by the fake process
-  service's, and the clock and the watches idle;
+  service's, and the clock, the watches and the searches idle;
 - against the real ports over the Rust library (`Editor/Job/Real.lean`), by
   `contract-test` (`ContractTest.flushContractChecks`): the files held by the
   file service's in-process hold, the processes by a child only a cancel
-  ends, and the clock, the watches and the diffs idle.
+  ends, and the clock, the watches, the diffs and the searches idle. A
+  search held in its walk is the grep service's own unit tests' (`editor-grep`,
+  `a_flush_is_completed_only_once_a_cancelled_searchs_thread_has_returned`).
 
 **A deadline here is a hang guard, never a result**: a flush is awaited with
 `Job.awaitWithin`, and one that has not ended within `patience` is reported

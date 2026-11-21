@@ -140,8 +140,8 @@ only `main`, which runs them in the order its doc gives.
 - The services' flush contract (`Editor/Job/FlushContract.lean`,
   `flushContractChecks`) against the real ports: the file service held by
   its in-process hold (`ContractTest/Support/FileHold.lean`), the process
-  service by a child only a cancel ends, and the clock, the watch service
-  and the diff service idle. `model-test` runs it against the fakes.
+  service by a child only a cancel ends, and the clock, the watch service,
+  the diff service and the grep service idle. `model-test` runs it against the fakes.
 - The contract of a file request's handle (`Editor/Job/HandleContract.lean`,
   `handleContractChecks`) against the real file port, held by the same
   hold, in a temporary directory of its own: a held request's handle has

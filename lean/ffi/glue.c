@@ -1851,6 +1851,7 @@ bool editor_ffi_grep_start(uint64_t id, const uint8_t *words, size_t words_len,
 bool editor_ffi_grep_next(uint64_t id, uint64_t wait);
 bool editor_ffi_grep_take(uint64_t wait, editor_ffi_raw_grep_reply *out);
 bool editor_ffi_grep_cancel(uint64_t id);
+bool editor_ffi_grep_flush(uint64_t id);
 uint64_t editor_ffi_grep_pending(void);
 void editor_ffi_grep_shutdown(void);
 
@@ -1909,6 +1910,11 @@ lean_obj_res editor_glue_grep_take(uint64_t wait) {
 // `Editor.Ffi.grepCancel : UInt64 → IO Bool`
 lean_obj_res editor_glue_grep_cancel(uint64_t id) {
   return lean_io_result_mk_ok(lean_box(editor_ffi_grep_cancel(id)));
+}
+
+// `Editor.Ffi.grepFlush : UInt64 → IO Bool`
+lean_obj_res editor_glue_grep_flush(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_grep_flush(id)));
 }
 
 // `Editor.Ffi.grepPending : IO UInt64`

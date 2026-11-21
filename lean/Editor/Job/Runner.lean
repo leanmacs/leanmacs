@@ -479,13 +479,20 @@ structure Greps where
   not complete it, reads nothing more for it and keeps nothing of it. Safe
   for any id, a timer's included. -/
   cancel : (id : UInt64) → BaseIO Unit
+  /-- Asks for the wait `id` to be completed once every search started before
+  has ended, its walk over: a cancelled search's among them, which may still
+  be reading when its cancel returns. It returns at once, keeps no reply,
+  and a service that refuses it finishes the wait as `cancelled`. -/
+  flush : (id : UInt64) → BaseIO Unit
 
 /-- No grep service: every request completes at once, refused as failed,
-through the table `completions`. -/
+through the table `completions`, and so does a flush, with no search to
+wait for. -/
 def Greps.absent (completions : Completions) : Greps where
   start id _ := completions.finish id .completed
   take _ request := pure (request.refused (.failed "this runner has no grep service"))
   cancel _ := pure ()
+  flush id := completions.finish id .completed
 
 /-- The environments port: what a job's environment requests are answered
 by, at once (`Editor/Process/Environment.lean`). -/
@@ -556,6 +563,8 @@ inductive Service where
   | fileWatches
   /-- The diffs. -/
   | diffs
+  /-- The searches. -/
+  | greps
   deriving DecidableEq, Repr, Inhabited
 
 /-- The flush of `target` among `services`. -/
@@ -565,6 +574,7 @@ def Services.flushOf (services : Services) : Service → (UInt64 → BaseIO Unit
   | .processes => services.processes.flush
   | .fileWatches => services.fileWatches.flush
   | .diffs => services.diffs.flush
+  | .greps => services.greps.flush
 
 /-- Flushes `target`: registers a wait in the table, hands its id to the
 service's `flush`, and returns the task that ends with the wait: `completed`

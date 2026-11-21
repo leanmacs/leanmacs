@@ -240,8 +240,8 @@ library never calls Lean. A completion may still arrive for a request that
 was cancelled, and whoever pulls the queue ignores an id it no longer waits
 for.
 
-Every service but grep takes a flush (`timersFlush`, `filesFlush`,
-`processesFlush`, `watchesFlush`, `diffsFlush`): a request under an id of
+Every service takes a flush (`timersFlush`, `filesFlush`,
+`processesFlush`, `watchesFlush`, `diffsFlush`, `grepFlush`): a request under an id of
 the caller's, completed once the service has finished the work handed to it
 before that it can finish on its own, its completion queued behind theirs,
 with nothing to take. It is what a caller waits on in place of polling a

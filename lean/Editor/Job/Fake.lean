@@ -544,11 +544,19 @@ def cancelGrep (files : FakeFiles) (id : UInt64) : BaseIO Unit :=
         grepsCancelled := state.grepsCancelled.push id }
     else state
 
+/-- Flushes the searches as the wait `id`, as `flush` flushes the files: the
+model's searches are worked in the call that takes them, so nothing runs
+past a cancel, and the flush is completed at once, unless completions are
+held, when it is parked behind them. -/
+def flushGreps (files : FakeFiles) (id : UInt64) : BaseIO Unit :=
+  files.flush id
+
 /-- The fake of the grep port (`Job.Greps`): the model of project search over
 the files and the snapshots this file service's model holds, so a job's load
 and its search see one table, as the library's two services do. -/
 def greps (files : FakeFiles) : Greps :=
-  { start := files.startGrep, take := files.takeGrep, cancel := files.cancelGrep }
+  { start := files.startGrep, take := files.takeGrep, cancel := files.cancelGrep
+    flush := files.flushGreps }
 
 /-- Every search request ever started, each with its wait's id, oldest
 first. -/

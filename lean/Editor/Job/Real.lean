@@ -1082,7 +1082,8 @@ def realGreps (completions : Completions) (published : SnapshotReader) (held : H
           return .error refusal
     cancel := fun id => do
       state.refused.modify (·.erase id)
-      (discard <| Ffi.grepCancel id : IO Unit).catchExceptions fun _ => pure () }
+      (discard <| Ffi.grepCancel id : IO Unit).catchExceptions fun _ => pure ()
+    flush := flushThrough completions Ffi.grepFlush }
 where
   /-- Completes the wait `id` at once, with `refusal` kept as what its take
   answers. -/

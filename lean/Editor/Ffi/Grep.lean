@@ -206,6 +206,13 @@ is completed. Safe for an id that is unknown. -/
 @[extern "editor_glue_grep_cancel"]
 opaque grepCancel (id : UInt64) : IO Bool
 
+/-- Asks the grep service for the request `id` to be completed once the
+thread of every search started before this call has returned, a cancelled
+search's among them, and returns whether it was accepted: refused for an id
+in use. It returns at once and keeps no result. `grepCancel` withdraws it. -/
+@[extern "editor_glue_grep_flush"]
+opaque grepFlush (id : UInt64) : IO Bool
+
 /-- How many searches are held, and how many waits are not answered or not
 taken, together. A readout for tests. -/
 @[extern "editor_glue_grep_pending"]

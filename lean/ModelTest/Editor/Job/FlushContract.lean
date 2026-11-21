@@ -41,7 +41,8 @@ def FlushFakes.new : BaseIO FlushFakes := do
       completions, files, processes
       services :=
         { completions, timers := clock.timers, files := files.files, diffs := files.diffs
-          processes := processes.processes, fileWatches := watches.fileWatches } }
+          greps := files.greps, processes := processes.processes
+          fileWatches := watches.fileWatches } }
 
 /-- Starts `start` as a wait of `completions` with the completions held by
 `hold`, and gives back `letGo` and whether that wait has ended. -/
@@ -74,7 +75,8 @@ def flushFakeRigs (fakes : FlushFakes) : List FlushContract.FlushRig :=
         some <|
           heldWork fakes.completions fakes.processes.holdCompletions fakes.processes.letGo fun id =>
             services.processes.start id (.run { program := "/bin/true", directory := "/" } 10) },
-    { name := "the fake watch service", flush := services.flushed .fileWatches }]
+    { name := "the fake watch service", flush := services.flushed .fileWatches },
+    { name := "the fake grep service", flush := services.flushed .greps }]
 
 /-- The services' flush contract on the fakes, one check for each rig and
 property (`Editor/Job/FlushContract.lean`); and that it bites, on a file

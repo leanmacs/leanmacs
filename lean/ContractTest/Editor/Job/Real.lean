@@ -620,67 +620,63 @@ def fileChecks (completions : Job.Completions) : List Check :=
 outlive the job; and an overlay of a snapshot a command took, published in
 the store's table, is searched in place of a file whose text on disk
 differs. Every file is in a temporary directory its check makes and
-removes. -/
+removes once the grep and file services have worked what was handed to them
+(`Linked.withFiles`, with the grep service's flush): no cancelled search
+still walks it. -/
 def grepChecks (completions : Job.Completions) : List Check :=
   [{  name :=
         "a job's search does not outlive the job: cancelled while its search is held, the grep service holds nothing more"
       run := do
-        -- no flush on the grep service: a residual (task grep-search-outlives-directory)
-        let directory ← IO.FS.createTempDir
-        try
-          IO.FS.writeFile (directory / "a") "needle\n"
-          let rig ← FileRig.new completions
-          let before ← Ffi.grepPending
-          let handle ←
-            Job.spawn rig.services
-                (reporting fun _ => do
-                  let .ok _ ←
-                    Grep.start directory "needle" #[] JobContract.wideLimits 64 | return false
-                  sleep hour
-                  return true)
-                (pure ())
-          -- work started, not finished: phase 4's idle signal
-          let held ← eventually (return (← Ffi.grepPending) > before)
-          handle.cancel
-          let cancelled ← endedAs handle .cancelled
-          -- A readout, final once the outcome is in: `Handle.conclude` ends
-          -- the job's searches, a cancel the grep service does in the call,
-          -- before it resolves the outcome.
-          let freed := (← Ffi.grepPending) == before
-          return held && cancelled && freed
-        finally
-          IO.FS.removeDirAll directory },
+        Editor.Test.Linked.withFiles (← Editor.Test.Linked.Services.over completions).jobs
+            (targets := [.greps, .files]) fun directory => do
+            IO.FS.writeFile (directory / "a") "needle\n"
+            let rig ← FileRig.new completions
+            let before ← Ffi.grepPending
+            let handle ←
+              Job.spawn rig.services
+                  (reporting fun _ => do
+                    let .ok _ ←
+                      Grep.start directory "needle" #[] JobContract.wideLimits 64 | return false
+                    sleep hour
+                    return true)
+                  (pure ())
+            -- work started, not finished: phase 4's idle signal
+            let held ← eventually (return (← Ffi.grepPending) > before)
+            handle.cancel
+            let cancelled ← endedAs handle .cancelled
+            -- A readout, final once the outcome is in: `Handle.conclude` ends
+            -- the job's searches, a cancel the grep service does in the call,
+            -- before it resolves the outcome.
+            let freed := (← Ffi.grepPending) == before
+            return held && cancelled && freed },
     { name :=
         "an overlay of a snapshot a command took is searched in place of a file whose text on disk differs, and answered as the buffer's"
       run := do
-        -- no flush on the grep service: a residual (task grep-search-outlives-directory)
-        let directory ← IO.FS.createTempDir
-        try
-          IO.FS.writeFile (directory / "a") "nothing\n"
-          IO.FS.writeFile (directory / "b") "x needle\n"
-          let rig ← FileRig.new completions
-          let first ← Job.spawn rig.services (reporting fun _ => pure 1) (pure ())
-          unless ← eventually first.ended do
-            return false
-          let command : EditorM SnapshotId := do
-            let text ← createText "y\nneedle needle"
-            text.snapshot
-          let display := (← recorderOf rig.published).handle
-          let (.ok snapshot, _) ←
-            Job.finishWith rig.held first command (.over rig.published) display | return false
-          let handle ←
-            Job.spawn rig.services
-                (reporting fun _ => do
-                  let reply ←
-                    JobContract.searchedAll directory "needle"
-                        #[(directory / "a", .snapshot snapshot)]
-                  return reply.toOption ==
-                      some
-                        (#[("a", .buffer, #[(1, 2, 8), (1, 9, 15)]), ("b", .disk, #[(0, 2, 8)])],
-                          .complete 2 3))
-                (pure ())
-          endedAs handle (.finished #["true"])
-        finally
-          IO.FS.removeDirAll directory }]
+        Editor.Test.Linked.withFiles (← Editor.Test.Linked.Services.over completions).jobs
+            (targets := [.greps, .files]) fun directory => do
+            IO.FS.writeFile (directory / "a") "nothing\n"
+            IO.FS.writeFile (directory / "b") "x needle\n"
+            let rig ← FileRig.new completions
+            let first ← Job.spawn rig.services (reporting fun _ => pure 1) (pure ())
+            unless ← eventually first.ended do
+              return false
+            let command : EditorM SnapshotId := do
+              let text ← createText "y\nneedle needle"
+              text.snapshot
+            let display := (← recorderOf rig.published).handle
+            let (.ok snapshot, _) ←
+              Job.finishWith rig.held first command (.over rig.published) display | return false
+            let handle ←
+              Job.spawn rig.services
+                  (reporting fun _ => do
+                    let reply ←
+                      JobContract.searchedAll directory "needle"
+                          #[(directory / "a", .snapshot snapshot)]
+                    return reply.toOption ==
+                        some
+                          (#[("a", .buffer, #[(1, 2, 8), (1, 9, 15)]), ("b", .disk, #[(0, 2, 8)])],
+                            .complete 2 3))
+                  (pure ())
+            endedAs handle (.finished #["true"]) }]
 
 end ContractTest

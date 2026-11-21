@@ -12,7 +12,7 @@ library: `flushContractChecks`, one check a port. The file service is held
 by its in-process hold (`FileHold`), the work behind it a stamp; the process
 service by a run of `/bin/sleep 600`, which only its cancel ends, the work
 having ended once the service has no more children than before it started;
-the clock, the watch service and the diff service are idle. The root module
+the clock, the watch service, the diff service and the grep service are idle. The root module
 `ContractTest` runs them over the services it starts.
 -/
 
@@ -57,7 +57,8 @@ def flushRealRigs (services : Job.Services) : List FlushContract.FlushRig :=
             completions.finish id .cancelled
           return (release, return (← Test.Linked.pendingChildren) == before) },
     { name := "the library's watch service", flush := services.flushed .fileWatches },
-    { name := "the library's diff service", flush := services.flushed .diffs }]
+    { name := "the library's diff service", flush := services.flushed .diffs },
+    { name := "the library's grep service", flush := services.flushed .greps }]
 
 /-- The services' flush contract over the real ports among `services`, one
 check a port (`Editor/Job/FlushContract.lean`). -/

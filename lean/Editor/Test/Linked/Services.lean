@@ -158,6 +158,7 @@ private def serviceName : Job.Service → String
   | .processes => "process"
   | .fileWatches => "watch"
   | .diffs => "diff"
+  | .greps => "grep"
 
 /-- Waits for a flush of each of `targets` among `jobs`, asked in turn, with no
 deadline: one not completed `guard` milliseconds after it was asked is said

@@ -1907,7 +1907,8 @@ outlives it (AGENTS.md, "Deterministic concurrency in tests"):
 - **`Editor.Test.Linked.withFiles` removes a test's directory only once
   the services' flushes are completed** (`lean/Editor/Test/Linked/Services.lean`):
   a flush of each service the check handed paths under the directory, the
-  file service unless it names others, waited for with no deadline,
+  file service unless it names others (the grep service's flush waits for
+  a cancelled search's thread, which may still be walking), waited for with no deadline,
   whether the body returned or threw; a guard says a hang, and a refused
   flush is said too. A check that runs a host over the directory nests the
   host's bracket inside it. ConfigTest reaches it through
@@ -1926,9 +1927,7 @@ outlives it (AGENTS.md, "Deterministic concurrency in tests"):
 - **Not yet in a scope** (tasks filed, `tech-debt`): the reload job, a
   dedicated task the loop abandons when it ends
   (`reload-job-outlives-host-loop`); pool jobs, which `cancelAll` cancels
-  and does not wait for (`pool-jobs-outlive-host-loop`); the grep service,
-  which has no flush, so a cancelled search may still walk a directory
-  being removed (`grep-search-outlives-directory`); the Rust service
+  and does not wait for (`pool-jobs-outlive-host-loop`); the Rust service
   threads that are waited for by a count and not joined
   (`rust-service-threads-joined-by-count`); and the test threads left
   behind on a panic path (`rust-test-threads-left-on-panic`).
