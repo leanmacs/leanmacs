@@ -16,6 +16,7 @@ import Editor.Test.Config
 import Editor.Test.Driver
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Test.Sources
@@ -55,8 +56,8 @@ def saysMarked : Dispatched := fun _ => do
 are registered: the commands compiled code registers for the command prompt
 (`ExecuteCommand.package.registered.commands`), the command that loads a
 theme, as the themes package registers it (`Themes.loadName`,
-`Themes.loadThemeCommand`), and the minibuffer's commands
-(`Minibuffer.package.registered.commands`), then `marked`, which says
+`Themes.loadThemeCommand`), and the core's test kit's minibuffer's commands
+(`Test.Minibuffer.package.registered.commands`), then `marked`, which says
 `marked`. -/
 def executeCommands : List (String × Dispatched) :=
   let called (registrations : Array Config.Registration) : List (String × Dispatched) :=
@@ -72,7 +73,7 @@ def executeCommands : List (String × Dispatched) :=
     Themes.loadThemeCommand call
     return none
   called ExecuteCommand.package.registered.commands ++ [(Themes.loadName, loadTheme)] ++
-    called Minibuffer.package.registered.commands ++
+    called Test.Minibuffer.package.registered.commands ++
     [("marked", saysMarked)]
 
 /-- What a step of the command prompt's checks is handed: the commands of
@@ -87,7 +88,7 @@ def executeKeys : Loop.Keys TestScheme.scheme :=
       executeCommands with
     maps := fun _ _ =>
       [Keymap.ofDescribed
-          [(keys "C-e y", invoke Minibuffer.acceptName, none),
+          [(keys "C-e y", invoke Editor.Minibuffer.acceptName, none),
             (keys "C-c m", invoke "marked", some "Mark it"), (keys "C-c n", invoke "marked", none)]]
     registered :=
       { themeNames := #[Theme.defaultName, "second"]
@@ -178,7 +179,7 @@ def executeCommandChecks : List Check :=
                 (candidatesOf (calling driver)).bind fun candidates =>
                   (candidates.all.find? (·.text == name)).map (·.annotation)
               annotated "marked" == some (some "C-c m, C-c n  Mark it") &&
-                annotated Minibuffer.acceptName == some (some "C-e y") &&
+                annotated Editor.Minibuffer.acceptName == some (some "C-e y") &&
                 annotated Themes.loadName == some none },
       { name :=
           "a command's annotation is none with no binding, the keys of one with no description, and the keys then the description of a described one"

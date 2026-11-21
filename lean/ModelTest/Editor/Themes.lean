@@ -18,8 +18,6 @@ import Editor.Job
 import Editor.Language
 import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.Program
 import Editor.ProjectMode
@@ -28,6 +26,7 @@ import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Text
@@ -55,15 +54,17 @@ def saysOther : Dispatched := fun _ => do
   return none
 
 /-- What a step of the theme command's checks is handed: the commands
-compiled code registers for loading a theme and for the minibuffer
-(`Themes.package.registered.commands`, `Minibuffer.package.registered.commands`), and `other`, which says
+compiled code registers for loading a theme (`Themes.package.registered.commands`),
+the kit's minibuffer's (`Test.Minibuffer.package.registered.commands`,
+`Editor/Test/Minibuffer.lean`), and `other`, which says
 `other`; told that the themes `default` and `second` are registered. `C-t
 t` runs the theme command with nothing, `C-t s` with the name `second`,
 `C-t n` with the name `nope`, `C-e y` runs the minibuffer's accept and `C-e
 o` runs `other`. -/
 def themeKeys : Loop.Keys TestScheme.scheme :=
   let compiled : List (String × Dispatched) :=
-    (Themes.package.registered.commands ++ Minibuffer.package.registered.commands).toList.filterMap
+    (Themes.package.registered.commands ++
+          Test.Minibuffer.package.registered.commands).toList.filterMap
       fun registration =>
       match registration.action with
       | .call run =>
@@ -77,7 +78,7 @@ def themeKeys : Loop.Keys TestScheme.scheme :=
       [("C-t t", invoke Themes.loadName),
         ("C-t s", { command := Themes.loadName, arguments := [.str "second"] }),
         ("C-t n", { command := Themes.loadName, arguments := [.str "nope"] }),
-        ("C-e y", invoke Minibuffer.acceptName), ("C-e o", invoke "other")]
+        ("C-e y", invoke Test.Minibuffer.acceptName), ("C-e o", invoke "other")]
       (compiled ++ [("other", saysOther)]) with
     registered := { themeNames := #[Theme.defaultName, "second"] } }
 

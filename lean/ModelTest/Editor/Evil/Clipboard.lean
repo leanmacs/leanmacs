@@ -21,7 +21,6 @@ import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Menu
 import Editor.Menu.Compiled
-import Editor.Minibuffer.Compiled
 import Editor.Process.Environment
 import Editor.Program
 import Editor.ProjectMode
@@ -29,6 +28,7 @@ import Editor.Scene
 import Editor.State
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Text
 import Editor.Watch.Model
@@ -63,7 +63,7 @@ bar `clipRegistry config` makes, as a host's are. -/
 def clipHanded (config : Array Config.KeyBinding := #[])
     (commands : List (String × Dispatched) := []) : Loop.Keys Vim.Default.scheme :=
   let registry := clipRegistry config
-  { evilHanded Minibuffer.package.registered.commands
+  { evilHanded Test.Minibuffer.package.registered.commands
       commands with
     maps := registry.activeMaps Vim.Default.scheme
     menu := some (registry.menuOf Menu.standard) }

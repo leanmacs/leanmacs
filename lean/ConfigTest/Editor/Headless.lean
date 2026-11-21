@@ -63,8 +63,6 @@ import Editor.Layout
 import Editor.Loop
 import Editor.Menu
 import Editor.Menu.Compiled
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Package
@@ -80,6 +78,7 @@ import Editor.SyntaxTree
 import Editor.TabBar
 import Editor.TabCommands
 import Editor.TabCommands.Compiled
+import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.Text.Model
 import Editor.Text.Real
@@ -2343,9 +2342,10 @@ def scriptOf (directives : List Headless.Directive) : Array Headless.Line :=
 
 /-- Runs `directives` as a script (`Headless.run`) against a host of its own
 over the library's file service (`Stage.overFiles`), with an empty config
-directory, that is handed what the executable is handed for the ex line:
-the ex line's commands and the `ex` package's ex names, the minibuffer's
-commands and its mode, and the file commands with their jobs. What `run`
+directory, that is handed what the executable is handed for the ex line,
+the ex line's commands and the `ex` package's ex names, and the file
+commands with their jobs, and the kit's minibuffer's commands and its mode
+(`Editor/Test/Minibuffer.lean`) where the executable has the shipped ones. What `run`
 answered, and every line the host printed. -/
 def ranScript (context : Context) (directives : List Headless.Directive) :
     IO (Option Headless.Failure × Array String) :=
@@ -2353,10 +2353,10 @@ def ranScript (context : Context) (directives : List Headless.Directive) :
     let stage ←
       Stage.overFiles context (Config.Directory.source directory)
           { commands :=
-              Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
+              Ex.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
                 Files.package.registered.commands
             jobs := Files.package.registered.jobs
-            modes := Minibuffer.package.registered.modes
+            modes := Test.Minibuffer.package.registered.modes
             ex := Ex.package.registered.ex }
     let failure ← Headless.run stage.collaborators (scriptOf directives) patience
     return (failure, ← stage.output.get)
@@ -2779,7 +2779,7 @@ def shippedChecks (_ : Unit) : List Check :=
             names.all (fun name => (registry.ex? name).isNone) &&
             (registry.findJob? "compile-run").isNone &&
             (registry.mode? "compilation").isNone &&
-            (registry.mode? Minibuffer.mode.name).isSome &&
+            (registry.mode? Prompt.mode).isSome &&
             registry.contributions.isEmpty },
     { name :=
         "the executable's hosts start with the jobs find-mode-markers and compile-list registered by the workspace package, beside find-workspace, and compile-list by no other package: the listing is the core's, whichever package gives the contributions it lists"

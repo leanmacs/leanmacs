@@ -27,18 +27,20 @@ import Editor.Invocation
 import Editor.Job
 import Editor.Job.Fake
 import Editor.Loop
-import Editor.Minibuffer.Compiled
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.Themes.Compiled
 
 /-!
 # Config tests: `Editor/Minibuffer.lean`
 
-The tests of `Editor/Minibuffer.lean`: `promptChecks`, the prompts of
-`Editor/Minibuffer/Compiled.lean` through the headless host. The root module
+The tests of prompts through the headless host: `promptChecks`, the core's
+prompts answered through the kit's minibuffer (`Editor/Test/Minibuffer.lean`),
+so that none depends on the minibuffer that ships, whose own tests pin it
+(`ModelTest.promptModeChecks`). The root module
 `ConfigTest` runs them; its module doc says what each shows.
 -/
 
@@ -61,7 +63,7 @@ def promptCompiled : Compiled :=
   let asks : EditorM Unit := discard <| prompt "Name: " { command := "greet" } "Ada"
   { minibufferCompiled with
     commands :=
-      Minibuffer.package.registered.commands ++
+      Test.Minibuffer.package.registered.commands ++
         #[{ name := "ask", action := .plain asks },
           { name := "greet"
             action :=
@@ -174,7 +176,7 @@ clock, and delivers `rewrite` and `w`. -/
 def laterCompiled : Compiled :=
   { minibufferCompiled with
     commands :=
-      Minibuffer.package.registered.commands ++
+      Test.Minibuffer.package.registered.commands ++
         #[{ name := "ask-later"
             action :=
               .plain
@@ -195,7 +197,7 @@ a source given as a value over `manyPaths count`. -/
 def manyCompiled (count : Nat) : Compiled :=
   { minibufferCompiled with
     commands :=
-      Minibuffer.package.registered.commands ++
+      Test.Minibuffer.package.registered.commands ++
         #[{ name := "ask-many"
             action :=
               .plain
@@ -215,7 +217,7 @@ minibuffer's commands and its mode, and `ask-annotated`, which asks
 def annotatedCompiled : Compiled :=
   { minibufferCompiled with
     commands :=
-      Minibuffer.package.registered.commands ++
+      Test.Minibuffer.package.registered.commands ++
         #[{ name := "ask-annotated"
             action :=
               .plain
@@ -297,8 +299,8 @@ def echoSourceText : String :=
 
 /-- The checks of prompts through the headless host (`Editor/Headless.lean`),
 on the real queue, the real text binding and the real elaborator, with the
-test scheme: the host is handed the minibuffer's commands and its mode
-(`Editor/Minibuffer/Compiled.lean`), and runs the answer's command of an
+test scheme: the host is handed the kit's minibuffer's commands and its
+mode (`Test.Minibuffer.package`, `Editor/Test/Minibuffer.lean`), and runs the answer's command of an
 accepted prompt before its next event. The accept key and the cancel key
 are the test scheme's keys for the roles the minibuffer's mode fills, so no
 check names a scheme's key. -/
@@ -591,7 +593,7 @@ def promptChecks (context : Context) : List Check :=
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           { minibufferCompiled with
             commands :=
-              Minibuffer.package.registered.commands ++ Buffers.package.registered.commands,
+              Test.Minibuffer.package.registered.commands ++ Buffers.package.registered.commands,
             sources := Buffers.package.registered.sources } },
     { name :=
         "with config choosing the hosts' style parts for buffer, a text of two parts that is no buffer's name, typed into switch-buffer and accepted with nothing chosen, shows the first buffer the prompt lists for it, though the fuzzy matcher matches it with no name"
@@ -611,7 +613,7 @@ def promptChecks (context : Context) : List Check :=
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           { minibufferCompiled with
             commands :=
-              Minibuffer.package.registered.commands ++ Buffers.package.registered.commands,
+              Test.Minibuffer.package.registered.commands ++ Buffers.package.registered.commands,
             sources := Buffers.package.registered.sources } },
     { name :=
         "criterion 1 over the recorder: a prompt asked with a source that answers later, from a compiled job that delivers two batches 10 ms apart on the fake clock, lists the first batch once it has arrived, in the library's order, and both once the job has ended; no step is refused"

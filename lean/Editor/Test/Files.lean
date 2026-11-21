@@ -32,8 +32,6 @@ import Editor.Language.IndentUnit
 import Editor.Layout
 import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process
@@ -47,6 +45,7 @@ import Editor.Test.Driver
 import Editor.Test.Jobs
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Text
 import Editor.Value
@@ -215,7 +214,7 @@ def filesDriver (registered : String → Option (List Argument → Work) := file
     fun driver => { driver with jobs := { files } }
 
 /-- A driver whose commands and jobs are the ones compiled code registers
-(`Files.package.registered.commands`, `Files.package.registered.jobs`, and `Minibuffer.package.registered.commands`), each under the
+(`Files.package.registered.commands`, `Files.package.registered.jobs`), and the kit's minibuffer's (`Minibuffer.package.registered.commands`, `Editor/Test/Minibuffer.lean`), each under the
 name it is registered under, over the files of the file command checks:
 `C-o n` is bound to the open command with the path of `note.txt`, `C-o o`
 to the open command with no argument, `C-o w` to the save command, and
@@ -296,8 +295,8 @@ shows. -/
 def languageAndMajor (driver : TestDriver) : Option (Option String × Option String) :=
   (showing driver).map fun shown => (shown.buffer.language, shown.buffer.major)
 
-/-- The commands compiled code registers for files, the minibuffer and the ex
-line, each under its name, and `undo` and `redo`, which move one step of the
+/-- The commands compiled code registers for files and the ex line, and the
+kit's minibuffer's (`Editor/Test/Minibuffer.lean`), each under its name, and `undo` and `redo`, which move one step of the
 history of the buffer of the window they are called with. -/
 def reloadCommands : List (String × Dispatched) :=
   let compiled : List (String × Dispatched) :=

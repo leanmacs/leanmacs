@@ -17,6 +17,7 @@ import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Contract
 import Editor.Main
 import Editor.Menu.Compiled
+import Editor.Minibuffer.Compiled
 import Editor.PackageSet.Compiled
 import Editor.ProjectSearch.Compiled
 import Editor.Restore.Compiled
@@ -70,9 +71,10 @@ and theorems, the elaborator port's model
 hosts, the executable's modes and `Editor.Command.Append`),
 and the test kit the core publishes for a package's tests: the model
 tests' (`Editor.Test.…`, `Editor/Test/`: `Editor.Test.Listing` and
-`Editor.Test.Prompts`, which import the rest of it, and
-`Editor.Test.Shipped` and `Editor.Test.Sources`, which no other kit module
-imports) and the linked tests'
+`Editor.Test.Prompts`, which import the rest of it, among it the kit's
+hand-written minibuffer (`Editor.Test.Minibuffer`), and
+`Editor.Test.Shipped`, `Editor.Test.Sources` and the kit's hand-written
+at-point (`Editor.Test.AtPoint`), which no other kit module imports) and the linked tests'
 (`Editor.Test.Linked.…`, `Editor/Test/Linked/`: its rig, its services and
 its trees). Everything else comes with them: the kit is the support the
 core's own tests are written on, so it imports the driver of the loop that

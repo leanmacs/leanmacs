@@ -16,8 +16,6 @@ import Editor.Job.Model
 import Editor.Layout
 import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Process
 import Editor.Process.Model
 import Editor.Program
@@ -29,6 +27,7 @@ import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Workspace
 import Editor.Text
 import Editor.Text.Model

@@ -22,8 +22,6 @@ import Editor.Language
 import Editor.Layout
 import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.Process
 import Editor.Process.Environment
@@ -36,6 +34,7 @@ import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Text
 import Editor.Value
@@ -55,9 +54,10 @@ open Editor
 open Editor.Test
 
 /-- What a step of the buffer command checks is handed. The commands are the
-ones compiled code registers for files, the minibuffer, the buffers and the
-ex line (`Files.package.registered.commands`, `Minibuffer.package.registered.commands`, `Buffers.package.registered.commands`,
-`Ex.package.registered.commands`), each under the name it is registered under, told of the `ex`
+ones compiled code registers for files, the buffers and the ex line
+(`Files.package.registered.commands`, `Buffers.package.registered.commands`,
+`Ex.package.registered.commands`) and the kit's minibuffer's
+(`Test.Minibuffer.package.registered.commands`, `Editor/Test/Minibuffer.lean`), each under the name it is registered under, told of the `ex`
 package's ex names (`Ex.package.registered.ex`), and five written here: `split`, which
 splits the window it is called with and leaves the focus,
 `edit-then-close`, which inserts `x` at its window's cursors and then runs
@@ -82,7 +82,7 @@ view on the call's window's buffer (`ViewId.newTab`), and `C-b c` runs
 `close-anyway`. -/
 def bufferKeys : Loop.Keys TestScheme.scheme :=
   let registrations :=
-    Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
+    Files.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
       Buffers.package.registered.commands ++
       Ex.package.registered.commands
   let compiled : List (String × Dispatched) :=
@@ -125,8 +125,8 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
         return none)]
   {
     dispatchKeys
-      [("C-e e", invoke Ex.name), ("C-e y", invoke Minibuffer.acceptName),
-        ("C-e t", invoke Minibuffer.nextName),
+      [("C-e e", invoke Ex.name), ("C-e y", invoke Test.Minibuffer.acceptName),
+        ("C-e t", invoke Test.Minibuffer.nextName),
         ("C-b b", { command := Buffers.switchName, arguments := [.nat 0, .str ""] }),
         ("C-b n", { command := Buffers.switchName, arguments := [.str "note.txt"] }),
         ("C-b s", invoke "split"), ("C-b x", invoke "edit-then-close"),

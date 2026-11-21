@@ -15,8 +15,8 @@ import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
-import Editor.Minibuffer.Compiled
 import Editor.Process
+import Editor.Test.Minibuffer
 import Editor.VersionControl.Compiled
 import Editor.Workspace.Compiled
 
@@ -108,14 +108,15 @@ def gutterChecks (context : Context) : List Check :=
           let stage ←
             Stage.overFiles context (Config.Directory.source configDir)
                 { commands :=
-                    Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
+                    Files.package.registered.commands ++
+                      Test.Minibuffer.package.registered.commands ++
                       Workspace.package.registered.commands ++
                       VersionControl.gutterPackage.registered.commands ++
                       #[opening "open-a" file]
                   jobs :=
                     Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
                       VersionControl.gutterPackage.registered.jobs
-                  modes := Minibuffer.package.registered.modes }
+                  modes := Test.Minibuffer.package.registered.modes }
           let collaborators := stage.collaborators
           let services := collaborators.services
           let processes :=

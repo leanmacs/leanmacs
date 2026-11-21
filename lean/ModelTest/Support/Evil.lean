@@ -33,7 +33,6 @@ import Editor.Layout
 import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Menu
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
@@ -45,6 +44,7 @@ import Editor.TabBar
 import Editor.Test.AtPoint
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
@@ -110,9 +110,9 @@ abbrev EvilDriver :=
 
 /-- What a step of the evil checks is handed: no active keymaps, so that a
 key is looked up in the keymaps of its view's Vim state alone, and the
-commands compiled code registers for evil (`Evil.package.registered.commands`) and for the
-minibuffer (`Minibuffer.package.registered.commands`), as the executable registers both, so
-that `/` and `?` ask and are answered, and the kit's for completion at point
+commands compiled code registers for evil (`Evil.package.registered.commands`), and the
+kit's for the minibuffer (`Test.Minibuffer.package.registered.commands`,
+`Editor/Test/Minibuffer.lean`), so that `/` and `?` ask and are answered, and the kit's for completion at point
 (`Test.AtPoint.package.registered.commands`, `Editor/Test/AtPoint.lean`), so
 that insert state's `RET`, `TAB` and `C-g` type and quit as the package that
 ships has them do, and those of `more`, each under the
@@ -124,7 +124,7 @@ def evilHanded (more : Array Config.Registration := #[])
   {
     command? := fun name =>
       match
-        (Evil.package.registered.commands ++ Minibuffer.package.registered.commands ++
+        (Evil.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
               Test.AtPoint.package.registered.commands ++
               more).findRev?
           (·.name == name) with

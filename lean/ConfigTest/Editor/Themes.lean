@@ -20,8 +20,8 @@ import Editor.InputScheme.Test
 import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
-import Editor.Minibuffer.Compiled
 import Editor.Scene
+import Editor.Test.Minibuffer
 import Editor.Text.Real
 import Editor.Themes
 import Editor.Themes.Compiled
@@ -40,10 +40,11 @@ open Editor
 /-- What compiled code hands the hosts of the theme checks: the command that
 loads a theme and the theme `default` (`Editor/Themes/Compiled.lean`), the
 fixture themes (`ConfigTest/Support/Themes.lean`), and
-the minibuffer's commands and its mode, which its prompt is answered with. -/
+the kit's minibuffer's commands and its mode (`Editor/Test/Minibuffer.lean`),
+which its prompt is answered with. -/
 def themeCompiled : Compiled :=
-  { commands := Themes.package.registered.commands ++ Minibuffer.package.registered.commands,
-    modes := Minibuffer.package.registered.modes
+  { commands := Themes.package.registered.commands ++ Test.Minibuffer.package.registered.commands,
+    modes := Test.Minibuffer.package.registered.modes
     themes := #[Themes.defaultTheme] ++ fixtureThemes }
 
 /-- The face `default` of the theme `second` the theme checks' config

@@ -18,7 +18,6 @@ import Editor.Invocation
 import Editor.Language
 import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Minibuffer
 import Editor.Mode
 import Editor.Program
 import Editor.ProjectMode
@@ -27,6 +26,7 @@ import Editor.State
 import Editor.Test.Completion
 import Editor.Test.Driver
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.States
 import Editor.Text
@@ -466,8 +466,8 @@ def insertCandidateChecks : List Check :=
             | none => false
             | some driver =>
               let (ran, _) :=
-                driver.stepped (driver.loop.runNamed driver.handed Minibuffer.insertName)
-              ran.loop.state.echo == Minibuffer.notOpen && evilShown ran == "a|bc"
+                driver.stepped (driver.loop.runNamed driver.handed Test.Minibuffer.insertName)
+              ran.loop.state.echo == PromptRefusal.notOpen.describe && evilShown ran == "a|bc"
           (candidates.toInsert "e").map (·.text) == some "edit" &&
             (Candidates.toInsert { candidates with chosen := some 1 } "e").map (·.text) ==
               some "rewrite" &&

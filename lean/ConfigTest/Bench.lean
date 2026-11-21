@@ -33,8 +33,6 @@ import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.Package
 import Editor.Program
@@ -43,6 +41,7 @@ import Editor.Setup
 import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
+import Editor.Test.Minibuffer
 import Editor.Test.Shipped
 import Editor.Text
 import Editor.Text.Model
@@ -735,7 +734,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             jobs := requests + 2, environment := requests + 3, posts := requests + 4,
             pauseEvents := requests + 5,
             packages :=
-              #[listingsPackage, Test.Shipped.modeLine, Minibuffer.package,
+              #[listingsPackage, Test.Shipped.modeLine, Test.Minibuffer.package,
                 Compiled.package
                   {
                     commands :=
@@ -752,7 +751,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
       for sample in [0:samples] do
         let index := sample % keys.length
         if index == 0 && sample > 0 then
-          host.send (.run Minibuffer.cancelName)
+          host.send (.run Test.Minibuffer.cancelName)
           ask
         let ran ← IO.Promise.new
         let listed ← IO.Promise.new
@@ -879,7 +878,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             wakeups := requests + 1, jobs := requests + 2, environment := requests + 3,
             posts := requests + 4, pauseEvents := requests + 5,
             packages :=
-              #[listingsPackage, Test.Shipped.modeLine, Files.package, Minibuffer.package,
+              #[listingsPackage, Test.Shipped.modeLine, Files.package, Test.Minibuffer.package,
                 Compiled.package { commands := #[{ name := "noop", action := .plain (pure ()) }] }]
             workingDirectory := "/big" }
     try
@@ -893,7 +892,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
       for sample in [0:samples] do
         let index := sample % fileKeys.length
         if index == 0 && sample > 0 then
-          host.send (.run Minibuffer.cancelName)
+          host.send (.run Test.Minibuffer.cancelName)
           ask
         let ran ← IO.Promise.new
         ranSlot.set (some ran)
@@ -1025,7 +1024,7 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
           source := memorySource [], emit, services, published, held, requests := 1
           wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
           packages :=
-            #[listingsPackage, Test.Shipped.modeLine, Files.package, Minibuffer.package,
+            #[listingsPackage, Test.Shipped.modeLine, Files.package, Test.Minibuffer.package,
               Workspace.package,
               Compiled.package
                 {
@@ -1062,7 +1061,7 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
         let index := sample % keys.length
         if index == 0 && sample > 0 then
           joined "the keys"
-          host.send (.run Minibuffer.cancelName)
+          host.send (.run Test.Minibuffer.cancelName)
           joined "the cancel"
           opens
         let ran ← IO.Promise.new
@@ -1082,7 +1081,7 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
         else
           IO.sleep finderCadence.toUInt32
       joined "the row"
-      host.send (.run Minibuffer.cancelName)
+      host.send (.run Test.Minibuffer.cancelName)
       joined "the cancel"
       return (keyTimes, listingTimes)
     -- The finder's first listing, untimed, and its prompt's status line.
@@ -1090,7 +1089,7 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
     joined "the first listing"
     host.send .scene
     joined "the scene"
-    host.send (.run Minibuffer.cancelName)
+    host.send (.run Test.Minibuffer.cancelName)
     joined "the cancel"
     let idle := Row.of "no candidates" (← row "ask-plain" false true).1
     let (finderKeys, finderListings) ← row Workspace.FindFile.name true true

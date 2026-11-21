@@ -7,8 +7,6 @@ import Editor.InputScheme
 import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
 import Editor.Keymap
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Role
 import Editor.Scene
 import Editor.Shell
@@ -16,6 +14,7 @@ import Editor.TabCommands
 import Editor.TabCommands.Compiled
 import Editor.Test.AtPoint
 import Editor.Test.Keys
+import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.WindowCommands
 import Editor.WindowCommands.Compiled
@@ -176,7 +175,7 @@ def vimDefaultChecks : List Check :=
                 if text == "C-u" then
                   match inMinibuffer.getLast? with
                   | some (.edit (.run command none none)) =>
-                    command.name == Minibuffer.deleteToStartName
+                    command.name == Test.Minibuffer.deleteToStartName
                   | _ => false
                 else runsNone inMinibuffer) },
     { name :=
@@ -258,7 +257,7 @@ def vimDefaultChecks : List Check :=
         "every command a key of insert state's table or of the minibuffer's state's table runs is registered under its name by evil's commands, the minibuffer's or completion at point's"
       run :=
         let registered :=
-          (Evil.package.registered.commands ++ Minibuffer.package.registered.commands ++
+          (Evil.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
                 Test.AtPoint.package.registered.commands).map
             (·.name)
         pure
@@ -279,6 +278,18 @@ def vimDefaultChecks : List Check :=
             (bound ++ [Completion.AtPoint.triggeredCommand, Completion.AtPoint.pausedCommand]).all
               Test.AtPoint.names.contains &&
             Test.AtPoint.package.registered.commands.map (·.name) == Test.AtPoint.names) },
+    { name :=
+        "every command the minibuffer's state's table runs, the one the Vim scheme yields to ask for a text and the one a source's job posts each batch as are each one of the kit's minibuffer names, which are what its package registers, in order"
+      run :=
+        let bound :=
+          Vim.Default.minibufferCommands.filterMap fun
+            | (_, .command command) => some command.name
+            | _ => none
+        pure
+          (bound.length == 7 &&
+            (bound ++ [Vim.askCommand, Completion.candidatesCommand]).all
+              Test.Minibuffer.names.contains &&
+            Test.Minibuffer.package.registered.commands.map (·.name) == Test.Minibuffer.names) },
     { name :=
         "each of the default key sequences z t, z z and z b runs a command of its own that changes no text and enters no state, in the initial state and, the same command, in each visual state, which the view stays in; z alone yields nothing and is pending; and in the state i enters and in the minibuffer's state z is typed text"
       run :=
@@ -459,10 +470,10 @@ def vimDefaultChecks : List Check :=
           | [.edit (.run command none none)] => some command.name
           | _ => none
         pure
-          (command "TAB" == some Minibuffer.insertName &&
-            command "C-n" == some Minibuffer.nextName &&
-            command "C-p" == some Minibuffer.previousName &&
-            Minibuffer.nextName != Minibuffer.previousName &&
+          (command "TAB" == some Test.Minibuffer.insertName &&
+            command "C-n" == some Test.Minibuffer.nextName &&
+            command "C-p" == some Test.Minibuffer.previousName &&
+            Test.Minibuffer.nextName != Test.Minibuffer.previousName &&
             command "S-TAB" == none &&
             (parsed "S-TAB").2.all (· == .nothing) &&
             ["TAB", "C-n", "C-p"].all fun text => (parsed text).1 == told) },

@@ -30,8 +30,10 @@ This module is apart from `Editor/Minibuffer.lean` because it is what a
 host is handed, not what config calls: `Editor.lean` imports the commands,
 so that config can call them, and not this.
 
-Pinned by `ModelTest.promptChecks`, on the models, and by
-`ConfigTest.promptChecks`, through the headless host.
+Pinned by `ModelTest.promptModeChecks`, on the models, and through the
+editor by the headless fixtures `prompt` and `candidates`. The core's own
+tests of prompts (`ModelTest.promptChecks`, `ConfigTest.promptChecks`) run
+on the test kit's minibuffer (`Editor/Test/Minibuffer.lean`).
 -/
 
 namespace Editor.Minibuffer

@@ -57,11 +57,22 @@ def promptScene (driver : TestDriver) :
   return (shownText driver.model minibuffer, minibuffer.status, scene.focused == some view,
       window.status)
 
+/-- A driver of the minibuffer checks (`minibufferDriver`,
+`Editor/Test/Prompts.lean`) over the state `start` makes, with the
+minibuffer that ships (`Editor.Minibuffer.package`) where the kit's
+drivers have the kit's: these checks are of that package's own commands. -/
+def shippedMinibufferDriver (start : TextM EditorState := EditorState.initial ⟨640, 480⟩) :
+    Option TestDriver :=
+  minibufferDriver start (package := Editor.Minibuffer.package)
+
 /-- The checks of the minibuffer's commands and its mode
 (`Editor/Minibuffer.lean`, `Editor/Minibuffer/Compiled.lean`), on the
 loop's driver over the editor's models and the test scheme, with the
-registry's active keymaps: the phase's acceptance criteria on the models.
-The accept key and the cancel key are the test scheme's keys for the roles
+registry's active keymaps (`shippedMinibufferDriver`): the phase's acceptance
+criteria on the models, the rules of the shipped commands the kit's
+minibuffer does not share (`<Backspace>` on an empty minibuffer, a malformed
+batch), and that the shipped package registers what the kit's does
+(`Editor/Test/Minibuffer.lean`). The accept key and the cancel key are the test scheme's keys for the roles
 the mode fills (`InputScheme.roleKey`), so no check names a key of
 either. -/
 def promptModeChecks : List Check :=
@@ -76,7 +87,7 @@ def promptModeChecks : List Check :=
         "criterion 1: a command prompts, keys are typed and the accept key is pressed: the continuation's command receives the typed string, with the asking view as its target, and the minibuffer's window is closed; the state has no prompt, one window, the tree it had and the focus on the asking view, the minibuffer's buffer slot is empty and its text refuses noSuchText, and the scene has one view"
       run :=
         pure <|
-          match minibufferDriver with
+          match shippedMinibufferDriver with
           | none => false
           | some driver =>
             let (typed, _) := fedTo driver (presses "C-c a h i")
@@ -95,7 +106,7 @@ def promptModeChecks : List Check :=
         "criterion 2: a prompt given an initial value and accepted with no key typed: the continuation's command receives the initial value"
       run :=
         pure <|
-          match minibufferDriver with
+          match shippedMinibufferDriver with
           | none => false
           | some driver =>
             let (asking, _) := fedTo driver (presses "C-c i")
@@ -106,7 +117,7 @@ def promptModeChecks : List Check :=
         "criterion 3: the prompt is cancelled: the continuation's command does not run, nothing is answered, the focus returns to the view that had it, and the minibuffer's text is released; the same keys with the accept key in place of the cancel key do run it"
       run :=
         pure <|
-          match minibufferDriver with
+          match shippedMinibufferDriver with
           | none => false
           | some driver =>
             let (typed, _) := fedTo driver (presses "C-c a h i")
@@ -124,7 +135,7 @@ def promptModeChecks : List Check :=
         "criterion 4: a job completes while a prompt is open: its result's command runs, to its end, before the prompt is answered, and inserts in the window's buffer; the prompt is still open, with its text and the focus, and the keys typed afterwards and the accept key answer it with everything typed"
       run :=
         pure <|
-          match minibufferDriver with
+          match shippedMinibufferDriver with
           | none => false
           | some driver =>
             let (typed, _) := fedTo driver (presses "C-c s C-c a h")
@@ -144,7 +155,7 @@ def promptModeChecks : List Check :=
         "criterion 5: while a prompt is open the scene shows the prompt text and the input typed so far in the minibuffer's view: after the prompt is asked for and after each key that prints, the last scene has that view with the text so far, the label alone as its status line, in the prompt's face, and the focus, and view 0 with its own status line"
       run :=
         pure <|
-          match minibufferDriver with
+          match shippedMinibufferDriver with
           | none => false
           | some driver =>
             let (asking, _) := fedTo driver (presses "C-c a")
@@ -161,21 +172,21 @@ def promptModeChecks : List Check :=
         "with no prompt open the minibuffer's accept command and its cancel command, each run by a key of the global keymap, say that no prompt is open and change nothing else; and the keys of the two roles, typed in a view whose buffer does not have the minibuffer's mode, run no command"
       run :=
         pure <|
-          match minibufferDriver with
+          match shippedMinibufferDriver with
           | none => false
           | some driver =>
             let said (typed : String) : Bool :=
               let (after, _) := fedTo driver (presses typed)
-              after.loop.state == { driver.loop.state with echo := Minibuffer.notOpen }
+              after.loop.state == { driver.loop.state with echo := Editor.Minibuffer.notOpen }
             let (unbound, steps) := fedTo driver (accept ++ cancel)
-            !Minibuffer.notOpen.isEmpty && said "C-c 1" && said "C-c 2" &&
+            !Editor.Minibuffer.notOpen.isEmpty && said "C-c 1" && said "C-c 2" &&
               steps.all (·.all (·.ended.isNone)) &&
               unbound.loop.state == driver.loop.state },
     { name :=
         "a second prompt asked for while one is open, by a key of the global keymap typed in the minibuffer: the command says the refusal, the first prompt is still open with its text, and no text was made"
       run :=
         pure <|
-          match minibufferDriver with
+          match shippedMinibufferDriver with
           | none => false
           | some driver =>
             let (typed, _) := fedTo driver (presses "C-c a h")
@@ -189,7 +200,7 @@ def promptModeChecks : List Check :=
         "a prompt does not capture the keyboard: with the focus moved to the window while the prompt is open, a key that prints goes to the window's buffer and the prompt waits; with the focus moved back, the accept key answers with what the minibuffer held"
       run :=
         pure <|
-          match minibufferDriver with
+          match shippedMinibufferDriver with
           | none => false
           | some driver =>
             let (away, _) := fedTo driver (presses "C-c a h C-c w x")
@@ -206,7 +217,7 @@ def promptModeChecks : List Check :=
         "with the asking view closed while the prompt is open: the prompt stays open, and after the accept key the focus is on the first window of the list, which is the target of the continuation's command"
       run :=
         pure <|
-          match minibufferDriver twoBuffers with
+          match shippedMinibufferDriver twoBuffers with
           | none => false
           | some driver =>
             let (closing, _) := fedTo driver (presses "C-c a h C-c k")
@@ -218,22 +229,78 @@ def promptModeChecks : List Check :=
               closed accepted ⟨1⟩ &&
               accepted.loop.state.windows.map (·.id) == #[⟨1⟩] },
     { name :=
+        "the minibuffer's command that deletes backward, run on an empty minibuffer, closes the prompt as the cancel command does, and the command the prompt named is not run; the command that deletes to the input's start, run there, leaves the prompt open; each, run by name with no prompt open, says that no prompt is open in the echo area"
+      run :=
+        pure <|
+          match shippedMinibufferDriver with
+          | none => false
+          | some driver =>
+            let ran (on : TestDriver) (name : String) : TestDriver :=
+              (on.stepped (on.loop.runNamed on.handed name)).1
+            let (typed, _) := fedTo driver (presses "C-c a h")
+            let erased := ran typed Editor.Minibuffer.deleteBackwardName
+            let kept := ran erased Editor.Minibuffer.deleteToStartName
+            let emptied := ran kept Editor.Minibuffer.deleteBackwardName
+            minibufferText erased == some "" && erased.loop.state.prompt.isSome &&
+              minibufferText kept == some "" &&
+              kept.loop.state.prompt.isSome &&
+              closed emptied &&
+              promptEcho emptied == "" &&
+              !Editor.Minibuffer.notOpen.isEmpty &&
+              [Editor.Minibuffer.deleteBackwardName, Editor.Minibuffer.deleteToStartName].all
+                fun name => promptEcho (ran driver name) == Editor.Minibuffer.notOpen },
+    { name :=
+        "the minibuffer's command that takes a batch, delivered as a job's post with arguments that are no batch, says minibuffer-candidates: malformed batch in the echo area, and the open prompt's asking source takes nothing"
+      run :=
+        pure <|
+          match shippedMinibufferDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-c a")
+            let source : Completion.Asking :=
+              { source := "later", later := { job := "j" }, askedFor := "", generation := 1 }
+            let set :=
+              { asking with
+                loop :=
+                  { asking.loop with
+                    state := (asking.loop.state.setCandidates { asking := #[source] }).2 } }
+            let bad :=
+              (set.stepped
+                  (set.loop.deliver set.handed "job 1 later"
+                    (runPosted
+                      { command := Editor.Minibuffer.candidatesName, arguments := [.str "x"] }))).1
+            asking.loop.state.prompt.isSome &&
+              bad.model.display.scenes.back?.map (·.echo) ==
+                some s!"{Completion.candidatesCommand}: malformed batch" &&
+              (candidatesOf bad).map (·.asking) == (candidatesOf set).map (·.asking) },
+    { name :=
+        "the minibuffer that ships registers its commands under the kit's minibuffer names, in order, and its one mode under the name and with the roles of the kit's"
+      run :=
+        pure
+          (Editor.Minibuffer.package.registered.commands.map (·.name) == Test.Minibuffer.names &&
+            Editor.Minibuffer.package.registered.modes.map (fun mode => (mode.name, mode.roles)) ==
+              Test.Minibuffer.package.registered.modes.map fun mode => (mode.name, mode.roles)) },
+    { name :=
         "the minibuffer's commands are registered under their nine names, each another, the one that asks for the input scheme under the name the Vim scheme yields and the one that takes a batch under the name a source's job posts; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
       run :=
         pure
-          (Minibuffer.package.registered.commands.map (·.name) ==
-              #[Minibuffer.acceptName, Minibuffer.cancelName, Minibuffer.nextName,
-                Minibuffer.previousName, Minibuffer.insertName, Minibuffer.deleteBackwardName,
-                Minibuffer.deleteToStartName, Minibuffer.askName, Minibuffer.candidatesName] &&
-            (Minibuffer.package.registered.commands.map (·.name)).toList.eraseDups.length == 9 &&
-            Minibuffer.askName == Vim.askCommand &&
-            Minibuffer.candidatesName == Completion.candidatesCommand &&
-            Minibuffer.package.registered.modes.map (·.name) == #[Prompt.mode] &&
-            Minibuffer.package.registered.modes.map (·.roles) ==
-              #[[(Role.activate, Minibuffer.acceptName), (Role.quit, Minibuffer.cancelName),
-                  (Role.nextItem, Minibuffer.nextName),
-                  (Role.previousItem, Minibuffer.previousName)]] &&
-            Minibuffer.package.registered.modes.all fun mode =>
+          (Editor.Minibuffer.package.registered.commands.map (·.name) ==
+              #[Editor.Minibuffer.acceptName, Editor.Minibuffer.cancelName,
+                Editor.Minibuffer.nextName, Editor.Minibuffer.previousName,
+                Editor.Minibuffer.insertName, Editor.Minibuffer.deleteBackwardName,
+                Editor.Minibuffer.deleteToStartName, Editor.Minibuffer.askName,
+                Editor.Minibuffer.candidatesName] &&
+            (Editor.Minibuffer.package.registered.commands.map (·.name)).toList.eraseDups.length ==
+              9 &&
+            Editor.Minibuffer.askName == Vim.askCommand &&
+            Editor.Minibuffer.candidatesName == Completion.candidatesCommand &&
+            Editor.Minibuffer.package.registered.modes.map (·.name) == #[Prompt.mode] &&
+            Editor.Minibuffer.package.registered.modes.map (·.roles) ==
+              #[[(Role.activate, Editor.Minibuffer.acceptName),
+                  (Role.quit, Editor.Minibuffer.cancelName),
+                  (Role.nextItem, Editor.Minibuffer.nextName),
+                  (Role.previousItem, Editor.Minibuffer.previousName)]] &&
+            Editor.Minibuffer.package.registered.modes.all fun mode =>
               mode.check TestScheme.scheme == []) }]
 
 end ModelTest

@@ -25,11 +25,11 @@ import Editor.Job
 import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.Value
 
@@ -47,12 +47,13 @@ namespace ConfigTest
 
 open Editor
 
-/-- What compiled code hands every host of the prompt checks: the
-minibuffer's commands and its mode, as the executable is handed them
-(`Editor/Minibuffer/Compiled.lean`). -/
+/-- What compiled code hands every host of the prompt checks: the kit's
+minibuffer's commands and its mode (`Test.Minibuffer.package`,
+`Editor/Test/Minibuffer.lean`), where the executable is handed the
+package that ships. -/
 def minibufferCompiled : Compiled :=
-  { commands := Minibuffer.package.registered.commands,
-    modes := Minibuffer.package.registered.modes }
+  { commands := Test.Minibuffer.package.registered.commands,
+    modes := Test.Minibuffer.package.registered.modes }
 
 /-- Whether `message` is one line and names `path`. A message that will be
 printed as one diagnostic line must hold the path on its first line. -/
@@ -155,16 +156,16 @@ def nappingCompiled : Compiled :=
 
 /-- What compiled code hands every host of the ex checks: the ex line's
 commands and the `ex` package's ex names (`Ex.package.registered.commands`, `Ex.package.registered.ex`,
-`Editor/Ex/Compiled.lean`), the minibuffer's commands and its mode, the
-file commands, which two of the shipped names run, and `other`, written
+`Editor/Ex/Compiled.lean`), the kit's minibuffer's commands and its mode
+(`Editor/Test/Minibuffer.lean`), the file commands, which two of the shipped names run, and `other`, written
 here, which says `other`, on `C-c o`. It is handed no job: no check here
 opens or saves a file. -/
 def exCompiled : Compiled :=
   { commands :=
-      Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
+      Ex.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
         Files.package.registered.commands ++
         #[{ name := "other", action := .plain (message "other") }]
-    modes := Minibuffer.package.registered.modes
+    modes := Test.Minibuffer.package.registered.modes
     ex := Ex.package.registered.ex
     bindings := #[bound "C-c o" "other"] }
 
@@ -189,8 +190,9 @@ def opening (name : String) (path : System.FilePath) : Config.Registration :=
 /-- Runs `check` against a host over the library's file service
 (`Stage.overFiles`), with an empty config directory of its own, that is
 handed the file commands and their jobs as compiled code registers them
-(`Files.package.registered.commands`, `Files.package.registered.jobs`), the minibuffer's commands and its mode
-(`Minibuffer.package.registered.commands`, `Minibuffer.package.registered.modes`), as the executable is, and,
+(`Files.package.registered.commands`, `Files.package.registered.jobs`), the
+kit's minibuffer's commands and its mode (`Test.Minibuffer.package.registered.commands`,
+`Test.Minibuffer.package.registered.modes`, `Editor/Test/Minibuffer.lean`), and,
 for each name and path of `opens`, a command of that name that opens that
 path (`opening`). Stops the host: `false` if the check did not hold or the
 host did not stop. -/
@@ -200,11 +202,11 @@ def withFileHost (context : Context) (opens : List (String × System.FilePath))
     let stage ←
       Stage.overFiles context (Config.Directory.source directory)
           { commands :=
-              Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
+              Files.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
                 (opens.map fun (name, path) => opening name path).toArray ++
                 extra
             jobs := Files.package.registered.jobs
-            modes := Minibuffer.package.registered.modes }
+            modes := Test.Minibuffer.package.registered.modes }
     onStage stage fun host stage =>
         check
           { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,

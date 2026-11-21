@@ -159,8 +159,10 @@ show:
   command can set one yet, and the key pressed is the test scheme's for the
   role (`Session.pressKeys`), so no check names a scheme's key;
 - `promptChecks`: prompts through the host, with the test scheme, the
-  minibuffer's commands and its mode as compiled code hands them
-  (`Minibuffer.package.registered.commands`, `Minibuffer.package.registered.modes`) and commands written here: a
+  kit's minibuffer's commands and its mode as compiled code hands them
+  (`Test.Minibuffer.package.registered.commands`,
+  `Test.Minibuffer.package.registered.modes`, `Editor/Test/Minibuffer.lean`)
+  and commands written here: a
   command asks, a commit is typed into the minibuffer and the scene shows
   it; the accept key runs the continuation's command with the answer and
   the cancel key does not; a job's result is delivered while a prompt is

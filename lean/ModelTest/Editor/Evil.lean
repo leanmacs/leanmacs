@@ -16,13 +16,12 @@ import Editor.Invocation
 import Editor.Job
 import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Program
 import Editor.Scene
 import Editor.State
 import Editor.Test.Config
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Text
 import ModelTest.Check
@@ -350,12 +349,13 @@ def evilPrompts : List (Option EvilDriver × String × (String → String)) :=
     return none
   let asked :=
     (evilDriver "a|bc"
-          (evilHanded Minibuffer.package.registered.commands [("ask", ask), ("greet", greet)])).map
+          (evilHanded Test.Minibuffer.package.registered.commands
+            [("ask", ask), ("greet", greet)])).map
       fun driver => (driver.stepped (driver.loop.runNamed driver.handed "ask")).1
   let ex :=
     (evilDriver "a|bc"
           (evilHanded
-            (Ex.package.registered.commands ++ Minibuffer.package.registered.commands))).map
+            (Ex.package.registered.commands ++ Test.Minibuffer.package.registered.commands))).map
       (evilFed · ":")
   [(asked, "greet", fun answer => s!"hello {answer}"), (ex, Ex.name, Ex.unknown)]
 
@@ -520,7 +520,7 @@ def evilInsertChecks : List Check :=
             message s!"hello {" ".intercalate (call.arguments.map argumentText)}"
             return none
           let handed :=
-            evilHanded Minibuffer.package.registered.commands [("ask", ask), ("greet", greet)]
+            evilHanded Test.Minibuffer.package.registered.commands [("ask", ask), ("greet", greet)]
           match evilDriver "a|bc" handed with
           | none => false
           | some driver =>
@@ -533,7 +533,7 @@ def evilInsertChecks : List Check :=
               answered.loop.state.echo == "hello Ada7" &&
               evilShown answered == "a|bc" },
     { name :=
-        "<Backspace>, typed while a prompt is open, deletes the character before the minibuffer's bar, a character of two bytes whole, and RET then accepts what is left; with the bar at the start of a text it deletes nothing; on an empty minibuffer it closes the prompt as <Escape> does, and the command the prompt named is not run; its command run by name with no prompt open says so in the echo area"
+        "<Backspace>, typed while a prompt is open, deletes the character before the minibuffer's bar, a character of two bytes whole, and RET then accepts what is left; with the bar at the start of a text it deletes nothing; deleting the last character leaves the minibuffer empty and the prompt open"
       run :=
         pure <|
           let ask : Dispatched := fun _ => do
@@ -546,7 +546,7 @@ def evilInsertChecks : List Check :=
             call.target.select { ranges := #[⟨0, 0⟩], shape := .exclusive }
             return none
           let handed :=
-            evilHanded Minibuffer.package.registered.commands
+            evilHanded Test.Minibuffer.package.registered.commands
               [("ask", ask), ("greet", greet), ("home", home)]
           match evilDriver "a|bc" handed with
           | none => false
@@ -558,22 +558,14 @@ def evilInsertChecks : List Check :=
             let (homed, _) := typing.stepped (typing.loop.runNamed typing.handed "home")
             let atStart := evilFed homed "<Backspace>"
             let emptied := evilFed typing "<Backspace> <Backspace> <Backspace> <Backspace>"
-            let closed := evilFed emptied "<Backspace>"
-            let (unasked, _) :=
-              driver.stepped (driver.loop.runNamed driver.handed Minibuffer.deleteBackwardName)
-            unasked.loop.state.echo == Minibuffer.notOpen && evilShown unasked == "a|bc" &&
-              evilShown erased ⟨1⟩ == "Ad|" &&
-              evilShown erased == "a|bc" &&
+            evilShown erased ⟨1⟩ == "Ad|" && evilShown erased == "a|bc" &&
               answered.loop.state.prompt.isNone &&
               answered.loop.state.echo == "hello Ad" &&
               evilShown atStart ⟨1⟩ == "|Adé7" &&
               atStart.loop.state.prompt.isSome &&
               evilShown emptied ⟨1⟩ == "|" &&
               emptied.loop.state.prompt.isSome &&
-              closed.loop.state.prompt.isNone &&
-              closed.loop.state.frame.focused == ⟨0⟩ &&
-              closed.loop.state.echo == "" &&
-              evilShown closed == "a|bc" },
+              evilShown emptied == "a|bc" },
     { name :=
         "<ArrowLeft>, typed while a prompt is open, the minibuffer's and the ex line's, moves the minibuffer's bar one character back, and no further than the input's start; text typed then is inserted there, and RET accepts the whole input; the asking view is as it was"
       run :=
@@ -602,30 +594,21 @@ def evilInsertChecks : List Check :=
               answer.loop.state.echo == answered "Adya" &&
               evilShown answer == "a|bc" },
     { name :=
-        "C-u, typed while a prompt is open, the minibuffer's and the ex line's, deletes from the minibuffer's bar to the input's start and keeps what is after the bar, and RET accepts what is left; with the bar at the start it deletes nothing; on an empty minibuffer it leaves the prompt open, unlike <Backspace>; its command run by name with no prompt open says so in the echo area"
+        "C-u, typed while a prompt is open, the minibuffer's and the ex line's, deletes from the minibuffer's bar to the input's start and keeps what is after the bar, and RET accepts what is left; with the bar at the start it deletes nothing; on an empty minibuffer it leaves the prompt open"
       run :=
         pure <|
-          let held :=
-            evilPromptsHold fun asking answered =>
-              let cleared := evilFed asking "A d a <ArrowLeft> C-u"
-              let answer := evilFed cleared "RET"
-              let atStart := evilFed asking "A d a <ArrowLeft> <ArrowLeft> <ArrowLeft> C-u"
-              let empty := evilFed asking "C-u"
-              evilShown cleared ⟨1⟩ == "|a" && cleared.loop.state.prompt.isSome &&
-                answer.loop.state.prompt.isNone &&
-                answer.loop.state.echo == answered "a" &&
-                evilShown atStart ⟨1⟩ == "|Ada" &&
-                evilShown empty ⟨1⟩ == "|" &&
-                empty.loop.state.prompt.isSome &&
-                evilShown cleared == "a|bc"
-          let unasked :=
-            match evilDriver "a|bc" (evilHanded Minibuffer.package.registered.commands) with
-            | none => false
-            | some driver =>
-              let (ran, _) :=
-                driver.stepped (driver.loop.runNamed driver.handed Minibuffer.deleteToStartName)
-              ran.loop.state.echo == Minibuffer.notOpen && evilShown ran == "a|bc"
-          held && unasked },
+          evilPromptsHold fun asking answered =>
+            let cleared := evilFed asking "A d a <ArrowLeft> C-u"
+            let answer := evilFed cleared "RET"
+            let atStart := evilFed asking "A d a <ArrowLeft> <ArrowLeft> <ArrowLeft> C-u"
+            let empty := evilFed asking "C-u"
+            evilShown cleared ⟨1⟩ == "|a" && cleared.loop.state.prompt.isSome &&
+              answer.loop.state.prompt.isNone &&
+              answer.loop.state.echo == answered "a" &&
+              evilShown atStart ⟨1⟩ == "|Ada" &&
+              evilShown empty ⟨1⟩ == "|" &&
+              empty.loop.state.prompt.isSome &&
+              evilShown cleared == "a|bc" },
     { name :=
         "the command typed text runs, called with no string as its first argument, inserts nothing and says so in the echo area"
       run :=

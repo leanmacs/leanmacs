@@ -8,7 +8,6 @@ import Editor.Job
 import Editor.Job.Model
 import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Minibuffer
 import Editor.Process
 import Editor.Process.Model
 import Editor.State
@@ -16,6 +15,7 @@ import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Prompts
 import Editor.Test.Workspace
 import Editor.Workspace
@@ -116,8 +116,8 @@ def commands : List (String × Dispatched) :=
     [(Workspace.FindFile.name, fun call => do
         Workspace.FindFile.command call
         return none),
-      (Minibuffer.nextName, fun call => do
-        Minibuffer.nextCommand call
+      (Test.Minibuffer.nextName, fun call => do
+        Test.Minibuffer.next call
         return none),
       ("register", fun _ => do
         registers
@@ -135,7 +135,7 @@ location the table does not know, `C-o t` at `/w` with the text `b` after
 the location, and `C-o m` opens `/m/src/a.txt`. -/
 def bindings : List (String × Invocation) :=
   workspaceBindings ++
-    [("C-o f", invoke Workspace.FindFile.name), ("C-o j", invoke Minibuffer.nextName),
+    [("C-o f", invoke Workspace.FindFile.name), ("C-o j", invoke Test.Minibuffer.nextName),
       ("C-o y", invoke "accept"), ("C-o r", invoke "register"), ("C-o s", invoke "strand"),
       ("C-o g", { command := Workspace.FindFile.name, arguments := remote.arguments }),
       ("C-o u",

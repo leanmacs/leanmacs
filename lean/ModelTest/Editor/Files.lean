@@ -28,8 +28,6 @@ import Editor.Job.Model
 import Editor.Language
 import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.Process
 import Editor.Process.Environment
@@ -47,6 +45,7 @@ import Editor.Test.Files
 import Editor.Test.Jobs
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Text
@@ -1441,13 +1440,15 @@ def lastStyle : Completion.Style :=
 command with no path, `TAB` the minibuffer's insert, `C-n` its next,
 `C-u` its delete to the start, `<Backspace>` its delete backward and `RET`
 its accept, and a key that prints is typed; the commands are the ones
-compiled code registers for files and the minibuffer; the category `file`
+compiled code registers for files and the kit's minibuffer's
+(`Editor/Test/Minibuffer.lean`); the category `file`
 is matched with a style written here (`lastStyle`) and every other with the
 core's own; and a prompt over more than `inline` candidates is matched by
 a job. -/
 def fileNameKeys (inline : Nat := Loop.inlineMatches) : Loop.Keys TestScheme.scheme :=
   let compiled : List (String × Dispatched) :=
-    (Files.package.registered.commands ++ Minibuffer.package.registered.commands).toList.filterMap
+    (Files.package.registered.commands ++
+          Test.Minibuffer.package.registered.commands).toList.filterMap
       fun (registration : Config.Registration) =>
       match registration.action with
       | .call run =>
@@ -1458,10 +1459,10 @@ def fileNameKeys (inline : Nat := Loop.inlineMatches) : Loop.Keys TestScheme.sch
       | _ => none
   let keys :=
     dispatchKeys
-      [("C-o o", invoke Files.openName), ("TAB", invoke Minibuffer.insertName),
-        ("C-n", invoke Minibuffer.nextName), ("C-u", invoke Minibuffer.deleteToStartName),
-        ("<Backspace>", invoke Minibuffer.deleteBackwardName),
-        ("RET", invoke Minibuffer.acceptName)]
+      [("C-o o", invoke Files.openName), ("TAB", invoke Test.Minibuffer.insertName),
+        ("C-n", invoke Test.Minibuffer.nextName), ("C-u", invoke Test.Minibuffer.deleteToStartName),
+        ("<Backspace>", invoke Test.Minibuffer.deleteBackwardName),
+        ("RET", invoke Test.Minibuffer.acceptName)]
       (compiled ++
         [((TestScheme.selfInsert "").command, fun call => do
             let [.str text] := call.arguments | throw .badRange

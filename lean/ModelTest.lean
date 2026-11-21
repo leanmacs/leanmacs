@@ -106,6 +106,7 @@ import ModelTest.Editor.Loop.Driver
 import ModelTest.Editor.Marks
 import ModelTest.Editor.Marks.Follow
 import ModelTest.Editor.Menu
+import ModelTest.Editor.Minibuffer
 import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
 import ModelTest.Editor.ModuleLookup
@@ -527,11 +528,13 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   continuation with no command, one that is refused and one that asks
   again; and rollback and the interrupt around an open prompt.
   `echoPromptChecks`: a command that says something and then asks leaves
-  no echo, and what a job's command says while the prompt is open is kept.
-  `promptModeChecks`, with the minibuffer's commands and its mode
+  no echo, and what a job's command says while the prompt is open is kept;
+- `promptModeChecks`: the minibuffer that ships, its commands and its mode
   (`Editor/Minibuffer/Compiled.lean`) in a registry whose active keymaps
   the loop is handed: the phase's acceptance criteria, with the accept key
-  and the cancel key read from the test scheme's role table;
+  and the cancel key read from the test scheme's role table, and the
+  shipped commands' own rules (`<Backspace>` on an empty minibuffer cancels
+  the prompt);
 - `candidateChecks`: a prompt's candidates on that driver, with commands
   written here: first, that a prompt matched by a style and drawn by a
   display written here, neither shipped, registered in a registry the loop
@@ -634,8 +637,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   quit and asks `keepRunning`; config's `quit` runs in its place; and a
   quit the system did not ask asks the frame nothing;
 - `exChecks`: the ex command line (`Editor/Ex.lean`) on that driver, with
-  the commands compiled code registers for it, for the minibuffer and for
-  files, keys of the test scheme bound to the ex command and to the accept
+  the commands compiled code registers for it and for files, and the kit's
+  minibuffer's (`Editor/Test/Minibuffer.lean`), keys of the test scheme bound to the ex command and to the accept
   and cancel commands, and ex bindings written here: the ex command opens
   a prompt, and the accepted line runs the command its name is bound to,
   as a step of its own, with the rest of the line as its argument; a name
@@ -1592,6 +1595,7 @@ def checks : List Check :=
     restoreChecks ++
     driverChecks ++
     promptChecks ++
+    promptModeChecks ++
     candidateChecks ++
     laterChecks ++
     completionJobChecks ++

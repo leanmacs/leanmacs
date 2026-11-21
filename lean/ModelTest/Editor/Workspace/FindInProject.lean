@@ -3,9 +3,9 @@ import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
-import Editor.Minibuffer
 import Editor.Setup
 import Editor.Test.Driver
+import Editor.Test.Minibuffer
 import Editor.Test.Workspace
 import Editor.VersionControl.Contract
 import Editor.VersionControl.Git
@@ -70,8 +70,8 @@ def projectCommands : List (String × Dispatched) :=
       ("register-agent", fun _ => do
         discard <| Workspace.register FindFileTest.remote workspaceOrigin (some "agent")
         return none),
-      (Minibuffer.cancelName, fun call => do
-        Minibuffer.cancelCommand call
+      (Test.Minibuffer.cancelName, fun call => do
+        Test.Minibuffer.cancel call
         return none)]
 
 /-- The keys of the checks: the finder checks', `C-o p` the picker, `C-o k`
@@ -80,7 +80,7 @@ registers it on `main`), and `C-o q` cancels the prompt. -/
 def projectBindings : List (String × Invocation) :=
   FindFileTest.bindings ++
     [("C-o p", invoke Workspace.FindInProject.name), ("C-o k", invoke "register-agent"),
-      ("C-o q", invoke Minibuffer.cancelName)]
+      ("C-o q", invoke Test.Minibuffer.cancelName)]
 
 /-- A job that does nothing, in place of the source's, for the check that
 shows the picker's key runs no process. -/

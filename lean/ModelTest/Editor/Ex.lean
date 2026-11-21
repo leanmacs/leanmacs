@@ -31,8 +31,6 @@ import Editor.Job.Model
 import Editor.Language
 import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.Process
 import Editor.Process.Environment
@@ -46,6 +44,7 @@ import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Text
@@ -91,8 +90,10 @@ def exListed (pattern : String) (chosen : Option Nat := none)
     chosen }
 
 /-- What a step of the ex checks is handed. The commands are the ones
-compiled code registers for the ex line, the minibuffer and files
-(`Ex.package.registered.commands`, `Minibuffer.package.registered.commands`, `Files.package.registered.commands`), each under the
+compiled code registers for the ex line and files
+(`Ex.package.registered.commands`, `Files.package.registered.commands`) and
+the kit's minibuffer's (`Test.Minibuffer.package.registered.commands`,
+`Editor/Test/Minibuffer.lean`), each under the
 name it is registered under, and then the commands of the prompt checks:
 `greet`, which says what it was called with, `boom`, `other` and the test
 scheme's self-insert. The ex bindings a command is told of are `bindings`,
@@ -110,7 +111,7 @@ style and the display written for the core's tests (`marking`,
 `windowed`). -/
 def exKeys (bindings : Array Ex.Binding := exTestBindings) : Loop.Keys TestScheme.scheme :=
   let compiled : List (String × Dispatched) :=
-    (Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
+    (Ex.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
           Files.package.registered.commands).toList.filterMap
       fun registration =>
       match registration.action with
@@ -124,8 +125,8 @@ def exKeys (bindings : Array Ex.Binding := exTestBindings) : Loop.Keys TestSchem
     dispatchKeys
       [("C-e e", invoke Ex.name), ("C-e V", { command := Ex.name, arguments := [.nat 0, .str ""] }),
         ("C-e l", { command := Ex.name, arguments := [.str "say hello there"] }),
-        ("C-e y", invoke Minibuffer.acceptName), ("C-e n", invoke Minibuffer.cancelName),
-        ("C-e t", invoke Minibuffer.nextName), ("C-e o", invoke "other")]
+        ("C-e y", invoke Test.Minibuffer.acceptName), ("C-e n", invoke Test.Minibuffer.cancelName),
+        ("C-e t", invoke Test.Minibuffer.nextName), ("C-e o", invoke "other")]
       (compiled ++ promptCommands) with
     matching := markingMatching,
     displaying := windowedDisplaying

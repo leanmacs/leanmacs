@@ -22,8 +22,6 @@ import Editor.Layout
 import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Menu
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
@@ -37,6 +35,7 @@ import Editor.Test.Config
 import Editor.Test.Driver
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Text
@@ -131,7 +130,7 @@ def manyTexts : Array String :=
 - `still` does nothing, and `edit-then-fail` inserts `x` at its target's
   cursors and is then refused.
 - `delete-backward` is the minibuffer's command that deletes the character
-  before its cursor (`Minibuffer.deleteBackwardCommand`). -/
+  before its cursor (`Test.Minibuffer.deleteBackward`). -/
 def candidateCommands : List (String × Dispatched) :=
   let asks (initial : String) (sources : List Completion.SourceRef) : Dispatched := fun _ => do
     discard <| prompt pickLabel pickContinuation initial sources
@@ -153,8 +152,8 @@ def candidateCommands : List (String × Dispatched) :=
     ("ask-dir", asks "" [.given (.answeringLater "dir" "pick" "later-dir" (.beforeLast '/'))]),
     ("ask-dir-refusing",
       asks "" [.given (.answeringLater "dir" "pick" "later-refusing" (.beforeLast '/'))]),
-    (Minibuffer.candidatesName, fun call => do
-      Minibuffer.candidatesCommandOf call
+    (Test.Minibuffer.candidatesName, fun call => do
+      Test.Minibuffer.candidates call
       return none),
     ("ask-named", fun _ => do
       if let .error refusal← prompt pickLabel pickContinuation "" [.named pickSource.name] then
@@ -176,7 +175,7 @@ def candidateCommands : List (String × Dispatched) :=
     ("still", fun _ => return none),
     ("edit-then-fail", failingAfter fun call => call.target.insertAtSelections "x"),
     ("delete-backward", fun call => do
-      Minibuffer.deleteBackwardCommand call
+      Test.Minibuffer.deleteBackward call
       return none)]
 
 /-- What a step of the candidate checks is handed: one keymap, the same for
@@ -208,16 +207,18 @@ def candidateDriver (model : EditorModel := editorModel) : Option TestDriver :=
   (Loop.Driver.over candidateKeys driverJobs (EditorState.initial ⟨640, 480⟩) model).toOption
 
 /-- The registry of the candidate checks that press the minibuffer's keys:
-the minibuffer's commands and its mode registered for the owner `compiled`,
+the kit's minibuffer's commands and its mode (`Editor/Test/Minibuffer.lean`)
+registered for the owner `compiled`,
 an owner that is not config, as a host registers a package's, and as config's bindings two that ask and two
 that run the commands that move through the list by their names, from any
 view. -/
 def pickRegistry : Config.Registry :=
-  ((({} : Config.Registry).replace .compiled Minibuffer.package.registered.commands).replaceModes
-        .compiled Minibuffer.package.registered.modes).replaceBindings
+  ((({} : Config.Registry).replace .compiled
+            Test.Minibuffer.package.registered.commands).replaceModes
+        .compiled Test.Minibuffer.package.registered.modes).replaceBindings
     .config
-    ([("C-c a", "ask-pick"), ("C-c p", "ask-plain"), ("C-c 3", Minibuffer.nextName),
-          ("C-c 4", Minibuffer.previousName)].toArray.map
+    ([("C-c a", "ask-pick"), ("C-c p", "ask-plain"), ("C-c 3", Test.Minibuffer.nextName),
+          ("C-c 4", Test.Minibuffer.previousName)].toArray.map
       fun (text, command) => .ofKeys (keys text) command)
 
 /-- What a step of those checks is handed: the active keymaps `pickRegistry`

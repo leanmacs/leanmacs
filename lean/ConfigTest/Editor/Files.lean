@@ -27,10 +27,10 @@ import Editor.InputScheme.Test
 import Editor.Job.Real
 import Editor.Language
 import Editor.Loop
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.Program
 import Editor.Scene
+import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.Text.Model
 
@@ -109,7 +109,8 @@ def rustOverride : String :=
 /-- Runs `check` against a host over the library's file service
 (`Stage.overFiles`), with a config directory of its own holding
 `languageReportText` with `more` lines of its `setup`, that is handed the file commands and
-their jobs, the minibuffer's commands and its mode, the `code` mode and the
+their jobs, the kit's minibuffer's commands and its mode
+(`Editor/Test/Minibuffer.lean`), the `code` mode and the
 languages that ship (`Language.modes`, `Language.shipped`), as the
 executable is, and, for each name and path of `opens`, a command of that
 name that opens that path (`opening`). Its syntax tree is the real binding
@@ -124,10 +125,10 @@ def withLanguageHost (context : Context) (more : String) (opens : List (String Ã
     let stage â†
       Stage.overFiles context (Config.Directory.source directory)
           { commands :=
-              Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
+              Files.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
                 (opens.map fun (name, path) => opening name path).toArray
             jobs := Files.package.registered.jobs
-            modes := Minibuffer.package.registered.modes ++ Language.modes
+            modes := Test.Minibuffer.package.registered.modes ++ Language.modes
             languages := Language.shipped }
     onStage
         { stage with

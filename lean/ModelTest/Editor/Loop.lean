@@ -49,8 +49,6 @@ import Editor.Layout
 import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Menu
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process
@@ -72,6 +70,7 @@ import Editor.Test.Geometry
 import Editor.Test.Jobs
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Test.States
@@ -4244,8 +4243,9 @@ def candidateChecks : List Check :=
           | some driver =>
             let (next, _) := fedTo driver (presses "C-c 3")
             let (previous, _) := fedTo driver (presses "C-c 4")
-            !Minibuffer.notOpen.isEmpty && promptEcho next == Minibuffer.notOpen &&
-              promptEcho previous == Minibuffer.notOpen &&
+            !PromptRefusal.notOpen.describe.isEmpty &&
+              promptEcho next == PromptRefusal.notOpen.describe &&
+              promptEcho previous == PromptRefusal.notOpen.describe &&
               next.loop.state.prompt == none &&
               { next.loop.state with echo := "" } == driver.loop.state },
     { name :=
@@ -6472,7 +6472,7 @@ def viewChecks : List Check :=
           let cells : Display.Cells := { advance := 8, lineHeight := 16 }
           let answer := "abcdefghijklm"
           let typed := " ".intercalate (answer.toList.map (·.toString))
-          let handed := evilHanded Minibuffer.package.registered.commands [("ask", ask)]
+          let handed := evilHanded Test.Minibuffer.package.registered.commands [("ask", ask)]
           let model : EditorModel := { editorModel with display := { cells } }
           match viewDriver (numbered 20) ⟨32, 64⟩ (handed := handed) (model := model) with
           | none => false

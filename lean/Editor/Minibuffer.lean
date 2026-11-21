@@ -127,9 +127,12 @@ It opens a prompt with the label it is handed and the reserved continuation
 `InputScheme.answerName`, so the accepted answer is handed to the scheme
 (`Editor/Loop.lean`, "Prompts") and no command runs under that name.
 
-Pinned by `ModelTest.promptChecks`, on the models and the test scheme, and
-the two commands that move through the candidates by
-`ModelTest.candidateChecks`.
+Pinned by `ModelTest.promptModeChecks`, on the models and the test scheme,
+and through the editor by the headless fixtures `prompt` and `candidates`.
+The core's own tests of prompts and their candidates
+(`ModelTest.candidateChecks`) run on the test kit's minibuffer
+(`Editor/Test/Minibuffer.lean`), whose commands act through the same
+operations.
 -/
 
 namespace Editor.Minibuffer

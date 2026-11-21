@@ -92,7 +92,7 @@ def compileBindings : List (String × Invocation) :=
       ("C-k z",
         { command := Compile.outputName
           arguments := placeR.arguments ++ [.nat 1, .str "stale"] }),
-      ("C-k q", invoke Minibuffer.cancelName), ("C-o q", opens "/clone/r/src/a.lean"),
+      ("C-k q", invoke Editor.Minibuffer.cancelName), ("C-o q", opens "/clone/r/src/a.lean"),
       ("C-k h", { command := Compile.compileName, arguments := [.str "check"] }),
       ("C-k n", invoke Compile.nextName), ("C-k p", invoke Compile.previousName),
       ("C-k e", invoke Compile.gotoName),
