@@ -1,6 +1,9 @@
 //! The contract on the published fake, plain and tinted, and on
-//! rasterisers written to break each rule: each must fail by that rule,
-//! under its property's name, or the rule could not see what it claims to.
+//! rasterisers written to break its rules: each must fail by exactly the
+//! rules it breaks, under their properties' names, so that every rule is
+//! seen to fail and deleting any rule from [`check`] fails a test. Which
+//! rules a fault breaks alone, and which only with others, is in
+//! `a_rasteriser_written_to_break_a_rule_fails_by_that_rule`.
 
 use std::collections::HashSet;
 
@@ -71,6 +74,14 @@ enum Fault {
     /// Moves each bin as it should, and draws every bin but 0 with a
     /// tenth less ink.
     Fading,
+    /// Draws a subpixel mask asked for in colour.
+    ColourForSubpixel,
+    /// Draws a pixel of ink for the space.
+    InkedSpace,
+    /// Reads the luminance, and has no image in bucket 2.
+    NoMiddleBucket,
+    /// Draws `I` two pixels right of where `H` is centred.
+    OffCentre,
 }
 
 /// The fake, with one fault.
@@ -87,7 +98,10 @@ impl Broken {
     /// A rasteriser with `fault`.
     fn new(fault: Fault) -> Self {
         Self {
-            inner: fake(matches!(fault, Fault::UntintedChange | Fault::Thinning)),
+            inner: fake(matches!(
+                fault,
+                Fault::UntintedChange | Fault::Thinning | Fault::NoMiddleBucket
+            )),
             fault,
             count: 0,
         }
@@ -116,6 +130,7 @@ impl Rasterize for Broken {
                 },
                 ..*request
             },
+            Fault::NoMiddleBucket if request.key.bucket == 2 => return None,
             _ => *request,
         };
         let mut image = self.inner.rasterize(&asked)?;
@@ -137,6 +152,15 @@ impl Rasterize for Broken {
                     *byte = (f64::from(*byte) * 0.9).round() as u8;
                 }
             }
+            // A subpixel mask's four bytes a pixel are a colour image's.
+            Fault::ColourForSubpixel if request.key.subpixel => image.kind = Kind::Color,
+            Fault::InkedSpace if image.data.is_empty() => {
+                image.width = 1;
+                image.height = 1;
+                image.top = 1;
+                image.data = vec![255; image.kind.bytes() as usize];
+            }
+            Fault::OffCentre if request.key.glyph == fixture().i => image.left += 2,
             _ => {}
         }
         Some(image)
@@ -157,13 +181,26 @@ fn rules(failures: &[Failure]) -> HashSet<Rule> {
 }
 
 /// Each fault breaks the rule it is written to break, under that rule's
-/// property, and no rule but the few it cannot help breaking: a mask
-/// drawn in another kind has no coverage for the rules that read a mask's,
-/// and a counter of requests makes the buckets differ too. So no rule is
-/// seen only through another of its property. `Thinning` pins the falling
-/// ink of [`LUMINANCE`] and `Fading` the ink across the bins of [`BIN`]:
-/// with either rule's branch deleted from [`check`] its fault was seen to
-/// fail this test, and to pass it once the branch was put back.
+/// property, and exactly the rules listed with it. With the rasteriser
+/// with no images below, every [`Rule`] is in some exact set, so deleting
+/// any rule's branch from [`check`] fails a test.
+///
+/// Eleven rules are each broken alone, by one fault: `Misshaped`,
+/// `SpaceDraws`, `SubpixelInColour`, `BinStep`, `BinInk`,
+/// `BelowBaseline`, `CentresApart`, `BucketMissing`, `InkFalls`,
+/// `BlackIsWhite` and `UnreadBucketsDiffer`. The other seven are broken
+/// only with others, because their faults cannot help it: `MaskNotMask`
+/// with `BinNoInk`, `BelowBaseline` and `CentresApart` (a mask drawn in
+/// another kind has no coverage for the rules that read a mask's),
+/// `SameTwice` with `SameFresh` and `UnreadBucketsDiffer` (a counter of
+/// requests changes every image), and `GlyphMissing`, `SpaceMissing`,
+/// `BinNoInk` and `CapitalMissing` together, by the rasteriser with no
+/// images.
+///
+/// Each of `Thinning`, `Fading`, `ColourForSubpixel`, `InkedSpace`,
+/// `NoMiddleBucket` and `OffCentre` was seen to fail this test with its
+/// rule's branch deleted from [`check`], and to pass it once the branch
+/// was put back.
 #[test]
 fn a_rasteriser_written_to_break_a_rule_fails_by_that_rule() {
     for (fault, rule, property, also) in [
@@ -192,6 +229,10 @@ fn a_rasteriser_written_to_break_a_rule_fails_by_that_rule() {
             LUMINANCE,
             &[],
         ),
+        (Fault::ColourForSubpixel, Rule::SubpixelInColour, KINDS, &[]),
+        (Fault::InkedSpace, Rule::SpaceDraws, SHAPE, &[]),
+        (Fault::NoMiddleBucket, Rule::BucketMissing, LUMINANCE, &[]),
+        (Fault::OffCentre, Rule::CentresApart, BASELINE, &[]),
     ] {
         let failures = check(&mut || Box::new(Broken::new(fault)), &fixture());
         let broken: HashSet<Rule> = also.iter().copied().chain([rule]).collect();
