@@ -6,8 +6,6 @@ import ConfigTest.Support.Lines
 import ConfigTest.Support.Syntax
 import Editor.Api
 import Editor.Appearance
-import Editor.Buffers
-import Editor.Buffers.Compiled
 import Editor.Clipboard.InProcess
 import Editor.Command
 import Editor.Command.Call
@@ -2536,11 +2534,12 @@ def shippedChecks (_ : Unit) : List Check :=
             ownedBy FrameCommands.package "minimise-window" &&
             ownedBy Ex.package Ex.quitName &&
             frameKeys == #["toggle-fullscreen", "minimise-window", Ex.quitName] &&
-            [Buffers.switchName, Buffers.listName, Buffers.closeName].all
-              (ownedBy Buffers.package) &&
-            ex "b" == some Buffers.switchName &&
-            ex "ls" == some Buffers.listName &&
-            ex "bd" == some Buffers.closeName },
+            ["switch-buffer", "list-buffers", "close-buffer"].all
+              (fun name =>
+                (registry.find? name).any (·.owner == ({ name := "buffers" } : Config.Owner))) &&
+            ex "b" == some "switch-buffer" &&
+            ex "ls" == some "list-buffers" &&
+            ex "bd" == some "close-buffer" },
     { name :=
         "the executable's hosts start with every window command registered by the window-commands package, every command the Vim scheme's C-w table names among them"
       run := do
@@ -2563,13 +2562,12 @@ def shippedChecks (_ : Unit) : List Check :=
         "the executable's hosts start with the completion sources that ship each registered by its package, so config can ask for each by name: the ex line's history and its names, the buffers, the tabs and the themes"
       run := do
         let registry := shippedRegistry
-        let ownedBy (package : Package) (name : String) : Bool :=
+        let ownedBy (package : String) (name : String) : Bool :=
           registry.sources.any fun entry =>
-            entry.source.name == name && entry.owner == package.owner
-        return [(Ex.package, Ex.historySource.name), (Ex.package, Ex.namesSource.name),
-                (Buffers.package, Buffers.source.name),
-                (TabCommands.package, TabCommands.source.name),
-                (Themes.package, Themes.source.name)].all
+            entry.source.name == name && entry.owner == ({ name := package } : Config.Owner)
+        return [(Ex.package.name, Ex.historySource.name), (Ex.package.name, Ex.namesSource.name),
+                ("buffers", "buffers"), (TabCommands.package.name, TabCommands.source.name),
+                (Themes.package.name, Themes.source.name)].all
             fun (package, name) => ownedBy package name && (registry.source? name).isSome },
     { name :=
         "the executable's hosts start with nothing of the execute-command package: no command execute-command, no source commands, and no source in the category command, registered by a package of the core's Lake package"
@@ -2602,7 +2600,7 @@ def shippedChecks (_ : Unit) : List Check :=
       run := do
         let registry := shippedRegistry
         return registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] &&
-            registry.sourcesIn "buffer" == #[Buffers.source.name] &&
+            registry.sourcesIn "buffer" == #["buffers"] &&
             registry.sourcesIn "tab" == #[TabCommands.source.name] &&
             registry.sourcesIn "theme" == #[Themes.source.name] },
     { name :=

@@ -403,8 +403,9 @@ of the workspace table bumps its revision, a restored table among them.
 Display rules (`Editor/DisplayRules.lean`) are checked by
 `displayRuleChecks`: which rule a buffer's facts choose, which targets a
 layout lacks, where `EditorState.displaying` puts a buffer, and, on the
-loop's driver over the editor's models, `ls` and a command's buffer going
-to the stack while main keeps the file, a mode's buffer docked at the
+loop's driver over the editor's models, a list a command shows (the
+stand-in for `ls`) and a command's buffer going to the stack while main
+keeps the file, a mode's buffer docked at the
 left edge by a rule, and a command's buffer opened in a float centred in
 the tiled area by a float rule.
 
@@ -577,7 +578,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   runner over `twoBuffers` and the editor's models
   (`Editor.Test.sourceRunner`, `Editor/Test/Sources.lean`), and seen to
   report a source that writes and one that is refused. The files feature's
-  file source is held to it by `pathsChecks`;
+  file source is held to it by `pathsChecks`, and the buffers feature's
+  buffer source by `bufferCommandChecks`;
 - `keyHintSourceChecks`: the key hints' source
   (`Editor/Completion/Keys.lean`): a candidate of each kind of hint, its
   annotation and kind, a source of the category `key` that has filtered

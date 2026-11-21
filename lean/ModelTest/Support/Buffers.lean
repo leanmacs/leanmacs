@@ -3,13 +3,8 @@ import Editor.Buffers
 import Editor.Buffers.Compiled
 import Editor.Command
 import Editor.Command.Call
-import Editor.Command.Dispatch
 import Editor.Config.Packages
-import Editor.Config.Registry
-import Editor.Config.Stores
 import Editor.DisplayRules
-import Editor.Ex
-import Editor.Ex.Compiled
 import Editor.Ex.Line
 import Editor.FileWatch
 import Editor.FileWatch.Model
@@ -18,7 +13,6 @@ import Editor.Invocation
 import Editor.Job.Model
 import Editor.Language
 import Editor.Layout
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Mode
 import Editor.Process
@@ -29,6 +23,7 @@ import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.Test.Driver
+import Editor.Test.Ex
 import Editor.Test.Files
 import Editor.Test.Keys
 import Editor.Test.Loop
@@ -55,17 +50,16 @@ open Editor.Test
 /-- What a step of the buffer command checks is handed. The commands are the
 ones compiled code registers for files, the buffers and the ex line
 (`files-api`'s fake's, `FilesApiTest.fake`, `Buffers.package.registered.commands`,
-`Ex.package.registered.commands`) and the kit's minibuffer's
-(`Test.Minibuffer.package.registered.commands`, `Editor/Test/Minibuffer.lean`), each under the name it is registered under, told of the `ex`
-package's ex names (`Ex.package.registered.ex`), and five written here: `split`, which
+and the kit's ex line's, `Editor.Test.exLinePackage`, `Editor/Test/Ex.lean`,
+which binds the ex names files' and the buffers' tests type to the
+interfaces' names) and the kit's minibuffer's
+(`Test.Minibuffer.package.registered.commands`, `Editor/Test/Minibuffer.lean`), each under the name it is registered under, told of the kit's ex
+line's ex names (`exLinePackage.registered.ex`), and four written here: `split`, which
 splits the window it is called with and leaves the focus,
 `edit-then-close`, which inserts `x` at its window's cursors and then runs
 `close-buffer` inside itself, so the edit and the close are one command,
 `dock-others`, which docks every other window of the tiled list at the
-left edge, `focus-main`, which focuses the first window of the tiled list,
-and `make-notes`, which makes a buffer called `notes`, or a free name made
-from it, holding `a note`, adds the minor mode `notes` to it and displays
-it for the command `make-notes` (`BufferId.display`), and `close-anyway`,
+left edge, and `close-anyway`,
 which closes its window's buffer with `Buffers.close`, checking nothing.
 
 One keymap, the same for every view: `C-e e` runs the ex command, `C-e y`
@@ -75,15 +69,14 @@ scheme gives a command a key is bound to, a count and a register, `C-b n`
 runs it with `note.txt`, `C-b s` runs `split`, `C-b x` runs
 `edit-then-close`, `C-b d` runs `close-buffer` with no argument, `C-b m`
 runs it with the name the minibuffer's buffer has (`Prompt.bufferName`),
-`C-b h` runs `dock-others`, `C-b f` runs `focus-main`, `C-b o` runs
-`make-notes`, `C-b t` runs `new-tab`, which opens a tab after the one in
+`C-b h` runs `dock-others`, `C-b t` runs `new-tab`, which opens a tab after the one in
 view on the call's window's buffer (`ViewId.newTab`), and `C-b c` runs
 `close-anyway`. -/
 def bufferKeys : Loop.Keys TestScheme.scheme :=
   let registrations :=
     FilesApiTest.fake.registered.commands ++ Test.Minibuffer.package.registered.commands ++
       Buffers.package.registered.commands ++
-      Ex.package.registered.commands
+      exLinePackage.registered.commands
   let compiled : List (String × Dispatched) :=
     registrations.toList.filterMap fun registration =>
       match registration.action with
@@ -106,21 +99,11 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
           if view != call.target.window.id then
             discard <| view.arrange (.edge .left)
         return none),
-      ("focus-main", fun _ => do
-        if let some main := (← editorState).frame.windows[0]? then
-          discard <| main.focus
-        return none),
       ("new-tab", fun call => do
         discard <| call.target.window.id.newTab
         return none),
       ("close-anyway", fun call => do
         Buffers.close call.target.window.buffer
-        return none),
-      ("make-notes", fun call => do
-        let name := (← editorState).freeName "notes"
-        let .ok notes ← createBuffer name "a note" | giveUp "making notes was refused"
-        discard <| notes.addMinorMode "notes"
-        discard <| notes.display call.target.window.id "make-notes"
         return none)]
   {
     dispatchKeys
@@ -131,13 +114,12 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
         ("C-b s", invoke "split"), ("C-b x", invoke "edit-then-close"),
         ("C-b d", invoke Buffers.closeName),
         ("C-b m", { command := Buffers.closeName, arguments := [.str Prompt.bufferName] }),
-        ("C-b h", invoke "dock-others"), ("C-b f", invoke "focus-main"),
-        ("C-b o", invoke "make-notes"), ("C-b t", invoke "new-tab"),
+        ("C-b h", invoke "dock-others"), ("C-b t", invoke "new-tab"),
         ("C-b c", invoke "close-anyway")]
       (compiled ++ written) with
     registered :=
-      { ex := fun name => Ex.package.registered.ex.findRev? (·.name == name),
-        exNames := exNamesOf Ex.package.registered.ex } }
+      { ex := fun name => exLinePackage.registered.ex.findRev? (·.name == name),
+        exNames := exNamesOf exLinePackage.registered.ex } }
 
 /-- A driver of the buffer command checks over the initial state, with the
 `files-api`'s fake's jobs and the files of the file command checks; `none` if

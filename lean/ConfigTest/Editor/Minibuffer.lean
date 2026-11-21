@@ -6,8 +6,6 @@ import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
 import ConfigTest.Support.Listings
 import Editor.Api
-import Editor.Buffers
-import Editor.Buffers.Compiled
 import Editor.Command
 import Editor.Command.Call
 import Editor.Completion
@@ -160,14 +158,25 @@ def styleText (choices : List String) : String :=
     asks "pick" "pick" ++
     asks "other" "other"
 
+/-- A compiled command of the checks of a category's sources, `pick-buffer`,
+the stand-in for a prompt over the buffers such as `switch-buffer`'s: it
+asks `Buffer: ` for the category `buffer`, with a source called `buffers`
+of that category as its default, which lists `alpha`, `beta` and the
+scratch buffer's name, in that order. -/
+def pickBuffer : Config.Registration :=
+  { name := "pick-buffer"
+    action :=
+      .call fun _ => do
+        discard <|
+            prompt "Buffer: " { command := "picked" } (sources :=
+              [.category "buffer"
+                  [.ofTexts "buffers" "buffer" #["alpha", "beta", EditorState.scratchName]]]) }
+
 /-- A config whose `setup` chooses the hosts' style `parts` for the category
-`buffer`, so `switch-buffer` lists its candidates in their own order,
-registers the sources `defines` (lines of `setup`, each indented), and
-registers `make`, which makes a buffer of each of `names`, in order. -/
-def bufferStyleText (defines : List String) (names : List String := ["alpha", "beta"]) : String :=
+`buffer`, so `pick-buffer` lists its candidates in their own order, and
+registers the sources `defines` (lines of `setup`, each indented). -/
+def bufferStyleText (defines : List String) : String :=
   "def setup : SetupM Unit := do\n  useStyleFor \"buffer\" \"parts\"\n" ++
-    "  command \"make\" do\n" ++
-    String.join (names.map (s!"    discard <| createBuffer {·.quote}\n")) ++
     String.join (defines.map (s!"  {·}\n"))
 
 /-- What compiled code hands the hosts of the checks of a source that
@@ -568,7 +577,7 @@ def promptChecks (context : Context) : List Check :=
               | _, _ => false)
           minibufferCompiled },
     { name :=
-        "criterion 5: a source config registers in the category buffer adds its candidates to switch-buffer's list, after the shipped source's buffer names; one registered under the shipped source's name replaces it; with neither the shipped names alone are listed (config chooses the hosts' style parts for buffer, so the empty text lists the candidates in their own order and not by the library's scores)"
+        "criterion 5: a source config registers in the category buffer adds its candidates to the list of a prompt that asks for that category with a shipped source as its default, after the shipped source's names; one registered under the shipped source's name replaces it; with neither the shipped names alone are listed (config chooses the hosts' style parts for buffer, so the empty text lists the candidates in their own order and not by the library's scores)"
       run :=
         let more := "defineSource (.ofTexts \"more\" \"buffer\" #[\"zz-extra\"])"
         let mine := "defineSource (.ofTexts \"buffers\" \"buffer\" #[\"mine\"])"
@@ -576,12 +585,10 @@ def promptChecks (context : Context) : List Check :=
           (fun session => do
             let asked : IO (Array String) := do
               session.ask [.reload]
-              session.ask [.run Buffers.switchName]
+              session.ask [.run "pick-buffer"]
               let asking ← session.sceneLines
               session.pressKeys cancelKeys
               return asking
-            session.ask [.reload]
-            session.ask [.run "make"]
             let added ← asked
             session.write "init.lean" (bufferStyleText [mine])
             let replaced ← asked
@@ -589,34 +596,12 @@ def promptChecks (context : Context) : List Check :=
             let shipped ← asked
             let names := ["alpha", "beta", EditorState.scratchName]
             -- The hosts' display draws no group header.
-            return listsAfter shipped Buffers.switchPrompt names &&
-                listsAfter added Buffers.switchPrompt (names ++ ["zz-extra"]) &&
-                listsAfter replaced Buffers.switchPrompt ["mine"] &&
+            return listsAfter shipped "Buffer: " names &&
+                listsAfter added "Buffer: " (names ++ ["zz-extra"]) &&
+                listsAfter replaced "Buffer: " ["mine"] &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           { minibufferCompiled with
-            commands :=
-              Test.Minibuffer.package.registered.commands ++ Buffers.package.registered.commands,
-            sources := Buffers.package.registered.sources } },
-    { name :=
-        "with config choosing the hosts' style parts for buffer, a text of two parts that is no buffer's name, typed into switch-buffer and accepted with nothing chosen, shows the first buffer the prompt lists for it, though the fuzzy matcher matches it with no name"
-      run :=
-        withHost context [("init.lean", bufferStyleText [] ["mars.txt", "main.rs"])]
-          (fun session => do
-            session.ask [.reload]
-            session.ask [.run "make"]
-            session.ask [.run Buffers.switchName]
-            unless ← Event.post (.commit "rs ma") do
-              return false
-            let typed ← session.sceneLines
-            session.pressKeys acceptKeys
-            let accepted ← session.sceneLines
-            return listsAfter typed Buffers.switchPrompt ["mars.txt", "main.rs"] &&
-                accepted.contains (statusOf 0 "mars.txt") &&
-                !(← session.output.get).any (·.startsWith "loop: refused"))
-          { minibufferCompiled with
-            commands :=
-              Test.Minibuffer.package.registered.commands ++ Buffers.package.registered.commands,
-            sources := Buffers.package.registered.sources } },
+            commands := Test.Minibuffer.package.registered.commands.push pickBuffer } },
     { name :=
         "criterion 1 over the recorder: a prompt asked with a source that answers later, from a compiled job that delivers two batches 10 ms apart on the fake clock, lists the first batch once it has arrived, in the library's order, and both once the job has ended; no step is refused"
       run :=

@@ -1,9 +1,10 @@
-import Editor.Buffers.Compiled
+import BuffersApiTest.Fake
 import Editor.Ex
 import Editor.Ex.Compiled
-import Editor.Files.Compiled
 import Editor.Test.Driver
 import Editor.Test.Hosted
+import Editor.Test.Opener
+import FilesApiTest.Fake
 import ModelTest.Check
 import ModelTest.Support.Evil
 import ModelTest.Support.Jumps
@@ -110,22 +111,23 @@ def markUndoRows : List (String × String × String) :=
     ("o x <Escape> m a k x 2 u 2 C-r ` a", "|ab", "b\n|x"),
     ("j m a O x <Escape> G x 2 u C-r ` a", "|ab\ncd", "ab\nx\n|cd")]
 
-/-- The jobs of the mark checks, by name: those compiled code registers for
-files. -/
+/-- The jobs of the mark checks, by name: those of `files-api`'s fake
+(`FilesApiTest.jobs`). -/
 def markJobs (name : String) : Option (List Argument → Work) :=
-  (Files.package.registered.jobs.find? (·.name == name)).map (·.work)
+  FilesApiTest.jobs name
 
 /-- The driver of the mark checks that cross buffers: under the Vim scheme
-that ships, with the commands compiled code registers for files and
-buffers, and the files' `FilesApi.Files` value, which a mark in a closed
-file is visited through, over the files of the jump checks (`jumpFiles`),
+that ships, with the commands of `files-api`'s and `buffers-api`'s fakes
+(`FilesApiTest.fake`, `BuffersApiTest.fake`), and the files fake's
+`FilesApi.Files` value, which a mark in a closed file is visited through, over the files of the jump checks (`jumpFiles`),
 from one buffer, `scratch`, holding three lines, the cursor at the start of
 the second. -/
 def markDriver : Option EvilDriver :=
   (Loop.Driver.over
         (withExtensionsOf
-          (evilHanded (Files.package.registered.commands ++ Buffers.package.registered.commands))
-          #[Files.package])
+          (evilHanded
+            (FilesApiTest.fake.registered.commands ++ BuffersApiTest.fake.registered.commands))
+          #[FilesApiTest.fake, BuffersApiTest.fake])
         markJobs (evilState "s0\ns1\n  s2\n" 3) editorModel).toOption.map
     fun driver => { driver with jobs := { files := jumpFiles } }
 
@@ -133,7 +135,7 @@ def markDriver : Option EvilDriver :=
 def markLoaded (driver : EvilDriver) : EvilDriver :=
   (List.range 2).foldl
     (fun driver _ =>
-      match driver.pending.find? (·.name == Files.loadJob) with
+      match driver.pending.find? (·.name == Opener.loadJob) with
       | some job => (driver.finish job.id).1
       | none => driver)
     driver
@@ -150,11 +152,11 @@ def markRan (driver : EvilDriver) (invocation : Invocation) : EvilDriver :=
 
 /-- The invocation that opens `jumps.txt`. -/
 def openJumps : Invocation :=
-  { command := Files.openName, arguments := [.str jumpsPath.toString] }
+  { command := FilesApi.openFileName, arguments := [.str jumpsPath.toString] }
 
 /-- The invocation that shows the buffer `scratch`. -/
 def toScratch : Invocation :=
-  { command := Buffers.switchName, arguments := [.str EditorState.scratchName] }
+  { command := BuffersApi.switchName, arguments := [.str EditorState.scratchName] }
 
 /-- The name of the buffer view 0 of `driver` shows, and what it shows, as a
 fixture writes it. -/
@@ -375,7 +377,7 @@ def evilMarkChecks : List Check :=
               let marked := markFed (markRan driver openJumps) "j l l m A"
               let closed :=
                 markRan (markRan marked toScratch)
-                  { command := Buffers.closeName, arguments := [.str "jumps.txt"] }
+                  { command := BuffersApi.closeName, arguments := [.str "jumps.txt"] }
               let before := jumpCount closed
               let back := markFed closed "' A"
               (markSeen back, before.map (· + 1) == jumpCount back,
@@ -391,7 +393,7 @@ def evilMarkChecks : List Check :=
               let marked := markFed (markRan driver openJumps) "j l l m A"
               let closed :=
                 markRan (markRan marked toScratch)
-                  { command := Buffers.closeName, arguments := [.str "jumps.txt"] }
+                  { command := BuffersApi.closeName, arguments := [.str "jumps.txt"] }
               let shifted := markFed (markRan closed openJumps) "g g O x <Escape>"
               let back := markFed shifted "G ` A"
               (match shifted.loop.state.globalMark? 'A' with
@@ -406,7 +408,7 @@ def evilMarkChecks : List Check :=
               let other := markRan (markFed driver "m A") openJumps
               let closed :=
                 markRan other
-                  { command := Buffers.closeName, arguments := [.str EditorState.scratchName] }
+                  { command := BuffersApi.closeName, arguments := [.str EditorState.scratchName] }
               let tried := markFed closed "` A"
               (closed.loop.state.globalMark? 'A', markSeen tried, tried.loop.state.echo)) ==
             some
@@ -419,7 +421,7 @@ def evilMarkChecks : List Check :=
               let marked := markFed (markRan driver openJumps) "j l l m a"
               let closed :=
                 markRan (markRan marked toScratch)
-                  { command := Buffers.closeName, arguments := [.str "jumps.txt"] }
+                  { command := BuffersApi.closeName, arguments := [.str "jumps.txt"] }
               let tried := markFed (markRan closed openJumps) "` a"
               (markSeen tried, tried.loop.state.echo)) ==
             some ((some "jumps.txt", "|zero\n  one\néx two\nthree\nfour\n"), Evil.markNotSet) },

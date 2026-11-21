@@ -1959,6 +1959,7 @@ those import them, and a kit that left them behind would not build.
 | `Editor.Test.Shipped` | Added in the same phase: stand-ins for the default packages whose data the core keeps, `modeLine` and `languages` |
 | `Editor.Test.Minibuffer` | Added in the features-as-packages roadmap's phase 4: a minibuffer written over the core's prompt API, the package `minibuffer` with its nine commands and the mode `Prompt.mode`, and `names`, the nine in registration order; `minibuffer-api`'s fake |
 | `Editor.Test.AtPoint` | Added in the same phase: an at-point written over the API's completion at point, the package `at-point` with its nine commands and no source, and `names`; `at-point-api`'s fake |
+| `Editor.Test.Ex` | Added in the features-as-packages roadmap's phase 6: the kit's ex line (`exLinePackage`), a stand-in for the `ex` package that registers ex's command from the core's `Editor.Ex` and the ex names files' and the buffers' tests type (`w`, `e`, `autoread`, `b`, `ls`, `bd` and their bang forms) bound to `files-api`'s and `buffers-api`'s names, so those tests drive ex lines with no import of `Editor.Ex.Compiled` |
 
 The linked kit:
 

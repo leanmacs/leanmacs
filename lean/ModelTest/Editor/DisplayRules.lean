@@ -1,5 +1,4 @@
 import Editor.Api
-import Editor.Buffers
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
@@ -21,13 +20,15 @@ import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.Test.Driver
+import Editor.Test.Files
 import Editor.Test.Keys
+import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Test.States
 import Editor.Text
 import Editor.Workspace
+import FilesApiTest.Fake
 import ModelTest.Check
-import ModelTest.Support.Buffers
 
 /-!
 # Model tests: `Editor/DisplayRules.lean`
@@ -40,6 +41,58 @@ namespace ModelTest
 
 open Editor
 open Editor.Test
+
+/-- What a step of the display rule checks that run commands is handed: one
+keymap, the same for every view, in which `C-o l` opens `lf.txt` of the
+file command checks with the open command of `files-api`'s fake
+(`FilesApiTest.openSaveCommands`), and three commands written here:
+`focus-main` (`C-b f`) focuses the first window of the tiled list,
+`make-notes` (`C-b o`) makes a buffer called `notes`, or a free name made
+from it, holding `a note`, adds the minor mode `notes` to it and displays it
+for the command `make-notes` (`BufferId.display`), and `show-list`
+(`C-b l`) displays a buffer called `list` with no file, made by its first
+run and kept by later ones, where the display rules say, for the opener
+`show-list`: the stand-in for a list a command shows, as the buffer list
+`ls` shows is (whose own display is `ModelTest.bufferCommandChecks`'). -/
+def displayKeys : Loop.Keys TestScheme.scheme :=
+  let written : List (String × Dispatched) :=
+    [("focus-main", fun _ => do
+        if let some main := (← editorState).frame.windows[0]? then
+          discard <| main.focus
+        return none),
+      ("make-notes", fun call => do
+        let name := (← editorState).freeName "notes"
+        let .ok notes ← createBuffer name "a note" | giveUp "making notes was refused"
+        discard <| notes.addMinorMode "notes"
+        discard <| notes.display call.target.window.id "make-notes"
+        return none),
+      ("show-list", fun call => do
+        let list ←
+          match (← editorState).findBuffer "list" with
+          | some list =>
+            pure list
+          | none =>
+            let .ok made ← createBuffer "list" "" | giveUp "making the list was refused"
+            pure made
+        discard <| list.display call.target.window.id "show-list"
+        return none)]
+  dispatchKeys
+    [("C-o l", opens (inFiles "lf.txt")), ("C-b f", invoke "focus-main"),
+      ("C-b o", invoke "make-notes"), ("C-b l", invoke "show-list")]
+    (FilesApiTest.openSaveCommands ++ written)
+
+/-- A driver of the display rule checks that run commands, over the initial
+state, with `lf.txt` open in view 0, its load (job 1) finished; `none` if
+making the state was refused. -/
+def displayOpen : Option TestDriver :=
+  (Loop.Driver.over displayKeys FilesApiTest.jobs (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption.map
+    fun driver =>
+    ((fedTo { driver with jobs := { files := commandFiles } } (presses "C-o l")).1.finish 1).1
+
+/-- The name of the buffer view `view` of `driver` shows. -/
+def displayedName (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option String :=
+  (showing driver view).map (·.buffer.name)
 
 /-- The checks of display rules (`Editor/DisplayRules.lean`): which rule a
 buffer's facts choose, and which targets a layout lacks; and where a
@@ -207,36 +260,36 @@ def displayRuleChecks : List Check :=
               shownFalse == some otherFalse
           | _, _ => false },
     { name :=
-        "criterion 1, in the model: with no rules, ls from main, which shows a file, leaves main on the file and shows the list in a new window at the end of the list, the stack, focused; ls from main again focuses that window and makes no third; a command that makes a buffer and displays it puts it in a new window at the end of the stack, and main still shows the file"
+        "criterion 1, in the model: with no rules, a command run from main, which shows a file, that displays a list buffer leaves main on the file and shows the list in a new window at the end of the list, the stack, focused; run from main again it focuses that window and makes no third; a command that makes a buffer and displays it puts it in a new window at the end of the stack, and main still shows the file"
       run :=
         pure <|
-          match buffersOpen with
+          match displayOpen with
           | none => false
           | some opened =>
-            let (listed, _) := fedTo opened (exLine "ls")
-            let (again, _) := fedTo listed (presses "C-b f" ++ exLine "ls")
+            let (listed, _) := fedTo opened (presses "C-b l")
+            let (again, _) := fedTo listed (presses "C-b f" ++ presses "C-b l")
             let (noted, _) := fedTo again (presses "C-b f" ++ presses "C-b o")
             let state := listed.loop.state
             match state.frame.windows.toList, noted.loop.state.frame.windows.toList with
             | [main, list], [_, _, notes] =>
-              main == ⟨0⟩ && shownName listed main == some "lf.txt" &&
+              main == ⟨0⟩ && displayedName listed main == some "lf.txt" &&
                 state.frame.focused == list &&
-                shownName listed list == some Buffers.listBuffer &&
+                displayedName listed list == some "list" &&
                 (state.rect? main).map (·.width) == some 318 &&
                 (state.rect? list).map (fun rect => (rect.x, rect.width)) == some (320, 320) &&
                 again.loop.state.frame.windows == state.frame.windows &&
                 again.loop.state.frame.focused == list &&
                 noted.loop.state.frame.windows == state.frame.windows.push notes &&
                 noted.loop.state.frame.focused == notes &&
-                shownName noted notes == some "notes" &&
-                shownName noted main == some "lf.txt" &&
+                displayedName noted notes == some "notes" &&
+                displayedName noted main == some "lf.txt" &&
                 noted.loop.state.wellFormed
             | _, _ => false },
     { name :=
         "criterion 2, in the model: under a layout with a left edge, a rule that sends a mode's buffers to the left edge docks the buffer a command makes with that minor mode there, in the edge's strip of 25 percent, focused, and main still shows the file"
       run :=
         pure <|
-          match buffersOpen with
+          match displayOpen with
           | none => false
           | some opened =>
             let ruled :=
@@ -254,8 +307,8 @@ def displayRuleChecks : List Check :=
             match state.frame.docked.toList with
             | [(notes, .left)] =>
               state.frame.windows == #[⟨0⟩] && state.frame.focused == notes &&
-                shownName noted notes == some "notes" &&
-                shownName noted ⟨0⟩ == some "lf.txt" &&
+                displayedName noted notes == some "notes" &&
+                displayedName noted ⟨0⟩ == some "lf.txt" &&
                 (state.rect? notes).map (fun rect => (rect.x, rect.y, rect.width)) ==
                   some (0, 0, 158) &&
                 (state.rect? ⟨0⟩).map (fun rect => (rect.x, rect.width)) == some (160, 480) &&
@@ -265,7 +318,7 @@ def displayRuleChecks : List Check :=
         "criterion 2, in the model: a rule that sends what a command opens to a float shows the buffer the command makes in a new view, listed after view 0 in the scene, centred in the tiled area at 60 by 50 percent, focused, and main still shows the file"
       run :=
         pure <|
-          match buffersOpen with
+          match displayOpen with
           | none => false
           | some opened =>
             let ruled :=
@@ -284,8 +337,8 @@ def displayRuleChecks : List Check :=
               state.frame.windows == #[⟨0⟩] && state.frame.focused == notes &&
                 float.anchor == .frame &&
                 !float.pinned &&
-                shownName noted notes == some "notes" &&
-                shownName noted ⟨0⟩ == some "lf.txt" &&
+                displayedName noted notes == some "notes" &&
+                displayedName noted ⟨0⟩ == some "lf.txt" &&
                 scene.views.map (·.id) == #[⟨0⟩, notes] &&
                 (scene.views.find? (·.id == notes)).map (·.rect) ==
                   some (Floating.centred {} tiled) &&
@@ -296,7 +349,7 @@ def displayRuleChecks : List Check :=
         "criterion 6, in the model: a rule that sends what a command opens to a new tab shows the buffer the command makes in the only window of a second tab, which is in view and focused, and the first tab still shows the file; with the rule's focus off the first tab stays in view and the second is behind it"
       run :=
         pure <|
-          match buffersOpen with
+          match displayOpen with
           | none => false
           | some opened =>
             let ruled (focus : Bool) : TestDriver :=
@@ -314,13 +367,13 @@ def displayRuleChecks : List Check :=
             match state.frame.windows.toList, hidden.frame.tabsAfter.toList with
             | [notes], [tab] =>
               state.frame.tabIndex == 1 && state.frame.focused == notes &&
-                shownName noted notes == some "notes" &&
+                displayedName noted notes == some "notes" &&
                 state.frame.tabsBefore.map (·.windows) == #[#[⟨0⟩]] &&
-                shownName noted ⟨0⟩ == some "lf.txt" &&
+                displayedName noted ⟨0⟩ == some "lf.txt" &&
                 hidden.frame.tabIndex == 0 &&
                 hidden.frame.focused == ⟨0⟩ &&
                 tab.windows.size == 1 &&
-                (tab.windows.all fun view => shownName behind view == some "notes") &&
+                (tab.windows.all fun view => displayedName behind view == some "notes") &&
                 state.wellFormed &&
                 hidden.wellFormed
             | _, _ => false }]
