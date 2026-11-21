@@ -526,3 +526,80 @@ fn an_overlay_is_delivered_with_its_source() {
     assert_eq!(delivery.found[0].source, Source::Buffer);
     assert_eq!(delivery.found[0].matches[0].row, 1);
 }
+
+#[test]
+fn a_flush_is_completed_only_once_a_cancelled_searchs_thread_has_returned() {
+    let rig = Rig::over(five());
+    assert_eq!(rig.started(1, "x", 10), Some(Reply::Started));
+    assert!(rig.service.next(1, 2));
+    // The search's thread is held in its first read.
+    assert!(rig.gate.until_entered(1));
+    assert!(rig.service.cancel(1));
+    assert_eq!(rig.service.pending(), 0, "its bookkeeping is gone");
+
+    assert!(rig.service.flush(9));
+    // Read while the thread is held, checked once it is let go.
+    let early = rig.completed.try_recv().ok();
+    rig.gate.open();
+    let flushed = rig.completion();
+
+    assert_eq!(
+        early, None,
+        "the flush was completed while the cancelled search's thread was still in its read"
+    );
+    assert_eq!(flushed, Some(9));
+    assert_eq!(rig.completed.try_recv().ok(), None, "nothing more");
+    assert_eq!(rig.service.take(9), None, "a flush keeps no reply");
+    assert_eq!(rig.service.pending(), 0);
+}
+
+#[test]
+fn a_flush_with_no_search_running_is_completed_at_once_and_an_id_in_use_is_refused() {
+    let rig = Rig::over(five());
+    rig.gate.open();
+    assert!(rig.service.flush(9));
+    assert_eq!(
+        rig.completed.try_recv().ok(),
+        Some(9),
+        "on the caller's thread"
+    );
+
+    assert_eq!(rig.started(1, "x", 10), Some(Reply::Started));
+    assert!(!rig.service.flush(1), "a search's id");
+    let deliveries = rig.read_to_end(1, 2);
+    assert!(
+        deliveries
+            .last()
+            .is_some_and(|delivery| delivery.end.is_some())
+    );
+}
+
+#[test]
+fn a_flush_waits_for_a_live_search_and_a_cancel_withdraws_it() {
+    let rig = Rig::over(five());
+    assert_eq!(rig.started(1, "x", 10), Some(Reply::Started));
+    // The live search's thread is held in its first read.
+    assert!(rig.gate.until_entered(1));
+    assert!(rig.service.flush(8));
+    assert!(rig.service.flush(9));
+    assert!(
+        !rig.service.flush(9),
+        "a flush's id is in use while it waits"
+    );
+    assert_eq!(rig.service.pending(), 3, "the search and its two flushes");
+    assert!(rig.service.cancel(8));
+    let early = rig.completed.try_recv().ok();
+
+    // Ended by its cancel, the search's thread returns once let go.
+    assert!(rig.service.cancel(1));
+    rig.gate.open();
+
+    assert_eq!(early, None, "the flush waits for the live search");
+    assert_eq!(rig.completion(), Some(9));
+    assert_eq!(
+        rig.completed.try_recv().ok(),
+        None,
+        "the withdrawn flush is never completed"
+    );
+    assert_eq!(rig.service.pending(), 0);
+}

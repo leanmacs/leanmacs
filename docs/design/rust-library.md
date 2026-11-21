@@ -1778,7 +1778,16 @@ delivery that takes the last file, and frees the id. The search waits
 while `bound` matches or more are kept and not taken, so memory is bounded
 and a slow reader slows its search. `cancel` makes its `stopped` true and
 completes nothing more; an id in use is refused; `shutdown` cancels every
-search and waits for every thread.
+search and waits for every thread. **A flush** (`Service::flush`,
+deterministic-test-concurrency phase 3) is a wait of the caller's,
+completed once the thread of every search started before it has returned:
+a cancelled search's bookkeeping goes at its cancel, but its thread may
+still be in a read, so each thread holds a ticket until it returns and a
+flush waits on the tickets. It is completed at once when no search's
+thread runs, keeps no reply, and a cancel withdraws it; shutdown completes
+those left. A caller that cancelled its searches and then sees the flush
+knows nothing still walks their directories (`Linked.withFiles` with the
+target `greps`).
 
 **The adapter** is `crates/editor-grep-ripgrep`: `RipgrepFiles`, over
 ripgrep's libraries, each pinned exactly to the newest release on

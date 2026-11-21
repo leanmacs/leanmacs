@@ -43,15 +43,25 @@
 //!   wait alone. It is safe for an unknown or a finished id.
 //! - **Shutdown** ([`Service::shutdown`]) refuses every later start, which
 //!   comes to [`RefusalKind::ShutDown`] and is completed at once; cancels
-//!   every search; and waits for every search's thread to return. It is
+//!   every search; waits for every search's thread to return; and then
+//!   completes the flushes left. It is
 //!   idempotent, and dropping the last handle of a service does it.
 //! - **Locks**: the closure is never called while the service's lock is
 //!   held.
+//! - **A flush is a barrier** ([`Service::flush`]): a wait of the caller's,
+//!   completed once the thread of every search started before it has
+//!   returned, a cancelled search's among them, whose bookkeeping goes at
+//!   its cancel while its thread may still be in a read. So a caller that
+//!   cancelled its searches and then sees the flush completed knows no
+//!   search still walks their directories. It is completed at once, on the
+//!   caller's thread, when no search's thread runs, keeps no reply, its id
+//!   is in use while it waits, and a cancel withdraws it. Shutdown, which
+//!   waits for every thread, completes those that are left.
 //! - **[`Service::pending`]** counts the searches held and the waits not
-//!   answered or not taken, and [`Service::held_back`] the searches waiting
-//!   for their reader: readouts for tests.
+//!   answered or not taken, flushes among them, and [`Service::held_back`]
+//!   the searches waiting for their reader: readouts for tests.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
@@ -145,6 +155,14 @@ enum Wait {
     Reading(u64),
     /// This reply, kept.
     Kept(Reply),
+    /// A flush: completed once the searches' threads it waits for have
+    /// returned.
+    Flush {
+        /// How many flushes were asked before it.
+        order: u64,
+        /// The tickets of the searches' threads it still waits for.
+        awaited: HashSet<u64>,
+    },
 }
 
 /// What the service holds.
@@ -158,6 +176,14 @@ struct State {
     waits: HashMap<u64, Wait>,
     /// How many searches' threads have not returned.
     active: usize,
+    /// The ticket of each search's thread that has not returned. A ticket,
+    /// not the search's id, since the id of a cancelled search is free
+    /// again before its thread returns.
+    running: HashSet<u64>,
+    /// The next search's ticket.
+    tickets: u64,
+    /// How many flushes have been asked.
+    flushes: u64,
     /// How many searches wait for their reader.
     held_back: usize,
 }
@@ -166,6 +192,34 @@ impl State {
     /// Whether `id` names a search or a wait.
     fn in_use(&self, id: u64) -> bool {
         self.searches.contains_key(&id) || self.waits.contains_key(&id)
+    }
+
+    /// Settles the thread `ticket`, which has returned, and takes out each
+    /// flush that waited for nothing else, in the order they were asked.
+    fn settle(&mut self, ticket: u64) -> Vec<u64> {
+        self.running.remove(&ticket);
+        self.take_flushes(|awaited| {
+            awaited.remove(&ticket);
+            awaited.is_empty()
+        })
+    }
+
+    /// Takes out each flush `done` says is done, in the order they were
+    /// asked.
+    fn take_flushes(&mut self, mut done: impl FnMut(&mut HashSet<u64>) -> bool) -> Vec<u64> {
+        let mut flushed: Vec<(u64, u64)> = self
+            .waits
+            .iter_mut()
+            .filter_map(|(&id, wait)| match wait {
+                Wait::Flush { order, awaited } => done(awaited).then_some((*order, id)),
+                _ => None,
+            })
+            .collect();
+        flushed.sort_unstable();
+        for (_, id) in &flushed {
+            self.waits.remove(id);
+        }
+        flushed.into_iter().map(|(_, id)| id).collect()
     }
 
     /// The search `id`, if it is held and not cancelled.
@@ -306,18 +360,23 @@ where
             },
         );
         state.active += 1;
+        let ticket = state.tickets;
+        state.tickets += 1;
+        state.running.insert(ticket);
         drop(state);
         let searching = Arc::clone(inner);
         let started = thread::Builder::new()
             .name("editor-grep-search".into())
-            .spawn(move || searching.search(id, &request, &cancelled))
+            .spawn(move || searching.search(id, ticket, &request, &cancelled))
             .is_ok();
         if !started {
             let mut state = inner.state();
             state.searches.remove(&id);
             state.active -= 1;
+            let flushed = state.settle(ticket);
             drop(state);
             inner.finished.notify_all();
+            inner.complete_all(flushed);
         }
         started
     }
@@ -360,6 +419,8 @@ where
                     _ => None,
                 };
             }
+            // A flush keeps no reply.
+            Wait::Flush { .. } => return None,
             &Wait::Reading(id) => id,
         };
         let held = state.searches.get_mut(&id)?;
@@ -399,9 +460,36 @@ where
                 }
                 true
             }
-            Some(Wait::Kept(_)) => true,
+            Some(Wait::Kept(_) | Wait::Flush { .. }) => true,
             None => false,
         }
+    }
+
+    /// Asks for the wait `id` to be completed once every search started
+    /// before this call has ended: its thread has returned, whether the
+    /// search ran to its end, was refused or was cancelled. A cancelled
+    /// search's bookkeeping goes at its cancel, but its thread may still be
+    /// in a read; the flush waits for that thread. It returns at once and
+    /// keeps no reply. An id in use is refused; with no search's thread
+    /// running it is completed at once, on the caller's thread. It is
+    /// counted in [`pending`](Self::pending) while it waits, and a cancel
+    /// withdraws it.
+    pub fn flush(&self, id: u64) -> bool {
+        let inner = self.inner();
+        let mut state = inner.state();
+        if state.in_use(id) {
+            return false;
+        }
+        if state.running.is_empty() {
+            drop(state);
+            (inner.complete)(id);
+            return true;
+        }
+        let order = state.flushes;
+        state.flushes += 1;
+        let awaited = state.running.clone();
+        state.waits.insert(id, Wait::Flush { order, awaited });
+        true
     }
 
     /// Refuses every later start, cancels every search, and waits for every
@@ -447,15 +535,29 @@ impl<F, E> Inner<F, E> {
     fn shutdown(&self) {
         let mut state = self.state();
         state.shut = true;
-        state.waits.clear();
+        // A flush is kept: it is completed once every search's thread has
+        // returned.
+        state
+            .waits
+            .retain(|_, wait| matches!(wait, Wait::Flush { .. }));
         for (_, held) in state.searches.drain() {
             held.cancelled.store(true, Ordering::SeqCst);
         }
         self.room.notify_all();
-        let _state = self
+        let mut state = self
             .finished
             .wait_while(state, |state| state.active > 0)
             .unwrap_or_else(PoisonError::into_inner);
+        let flushed = state.take_flushes(|_| true);
+        drop(state);
+        self.complete_all(flushed);
+    }
+
+    /// Completes each of `waits`, in order, with no lock held.
+    fn complete_all(&self, waits: Vec<u64>) {
+        for wait in waits {
+            (self.complete)(wait);
+        }
     }
 
     /// Keeps `reply` under the start `id` if the search is still wanted,
@@ -541,7 +643,7 @@ where
 {
     /// A search's thread: prepares the search, keeps the start's reply,
     /// runs it, keeping each file found, and keeps how it ended.
-    fn search(self: Arc<Self>, id: u64, request: &Request, cancelled: &AtomicBool) {
+    fn search(self: Arc<Self>, id: u64, ticket: u64, request: &Request, cancelled: &AtomicBool) {
         let (files, mut engine) = (self.make)();
         match Search::prepare(&mut engine, request) {
             Err(refusal) => {
@@ -570,8 +672,10 @@ where
         }
         let mut state = self.state();
         state.active -= 1;
+        let flushed = state.settle(ticket);
         drop(state);
         self.finished.notify_all();
+        self.complete_all(flushed);
     }
 }
 

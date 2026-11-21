@@ -83,6 +83,7 @@
 //! | [`editor_ffi_grep_next`] | Asks for a search's next delivery, under a wait id of its own. False for a search that is not held, one with a read pending, or a wait id in use |
 //! | [`editor_ffi_grep_take`] | Fills a [`RawGrepReply`] and returns true, or returns false when nothing is kept for the wait |
 //! | [`editor_ffi_grep_cancel`] | Cancels a search, which reads nothing more, or a wait |
+//! | [`editor_ffi_grep_flush`] | Asks for a wait completed once the thread of every search started before has returned, a cancelled search's among them. False for an id in use |
 //! | [`editor_ffi_grep_pending`] | Searches held, and waits not answered or not taken. A readout for tests |
 //! | [`editor_ffi_grep_shutdown`] | Ends every search; a later start is refused as shut down |
 
@@ -435,6 +436,16 @@ pub unsafe extern "C" fn editor_ffi_grep_take(wait: u64, out: *mut RawGrepReply)
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_grep_cancel(id: u64) -> bool {
     GREP.cancel(id)
+}
+
+/// Asks for the request `id` to be completed once the thread of every
+/// search started before this call has returned, a cancelled search's
+/// among them, and returns whether it was accepted: refused for an id in
+/// use. It returns at once and keeps no result; with no search's thread
+/// running it is completed at once. `editor_ffi_grep_cancel` withdraws it.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_grep_flush(id: u64) -> bool {
+    GREP.flush(id)
 }
 
 /// How many searches are held, and how many waits have not been answered
