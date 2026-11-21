@@ -88,6 +88,7 @@ import ModelTest.Editor.InputScheme.Contract
 import ModelTest.Editor.InputScheme.Vim
 import ModelTest.Editor.InputScheme.Vim.Default
 import ModelTest.Editor.Invocation
+import ModelTest.Editor.Job.Activity
 import ModelTest.Editor.Job.Contract
 import ModelTest.Editor.Job.FlushContract
 import ModelTest.Editor.Job.HandleContract
@@ -689,6 +690,12 @@ The job system is tested here with no Rust library:
   clock and its cancellation, and what only the model's exact clock can
   show: that a timer does not drift;
 - `waitChecks`: the table of waits and the fake clock, with no job;
+- `activityChecks`: a host's activity count (`Editor/Job/Activity.lean`),
+  what its idle is made of: begin and done move the count and its epoch, a
+  round from 0 to 1 and back between two readings is not idle, a done with
+  nothing held is refused, a wait for a change ends at the next one and not
+  before, and the untracked count is never idle. Each runs on the check's
+  own thread;
 - `runnerChecks`: the runner (`Editor/Job/Runner.lean`) over the fake clock
   (`Editor/Job/Fake.lean`). A check controls time by moving its own fake
   clock and holds a job on a promise it resolves; it sleeps for nothing, and
@@ -1472,6 +1479,7 @@ makes Lean add a thread to the pool, which a later burst can land on. -/
 def checks : List Check :=
   typedPathChecks ++ poolChecks ++ programChecks ++ jobModelChecks ++ snapshotReadChecks ++
     waitChecks ++
+    activityChecks ++
     runnerChecks ++
     flushContractChecks ++
     handleContractChecks ++
