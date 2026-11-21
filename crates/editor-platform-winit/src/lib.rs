@@ -200,7 +200,11 @@
 //!   `NSFullScreenMenuItemEverywhere`. What is built and read is `menu`'s,
 //!   and tested. The contract example asks a running window for a menu
 //!   bar, reads it back from AppKit, performs each command item and the
-//!   Quit item, and sees what each reports.
+//!   Quit item, and sees what each reports. It reads back once, after the
+//!   loop has carried out every request sent to it
+//!   (`probe::await_requests_handled`: a count of the requests sent and of
+//!   those the loop carried out, `handled`, notified as the loop counts),
+//!   never by a poll.
 //!
 //! They are held to the port's contract by `examples/contract/main.rs`, which
 //! two opt-in tasks run: `mise run linux-window`, under Xvfb in a
@@ -224,6 +228,7 @@ mod corner;
 #[cfg(target_os = "macos")]
 mod delegate;
 mod files;
+mod handled;
 #[cfg(any(target_os = "macos", test))]
 mod menu;
 #[cfg(target_os = "macos")]
@@ -259,15 +264,37 @@ use crate::corner::Shape;
 use crate::files::Arrivals;
 #[cfg(any(target_os = "macos", test))]
 use crate::files::Handing;
+use crate::handled::Handled;
 use crate::terminate::{Reply, Terminate};
 use crate::translate::{KeyParts, Seen, Told};
 
-/// A reading of the menu bar the adapter built, for `examples/contract`
-/// alone (macOS): no other crate calls it, and it names no objc2 type.
-#[cfg(target_os = "macos")]
+/// Readings of what the adapter did, for `examples/contract` alone: no
+/// other crate calls them, and they name no objc2 type. On macOS, a reading
+/// of the menu bar the adapter built; everywhere, a wait for the running
+/// loop to have carried out every request sent to it.
 #[doc(hidden)]
 pub mod probe {
+    use std::time::Duration;
+
+    #[cfg(target_os = "macos")]
     pub use crate::menu_bar::{Reading, read_menu_bar};
+
+    /// Waits until the loop of `platform`'s running window has carried out
+    /// every request sent to it, on the main thread, and says whether it
+    /// had: false once `bound` has passed first, and at once when no window
+    /// runs. A reading of the window or the menu bar made after it sees
+    /// what the requests did. It is notified as the loop carries them out,
+    /// never a poll.
+    ///
+    /// `bound` is a hang guard: only a loop that never carries a request
+    /// out reaches it.
+    pub fn await_requests_handled(platform: &crate::WinitPlatform, bound: Duration) -> bool {
+        let handled = platform
+            .running()
+            .as_ref()
+            .map(|running| std::sync::Arc::clone(&running.handled));
+        handled.is_some_and(|handled| handled.wait_all(bound))
+    }
 }
 
 /// The window port over winit. It opens one window, on the process's main
@@ -288,6 +315,9 @@ struct Running {
     closing: Closing,
     /// Where requests go, which the loop takes when woken.
     requests: mpsc::Sender<Request>,
+    /// How many requests have been sent and carried out
+    /// (`probe::await_requests_handled`).
+    handled: Arc<Handled>,
 }
 
 impl WinitPlatform {
@@ -358,10 +388,12 @@ impl Platform for WinitPlatform {
         let installed = delegate::install(handing);
         #[cfg(not(target_os = "macos"))]
         drop((handing, terminating, choosing));
+        let handled = Arc::new(Handled::default());
         *self.running() = Some(Running {
             proxy: event_loop.create_proxy(),
             closing: closing.clone(),
             requests,
+            handled: Arc::clone(&handled),
         });
         let mut app = App {
             options,
@@ -372,6 +404,7 @@ impl Platform for WinitPlatform {
             failure: None,
             closing,
             requests: asked,
+            handled,
             asked: Asked::default(),
             files,
             arrivals: Arrivals::default(),
@@ -418,7 +451,9 @@ impl Platform for WinitPlatform {
         if let Some(running) = self.running().as_ref() {
             // Sent first, as a close is asked first, so that the loop it
             // wakes finds it. A loop that has ended has dropped its end of
-            // the channel, and the request goes nowhere.
+            // the channel, and the request goes nowhere. It is counted as
+            // sent before it is, so the loop never counts more carried out.
+            running.handled.sent();
             let _ = running.requests.send(request);
             running.proxy.wake_up();
         }
@@ -540,6 +575,8 @@ struct App {
     closing: Closing,
     /// The requests sent to the window, taken when the loop is woken.
     requests: mpsc::Receiver<Request>,
+    /// Where the loop counts the requests it has carried out.
+    handled: Arc<Handled>,
     /// What the translation of requests remembers of the window.
     asked: Asked,
     /// The lists of files the system asks the app to open, taken when the
@@ -573,64 +610,14 @@ impl App {
         #[cfg(not(target_os = "macos"))]
         let _ = menu;
     }
-}
 
-impl ApplicationHandler for App {
-    /// Opens the window. winit calls this once its loop has started, on
-    /// every platform, and may call it again; a window already made, or
-    /// one that could not be, is not made again.
-    fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
-        if self.window.is_some() || self.failure.is_some() {
-            return;
-        }
-        match event_loop.create_window(title_bar::attributes(self.options)) {
-            Ok(window) => {
-                // What it comes to is seen in the events the window sends,
-                // as with the call this replaces, which returned nothing.
-                let _ = window.request_ime_update(ime_request(self.options.composition));
-                window.focus_window();
-                let (opened, size) = self.seen.opened(
-                    window.surface_size(),
-                    window.scale_factor(),
-                    native_window(window.as_ref()),
-                    refresh_rate(window.as_ref()),
-                    shape(window.as_ref(), self.options.title_bar),
-                );
-                self.window = Some(window);
-                // The drawer hears of the window before anyone else does.
-                (self.drawer)(opened);
-                (self.report)(Input::Opened {
-                    platform: WinitPlatform::NAME.into(),
-                });
-                (self.report)(size);
-                // The files that arrived before the window, and those still
-                // waiting on the channel, after them.
-                for input in self.arrivals.open(self.files.try_iter()) {
-                    (self.report)(input);
-                }
-                // An ask to terminate that came before the window, or is
-                // still waiting, after the files.
-                if let Some(input) = self.terminate.open(self.terminations.try_iter().count()) {
-                    (self.report)(input);
-                }
-            }
-            Err(error) => {
-                self.failure = Some(error.to_string());
-                // An ask held, or waiting, keeps AppKit waiting inside
-                // `terminate:`, and the run could not return with the
-                // failure: what it is answered is `terminate`'s.
-                if let Some(reply) = self.terminate.fail(self.terminations.try_iter().count()) {
-                    answer(reply);
-                }
-                event_loop.exit();
-            }
-        }
-    }
-
-    fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
+    /// Carries out a wake-up of the loop with `requests` taken off their
+    /// channel, and the files, asks to terminate and choices still on
+    /// theirs ([`wake`]).
+    fn woken(&mut self, event_loop: &dyn ActiveEventLoop, requests: Vec<Request>) {
         let woken = wake(
             &self.closing,
-            self.requests.try_iter(),
+            requests.into_iter(),
             self.files.try_iter(),
             self.terminations.try_iter(),
             self.choices.try_iter(),
@@ -701,6 +688,68 @@ impl ApplicationHandler for App {
         if let Some(input) = told.input {
             (self.report)(input);
         }
+    }
+}
+
+impl ApplicationHandler for App {
+    /// Opens the window. winit calls this once its loop has started, on
+    /// every platform, and may call it again; a window already made, or
+    /// one that could not be, is not made again.
+    fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
+        if self.window.is_some() || self.failure.is_some() {
+            return;
+        }
+        match event_loop.create_window(title_bar::attributes(self.options)) {
+            Ok(window) => {
+                // What it comes to is seen in the events the window sends,
+                // as with the call this replaces, which returned nothing.
+                let _ = window.request_ime_update(ime_request(self.options.composition));
+                window.focus_window();
+                let (opened, size) = self.seen.opened(
+                    window.surface_size(),
+                    window.scale_factor(),
+                    native_window(window.as_ref()),
+                    refresh_rate(window.as_ref()),
+                    shape(window.as_ref(), self.options.title_bar),
+                );
+                self.window = Some(window);
+                // The drawer hears of the window before anyone else does.
+                (self.drawer)(opened);
+                (self.report)(Input::Opened {
+                    platform: WinitPlatform::NAME.into(),
+                });
+                (self.report)(size);
+                // The files that arrived before the window, and those still
+                // waiting on the channel, after them.
+                for input in self.arrivals.open(self.files.try_iter()) {
+                    (self.report)(input);
+                }
+                // An ask to terminate that came before the window, or is
+                // still waiting, after the files.
+                if let Some(input) = self.terminate.open(self.terminations.try_iter().count()) {
+                    (self.report)(input);
+                }
+            }
+            Err(error) => {
+                self.failure = Some(error.to_string());
+                // An ask held, or waiting, keeps AppKit waiting inside
+                // `terminate:`, and the run could not return with the
+                // failure: what it is answered is `terminate`'s.
+                if let Some(reply) = self.terminate.fail(self.terminations.try_iter().count()) {
+                    answer(reply);
+                }
+                event_loop.exit();
+            }
+        }
+    }
+
+    fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
+        // Each request taken now is counted once the wake-up has carried
+        // it out, or dropped it, so the count says it is done.
+        let requests: Vec<Request> = self.requests.try_iter().collect();
+        let taken = requests.len();
+        self.woken(event_loop, requests);
+        self.handled.handled(taken);
     }
 
     fn window_event(&mut self, _: &dyn ActiveEventLoop, _: WindowId, event: WindowEvent) {
@@ -835,6 +884,7 @@ fn event_loop() -> Result<EventLoop, String> {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+    use std::time::Duration;
     use winit::event_loop::EventLoopProxyProvider;
 
     #[test]
@@ -899,6 +949,7 @@ mod tests {
             proxy: EventLoopProxy::new(waker.clone()),
             closing,
             requests: mpsc::channel().0,
+            handled: Arc::default(),
         });
 
         platform.close();
@@ -932,14 +983,24 @@ mod tests {
             woken: Mutex::new(Vec::new()),
         });
         let closing = Closing::default();
+        let handled = Arc::new(Handled::default());
         *platform.running() = Some(Running {
             proxy: EventLoopProxy::new(waker.clone()),
             closing: closing.clone(),
             requests,
+            handled: Arc::clone(&handled),
         });
 
         platform.request(Request::EnterFullscreen);
         platform.request(Request::Title("notes.txt".into()));
+
+        // Each is counted as sent, so a wait for them runs out until the
+        // loop has counted both carried out.
+        assert!(!probe::await_requests_handled(&platform, Duration::ZERO));
+        handled.handled(1);
+        assert!(!probe::await_requests_handled(&platform, Duration::ZERO));
+        handled.handled(1);
+        assert!(probe::await_requests_handled(&platform, Duration::ZERO));
 
         // Woken once for each, with it already on the channel: the loop
         // that wakes finds it. A request asks no close.
@@ -956,6 +1017,13 @@ mod tests {
     #[test]
     fn a_request_with_no_window_running_does_nothing() {
         WinitPlatform::new(|| false).request(Request::Minimise);
+    }
+
+    #[test]
+    fn with_no_window_running_a_wait_for_requests_carried_out_says_no_at_once() {
+        let platform = WinitPlatform::new(|| false);
+        platform.request(Request::Minimise);
+        assert!(!probe::await_requests_handled(&platform, Duration::MAX));
     }
 
     /// A loop's waker that takes, at each wake-up, the lists of paths

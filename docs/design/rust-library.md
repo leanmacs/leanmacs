@@ -1224,7 +1224,11 @@ built"):
   two apart run only in a real window. A close asks the loop to end, with
   a flag the loop shares, and then wakes it with winit's `wake_up`: winit
   may wake a loop nobody woke, so the loop ends on a wake-up only when the
-  flag is set. The adapter is held to the
+  flag is set. A count of the requests sent to the running loop and of
+  those it has carried out on the main thread, notified as the loop
+  counts, is a test readout (`probe::await_requests_handled`): the
+  contract example reads AppKit back once after it, never by a poll. The
+  adapter is held to the
   contract by an example binary that `mise run linux-window` runs under
   Xvfb in a container and `mise run window-contract` on a desktop.
 - **Onto the queue**: `editor-ffi` runs a platform and pushes each input as
