@@ -2269,7 +2269,28 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   visible"). `tests/headless/default-config` runs the default
   config (`config/default`, copied into a temporary directory): `SPC :`
   and `SPC ?`, run from the binding search as their keys would run, open
-  the command prompt and the binding search.
+  the command prompt and the binding search. The binding search lists its
+  workspace, project-search, working-set and `SPC b` keys, and `SPC f f`,
+  `SPC p f`, `SPC SPC`, `SPC p p`, `SPC s p`, `SPC /`, `SPC *`, `SPC k a`
+  and `SPC k o`, run the same way, open their prompts (`Open file: `,
+  `Find file in @DIR@/cwd: `, `Search @DIR@/cwd: `) or say why they
+  cannot (`find-file-in-project: scratch is in no project`, `E348: No
+  string under cursor`, `working-set-add: scratch has no file`,
+  `working-set-open: scratch has no workspace`). The editor runs in an
+  empty directory beside the config's copy, `@DIR@/cwd` once the
+  temporary directory is written `@DIR@`, so what starts at the working
+  directory or searches it is the same on every machine.
+- **`tests/headless/working-set-from-search`** is project search and the
+  working sets together, on the default set's editor with no config: `:e`
+  opens a file of a tree that is a workspace by its marker `.project`,
+  `project-search` searches `needle`, in two of its files, a row of the
+  results is added to a new working set (`found: added b.txt:3`, the
+  file's range, not the results'), and `working-set-open` shows that row
+  of the file as the set's one excerpt, nothing drifted, which `RET`
+  visits. A search's deliveries are what the library has found when its
+  job reads it, so how many there are differs from run to run: the gate
+  leaves the job lines out and writes each scene's published count
+  `@N@`.
 - **The fixtures of the four features that moved in the
   features-as-packages roadmap's phase 3 are their packages'**:
   `packages/mode-line/tests/headless/mode-line`, the core's until then;

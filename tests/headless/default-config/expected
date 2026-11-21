@@ -30,3 +30,115 @@ status 6: minibuffer.prompt "Binding: "
 view 2 0,0 0x0: "C-s-f  toggle-fullscreen\ns-m  minimise-window\ns-q  quit\ns-o  open-file\ns-s  save-buffer\ns-z  undo\ns-Z  redo\ns-x  clipboard-cut\ns-c  clipboard-copy\ns-v  clipboard-paste", scroll 0, selections , padding 8 0
 decorations 2: minibuffer.candidate 0..24 minibuffer.candidate 25..45 minibuffer.candidate 46..55 minibuffer.candidate 56..70 minibuffer.candidate 71..87 minibuffer.candidate 88..97 minibuffer.candidate 98..107 minibuffer.candidate 108..126 minibuffer.candidate 127..146 minibuffer.candidate 147..167
 status 2: -
+key arrived: <Escape> Escape -
+run search-bindings: ok
+scene 0x0, focused 7, echo "", echo padding 8, preedit -, published 20, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 7 0,0 0x0: "workspace", scroll 0, selections 9..9, padding 8 0
+status 7: minibuffer.prompt "Binding: "
+view 2 0,0 0x0: "SPC SPC  find-file-in-workspace  Find file in workspace\nSPC p f  find-file-in-workspace  Find file in workspace", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..55 minibuffer.match 22..31 minibuffer.annotation 33..55 minibuffer.candidate 56..111 minibuffer.match 78..87 minibuffer.annotation 89..111
+status 2: -
+key arrived: <Escape> Escape -
+run search-bindings: ok
+scene 0x0, focused 8, echo "", echo padding 8, preedit -, published 24, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 8 0,0 0x0: "project-search", scroll 0, selections 14..14, padding 8 0
+status 8: minibuffer.prompt "Binding: "
+view 2 0,0 0x0: "SPC /  project-search         Search workspace\nSPC *  project-search-symbol  Search symbol in workspace\nSPC s p  project-search       Search workspace", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..46 minibuffer.match 7..21 minibuffer.annotation 30..46 minibuffer.candidate 47..103 minibuffer.match 54..68 minibuffer.annotation 77..103 minibuffer.candidate 104..150 minibuffer.match 110..111 minibuffer.match 114..127 minibuffer.annotation 134..150
+status 2: -
+key arrived: <Escape> Escape -
+run search-bindings: ok
+scene 0x0, focused 9, echo "", echo padding 8, preedit -, published 28, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 9 0,0 0x0: "working-set", scroll 0, selections 11..11, padding 8 0
+status 9: minibuffer.prompt "Binding: "
+view 2 0,0 0x0: "SPC <Enter>  working-set-open  Open working set\nSPC k a  working-set-add       Add to working set\nSPC k o  working-set-open      Open working set", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..47 minibuffer.match 13..24 minibuffer.annotation 31..47 minibuffer.candidate 48..97 minibuffer.match 57..68 minibuffer.annotation 79..97 minibuffer.candidate 98..145 minibuffer.match 107..118 minibuffer.annotation 129..145
+status 2: -
+key arrived: <Escape> Escape -
+run search-bindings: ok
+scene 0x0, focused 10, echo "", echo padding 8, preedit -, published 32, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 10 0,0 0x0: "SPC b", scroll 0, selections 5..5, padding 8 0
+status 10: minibuffer.prompt "Binding: "
+view 2 0,0 0x0: "SPC b b  switch-buffer        Switch buffer\nSPC b i  list-buffers         List buffers\nSPC b k  close-buffer         Kill buffer\nSPC b d  close-buffer         Kill buffer\nSPC b s  save-buffer          Save buffer\nSPC b r  reload-buffer        Revert buffer\nSPC w b  window-focus-bottom  Bottom window\nSPC ,  switch-buffer          Switch buffer\nSPC ?  search-bindings        Search bindings\nSPC f s  save-buffer          Save file", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..43 minibuffer.match 0..5 minibuffer.annotation 30..43 minibuffer.candidate 44..86 minibuffer.match 44..49 minibuffer.annotation 74..86 minibuffer.candidate 87..128 minibuffer.match 87..92 minibuffer.annotation 117..128 minibuffer.candidate 129..170 minibuffer.match 129..134 minibuffer.annotation 159..170 minibuffer.candidate 171..212 minibuffer.match 171..176 minibuffer.annotation 201..212 minibuffer.candidate 213..256 minibuffer.match 213..218 minibuffer.annotation 243..256 minibuffer.candidate 257..300 minibuffer.match 257..261 minibuffer.match 263..264 minibuffer.annotation 287..300 minibuffer.candidate 301..344 minibuffer.match 301..305 minibuffer.match 315..316 minibuffer.annotation 331..344 minibuffer.candidate 345..390 minibuffer.match 345..349 minibuffer.match 359..360 minibuffer.annotation 375..390 minibuffer.candidate 391..430 minibuffer.match 391..395 minibuffer.match 405..406 minibuffer.annotation 421..430
+status 2: -
+key arrived: <Escape> Escape -
+run search-bindings: ok
+key arrived: <Enter> Enter -
+job 1 files: started
+job 1 files: ok
+key arrived: u KeyU control
+job 2 files: started
+job 2 files: ok
+scene 0x0, focused 12, echo "", echo padding 8, preedit -, published 44, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 12 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 12: minibuffer.prompt "Open file: "
+key arrived: <Escape> Escape -
+run search-bindings: ok
+key arrived: <Enter> Enter -
+job 3 workspace-files: started
+job 3 workspace-files: ok
+job 3 workspace-files: ok
+scene 0x0, focused 14, echo "", echo padding 8, preedit -, published 54, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 14 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 14: minibuffer.prompt "Find file in @DIR@/cwd: "
+key arrived: <Escape> Escape -
+run search-bindings: ok
+key arrived: <Enter> Enter -
+job 4 workspace-files: started
+job 4 workspace-files: ok
+job 4 workspace-files: ok
+scene 0x0, focused 16, echo "", echo padding 8, preedit -, published 64, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 16 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 16: minibuffer.prompt "Find file in @DIR@/cwd: "
+key arrived: <Escape> Escape -
+run search-bindings: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "find-file-in-project: scratch is in no project", echo padding 8, preedit -, published 72, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run search-bindings: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 19, echo "", echo padding 8, preedit -, published 79, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 19 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 19: minibuffer.prompt "Search @DIR@/cwd: "
+key arrived: <Escape> Escape -
+run search-bindings: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 21, echo "", echo padding 8, preedit -, published 87, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 21 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 21: minibuffer.prompt "Search @DIR@/cwd: "
+key arrived: <Escape> Escape -
+run search-bindings: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "E348: No string under cursor", echo padding 8, preedit -, published 95, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run search-bindings: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "working-set-add: scratch has no file", echo padding 8, preedit -, published 102, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run search-bindings: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "working-set-open: scratch has no workspace", echo padding 8, preedit -, published 109, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4

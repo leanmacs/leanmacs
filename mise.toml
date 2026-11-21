@@ -760,10 +760,15 @@ run = [
   # editor of the default set (tests/headless/default-config): the binding
   # search lists its `SPC f f  open-file`, and `SPC :` and `SPC ?`, run
   # from the search as their keys would run, open the command prompt and
-  # the binding search (`default-config/expected`). The config is copied
-  # into a temporary directory, which a trap removes, so nothing is written
-  # into the checkout.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../config/default \"$dir/config\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean \"$dir/config\" ../tests/headless/default-config/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/default-config/expected -",
+  # the binding search; its file, buffer, workspace, search and working-set
+  # keys are listed, and each run from the search opens its prompt or says
+  # why it cannot (`default-config/expected`). The config is copied into a
+  # temporary directory, which a trap removes, so nothing is written into
+  # the checkout, and the editor runs in an empty directory beside it, so
+  # the prompts that start at the working directory, or search it, are the
+  # same everywhere once the directory's path, taken physically, is written
+  # `@DIR@`.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && root=$(pwd) && prefix=$(lean --print-prefix) && cp -R ../config/default \"$dir/config\" && mkdir \"$dir/cwd\" && out=$(cd \"$dir/cwd\" && \"$root/../packages/.lake/build/bin/editor\" headless \"$prefix\" \"$root/.lake/build/lib/lean\" \"$dir/config\" \"$root/../tests/headless/default-config/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/default-config/expected -",
   # The themes of an editor with no package but the core's
   # (tests/headless/core-themes), run on the editor built from the set
   # tests/empty-set, which is the default set with its packages, the
@@ -1030,6 +1035,18 @@ run = [
   # made as `open-file`'s entry is, from a template under `/tmp`; the
   # headless mode has no state directory, so no file is written.
   "dir=$(mktemp -d /tmp/working-set.XXXXXXXX) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/working-set-reopen/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/working-set-reopen/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/working-set-reopen/expected -",
+  # A working set's range added from project search's results, as a
+  # process, with no config (tests/headless/working-set-from-search): `:e`
+  # opens a file of a tree whose marker `.project` makes it a workspace,
+  # `project-search` searches a word in two of its files, `working-set-add`
+  # adds the results' row of the second file's match to a new set `found`,
+  # and `working-set-open` shows that row of the file as the set's one
+  # excerpt, nothing drifted, which `RET` visits. It pins what project search
+  # and the working set do together. It is made as `working-set-reopen`'s
+  # entry is; the job lines are left out and each scene's published count
+  # is written `@N@`, because how many deliveries a search makes is the
+  # library's timing.
+  "dir=$(mktemp -d /tmp/working-set-search.XXXXXXXX) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/working-set-from-search/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/working-set-from-search/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g; s/, published [0-9][0-9]*,/, published @N@,/\" | grep -v '^job ' | diff ../tests/headless/working-set-from-search/expected -",
   # A view that follows its cursor, as a process, with no config
   # (tests/headless/view): the script sizes the frame, opens a file of 120
   # lines with `:e`, and moves the cursor 100 lines down, with a scene
