@@ -26,9 +26,10 @@
 //! fails.
 //!
 //! - (a) Linear light, on the CPU, against all five captures: it must miss
-//!   each in the direction that is why macOS blends encoded, the light
-//!   text on dark heavier (ink past 1.005) and the dark text on light
-//!   lighter (ink under 0.995). A miss the other way fails too.
+//!   each by its ink, in the direction that is why macOS blends encoded,
+//!   the light text on dark heavier (ink past 1.005) and the dark text on
+//!   light lighter (ink under 0.995). A miss the other way, or on the dark
+//!   pixels or the worst channel alone, fails too.
 //! - (b) The old contrast, 0.1, blended encoded, against `sentence.png`.
 //! - (c) For the record and not asserted: swash alone at the macOS
 //!   setting, against each capture.
@@ -71,7 +72,7 @@ mod check {
     use editor_render::port::{DrawRequest, Renderer, Target};
     use editor_render_wgpu::{HeadlessRenderer, Image, Settings, Weight, WgpuRenderer};
 
-    use crate::measure::{Composited, Direction, compare, thresholds};
+    use crate::measure::{Composited, Control, Direction, compare, thresholds};
     use crate::sentence::{CAPTURES, Capture, frame};
 
     /// How far any channel of the GPU's picture may be from the CPU's: 3
@@ -177,8 +178,8 @@ mod check {
         verdict.is_ok()
     }
 
-    /// Whether a control missed the capture, and in the direction it must
-    /// when one is given: printed.
+    /// Whether a control missed the capture, by its ink in the direction
+    /// it must when one is given ([`Composited::as_control`]): printed.
     fn missed(
         ours: &Image,
         theirs: &Image,
@@ -189,19 +190,21 @@ mod check {
         let Some(compared) = measured(ours, theirs, capture, what) else {
             return false;
         };
-        let verdict = compared.within(thresholds(capture.scale));
-        let direction = compared.direction();
-        let right_way = way.is_none_or(|way| way == direction);
+        let tolerance = thresholds(capture.scale);
+        let control = compared.as_control(tolerance, way);
+        let missed = compared.within(tolerance).err().unwrap_or_default();
         println!(
-            "coretext: {}: control, {what}: {compared}, {direction:?}: {}",
+            "coretext: {}: control, {what}: {compared}, by its ink {:?}: {}",
             capture.name,
-            match (&verdict, right_way) {
-                (Ok(()), _) => "WITHIN: the comparison cannot see it".to_owned(),
-                (Err(missed), true) => format!("missed as it must: {missed}"),
-                (Err(_), false) => format!("MISSED THE WRONG WAY: {way:?} was due"),
+            compared.direction(tolerance),
+            match control {
+                Control::Within => "WITHIN: the comparison cannot see it".to_owned(),
+                Control::Missed => format!("missed as it must: {missed}"),
+                Control::NotThatWay =>
+                    format!("MISSED, BUT NOT BY ITS INK THE WAY DUE: {missed}; {way:?} was due"),
             }
         );
-        verdict.is_err() && right_way
+        control == Control::Missed
     }
 
     /// Runs the check: whether everything held.

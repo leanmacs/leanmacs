@@ -53,15 +53,27 @@ pub struct Composited {
     pub worst: u8,
 }
 
-/// Which way a picture misses another: by its ink.
+/// Which way a picture misses another by its ink, for a tolerance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
-    /// More ink than the other.
+    /// More ink than the tolerance's most.
     Heavier,
-    /// Less.
+    /// Less than its least.
     Lighter,
-    /// As much.
-    Alike,
+    /// Within its band, whatever else misses.
+    Within,
+}
+
+/// What a control, a comparison that must miss, came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Control {
+    /// It was within the tolerance: the comparison cannot see what the
+    /// control changed.
+    Within,
+    /// It missed as it must.
+    Missed,
+    /// It missed, but not by its ink in the direction due.
+    NotThatWay,
 }
 
 /// How far a comparison may go and still pass.
@@ -168,14 +180,28 @@ impl Composited {
         }
     }
 
-    /// Which way the first picture misses the second, by its ink.
-    pub fn direction(&self) -> Direction {
-        if self.ink > 1.0 {
+    /// Which way the first picture misses the second by its ink, past
+    /// `tolerance`'s band of it.
+    pub fn direction(&self, tolerance: Tolerance) -> Direction {
+        if self.ink > tolerance.ink.1 {
             Direction::Heavier
-        } else if self.ink < 1.0 {
+        } else if self.ink < tolerance.ink.0 {
             Direction::Lighter
         } else {
-            Direction::Alike
+            Direction::Within
+        }
+    }
+
+    /// What it came to as a control, which must miss `tolerance`: by its
+    /// ink in the direction `way` when one is due, and otherwise on any
+    /// measure.
+    pub fn as_control(&self, tolerance: Tolerance, way: Option<Direction>) -> Control {
+        if self.within(tolerance).is_ok() {
+            Control::Within
+        } else if way.is_none_or(|way| way == self.direction(tolerance)) {
+            Control::Missed
+        } else {
+            Control::NotThatWay
         }
     }
 }
@@ -194,7 +220,7 @@ impl std::fmt::Display for Composited {
 mod tests {
     use editor_render_wgpu::Image;
 
-    use super::{AT_SCALE_ONE, AT_SCALE_TWO, Colours, Direction, compare, thresholds};
+    use super::{AT_SCALE_ONE, AT_SCALE_TWO, Colours, Control, Direction, compare, thresholds};
 
     const BLACK_ON_WHITE: Colours = Colours {
         ground: [255, 255, 255],
@@ -244,7 +270,11 @@ mod tests {
             assert_eq!((compared.ink, compared.dark, compared.worst), (1.0, 1.0, 0));
             assert_eq!(compared.within(thresholds(2)), Ok(()));
             assert_eq!(compared.within(thresholds(1)), Ok(()));
-            assert_eq!(compared.direction(), Direction::Alike);
+            assert_eq!(compared.direction(thresholds(2)), Direction::Within);
+            assert_eq!(
+                compared.as_control(thresholds(2), Some(Direction::Heavier)),
+                Control::Within
+            );
         }
     }
 
@@ -256,11 +286,47 @@ mod tests {
             assert!(compared.ink > 1.005, "{compared}");
             let missed = compared.within(AT_SCALE_ONE).expect_err("past the ink");
             assert!(missed.contains("ink"), "{missed}");
-            assert_eq!(compared.direction(), Direction::Heavier);
+            assert_eq!(compared.direction(AT_SCALE_ONE), Direction::Heavier);
+            // As a control it missed the way due when that is heavier,
+            // and not when it is lighter.
+            let heavier = Some(Direction::Heavier);
+            let lighter = Some(Direction::Lighter);
+            assert_eq!(compared.as_control(AT_SCALE_ONE, heavier), Control::Missed);
+            assert_eq!(
+                compared.as_control(AT_SCALE_ONE, lighter),
+                Control::NotThatWay
+            );
             // And the other way about it is lighter.
             let back = compare(&theirs, &ours, colours).expect("one size");
-            assert_eq!(back.direction(), Direction::Lighter);
+            assert_eq!(back.direction(AT_SCALE_ONE), Direction::Lighter);
+            assert_eq!(back.as_control(AT_SCALE_ONE, lighter), Control::Missed);
         }
+    }
+
+    /// A control due to miss heavier misses by its ink: a picture with a
+    /// little more ink than the other, within the band, that misses only
+    /// on its worst channel has not missed as the control must.
+    #[test]
+    fn a_picture_heavier_within_the_band_that_misses_only_on_its_worst_channel_is_no_control_miss()
+    {
+        let colours = BLACK_ON_WHITE;
+        let theirs = block(colours, 0);
+        let mut ours = theirs.clone();
+        // A pixel of ground, its red channel 30 darker: more ink, by far
+        // less than half a percent, and past 21 of 255.
+        let at = ((2 * 40 + 2) * 4) as usize;
+        ours.rgba[at] -= 30;
+        let compared = compare(&ours, &theirs, colours).expect("one size");
+        assert!(compared.ink > 1.0 && compared.ink <= 1.005, "{compared}");
+        let missed = compared.within(AT_SCALE_ONE).expect_err("past 21 of 255");
+        assert!(!missed.contains("ink"), "{missed}");
+        assert_eq!(compared.direction(AT_SCALE_ONE), Direction::Within);
+        assert_eq!(
+            compared.as_control(AT_SCALE_ONE, Some(Direction::Heavier)),
+            Control::NotThatWay
+        );
+        // A control with no way due misses on any measure.
+        assert_eq!(compared.as_control(AT_SCALE_ONE, None), Control::Missed);
     }
 
     #[test]

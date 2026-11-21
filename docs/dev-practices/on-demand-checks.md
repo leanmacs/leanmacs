@@ -1641,9 +1641,10 @@ tests run in the gate:
 
 Two controls must miss, or the check prints `WITHIN: the comparison
 cannot see it` and fails: (a) linear light on the CPU against every
-capture, which must miss in the direction that is why macOS blends
-encoded, heavier (ink past 1.005) light on dark and lighter (ink under
-0.995) dark on light, a miss the other way failing too; (b) the old
+capture, which must miss by its ink in the direction that is why macOS
+blends encoded, heavier (ink past 1.005) light on dark and lighter (ink
+under 0.995) dark on light, a miss the other way, or by the dark pixels
+or the worst channel alone, failing too; (b) the old
 contrast of 0.1, encoded, against `sentence.png`. For the record, and
 not asserted, (c) swash alone at the macOS setting against each capture.
 On a miss: if the mask check misses too, the masks moved; if only the
@@ -1681,6 +1682,11 @@ figures, and the GPU was 0 of 255 from the CPU in every capture.
 | (c) swash alone, for the record | `sentence-14.png` | x1.1100 | x1.1125 | 187 | |
 | (c) swash alone, for the record | `sentence-14-dark.png` | x0.9385 | x0.9101 | 130 | |
 | (c) swash alone, for the record | `sentence-grey.png` | x0.9250 | x0.9324 | 98 | |
+
+Run again on 2026-11-20 on the same machine, once control (a) was made
+to miss by its ink itself (a review of phase 2 found it had counted any
+miss with its ink on the due side of 1): exit 0, and every figure in
+both tables as above; each control (a) missed by its ink the way due.
 
 The GPU renderer is made again for each capture: the frames are built by
 hand, all of generation 0 with a font of another size under the same id,
