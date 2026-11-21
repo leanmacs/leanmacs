@@ -1620,6 +1620,7 @@ bool editor_ffi_processes_close_input(uint64_t child, uint64_t wait);
 bool editor_ffi_processes_take_stream(uint64_t wait,
                                       editor_ffi_raw_process_result *out);
 uint64_t editor_ffi_processes_held(uint64_t child);
+bool editor_ffi_processes_await_held(uint64_t child, uint64_t bound_ms);
 
 // `Editor.Ffi.processesRunRaw : UInt64 → @& ByteArray → @& String → IO Bool`
 lean_obj_res editor_glue_processes_run(uint64_t id, b_lean_obj_arg words,
@@ -1719,6 +1720,13 @@ lean_obj_res editor_glue_processes_take_stream(uint64_t wait) {
     return lean_io_result_mk_ok(lean_box(0)); // `none`
   }
   return lean_io_result_mk_ok(option_some(process_result_of(raw)));
+}
+
+// `Editor.Ffi.processesAwaitHeld : UInt64 → UInt64 → IO Bool`
+lean_obj_res editor_glue_processes_await_held(uint64_t child,
+                                              uint64_t bound_ms) {
+  return lean_io_result_mk_ok(
+      lean_box(editor_ffi_processes_await_held(child, bound_ms) ? 1 : 0));
 }
 
 // `Editor.Ffi.processesHeld : UInt64 → IO UInt64`

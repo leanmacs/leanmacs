@@ -315,7 +315,8 @@
 //! ([`processes::editor_ffi_processes_take_stream`]); a read is a pull, so
 //! however fast the child writes, it is one completion on the queue.
 //! [`processes::editor_ffi_processes_held`] says, for tests, whether a
-//! child is held at its bound.
+//! child is held at its bound, and
+//! [`processes::editor_ffi_processes_await_held`] waits for it to be.
 //!
 //! Tests: the unit tests of `processes.rs`, on the port's fake (a command's
 //! words and string read back, the refusals of words that spell none, and

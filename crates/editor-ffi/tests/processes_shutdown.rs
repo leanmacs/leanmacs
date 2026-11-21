@@ -82,7 +82,7 @@ fn after_shutdown_the_child_is_reaped_its_grandchild_ends_and_a_later_run_is_ref
     ));
     assert_eq!(next_completion(), completion_of(3));
     let streaming = written(&dir.join("streaming")).expect("the streaming child wrote its id");
-    assert!(comes_to_be_held(3, DEADLINE));
+    assert!(comes_to_be_held(3));
 
     editor_ffi_processes_shutdown();
 

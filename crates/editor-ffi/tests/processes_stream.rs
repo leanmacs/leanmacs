@@ -177,7 +177,7 @@ fn a_streaming_child_is_read_written_closed_and_cancelled_through_c_one_completi
     // A held child, cancelled, leaves nothing pending.
     assert!(open(20, "while :; do echo y; done", dir, false, 64));
     assert_eq!(completed(20).status, 10);
-    assert!(comes_to_be_held(20, DEADLINE));
+    assert!(comes_to_be_held(20));
     assert!(editor_ffi_processes_cancel(20));
     flushed(21);
     assert_eq!(
@@ -194,7 +194,7 @@ fn a_streaming_child_is_read_written_closed_and_cancelled_through_c_one_completi
     assert!(open(30, script, dir, true, lines.len() as u64));
     assert_eq!(completed(30).status, 10);
     assert!(editor_ffi_processes_read(30, 31));
-    assert!(comes_to_be_held(30, DEADLINE));
+    assert!(comes_to_be_held(30));
     assert_eq!(next_completion(), completion_of(31));
     // The pull is left waiting: the next completion it takes is the
     // flush's, below.

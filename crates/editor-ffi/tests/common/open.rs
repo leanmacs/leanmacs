@@ -1,10 +1,10 @@
 //! What the streaming wiring test and the shutdown test share: a
 //! streaming child opened through the C function, its command laid out as
-//! Lean lays it out, and the readout of whether it is held at its bound.
+//! Lean lays it out, and the wait for it to be held at its bound.
 
 use std::path::Path;
 
-use editor_ffi::processes::{editor_ffi_processes_held, editor_ffi_processes_open};
+use editor_ffi::processes::{editor_ffi_processes_await_held, editor_ffi_processes_open};
 
 /// Opens `/bin/sh -c script` in `directory` as the streaming child `id`,
 /// with lines framing on both streams, its input piped if `piped`, and
@@ -35,14 +35,13 @@ pub fn open(id: u64, script: &str, directory: &Path, piped: bool, bound: u64) ->
     }
 }
 
-/// Whether the child `id` comes to be held at its bound within `deadline`.
-pub fn comes_to_be_held(id: u64, deadline: std::time::Duration) -> bool {
-    let end = std::time::Instant::now() + deadline;
-    while std::time::Instant::now() < end {
-        if editor_ffi_processes_held(id) == 1 {
-            return true;
-        }
-        std::thread::yield_now();
-    }
-    false
+/// hang guard: a reader's park on the child's bound; only a hang reaches
+/// the bound, and the check then fails as a hang. In milliseconds, as the C
+/// function takes it.
+const HELD_GUARD_MS: u64 = 10_000;
+
+/// Whether the child `id` comes to be held at its bound, on the park
+/// itself (`editor_ffi_processes_await_held`).
+pub fn comes_to_be_held(id: u64) -> bool {
+    editor_ffi_processes_await_held(id, HELD_GUARD_MS)
 }

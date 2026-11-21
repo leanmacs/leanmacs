@@ -38,7 +38,8 @@
 //!   so the kernel pipe fills and the child blocks in `write(2)`: it is
 //!   **held**. A take makes room and wakes it. Nothing is dropped, and no
 //!   delivery says the child was held ([`Service::held`] is a readout for
-//!   tests). The bound counts each stream on its own, so a reader blocked
+//!   tests, and [`Service::wait_held`] one that waits for a reader's
+//!   park). The bound counts each stream on its own, so a reader blocked
 //!   on a stream the child does not write takes nothing from the other's
 //!   room.
 //! - **A line longer than the bound**, its line feed counted, can never be
@@ -183,6 +184,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::frame::{Frames, Framing, Outbox};
 use crate::{
@@ -296,6 +298,11 @@ struct StreamState {
     /// Told when a reader may go on, when there is work for the writer,
     /// and when the child is abandoned.
     changed: Condvar,
+    /// Told when a reader parks on the bound: what
+    /// [`Service::wait_held`] waits on. A Condvar of its own, so a take's
+    /// wake-up on `changed` always reaches the readers and the writer and
+    /// never a test's wait.
+    held: Condvar,
 }
 
 /// What [`StreamState`] holds.
@@ -534,6 +541,16 @@ struct Inner<P: Processes> {
     /// on before it checks that shutdown has not returned.
     #[cfg(test)]
     unfinished: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// Called on a streaming child's reader's thread, with the stream
+    /// unlocked, each time the reader is about to park on the bound. Set
+    /// once, by a test.
+    #[cfg(test)]
+    before_held: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// Called each time [`Service::wait_held`] reads whether a reader is
+    /// parked, with that reading, under the stream's lock. Set once, by a
+    /// test.
+    #[cfg(test)]
+    held_read: std::sync::OnceLock<Box<dyn Fn(bool) + Send + Sync>>,
 }
 
 /// The process service over `P`. A cheap handle: clones share one service.
@@ -670,6 +687,10 @@ impl<P: Processes + 'static> Service<P> {
                 finished: Condvar::new(),
                 #[cfg(test)]
                 unfinished: std::sync::OnceLock::new(),
+                #[cfg(test)]
+                before_held: std::sync::OnceLock::new(),
+                #[cfg(test)]
+                held_read: std::sync::OnceLock::new(),
             }),
         }
     }
@@ -1169,6 +1190,48 @@ impl<P: Processes + 'static> Service<P> {
         Some(held)
     }
 
+    /// Waits until a reader of the child `child` is parked on its bound,
+    /// and says whether one was: false at once for a child the service
+    /// does not hold as streaming, and false once `bound` has passed first.
+    /// A readout for tests, which use it to know the child is held, on an
+    /// event and never a poll: a reader notifies it as it parks, under the
+    /// lock its wait then releases, so once this has seen the reader parked
+    /// the reader is in its wait. It waits on a Condvar of its own, so it
+    /// never takes a take's wake-up from a reader.
+    ///
+    /// `bound` is a hang guard: only a child whose readers never park
+    /// reaches it.
+    pub fn wait_held(&self, child: u64, bound: Duration) -> bool {
+        let until = Instant::now() + bound;
+        let stream = {
+            let state = self.inner.state();
+            let Some(Run::Streaming { stream, .. }) = state.runs.get(&child) else {
+                return false;
+            };
+            Arc::clone(stream)
+        };
+        let mut streamed = stream.state();
+        loop {
+            let held = streamed.parked.iter().any(|&parked| parked);
+            #[cfg(test)]
+            if let Some(hook) = self.inner.held_read.get() {
+                hook(held);
+            }
+            if held {
+                return true;
+            }
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            streamed = stream
+                .held
+                .wait_timeout(streamed, left)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+
     /// Cancels the wait `id` on a streaming child, if it is one: drops it,
     /// or its kept reply, without completing it. The child keeps running
     /// and keeps what it wrote. A write already handed to the writer still
@@ -1453,6 +1516,7 @@ impl<P: Processes + 'static> Inner<P> {
                 parked: [false; 2],
             }),
             changed: Condvar::new(),
+            held: Condvar::new(),
         });
         let mut state = inner.state();
         let cancelled = !matches!(
@@ -1498,7 +1562,7 @@ impl<P: Processes + 'static> Inner<P> {
             let spawned = thread::Builder::new()
                 .name("editor-process-read".into())
                 .spawn(move || {
-                    stream_reader(output, which, &reading, &*killed, &*completing.complete);
+                    stream_reader(output, which, &reading, &*killed, &*completing);
                 });
             if let Err(error) = spawned {
                 let mut streamed = stream.state();
@@ -1660,13 +1724,14 @@ fn write_all(input: &mut impl ChildInput, bytes: &[u8]) -> Result<(), Refusal> {
 /// A streaming child's reader of `stream`: it reads as much as the bound
 /// leaves room for, frames it and wakes the pending read, until the stream
 /// ends, a read fails, a line is too long, or the child is abandoned. At a
-/// room of 0 it parks, which holds the child.
-fn stream_reader(
+/// room of 0 it parks, which holds the child. Its wake-ups go to `inner`'s
+/// completion.
+fn stream_reader<P: Processes>(
     mut output: impl Output,
     stream: Stream,
     shared: &StreamState,
     child: &impl Child,
-    complete: &(dyn Fn(u64) + Send + Sync),
+    inner: &Inner<P>,
 ) {
     let slot = usize::from(stream == Stream::Err);
     let mut buffer = vec![0; 8192];
@@ -1680,9 +1745,24 @@ fn stream_reader(
             if streamed.outbox.room(stream) > 0 {
                 break;
             }
+            #[cfg(test)]
+            if let Some(hook) = inner.before_held.get() {
+                drop(streamed);
+                hook();
+                streamed = shared.state();
+                // What changed while unlocked is seen first.
+                if streamed.abandoned || streamed.failed.is_some() {
+                    streamed.parked[slot] = false;
+                    return;
+                }
+                if streamed.outbox.room(stream) > 0 {
+                    break;
+                }
+            }
             // Held: nothing reads the pipe, so it fills and the child
             // blocks in `write(2)`, until a take makes room.
             streamed.parked[slot] = true;
+            shared.held.notify_all();
             streamed = shared
                 .changed
                 .wait(streamed)
@@ -1746,7 +1826,7 @@ fn stream_reader(
             child.kill();
         }
         if let Some(wait) = wake {
-            complete(wait);
+            (inner.complete)(wait);
         }
         if ended {
             return;
@@ -3114,16 +3194,105 @@ mod streaming {
         }
     }
 
-    /// Whether the readers of `child` come to be parked on its bound.
+    /// Whether the readers of `child` come to be parked on its bound, on
+    /// the park itself ([`Service::wait_held`]).
     fn comes_to_be_held(service: &Service<FakeProcesses>, child: u64) -> bool {
-        let end = std::time::Instant::now() + DEADLINE;
-        while std::time::Instant::now() < end {
-            if service.held(child) == Some(true) {
-                return true;
-            }
-            thread::yield_now();
-        }
-        false
+        // hang guard: a reader's park on the bound; only a hang reaches the
+        // bound, and the check then fails as a hang.
+        service.wait_held(child, DEADLINE)
+    }
+
+    /// Has `service` call `held` each time a streaming child's reader is
+    /// about to park on its bound, on the reader's thread.
+    fn before_held(service: &Service<FakeProcesses>, held: impl Fn() + Send + Sync + 'static) {
+        assert!(
+            service.inner.before_held.set(Box::new(held)).is_ok(),
+            "set once"
+        );
+    }
+
+    /// Where each reading [`Service::wait_held`] makes on `service` arrives.
+    fn held_readings(service: &Service<FakeProcesses>) -> Receiver<bool> {
+        let (read, readings) = mpsc::channel();
+        let read = Mutex::new(read);
+        let hook = move |held| {
+            let _ = read
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(held);
+        };
+        assert!(
+            service.inner.held_read.set(Box::new(hook)).is_ok(),
+            "set once"
+        );
+        readings
+    }
+
+    #[test]
+    fn wait_held_returns_only_once_a_reader_held_before_its_park_has_parked() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).stdout(numbered(400))),
+        )]);
+        let (service, completed) = service(&fake);
+        // The reader is held on its way to the park until the test lets it
+        // go.
+        let (holding, held) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let hold = Mutex::new((holding, released));
+        before_held(&service, move || {
+            let hold = hold.lock().unwrap_or_else(PoisonError::into_inner);
+            let _ = hold.0.send(());
+            let _ = hold.1.recv();
+        });
+        let readings = held_readings(&service);
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            lines_with(Input::Closed, 1000),
+        );
+        held.recv_timeout(DEADLINE)
+            .expect("the reader reaches its park");
+
+        let waited = {
+            let service = service.clone();
+            thread::spawn(move || service.wait_held(1, DEADLINE))
+        };
+        assert_eq!(
+            readings.recv_timeout(DEADLINE),
+            Ok(false),
+            "the wait reads no parked reader while the reader is held"
+        );
+        release.send(()).expect("the reader is held");
+        drop(release);
+
+        // A wait that returned at its first reading never reads the park.
+        assert_eq!(
+            readings.recv_timeout(DEADLINE),
+            Ok(true),
+            "the wait reads again once the reader has parked"
+        );
+        assert!(waited.join().expect("the wait returns"));
+        assert_eq!(service.held(1), Some(true));
+        assert!(service.cancel(1));
+        assert!(flushed(&service, &completed));
+    }
+
+    #[test]
+    fn wait_held_says_no_at_once_for_a_child_it_does_not_hold() {
+        let fake = FakeProcesses::new();
+        let (service, _completed) = service(&fake);
+        let readings = held_readings(&service);
+
+        assert!(!service.wait_held(1, DEADLINE));
+
+        assert_eq!(
+            readings.try_recv(),
+            Err(TryRecvError::Empty),
+            "nothing read"
+        );
     }
 
     /// `count` numbered lines, each `{n:05}` and a line feed.

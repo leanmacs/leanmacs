@@ -119,6 +119,7 @@
 //! | [`editor_ffi_processes_close_input`] | Closes a child's input |
 //! | [`editor_ffi_processes_take_stream`] | Fills a [`RawStreamReply`] and returns true, or returns false when the service keeps no reply for the wait |
 //! | [`editor_ffi_processes_held`] | Whether a child is held at its bound: 0 no, 1 yes, 2 no such child. A readout for tests |
+//! | [`editor_ffi_processes_await_held`] | Waits until a child is held at its bound, and says whether it was: false once the bound has passed first, and at once for no such child. A readout for tests |
 //! | [`editor_ffi_processes_flush`] | Asks for an id to be completed once every run before it has ended and every child cancelled before it has been reaped; keeps no reply. False for an id in use |
 //! | [`editor_ffi_processes_cancel`] | Cancels a run, a streaming child or a wait on one, killing the child's group, and says whether there was anything to cancel |
 //! | [`editor_ffi_processes_pending`] | Runs and streaming children whose child is not yet reaped, results not taken, waits not answered or not taken, and the flushes waiting |
@@ -126,6 +127,7 @@
 
 use std::path::PathBuf;
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use editor_process::frame::{Frames, Framing};
 use editor_process::service::{End, RunResult, Service, StreamReply, Streaming};
@@ -716,6 +718,19 @@ pub extern "C" fn editor_ffi_processes_held(child: u64) -> u64 {
         Some(true) => 1,
         None => 2,
     }
+}
+
+/// Waits until a reader of the child `child` is parked on its bound
+/// ([`Service::wait_held`]), and says whether one was: false once
+/// `bound_ms` milliseconds have passed first, and at once for a child the
+/// service does not hold. A readout for tests, which use it to know a child
+/// is held: it returns on the park, never by a poll.
+///
+/// `bound_ms` is a hang guard: only a child whose readers never park
+/// reaches it.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_processes_await_held(child: u64, bound_ms: u64) -> bool {
+    PROCESSES.wait_held(child, Duration::from_millis(bound_ms))
 }
 
 /// The reply about a streaming child as it crosses: the same record as a

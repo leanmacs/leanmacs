@@ -2418,7 +2418,11 @@ As built:
   turn. The process service queues one completion for each read of a
   streaming child, never one for each chunk the child writes: however fast
   the child writes, the completions of its output equal the reads its job
-  made, and each delivery holds everything read up to its take. The watch
+  made, and each delivery holds everything read up to its take. A child
+  held at its bound is waited for by `Service::wait_held`
+  (`editor_ffi_processes_await_held` through C), which a reader notifies on
+  a Condvar of its own as it parks: a test readout, never a production
+  wait, whose bound is a hang guard. The watch
   service does the same for a watch: one completion for each `next`, never
   one for each change on disk, and the delivery holds every change
   recorded up to its take.

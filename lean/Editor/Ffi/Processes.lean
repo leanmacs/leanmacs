@@ -222,6 +222,15 @@ yes, 2 no such child. A readout for tests. -/
 @[extern "editor_glue_processes_held"]
 opaque processesHeld (child : UInt64) : IO UInt64
 
+/-- Waits until the readers of the child `child` are held at its bound, and
+says whether they were: false at once for a child the service does not hold
+as streaming, and once `boundMs` milliseconds have passed first. A readout
+for tests: it returns on the reader's park, never by a poll of
+`processesHeld`. `boundMs` is a hang guard: only readers that never park
+reach it. -/
+@[extern "editor_glue_processes_await_held"]
+opaque processesAwaitHeld (child : UInt64) (boundMs : UInt64) : IO Bool
+
 /-- A process result as the glue builds it, in one call: the object fields
 first and the `UInt64` field after them, so the order here is the layout the
 glue writes. -/
