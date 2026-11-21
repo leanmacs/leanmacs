@@ -6268,28 +6268,28 @@ def floatModel : EditorModel :=
   .over { advance := 8, lineHeight := 16 }
 
 /-- A driver of the float checks of the loop over `hinted`, with the cursor
-at `head` and the float anchored at `offset`, under the Vim scheme that
-ships, with the frame padding 8, in a frame of 640 by 480, whose one
+at `head` and the float anchored at `offset`, under the test scheme with
+the kit's editing keys, with the frame padding 8, in a frame of 640 by 480, whose one
 window's text area is 640 by 448; none if making the state was refused.
 Nothing is published until a step is fed. -/
-def floatDriver (head offset : Nat) (pinned : Bool := false) : Option EvilDriver :=
+def floatDriver (head offset : Nat) (pinned : Bool := false) : Option TestDriver :=
   let frame := frameAround ⟨640, 448⟩ floatModel.display.cells
-  (Loop.Driver.over { evilHanded with padding := 8 } (fun _ => none)
-      (hinted frame head offset pinned) floatModel).toOption
+  (Loop.Driver.over { dispatchKeys editingBindings editingDispatched with padding := 8 }
+      (fun _ => none) (hinted frame head offset pinned) floatModel).toOption
 
 /-- The views of the last scene `driver`'s display recorded, with their
 rectangles, and the focused view. -/
-def sceneViews (driver : EvilDriver) : Option (Array (ViewId × Rect) × Option ViewId) :=
+def sceneViews (driver : TestDriver) : Option (Array (ViewId × Rect) × Option ViewId) :=
   driver.model.display.scenes.back?.map fun scene =>
     (scene.views.map fun view => (view.id, view.rect), scene.focused)
 
 /-- Whether the text model of `driver` holds the marker `id`. -/
-def holdsMarker (driver : EvilDriver) (id : MarkerId) : Bool :=
+def holdsMarker (driver : TestDriver) (id : MarkerId) : Bool :=
   ((id.text.marker id : TextM Marker).runModel driver.model.texts).1.toOption.isSome
 
 /-- The snapshot the last scene `driver`'s display recorded names for the
 view `view`. -/
-def sceneSnapshot (driver : EvilDriver) (view : ViewId) : Option SnapshotId :=
+def sceneSnapshot (driver : TestDriver) (view : ViewId) : Option SnapshotId :=
   driver.model.display.scenes.back?.bind fun scene =>
     (scene.views.find? (·.id == view)).map (·.snapshot)
 
@@ -6299,7 +6299,7 @@ the editor's models. -/
 def floatViewChecks : List Check :=
   let rect (x y width height : Nat) : Rect := { x, y, width, height }
   -- The first publish: a resize to the size the frame has.
-  let published (driver : EvilDriver) : EvilDriver := viewResized driver ⟨640, 448⟩
+  let published (driver : TestDriver) : TestDriver := viewResized driver ⟨640, 448⟩
   [{  name :=
         "a pinned float anchored at a position keeps its anchor marker while another tab is in view and when its tab comes back; closing a tab gives up the markers of its windows, the float's anchor among them, and the loop counts its views as closed"
       run :=
@@ -6308,7 +6308,7 @@ def floatViewChecks : List Check :=
           | none => false
           | some driver =>
             let shown := published driver
-            let delivered (driver : EvilDriver) (command : EditorM Unit) : EvilDriver :=
+            let delivered (driver : TestDriver) (command : EditorM Unit) : TestDriver :=
               (driver.stepped (driver.loop.deliver driver.handed "tab" command)).1
             let held : Array MarkerId :=
               ((shown.loop.state.window? ⟨1⟩).map
@@ -6345,7 +6345,7 @@ def floatViewChecks : List Check :=
                 some (#[(⟨0⟩, rect 0 0 640 464), (⟨1⟩, rect 40 308 320 116)], some ⟨0⟩)
           | _, _ => false },
     { name :=
-        "a transient float whose anchor scrolled away is closed at the publish: once the cursor moves thirty rows down it is in neither the scene nor the state, and its window's markers and its anchor marker are given up; a pinned one stays where it last was"
+        "a transient float whose anchor scrolled away is closed at the publish: once the cursor goes to the text's end it is in neither the scene nor the state, and its window's markers and its anchor marker are given up; a pinned one stays where it last was"
       run :=
         pure <|
           match floatDriver 18 18, floatDriver 18 18 (pinned := true) with
@@ -6356,8 +6356,8 @@ def floatViewChecks : List Check :=
                       (fun window => #[window.scroll, window.selection])).getD
                   #[] ++
                 (shown.loop.state.frame.floats.filterMap (·.anchor.marker?))
-            let moved := evilFed shown "3 0 j"
-            let kept := evilFed (published pinned) "3 0 j"
+            let moved := keysFed shown "C-<End>"
+            let kept := keysFed (published pinned) "C-<End>"
             held.size == 3 && held.all (holdsMarker shown) &&
               (sceneViews moved).map (·.1.map (·.1)) == some #[⟨0⟩] &&
               (moved.loop.state.window? ⟨1⟩).isNone &&
@@ -6377,8 +6377,8 @@ def floatViewChecks : List Check :=
           match floatDriver 18 18, floatDriver 0 (7 * 35) with
           | some driver, some away =>
             let shown := published driver
-            let moved := evilFed shown "3 0 j"
-            let unlisted (driver : EvilDriver) (id : SnapshotId) : Bool :=
+            let moved := keysFed shown "C-<End>"
+            let unlisted (driver : TestDriver) (id : SnapshotId) : Bool :=
               !driver.loop.shown.any (·.snapshot == id)
             let before := away.model.texts.snapshots.size
             let closed := published away
@@ -6420,7 +6420,7 @@ def floatViewChecks : List Check :=
           let spotsAsked (start : TextM EditorState) : Option Nat :=
             let program : EditorM Unit := do
               let state ← start
-              let loop : Loop Vim.Default.scheme :=
+              let loop : TestLoop :=
                 { state := { state with heights := floatModel.display.cells.heights } }
               discard <| loop.publish (padding := 8)
             let count (request : EditorRequest) : Nat :=
