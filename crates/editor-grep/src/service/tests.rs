@@ -603,3 +603,71 @@ fn a_flush_waits_for_a_live_search_and_a_cancel_withdraws_it() {
     );
     assert_eq!(rig.service.pending(), 0);
 }
+
+#[test]
+fn shutdown_completes_a_flush_once_and_only_after_the_search_thread_it_waited_for_has_returned() {
+    let gate = Gate::default();
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let made = gate.clone();
+    let files = five();
+    let service = Service::new(
+        move || {
+            (
+                Gated {
+                    files: files.clone(),
+                    gate: made.clone(),
+                },
+                Literal,
+            )
+        },
+        |c: char| c.is_ascii_alphanumeric() || c == '_',
+        {
+            let completions = Arc::clone(&completions);
+            move |id| {
+                completions
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(id);
+            }
+        },
+    );
+    assert!(service.start(1, request("/w", "x"), 10));
+    // The search's thread is held in its first read.
+    assert!(gate.until_entered(1));
+    assert!(service.flush(9));
+    // What was completed when shutdown first waited for the thread, then
+    // the thread let go: the hook is the shutdown's own wait.
+    let at_wait = Arc::new(std::sync::OnceLock::new());
+    {
+        let at_wait = Arc::clone(&at_wait);
+        let completions = Arc::clone(&completions);
+        let opener = gate.clone();
+        service.when_shutdown_waits(move || {
+            let _ = at_wait.set(
+                completions
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone(),
+            );
+            opener.open();
+        });
+    }
+
+    service.shutdown();
+
+    let at_wait = at_wait.get().cloned();
+    let completed = completions
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    assert!(
+        at_wait.as_ref().is_some_and(|early| !early.contains(&9)),
+        "the flush was completed before the search's thread returned: {at_wait:?}"
+    );
+    assert_eq!(
+        completed.iter().filter(|&&id| id == 9).count(),
+        1,
+        "the flush is completed exactly once: {completed:?}"
+    );
+    assert_eq!(service.pending(), 0);
+}

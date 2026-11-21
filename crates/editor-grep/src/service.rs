@@ -249,6 +249,11 @@ struct Inner<F, E> {
     room: Condvar,
     /// Told whenever a search's thread returns.
     finished: Condvar,
+    /// Called, in a test, each time shutdown goes on waiting for a search's
+    /// thread that has not returned, with the state locked: the sign a
+    /// test lets the thread go on.
+    #[cfg(test)]
+    unfinished: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 /// The search service, over the port `F` and the engine `E` its factory
@@ -300,10 +305,22 @@ where
             state: Mutex::new(State::default()),
             room: Condvar::new(),
             finished: Condvar::new(),
+            #[cfg(test)]
+            unfinished: std::sync::OnceLock::new(),
         });
         Self {
             handle: Arc::new(Handle { inner }),
         }
+    }
+
+    /// Has `told` called each time shutdown goes on waiting for a search's
+    /// thread that has not returned. Set once, by a test.
+    #[cfg(test)]
+    pub(crate) fn when_shutdown_waits(&self, told: impl Fn() + Send + Sync + 'static) {
+        assert!(
+            self.inner().unfinished.set(Box::new(told)).is_ok(),
+            "set once"
+        );
     }
 
     /// The service.
@@ -492,8 +509,9 @@ where
         true
     }
 
-    /// Refuses every later start, cancels every search, and waits for every
-    /// search's thread to return. Safe to call again.
+    /// Refuses every later start, cancels every search, waits for every
+    /// search's thread to return, and then completes the flushes left, with
+    /// no lock held. Safe to call again.
     pub fn shutdown(&self) {
         self.inner().shutdown();
     }
@@ -546,11 +564,22 @@ impl<F, E> Inner<F, E> {
         self.room.notify_all();
         let mut state = self
             .finished
-            .wait_while(state, |state| state.active > 0)
+            .wait_while(state, |state| self.unfinished(state))
             .unwrap_or_else(PoisonError::into_inner);
         let flushed = state.take_flushes(|_| true);
         drop(state);
         self.complete_all(flushed);
+    }
+
+    /// Whether a search's thread has not returned; in a test, says so to
+    /// the hook first.
+    fn unfinished(&self, state: &State) -> bool {
+        let waiting = state.active > 0;
+        #[cfg(test)]
+        if waiting && let Some(told) = self.unfinished.get() {
+            told();
+        }
+        waiting
     }
 
     /// Completes each of `waits`, in order, with no lock held.
