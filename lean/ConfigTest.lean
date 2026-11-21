@@ -21,7 +21,6 @@ import ConfigTest.Editor.PackageSet.Edit
 import ConfigTest.Editor.Setup
 import ConfigTest.Editor.Themes
 import ConfigTest.Editor.Themes.Check
-import ConfigTest.Editor.VersionControl.Gutter
 import ConfigTest.Lsp
 
 /-!
@@ -355,7 +354,6 @@ def checks (context : Context) : List Check :=
     environmentHostChecks context ++
     restoreOrderChecks context ++
     journalFailureChecks context ++
-    gutterChecks context ++
     exScriptChecks context ++
     leaderChecks context ++
     hintChecks context ++

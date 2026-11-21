@@ -2434,10 +2434,10 @@ def shippedChecks (_ : Unit) : List Check :=
         let registry := shippedRegistry
         return (registry.mode? "code").isNone && registry.languages.isEmpty },
     { name :=
-        "the executable's hosts start with nothing of the mode-line package: of the segments the default listing names, the packages of the core's Lake package register version control's review alone, and none of state, buffer, modified, changed, directory, pending-keys, major-mode, line-column and position"
+        "the executable's hosts start with nothing of the mode-line package: of the segments the default listing names, the packages of the core's Lake package register none, none of state, buffer, modified, changed, directory, pending-keys, major-mode, line-column and position, and not version control's review either, which is the version-control package's"
       run := do
         let registry := shippedRegistry
-        return registry.segments.map (·.segment.name) == #["review"] },
+        return registry.segments.isEmpty },
     { name :=
         "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, the first two commands the frame-commands package's and quit the ex package's, and the three bindings the frame-commands package's; and the ex names b, ls and bd bound to switch-buffer, list-buffers and close-buffer"
       run := do
@@ -2500,6 +2500,20 @@ def shippedChecks (_ : Unit) : List Check :=
             (registry.source? "files").isNone &&
             registry.sourcesIn "file" == #[] &&
             !(registry.extensions.any (·.owner == owned "files")) },
+    { name :=
+        "the executable's hosts start with nothing of the version-control packages: no command named vc-, no ex name vc-, no job vc-status-apply, vc-hunk-apply, vc-commit-run, vc-gutter-head, vc-gutter-diff or vc-gutter-refs, no codec vc-review, no segment review, and no value of an interface, vc-api's backend among them, registered by a package of the core's Lake package"
+      run := do
+        let registry := shippedRegistry
+        let owners := [owned "version-control", owned "version-control-gutter"]
+        return !registry.entries.any (fun entry => entry.registration.name.startsWith "vc-") &&
+            !registry.exNames.any (·.startsWith "vc-") &&
+            ["vc-status-apply", "vc-hunk-apply", "vc-commit-run", "vc-gutter-head",
+                  "vc-gutter-diff", "vc-gutter-refs"].all
+              (fun name => (registry.findJob? name).isNone) &&
+            !registry.codecs.any
+                (fun (owner, codec) => owners.contains owner || codec.name == "vc-review") &&
+            !registry.segments.any (fun entry => owners.contains entry.owner) &&
+            !(registry.extensions.any fun entry => owners.contains entry.owner) },
     { name :=
         "the executable's hosts start with nothing of the shell package: no command shell-command, shell-filter or keyboard-quit, no job shell-run, no codec shell-history, and no codec or value of an interface registered by the shell, registered by a package of the core's Lake package"
       run := do

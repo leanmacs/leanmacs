@@ -34,8 +34,6 @@ import Editor.Test.Prompts
 import Editor.Test.Sources
 import Editor.Themes.Compiled
 import Editor.Themes.Picture
-import Editor.VersionControl.Compiled
-import Editor.VersionControl.Git.Model
 import Editor.Watch.Contract
 import Editor.WindowCommands.Compiled
 
@@ -69,10 +67,7 @@ the packages still in the core (`….Compiled`), the source a command
 filters (`Editor.Completion.Filtering`, which the workspace package's finder
 is built on), what a search covers (`Editor.SearchRoot`, which the project
 search package reads), the contracts, fakes, cases and theorems, the elaborator port's model
-(`Editor.Config.Elaborator.Model`), the git implementation's half of the
-repository model (`Editor.VersionControl.Git.Model`, whose port and pure
-model are the interface library `vc-api`'s, `VcApi` and `VcApiTest`,
-libraries of their own outside `Editor`), the executable's entry (`Editor.Main`, which brings the
+(`Editor.Config.Elaborator.Model`), the executable's entry (`Editor.Main`, which brings the
 hosts, the executable's modes and `Editor.Command.Append`),
 and the test kit the core publishes for a package's tests: the model
 tests' (`Editor.Test.…`, `Editor/Test/`: `Editor.Test.Listing` and

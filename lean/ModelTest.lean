@@ -143,24 +143,6 @@ import ModelTest.Editor.Themes
 import ModelTest.Editor.TypedPath
 import ModelTest.Editor.UndoTree
 import ModelTest.Editor.Version
-import ModelTest.Editor.VersionControl.Blame
-import ModelTest.Editor.VersionControl.Commit
-import ModelTest.Editor.VersionControl.Compiled
-import ModelTest.Editor.VersionControl.Git
-import ModelTest.Editor.VersionControl.Git.Model
-import ModelTest.Editor.VersionControl.Gutter
-import ModelTest.Editor.VersionControl.HistoryRead
-import ModelTest.Editor.VersionControl.Hunk
-import ModelTest.Editor.VersionControl.Log
-import ModelTest.Editor.VersionControl.Plumbing
-import ModelTest.Editor.VersionControl.Porcelain
-import ModelTest.Editor.VersionControl.Review
-import ModelTest.Editor.VersionControl.ReviewHunks
-import ModelTest.Editor.VersionControl.Show
-import ModelTest.Editor.VersionControl.Stage
-import ModelTest.Editor.VersionControl.Status
-import ModelTest.Editor.VersionControl.Views
-import ModelTest.Editor.VersionControl.Worktrees
 import ModelTest.Editor.Watch.Contract
 import ModelTest.Editor.Watch.Model
 import ModelTest.Editor.Window
@@ -815,14 +797,13 @@ The config session's decisions are tested here too, with no elaborator:
   (`CompletionTest.completionPackageChecks`,
   `ModeLineTest.modeLinePackageChecks`,
   `LanguagesTest.languagePackageChecks`);
-- `exPackageChecks` and `versionControlPackageChecks`: each package binds
-  its own ex names, in order: the `ex` package the files', its own and the
-  buffers' and no other (`Editor/Ex/Compiled.lean`), and the
-  `version-control` package its twelve, the gutter's package none
-  (`Editor/VersionControl/Compiled.lean`), each to a command it registers;
-  the compile mode's six are its package's, outside the core
-  (`CompileTest.compilePackageChecks`, `packages/compile/`); and the
-  gutter's three jobs restarted by their owner, none of version control's;
+- `exPackageChecks`: the `ex` package binds its own ex names, in order:
+  the files', its own and the buffers' and no other
+  (`Editor/Ex/Compiled.lean`), each to a command it registers; the
+  `version-control` package's twelve are its package's
+  (`VersionControlTest.versionControlPackageChecks`,
+  `packages/version-control/`), and the compile mode's six its package's
+  (`CompileTest.compilePackageChecks`, `packages/compile/`);
 - `restorePackageChecks`: which jobs the `restore` package leaves to its
   owner to start again after a restart, never counted as stopped, its four
   (`Editor/Restore/Compiled.lean`) (the `files` package's are
@@ -874,15 +855,16 @@ The config session's decisions are tested here too, with no elaborator:
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
-  list is the 24 packages, in order, each accepted, with no package of
-  the shipped palettes or of the compile mode among them, in the state
-  they make every entry's owner is one of them, the ex names are bound in
-  the order the headless fixtures show, the `ex` package's and then
-  version control's, and the one theme is `default`; and the set keeps
-  exactly version control's reviews across a restart (the shell's history
-  is `ShellTest.shellChecks`', in its package), reports exactly the jobs a person waits on, and leaves exactly
-  the restore's four and the gutter's three to their owners to
-  start again.
+  list is the 9 packages, in order, each accepted, with no package of the
+  shipped palettes, of the compile mode or of the seven features phase 6
+  moved out among them, in the state they make every entry's owner is one
+  of them, the ex names are bound in the order the headless fixtures show,
+  the `ex` package's first, and the one theme is `default`; and the set
+  keeps no store across a restart (the shell's history is
+  `ShellTest.shellChecks`' and version control's reviews
+  `VersionControlTest.versionControlPackageChecks`', each in its package),
+  reports exactly the package-set build, and leaves exactly the restore's
+  six to their owner to start again.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
@@ -1144,28 +1126,17 @@ names a scheme's key:
   none. Evil's `*` and `#` hold the same through the keys
   (`evilSearchChecks`).
 
-Version control (`Editor/VersionControl.lean` and the modules under
-`Editor/VersionControl/`) is checked with no git: against what git printed,
-captured as fixtures (`ModelTest.Support.Git` says how), the model of a
-repository (`Editor/VersionControl/Model.lean`) and the job model:
+The interface libraries the core stages, and what of version control is
+the core's, are checked with no git, on the model of a repository
+(`VcApiTest/Fake.lean`) and the job model (the version-control commands,
+their git implementation and the gutter's package are the
+`version-control` package's, `packages/version-control/`, whose test
+driver runs their checks, `VersionControlTest.versionControlParserChecks`
+and the rest, which were this driver's):
 
-- `versionControlParserChecks`: the reader of git's porcelain status
-  (`Editor/VersionControl/Porcelain.lean`), on the fixtures, and the
-  records it refuses;
-- `versionControlPlumbingChecks`: the readers of git's plumbing
-  (`Editor/VersionControl/Plumbing.lean`): the worktree list, the branches,
-  a raw diff and a batch of blobs, and what each refuses;
-- `versionControlHistoryParserChecks`: the readers of git's history
-  (`Editor/VersionControl/HistoryRead.lean`): a log, a blame with two
-  authors and a commit named twice, and a range-diff of each relation, on
-  fixtures, and what each refuses;
 - `versionControlModelChecks`: the model of a repository, the fake of the
   interface library `vc-api` (`VcApiTest/Fake.lean`): its status of each
   state, how it pairs renames, and what its writes do;
-- `gitModelChecks`: git's half of that model
-  (`Editor/VersionControl/Git/Model.lean`): the real parser reads what its
-  printer prints as the model's status, in every state and for every
-  repository of the contract;
 - `vcApiChecks`: the interface library `vc-api` (`VcApi.lean`): the backend
   point is a choice by the name `git`, so a consumer connects through the
   latest backend of that name, config's after a package's, never through
@@ -1202,38 +1173,6 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   naming its continuation's job;
 - `versionControlContractFailures`: the version-control contract
   (`VcApiTest/Contract.lean`) against the model;
-- `versionControlGitChecks`, `versionControlWorktreeGitChecks`,
-  `versionControlHistoryGitChecks` and `versionControlShowChecks`: the git
-  implementation (`Editor/VersionControl/Git.lean`) on the job model: its
-  status read of each of the contract's repositories on the job model that
-  prints it (`Repository.jobModel`), the
-  command lines it runs for the status and its writes, for worktrees,
-  branches and changes, for a log, a blame, a range-diff and a change
-  against no base, and for `show` and `watched`, their environments and limits, and how it
-  reads what they answer;
-- `hunkChecks`: the pure core of staging a hunk
-  (`Editor/VersionControl/Hunk.lean`) and the patch the git implementation
-  feeds `git apply` (`Git.patch`);
-- `reviewHunkChecks`, `reviewOrderChecks` and `reviewRecordChecks`: the
-  pure core of the review buffer (`Editor/VersionControl/ReviewHunks.lean`):
-  a change's hunks with their context and git's numbers, on strings; the
-  order of a change's files, over the change the version-control model
-  gives; and the record, its counts and the hunk at an offset;
-- `statusViewChecks` and `worktreeViewChecks`: the pure views of the status
-  buffer (`Editor/VersionControl/Status.lean`) and of the worktree list
-  (`Editor/VersionControl/Worktrees.lean`), on values the model gives;
-- `statusBufferChecks`, `worktreeBufferChecks`, `revisionBufferChecks`
-  (`vc-show`, `Editor/VersionControl/Show.lean`), `stageHunkChecks`
-  (`Editor/VersionControl/Stage.lean`) and `commitBufferChecks` (the
-  message buffer, `Editor/VersionControl/Commit.lean`): the commands, on
-  the loop's driver over the editor's models, the job model, the model of
-  files and the model of a repository in `/r`, whose git answers as the
-  model does; and, with no implementation of an interface they reach
-  registered (`Editor.Test.withoutExtension`), what each says or does:
-  `vc-status-visit` and `vc-stage-hunk` with no files implementation,
-  `vc-worktrees-visit` with no workspace implementation, each saying so and
-  starting no job, and a commit made and `vc-commit-abort` with no buffers
-  implementation, which keep the message buffer;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1244,30 +1183,6 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   outside the root, a detached HEAD tracked, a diff once a head is held, a
   closed buffer's jobs cancelled and its head released, and the paths
   relative to a root;
-- `gutterChecks`: the version-control gutter
-  (`Editor/VersionControl/Gutter.lean`) on that driver and the model of
-  watches, whose waiting jobs it holds parked: the head fetched, the marks
-  of a diff, and what a commit made outside the editor and HEAD moving
-  while a fetch or a diff runs change;
-- `reviewBufferChecks`: the review buffer
-  (`Editor/VersionControl/Review.lean`) on that driver (and `vc-review`
-  kept across a restart without its buffer's number), its read run over
-  the version-control interface's model (`Model.readHandler`): the four
-  criteria of the excerpts roadmap's phase 4, its refusals, refresh, the
-  old buffers a round that ends early removes, the rounds its store keeps,
-  the commit each records and the store's migration, edits through its
-  excerpts, a commit's review, and `vc-review-since`, into a review buffer
-  and, past a rewritten branch, the range-diff buffer; and, with no files
-  implementation registered, a changed file left out as a refused load is;
-- `logViewChecks` and `logBufferChecks`, `blameViewChecks` and
-  `blameBufferChecks`: the log buffer (`Editor/VersionControl/Log.lean`)
-  and the blame view (`Editor/VersionControl/Blame.lean`), their pure views
-  on values and their commands on that driver, their reads over the
-  interface's model: what each lists, with each commit's author, and the
-  review a row's visit opens;
-- `versionControlViewsChecks`: what the version-control buffers share
-  (`Editor/VersionControl/Views.lean`), on values: a day as the log's and
-  the blame's rows show it;
 - `excerptViewedChecks`: what a view shows of a tracked excerpt
   (`Editor/ExcerptView.lean`) and the marking of what was viewed
   (`EditorState.markViewed`, `creditViewed`), on hand-built rows and
@@ -1463,7 +1378,6 @@ def checks : List Check :=
     packageChecks ++
     extensionChecks ++
     exPackageChecks ++
-    versionControlPackageChecks ++
     restorePackageChecks ++
     restartChecks ++
     restartHandoverChecks ++
@@ -1635,40 +1549,14 @@ def checks : List Check :=
     formatDataChecks ++
     listingChecks ++
     turnOnModesChecks ++
-    versionControlParserChecks ++
-    versionControlPlumbingChecks ++
-    versionControlHistoryParserChecks ++
     versionControlModelChecks ++
-    gitModelChecks ++
     vcApiChecks ++
     filesApiChecks ++
     buffersApiChecks ++
     shellApiChecks ++
     projectApiChecks ++
-    versionControlGitChecks ++
-    versionControlWorktreeGitChecks ++
-    versionControlHistoryGitChecks ++
-    hunkChecks ++
-    reviewHunkChecks ++
-    reviewOrderChecks ++
-    reviewRecordChecks ++
-    versionControlShowChecks ++
-    statusViewChecks ++
-    statusBufferChecks ++
-    worktreeViewChecks ++
-    worktreeBufferChecks ++
-    revisionBufferChecks ++
     gutterCarryChecks ++
-    gutterTrackChecks ++
-    gutterChecks ++
-    stageHunkChecks ++
-    commitBufferChecks ++
-    reviewBufferChecks ++
-    logViewChecks ++
-    logBufferChecks ++
-    blameViewChecks ++
-    blameBufferChecks ++
-    versionControlViewsChecks
+    gutterTrackChecks
 
 end ModelTest
 

@@ -1,0 +1,70 @@
+# Version control: git's implementation of the core's version-control
+# interface, the status buffer (`vc-status`), the worktree list, `vc-show`,
+# staging and unstaging hunks, the message buffer (`vc-commit`), the review
+# buffer (`vc-review`), the log and the blame, and the gutter's marks, as
+# two packages, `version-control` and `version-control-gutter`: a default
+# package, a Lake package outside the core that the default package set
+# requires (../lakefile.toml; docs/design/packages.md, "The package set and
+# its build"). It was the seventeen modules of the core under
+# `Editor.VersionControl` (and git's half of the repository model, a test
+# double now) until the features-as-packages roadmap's phase 6. The gate's
+# package steps build, test, lint and format-check it through the fixture
+# set, which requires the default set (tools/package-set.sh), and the package
+# imports check holds what it imports of the core
+# (tools/package-imports-check.sh).
+#
+# - `VersionControl` is the package's library: the modules under
+#   `VersionControl/`, and its entry module
+#   `VersionControl/EditorPackage.lean`, which the package-set build reads
+#   and which lists both packages. It has no root module
+#   (`VersionControl.lean`), so its `globs` hold every module under
+#   `VersionControl` and none at the root, and the package imports check
+#   sees each one's imports. It implements the core's interface library
+#   `vc-api` (its backend `git`, the gutter's jobs and the segment) and
+#   reaches a path's workspace through `project-api`, both still the core's,
+#   so it requires no package but the core.
+# - `version-control-test` is its test driver (`lake test`): the tests that
+#   need no Rust library, rooted at `VersionControlTest/Model.lean`. It is no
+#   default target, as the core's `model-test` is not: `mise run lean` links
+#   with the system compiler, which this executable has no flags for.
+# - `VersionControlTest` holds the test modules, git's half of the model of
+#   a repository (`VersionControlTest/Git/Model.lean`), the drivers and
+#   fixtures of the model checks (`VersionControlTest/Support/`), and
+#   `VersionControlTest/Linked.lean`: the root of the executable the core's
+#   `editorLinked` facet links as the editor is linked, with the Rust
+#   library. It runs version control over real git, in temporary
+#   repositories, and the gutter through the headless host.
+#
+# It has no headless fixture of its own: the core's fixture tests/headless/ex,
+# which runs on the default set's editor, lists its ex names.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its modules,
+# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/version-control update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages,
+# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+name = "version-control"
+testDriver = "«version-control-test»"
+defaultTargets = ["VersionControl", "VersionControlTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "VersionControl"
+globs = ["VersionControl.+"]
+
+[[lean_lib]]
+name = "VersionControlTest"
+globs = ["VersionControlTest.+"]
+
+[[lean_exe]]
+name = "version-control-test"
+root = "VersionControlTest.Model"

@@ -6,7 +6,6 @@ import Editor.PackageSet.Compiled
 import Editor.Restore.Compiled
 import Editor.TabCommands.Compiled
 import Editor.Themes.Compiled
-import Editor.VersionControl.Compiled
 import Editor.WindowCommands.Compiled
 
 /-!
@@ -76,9 +75,9 @@ language table read as they did:
 - `package-set` comes right after `restore`: a user's package-set build
   restarts the editor through the restore's restart, and its ex names
   follow `restart`'s;
-- `ex` comes before `version-control`: each binds its own ex names, and
-  the ex names' completion lists them in the order they were bound, the
-  `ex` package's first.
+- `ex` comes first of the packages that bind ex names: the ex names'
+  completion lists them in the order they were bound, the `ex` package's
+  first, and every Lake package's after the core's.
 
 Nothing in this list is ordered by what a package depends on: a command's
 name is looked up when it is run, so a package may name a command of a
@@ -134,6 +133,13 @@ workspaces' in the command prompt, and the working sets' follow its. The
 shell's package, which was twelfth here, after `package-set`, is the
 default package `shell` (`packages/shell/`), and registers right after
 `working-set`: its commands follow the working sets' in the command prompt.
+Version control's two packages, which were last here, are the default
+package `version-control` (`packages/version-control/`, whose entry module
+lists both, `version-control` and `version-control-gutter`), and register
+right after `shell`: their commands follow the shell's in the command
+prompt, and their ex names still follow ex's and come before the compile
+mode's. With them gone, the last package here is `package-set`, so every
+moved feature's commands follow `package-set`'s.
 -/
 
 namespace EditorCore.EditorPackage
@@ -144,7 +150,6 @@ open Editor
 them ("The order", in the module docs). -/
 def packages : Array Package :=
   #[Evil.package, Ex.package, FrameCommands.package, Menu.package, WindowCommands.package,
-    TabCommands.package, Themes.package, Restore.package, PackageSet.package,
-    VersionControl.package, VersionControl.gutterPackage]
+    TabCommands.package, Themes.package, Restore.package, PackageSet.package]
 
 end EditorCore.EditorPackage

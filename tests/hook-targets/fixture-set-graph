@@ -10,6 +10,7 @@ project-search	implementation	project-search-api
 working-set-api	interface	-
 working-set	implementation	working-set-api
 shell	implementation	-
+version-control	implementation	-
 completion-api	interface	-
 completion	implementation	completion-api
 mode-line	implementation	-

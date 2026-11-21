@@ -13,8 +13,6 @@ import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
 import Editor.TabCommands
 import Editor.Themes
-import Editor.VersionControl.Commit
-import Editor.VersionControl.Stage
 
 /-!
 # The editor
@@ -255,19 +253,16 @@ module and then the entry module of each package of the set
 (`Editor/Main.lean`, "The base"); an editor built from a set without that
 package elaborates config on this module alone.
 
-Version control is here too. The interface a version-control system
+Version control is not here: it is a default package outside the core
+(`packages/version-control/`, git's implementation, the status, commit,
+review, log and blame buffers and the gutter), and config reaches it
+through the set's base, the package's entry module
+`VersionControl.EditorPackage` among it, as the command prompt's
+(features-as-packages phase 3). The interface a version-control system
 answers, in the editor's own terms, is its own library (`VcApi.lean`), with
-the backend a package registers (`VcApi.Backend`); git's implementation
-(`Editor/VersionControl/Git.lean`) runs git as jobs. With them come the
-status buffer, `vc-status`, which shows a workspace's changed files and
-stages and unstages them (`Editor/VersionControl/Status.lean`, which brings
-the interface and git with it); staging and unstaging the hunk on the
-cursor's line (`Editor/VersionControl/Stage.lean`); and the message buffer,
-`vc-commit`, which commits (`Editor/VersionControl/Commit.lean`). Its registrations
-(`Editor/VersionControl/Compiled.lean`) name the registry and are not
-imported. The interface's fake and its contract (`VcApiTest/Fake.lean`,
-`VcApiTest/Contract.lean`) are for tests, and are not imported; git's half
-of the model (`Editor/VersionControl/Git/Model.lean`) comes with the core.
+the backend a package registers (`VcApi.Backend`); its fake and its
+contract (`VcApiTest/Fake.lean`, `VcApiTest/Contract.lean`) are for tests,
+and are not imported.
 
 Extension points are here too (`Editor/Extension.lean`): config registers
 a value at a package's extension point with `Extension.add`, as a package

@@ -23,41 +23,42 @@ open Editor
 register. -/
 def shippedPackageNames : Array String :=
   #["evil", "ex", "frame-commands", "menu", "window-commands", "tab-commands", "themes", "restore",
-    "package-set", "version-control", "version-control-gutter"]
+    "package-set"]
 
 /-- The checks of the packages of the core's Lake package
 (`EditorCore/EditorPackage.lean`): the list a host is handed is whole,
 every package of it is accepted, and what it registers is all theirs. -/
 def packageSetChecks : List Check :=
   [{  name :=
-        "the shipped set keeps exactly one store across a restart, version control's reviews, reports exactly the jobs a person waits on: the package-set build, and version control's apply, hunk apply and commit, and leaves exactly the jobs their owner starts again to it: the restore's six and the gutter's three"
+        "the shipped set keeps no store across a restart, reports exactly the job a person waits on, the package-set build, and leaves exactly the jobs their owner starts again to it: the restore's six"
       run :=
         let (state, _) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure <|
-          state.registry.codecs.map (fun (owner, codec) => (owner.name, codec.name)) ==
-              #[("version-control", "vc-review")] &&
+          state.registry.codecs.isEmpty &&
             (state.registry.jobs.filter (·.registration.reported)).map (·.registration.name) ==
-              #["package-build", "vc-status-apply", "vc-hunk-apply", "vc-commit-run"] &&
+              #["package-build"] &&
             (state.registry.jobs.filter (·.registration.restarted)).map (·.registration.name) ==
               #["restore", "restore-files", "restore-write", "restore-save", "restart-probe",
-                "restart-save", "vc-gutter-head", "vc-gutter-diff", "vc-gutter-refs"] },
+                "restart-save"] },
     { name :=
-        "every package of the shipped set is accepted, and their names are the 11 of the package table, each once, in its order, with no package of the shipped palettes and none of the file commands, the buffer commands, the workspaces, project search, the working sets, the shell, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
+        "every package of the shipped set is accepted, and their names are the 9 of the package table, each once, in its order, with no package of the shipped palettes and none of the file commands, the buffer commands, the workspaces, project search, the working sets, the shell, version control and its gutter, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
       run :=
         let (state, refused) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (refused == #[] &&
             EditorCore.EditorPackage.packages.map (·.name) == shippedPackageNames &&
-            shippedPackageNames.size == 11 &&
-            shippedPackageNames.toList.eraseDups.length == 11 &&
+            shippedPackageNames.size == 9 &&
+            shippedPackageNames.toList.eraseDups.length == 9 &&
             !shippedPackageNames.contains "files" &&
             !shippedPackageNames.contains "buffers" &&
             !shippedPackageNames.contains "workspace" &&
             !shippedPackageNames.contains "project-search" &&
             !shippedPackageNames.contains "working-set" &&
             !shippedPackageNames.contains "shell" &&
+            !shippedPackageNames.contains "version-control" &&
+            !shippedPackageNames.contains "version-control-gutter" &&
             !shippedPackageNames.contains "shipped-themes" &&
             !shippedPackageNames.contains "compile" &&
             !shippedPackageNames.contains "languages" &&
@@ -84,17 +85,14 @@ def packageSetChecks : List Check :=
             (state.registry.menuBar?).isSome &&
             state.cells.cells.all fun cell => shippedPackageNames.contains cell.owner.name) },
     { name :=
-        "the shipped set binds the ex names in this order: the files', the ex line's and the buffers', the restore's restart, the package set's three, then version control's twelve; the compile mode's six are bound by a package outside the core's Lake package"
+        "the shipped set binds the ex names in this order: the files', the ex line's and the buffers', the restore's restart, then the package set's three; version control's twelve and the compile mode's six are bound by packages outside the core's Lake package"
       run :=
         let (state, _) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (state.registry.exNames ==
             #["w", "w!", "e", "e!", "autoread", "noautoread", "q", "wq", "reload", "b", "ls", "bd",
-              "restart", "package-install", "package-remove", "package-update", "vc-status",
-              "vc-show", "vc-stage-hunk", "vc-unstage-hunk", "vc-commit", "vc-worktrees",
-              "vc-commit-accept", "vc-commit-abort", "vc-review", "vc-review-since", "vc-log",
-              "vc-blame"]) },
+              "restart", "package-install", "package-remove", "package-update"]) },
     { name :=
         "the shipped set registers one theme, `default`: the palettes that ship are a package outside the core's Lake package"
       run :=
