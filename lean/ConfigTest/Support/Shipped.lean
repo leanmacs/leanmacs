@@ -1,4 +1,5 @@
 import Editor.Package
+import Editor.Test.AtPoint
 import Editor.Test.Shipped
 import EditorCore.EditorPackage
 
@@ -23,5 +24,13 @@ default packages `mode-line` and `languages`, which register the shipped
 segments, and the `code` mode and the shipped languages. -/
 def shippedPackages : Array Package :=
   EditorCore.EditorPackage.packages ++ Test.Shipped.packages
+
+/-- `packages` completing at point through the core's test kit: a package
+named as the kit's at-point package is left out, and the kit's
+(`Test.AtPoint.package`, `Editor/Test/AtPoint.lean`) comes last, so a host
+made of them registers no at-point command, source, job or use of the
+package that ships, and the kit's commands. -/
+def withKitAtPoint (packages : Array Package) : Array Package :=
+  (packages.filter (·.name != Test.AtPoint.package.name)).push Test.AtPoint.package
 
 end ConfigTest

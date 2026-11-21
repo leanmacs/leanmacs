@@ -6,7 +6,6 @@ import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Display
 import Editor.Completion.Style
-import Editor.Completion.Words
 import Editor.Config.Owner
 import Editor.Config.Registry
 import Editor.Config.Reload
@@ -185,14 +184,14 @@ def registryChecks : List Check :=
         "the latest at-point entry of a name is the one found, config's over compiled's until a reload drops it; a name a use or a mode lists that nobody registered is unknown; the loop is told the lookup and the chain"
       run :=
         pure <|
+          let words (pause : Nat) : Completion.AtPoint :=
+            { Completion.AtPoint.silent "words" with pause := some pause }
           let compiled :=
-            (({} : Config.Registry).replaceAtPoints .compiled
-                  #[Completion.AtPoint.words]).replaceModes
-              .compiled #[{ name := "m", atPoint := ["lost"] }]
+            (({} : Config.Registry).replaceAtPoints .compiled #[words 240]).replaceModes .compiled
+              #[{ name := "m", atPoint := ["lost"] }]
           let tuned :=
-            (compiled.replaceAtPoints .config
-                  #[Completion.AtPoint.words (pause := 100)]).replaceAtPointUses
-              .config #[(none, "words"), (none, "gone")]
+            (compiled.replaceAtPoints .config #[words 100]).replaceAtPointUses .config
+              #[(none, "words"), (none, "gone")]
           let dropped := tuned.replaceAtPoints .config #[]
           (tuned.atPoint? "words").bind (·.pause) == some 100 &&
             (dropped.atPoint? "words").bind (·.pause) == some 240 &&

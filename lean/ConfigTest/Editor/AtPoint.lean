@@ -3,9 +3,8 @@ import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
 import ConfigTest.Support.Listings
+import ConfigTest.Support.Shipped
 import ConfigTest.Support.Syntax
-import Editor.Completion.Candidate
-import Editor.Completion.Words
 import Editor.File.Model
 import Editor.Headless
 import Editor.Job.Fake
@@ -17,18 +16,51 @@ import Editor.Scene
 
 The tests of `Editor/AtPoint.lean`: `atPointChecks`, through the headless host.
 The root module `ConfigTest` runs them; its module doc says what each shows.
+
+They complete at point through the core's test kit's at-point package
+(`Editor/Test/AtPoint.lean`, by `withKitAtPoint`) and the sources config
+defines, so nothing of the package that ships is asked: what its `words`
+answers is pinned by `ModelTest.wordsChecks`, and its commands by
+`ModelTest.atPointChecks` and the headless fixture `at-point`.
 -/
 
 namespace ConfigTest
 
 open Editor
 
-/-- A config whose `setup` registers `make-other`, bound to `C-c o`, which
-makes a buffer `other` holding `almond alpaca`. -/
-def otherBufferText : String :=
+/-- What the source `listed` of `listedText` answers, whatever it is
+asked. -/
+def listedTexts : Array String :=
+  #["alpha", "beta", "almond", "alpaca"]
+
+/-- A config whose `setup` defines the source `listed`, of the category
+`listed`, which answers later, from its job `listed`, the texts of
+`listedTexts` in one batch, is asked once and reads the open buffers'
+texts; the at-point source `typed`, the run of letters before the cursor on
+its line completed from `listed`, asked by itself after a pause of 240 ms,
+when on a pause that run holds two letters or more; and uses `typed` in
+every buffer. -/
+def listedText : String :=
   "def setup : SetupM Unit := do
-  command \"make-other\" (discard <| createBuffer \"other\" \"almond alpaca\")
-  bindKey \"C-c o\" \"make-other\"
+  sourceJob \"listed\" fun _ deliver =>
+    deliver #[.ofText \"alpha\", .ofText \"beta\", .ofText \"almond\", .ofText \"alpaca\"]
+  defineSource
+    { name := \"listed\", category := \"listed\", candidates := fun _ => pure #[]
+      later := some { job := \"listed\", reask := .never, readsTexts := true } }
+  defineAtPoint
+    { name := \"typed\", pause := some 240
+      ask := fun spot => do
+        let .ok target ← spot.view.target | return none
+        let text := target.buffer.text
+        let lineStart ← text.motion .lineStart spot.offset
+        let line ← text.slice lineStart spot.offset
+        let word := String.ofList (line.toList.reverse.takeWhile Char.isAlpha).reverse
+        if spot.occasion matches .pause _ && word.length < 2 then
+          return none
+        return some
+          { start := spot.offset - word.utf8ByteSize, stop := spot.offset
+            sources := [.source \"listed\"] } }
+  useAtPoint \"typed\"
 "
 
 /-- A config whose `setup` defines the source `members`, of the category
@@ -54,24 +86,23 @@ def noneChosen (lines : Array String) : Bool :=
 /-- The checks of completion at point through the headless host of the Vim
 scheme that ships (`withVimHost`), with the real elaborator, the real text
 binding, the recorder and the stage's fake clock (`Editor/AtPoint.lean`,
-`docs/design/keymaps-and-modes.md`, "Completion at point"). -/
+`docs/design/keymaps-and-modes.md`, "Completion at point"), on the kit's
+at-point package (`withKitAtPoint`). -/
 def atPointChecks (context : Context) : List Check :=
+  let packages := withKitAtPoint shippedPackages
   [{  name :=
-        "C-n in insert state lists the words of open buffers that match the word before the cursor"
+        "C-n in insert state lists what config's source that answers later answers that matches the word before the cursor, its job started"
       run :=
-        withVimHost context [("init.lean", otherBufferText)] fun session => do
+        withVimHost context [("init.lean", listedText)] (packages := packages) fun session => do
           session.ask [.reload]
           session.host.resize 640 480
-          session.typed "C-c o i"
+          session.typed "i"
           session.host.commit "alpha beta al"
           session.typed "C-n"
           unless (← session.host.join patience) == .settled do
             return false
           let lines ← session.sceneLines
-          let words :=
-            Completion.Words.ordered #["alpha beta al", "almond alpaca"]
-              (some { start := 11, stop := 13 })
-          let rows ← realOrder "al" words
+          let rows ← realOrder "al" listedTexts
           let some listId := listViewId lines | return false
           let some (_, listY, _, listHeight) := printedRect lines listId | return false
           let some (_, windowY, _, windowHeight) := printedRect lines 0 | return false
@@ -81,12 +112,12 @@ def atPointChecks (context : Context) : List Check :=
               listY + listHeight < 480 &&
               listHeight > 0 &&
               (lines.filter (·.startsWith "view ")).size == 2 &&
-              output.any (fun line => line.startsWith "job " && line.endsWith " words: started") &&
+              output.any (fun line => line.startsWith "job " && line.endsWith " listed: started") &&
               !output.any (·.startsWith "loop: refused") },
     { name :=
         "a source that declares a trigger character opens a session when that character is typed, and no other character does"
       run :=
-        withVimHost context [("init.lean", dotsText)] fun session => do
+        withVimHost context [("init.lean", dotsText)] (packages := packages) fun session => do
           session.ask [.reload]
           session.host.resize 640 480
           session.typed "i a x"
@@ -100,10 +131,10 @@ def atPointChecks (context : Context) : List Check :=
               rows.length == 2 &&
               (listViewId closed).isNone },
     { name :=
-        "pausing after typing two characters of a word opens a session of the words source, with nothing chosen"
+        "pausing after typing two characters of a word opens a session of config's source that pauses, with nothing chosen, and after one character it answers nothing and nothing opens"
       run := do
         let first ←
-          withVimHost context [] fun session => do
+          withVimHost context [("init.lean", listedText)] (packages := packages) fun session => do
               session.ask [.reload]
               session.host.resize 640 480
               session.typed "i"
@@ -116,16 +147,13 @@ def atPointChecks (context : Context) : List Check :=
               unless (← session.host.join patience) == .settled do
                 return false
               let lines ← session.sceneLines
-              let rows ←
-                realOrder "al"
-                    (Completion.Words.ordered #["alpha alpine\nal"]
-                      (some { start := 13, stop := 15 }))
+              let rows ← realOrder "al" listedTexts
               return armed == 1 && started.isEmpty && (listViewId before).isNone &&
-                  rows.length == 2 &&
+                  rows.length == 3 &&
                   listViewShows lines rows &&
                   noneChosen lines
         let second ←
-          withVimHost context [] fun session => do
+          withVimHost context [("init.lean", listedText)] (packages := packages) fun session => do
               session.ask [.reload]
               session.host.resize 640 480
               session.typed "i"
@@ -139,7 +167,7 @@ def atPointChecks (context : Context) : List Check :=
     { name :=
         "a typed key in insert state arms one pause wait and starts no job: after i a b the clock holds one wait and has withdrawn one, the table of waits holds one, no job line is printed, and a join returns at once"
       run :=
-        withVimHost context [] fun session => do
+        withVimHost context [("init.lean", listedText)] (packages := packages) fun session => do
           session.ask [.reload]
           session.typed "i a b"
           let waiting ← session.clock.waiting
@@ -157,7 +185,7 @@ def atPointChecks (context : Context) : List Check :=
     { name :=
         "the pause's event is queued before the clock's move returns: advance then join, five times over, each time finds the session the pause opened listed"
       run :=
-        withVimHost context [] fun session => do
+        withVimHost context [("init.lean", listedText)] (packages := packages) fun session => do
           session.ask [.reload]
           session.host.resize 640 480
           session.typed "i"

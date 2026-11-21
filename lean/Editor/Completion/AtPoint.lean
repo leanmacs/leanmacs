@@ -36,6 +36,20 @@ How the editor asks one, holds the session it opens and closes it is in
 `docs/design/keymaps-and-modes.md`, "Completion at point", and
 `Editor/Api.lean`, "Completion at point".
 
+## The names the core runs
+
+The core asks by itself through two commands it names and does not define
+(`triggeredCommand`, `pausedCommand`): the loop runs the first when a typed
+character is a trigger of an at-point source the buffer uses
+(`Loop.atPointAsks`, `Editor/Loop.lean`), and the headless host and the
+loop's driver run the second when a pause fires (`Editor/Headless.lean`,
+`Editor/Loop/Driver.lean`). An at-point package registers its commands
+under them, as `at-point` does (`Editor/AtPoint/Compiled.lean`), and
+`at-point-api` declares them from these constants. The registry resolves
+each by name when it runs, so a set with no at-point package runs nothing.
+When a session closes having never shown a row and was not asked silently,
+the loop says `noCompletions`.
+
 ## Where an addition goes
 
 | Addition | Where |
@@ -43,12 +57,14 @@ How the editor asks one, holds the session it opens and closes it is in
 | Something more an at-point source is asked | A field of `Spot` (`Editor/Completion/Candidate.lean`), filled where `completeAtPoint` asks |
 | Something more it answers | A field of `Region`, read where `completeAtPoint` opens the session |
 | A new reason to ask | A constructor of `Occasion` and its case of `asksOn` |
-| A shipped at-point source | A value in `AtPoint.shipped` (`Editor/Completion/Words.lean`), registered by the `at-point` package (`Editor/AtPoint/Compiled.lean`), and run by `ModelTest.atPointContractChecks` |
+| A shipped at-point source | A value in `AtPoint.shipped` (`Editor/Completion/Words.lean`), registered by the `at-point` package (`Editor/AtPoint/Compiled.lean`), and run on the contract by `ModelTest.wordsChecks`, under `atPointContractChecks`' sentences |
 | A rule every at-point source keeps | A property of `Editor/Completion/AtPointContract.lean` |
 
-Pinned by `ModelTest.atPointContractChecks` (the contract, on the model and
-the shipped source), `atPointChecks` (asking through the dispatcher, the
-first that answers), and `registryChecks` (a buffer's chain).
+Pinned by `ModelTest.atPointContractChecks` (the contract, on the model),
+`atPointChecks` (asking through the dispatcher, the first that answers),
+`registryChecks` (a buffer's chain), and the loop's at-point lists
+(`atPointAskChecks`, `atPointLoopChecks`), which run the names on the kit's
+at-point package (`Editor/Test/AtPoint.lean`).
 -/
 
 namespace Editor.Completion
@@ -84,6 +100,23 @@ def fixed (name : String) (answer : Spot → Option Region) : AtPoint :=
 /-- An at-point source called `name` that never answers. -/
 def silent (name : String) : AtPoint :=
   fixed name fun _ => none
+
+/-- The name of the command the loop runs when a typed character is a
+trigger of an at-point source the buffer uses, with the character as its
+argument. An at-point package registers it; the core does not. -/
+def triggeredCommand : String :=
+  "at-point-triggered"
+
+/-- The name of the command the headless host and the loop's driver run when
+a pause fires, with the view and the pause's milliseconds as its arguments.
+An at-point package registers it; the core does not. -/
+def pausedCommand : String :=
+  "at-point-paused"
+
+/-- What the echo area says when a session closes having never listed a
+candidate and was not asked silently. -/
+def noCompletions : String :=
+  "no completions"
 
 /-- What the echo area says of an at-point source named in a mode's list or
 config's uses that no at-point source is registered under. -/

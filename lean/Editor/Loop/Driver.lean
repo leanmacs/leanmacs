@@ -624,7 +624,8 @@ def pass (driver : Loop.Driver scheme) (ms : Nat) : Loop.Driver scheme :=
   let pause (driver : Loop.Driver scheme) (view : ViewId) (ms : Nat) : Loop.Driver scheme :=
     (driver.stepped
         (driver.loop.invoke driver.handed
-          { command := AtPoint.pausedName, arguments := [.nat view.index, .nat ms] })).1
+          { command := Completion.AtPoint.pausedCommand,
+            arguments := [.nat view.index, .nat ms] })).1
   let hinting (driver : Loop.Driver scheme) (generation : Nat) : Loop.Driver scheme :=
     (driver.stepped (driver.loop.keyHintsDue driver.handed generation)).1
   match hint with

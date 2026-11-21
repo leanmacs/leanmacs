@@ -1,5 +1,4 @@
-import Editor.AtPoint
-import Editor.AtPoint.Compiled
+import Editor.Completion.AtPoint
 import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Event
@@ -15,6 +14,7 @@ import Editor.Scene
 import Editor.Shell
 import Editor.TabCommands
 import Editor.TabCommands.Compiled
+import Editor.Test.AtPoint
 import Editor.Test.Keys
 import Editor.Text
 import Editor.WindowCommands
@@ -231,10 +231,10 @@ def vimDefaultChecks : List Check :=
       run :=
         pure <|
           let bound :=
-            [("C-SPC", AtPoint.completeName), ("C-n", AtPoint.nextName),
-              ("C-p", AtPoint.previousName), ("TAB", AtPoint.tabName),
-              ("S-TAB", AtPoint.backtabName), ("RET", AtPoint.returnName),
-              ("C-g", AtPoint.quitName)]
+            [("C-SPC", Test.AtPoint.completeName), ("C-n", Test.AtPoint.nextName),
+              ("C-p", Test.AtPoint.previousName), ("TAB", Test.AtPoint.tabName),
+              ("S-TAB", Test.AtPoint.backtabName), ("RET", Test.AtPoint.returnName),
+              ("C-g", Test.AtPoint.quitName)]
           (bound.all fun (key, name) =>
               (vimDefaultCommand s!"i {key}").any fun command =>
                 command.name == name && !command.changes && command.enters.isNone &&
@@ -259,12 +259,26 @@ def vimDefaultChecks : List Check :=
       run :=
         let registered :=
           (Evil.package.registered.commands ++ Minibuffer.package.registered.commands ++
-                AtPoint.package.registered.commands).map
+                Test.AtPoint.package.registered.commands).map
             (·.name)
         pure
           ((Vim.Default.insertCommands ++ Vim.Default.minibufferCommands).all fun
             | (_, .command command) => registered.contains command.name
             | _ => true) },
+    { name :=
+        "every command insert state's table runs that evil does not register, and the two the core runs by itself at a trigger and a pause, is one of the kit's at-point names, which are what its package registers, in order"
+      run :=
+        let evil := Evil.package.registered.commands.map (·.name)
+        let bound :=
+          Vim.Default.insertCommands.filterMap fun
+            | (_, .command command) =>
+              if evil.contains command.name then none else some command.name
+            | _ => none
+        pure
+          (bound.length == 7 &&
+            (bound ++ [Completion.AtPoint.triggeredCommand, Completion.AtPoint.pausedCommand]).all
+              Test.AtPoint.names.contains &&
+            Test.AtPoint.package.registered.commands.map (·.name) == Test.AtPoint.names) },
     { name :=
         "each of the default key sequences z t, z z and z b runs a command of its own that changes no text and enters no state, in the initial state and, the same command, in each visual state, which the view stays in; z alone yields nothing and is pending; and in the state i enters and in the minibuffer's state z is typed text"
       run :=

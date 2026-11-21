@@ -1991,7 +1991,7 @@ def paused (collaborators : Collaborators β σ scheme) (running : Running β σ
   let (stepped, running) ←
     running.attempt collaborators
         (frame.invoke (running.keys collaborators (← collaborators.services.timers.now))
-          { command := AtPoint.pausedName, arguments := [.nat view.index, .nat ms] })
+          { command := Completion.AtPoint.pausedCommand, arguments := [.nat view.index, .nat ms] })
   let some stepped := stepped | return running
   running.took collaborators stepped
 

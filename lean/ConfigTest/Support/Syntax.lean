@@ -98,9 +98,9 @@ def rustObjectsText : String :=
 collaborators the executable's hosts are made of (`Headless.shippedOver`),
 handed the package `listings`, so its listings are matched and shown by the
 style and the display written for these tests whatever else registers one
-(`ConfigTest/Support/Listings.lean`), then the packages of the core's Lake
-package and the kit's stand-ins (`shippedPackages`,
-`ConfigTest/Support/Shipped.lean`),
+(`ConfigTest/Support/Listings.lean`), then `packages`: by default the
+packages of the core's Lake package and the kit's stand-ins
+(`shippedPackages`, `ConfigTest/Support/Shipped.lean`),
 with the real elaborator, a config directory of `files` and the services of
 a stage of its own; its syntax tree is the real binding over the library's
 syntax service, which after an attach, and before a question of a text's
@@ -108,7 +108,8 @@ captures, waits, with a bound, for the text's tree to be delivered. Stops the ho
 hold or the host did not stop. The directory is removed. -/
 def withVimHost (context : Context) (files : List (String × String)) (check : Session → IO Bool)
     (fileModel : Option FileModel := none) (realFiles : Bool := false)
-    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none) : IO Bool :=
+    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
+    (packages : Array Package := shippedPackages) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeConfig directory files
     let source := Config.Directory.source directory
@@ -130,8 +131,8 @@ def withVimHost (context : Context) (files : List (String × String)) (check : S
       | none =>
         pure staged.services
     let shipped :=
-      Headless.shippedOver (#[listingsPackage] ++ shippedPackages) #[`Editor] "" [] "" staged.emit
-        services staged.published staged.held (← Config.Elaborate.ModuleFiles.temporary)
+      Headless.shippedOver (#[listingsPackage] ++ packages) #[`Editor] "" [] "" staged.emit services
+        staged.published staged.held (← Config.Elaborate.ModuleFiles.temporary)
     let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
       let real ← RealSyntaxTree.new snapshots
       return fun request => do

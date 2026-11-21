@@ -6,7 +6,6 @@ import Editor.Command.Model
 import Editor.Completion.AtPoint
 import Editor.Completion.Display
 import Editor.Completion.Style
-import Editor.Completion.Words
 import Editor.Config.Diagnostic
 import Editor.Config.Display
 import Editor.Config.Owner
@@ -244,7 +243,8 @@ def reloadChecks : List Check :=
       run :=
         let shown : ModelState :=
           { themed with
-            registry := themed.registry.replaceAtPoints .compiled Completion.AtPoint.shipped }
+            registry :=
+              themed.registry.replaceAtPoints .compiled #[Completion.AtPoint.silent "words"] }
         let uses : SetupM Unit := do
           defineAtPoint (Completion.AtPoint.silent "mine")
           useAtPoint "mine"

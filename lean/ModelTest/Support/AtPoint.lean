@@ -9,7 +9,6 @@ import Editor.Completion.AtPointContract
 import Editor.Completion.Candidate
 import Editor.Completion.Display
 import Editor.Completion.Later
-import Editor.Completion.Words
 import Editor.Config.Registry
 import Editor.Display.Model
 import Editor.DisplayRules
@@ -44,6 +43,13 @@ The fixture of the checks of completion at point: the at-point sources and the
 drivers over the evil fixture they run on, the contract's runner of at-point
 sources, and what a scene and the state show of a session at point. Shared by
 several test modules under `ModelTest/Editor/`; it holds no checks of its own.
+
+Its drivers complete at point through the kit's at-point package
+(`Editor.Test.AtPoint.package`, which `evilHanded` registers) and the
+sources written here, the one that answers later among them (`laterSource`,
+over the job model's `Completion.Later.batches`), so nothing of the package
+that ships is asked. What the checks of that package need of it is in
+`ModelTest/Support/Words.lean`.
 -/
 
 namespace ModelTest
@@ -85,41 +91,86 @@ def lastTwoAtPoint : Completion.AtPoint :=
   .fixed "last2" fun spot =>
     some { start := spot.offset - 2, stop := spot.offset, sources := [.source "alphas"] }
 
+/-- The job of the source `later`. -/
+def laterJob : String :=
+  "later"
+
+/-- What the job of the source `later` answers, whatever it is asked: two
+batches, `alpha` and `beta`, then `alpine`. -/
+def laterBatches : Array (Array Completion.Candidate) :=
+  #[#[.ofText "alpha", .ofText "beta"], #[.ofText "alpine"]]
+
+/-- The completion source `later` of the loop checks: it answers later, from
+its job (`laterJob`, the job model's `Completion.Later.batches` over
+`laterBatches`), is asked once, and reads the open buffers' texts, so the
+command that asks takes a snapshot of each. -/
+def laterSource : Completion.Source :=
+  { name := "later", category := "later", candidates := fun _ => pure #[]
+    later := some { job := laterJob, reask := .never, readsTexts := true } }
+
+/-- The at-point source `later` of the loop checks: the run of word
+characters before the cursor on its line (`wordCharacter`), completed from
+the source `later`, asked by itself after a pause of 240 ms and on each of
+`triggers`. -/
+def laterAtPoint (triggers : List Char := []) : Completion.AtPoint :=
+  { name := "later", pause := some 240, triggers
+    ask := fun spot => do
+      let .ok target ← spot.view.target | return none
+      let text := target.buffer.text
+      let lineStart ← text.motion .lineStart spot.offset
+      let line ← text.slice lineStart spot.offset
+      let word := String.ofList (line.toList.reverse.takeWhile wordCharacter).reverse
+      return some
+          { start := spot.offset - word.utf8ByteSize, stop := spot.offset
+            sources := [.source laterSource.name] } }
+
 /-- The completion sources the loop checks complete from, by name. -/
 def atPointSources : List Completion.Source :=
   [.ofTexts "say" "say" #["say hello", "say hi"], .ofTexts "pick" "pick" #["wq", "w"],
     .ofTexts "alphas" "alpha" #["alpha", "alpine"], .ofTexts "threes" "three" #["a1", "a2", "a3"],
-    Completion.Words.source]
+    laterSource]
 
-/-- What a step of the at-point loop checks is handed: `evilHanded`, told
+/-- What a step of the at-point checks is handed: `evilHanded more`, told
 that a buffer's chain is `chain`, that the at-point sources are `atPoints`
-and the shipped `words`, and that the sources are `atPointSources`, by name
-and by category; its listings matched and shown by the style and the
-display written for the core's tests (`marking`, `windowed`). -/
-def atPointHanded (chain : Array String) (atPoints : List Completion.AtPoint)
+and `also`, and that the sources are `sources`, by name and by category; its
+listings matched and shown by the style and the display written for the
+core's tests (`marking`, `windowed`). -/
+def atPointHandedOver (sources : List Completion.Source) (also : List Completion.AtPoint)
+    (chain : Array String) (atPoints : List Completion.AtPoint)
     (more : Array Config.Registration := #[]) : Loop.Keys Vim.Default.scheme :=
   let handed := evilHanded more
   { handed with
     matching := markingMatching, displaying := windowedDisplaying
     registered :=
       { handed.registered with
-        atPoint := fun name => (atPoints ++ [Completion.AtPoint.words]).find? (·.name == name)
+        atPoint := fun name => (atPoints ++ also).find? (·.name == name)
         atPointNames := fun _ _ => chain
-        sources := fun name => atPointSources.find? (·.name == name)
+        sources := fun name => sources.find? (·.name == name)
         categorySources := fun category =>
-          (atPointSources.filter (·.category == category)).toArray.map (·.name) } }
+          (sources.filter (·.category == category)).toArray.map (·.name) } }
+
+/-- What a step of the at-point loop checks is handed: `atPointHandedOver`
+the sources `atPointSources`, with the at-point source `later` beside
+`atPoints`. -/
+def atPointHanded (chain : Array String) (atPoints : List Completion.AtPoint)
+    (more : Array Config.Registration := #[]) : Loop.Keys Vim.Default.scheme :=
+  atPointHandedOver atPointSources [laterAtPoint] chain atPoints more
+
+/-- A driver of the at-point checks over the fixture `fixture`
+(`evilState`), handed `handed`, with the jobs `jobs` registered. -/
+def atPointDriverOver (handed : Loop.Keys Vim.Default.scheme)
+    (jobs : String → Option (List Argument → Work)) (fixture : String) : Option EvilDriver :=
+  let (contents, head) := barred fixture
+  (Loop.Driver.over handed jobs (evilState contents head) editorModel).toOption
 
 /-- A driver of the at-point loop checks over the fixture `fixture`
-(`evilState`), handed `atPointHanded chain atPoints`, with the job `words`
+(`evilState`), handed `atPointHanded chain atPoints`, with the job `later`
 registered. -/
 def atPointDriver (fixture : String) (chain : Array String) (atPoints : List Completion.AtPoint)
     (more : Array Config.Registration := #[]) : Option EvilDriver :=
-  let (contents, head) := barred fixture
   let jobs (name : String) : Option (List Argument → Work) :=
-    if name == Completion.Words.job then some (Completion.answering Completion.Words.gather)
-    else none
-  (Loop.Driver.over (atPointHanded chain atPoints more) jobs (evilState contents head)
-      editorModel).toOption
+    if name == laterJob then some (Completion.Later.batches laterBatches) else none
+  atPointDriverOver (atPointHanded chain atPoints more) jobs fixture
 
 /-- Whether the last scene `driver` published shows the candidate list's
 view. -/

@@ -1,5 +1,4 @@
 import Editor.Api
-import Editor.AtPoint
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
@@ -474,11 +473,16 @@ step (`Stepped.answered`), and the sources' pauses are armed
 one while a prompt or a session is open, withdraws them. The host arms each
 pause as a wait on the job clock, and runs `at-point-paused` when one fires
 (`Headless.Running.pause`, `paused`); the driver on the models by
-`Loop.Driver.pass`.
+`Loop.Driver.pass`. Both names are the core's
+(`Completion.AtPoint.triggeredCommand`, `.pausedCommand`,
+`Editor/Completion/AtPoint.lean`), and the loop defines neither command: an
+at-point package registers them, and the registry finds each by name when
+it runs.
 
 Pinned by `ModelTest.atPointLoopChecks`, `atPointRepeatChecks`,
-`atPointAskChecks`, `atPointByItselfChecks` and `completionJobChecks`; on the
-headless host by `ConfigTest.atPointChecks`.
+`atPointAskChecks`, `atPointByItselfChecks` and `completionJobChecks`, on the
+kit's at-point package (`Editor/Test/AtPoint.lean`); on the headless host by
+`ConfigTest.atPointChecks`.
 
 ## Key hints
 
@@ -2247,7 +2251,8 @@ def atPointExhausted (state : EditorState) : EditorState × Option AtPointSessio
       ({ state with
           atPoint := none
           echo :=
-            if session.tallest == 0 && !session.silent then AtPoint.noCompletions else state.echo },
+            if session.tallest == 0 && !session.silent then Completion.AtPoint.noCompletions
+            else state.echo },
         some session)
     else (state, none)
   | _, _ => (state, none)
@@ -3360,7 +3365,7 @@ def atPointAsks (loop : Loop scheme) (keys : Keys scheme) (key : Option (ViewId 
           text.toList.getLast?.filter fun char => sources.any (·.triggers.contains char)
         let invocations : Array Invocation :=
           trigger.toArray.map fun char =>
-            { command := AtPoint.triggeredName, arguments := [.str char.toString] }
+            { command := Completion.AtPoint.triggeredCommand, arguments := [.str char.toString] }
         let pauses := (sources.filterMap (·.pause)).toList.eraseDups.toArray
         (invocations, if pauses.isEmpty then .keep else .arm view pauses)
       | _, _ => (#[], withdraw)

@@ -1,5 +1,4 @@
 import Editor.Api
-import Editor.AtPoint.Compiled
 import Editor.Clipboard.Model
 import Editor.Command
 import Editor.Command.Call
@@ -43,6 +42,7 @@ import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
+import Editor.Test.AtPoint
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Models
@@ -112,7 +112,10 @@ abbrev EvilDriver :=
 key is looked up in the keymaps of its view's Vim state alone, and the
 commands compiled code registers for evil (`Evil.package.registered.commands`) and for the
 minibuffer (`Minibuffer.package.registered.commands`), as the executable registers both, so
-that `/` and `?` ask and are answered, and those of `more`, each under the
+that `/` and `?` ask and are answered, and the kit's for completion at point
+(`Test.AtPoint.package.registered.commands`, `Editor/Test/AtPoint.lean`), so
+that insert state's `RET`, `TAB` and `C-g` type and quit as the package that
+ships has them do, and those of `more`, each under the
 name it is registered under, then `commands`. A
 command of `more` runs in place of one of evil's of the same name, as the
 registry's latest entry of a name does. -/
@@ -122,7 +125,7 @@ def evilHanded (more : Array Config.Registration := #[])
     command? := fun name =>
       match
         (Evil.package.registered.commands ++ Minibuffer.package.registered.commands ++
-              AtPoint.package.registered.commands ++
+              Test.AtPoint.package.registered.commands ++
               more).findRev?
           (·.name == name) with
       | some { action := .call run, .. } =>

@@ -4,15 +4,14 @@ import ConfigTest.Support.Keys
 import ConfigTest.Support.Listings
 import ConfigTest.Support.Shipped
 import Editor.Api
-import Editor.AtPoint.Compiled
 import Editor.Clipboard
 import Editor.Clipboard.InProcess
 import Editor.Command
 import Editor.Completion
 import Editor.Completion.AtPoint
+import Editor.Completion.Later
 import Editor.Config.Directory
 import Editor.Config.Elaborate
-import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Session
 import Editor.Event
@@ -606,7 +605,15 @@ are. It is judged by the same bound.
 The row at typing cadence joins nothing: the keys are sent `cadence` ms
 apart whatever the match is doing, so a key arrives while a match runs or
 while its delivery is handled, which a key typed fast meets. The bound is
-judged on it and on the joined worker row. -/
+judged on it and on the joined worker row.
+
+The insert rows complete at point through the core's test kit's at-point
+package (`withKitAtPoint`, `Editor/Test/AtPoint.lean`) and a source written
+here (`benchAtPoint`), which answers later from a job of the job model's
+(`Completion.Later.batches`) over the words the open buffers hold, and
+reads the open buffers' texts, so the snapshots are still taken. The cost of
+the shipped `words`' own gathering is not measured here: it left this bench
+with the `at-point` package. -/
 
 /-- The command of a host of the prompt benchmark: asks `Pick: ` with a
 source given as a value over `manyPaths count`. -/
@@ -618,19 +625,38 @@ def askingMany (count : Nat) : Config.Registration :=
           prompt "Pick: " { command := "picked" } ""
             [.given (.ofTexts "many" "pick" (manyPaths count))]) }
 
-/-- The `at-point` package with no use of an at-point source: what it
-registers (`Package.registered`) replayed under its name, less its uses, so
-the insert rows' host without completion at point differs from the other's
-in that alone. -/
-def atPointUnused : Package :=
-  let registered := AtPoint.package.registered
-  let replayed : Compiled :=
-    { commands := registered.commands, jobs := registered.jobs, sources := registered.sources }
-  { name := AtPoint.package.name
+/-- The words `makeWordBuffers`' buffers hold, each once: the one batch the
+job of `benchAtPoint`'s source answers. -/
+def benchWords : Array Completion.Candidate :=
+  (List.range 4999).toArray.map fun i => .ofText s!"word{i}_{i % 97}"
+
+/-- The insert rows' completion at point: the source `bench-words`, which
+answers later from its job `bench-words` (`Completion.Later.batches` over
+`benchWords`), is asked once and reads the open buffers' texts; the
+at-point source `bench-words`, the run of word characters before the
+cursor on its line completed from it, asked by itself after a pause of 240
+ms; and, when `used`, its use in every buffer, so the insert rows' host
+without completion at point differs from the other's in that alone. -/
+def benchAtPoint (used : Bool) : Package :=
+  { name := "bench-at-point"
     setup := do
-      replayed.package.setup
-      for atPoint in registered.atPoints do
-        defineAtPoint atPoint }
+      workJob "bench-words" (Completion.Later.batches #[benchWords])
+      defineSource
+          { name := "bench-words", category := "bench-words", candidates := fun _ => pure #[]
+            later := some { job := "bench-words", reask := .never, readsTexts := true } }
+      defineAtPoint
+          { name := "bench-words", pause := some 240
+            ask := fun spot => do
+              let .ok target ← spot.view.target | return none
+              let text := target.buffer.text
+              let lineStart ← text.motion .lineStart spot.offset
+              let line ← text.slice lineStart spot.offset
+              let word := String.ofList (line.toList.reverse.takeWhile wordCharacter).reverse
+              return some
+                  { start := spot.offset - word.utf8ByteSize, stop := spot.offset
+                    sources := [.source "bench-words"] } }
+      if used then
+        useAtPoint "bench-words" }
 
 /-- What the 99th percentile of a key's latency must stay under, in
 nanoseconds: 1 ms. -/
@@ -670,8 +696,8 @@ def makeWordBuffers : EditorM Unit := do
 1,000, 10,000 and 100,000 candidates listed inline (the limit lifted), and
 over 100,000 matched off the editor thread, keys joined and back to back;
 and what a word key costs in insert state under the Vim scheme that ships,
-with no at-point source, and with the shipped `words` popping up by itself
-over 20 open buffers; and what a key costs in `open-file`'s prompt over a
+with no at-point source, and with `benchAtPoint`'s source popping up by
+itself over 20 open buffers; and what a key costs in `open-file`'s prompt over a
 directory of 10,000 files; `samples` keys a row. -/
 def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   let pool := (← Job.Pool.warm Job.Pool.size 200).size
@@ -767,9 +793,10 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
       (← row 100000 Loop.inlineMatches false false).1
   -- The insert rows: a host of the Vim scheme that ships, as `withVimHost`
   -- builds one, on a fake clock of its own, with the real library, queue and
-  -- recorder; `atPoint` says whether the shipped `words` is used in every
+  -- recorder, completing at point through the kit's package and
+  -- `benchAtPoint`; `atPoint` says whether its source is used in every
   -- buffer. Each sample types two word keys, timed; with `atPoint`, moves the
-  -- clock past the pause and joins the `words` job, untimed; types four more
+  -- clock past the pause and joins the source's job, untimed; types four more
   -- word keys, timed; and leaves insert state and undoes, untimed.
   let insertRow (atPoint : Bool) : IO (Array Nat) := do
     let requests ← ids.modifyGet fun next => (next, next + 6)
@@ -779,13 +806,8 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
     let services : Job.Services :=
       { completions := waits, timers := clock.timers, fuzzy := Fuzzy.real
         snapshots := Job.realSnapshots published.reader }
-    let shippedPackages :=
-      if atPoint then shippedPackages
-      else
-        shippedPackages.map fun package =>
-          if package.name == AtPoint.package.name then atPointUnused else package
     let packages :=
-      shippedPackages.push
+      (withKitAtPoint shippedPackages ++ #[benchAtPoint atPoint]).push
         (Compiled.package
           {
             commands :=
@@ -828,7 +850,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             throw (IO.userError "no pause was armed")
           clock.advance 240
           unless (← host.join patience) == .settled do
-            throw (IO.userError "the words were not gathered")
+            throw (IO.userError "the candidates were not delivered")
         for key in ["r", "d", "1", "_"] do
           times := times.push (← timed key)
         untimed "<Escape> u"

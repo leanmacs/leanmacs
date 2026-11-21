@@ -1,5 +1,4 @@
 import Editor.Api
-import Editor.AtPoint
 import Editor.Clipboard
 import Editor.Command
 import Editor.Command.Call
@@ -12,7 +11,6 @@ import Editor.Completion.Display
 import Editor.Completion.Fake
 import Editor.Completion.Later
 import Editor.Completion.Style
-import Editor.Completion.Words
 import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
@@ -116,7 +114,9 @@ loop. `directoryChecks` also cover the reasking of a source
 (`Editor/Completion/Candidate.lean`) and what the state lists while it is
 asked again (`Editor/State.lean`), through the loop's reconciler of a
 prompt's jobs. The checks of completion at point in the loop run on the
-evil driver (`ModelTest/Support/AtPoint.lean`). The root module `ModelTest`
+evil driver (`ModelTest/Support/AtPoint.lean`), through the kit's at-point
+package (`Editor/Test/AtPoint.lean`) and at-point sources written for them,
+so nothing of the package that ships is asked. The root module `ModelTest`
 runs them; its module doc says what each shows.
 -/
 
@@ -7238,60 +7238,79 @@ def atPointLoopChecks : List Check :=
             let cancelled : Array String := quitSteps.flatMap (·.cancels)
             spawned == #[Loop.matchKey ⟨0⟩] && cancelled.contains (Loop.matchKey ⟨0⟩) },
     { name :=
-        "C-n with words starts its job under completion 0 words, with an order whose texts are snapshots of the open buffers; its batches list the words that match, and closing the session cancels the key and releases the snapshots"
+        "C-n with a source that answers later and reads the open buffers' texts starts its job under completion 0 later, with an order whose texts are snapshots of the open buffers; its batches list the candidates that match, and closing the session cancels the key and releases the snapshots"
       run :=
         pure <|
-          match atPointDriver "alpha alpine al|p" #["words"] [] with
+          match atPointDriver "alpha alpine al|p" #["later"] [] with
           | none => false
           | some driver =>
             let (asked, steps) := evilSteps driver "a C-n"
             let started : Array JobStart := steps.flatMap (·.starts)
             let order :=
-              (started.find? (·.name == Completion.Words.job)).bind fun start =>
+              (started.find? (·.name == laterJob)).bind fun start =>
                 Completion.Order.ofArguments? start.arguments
             let listed := evilDrained asked
             let closed := evilFed listed "<Escape>"
             let texts := (order.map (·.query.texts)).getD #[]
             let contents (driver : EvilDriver) (id : SnapshotId) : Option String :=
               (driver.model.texts.snapshots[id.index]?).join.map (·.contents)
-            (started.find? (·.name == Completion.Words.job)).bind (·.key) ==
-                some (Loop.sourceKey ⟨0⟩ "words") &&
+            (started.find? (·.name == laterJob)).bind (·.key) ==
+                some (Loop.sourceKey ⟨0⟩ "later") &&
               texts.toList.map (contents asked) == [some "alpha alpine alp"] &&
               (order.bind (·.query.region)) == some { start := 13, stop := 16 } &&
               sessionRows listed == #["alpha", "alpine"] &&
               closed.loop.state.atPoint.isNone &&
               texts.all (contents closed · |>.isNone) &&
-              !closed.loop.state.completionKeys.contains (Loop.sourceKey ⟨0⟩ "words") },
+              !closed.loop.state.completionKeys.contains (Loop.sourceKey ⟨0⟩ "later") },
     { name :=
-        "C-n on a word that appears nowhere else opens a session of words, and when its job lists nothing the session closes and the echo area says no completions"
+        "C-n on a word no batch of a source that answers later holds opens a session of it, and when its job lists nothing that matches the session closes and the echo area says no completions"
       run :=
         pure <|
-          match atPointDriver "xyz |" #["words"] [] with
+          match atPointDriver "xyz |" #["later"] [] with
           | none => false
           | some driver =>
             let asked := evilFed driver "a q w C-n"
             let drained := evilDrained asked
-            asked.loop.state.atPoint.map (·.source) == some "words" &&
+            asked.loop.state.atPoint.map (·.source) == some "later" &&
               drained.loop.state.atPoint.isNone &&
-              drained.loop.state.echo == AtPoint.noCompletions }]
+              drained.loop.state.echo == Completion.AtPoint.noCompletions }]
 
 /-- The checks of what a key asks of completion at point (`Loop.atPointAsks`),
 pure: a trigger's command, the pause armed, kept or withdrawn. -/
 def atPointAskChecks : List Check :=
   let paused : Completion.AtPoint := { Completion.AtPoint.silent "paused" with pause := some 100 }
-  let atPoints := [dotsAtPoint, paused, Completion.AtPoint.words]
+  let atPoints := [dotsAtPoint, paused, laterAtPoint]
   [{  name :=
+        "completion at point through an implementation written here: the kit's at-point package and an at-point source over the job model's later source, neither shipped, open a session on a trigger, list what the job answered, preview the chosen one in the region and accept it"
+      run :=
+        pure <|
+          match atPointDriver "|" #["dotted"] [{ laterAtPoint ['.'] with name := "dotted" }] with
+          | none => false
+          | some driver =>
+            let typed := evilFed driver "i a x"
+            let dotted := evilDrained (evilFed typed ".")
+            let previewed := evilFed dotted "C-n"
+            let accepted := evilFed previewed "RET"
+            typed.loop.state.atPoint.isNone &&
+              dotted.loop.state.atPoint.map (·.source) == some "dotted" &&
+              sessionChosen dotted == none &&
+              sessionRows dotted == #["alpha", "beta", "alpine"] &&
+              evilText previewed == some "ax.alpha" &&
+              sessionChosen previewed == some 0 &&
+              evilText accepted == some "ax.alpha" &&
+              accepted.loop.state.atPoint.isNone },
+    { name :=
         "a typed . with a trigger source hands back at-point-triggered with it, and a typed a none; a typed key with pause sources arms each distinct pause, and a chain with no pause keeps what is armed"
       run :=
         pure <|
-          match atPointDriver "|" #["dots", "paused", "words"] atPoints,
+          match atPointDriver "|" #["dots", "paused", "later"] atPoints,
             atPointDriver "|" #["dots"] atPoints with
           | some driver, some noPause =>
             let loop := driver.loop
             let triggered := loop.atPointAsks driver.handed (some (⟨0⟩, some "x."))
             let plain := loop.atPointAsks driver.handed (some (⟨0⟩, some "a"))
             triggered ==
-                (#[{ command := AtPoint.triggeredName, arguments := [.str "."] }],
+                (#[{ command := Completion.AtPoint.triggeredCommand, arguments := [.str "."] }],
                   .arm ⟨0⟩ #[100, 240]) &&
               plain == (#[], .arm ⟨0⟩ #[100, 240]) &&
               noPause.loop.atPointAsks noPause.handed (some (⟨0⟩, some "a")) == (#[], .keep) &&
@@ -7337,10 +7356,10 @@ def atPointByItselfChecks : List Check :=
               sessionRows dotted == #["wq", "w"] &&
               evilText dotted == some "ax." },
     { name :=
-        "typing a then b in insert state leaves the driver with one pause armed and no job; 239 ms open nothing, and one more opens a session of words, with nothing chosen; a move before the pause withdraws it, and nothing opens"
+        "typing a then b in insert state leaves the driver with one pause armed and no job; 239 ms open nothing, and one more opens a session of a source that pauses 240 ms, with nothing chosen; a move before the pause withdraws it, and nothing opens"
       run :=
         pure <|
-          match atPointDriver "alpha |" #["words"] [] with
+          match atPointDriver "alpha |" #["later"] [] with
           | none => false
           | some driver =>
             let typed := evilFed driver "a a l"
@@ -7349,24 +7368,24 @@ def atPointByItselfChecks : List Check :=
             let moved := (evilFed typed "<ArrowLeft>").pass 240
             typed.armed.size == 1 && typed.pending.isEmpty && typed.posting.isEmpty &&
               early.loop.state.atPoint.isNone &&
-              due.loop.state.atPoint.map (·.source) == some "words" &&
+              due.loop.state.atPoint.map (·.source) == some "later" &&
               sessionChosen due == none &&
               due.armed.isEmpty &&
               moved.armed.isEmpty &&
               moved.loop.state.atPoint.isNone },
     { name :=
-        "a pause on a word that appears nowhere else opens a session of words, and when its job lists nothing the session closes and the echo area is left as it was"
+        "a pause on a word no batch of a source that answers later holds opens a session of it, and when its job lists nothing that matches the session closes and the echo area is left as it was"
       run :=
         pure <|
-          match atPointDriver "xyz |" #["words"] [] with
+          match atPointDriver "xyz |" #["later"] [] with
           | none => false
           | some driver =>
             let typed := evilFed driver "a q w"
             let due := typed.pass 240
             let drained := evilDrained due
-            due.loop.state.atPoint.map (·.source) == some "words" &&
+            due.loop.state.atPoint.map (·.source) == some "later" &&
               drained.loop.state.atPoint.isNone &&
-              drained.loop.state.echo != AtPoint.noCompletions &&
+              drained.loop.state.echo != Completion.AtPoint.noCompletions &&
               drained.loop.state.echo == typed.loop.state.echo }]
 
 /-- The command `marked` of the pressed-keys checks: it says `marked`, then

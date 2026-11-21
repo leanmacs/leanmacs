@@ -1,4 +1,5 @@
 import Editor.Api
+import Editor.Completion.AtPoint
 
 /-!
 # Completion at point's commands
@@ -23,6 +24,12 @@ the operations of `Editor/Api.lean`, "Completion at point".
 | `at-point-triggered` (a character) | Nothing | `completeAtPoint (.trigger c)`, silent when nothing answers and when the session closes having shown no row |
 | `at-point-paused` (a view and milliseconds) | Nothing | When the view is focused and no prompt is open, `completeAtPoint (.pause ms)`, silent when nothing answers and when the session closes having shown no row |
 
+The last two names are the core's (`Completion.AtPoint.triggeredCommand`,
+`.pausedCommand`, `Editor/Completion/AtPoint.lean`): the loop runs the
+first and the host and the driver the second, and neither names this
+module. When a session closes having never shown a row, the loop says the
+core's `Completion.AtPoint.noCompletions`.
+
 `insert-tab` and `insert-newline` run by name, so config's commands of those
 names stay reachable from `TAB` and `RET`. What they type reaches the last
 change's recording through `retype`, and only when they ran.
@@ -34,9 +41,13 @@ change's recording through `retype`, and only when they ran.
 | A new key's command | A command here, its registration in `AtPoint.package` (`Editor/AtPoint/Compiled.lean`), and its row in `Vim.Default.insertCommands` |
 | A new way to ask | An `Occasion` (`Editor/Completion/Candidate.lean`), and a command here that asks with it |
 
-Pinned by `ModelTest.atPointChecks` (asking, on the models),
-`atPointLoopChecks` (the keys, the preview, the accept and the closing, on
-the evil driver) and `atPointRepeatChecks` (what the repeat replays).
+Pinned by `ModelTest.atPointChecks` (asking and what these commands say,
+on the evil driver over the models) and by the headless fixture `at-point`
+(the pause, the preview and the accept through the host). The loop's
+checks (`atPointLoopChecks`, `atPointRepeatChecks`, `atPointAskChecks`,
+`atPointByItselfChecks`) and `ConfigTest.atPointChecks` run the same keys on
+the core's test kit's implementation (`Editor/Test/AtPoint.lean`), so they
+do not depend on this one.
 -/
 
 namespace Editor.AtPoint
@@ -69,23 +80,20 @@ def returnName : String :=
 def quitName : String :=
   "at-point-quit"
 
-/-- The name of the command a typed trigger character runs. -/
+/-- The name of the command a typed trigger character runs: the one the
+loop runs (`Completion.AtPoint.triggeredCommand`). -/
 def triggeredName : String :=
-  "at-point-triggered"
+  Completion.AtPoint.triggeredCommand
 
-/-- The name of the command a pause that fired runs. -/
+/-- The name of the command a pause that fired runs: the one the headless
+host and the loop's driver run (`Completion.AtPoint.pausedCommand`). -/
 def pausedName : String :=
-  "at-point-paused"
+  Completion.AtPoint.pausedCommand
 
 /-- What the echo area says when a key asks and no at-point source
 answers. -/
 def nothing : String :=
   "nothing to complete at point"
-
-/-- What the echo area says when a session closes having never listed a
-candidate. -/
-def noCompletions : String :=
-  "no completions"
 
 /-- The session open in the target's window of `call`, if there is one. -/
 def sessionOf (call : Call) : EditorM (Option AtPointSession) :=
