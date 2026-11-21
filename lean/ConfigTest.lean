@@ -15,6 +15,7 @@ import ConfigTest.Editor.Extension
 import ConfigTest.Editor.Face
 import ConfigTest.Editor.Files
 import ConfigTest.Editor.Headless
+import ConfigTest.Editor.Headless.Stepped
 import ConfigTest.Editor.Indent
 import ConfigTest.Editor.Keymap
 import ConfigTest.Editor.Loop
@@ -114,6 +115,18 @@ show:
   time; a reload held at a gate when the body returns is waited for by the
   loop's end, which says so (`endWaits`) and is what lets it go; and a
   bracket given a grace fails as a hang on a loop held past it;
+- `steppedChecks`: a host stepped on the check's own thread
+  (`Headless.withStepped`, `Editor/Headless/Stepped.lean`): its lines are
+  emitted on the check's thread and no loop thread starts; a settle after a
+  reload held at a gate settles only after the install, the gate let go
+  from the wait's block; a join with a job asleep on the fake clock answers
+  working at idle, as an advance's wait with nothing due does; an event
+  posted after a round found the queue empty, the count unchanged, is
+  handled (the forced lost wake-up); it publishes the scenes a real host
+  does; a wait at its guard says the hang once; the bracket, on return and
+  on throw, cancels the jobs, waits for a held reload after `endWaits` and
+  closes the queue; and a loop a step stopped, or a turn that threw, makes
+  later waits answer ended, the turn's error thrown by the bracket;
 - `threadChecks`: the editor answers events while a file elaborates, reloads
   are serialised, and a replaced config is not retained;
 - `jobChecks`: jobs from config through the host: a handler receives a job's
@@ -374,6 +387,7 @@ def checks (context : Context) : List Check :=
     moduleFilesChecks () ++
     hostChecks context ++
     bracketChecks context ++
+    steppedChecks context ++
     threadChecks context ++
     jobChecks context ++
     idleChecks context ++

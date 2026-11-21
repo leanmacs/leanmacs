@@ -18,6 +18,7 @@ import Editor.ExecuteCommand.Compiled
 import Editor.Extension
 import Editor.FrameCommands.Compiled
 import Editor.Headless.Queue.Contract
+import Editor.Headless.Stepped
 import Editor.InputScheme.Contract
 import Editor.Job.FlushContract
 import Editor.Job.HandleContract

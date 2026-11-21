@@ -2537,9 +2537,12 @@ def Running.progress {β σ : Type} {scheme : InputScheme} (running : Running β
 will deal with a result any more, so every job is cancelled, and every pause
 and the hint delay withdrawn; and the reload job is the loop's, so the end
 waits for it, after telling `Collaborators.endWaits`, when it has not
-ended. -/
+ended: through `awaitReload`, a plain wait for its task unless a stepped
+host's bracket guards it. -/
 def Running.wind {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (running : Running β σ scheme) : IO Unit := do
+    (running : Running β σ scheme)
+    (awaitReload : Task (Except IO.Error Unit) → IO Unit := fun task => discard <| IO.wait task) :
+    IO Unit := do
   running.jobs.cancelAll
   let running ← running.withdrawPauses collaborators
   discard <| running.withdrawHints collaborators
@@ -2549,7 +2552,7 @@ def Running.wind {β σ : Type} {scheme : InputScheme} (collaborators : Collabor
   if let some task := running.reloadTask then
     unless ← IO.hasFinished task do
       collaborators.endWaits "reload"
-      discard <| IO.wait task
+      awaitReload task
 
 /-- The editor thread: pulls the editor queue and takes one turn of the loop
 for each event (`Running.turn`), until the driver ends the loop or the
