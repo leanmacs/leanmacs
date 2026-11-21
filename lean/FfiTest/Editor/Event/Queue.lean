@@ -9,8 +9,9 @@ import FfiTest.Support.Windows
 /-!
 # FFI tests: `Editor/Event/Queue.lean`
 
-The tests of `Editor/Event/Queue.lean`: `eventDecodeChecks` and `eventChecks`,
-of `Event.ofFfi` and `Event.post`. The root module `FfiTest` runs them, and each
+The tests of `Editor/Event/Queue.lean`: `eventDecodeChecks`,
+`eventEncodeChecks` and `eventChecks`, of `Event.ofFfi`, `Event.toFfi` and
+`Event.post`. The root module `FfiTest` runs them, and each
 list's own doc says what it checks.
 -/
 
@@ -265,6 +266,48 @@ def roundTrip (event : Editor.Event) : IO (Option Editor.Event) := do
     return none
   let some pulled ← pull .editor | return none
   return (Editor.Event.ofFfi pulled).toOption.map (·.event)
+
+/-- One event of each kind a window reports, with fields that each layout
+carries: what the checks of `Editor.Event.toFfi` encode. -/
+def windowKinds : List Editor.Event :=
+  [.windowOpened "x", .focus true, .focus false,
+    .key
+      { logical := .named .escape, physical := .code "Escape", modifiers := { superKey := true } }
+      true "",
+    .key { logical := .character "é", repeated := true } true "é", .compositionEnabled,
+    .preedit "´", .commit "é", .compositionDisabled, .pointer (pointerAt .press (some .primary)),
+    .pointer (pointerAt (.wheel (.pixels 0.25 8)) none),
+    .resize { width := 1920, height := 1080, scale := 1.25, fullscreen := true },
+    .openFiles ["/tmp/é x.lean"], .closeRequested, .quitRequested, .menu "undo"]
+
+/-- The checks of `Editor.Event.toFfi`, the event the library delivers for a
+window's report of an event: decoded back it is the event, unmarked, and it
+is what a post of the event through the library's window input is pulled
+back as, but for the stamp. -/
+def eventEncodeChecks (_ : Unit) : List Check :=
+  [{  name :=
+        "an event of each kind a window reports, encoded as the library delivers it, decodes back to itself, unmarked"
+      run :=
+        return windowKinds.all fun event =>
+            match Editor.Event.toFfi event with
+            | some delivered =>
+              match Editor.Event.ofFfi delivered with
+              | .ok received => received.event == event && !received.interrupt
+              | .error _ => false
+            | none => false },
+    { name :=
+        "an event of each kind a window reports, posted through the library's window input, is pulled back as its encoding but for the stamp"
+      run :=
+        windowKinds.allM fun event => do
+          unless ← Editor.Event.post event do
+            return false
+          let some pulled ← pull .editor | return false
+          return Editor.Event.toFfi event == some { pulled with stamp := 0 } },
+    { name := "an event no window reports has no encoding: a message, a completion, a parse and a quit"
+      run :=
+        return [Editor.Event.message { kind := .lean, id := 1 } 0 "",
+              .completion { kind := .library, id := 1 } 0, .parsed, .quit].all
+            fun event => (Editor.Event.toFfi event).isNone }]
 
 /-- The checks of `Editor.Event` against the real library: what Rust posts
 arrives in Lean with the same values. -/

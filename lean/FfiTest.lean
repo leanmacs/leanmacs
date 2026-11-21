@@ -104,6 +104,7 @@ def checks (_ : Unit) : List Check :=
     sceneChecks () ++
     decodeChecks () ++
     eventDecodeChecks () ++
+    eventEncodeChecks () ++
     eventChecks () ++
     interruptChecks () ++
     ffiLaunchChecks () ++

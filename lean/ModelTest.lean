@@ -81,6 +81,7 @@ import ModelTest.Editor.Fuzzy.Model
 import ModelTest.Editor.Grep.Model
 import ModelTest.Editor.Gutter
 import ModelTest.Editor.Headless.CommandLine
+import ModelTest.Editor.Headless.Queue
 import ModelTest.Editor.Highlight
 import ModelTest.Editor.Indent
 import ModelTest.Editor.InputScheme
@@ -713,6 +714,12 @@ The job system is tested here with no Rust library:
   work has not ended until it is let go, and the fake clock and watches
   idle; and the contract biting on a file service whose flush completes at
   its call;
+- `queueContractChecks`: the editor queue port's contract
+  (`Editor/Headless/Queue/Contract.lean`) held of the in-memory queue
+  (`Queue.Memory`), as `contract-test` holds it of the library's editor
+  queue; and `queueMemoryChecks`, what only the memory queue has: its
+  next-push task ends at the next push and not before, and a push after
+  its close is refused;
 - `handleContractChecks`: the contract of a file request's handle
   (`Editor/Job/HandleContract.lean`) on the fake file service, held by its
   held completions: a held request's handle has not ended until it is let
@@ -1491,6 +1498,8 @@ def checks : List Check :=
     activityRunnerChecks ++
     flushContractChecks ++
     handleContractChecks ++
+    queueContractChecks ++
+    queueMemoryChecks ++
     tableChecks ++
     ownerChecks ++
     fileRunnerChecks ++

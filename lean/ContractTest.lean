@@ -9,6 +9,8 @@ import ContractTest.Editor.Display.Recorder
 import ContractTest.Editor.File.Cases
 import ContractTest.Editor.Fuzzy.Contract
 import ContractTest.Editor.Fuzzy.Real
+import ContractTest.Editor.Headless.Queue.Contract
+import ContractTest.Editor.Headless.Queue.Real
 import ContractTest.Editor.Job.Contract
 import ContractTest.Editor.Job.FlushContract
 import ContractTest.Editor.Job.HandleContract
@@ -148,6 +150,13 @@ only `main`, which runs them in the order its doc gives.
   not ended until the worker is let go, then ends with its reply, and a
   dropped handle's reply is still taken, so the service keeps nothing.
   `model-test` runs it against the fake file service.
+- The editor queue port's contract (`Editor/Headless/Queue/Contract.lean`,
+  `queueContractChecks`) against its real binding, the library's editor
+  queue (`Queue.library`, `Editor/Headless/Queue/Real.lean`), its posts
+  taken back with pulls of the editor queue; `model-test` runs it against
+  the in-memory queue. Beside it, what only the real binding shows
+  (`queueRealChecks`): what the library hands back for a post is
+  `Posted.toFfi` of it, which a stepped host's queue holds in its place.
 - The bracket a check's temporary directory lives in
   (`Editor/Test/Linked/Services.lean`, `linkedServicesChecks`) over the
   real file service, held by the same hold: the directory is removed only
@@ -384,6 +393,8 @@ def main (arguments : List String) : IO UInt32 := do
   let flushContractFailed ← ContractTest.checkFailures flushContractChecks
   let handleContractChecks := ContractTest.handleContractChecks services
   let handleContractFailed ← ContractTest.checkFailures handleContractChecks
+  let queueContractFailed ← ContractTest.checkFailures ContractTest.queueContractChecks
+  let queueRealFailed ← ContractTest.checkFailures ContractTest.queueRealChecks
   let linkedServicesChecks := ContractTest.linkedServicesChecks services
   let linkedServicesFailed ← ContractTest.checkFailures linkedServicesChecks
   let environmentChecks := ContractTest.environmentChecks services fixtures
@@ -457,6 +468,8 @@ def main (arguments : List String) : IO UInt32 := do
       processCheckFailed ++
       flushContractFailed ++
       handleContractFailed ++
+      queueContractFailed ++
+      queueRealFailed ++
       linkedServicesFailed ++
       environmentFailed ++
       workspaceFailed ++

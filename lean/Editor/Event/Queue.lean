@@ -362,32 +362,49 @@ def Event.ofFfi (event : Ffi.Event) : Except String Received := do
       throw s!"{repr kind} has no code {code}"
   return { event := decoded, stamp := event.stamp, interrupt }
 
-/-- Posts `event` to the editor queue as the process's window would report it,
-through the library's window input (`Ffi.postInput`), so that it takes the
-same encoding path a real window's input does. `false` when it was not
-queued: a message, a completion, a parse delivered and a quit are not a
-window's, and are never posted; nor is anything once the queues are quit. -/
-def Event.post : Event → IO Bool
-  | .windowOpened platform => Ffi.postInput .windowOpened 0 platform #[]
-  | .focus gained => Ffi.postInput .windowFocus (if gained then 1 else 0) "" #[]
+/-- The event the library delivers for a window's report of `event`: from the
+window number 1, with its kind, code, text and words as the layouts of the
+window input have them (the table in `crates/editor-ffi/src/window.rs`), not
+marked as the interrupt key, and with no stamp. A stepped host's queue holds
+it in place of the library's event (`Editor/Headless/Stepped.lean`). `none`
+for an event no window reports: a message, a completion, a parse delivered
+and a quit. -/
+def Event.toFfi (event : Event) : Option Ffi.Event :=
+  let window (kind : Ffi.EventKind) (code : UInt64) (text : String) (words : Array UInt64) :
+    Option Ffi.Event :=
+    some { source := { kind := .window, id := 1 }, kind, code, text, stamp := 0, words }
+  match event with
+  | .windowOpened platform => window .windowOpened 0 platform #[]
+  | .focus gained => window .windowFocus (if gained then 1 else 0) "" #[]
   | .key which pressed text =>
-    Ffi.postInput .key (EventWords.keyCode which pressed) text (EventWords.keyWords which)
-  | .compositionEnabled => Ffi.postInput .composition 0 "" #[]
-  | .preedit text => Ffi.postInput .composition 1 text #[]
-  | .commit text => Ffi.postInput .composition 2 text #[]
-  | .compositionDisabled => Ffi.postInput .composition 3 "" #[]
+    window .key (EventWords.keyCode which pressed) text (EventWords.keyWords which)
+  | .compositionEnabled => window .composition 0 "" #[]
+  | .preedit text => window .composition 1 text #[]
+  | .commit text => window .composition 2 text #[]
+  | .compositionDisabled => window .composition 3 "" #[]
   | .pointer what =>
     let (code, words) := EventWords.pointerWords what
-    Ffi.postInput .pointer code "" words
+    window .pointer code "" words
   | .resize size =>
-    Ffi.postInput .resize (if size.fullscreen then 1 else 0) ""
+    window .resize (if size.fullscreen then 1 else 0) ""
       #[size.width.toUInt64, size.height.toUInt64, size.scale.toBits, size.corner.toUInt64,
         size.top.toUInt64]
-  | .closeRequested => Ffi.postInput .closeRequested 0 "" #[]
-  | .openFiles paths => Ffi.postInput .openFiles 0 "" (EventWords.pathWords paths)
-  | .quitRequested => Ffi.postInput .quitRequested 0 "" #[]
-  | .menu command => Ffi.postInput .menu 0 command #[]
-  | .message .. | .completion .. | .parsed | .quit => pure false
+  | .closeRequested => window .closeRequested 0 "" #[]
+  | .openFiles paths => window .openFiles 0 "" (EventWords.pathWords paths)
+  | .quitRequested => window .quitRequested 0 "" #[]
+  | .menu command => window .menu 0 command #[]
+  | .message .. | .completion .. | .parsed | .quit => none
+
+/-- Posts `event` to the editor queue as the process's window would report it,
+through the library's window input (`Ffi.postInput`), so that it takes the
+same encoding path a real window's input does: the kind, code, text and
+words of its encoding (`Event.toFfi`). `false` when it was not
+queued: a message, a completion, a parse delivered and a quit are not a
+window's, and are never posted; nor is anything once the queues are quit. -/
+def Event.post (event : Event) : IO Bool :=
+  match event.toFfi with
+  | some delivered => Ffi.postInput delivered.kind delivered.code delivered.text delivered.words
+  | none => pure false
 
 /-- Tells the library which key is the interrupt key, or that there is none:
 from then on a press of that key, as a chord names it, raises the library's

@@ -9,6 +9,7 @@ import Editor.Display.Real
 import Editor.Display.Recorder
 import Editor.Event.Queue
 import Editor.Headless.CommandLine
+import Editor.Headless.Queue.Real
 import Editor.InputScheme.Vim.Default
 import Editor.Job.Fake
 import Editor.Job.Jobs
@@ -1134,6 +1135,11 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   a host stepped on its caller's thread never calls it. The default does
   nothing. -/
   loopStarted : IO Unit := pure ()
+  /-- The editor queue the host's posters post to (`Editor/Headless/Queue.lean`):
+  the library's (`Queue.library`), which the real loop pulls. Only a stepped
+  host's bracket changes it (`Editor/Headless/Stepped.lean`), to the memory
+  queue it drains; a real host refuses a queue a stepper pulls (`start`). -/
+  queue : Queue := Queue.library
   /-- How this run was launched and what a restart hands on
   (`Restart.Launch`), which `start` writes into the editor state
   (`EditorState.launch`). The executable's hosts read it from the command
@@ -1159,7 +1165,7 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   dispose : IO Unit := pure ()
 
 /-- Posts an event under `source`, with `code` and `text`, to the editor
-queue, under a unit of the host's activity (`Job.Activity`; "The idle
+queue (`Collaborators.queue`), under a unit of the host's activity (`Job.Activity`; "The idle
 signal", in the module docs): the unit is taken before the post and given
 back by the loop once it has handled the event (`Collaborators.counts`,
 `loop`), or here at once when the queue refuses it, which it does once the
@@ -1169,8 +1175,7 @@ def Collaborators.postCounted {β σ : Type} {scheme : InputScheme}
     BaseIO Bool := do
   let activity := collaborators.services.activity
   activity.begin
-  let posted ←
-    (Ffi.postEvent .editor source code text : IO Bool).catchExceptions fun _ => pure false
+  let posted ← collaborators.queue.post { source, code, text }
   unless posted do
     activity.done
   return posted
@@ -3813,12 +3818,12 @@ def shippedOver (packages : Array Package) (base : Array Lean.Name) (sysroot : S
 
 /-- The environments every job of a host shares, over `state`
 (`Job.sharedEnvironments`), which report what they have to say by posting it
-to the editor queue under the Lean source id `source`: the host's editor
+to the editor queue `queue`, the library's unless a stepped host's is
+handed, under the Lean source id `source`: the host's editor
 thread then says it in the echo area (`Collaborators.environment`). -/
-def reportedEnvironments (state : IO.Ref Process.Environments) (source : UInt64) :
-    Job.Environments :=
-  Job.sharedEnvironments state fun text =>
-    (discard <| Ffi.postEvent .editor source 0 text : IO Unit).catchExceptions fun _ => pure ()
+def reportedEnvironments (state : IO.Ref Process.Environments) (source : UInt64)
+    (queue : Queue := Queue.library) : Job.Environments :=
+  Job.sharedEnvironments state fun text => discard <| queue.post { source, code := 0, text }
 
 /-- The collaborators the executable's hosts are made of, the headless
 mode's and the window mode's, with `packages` as the packages the host
@@ -3866,7 +3871,7 @@ def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : Strin
         fileWatches := Job.realFileWatches completions watches
         diffs := Job.realDiffs completions published.reader held refusedDiffs
         greps := Job.realGreps completions published.reader held greps
-        environments := reportedEnvironments environments 4, fuzzy := Fuzzy.real
+        environments := reportedEnvironments environments 4 Queue.library, fuzzy := Fuzzy.real
         snapshots := Job.realSnapshots published.reader } published held files stateDirectory
   return { collaborators with clock }
 
