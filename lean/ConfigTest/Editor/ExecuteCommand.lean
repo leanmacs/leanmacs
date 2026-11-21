@@ -6,7 +6,6 @@ import ConfigTest.Support.Lines
 import ConfigTest.Support.Themes
 import Editor.BindingSearch.Compiled
 import Editor.Config.Packages
-import Editor.Event
 import Editor.ExecuteCommand.Compiled
 import Editor.Themes.Compiled
 
@@ -68,18 +67,16 @@ def commandPromptChecks (context : Context) : List Check :=
   [{  name :=
         "criteria 1, 2 and 3: the command prompt lists the commands compiled code registers and config's, config's in the order registered; a reload whose config no longer registers zz-mine drops it from the candidates; from a config that binds neither execute-command nor load-theme, calling execute-command, accepting load-theme and then fixture-dark puts that theme in force, as the scene line names it; a config command bound to SPC f f shows SPC f f as its annotation; the binding search lists SPC y y with its command and description, and accepting it runs yy-said"
       run :=
-        withRealHost context [("init.lean", commandText true)]
+        withHost context [("init.lean", commandText true)]
           (fun session => do
             let asked (typed : String) : IO (Array String) := do
               session.ask [.run ExecuteCommand.name]
-              unless ← Event.post (.commit typed) do
-                return #[]
+              session.commit typed
               let asking ← session.sceneLines
               session.pressKeys cancelKeys
               return asking
             let answered (typed : String) : IO Bool := do
-              unless ← Event.post (.commit typed) do
-                return false
+              session.commit typed
               session.pressKeys acceptKeys
               return true
             let drawnIn : IO String := do
@@ -98,8 +95,7 @@ def commandPromptChecks (context : Context) : List Check :=
               return false
             let after ← drawnIn
             session.ask [.run BindingSearch.name]
-            unless ← Event.post (.commit "SPC y") do
-              return false
+            session.commit "SPC y"
             let searching ← session.sceneLines
             session.pressKeys acceptKeys
             let said := (← session.scene).1

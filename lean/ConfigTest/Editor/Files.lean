@@ -14,7 +14,6 @@ import Editor.Config.Elaborate
 import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Event
-import Editor.Event.Queue
 import Editor.Ex.Line
 import Editor.Face
 import Editor.Ffi.Snapshot
@@ -600,14 +599,13 @@ def listingsStarted (output : Array String) : Nat :=
 /-- Runs `check` on a host under the Vim scheme over `promptFiles`, with
 `open-file` run, its listing of `/` waited for, `w/` committed after its
 `/`, and the listing of `/w/` waited for. -/
-def atW (context : Context) (check : RealSession → IO Bool) : IO Bool :=
-  withRealVimHost context [] (fileModel := some promptFiles) fun session => do
+def atW (context : Context) (check : Session → IO Bool) : IO Bool :=
+  withVimHost context [] (fileModel := some promptFiles) fun session => do
     session.ask [.run Files.openName]
-    unless (← session.host.join patience) == .settled do
+    unless (← session.join) == .settled do
       return false
-    unless ← Event.post (.commit "w/") do
-      return false
-    unless (← session.host.join patience) == .settled do
+    session.commit "w/"
+    unless (← session.join) == .settled do
       return false
     check session
 
@@ -649,7 +647,7 @@ def filePromptChecks (context : Context) : List Check :=
           let before := listingsStarted (← session.output.get)
           session.typed "n o TAB"
           let inserted ← session.sceneLines
-          unless (← session.host.join patience) == .settled do
+          unless (← session.join) == .settled do
             return false
           session.typed "t"
           let typed ← session.sceneLines
@@ -661,17 +659,16 @@ def filePromptChecks (context : Context) : List Check :=
         withFiles context fun directory => do
           IO.FS.writeFile (directory / "alpha.txt") "alpha\n"
           IO.FS.writeFile (directory / "alps.md") "alps\n"
-          withRealVimHost context [] (realFiles := true) fun session => do
+          withVimHost context [] (realFiles := true) fun session => do
               session.ask [.run Files.openName]
-              unless (← session.host.join patience) == .settled do
+              unless (← session.join) == .settled do
                 return false
-              unless ← Event.post (.commit s!"{directory}/") do
-                return false
-              unless (← session.host.join patience) == .settled do
+              session.commit s!"{directory}/"
+              unless (← session.join) == .settled do
                 return false
               let some first := (← realOrder "al" #["alpha.txt", "alps.md"])[0]? | return false
               session.typed "a l C-n RET"
-              unless (← session.host.join patience) == .settled do
+              unless (← session.join) == .settled do
                 return false
               let lines ← session.sceneLines
               let text := if first == "alpha.txt" then "alpha\n" else "alps\n"
@@ -692,19 +689,18 @@ def filePromptChecks (context : Context) : List Check :=
           IO.FS.writeFile (home / "alpha.txt") "alpha\n"
           IO.FS.createDir (home / "notes")
           IO.FS.writeFile (home / "notes" / "todo.md") "todo\n"
-          withRealVimHost context [] (realFiles := true) (workingDirectory := home / "notes")
-              (home := some home) fun session => do
+          withVimHost context [] (realFiles := true) (workingDirectory := home / "notes") (home :=
+              some home) fun session => do
               session.ask [.run Files.openName]
-              unless (← session.host.join patience) == .settled do
+              unless (← session.join) == .settled do
                 return false
               let asked ← session.sceneLines
               session.typed "C-u"
-              unless ← Event.post (.commit "~/alpha.txt") do
-                return false
-              unless (← session.host.join patience) == .settled do
+              session.commit "~/alpha.txt"
+              unless (← session.join) == .settled do
                 return false
               session.typed "RET"
-              unless (← session.host.join patience) == .settled do
+              unless (← session.join) == .settled do
                 return false
               let lines ← session.sceneLines
               return minibufferHolds asked "~/notes/" && listLabels asked == ["todo.md"] &&
@@ -717,18 +713,17 @@ def filePromptChecks (context : Context) : List Check :=
     { name :=
         "AC 6 over the recorder: committing w/locked/ says files: cannot list /w/locked/: the file system does not allow it in the echo area and lists nothing; RET then says the load's refusal, and no prompt is left open"
       run :=
-        withRealVimHost context [] (fileModel := some promptFiles) fun session => do
+        withVimHost context [] (fileModel := some promptFiles) fun session => do
           session.ask [.run Files.openName]
-          unless (← session.host.join patience) == .settled do
+          unless (← session.join) == .settled do
             return false
-          unless ← Event.post (.commit "w/locked/") do
-            return false
-          unless (← session.host.join patience) == .settled do
+          session.commit "w/locked/"
+          unless (← session.join) == .settled do
             return false
           let lines ← session.sceneLines
           let (echo, _) ← session.scene
           session.typed "RET"
-          unless (← session.host.join patience) == .settled do
+          unless (← session.join) == .settled do
             return false
           let (after, views) ← session.scene
           return echo == "files: cannot list /w/locked/: the file system does not allow it".quote &&
@@ -739,7 +734,7 @@ def filePromptChecks (context : Context) : List Check :=
     { name :=
         "AC 5: under the Vim scheme, in a prompt that is not a file prompt, C-n C-n TAB puts the second listed candidate in the minibuffer with the bar at its end, not the first; e TAB puts the first listed for e; the prompt stays open, its status line and the list view still drawn, and nothing is refused"
       run :=
-        withRealVimHost context [("init.lean", pickText)] fun session => do
+        withVimHost context [("init.lean", pickText)] fun session => do
           session.ask [.reload]
           let listed ← realOrder "" #["wq", "edit", "w"]
           let some second := listed[1]? | return false

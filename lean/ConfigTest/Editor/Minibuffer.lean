@@ -19,7 +19,6 @@ import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Display
 import Editor.Event
-import Editor.Event.Queue
 import Editor.Face
 import Editor.Fuzzy
 import Editor.Fuzzy.Real
@@ -299,11 +298,10 @@ def promptChecks (context : Context) : List Check :=
   [{  name :=
         "a command asks for a prompt and a text is committed: the scene has the window's view and the minibuffer's, whose line holds the initial value and the committed text and whose status line is the prompt text, the minibuffer's view is the focused one, and show lists the minibuffer's text; after the accept key the echo area is the continuation's with the answer, which it inserted in the asking window, there is one view, with the focus, and the minibuffer's text is listed no more"
       run :=
-        withRealHost context []
+        withHost context []
           (fun session => do
             session.ask [.run "ask"]
-            unless ← Event.post (.commit "!") do
-              return false
+            session.commit "!"
             let asking ← session.sceneLines
             let listed ← session.shown
             session.pressKeys acceptKeys
@@ -325,11 +323,10 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "the cancel key in place of the accept key: the continuation's command does not run, the echo area is empty, there is one view, the window's, as it was and with the focus, and the minibuffer's text is listed no more; the scene published after that one has an empty echo area too, so the library refused neither the release of the minibuffer's text nor, after it, that of the snapshot the last scene named"
       run :=
-        withRealHost context []
+        withHost context []
           (fun session => do
             session.ask [.run "ask"]
-            unless ← Event.post (.commit "!") do
-              return false
+            session.commit "!"
             session.pressKeys cancelKeys
             let cancelled ← session.sceneLines
             -- The scene request was followed by a scene of its own: a
@@ -350,14 +347,14 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "a job completes while a prompt is open, on the fake clock: once the clock lets it go the host prints that its command ran, the window shows what that command inserted, and the scene still has the minibuffer's view, with the focus; the accept key afterwards runs the continuation's command"
       run :=
-        withRealHost context []
+        withHost context []
           (fun session => do
             session.ask [.run "rest-and-ask"]
-            unless ← eventually (return (← session.clock.waiting) == 1) do
+            unless (← session.join) == .working && (← session.clock.waiting) == 1 do
               return false
             let before ← session.output.get
             session.clock.advance 10
-            let joined ← session.host.join patience
+            let joined ← session.join
             let delivered := (← session.output.get).extract before.size
             let waiting ← session.sceneLines
             session.pressKeys acceptKeys
@@ -375,7 +372,7 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "the continuation is looked up when the answer arrives: config registers it as a command that is given its call, a prompt is asked for, config is reloaded with another command of the name, and the accept key runs the new one with the answer; asked for again and reloaded with a config that registers none, the accept key leaves no such command in the echo area, by the continuation's name, and the prompt closed"
       run :=
-        withRealHost context [("init.lean", greetWithText "one")]
+        withHost context [("init.lean", greetWithText "one")]
           (fun session => do
             session.ask [.reload]
             session.ask [.run "ask"]
@@ -396,11 +393,11 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "the accept key and a key bound to another command, sent one after the other with no wait between: the continuation's command ran, since the window holds what it inserted, and it ran before the second key was handled, since the echo area is the other command's"
       run :=
-        withRealHost context []
+        withHost context []
           (fun session => do
             session.ask [.run "ask"]
             for key in acceptKeys do
-              session.host.press key
+              session.press key
             session.type "C-c o"
             session.ask []
             return (← session.scene) == ("other".quote, #[viewLine "Ada" 3]))
@@ -408,7 +405,7 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "the answer's command is a step of its own, looked up after the accepting command's write was written back: with a store, a command over it that accepts the open prompt and adds one, and a continuation over it that adds one, the store holds two after the accept"
       run :=
-        withRealHost context [("init.lean", bumpAcceptText)]
+        withHost context [("init.lean", bumpAcceptText)]
           (fun session => do
             session.ask [.reload]
             session.ask [.run "ask", .run "bump-accept"]
@@ -419,12 +416,11 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "a completion source config registers supplies the candidates of a prompt that asks for it by name: after `w` is committed the minibuffer's status line is the label and the candidate list `w` and `wq`, the candidates the library's matcher lists; reloaded with a config that registers no such source, the same ask opens no prompt, leaves one view and refuses no step"
       run :=
-        withRealHost context [("init.lean", sourceText true)]
+        withHost context [("init.lean", sourceText true)]
           (fun session => do
             session.ask [.reload]
             session.ask [.run "pick"]
-            unless ← Event.post (.commit "w") do
-              return false
+            session.commit "w"
             let asking ← session.sceneLines
             session.pressKeys cancelKeys
             session.write "init.lean" (sourceText false)
@@ -442,13 +438,12 @@ def promptChecks (context : Context) : List Check :=
         -- compared from their fields on, whichever view they are of.
         let lists (asking : Array String) (candidate : String) : Bool :=
           listsAfter asking "Theme: " [candidate]
-        withRealHost context [("init.lean", shippedSourceText false)]
+        withHost context [("init.lean", shippedSourceText false)]
             (fun session => do
               let asked (query : String) : IO (Array String) := do
                 session.ask [.reload]
                 session.ask [.run "pick-theme"]
-                unless ← Event.post (.commit query) do
-                  return #[]
+                session.commit query
                 let asking ← session.sceneLines
                 session.pressKeys cancelKeys
                 return asking
@@ -464,13 +459,12 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "criterion 3: a config that chooses orderless for the category pick lists a pick prompt by it and every other by the default: after `w` is committed the pick prompt lists `wq`, `rewrite` and `w`, the candidates' own order, and a prompt of another category lists the same three with `w` first, the library's matcher's; reloaded with a config that chooses no style, the pick prompt lists `w` first too"
       run :=
-        withRealHost context [("init.lean", styleText ["useStyleFor \"pick\" \"orderless\""])]
+        withHost context [("init.lean", styleText ["useStyleFor \"pick\" \"orderless\""])]
           (fun session => do
             let asked (command : String) : IO (Array String) := do
               session.ask [.reload]
               session.ask [.run command]
-              unless ← Event.post (.commit "w") do
-                return #[]
+              session.commit "w"
               let asking ← session.sceneLines
               session.pressKeys cancelKeys
               return asking
@@ -488,13 +482,12 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "a category's compiled default sits between config's two choices, through the real elaborator: with compiled code giving pick the orderless style and config choosing nothing, the pick prompt lists `wq`, `rewrite` and `w` and another prompt `w` first; config's `useStyle \"fuzzy\"` leaves pick on orderless; config's `useStyleFor \"pick\" \"fuzzy\"` lists `w` first"
       run :=
-        withRealHost context [("init.lean", styleText [])]
+        withHost context [("init.lean", styleText [])]
           (fun session => do
             let asked (command : String) : IO (Array String) := do
               session.ask [.reload]
               session.ask [.run command]
-              unless ← Event.post (.commit "w") do
-                return #[]
+              session.commit "w"
               let asking ← session.sceneLines
               session.pressKeys cancelKeys
               return asking
@@ -517,12 +510,11 @@ def promptChecks (context : Context) : List Check :=
       run :=
         let defines :=
           "defineStyle (.keeping \"starts\" fun text candidate => candidate.startsWith text)"
-        withRealHost context [("init.lean", styleText [defines, "useStyle \"starts\""])]
+        withHost context [("init.lean", styleText [defines, "useStyle \"starts\""])]
           (fun session => do
             let asked (command : String) : IO (Array String) := do
               session.ask [.run command]
-              unless ← Event.post (.commit "w") do
-                return #[]
+              session.commit "w"
               let asking ← session.sceneLines
               session.pressKeys cancelKeys
               return asking
@@ -543,7 +535,7 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "a config that chooses a style and a display nobody registered says so on a report line each, the display's after the style's"
       run :=
-        withRealHost context [("init.lean", styleText [])]
+        withHost context [("init.lean", styleText [])]
           (fun session => do
             session.ask [.reload]
             session.write "init.lean"
@@ -561,7 +553,7 @@ def promptChecks (context : Context) : List Check :=
       run :=
         let more := "defineSource (.ofTexts \"more\" \"buffer\" #[\"zz-extra\"])"
         let mine := "defineSource (.ofTexts \"buffers\" \"buffer\" #[\"mine\"])"
-        withRealHost context [("init.lean", bufferStyleText [more])]
+        withHost context [("init.lean", bufferStyleText [more])]
           (fun session => do
             let asked : IO (Array String) := do
               session.ask [.reload]
@@ -591,13 +583,12 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "with config choosing orderless for buffer, a text of two components that is no buffer's name, typed into switch-buffer and accepted with nothing chosen, shows the first buffer the prompt lists for it, though the fuzzy matcher matches it with no name"
       run :=
-        withRealHost context [("init.lean", bufferStyleText [] ["mars.txt", "main.rs"])]
+        withHost context [("init.lean", bufferStyleText [] ["mars.txt", "main.rs"])]
           (fun session => do
             session.ask [.reload]
             session.ask [.run "make"]
             session.ask [.run Buffers.switchName]
-            unless ← Event.post (.commit "rs ma") do
-              return false
+            session.commit "rs ma"
             let typed ← session.sceneLines
             session.pressKeys acceptKeys
             let accepted ← session.sceneLines
@@ -611,16 +602,16 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "criterion 1 over the recorder: a prompt asked with a source that answers later, from a compiled job that delivers two batches 10 ms apart on the fake clock, lists the first batch once it has arrived, in the library's order, and both once the job has ended; no step is refused"
       run :=
-        withRealHost context []
+        withHost context []
           (fun session => do
             session.ask [.run "ask-later"]
             -- The job has posted its first batch, whose event is queued, and
             -- is in its sleep.
-            unless ← eventually (return (← session.clock.waiting) == 1) do
+            unless (← session.join) == .working && (← session.clock.waiting) == 1 do
               return false
             let first ← session.sceneLines
             session.clock.advance 10
-            unless (← session.host.join patience) == .settled do
+            unless (← session.join) == .settled do
               return false
             let both ← session.sceneLines
             return listsAfter first "Pick: " (← realOrder "" #["wq", "edit"]) &&
@@ -630,20 +621,19 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "a source that answers later, from a job config registers with sourceJob, on the real elaborator: its prompt lists the job's answer for the initial text; after a key the job is asked again, after the source's pause, and the prompt lists its answer for the typed text"
       run :=
-        withRealHost context [("init.lean", echoSourceText)]
+        withHost context [("init.lean", echoSourceText)]
           (fun session => do
             session.ask [.reload]
             session.ask [.run "pick"]
-            unless (← session.host.join patience) == .settled do
+            unless (← session.join) == .settled do
               return false
             let asked ← session.sceneLines
-            unless ← Event.post (.commit "w") do
-              return false
+            session.commit "w"
             -- The job started again for the typed text sleeps its pause.
-            unless ← eventually (return (← session.clock.waiting) == 1) do
+            unless (← session.join) == .working && (← session.clock.waiting) == 1 do
               return false
             session.clock.advance 20
-            unless (← session.host.join patience) == .settled do
+            unless (← session.join) == .settled do
               return false
             let typed ← session.sceneLines
             return listsAfter asked "Pick: " ["!"] && listsAfter typed "Pick: " ["w!"] &&
@@ -653,22 +643,22 @@ def promptChecks (context : Context) : List Check :=
         "criterion 4 on the host: in a prompt over 100,000 candidates, with the matcher held, each of five keys committed one after another is handled and its scene shows the minibuffer with it, while the one match started at the ask is held; once the matcher answers, the listing is the library's first ten for the whole typed text, from a second match started for it"
       run := do
         let gate ← IO.Promise.new
-        withRealHost context []
+        withHost context []
             (fun session => do
               try
                 session.ask [.run "ask-many"]
                 let mut typed := ""
                 let mut handled := true
                 for key in ["f", "i", "l", "e", "7"] do
-                  session.host.commit key
+                  session.commit key
                   typed := typed ++ key
-                  unless ← session.host.settle patience do
+                  unless ← session.settle do
                     handled := false
                   unless (← session.sceneLines).contains (minibufferLine typed typed.length) do
                     handled := false
                 let held := matchJobs (← session.output.get) "started"
                 gate.resolve ()
-                unless (← session.host.join patience) == .settled do
+                unless (← session.join) == .settled do
                   return false
                 let listed ← session.sceneLines
                 let expected := (← realOrder typed (manyPaths 100000)).take Completion.Displays.rows
@@ -683,7 +673,7 @@ def promptChecks (context : Context) : List Check :=
         "a reload that installs while a match of config's style is held cancels that match before the reload is reported, and the scene after the install, with no key typed, starts a match with the new config's style; once the matcher answers, the listing is the new style's, and the first match never delivered"
       run := do
         let gate ← IO.Promise.new
-        withRealHost context [("init.lean", slowStyleText "slow")]
+        withHost context [("init.lean", slowStyleText "slow")]
             (fun session => do
               try
                 session.ask [.reload]
@@ -695,7 +685,7 @@ def promptChecks (context : Context) : List Check :=
                 session.ask [.reload]
                 let reloaded ← session.output.get
                 gate.resolve ()
-                unless (← session.host.join patience) == .settled do
+                unless (← session.join) == .settled do
                   return false
                 let listed ← session.sceneLines
                 let output ← session.output.get
@@ -717,9 +707,9 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "criterion 1: a prompt lists its candidates one a row in a view of their own, up to the rows config's display sets, the chosen one in its face: at 640 by 480, with config's minibuffer display of three rows, a prompt of five lists the library's first three, each row in the candidate face, the minibuffer's status line the label alone; after the next-item key the first row is in the chosen face"
       run :=
-        withRealHost context [("init.lean", rowsText)]
+        withHost context [("init.lean", rowsText)]
           (fun session => do
-            session.host.resize 640 480
+            session.resize 640 480
             session.ask [.reload]
             session.ask [.run "pick"]
             let asking ← session.sceneLines
@@ -748,16 +738,15 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "criterion 3: closing a prompt gives the windows above back the height its list took: at 640 by 480, with config's display of three rows, the window is the frame less the bottom row before the prompt, less the input and three rows too while it lists three, with the list's view directly above the minibuffer's, and stays so once a text cuts the matches to one, which the list then shows alone; after the cancel key, and after accepting, the window has its height back and no list view is in the scene"
       run :=
-        withRealHost context [("init.lean", rowsText)]
+        withHost context [("init.lean", rowsText)]
           (fun session => do
-            session.host.resize 640 480
+            session.resize 640 480
             session.ask [.reload]
             session.ask []
             let before ← session.sceneLines
             session.ask [.run "pick"]
             let asking ← session.sceneLines
-            unless ← Event.post (.commit "ed") do
-              return false
+            session.commit "ed"
             let cut ← session.sceneLines
             session.pressKeys cancelKeys
             session.ask []
@@ -797,12 +786,11 @@ def promptChecks (context : Context) : List Check :=
           styleText
             ["defineDisplay (Completion.Display.plain \"plain\")",
               "useDisplayFor \"pick\" \"plain\""]
-        withRealHost context [("init.lean", choosing)]
+        withHost context [("init.lean", choosing)]
           (fun session => do
             let asked (command : String) : IO (Array String) := do
               session.ask [.run command]
-              unless ← Event.post (.commit "w") do
-                return #[]
+              session.commit "w"
               session.sceneLines
             session.ask [.reload]
             let pick ← asked "pick"
@@ -828,11 +816,10 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "criterion 4: a candidate's annotation is drawn in a column beside its text and its matched ranges in their face: after `al` is committed the list shows the library's order of the candidates it matches, each padded to the longest one's length and the gap with its annotation after, `zz` not among them; each row is in the candidate face, its in-order spans in the match face and its annotation in the annotation face"
       run :=
-        withRealHost context []
+        withHost context []
           (fun session => do
             session.ask [.run "ask-annotated"]
-            unless ← Event.post (.commit "al") do
-              return false
+            session.commit "al"
             let lines ← session.sceneLines
             let listed ← realOrder "al" (annotatedCandidates.map (·.text))
             let annotationOf (text : String) : String :=

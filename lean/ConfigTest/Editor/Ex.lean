@@ -3,8 +3,6 @@ import ConfigTest.Support.Configs
 import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
-import Editor.Event
-import Editor.Event.Queue
 import Editor.Ex
 import Editor.Files
 import Editor.Fuzzy.Real
@@ -25,11 +23,10 @@ open Editor
 /-- Runs `line` on the ex line: the ex command is run by its name, which
 asks, `line` is committed into the minibuffer, and the accept key is
 pressed. Waits until the editor thread has handled them and no reload is
-running. `false` if the commit was refused. -/
+running. `true`: a commit the queue refused throws. -/
 def Session.exLine (session : Session) (line : String) : IO Bool := do
   session.ask [.run Ex.name]
-  unless ← Event.post (.commit line) do
-    return false
+  session.commit line
   session.pressKeys acceptKeys
   return true
 
@@ -79,7 +76,7 @@ def exChecks (context : Context) : List Check :=
   [{  name :=
         "criterion 3: a config binds a key to a command and the key runs it; the config's file is changed to bind the key to another command and the ex line reload is run: the host reloads, with no restart, and the key then runs the other command"
       run :=
-        withRealHost context [("init.lean", sayingText "one")]
+        withHost context [("init.lean", sayingText "one")]
           (fun session => do
             session.ask [.reload]
             session.typed "C-c t"
@@ -99,7 +96,7 @@ def exChecks (context : Context) : List Check :=
     { name :=
         "criterion 4: config binds an ex name to a command of its own, and the name run on the ex line runs that command with the rest of the line; after a reload of a config without the binding the name is not an ex command, by the ex line's message"
       run :=
-        withRealHost context [("init.lean", greetExText true)]
+        withHost context [("init.lean", greetExText true)]
           (fun session => do
             session.ask [.reload]
             unless ← session.exLine "greet Ada" do
@@ -118,7 +115,7 @@ def exChecks (context : Context) : List Check :=
     { name :=
         "config's binding of an ex name a compiled binding has runs config's command in its place, and the compiled binding's command runs again once a reload drops config's"
       run :=
-        withRealHost context [("init.lean", ownWriteText)]
+        withHost context [("init.lean", ownWriteText)]
           (fun session => do
             unless ← session.exLine "w" do
               return false
@@ -139,7 +136,7 @@ def exChecks (context : Context) : List Check :=
     { name :=
         "criterion 5: a name nobody bound, run on the ex line, is said in the echo area of the scene, by the ex line's message, with the prompt closed, and the editor goes on: a key's command run after it runs"
       run :=
-        withRealHost context []
+        withHost context []
           (fun session => do
             unless ← session.exLine "bogus now" do
               return false
