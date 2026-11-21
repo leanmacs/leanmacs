@@ -107,6 +107,60 @@ def waitChecks : List Check :=
         table.finish id .completed
         return (← ran.get) == some .completed },
     { name :=
+        "the fake clock's arrival promise is resolved by an arrival made before it was asked for, at once, and by one made after, in the step that makes it: waits started, waits waiting, and calls arrived at a hold"
+      run := do
+        let rig ← Rig.new
+        let log ← IO.mkRef #[]
+        discard <| rig.wait 10 log
+        -- Already reached when asked for: resolved at once.
+        let startedOne ← rig.clock.arrivedAt (.started 1)
+        let waitingOne ← rig.clock.arrivedAt (.waiting 1)
+        -- Not yet reached: resolved by the start that reaches it, inside it.
+        let startedTwo ← rig.clock.arrivedAt (.started 2)
+        let waitingNone ← rig.clock.arrivedAt (.waiting 0)
+        let beforeSecond := (← startedTwo.isResolved, ← waitingNone.isResolved)
+        discard <| rig.wait 20 log
+        let afterSecond ← startedTwo.isResolved
+        rig.clock.advance 20
+        let afterAdvance ← waitingNone.isResolved
+        -- A start that arrives at a hold resolves the promise of `held`: one
+        -- asked for before it arrives, and one asked for after, at once.
+        let hold ← rig.clock.holdStarts
+        let heldOne ← rig.clock.arrivedAt (.held 1)
+        let (id, _) ← rig.services.completions.register
+        let starting ← IO.asTask (prio := .dedicated) (rig.services.timers.start id 30)
+        let some _ ← Job.awaitWithin patience heldOne.result? |
+          hold.resolve ();
+          return false
+        let heldLater ← rig.clock.arrivedAt (.held 1)
+        let resolvedLater ← heldLater.isResolved
+        hold.resolve ()
+        discard <| IO.wait starting
+        return (← startedOne.isResolved) && (← waitingOne.isResolved) &&
+            beforeSecond == (false, false) &&
+            afterSecond &&
+            afterAdvance &&
+            resolvedLater },
+    { name :=
+        "the fake files' take arrival promise is resolved by a take that arrived at the hold before it was asked for, and by one that arrives after"
+      run := do
+        let completions ← Job.Completions.new
+        let files ← Job.FakeFiles.new completions
+        let hold ← files.holdTakes
+        let first ← files.takesArrivedAt 1
+        let taking ← IO.asTask (prio := .dedicated) files.parkTake
+        let some _ ← Job.awaitWithin patience first.result? |
+          hold.resolve ();
+          return false
+        let again ← files.takesArrivedAt 1
+        let resolvedAgain ← again.isResolved
+        let second ← files.takesArrivedAt 2
+        let unresolved ← second.isResolved
+        hold.resolve ()
+        discard <| IO.wait taking
+        files.parkTake
+        return resolvedAgain && !unresolved && (← second.isResolved) },
+    { name :=
         "the fake clock completes the waits that are due when it is advanced, earliest deadline first, and leaves the others waiting"
       run := do
         let rig ← Rig.new

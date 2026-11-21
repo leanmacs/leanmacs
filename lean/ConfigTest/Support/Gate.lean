@@ -24,6 +24,10 @@ structure Gate where
   release : IO.Promise Unit
   /-- Whether an elaboration of the held file has arrived and waited. -/
   holding : IO.Ref Bool
+  /-- Resolved when an elaboration of the held file arrives, as `holding` is
+  set: what a check waits on, with a hang guard, for the gate to be holding,
+  in place of polling `holding`. -/
+  arrived : IO.Promise Unit
   /-- How many files are being elaborated now. -/
   inProgress : IO.Ref Nat
   /-- The most files that were being elaborated at once. -/
@@ -34,7 +38,7 @@ namespace Gate
 /-- A gate that is shut, holding the config file of `module`. -/
 def new (module : String := "Config.Slow") : IO Gate :=
   return { module, release := ← IO.Promise.new, holding := ← IO.mkRef false,
-           inProgress := ← IO.mkRef 0, most := ← IO.mkRef 0 }
+           arrived := ← IO.Promise.new, inProgress := ← IO.mkRef 0, most := ← IO.mkRef 0 }
 
 /-- Runs `elaborate`, the elaboration of `file`, behind the gate. -/
 def through {σ : Type} (gate : Gate) (file : Config.SourceFile)
@@ -44,6 +48,7 @@ def through {σ : Type} (gate : Gate) (file : Config.SourceFile)
   try
     if file.module == gate.module then
       gate.holding.set true
+      gate.arrived.resolve ()
       discard <| IO.wait gate.release.result?
     elaborate
   finally

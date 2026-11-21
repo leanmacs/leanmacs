@@ -39,9 +39,25 @@ a test holds them on purpose, and a held wait is not idle.
 A test can also hold the port itself: `holdReads` and `holdStarts` park every
 read, or every start, on a promise the test resolves, so the test can act
 while a request is in flight, which no amount of sleeping would arrange.
+
+And a test waits for a fake to reach a state on a promise the fake resolves,
+never by polling it: `FakeClock.arrivedAt` (calls arrived at a hold, waits
+started, waits waiting) and `FakeFiles.takesArrivedAt` (takes arrived at the
+take hold). The promise is resolved in the same atomic step that makes the
+state reach it, or at once if the state already has, so an arrival before
+the promise was asked for resolves it as surely as one after.
 -/
 
 namespace Editor.Job
+
+/-- What a test waits for a fake clock to reach (`FakeClock.arrivedAt`). -/
+inductive FakeClockArrival where
+  /-- At least `count` calls have arrived at a hold (`FakeClock.held`). -/
+  | held (count : Nat)
+  /-- At least `count` waits have been started (`FakeClock.started`). -/
+  | started (count : Nat)
+  /-- Exactly `count` waits are waiting (`FakeClock.waiting`). -/
+  | waiting (count : Nat)
 
 /-- What a fake clock holds. -/
 structure FakeClock.State where
@@ -66,6 +82,9 @@ structure FakeClock.State where
   startHold : Option (IO.Promise Unit) := none
   /-- How many calls have arrived at a hold. -/
   held : Nat := 0
+  /-- What tests wait for the clock to reach (`arrivedAt`), each with the
+  promise resolved when it does. -/
+  arrivals : Array (FakeClockArrival × IO.Promise Unit) := #[]
 
 /-- A clock a test moves by hand. -/
 structure FakeClock where
@@ -74,17 +93,50 @@ structure FakeClock where
   /-- What the clock holds. Every change to it is one atomic step. -/
   state : IO.Ref FakeClock.State
 
+/-- Whether the clock's state `state` has reached `arrival`. -/
+def FakeClockArrival.reached (arrival : FakeClockArrival) (state : FakeClock.State) : Bool :=
+  match arrival with
+  | .held count => state.held ≥ count
+  | .started count => state.started.size ≥ count
+  | .waiting count => state.waiting.size == count
+
 namespace FakeClock
 
 /-- A clock that reads 0 and has no waits, over the table `completions`. -/
 def new (completions : Completions) : BaseIO FakeClock :=
   return { completions, state := ← IO.mkRef {} }
 
+/-- Changes the clock's state by `change`, in one atomic step, and resolves
+the promise of every arrival the new state has reached. -/
+def change {α : Type} (clock : FakeClock) (change : State → α × State) : BaseIO α := do
+  let (result, reached) ←
+    clock.state.modifyGet fun state =>
+        let (result, state) := change state
+        let (reached, rest) := state.arrivals.partition (·.1.reached state)
+        ((result, reached), { state with arrivals := rest })
+  for (_, promise) in reached do
+    promise.resolve ()
+  return result
+
+/-- A promise resolved once the clock has reached `arrival`: at once if it
+already has, else in the step that makes it. What a test waits on, with
+`Job.awaitWithin` and a hang guard, for a state the clock reaches on another
+thread, in place of polling the readout. -/
+def arrivedAt (clock : FakeClock) (arrival : FakeClockArrival) : BaseIO (IO.Promise Unit) := do
+  let promise ← IO.Promise.new
+  let reached ←
+    clock.state.modifyGet fun state =>
+        if arrival.reached state then (true, state)
+        else (false, { state with arrivals := state.arrivals.push (arrival, promise) })
+  if reached then
+    promise.resolve ()
+  return promise
+
 /-- Parks the calling thread on the hold `hold` picks, if there is one, until
 the test that made it resolves it, and counts the arrival. -/
 def park (clock : FakeClock) (hold : State → Option (IO.Promise Unit)) : BaseIO Unit := do
   let hold? ←
-    clock.state.modifyGet fun state =>
+    clock.change fun state =>
         (hold state, if (hold state).isSome then { state with held := state.held + 1 } else state)
   if let some hold := hold? then
     discard <| IO.wait hold.result?
@@ -127,7 +179,7 @@ def start (clock : FakeClock) (id : UInt64) (deadline : Nat) : BaseIO Unit := do
   clock.park (·.startHold)
   let thread ← IO.getTID
   let due ←
-    clock.state.modifyGet fun state =>
+    clock.change fun state =>
         let state :=
           { state with
             started := state.started.push (id, deadline),
@@ -139,11 +191,12 @@ def start (clock : FakeClock) (id : UInt64) (deadline : Nat) : BaseIO Unit := do
 
 /-- Withdraws the wait `id`, if it is waiting. -/
 def cancel (clock : FakeClock) (id : UInt64) : BaseIO Unit :=
-  clock.state.modify fun state =>
-    if state.waiting.any (·.1 == id) then
-      { state with
-        waiting := state.waiting.filter (·.1 != id), withdrawn := state.withdrawn.push id }
-    else state
+  clock.change fun state =>
+    ((),
+      if state.waiting.any (·.1 == id) then
+        { state with
+          waiting := state.waiting.filter (·.1 != id), withdrawn := state.withdrawn.push id }
+      else state)
 
 /-- Flushes the clock as the wait `id`: it is due now, so it is completed at
 once, after every wait that `start` or `advance` has already completed. -/
@@ -173,7 +226,7 @@ def split (waiting : Array (UInt64 × Nat)) (now : Nat) :
 that is now due, earliest deadline first. -/
 def advance (clock : FakeClock) (duration : Nat) : BaseIO Unit := do
   let due ←
-    clock.state.modifyGet fun state =>
+    clock.change fun state =>
         let now := state.now + duration
         let (due, waiting) := split state.waiting now
         (due,
@@ -248,6 +301,9 @@ structure FakeFiles.State where
   takeHold : Option (IO.Promise Unit) := none
   /-- How many takes have arrived at the hold. -/
   takesHeld : Nat := 0
+  /-- The counts of takes held tests wait for (`takesArrivedAt`), each with
+  the promise resolved when `takesHeld` reaches it. -/
+  takeArrivals : Array (Nat × IO.Promise Unit) := #[]
   /-- The diff waits that were started and have been neither taken nor
   withdrawn. -/
   diffsPending : Array UInt64 := #[]
@@ -329,6 +385,19 @@ def holdTakes (files : FakeFiles) : BaseIO (IO.Promise Unit) := do
 def takesHeld (files : FakeFiles) : BaseIO Nat :=
   return (← files.state.get).takesHeld
 
+/-- A promise resolved once at least `count` takes have arrived at the hold:
+at once if they already have, else in the step that counts the last. What a
+test waits on, with a hang guard, in place of polling `takesHeld`. -/
+def takesArrivedAt (files : FakeFiles) (count : Nat) : BaseIO (IO.Promise Unit) := do
+  let promise ← IO.Promise.new
+  let reached ←
+    files.state.modifyGet fun state =>
+        if state.takesHeld ≥ count then (true, state)
+        else (false, { state with takeArrivals := state.takeArrivals.push (count, promise) })
+  if reached then
+    promise.resolve ()
+  return promise
+
 /-- Starts `request` as the wait `id`, records the thread that did, and
 completes the wait unless completions are held. -/
 def start (files : FakeFiles) (id : UInt64) (request : FileRequest) : BaseIO Unit := do
@@ -348,10 +417,17 @@ def start (files : FakeFiles) (id : UInt64) (request : FileRequest) : BaseIO Uni
 /-- Parks the calling thread on the take hold, if there is one, until the
 test that made it resolves it, and counts the arrival. -/
 def parkTake (files : FakeFiles) : BaseIO Unit := do
-  let hold? ←
+  let (hold?, reached) ←
     files.state.modifyGet fun state =>
-        (state.takeHold,
-          if state.takeHold.isSome then { state with takesHeld := state.takesHeld + 1 } else state)
+        if state.takeHold.isSome then
+          let takesHeld := state.takesHeld + 1
+          let (reached, rest) := state.takeArrivals.partition (·.1 ≤ takesHeld)
+          ((state.takeHold, reached),
+            { state with
+              takesHeld, takeArrivals := rest })
+        else ((none, #[]), state)
+  for (_, promise) in reached do
+    promise.resolve ()
   if let some hold := hold? then
     discard <| IO.wait hold.result?
 
