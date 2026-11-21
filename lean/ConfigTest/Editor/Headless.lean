@@ -1005,6 +1005,132 @@ def holdingLine {α β σ : Type} {scheme : InputScheme}
             hold
           collaborators.emit line }
 
+/-- Runs `check` with `hold`, which holds the first thread that calls it until
+`letGo`, and `letGo`; lets go before it returns, whatever `check` did. A
+thread that calls `hold` after the first, or after `letGo`, passes. No sleep
+and no task of its own: what lets go is an event the check names. -/
+def holdingUntil {α : Type} (check : BaseIO Unit → BaseIO Unit → IO α) : IO α := do
+  let release ← IO.Promise.new
+  let entered ← IO.mkRef false
+  try
+    check
+        (do
+          unless ← entered.modifyGet fun entered => (entered, true) do
+            discard <| IO.wait release.result?)
+        (release.resolve ())
+  finally
+    release.resolve ()
+
+/-- `stage`'s collaborators, with the editor thread held (`hold`) inside the
+first line of the host's output that starts with `commands:`, which a
+`show` prints, and `entered` resolved as it gets there. -/
+def heldAtCommands {β σ : Type} (stage : Stage β σ) (hold : BaseIO Unit)
+    (entered : IO.Promise Unit) : Headless.Collaborators β σ TestScheme.scheme :=
+  { stage.collaborators with
+    emit := fun line => do
+      if line.startsWith "commands:" then
+        entered.resolve ()
+        hold
+      stage.collaborators.emit line }
+
+/-- The checks of `Headless.withHost`, the bracket a host lives in
+(`Editor/Headless.lean`), on the real queue and the real text binding: it
+returns only once the host's loop has ended, whether its body returned or
+threw, and a loop slow to end is waited for past the bracket's guard, which
+says a hang once and does not end the wait. The slow end is forced by
+holding the editor thread inside an event (`holdingUntil`), let go only by
+the bracket's own report of the hang: no sleep, and the order is the same
+every run. -/
+def bracketChecks (context : Context) : List Check :=
+  [{  name :=
+        "a host's bracket returns only once its loop has ended: a loop held inside an event when the bracket asks it to stop is waited for past the bracket's guard, which says a hang once"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        let kept ← IO.mkRef (none : Option (Task (Except IO.Error Unit)))
+        let said ← IO.mkRef (#[] : Array String)
+        let entered ← IO.Promise.new
+        let finished ←
+          holdingUntil fun hold letGo => do
+              Headless.withHost (heldAtCommands stage hold entered) (guard := 0) (hung :=
+                  fun line => do
+                  said.modify (·.push line)
+                  letGo) fun host => do
+                  kept.set (some host.thread)
+                  host.send .show
+                  discard <| Job.awaitWithin patience entered.result?
+              match ← kept.get with
+              | some thread =>
+                IO.hasFinished thread
+              | none =>
+                pure false
+        -- Let go by now: a loop the bracket left is waited for here, so
+        -- nothing the check started outlives it.
+        if let some thread← kept.get then
+          discard <| IO.wait thread
+        let said ← said.get
+        let output ← stage.output.get
+        saw (finished && said.size == 1 && output.any (·.startsWith "commands:"))
+            s!"finished={finished} said={said} output={output}" },
+    { name :=
+        "a host's bracket stops and waits for its loop when its body throws, and the body's error is the one thrown"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        let kept ← IO.mkRef (none : Option (Task (Except IO.Error Unit)))
+        let said ← IO.mkRef (#[] : Array String)
+        let entered ← IO.Promise.new
+        let (thrown, finished) ←
+          holdingUntil fun hold letGo => do
+              let thrown ←
+                try
+                  Headless.withHost (heldAtCommands stage hold entered) (guard := 0) (hung :=
+                      fun line => do
+                      said.modify (·.push line)
+                      letGo) fun host => do
+                      kept.set (some host.thread)
+                      host.send .show
+                      discard <| Job.awaitWithin patience entered.result?
+                      throw (IO.userError "the body broke")
+                  pure none
+                catch error =>
+                  pure (some (toString error))
+              let finished ←
+                match ← kept.get with
+                | some thread =>
+                  IO.hasFinished thread
+                | none =>
+                  pure false
+              return (thrown, finished)
+        if let some thread← kept.get then
+          discard <| IO.wait thread
+        let said ← said.get
+        saw (thrown == some "the body broke" && finished && said.size == 1)
+            s!"thrown={thrown} finished={finished} said={said}" },
+    { name := "a host's bracket throws the error its loop ended with when its body returned"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        let broken :=
+          { stage.collaborators with display := fun _ => throw (IO.userError "no display here") }
+        let thrown ←
+          try
+            Headless.withHost broken fun _ => pure ()
+            pure none
+          catch error =>
+            pure (some (toString error))
+        saw (thrown == some "no display here") s!"thrown={thrown}" },
+    { name :=
+        "a host's bracket that hands back its loop's end gives the error its loop ended with, and throws nothing, when its body returned"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        let broken :=
+          { stage.collaborators with display := fun _ => throw (IO.userError "no display here") }
+        let (answered, ended) ← Headless.withHostEnding broken fun _ => pure 7
+        let error :=
+          match ended with
+          | .error error => some (toString error)
+          | .ok () => none
+        saw (answered == 7 && error == some "no display here")
+            s!"answered={answered} error={error}" }]
+
 /-- The checks of jobs through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue and the real text binding. The
 host's jobs wait on a fake clock the check moves, so a job ends when the

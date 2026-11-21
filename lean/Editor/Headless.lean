@@ -2611,6 +2611,75 @@ def stop (host : Host) (patience : Nat) : IO Bool := do
 
 end Host
 
+/-- How long a host's end waits for the journal's drain, a flush of the file
+service, before it quits the queues, in milliseconds: a guard against a
+stuck file system, never a result. -/
+def drainPatience : Nat :=
+  2000
+
+/-- How long the headless mode waits at each `settle` and each `join`, and
+for the loop to stop, in milliseconds. -/
+def settlePatience : Nat :=
+  30000
+
+/-- What a host's bracket says when its loop has not ended `guard`
+milliseconds after it was asked to stop: a hang, once, never a result. -/
+def hangLine (guard : Nat) : String :=
+  s!"editor: a hang: the editor loop had not ended {guard} ms after it was asked to stop; waiting for it"
+
+/-- Asks `host`'s loop to stop, unless it has ended, and waits for its task
+with no deadline; says what the loop ended with. A loop not ended `guard`
+milliseconds after it was asked is said through `hung` as a hang
+(`hangLine`), once, and still waited for. The stop is posted only when the
+queue takes it: a queue already quit (`Ffi.quit`) ends the loop with its
+quit event. -/
+private def endLoop (host : Host) (guard : Nat) (hung : String → IO Unit) :
+    IO (Except IO.Error Unit) := do
+  unless ← IO.hasFinished host.thread do
+    try
+      host.post .stop
+    catch _ =>
+      pure ()
+  if (← Job.awaitWithin guard host.thread).isNone then
+    hung (hangLine guard)
+  IO.wait host.thread
+
+/-- Runs `body` against a host started on `collaborators`, and returns only
+once the host's loop has ended, whether `body` returned or threw: a loop
+still running is asked to stop (`Signal.stop`), and its task is waited for
+with no deadline. A loop that has not ended `guard` milliseconds after it
+was asked is said through `hung` as a hang, once, and still waited for: the
+guard reports a hang, it never ends the wait. When `body` threw, its error
+is the one thrown, once the loop has ended. With what `body` returned, the
+result the loop ended with, for a caller that says a loop's error itself:
+the window mode, whose exit status says it (`Window.host`). `withHost`
+throws it. -/
+def withHostEnding {α β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
+    (body : Host → IO α) (guard : Nat := settlePatience) (hung : String → IO Unit := IO.eprintln) :
+    IO (α × Except IO.Error Unit) := do
+  let host ← start collaborators
+  let result ←
+    try
+      body host
+    catch error =>
+      discard <| endLoop host guard hung
+      throw error
+  return (result, ← endLoop host guard hung)
+
+/-- Runs `body` against a host started on `collaborators`, and returns only
+once the host's loop has ended, whether `body` returned or threw, as
+`withHostEnding` does. When `body` returned and the loop ended with an error,
+that error is thrown, as `Host.halt` throws it; when `body` threw, its error
+is the one thrown. The way to have a host: a host's loop never outlives its
+bracket, and `Host.halt`, `Host.stop` and the waits inside `body` answer
+what they answer, the bracket ends the loop whatever they did. -/
+def withHost {α β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
+    (body : Host → IO α) (guard : Nat := settlePatience) (hung : String → IO Unit := IO.eprintln) :
+    IO α := do
+  let (result, ended) ← withHostEnding collaborators body guard hung
+  IO.ofExcept ended
+  return result
+
 /-- One line of a script. -/
 inductive Directive where
   /-- Ask the editor thread for this. -/
@@ -3224,17 +3293,6 @@ def runAndDispose {β σ : Type} {scheme : InputScheme} (collaborators : Collabo
       collaborators.dispose
     catch _ =>
       pure ()
-
-/-- How long a host's end waits for the journal's drain, a flush of the file
-service, before it quits the queues, in milliseconds: a guard against a
-stuck file system, never a result. -/
-def drainPatience : Nat :=
-  2000
-
-/-- How long the headless mode waits at each `settle` and each `join`, and
-for the loop to stop, in milliseconds. -/
-def settlePatience : Nat :=
-  30000
 
 /-- How long warming the pool waits, in milliseconds, for each of its tasks
 to start. A task starts in microseconds; this long passes only when the pool

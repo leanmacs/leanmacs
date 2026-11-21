@@ -103,6 +103,13 @@ show:
   the lines the host prints; and what a host starts from: handed no
   packages, an empty registry and no menu bar, and handed a package it
   refuses, that package logged and skipped and the others registered;
+- `bracketChecks`: the bracket a host lives in (`Headless.withHost`): it
+  returns only once the host's loop has ended, whether its body returned
+  or threw, waits past its guard for a loop held inside an event, saying a
+  hang once, throws the body's error, or the loop's when the body returned,
+  and hands back the loop's end without throwing it (`withHostEnding`);
+  the hold is let go by the bracket's own report of the hang, never by
+  time;
 - `threadChecks`: the editor answers events while a file elaborates, reloads
   are serialised, and a replaced config is not retained;
 - `jobChecks`: jobs from config through the host: a handler receives a job's
@@ -351,6 +358,7 @@ def checks (context : Context) : List Check :=
     directoryChecks () ++
     moduleFilesChecks () ++
     hostChecks context ++
+    bracketChecks context ++
     threadChecks context ++
     jobChecks context ++
     treeObjectChecks context ++
