@@ -3,9 +3,7 @@ import Editor.Display
 import Editor.Display.Model
 import Editor.Floating
 import Editor.GeneratedView
-import Editor.InputScheme.Vim
-import Editor.InputScheme.Vim.Default
-import Editor.Keymap
+import Editor.InputScheme.Test
 import Editor.Layout
 import Editor.Loop
 import Editor.Loop.Driver
@@ -129,18 +127,17 @@ def tabBarChecks : List Check :=
         "criterion 5, in the loop: after C-w c the last view of the scene is the tab bar, its text the line of both tabs with the second's chip selected, in the bar's strip, padded across by the frame padding and not down, with no selection and no status field; after C-w p the chips' faces swap, the bar keeps its view, and the snapshot of the old line is released; it is never the focused view; after C-w & there is no bar and the tiled area is whole again"
       run :=
         pure <|
-          let handed : Loop.Keys Vim.Default.scheme :=
-            { tabHanded Layout.default with padding := 8 }
-          match (windowDriver 1 Layout.default (handed := handed)).map (evilFed · "C-w c") with
+          let handed : Loop.Keys TestScheme.scheme := { tabHanded Layout.default with padding := 8 }
+          match (windowDriver 1 Layout.default (handed := handed)).map (windowFed · "C-w c") with
           | none => false
           | some tabbed =>
-            let back := evilFed tabbed "C-w p"
-            let closed := evilFed back "C-w &"
-            let barOf (driver : EvilDriver) : Option View :=
+            let back := windowFed tabbed "C-w p"
+            let closed := windowFed back "C-w &"
+            let barOf (driver : TestDriver) : Option View :=
               driver.model.display.scenes.back?.bind fun scene =>
                 scene.views.back?.bind fun view =>
                   if driver.loop.state.tabBar.any (·.view == view.id) then some view else none
-            let focused (driver : EvilDriver) : Option ViewId :=
+            let focused (driver : TestDriver) : Option ViewId :=
               driver.model.display.scenes.back?.bind (·.focused)
             match barOf tabbed, barOf back with
             | some bar, some again =>
@@ -167,8 +164,8 @@ def tabBarChecks : List Check :=
           match tabsAfter "C-w c" with
           | none => false
           | some tabbed =>
-            let named := evilFed tabbed "C-c r n RET"
-            let barOf (driver : EvilDriver) : Option View :=
+            let named := windowFed tabbed "C-c r n RET"
+            let barOf (driver : TestDriver) : Option View :=
               driver.model.display.scenes.back?.bind (·.views.back?)
             match barOf tabbed, barOf named with
             | some bar, some again =>
@@ -180,16 +177,16 @@ def tabBarChecks : List Check :=
         "a loop handed never shows no bar with two tabs, and the tiled area is whole; handed always it shows one with one tab; handed none it keeps the state's, never or always as an earlier publish left it"
       run :=
         pure <|
-          let handed (shown : Option TabBar.Shown) : Loop.Keys Vim.Default.scheme :=
+          let handed (shown : Option TabBar.Shown) : Loop.Keys TestScheme.scheme :=
             { tabHanded Layout.default with tabBar := shown }
-          let barredDriver (shown : Option TabBar.Shown) (typed : String) : Option EvilDriver :=
-            (windowDriver 1 Layout.default (handed := handed shown)).map (evilFed · typed)
+          let barredDriver (shown : Option TabBar.Shown) (typed : String) : Option TestDriver :=
+            (windowDriver 1 Layout.default (handed := handed shown)).map (windowFed · typed)
           let barred (shown : Option TabBar.Shown) (typed : String) : Option EditorState :=
             (barredDriver shown typed).map (·.loop.state)
           -- Published once handed `shown`, then handed none.
           let kept (shown : TabBar.Shown) (typed : String) : Option EditorState :=
             (barredDriver (some shown) typed).map fun driver =>
-              (evilFed { driver with keys := handed none } "<Escape>").loop.state
+              (windowFed { driver with keys := handed none } "<Escape>").loop.state
           match barred (some .never) "C-w c", barred (some .always) "<Escape>", kept .never "C-w c",
             kept .always "<Escape>" with
           | some never, some always, some keptNever, some keptAlways =>

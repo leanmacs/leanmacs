@@ -16,8 +16,6 @@ import Editor.Ex.Line
 import Editor.FrameCommands
 import Editor.InputScheme
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim
-import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
 import Editor.Keymap
@@ -32,23 +30,22 @@ import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
 import Editor.ProjectMode
-import Editor.Role
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
 import Editor.Test.Config
 import Editor.Test.Driver
+import Editor.Test.Editing
 import Editor.Test.Hosted
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Text
-import Editor.Text.Model
 import Editor.Workspace
 import FilesApi
 import ModelTest.Check
-import ModelTest.Support.Evil
 import ModelTest.Support.Frame
+import ModelTest.Support.Switching
 
 /-!
 # Model tests: `Editor/Menu.lean`
@@ -74,30 +71,6 @@ alone unless told. -/
 def equivalent (character : Char) (modifiers : Modifiers := { superKey := true }) :
     Option KeyEquivalent :=
   some { character, modifiers }
-
-/-- The Vim scheme of the menu's run-table checks: the default states, with
-normal state's run table holding `t-enter`, run as `visual-line` entering
-that state, and `t-fail`, run as itself entering it too. -/
-def menuRunScheme : InputScheme :=
-  let enter (name : String) : Vim.Edit := .run { name, enters := some "visual-line" } none none
-  Vim.scheme
-    (Vim.Default.states.register
-      { Vim.Default.states.initial with
-        runs := [("t-enter", enter "visual-line"), ("t-fail", enter "t-fail")] })
-
-/-- A driver of the menu's run-table checks over the text and cursor
-`fixture` says, with evil's commands and `t-fail`, which gives up. -/
-def menuRunDriver (fixture : String) : Option (Loop.Driver menuRunScheme) :=
-  let (contents, head) := barred fixture
-  let fail : Dispatched := fun _ => giveUp "failed"
-  let keys : Loop.Keys menuRunScheme :=
-    { command? := (evilHanded (commands := [("t-fail", fail)])).command? }
-  (Loop.Driver.over keys (fun _ => none) (evilState contents head) editorModel).toOption
-
-/-- The selection of view 0 of `driver`, as the text model has it. -/
-def menuRunSelection (driver : Loop.Driver menuRunScheme) : Option Selection := do
-  let target ← driver.loop.state.target? ⟨0⟩
-  (target.selection.runModel driver.model.texts).1.toOption
 
 /-- The key equivalents the compiled bindings give the menu's commands. -/
 def compiledEquivalents : String → Option KeyEquivalent
@@ -145,37 +118,44 @@ def menuChecks : List Check :=
                   | _ => false) &&
               boundTo registry chord == some { command := name }) },
     { name :=
-        "a menu's undo undoes as u does: after x over abc, both leave abc and the same selection"
+        "a menu's Undo runs the command registered as undo, as a key of that command does: after a delete over abc, both leave abc and the same selection"
       run :=
         pure <|
-          match evilDriver "|abc" with
+          -- A stand-in for a scheme package's `undo`, under the name the
+          -- Edit menu's item runs: the kit's undo.
+          let undo := (editingDispatched.find? (·.1 == "edit-undo")).map (·.2)
+          match
+            undo.bind fun undo =>
+              editingDriver "|abc" [("C-u", invoke "undo")] [("undo", undo)] with
           | none => false
           | some driver =>
-            let cut := evilFed driver "x"
-            let byKey := evilFed cut "u"
+            let cut := keysFed driver "<Delete>"
+            let byKey := keysFed cut "C-u"
             let byMenu := (cut.feed { event := .menu "undo", stamp := 0 }).1
-            evilShown cut != evilShown byKey && evilShown byMenu == evilShown byKey &&
-              (evilShown byKey).replace "|" "" == "abc" &&
-              evilSelection byMenu == evilSelection byKey },
+            shownOf cut != shownOf byKey && shownOf byMenu == shownOf byKey &&
+              (shownOf byKey).replace "|" "" == "abc" &&
+              selectionOf byMenu == selectionOf byKey },
     { name :=
-        "a menu item naming a command the view's state's run table has an entry for runs that entry, with the report of the state it enters: t-enter in normal state leaves the view in visual-line, its selection of the line shape, at rest; one that gives up leaves the scheme at rest in normal state"
+        "a menu item naming a command its scheme makes something of runs with the report of the state the scheme hands back: under a scheme whose report the command mark switches, the item leaves the view with that report, at rest; one whose command gives up leaves the scheme at rest as it was"
       run :=
         pure <|
-          match menuRunDriver "a|b\ncd" with
-          | none => false
-          | some driver =>
-            let initial := menuRunScheme.report menuRunScheme.init ⟨0⟩
-            let entered := (driver.feed { event := .menu "t-enter", stamp := 0 }).1
-            let failed := (driver.feed { event := .menu "t-fail", stamp := 0 }).1
-            let report := menuRunScheme.report entered.loop.input ⟨0⟩
-            report.shape == .line && report.selecting &&
-              menuRunScheme.report entered.loop.atRest ⟨0⟩ == report &&
-              (menuRunSelection entered).map (·.shape) == some .line &&
+          let over (commands : List (String × Dispatched)) : Option (Loop.Driver switching) :=
+            (Loop.Driver.over (switchingKeys [] commands) (fun _ => none) (barState "ab\ncd" 1)
+                editorModel).toOption
+          match over [], over [("mark", fun _ => giveUp "failed")] with
+          | some driver, some failing =>
+            let initial := switching.report switching.init ⟨0⟩
+            let entered := (driver.feed { event := .menu "mark", stamp := 0 }).1
+            let failed := (failing.feed { event := .menu "mark", stamp := 0 }).1
+            let report := switching.report entered.loop.input ⟨0⟩
+            report == markedReport && report != initial &&
+              switching.report entered.loop.atRest ⟨0⟩ == report &&
               entered.loop.state.echo.isEmpty &&
-              failed.loop.state.echo == "t-fail: failed" &&
-              menuRunScheme.report failed.loop.input ⟨0⟩ == initial &&
-              menuRunScheme.report failed.loop.atRest ⟨0⟩ == initial &&
-              menuRunSelection failed == menuRunSelection driver },
+              failed.loop.state.echo == "mark: failed" &&
+              switching.report failed.loop.input ⟨0⟩ == initial &&
+              switching.report failed.loop.atRest ⟨0⟩ == initial &&
+              selectionOf failed == selectionOf failing
+          | _, _ => false },
     { name := "a menu's minimise-window asks the frame to minimise"
       run := pure (framed frameDriver [.menu "minimise-window"] == some (#[.minimise], false)) },
     { name :=

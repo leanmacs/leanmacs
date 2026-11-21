@@ -11,6 +11,8 @@ import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
+import Editor.Keymap
+import Editor.Layout
 import Editor.Loop.Driver
 import Editor.Program
 import Editor.Scene
@@ -20,7 +22,9 @@ import Editor.Test.Ex
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Models
+import Editor.Test.States
 import Editor.Text
+import Editor.WindowCommands
 import ModelTest.Check
 import ModelTest.Support.Evil
 import ModelTest.Support.OperatorRows
@@ -110,6 +114,30 @@ def evilEntered (contents : String) (was : Shape) (anchor head : Nat)
   return ((seen.selection.ranges.map fun range => (range.anchor, range.head)).toList,
       seen.selection.shape, seen.covered.toList)
 
+/-- The Vim scheme of the menu's run-table checks: the default states, with
+normal state's run table holding `t-enter`, run as `visual-line` entering
+that state, and `t-fail`, run as itself entering it too. -/
+def menuRunScheme : InputScheme :=
+  let enter (name : String) : Vim.Edit := .run { name, enters := some "visual-line" } none none
+  Vim.scheme
+    (Vim.Default.states.register
+      { Vim.Default.states.initial with
+        runs := [("t-enter", enter "visual-line"), ("t-fail", enter "t-fail")] })
+
+/-- A driver of the menu's run-table checks over the text and cursor
+`fixture` says, with evil's commands and `t-fail`, which gives up. -/
+def menuRunDriver (fixture : String) : Option (Loop.Driver menuRunScheme) :=
+  let (contents, head) := barred fixture
+  let fail : Dispatched := fun _ => giveUp "failed"
+  let keys : Loop.Keys menuRunScheme :=
+    { command? := (evilHanded (commands := [("t-fail", fail)])).command? }
+  (Loop.Driver.over keys (fun _ => none) (evilState contents head) editorModel).toOption
+
+/-- The selection of view 0 of `driver`, as the text model has it. -/
+def menuRunSelection (driver : Loop.Driver menuRunScheme) : Option Selection := do
+  let target ← driver.loop.state.target? ⟨0⟩
+  (target.selection.runModel driver.model.texts).1.toOption
+
 /-- The checks of evil's states (`Editor/Evil.lean`) on the loop's driver
 over the editor's models, under the Vim scheme that ships with evil's
 commands: what entering a visual state and leaving one does to the view's
@@ -119,6 +147,25 @@ report written by hand, a state that keeps both ends entered from an
 exclusive selection. -/
 def evilStateChecks : List Check :=
   [{  name :=
+        "a menu item naming a command the view's state's run table has an entry for runs that entry, with the report of the state it enters: t-enter in normal state leaves the view in visual-line, its selection of the line shape, at rest; one that gives up leaves the scheme at rest in normal state"
+      run :=
+        pure <|
+          match menuRunDriver "a|b\ncd" with
+          | none => false
+          | some driver =>
+            let initial := menuRunScheme.report menuRunScheme.init ⟨0⟩
+            let entered := (driver.feed { event := .menu "t-enter", stamp := 0 }).1
+            let failed := (driver.feed { event := .menu "t-fail", stamp := 0 }).1
+            let report := menuRunScheme.report entered.loop.input ⟨0⟩
+            report.shape == .line && report.selecting &&
+              menuRunScheme.report entered.loop.atRest ⟨0⟩ == report &&
+              (menuRunSelection entered).map (·.shape) == some .line &&
+              entered.loop.state.echo.isEmpty &&
+              failed.loop.state.echo == "t-fail: failed" &&
+              menuRunScheme.report failed.loop.input ⟨0⟩ == initial &&
+              menuRunScheme.report failed.loop.atRest ⟨0⟩ == initial &&
+              menuRunSelection failed == menuRunSelection driver },
+    { name :=
         "v and then a motion: the scene shows one inclusive selection from the cell the cursor started on to the cell the motion leads to, which covers both cells and what is between them"
       run :=
         pure
@@ -372,6 +419,44 @@ evil's commands: the keys that begin an insert, typed text, and `<Escape>`,
 and that one insert session is one step of the history. -/
 def evilInsertChecks : List Check :=
   [{  name :=
+        "criterion 6, on the models, over two windows side by side: with no active keymaps C-w in insert state deletes the word before the bar and l after it is text, the view staying in insert state and focused; with active keymaps that bind the window keys, as a config's bindKey binds them, C-w l and C-w h in insert state focus the window on the right and come back without leaving insert state, and typing goes on where it was"
+      run :=
+        pure <|
+          let stateOf (driver : EvilDriver) (view : Nat) : String :=
+            (driver.loop.input : Vim.State).stateOf Vim.Default.states ⟨view⟩
+          -- Stand-ins, written here over the editor API, for the two window
+          -- commands the check's keys run, under their names: the windows
+          -- are views 0, on the left, and 1.
+          let focusing (name : String) (view : Nat) : Config.Registration :=
+            { name, action := .call fun _ => discard <| (⟨view⟩ : ViewId).focus }
+          let handed : Loop.Keys Vim.Default.scheme :=
+            {
+              evilHanded
+                #[focusing WindowCommands.rightName 1, focusing WindowCommands.leftName 0] with
+              layout := some Layout.default }
+          let bound : Loop.Keys Vim.Default.scheme :=
+            { handed with
+              maps := fun _ _ =>
+                [Vim.Default.keymap
+                    (Vim.Default.windowKeys.map fun (text, name) => (text, .command { name }))] }
+          let over (handed : Loop.Keys Vim.Default.scheme) : Option EvilDriver :=
+            (Loop.Driver.over handed (fun _ => none) (windowsUnder 2 Layout.default)
+                editorModel).toOption
+          match (over handed).map (evilFed · "i h e l l o SPC w o r l d C-w l"), over bound with
+          | some plain, some driver =>
+            let typed := evilFed driver "i a b C-w l"
+            let back := evilFed typed "C-w h"
+            let more := evilFed back "c"
+            evilText plain == some "hello l" && plain.loop.state.frame.focused == ⟨0⟩ &&
+              stateOf plain 0 == "insert" &&
+              typed.loop.state.frame.focused == ⟨1⟩ &&
+              stateOf typed 0 == "insert" &&
+              back.loop.state.frame.focused == ⟨0⟩ &&
+              stateOf back 0 == "insert" &&
+              evilText more == some "abc" &&
+              stateOf more 0 == "insert"
+          | _, _ => false },
+    { name :=
         "i begins an insert before the cursor's cell, a key that prints is inserted at the bar, and <Escape> leaves the cursor one cell back from the bar, or where it is at a line's start; a digit and a key a motion is bound to are text in the session"
       run := evilRows insertRows },
     { name :=

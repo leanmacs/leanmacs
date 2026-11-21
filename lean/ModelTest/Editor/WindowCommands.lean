@@ -3,11 +3,9 @@ import Editor.Config.Packages
 import Editor.Display
 import Editor.Display.Model
 import Editor.Floating
-import Editor.InputScheme.Vim
-import Editor.InputScheme.Vim.Default
+import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
-import Editor.Keymap
 import Editor.Layout
 import Editor.Loop
 import Editor.Loop.Driver
@@ -15,13 +13,13 @@ import Editor.ModeLine
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Editing
 import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.WindowCommands
 import Editor.WindowCommands.Compiled
 import ModelTest.Check
-import ModelTest.Support.Evil
 import ModelTest.Support.Windows
 
 /-!
@@ -40,12 +38,14 @@ open Editor.Test
 `focus` focused, once the keys `typed` name were pressed. -/
 def windowsAfter (count : Nat) (layout : Layout) (typed : String) (focus : Nat := 0) :
     Option EditorState :=
-  (windowDriver count layout focus).map fun driver => (evilFed driver typed).loop.state
+  (windowDriver count layout focus).map fun driver => (windowFed driver typed).loop.state
 
 /-- The checks of the window commands (`Editor/WindowCommands.lean`), by
-key, on the loop's driver over the editor's models, under the Vim scheme
-that ships, with evil's, the minibuffer's, the ex line's and the window
-commands handed: Vim 9.1's `C-w` behaviours under the manual split layout,
+key, on the loop's driver over the editor's models, under the test scheme
+with the keys of the checks' own table (`windowTable`,
+`ModelTest/Support/Windows.lean`) and the kit's minibuffer's, the ex line's
+and the window commands handed; a count before a key is its command's
+first argument (`windowFed`): Vim 9.1's `C-w` behaviours under the manual split layout,
 resizes among them, the reorders, zoom and resizes under master-and-stack,
 focus by direction under the three layouts, and the refusals in the echo
 area. -/
@@ -111,7 +111,7 @@ def windowCommandChecks : List Check :=
                 (.over { advance := 8, lineHeight := 16 })).toOption with
           | none => false
           | some driver =>
-            let only := (evilFed driver "C-w o").loop.state
+            let only := (windowFed driver "C-w o").loop.state
             windowOrder only == ([0], 0) && floatsOf only == [] && only.windows.size == 1 &&
               only.echo == "" &&
               only.wellFormed },
@@ -171,15 +171,15 @@ def windowCommandChecks : List Check :=
         "criterion 1, C-w s: two windows on the same buffer with equal markers at first, the new one above and focused, and the windows of the column equal in height; three from one window at 640 by 464 give four rows of 116, the upper three less the divider below them"
       run :=
         pure <|
-          let split := (windowDriver 1 Layout.manual).map (evilFed · "C-w s")
+          let split := (windowDriver 1 Layout.manual).map (windowFed · "C-w s")
           match split, manual 1 "C-w s C-w s C-w s" with
           | some split, some thrice =>
             let state := split.loop.state
             windowOrder state == ([1, 0], 1) &&
               windowRects state == [(1, 0, 0, 640, 230), (0, 0, 232, 640, 232)] &&
               state.windows.all (·.buffer == ⟨0⟩) &&
-              evilSelection split ⟨1⟩ == evilSelection split ⟨0⟩ &&
-              (evilSelection split ⟨1⟩).isSome &&
+              selectionOf split ⟨1⟩ == selectionOf split ⟨0⟩ &&
+              (selectionOf split ⟨1⟩).isSome &&
               (windowRects thrice).map (·.2.2.2.2) == [114, 114, 114, 116] &&
               thrice.wellFormed
           | _, _ => false },
@@ -200,7 +200,7 @@ def windowCommandChecks : List Check :=
         "criterion 1, C-w C-n (Vim's CTRL-W n): a new window above, focused, on a new empty buffer with no file; the old window keeps its buffer"
       run :=
         pure <|
-          match (windowDriver 1 Layout.manual).map (evilFed · "C-w C-n") with
+          match (windowDriver 1 Layout.manual).map (windowFed · "C-w C-n") with
           | none => false
           | some driver =>
             let state := driver.loop.state
@@ -278,7 +278,7 @@ def windowCommandChecks : List Check :=
         pure <|
           let faces (typed : String) : Option (Array (Option FaceName)) :=
             (windowDriver 3 Layout.default).bind fun driver =>
-              (evilFed driver typed).model.display.scenes.back?.map (·.views.map (·.statusFace))
+              (windowFed driver typed).model.display.scenes.back?.map (·.views.map (·.statusFace))
           let active := some ModeLine.activeFace
           let inactive := some ModeLine.inactiveFace
           faces "C-w C-w" == some #[inactive, active, inactive] &&
@@ -325,7 +325,7 @@ def windowCommandChecks : List Check :=
             (windowsAfter 3 Layout.default typed 2).map windowOrder
           let scene (typed : String) : Option (List (Nat × Rect) × Layout) :=
             (windowDriver 3 Layout.default 2).bind fun driver =>
-              let driver := evilFed driver typed
+              let driver := windowFed driver typed
               driver.model.display.scenes.back?.map fun scene =>
                 (scene.views.toList.map fun view => (view.id.index, view.rect),
                   driver.loop.state.frame.layout)
@@ -394,28 +394,6 @@ def windowCommandChecks : List Check :=
             focus .monocle "C-w l" == some 0 &&
             focus .monocle "C-w j" == some 0 },
     { name :=
-        "criterion 6, on the models, over two windows side by side: with no active keymaps C-w in insert state deletes the word before the bar and l after it is text, the view staying in insert state and focused; with active keymaps that bind the window keys, as a config's bindKey binds them, C-w l and C-w h in insert state focus the window on the right and come back without leaving insert state, and typing goes on where it was"
-      run :=
-        pure <|
-          let stateOf (driver : EvilDriver) (view : Nat) : String :=
-            (driver.loop.input : Vim.State).stateOf Vim.Default.states ⟨view⟩
-          let bound := windowHanded Layout.default (windowMaps Vim.Default.windowKeys)
-          match (windowDriver 2 Layout.default).map (evilFed · "i h e l l o SPC w o r l d C-w l"),
-            windowDriver 2 Layout.default 0 bound with
-          | some plain, some driver =>
-            let typed := evilFed driver "i a b C-w l"
-            let back := evilFed typed "C-w h"
-            let more := evilFed back "c"
-            evilText plain == some "hello l" && plain.loop.state.frame.focused == ⟨0⟩ &&
-              stateOf plain 0 == "insert" &&
-              typed.loop.state.frame.focused == ⟨1⟩ &&
-              stateOf typed 0 == "insert" &&
-              back.loop.state.frame.focused == ⟨0⟩ &&
-              stateOf back 0 == "insert" &&
-              evilText more == some "abc" &&
-              stateOf more 0 == "insert"
-          | _, _ => false },
-    { name :=
         "window-close, window-only and window-quit on the minibuffer's view, by a config's binding that holds there, over two windows: each is refused with ofMinibuffer, the echo area says why under the command's name, no window is closed, and the prompt stays open"
       run :=
         pure <|
@@ -423,9 +401,7 @@ def windowCommandChecks : List Check :=
             [("C-w C-c", WindowCommands.closeName), ("C-w o", WindowCommands.onlyName),
               ("C-w q", WindowCommands.quitName)]
           let refused (typed name : String) : Bool :=
-            match
-              (windowDriver 2 Layout.manual 0 (windowHanded Layout.manual (windowMaps table))).map
-                (evilFed · s!": {typed}") with
+            match (windowDriver 2 Layout.manual 0).map (windowFed · s!"C-x {typed}") with
             | none => false
             | some driver =>
               let state := driver.loop.state

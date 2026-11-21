@@ -8,10 +8,8 @@ import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Event
 import Editor.InputScheme
-import Editor.InputScheme.Vim
-import Editor.InputScheme.Vim.Default
+import Editor.InputScheme.Test
 import Editor.Invocation
-import Editor.Keymap
 import Editor.Layout
 import Editor.Loop
 import Editor.Loop.Driver
@@ -50,14 +48,16 @@ def everyPart : Completion.Style :=
     (text.splitOn " ").all fun part => part.isEmpty || (candidate.splitOn part).length > 1
 
 /-- The checks of the tab commands (`Editor/TabCommands.lean`), by key, on
-the loop's driver over the editor's models, under the Vim scheme that
-ships with the tab commands handed: tmux's keys under `C-w`, the refusals
+the loop's driver over the editor's models, under the test scheme with
+the keys of the checks' own tables (`tabTable`, `tabOwnKeys`,
+`ModelTest/Support/Windows.lean`) and the tab commands handed: tmux's keys
+under `C-w`, the refusals
 in the echo area, the prompts of `tab-switch` and `tab-rename`, and that
 each command acts on the tab of its call's window. -/
 def tabCommandChecks : List Check :=
-  let delivered (driver : EvilDriver) (command : EditorM Unit) : EvilDriver :=
+  let delivered (driver : TestDriver) (command : EditorM Unit) : TestDriver :=
     (driver.stepped (driver.loop.deliver driver.handed "tab" command)).1
-  let state (driver : Option EvilDriver) : Option EditorState := driver.map (·.loop.state)
+  let state (driver : Option TestDriver) : Option EditorState := driver.map (·.loop.state)
   [{  name := "C-w c makes a tab after the one in view, on the same buffer, and selects it"
       run :=
         pure <|
@@ -144,14 +144,14 @@ def tabCommandChecks : List Check :=
         "with a style chosen for the category tab that keeps the candidates holding every space-separated part of the text, a typed text that is no candidate, label or number selects the first tab the prompt lists for it: from tab 1, scratch 2, which the fuzzy matcher matches with no candidate, lists 2 scratch alone and selects tab 2"
       run :=
         pure <|
-          let handed : Loop.Keys Vim.Default.scheme :=
+          let handed : Loop.Keys TestScheme.scheme :=
             { tabHanded with
               matching :=
                 { default := .unregistered
                   byCategory := fun category =>
                     if category == TabCommands.source.category then some everyPart else none } }
-          let after (typed : String) : Option EvilDriver :=
-            (windowDriver 1 Layout.default (handed := handed)).map (evilFed · typed)
+          let after (typed : String) : Option TestDriver :=
+            (windowDriver 1 Layout.default (handed := handed)).map (windowFed · typed)
           let typed := "C-w c C-w p C-w w s c r a t c h SPC 2"
           match after typed, state (after (typed ++ " RET")) with
           | some asking, some chosen =>
@@ -241,9 +241,9 @@ def tabCommandChecks : List Check :=
           match tabsAfter "C-w s C-w c C-w s" with
           | none => false
           | some driver =>
-            let chosen := evilFed { driver with keys := tabHanded .monocle } "<Escape>"
-            let back := evilFed chosen "C-w p <Escape>"
-            let made := evilFed back "C-w c"
+            let chosen := windowFed { driver with keys := tabHanded .monocle } "<Escape>"
+            let back := windowFed chosen "C-w p <Escape>"
+            let made := windowFed back "C-w c"
             let before := driver.loop.state.frame
             chosen.loop.state.frame.tabIndex == 1 && chosen.loop.state.frame.layout == .monocle &&
               chosen.loop.state.frame.windows == before.windows &&

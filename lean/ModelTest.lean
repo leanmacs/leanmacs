@@ -370,12 +370,14 @@ the tiled area by a float rule.
 The package of each registers the commands its list names
 (`WindowCommands.names`, `TabCommands.names`), which a scheme's key tables
 are held to. The window commands (`Editor/WindowCommands.lean`) are checked by key on
-the loop's driver over the editor's models, under the Vim scheme that ships
-(`windowCommandChecks`): Vim 9.1's `C-w` behaviours under the manual split
+the loop's driver over the editor's models, under the test scheme with the
+keys of the checks' own table (`windowTable`,
+`ModelTest/Support/Windows.lean`; `windowCommandChecks`): Vim 9.1's `C-w` behaviours under the manual split
 layout, resizes among them, the reorders, zoom and resizes under
 master-and-stack, focus by direction under the three layouts, the refusals
-in the echo area, and a config's `C-w` keys reached in insert state while
-one that binds none keeps the word delete.
+in the echo area. A config's `C-w` keys reached in the Vim scheme's insert
+state, while one that binds none keeps the word delete, is evil's
+(`evilInsertChecks`).
 
 Tabs (`Editor/State.lean`, "Tabs") are checked on the state's model
 (`tabChecks`): a new tab, selecting, closing, renaming and moving one, the
@@ -386,7 +388,7 @@ next view, chosen layout and most recent buffer set, what is frame-wide
 kept, a float at a position held by the marker handed, and each refusal,
 `malformed` for each break of `wellFormed` and `promptOpen`, leaving the
 state as it was. The tab commands (`Editor/TabCommands.lean`) are checked by
-key under the Vim scheme that ships (`tabCommandChecks`): tmux's keys under
+key under the test scheme with the checks' own tables (`tabCommandChecks`): tmux's keys under
 `C-w`, the prompts of `tab-switch` and `tab-rename`, each command acting on
 the tab of its call's window, and a publish's layout reaching the tab in
 view alone. The tab bar (`Editor/TabBar.lean`) is checked by `tabBarChecks`:

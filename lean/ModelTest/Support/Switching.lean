@@ -52,6 +52,9 @@ def switchingTable : List (String × String × InputScheme.Report) :=
 /-- A scheme written for the core's checks, so that none of them names a
 shipped scheme's states or keys: the test scheme, with a report of each
 view that an invocation it yields switches (`switchingTable`). A view
+is switched the same way when a menu item names a command of the table
+(`invoked`), as a scheme whose key tables enter a state does for an item
+of that command. A view
 starts with the default report, a view told to be the minibuffer's has
 `askedReport`, and a closed view's is forgotten. Its state is the test
 scheme's, and the report of each view that has one. -/
@@ -69,6 +72,11 @@ def switching : InputScheme :=
     roles := TestScheme.roles
     leader := TestScheme.leader
     localLeader := TestScheme.localLeader
+    invoked := fun view state invocation =>
+      match switchingTable.find? (·.1 == invocation.command) with
+      | some (_, _, report) =>
+        ((state.1, (view, report) :: state.2.filter (·.1 != view)), invocation)
+      | none => (state, invocation)
     closeView := fun view state => (state.1, state.2.filter (·.1 != view))
     openMinibuffer := fun view state => (state.1, (view, askedReport) :: state.2)
     report := fun state view => ((state.2.find? (·.1 == view)).map (·.2)).getD {} }

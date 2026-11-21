@@ -230,6 +230,19 @@ def evilUndoChecks : List Check :=
             let refused := evilFed removed "C-r"
             let emptied := evilFed refused "C-r"
             refused.loop.state.echo == Evil.sourceRemovedSays "one" &&
-              emptied.loop.state.echo == Evil.nothingToRedo }]
+              emptied.loop.state.echo == Evil.nothingToRedo },
+    { name :=
+        "a menu's undo undoes as u does: after x over abc, both leave abc and the same selection"
+      run :=
+        pure <|
+          match evilDriver "|abc" with
+          | none => false
+          | some driver =>
+            let cut := evilFed driver "x"
+            let byKey := evilFed cut "u"
+            let byMenu := (cut.feed { event := .menu "undo", stamp := 0 }).1
+            evilShown cut != evilShown byKey && evilShown byMenu == evilShown byKey &&
+              (evilShown byKey).replace "|" "" == "abc" &&
+              evilSelection byMenu == evilSelection byKey }]
 
 end ModelTest
