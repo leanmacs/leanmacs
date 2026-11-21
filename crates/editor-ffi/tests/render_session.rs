@@ -33,7 +33,7 @@ use editor_ffi::interrupt::Interrupt;
 use editor_ffi::render::{Asker, Presenter, Session, target};
 use editor_ffi::window::{self, CountingClock};
 use editor_layout::Layout;
-use editor_layout::face::{Color, Face};
+use editor_layout::face::{BASE_BACKGROUND, Color, Face};
 use editor_layout::frame::Frame;
 use editor_layout::scene::{Rect, Scene};
 use editor_layout::shaper::fake::CellShaper;
@@ -499,18 +499,19 @@ fn a_published_scenes_title_reaches_the_scripted_window_as_the_title_it_sets_onc
         platform.asked(),
         [
             Request::Title("notes.txt".into()),
-            Request::Background(WHITE),
+            Request::Background(base_paper()),
             Request::Title("todo.txt".into())
         ]
     );
 }
 
-/// The base paper, as a background.
-const WHITE: Rgb = Rgb {
-    red: 0xff,
-    green: 0xff,
-    blue: 0xff,
-};
+/// The base paper, as a background: what `editor-layout` grounds a frame
+/// with when no face sets a background. That crate owns the colour, so it
+/// is read from it here and not written out.
+fn base_paper() -> Rgb {
+    let [red, green, blue, _] = BASE_BACKGROUND.0.to_be_bytes();
+    Rgb { red, green, blue }
+}
 
 /// Publishes to `display` a scene of no view titled `scratch` whose
 /// default face's background is `paper`.
@@ -646,7 +647,7 @@ fn a_published_scenes_menu_reaches_the_scripted_window_as_one_request_for_each_c
         [
             Request::Title("scratch".into()),
             Request::Menu(menu_titled("File")),
-            Request::Background(WHITE),
+            Request::Background(base_paper()),
             Request::Menu(menu_titled("Edit"))
         ]
     );
