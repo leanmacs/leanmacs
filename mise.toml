@@ -1981,14 +1981,15 @@ run = ".lake/build/bin/ffi-test excerpt-picture ../tests/render/excerpts ../test
 #   black on white and light on dark; `sentence-grey.png`, at scale 2,
 #   `#808080` on white. Each is the coverage, and is what the Core Text
 #   adapter's masks are compared with (`mise run coretext-check`).
-#
-# Every drawing is made with the context's default subpixel flags, as
-# native apps draw text: Core Text floors each glyph's place to a quarter
-# of a point, the grid the renderer's painter places glyphs on.
 # - `positions.txt`, each glyph's place on the line at scale 1 and 2, which
 #   the shaper's and the painter's placement tests hold to
 #   (`crates/editor-shape-parley/tests/core_text.rs`,
 #   `crates/editor-render-wgpu/src/placement_tests.rs`).
+#
+# Every drawing is made with the context's default subpixel flags, as
+# native apps draw text: Core Text floors each glyph's place to its own
+# grid (thirds of a pixel at scale 1, halves at scale 2), the grid the
+# renderer's painter places glyphs on.
 #
 # The script checks each drawing itself (nothing on the border, the three
 # channels one coverage) and fails rather than write one that is not. Run
@@ -1999,6 +2000,29 @@ run = ".lake/build/bin/ffi-test excerpt-picture ../tests/render/excerpts ../test
 [tasks.coretext-reference]
 description = "Opt-in, never part of ci; macOS only: draw the weight sentence with Core Text from the fixture font and write the drawings and the glyphs' places under tests/coretext/, the macOS weight's target and the Core Text adapter's comparison"
 run = "swift tools/coretext/capture.swift tests/fonts/NotoSansMono-Regular.subset.ttf tests/coretext"
+
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to
+# hk.pkl. What Core Text draws is the system's: it changes between macOS
+# releases, and the gate's macOS runner is not the machine the captures
+# were made on, so it is no part of a gate that must give the same answer
+# everywhere.
+#
+# It runs the Core Text adapter's example (`crates/editor-raster-coretext/
+# examples/check/`): the adapter held to the rasteriser port's contract,
+# smoothed and not, at 14 and 28 pixels; what `AppleFontSmoothing` holds
+# and what was decided from it; and the adapter's masks, laid at the
+# painter's bins of Core Text's own positions, against Core Text's drawings
+# under `tests/coretext/`, each within its thresholds, with the controls
+# that must miss them. A pass is exit 0: every property holds, every
+# capture is within the thresholds of its scale and every control is
+# outside them. The gate builds the example and never runs it.
+#
+# Run it when macOS's major version changes, when a binding's pin moves,
+# and when the adapter changes, and record its figures, dated, in
+# `docs/dev-practices/on-demand-checks.md`.
+[tasks.coretext-check]
+description = "Opt-in, never part of ci; macOS only: hold the Core Text rasteriser to the rasteriser port's contract and compare its masks with Core Text's own drawings under tests/coretext/"
+run = "cargo run --locked -p editor-raster-coretext --example check"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. What it
 # finds depends on this machine's GPU and its driver, so it is no part of

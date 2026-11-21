@@ -11,6 +11,7 @@
 //! decision and are tested everywhere, in the gate:
 //!
 //! - [`bounds`]: where a glyph's bitmap goes, and the pen in it;
+//! - [`compare`]: how its masks are compared with Core Text's own drawing;
 //! - [`defaults`]: the `FontDefaults` port, which says what
 //!   `AppleFontSmoothing` holds, its fake, and whether text is smoothed;
 //! - [`decline`]: which fonts are left to swash;
@@ -39,6 +40,7 @@
 //! its test, and the macOS module only carries it out.
 
 pub mod bounds;
+pub mod compare;
 pub mod decline;
 pub mod defaults;
 pub mod fill;

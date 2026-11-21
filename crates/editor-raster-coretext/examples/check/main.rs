@@ -12,6 +12,8 @@
 //! The fixture font and the captures are compiled in, so it reads no file.
 
 #[cfg(target_os = "macos")]
+mod compare;
+#[cfg(target_os = "macos")]
 mod contract;
 
 /// The fixture font, Noto Sans Mono, the stand-in for Menlo.
@@ -32,8 +34,9 @@ fn main() {
         "check: AppleFontSmoothing is {preference:?}: text is smoothed: {}",
         smoothing(preference)
     );
-    let held = contract::run();
-    std::process::exit(if held { 0 } else { 1 });
+    let contract = contract::run();
+    let compared = compare::run();
+    std::process::exit(if contract && compared { 0 } else { 1 });
 }
 
 #[cfg(not(target_os = "macos"))]

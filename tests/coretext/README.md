@@ -90,8 +90,10 @@ tests/fonts/NotoSansMono-Regular.subset.ttf tests/coretext`.
   by its scale. Antialiasing and font smoothing are allowed and on.
 - For every drawing, subpixel positioning and quantisation are left at
   the context's defaults, as native apps leave them and as `sentence.png`
-  was drawn on 2026-11-14. Core Text then floors each glyph's place to a
-  quarter of a point: a quarter of a pixel at scale 1, a half at scale 2.
+  was drawn on 2026-11-14. Core Text then floors each glyph's place to
+  its own grid: a third of a pixel at scale 1, a half at scale 2
+  (measured on macOS 27.2.1, 2026-11-20, by drawing one glyph across a
+  pixel in steps of 1/400).
   The renderer's painter places glyphs on the same grid
   (`crates/editor-render-wgpu/src/glyphs.rs`, `bin_of`), so the Core Text
   adapter's masks are compared with these drawings as they are.

@@ -30,8 +30,8 @@
 //
 // Every drawing is made as native apps draw text (`CTLineDraw` with the
 // context's default subpixel flags), so that Core Text places each glyph
-// on its own grid, x floored to a quarter of a point: a quarter of a pixel
-// at scale 1 and a half at scale 2. The renderer's painter places glyphs
+// on its own grid, x floored to a third of a pixel at scale 1 and a half
+// at scale 2 (measured on macOS 27.2.1). The renderer's painter places glyphs
 // on the same grid, so the Core Text adapter's masks are compared with
 // these drawings as they are. Smoothing is on. The values of each of the
 // four drawings after `sentence.png` are the coverage, 255 being full

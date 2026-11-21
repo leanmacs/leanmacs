@@ -1463,6 +1463,70 @@ Run it on a new major version of macOS, or when the fixture font changes.
 new capture no longer matches the renderer's weight, the weight is fitted
 again.
 
+## The Core Text rasteriser, on demand
+
+```sh
+mise run coretext-check
+```
+
+This runs the example `check` of `crates/editor-raster-coretext`, on
+macOS. It holds the Core Text adapter to the rasteriser port's contract
+(`editor_raster::contract`), smoothed and not, at 14 and 28 pixels; says
+what `AppleFontSmoothing` holds and what was decided from it; and compares
+the adapter's masks with Core Text's own drawings of the weight sentence
+under `tests/coretext/`. Each glyph is laid at Core Text's own place
+(`positions.txt`), floored to Core Text's grid as the painter floors it
+(thirds of a pixel at scale 1, halves at scale 2), in the luminance
+bucket of the capture's text colour, and the masks are joined into one
+picture and measured against the capture
+(`crates/editor-raster-coretext/src/compare.rs`):
+
+- the ink and the dark pixels within [0.995, 1.005], a pixel counted as
+  dark or light only where both pictures are more than 1/255 from half
+  covered;
+- the worst pixel at most 2/255 at scale 2, and at most 0.08 at scale 1,
+  where Core Text's own line drawing puts a few glyphs a little off the
+  thirds its grid is measured at.
+
+Three controls must each miss those thresholds, or the comparison could
+not see what it claims to: (a) the light-on-dark captures drawn at
+bucket 0; (b) the black-on-white captures not smoothed; (c) the grey
+capture at the bucket of its linear light. A pass is exit 0: every
+property holds, every capture is within and every control is outside.
+
+What Core Text draws is the system's, and the gate's macOS runner is not
+the capture machine, so the gate builds the example and never runs it.
+Run it when macOS's major version changes, when a binding's pin moves,
+and when the adapter changes, and record the figures here.
+
+On 2026-11-20, on macOS 27.2.1 (26B131), `AppleFontSmoothing` not set:
+exit 0. Every property held at 14 and 28 pixels, smoothed and not.
+
+| Capture | Scale | Bucket | Ink | Dark pixels | Worst pixel |
+|---|---|---|---|---|---|
+| `sentence.png` | 2 | 0 | x1.0000 | x1.0000 | 0.000 |
+| `sentence-dark.png` | 2 | 3 | x1.0017 | x1.0000 | 0.004 |
+| `sentence-14.png` | 1 | 0 | x1.0001 | x1.0000 | 0.020 |
+| `sentence-14-dark.png` | 1 | 3 | x1.0035 | x1.0000 | 0.071 |
+| `sentence-grey.png` | 2 | 1 | x0.9972 | x1.0000 | 0.008 |
+
+| Control | Capture | Ink | Dark pixels | Worst pixel |
+|---|---|---|---|---|
+| (a) bucket 0 | `sentence-dark.png` | x0.8920 | x0.8458 | 0.420 |
+| (a) bucket 0 | `sentence-14-dark.png` | x0.8457 | x0.8206 | 0.282 |
+| (b) not smoothed | `sentence.png` | x0.8531 | x0.8679 | 0.533 |
+| (b) not smoothed | `sentence-14.png` | x0.8535 | x0.8864 | 0.231 |
+| (c) bucket 0 | `sentence-grey.png` | x0.9383 | x0.9282 | 0.243 |
+
+The grid was measured the same day by drawing one glyph across a pixel
+in steps of 1/400 with the context's default flags: its image changed at
+0.3325 and 0.6675 px at scale 1, at 0.5 px at scale 2, and only at whole
+pixels at scale 3. At scale 1 the masks laid at exact thirds are 0.020
+and 0.071 off at the worst pixel, and the best fit of the two places,
+86/256 and 170/256 of a pixel, was no better (0.016 and 0.071). Placed on
+a grid of a quarter of a pixel instead, the scale-1 captures were 0.169
+and 0.173 off.
+
 ## The editor on a file, on demand
 
 `mise run edit -- <file>` (`lean/Editor/Window/Real.lean`) opens the
