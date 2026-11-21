@@ -1,6 +1,8 @@
 import Editor.Clipboard.Model
 import Editor.Command.Call
 import Editor.Command.Model
+import Editor.Completion
+import Editor.Completion.AtPoint
 import Editor.Config.Packages
 import Editor.Event
 import Editor.Evil
@@ -33,8 +35,10 @@ import ModelTest.Support.Evil
 /-!
 # Model tests: `Editor/Evil/Repeat.lean`
 
-The model tests of `Editor/Evil/Repeat.lean`: `evilRepeatChecks`. The root
-module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `Editor/Evil/Repeat.lean`: `evilRepeatChecks`, and
+`atPointRepeatChecks`, what a repeat replays after completion at point, on
+the kit's at-point package (`Editor/Test/AtPoint.lean`). The root module
+`ModelTest` runs them; its module doc says what each shows.
 -/
 
 namespace ModelTest
@@ -374,5 +378,73 @@ def evilRepeatChecks : List Check :=
               some (⟨"X |X baz", charwise "bar", false, Evil.clipboardUnavailable⟩, none) &&
             replayed "|a b c d" "\" + d w" {} ==
               some (⟨"|c d", charwise "b ", false, ""⟩, some "b ") }]
+
+/-- The at-point source `line` of the repeat checks of completion at point:
+the region from the start of the cursor's line to the cursor, read from the
+text, completed from the source `say`. -/
+def repeatLineAtPoint : Completion.AtPoint :=
+  { name := "line"
+    ask := fun spot => do
+      let .ok target ← spot.view.target | return none
+      let start ← target.buffer.text.motion .lineStart spot.offset
+      return some { start, stop := spot.offset, sources := [.source "say"] } }
+
+/-- What a step of the repeat checks of completion at point is handed:
+`evilHanded`, which registers the kit's at-point package
+(`Editor/Test/AtPoint.lean`), told that a buffer's chain is the at-point
+source `line` (`repeatLineAtPoint`) and that the source `say` holds
+`say hello` and `say hi`. -/
+def repeatAtPointHanded : Loop.Keys Vim.Default.scheme :=
+  let handed := evilHanded
+  let say : Completion.Source := .ofTexts "say" "say" #["say hello", "say hi"]
+  { handed with
+    registered :=
+      { handed.registered with
+        atPoint := fun name =>
+          if name == repeatLineAtPoint.name then some repeatLineAtPoint else none
+        atPointNames := fun _ _ => #[repeatLineAtPoint.name]
+        sources := fun name => if name == say.name then some say else none
+        categorySources := fun category => if category == say.category then #[say.name] else #[] } }
+
+/-- The checks of what a repeat replays after completion at point
+(`EditorState.retyped`, `Loop.ranInto`): what a command typed in place of
+typed text reaches the last change's recording, only when the command ran to
+its end; and `.` after an insert that accepted a preview inserts what that
+insert left. -/
+def atPointRepeatChecks : List Check :=
+  let retyping : Config.Registration :=
+    { name := "retyping", action := .call fun call => retype call.target.window.id "zz" }
+  let refusing : Config.Registration :=
+    { name := "refusing"
+      action :=
+        .call fun call => do
+          retype call.target.window.id "yy"
+          throw .badRange }
+  [{  name :=
+        "what a command says it typed reaches the insert session's recording once it has run to its end, and a command that is refused tells the scheme nothing"
+      run :=
+        pure <|
+          match evilDriver "ab|c" (evilHanded #[retyping, refusing]) with
+          | none => false
+          | some driver =>
+            let inserting := evilFed driver "i x"
+            let told :=
+              (inserting.stepped
+                  (inserting.loop.invoke inserting.handed { command := "retyping" })).1
+            let refused := (told.stepped (told.loop.invoke told.handed { command := "refusing" })).1
+            told.loop.input.inserted == some "xzz" && told.loop.atRest.inserted == some "xzz" &&
+              refused.loop.input.inserted == some "xzz" &&
+              told.loop.state.retyped.isEmpty },
+    { name :=
+        "after a C-n C-n RET <Escape>, a move and . insert at the new bar what the insert left, the previewed text included"
+      run :=
+        pure <|
+          match evilDriver "say he\nsay h|e" repeatAtPointHanded with
+          | none => false
+          | some driver =>
+            let done := evilFed driver "a C-n C-n RET <Escape>"
+            let repeated := evilFed done "k ."
+            evilText done == some "say he\nsay hello" &&
+              evilText repeated == some "say hello\nsay hello" }]
 
 end ModelTest

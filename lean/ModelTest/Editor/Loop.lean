@@ -34,7 +34,6 @@ import Editor.Fuzzy.Model
 import Editor.GeneratedView
 import Editor.InputScheme
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
@@ -102,7 +101,7 @@ The model tests of `Editor/Loop.lean`: `loopChecks`, `commitChecks`,
 `laterLoopChecks`, `loopFileJobChecks`, `openFilesChecks`,
 `dispatchQuitChecks`, `systemQuitChecks`,
 `searchDecorationChecks`, `viewChecks`, `floatViewChecks`,
-`atPointRepeatChecks`, `atPointLoopChecks`, `atPointAskChecks`,
+`atPointLoopChecks`, `atPointAskChecks`,
 `atPointByItselfChecks` and `pressedChecks`. `searchDecorationChecks` are of the loop's
 decorations under the test scheme, and `modeDispatchChecks` of modes in the
 loop. `directoryChecks` also cover the reasking of a source
@@ -927,7 +926,36 @@ def commitChecks : List Check :=
           told true == some ([(⟨0⟩, "c"), (⟨0⟩, "ab")], [(⟨0⟩, "c"), (⟨0⟩, "ab")], #["abc"]) &&
             told false == some ([], [], #[""]) &&
             (TestScheme.scheme.pending
-                (TestScheme.scheme.committed ⟨0⟩ "x" TestScheme.scheme.init)).isEmpty }]
+                (TestScheme.scheme.committed ⟨0⟩ "x" TestScheme.scheme.init)).isEmpty },
+    { name :=
+        "what a command says it typed is told to the scheme as committed text once the command has run to its end, and a command that is refused tells the scheme nothing"
+      run :=
+        pure <|
+          let handed : Loop.Keys (telling true) :=
+            {
+              command? := fun name =>
+                if name == "retyping" then
+                  some fun call => do
+                    retype call.target.window.id "zz"
+                    return none
+                else
+                  if name == "refusing" then
+                    some fun call => do
+                      retype call.target.window.id "yy"
+                      throw .badRange
+                  else none }
+          match
+            (Loop.Driver.over handed (fun _ => none) (EditorState.initial ⟨640, 480⟩)
+                editorModel).toOption with
+          | none => false
+          | some driver =>
+            let told :=
+              (driver.stepped (driver.loop.invoke driver.handed { command := "retyping" })).1
+            let refused := (told.stepped (told.loop.invoke told.handed { command := "refusing" })).1
+            told.loop.input.2 == [(⟨0⟩, "zz")] && refused.loop.input.2 == [(⟨0⟩, "zz")] &&
+              told.loop.state.retyped.isEmpty &&
+              refused.loop.state.retyped.isEmpty &&
+              refused.loop.state.echo.startsWith "refusing: refused: " }]
 
 /-- The pending keys each scene of a run showed; none of them when the run
 was refused. -/
@@ -6437,47 +6465,6 @@ def floatViewChecks : List Check :=
           let frame := frameAround ⟨640, 448⟩ floatModel.display.cells
           spotsAsked (hinted frame 18 18 false) == some 1 &&
             spotsAsked (viewState floatLines frame 0 18) == some 0 }]
-
-/-- The checks of what a repeat replays after completion at point
-(`EditorState.retyped`, `Loop.ranInto`): what a command typed in place of
-typed text reaches the last change's recording, only when the command ran to
-its end; and `.` after an insert that accepted a preview inserts what that
-insert left. -/
-def atPointRepeatChecks : List Check :=
-  let retyping : Config.Registration :=
-    { name := "retyping", action := .call fun call => retype call.target.window.id "zz" }
-  let refusing : Config.Registration :=
-    { name := "refusing"
-      action :=
-        .call fun call => do
-          retype call.target.window.id "yy"
-          throw .badRange }
-  [{  name :=
-        "what a command says it typed reaches the insert session's recording once it has run to its end, and a command that is refused tells the scheme nothing"
-      run :=
-        pure <|
-          match evilDriver "ab|c" (evilHanded #[retyping, refusing]) with
-          | none => false
-          | some driver =>
-            let inserting := evilFed driver "i x"
-            let told :=
-              (inserting.stepped
-                  (inserting.loop.invoke inserting.handed { command := "retyping" })).1
-            let refused := (told.stepped (told.loop.invoke told.handed { command := "refusing" })).1
-            told.loop.input.inserted == some "xzz" && told.loop.atRest.inserted == some "xzz" &&
-              refused.loop.input.inserted == some "xzz" &&
-              told.loop.state.retyped.isEmpty },
-    { name :=
-        "after a C-n C-n RET <Escape>, a move and . insert at the new bar what the insert left, the previewed text included"
-      run :=
-        pure <|
-          match atPointDriver "say he\nsay h|e" #["line"] [lineAtPoint] with
-          | none => false
-          | some driver =>
-            let done := evilFed driver "a C-n C-n RET <Escape>"
-            let repeated := evilFed done "k ."
-            evilText done == some "say he\nsay hello" &&
-              evilText repeated == some "say hello\nsay hello" }]
 
 /-- The checks of completion at point through the loop (`Editor/Loop.lean`,
 "Completion at point"), on the evil driver over the models. -/
