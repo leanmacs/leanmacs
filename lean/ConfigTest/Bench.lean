@@ -38,6 +38,7 @@ import Editor.Setup
 import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
+import Editor.Test.Linked.Bench
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Listings
@@ -47,8 +48,6 @@ import Editor.Text
 import Editor.Text.Model
 import Editor.Text.Real
 import Editor.Watch
-import Editor.Workspace.Compiled
-import Editor.Workspace.FindFile
 import ShellApi
 
 /-!
@@ -399,49 +398,6 @@ def setup : SetupM Unit := do
   job \"spin\" (fun _ => spin 1) fun _ => pure ()
 ")]
 
-/-- What the samples of one row came to, in nanoseconds. -/
-structure Row where
-  /-- What ran while the row was measured. -/
-  name : String
-  /-- The median latency. -/
-  median : Nat
-  /-- The 99th percentile. -/
-  high : Nat
-  /-- The largest sample. -/
-  maximum : Nat
-  /-- What to say after the numbers, if anything. -/
-  note : String := ""
-
-/-- The row of `times`, which need not be sorted. -/
-def Row.of (name : String) (times : Array Nat) (note : String := "") : Row :=
-  let sorted := times.qsort (· < ·)
-  { name, median := (sorted.getD ((sorted.size - 1) / 2) 0 + sorted.getD (sorted.size / 2) 0) / 2,
-    high := sorted.getD (min (sorted.size * 99 / 100) (sorted.size - 1)) 0,
-    maximum := sorted.back?.getD 0, note }
-
-/-- Nanoseconds as microseconds with one decimal. -/
-def microseconds (nanoseconds : Nat) : String :=
-  let tenths := (nanoseconds + 50) / 100
-  s!"{tenths / 10}.{tenths % 10}"
-
-/-- A row as a line of the report: its name, padded, then the median, the
-99th percentile and the maximum. -/
-def Row.line (row : Row) : String :=
-  let label := row.name ++ ":"
-  s!"  {label.pushn ' ' (36 - label.length)}{microseconds row.median} / {microseconds row.high} / {microseconds row.maximum}{row.note}"
-
-/-- What the 99th percentile of a loaded row must stay under, in nanoseconds:
-100 µs. -/
-def highBound : Nat :=
-  100000
-
-/-- Whether a loaded row is within the bound the job system was accepted
-against, as an observation about one run: its median is at most twice the
-larger of the two idle medians, and its 99th percentile is under 100 µs. The
-maximum is not judged: one scheduling delay sets it. -/
-def Row.withinBound (row before after : Row) : Bool :=
-  row.median ≤ 2 * max before.median after.median && row.high < highBound
-
 /-- A compiled job that reads the clock `count` times and finishes. -/
 def readings (count : Nat) : Work := fun _ => do
   for _ in [0:count] do
@@ -659,24 +615,12 @@ def benchAtPoint (used : Bool) : Package :=
       if used then
         useAtPoint "bench-words" }
 
-/-- What the 99th percentile of a key's latency must stay under, in
-nanoseconds: 1 ms. -/
-def keyBound : Nat :=
-  1000000
-
 /-- How far apart the keys of the row typed at typing cadence are sent, in
 milliseconds: faster than anyone types, and shorter than a match of
 100,000 takes, so keys arrive while a match runs and while its delivery is
 handled. -/
 def cadence : Nat :=
   20
-
-/-- Whether a row of keys is within the bound the plan set for matching off
-the editor thread: its median at most twice the idle row's, and its 99th
-percentile under 1 ms. The auto-popup row is judged with the plain insert
-row as its idle row: the same key with no at-point source. -/
-def Row.keyWithinBound (row idle : Row) : Bool :=
-  row.median ≤ 2 * idle.median && row.high < keyBound
 
 /-- About 50 KB of generated words, `word<i % 4999>_<i % 4999 % 97>` for `i` from
 `first`, space-separated: one open buffer of the auto-popup row of the
@@ -943,195 +887,6 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
     IO.println s!"refused steps: {← refused.get}"
   (← IO.getStdout).flush
   return 0
-
-/-! ## The workspace finder benchmark
-
-`bench-workspace-files` measures what a key costs in
-`find-file-in-workspace`'s prompt over a real repository
-(`Editor/Workspace/FindFile.lean`), and the time from a key to the list it
-updates: the source's job runs the workspace's lister, `git ls-files`, and
-fzf, both real, on the pool, after the source's 50 ms pause. One headless
-host of the test scheme, over the library's real process and file
-services and its queue, whose working directory is the repository. -/
-
-/-- How far apart the keys of the cadence row of the workspace finder
-benchmark are sent, in milliseconds: more than the source's 50 ms pause, so
-each key arrives while the job of the text before it runs its lister or its
-filter. -/
-def finderCadence : Nat :=
-  120
-
-/-- The median of `times`, which need not be sorted. -/
-def median (times : Array Nat) : Nat :=
-  (Row.of "" times).median
-
-/-- How long one run of `command` with `arguments` in `directory` takes, fed
-`input` when it is given, in nanoseconds, with what it wrote
-(`IO.Process.output`); a throw when it does not exit 0. -/
-def timedRun (command : String) (arguments : Array String) (directory : System.FilePath)
-    (input : Option String := none) : IO (Nat × String) := do
-  let started ← IO.monoNanosNow
-  let output ← IO.Process.output { cmd := command, args := arguments, cwd := directory } input
-  let ended ← IO.monoNanosNow
-  unless output.exitCode == 0 do
-    throw (IO.userError s!"{command} exited with status {output.exitCode}: {output.stderr}")
-  return (ended - started, output.stdout)
-
-/-- `bench-workspace-files`: what a key costs in `find-file-in-workspace`'s
-prompt over the repository at `repository`, a key in a prompt with no
-candidates as the floor, the keys `m`, `1`, `2`, `f`, `3` and `4` each
-joined, with the time from each to its updated list, and the same keys
-`finderCadence` ms apart with nothing joined; `samples` keys a row. Then
-the lister and the filter alone, each run 20 times. -/
-def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (samples : Nat) :
-    IO UInt8 := do
-  let repository ← IO.FS.realPath repository
-  let pool := (← Job.Pool.warm Job.Pool.size 200).size
-  let completions ← Job.Completions.new
-  discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
-  let timers := Job.realTimers completions
-  let published ← Snapshots.new
-  let held ← Job.HeldSnapshots.new
-  let services : Job.Services :=
-    { completions, timers, fuzzy := Fuzzy.real
-      files := Job.realFiles completions published.reader held
-      processes :=
-        Job.realProcesses completions (← Job.RefusedRuns.new) timers (← Job.TimedRuns.new)
-      snapshots := Job.realSnapshots published.reader }
-  -- The editor thread reads the clock when it prints that it ran `noop`,
-  -- and when it prints that the source's job's post, its batch, ran.
-  let ranSlot ← IO.mkRef (none : Option (IO.Promise Nat))
-  let listedSlot ← IO.mkRef (none : Option (IO.Promise Nat))
-  let failures ← IO.mkRef (#[] : Array String)
-  let refused ← IO.mkRef 0
-  let source := Workspace.FindFile.job
-  -- The status line of the finder's prompt, as `scene` prints it: it names
-  -- the workspace, so the report says git found it.
-  let labelLine ← IO.mkRef (none : Option String)
-  let emit (line : String) : IO Unit := do
-    if line.startsWith "status " && (line.splitOn "Find file in ").length > 1 then
-      labelLine.modify (·.orElse fun _ => some line)
-    if line == "run noop: ok" then
-      if let some sample← ranSlot.modifyGet fun slot => (slot, none) then
-        sample.resolve (← IO.monoNanosNow)
-    else if line.startsWith "job " && line.endsWith s!" {source}: ok" then
-      if let some sample← listedSlot.modifyGet fun slot => (slot, none) then
-        sample.resolve (← IO.monoNanosNow)
-    else if line.startsWith "job " && (line.splitOn s!" {source}: failed").length > 1 then
-      failures.modify (·.push line)
-    else if line.startsWith "loop: refused" then
-      refused.modify (· + 1)
-  let host ←
-    Headless.start (scheme := TestScheme.scheme)
-        { elaborator := (← measured sysroot oleanDir).1
-          source := memorySource [], emit, services, published, held, requests := 1
-          wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
-          packages :=
-            #[listingsPackage, Test.Shipped.modeLine, shippedPackage "files",
-              Test.Minibuffer.package, Workspace.package,
-              Compiled.package
-                {
-                  commands :=
-                    #[{ name := "noop", action := .plain (pure ()) },
-                      { name := "ask-plain"
-                        action :=
-                          .plain (discard <| Editor.prompt "Plain: " { command := "noop" } "") }] }]
-          workingDirectory := repository }
-  try
-    let joined (what : String) : IO Unit := do
-      unless (← host.join patience) == .settled do
-        throw (IO.userError s!"{what} did not settle")
-      unless (← failures.get).isEmpty do
-        throw (IO.userError s!"the source failed: {(← failures.get)[0]!}")
-    -- The file opens, and the finder runs git for its directory.
-    host.send (.open (repository / "src" / "m0" / "f0.rs").toString)
-    joined "the open"
-    let keys := ["m", "1", "2", "f", "3", "4"]
-    -- One row: `ask` opens the prompt, joined and untimed; each key is
-    -- committed and followed by `noop`, and timed to the editor thread's
-    -- line for `noop`, and, when `listing`, to the post of the batch for
-    -- its text. After the sixth key the prompt is cancelled and asked again,
-    -- untimed. `joined` joins after each key; otherwise the next key comes
-    -- `finderCadence` ms later.
-    let row (ask : String) (listing joinEach : Bool) : IO (Array Nat × Array Nat) := do
-      let opens : IO Unit := do
-        host.send (.run ask)
-        joined s!"{ask}'s prompt"
-      opens
-      let mut keyTimes := #[]
-      let mut listingTimes := #[]
-      for sample in [0:samples] do
-        let index := sample % keys.length
-        if index == 0 && sample > 0 then
-          joined "the keys"
-          host.send (.run Test.Minibuffer.cancelName)
-          joined "the cancel"
-          opens
-        let ran ← IO.Promise.new
-        let listed ← IO.Promise.new
-        ranSlot.set (some ran)
-        listedSlot.set (if listing then some listed else none)
-        let asked ← IO.monoNanosNow
-        host.commit (keys[index]?.getD "x")
-        host.send (.run "noop")
-        let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
-        keyTimes := keyTimes.push (handled - asked)
-        if listing then
-          let some delivered ← IO.wait listed.result? | throw (IO.userError "a listing was lost")
-          listingTimes := listingTimes.push (delivered - asked)
-        if joinEach then
-          joined "a key's listing"
-        else
-          IO.sleep finderCadence.toUInt32
-      joined "the row"
-      host.send (.run Test.Minibuffer.cancelName)
-      joined "the cancel"
-      return (keyTimes, listingTimes)
-    -- The finder's first listing, untimed, and its prompt's status line.
-    host.send (.run Workspace.FindFile.name)
-    joined "the first listing"
-    host.send .scene
-    joined "the scene"
-    host.send (.run Test.Minibuffer.cancelName)
-    joined "the cancel"
-    let idle := Row.of "no candidates" (← row "ask-plain" false true).1
-    let (finderKeys, finderListings) ← row Workspace.FindFile.name true true
-    let finder := Row.of "workspace finder, each key joined" finderKeys
-    let listed := Row.of "  key to the updated list" finderListings
-    let cadence :=
-      Row.of s!"workspace finder, keys {finderCadence} ms apart"
-        (← row Workspace.FindFile.name false false).1
-    -- The lister and the filter alone, outside the editor.
-    let lister := Workspace.Lister.git "git"
-    let mut listerTimes := #[]
-    let mut filterTimes := #[]
-    let mut listedCount := 0
-    for _ in [0:20] do
-      let (time, output) ← timedRun lister.program lister.arguments repository
-      listerTimes := listerTimes.push time
-      listedCount := (Completion.Filtering.records .nul output.toUTF8 false).size
-      let (time, _) ←
-        timedRun "fzf" #["--read0", "--print0", "--filter", "m12"] repository (some output)
-      filterTimes := filterTimes.push time
-    IO.println
-        s!"pool: {pool} threads; {samples} keys a row, of m, 1, 2, f, 3 and 4 committed into the prompt; {repository}: git lists {listedCount} files; the prompt's {(← labelLine.get).getD "status line was not printed"}"
-    IO.println
-        "latency of a key, from sending it to the editor thread having handled it and published its scene, and of the list, from sending a key to the post of its batch, in µs: median / 99th percentile / maximum"
-    for row in [idle, finder, listed, cadence] do
-      IO.println row.line
-    IO.println
-        s!"alone, median of 20 runs, in µs: git ls-files -z --cached --others --exclude-standard {microseconds (median listerTimes)}; fzf --read0 --print0 --filter m12 fed its output {microseconds (median filterTimes)}"
-    IO.println
-        ("within bound (median within twice the no-candidates median, 99th percentile under 1 ms): " ++
-          "; ".intercalate
-            ([finder, cadence].map fun row =>
-              s!"{row.name}: {if row.keyWithinBound idle then "yes" else "no"}"))
-    if (← refused.get) > 0 then
-      IO.println s!"refused steps: {← refused.get}"
-    (← IO.getStdout).flush
-    return 0
-  finally
-    discard <| host.halt patience
 
 /-- A text of about `size` bytes in lines of 52, as `milestone-bench`
 generates its file: `%07d the quick brown fox jumps over the lazy dog`. -/

@@ -23,6 +23,7 @@ import ConfigTest.Editor.Setup
 import ConfigTest.Editor.Themes
 import ConfigTest.Editor.Themes.Check
 import ConfigTest.Editor.VersionControl.Gutter
+import ConfigTest.Editor.Workspace.Bench
 import ConfigTest.Lsp
 
 /-!
@@ -335,7 +336,9 @@ that reads an `initialize`d constant of config's, and none runs config that
 recurses without bound.
 
 The executable also holds the benchmark (`ConfigTest.Bench`,
-`ConfigTest/Bench.lean`), which the gate builds and never runs.
+`ConfigTest/Bench.lean`) and the workspace finder's
+(`ConfigTest.WorkspaceBench`, `ConfigTest/Editor/Workspace/Bench.lean`),
+which the gate builds and never runs.
 -/
 
 namespace ConfigTest
@@ -411,7 +414,8 @@ never runs.
 `mise run job-bench`), which the gate never runs either, and so is
 `bench-prompt`, the prompt benchmark (`ConfigTest.Bench.prompt`;
 `mise run prompt-bench`), and `bench-workspace-files`, the workspace
-finder's (`ConfigTest.Bench.workspaceFiles`; `mise run find-file-bench`),
+finder's (`ConfigTest.WorkspaceBench.workspaceFiles`, the workspace's, in
+`ConfigTest/Editor/Workspace/Bench.lean`; `mise run find-file-bench`),
 handed the repository it searches, and `bench-journal`, the session
 journal's cost on the editor thread (`ConfigTest.Bench.journal`;
 `mise run journal-bench`).
@@ -482,7 +486,7 @@ def main (args : List String) : IO UInt32 := do
     | some samples =>
       let status ←
         try
-          ConfigTest.Bench.workspaceFiles sysroot oleanDir repository samples
+          ConfigTest.WorkspaceBench.workspaceFiles sysroot oleanDir repository samples
         catch error =>
           IO.eprintln s!"config-test: bench-workspace-files: {error}"
           pure 1

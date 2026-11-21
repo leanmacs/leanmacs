@@ -593,7 +593,8 @@ test modules share are in `<Root>/Support/`, and contract-test's rig over
 the real services in the linked test kit, `lean/Editor/Test/Linked/`; `Check` (and `failures`,
 `run` and `usage`, and config-test's `Context`, where the root has them)
 are in `<Root>/Check.lean`; the benchmark is in
-`lean/ConfigTest/Bench.lean`; and the checks of the default config
+`lean/ConfigTest/Bench.lean`, but for the workspace finder's, which is the
+workspace's, in `lean/ConfigTest/Editor/Workspace/Bench.lean`; and the checks of the default config
 (`config/default`), which is no Lean module to mirror, are in
 `lean/ConfigTest/DefaultConfig.lean`. Each root keeps its imports, its `checks`
 aggregator (contract-test's is `main`) and `main`, and every list stays in

@@ -1768,7 +1768,7 @@ run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test
 # library's process and file services; LEAN_NUM_THREADS and
 # LEAN_STACK_SIZE_KB are removed from the environment, as for `job-bench`.
 [tasks.find-file-bench]
-description = "Opt-in, never part of ci: measure what a key costs in find-file-in-workspace's prompt over a repository of 100,000 files, and the time from a key to its updated list (lean/ConfigTest/Bench.lean). It asserts nothing"
+description = "Opt-in, never part of ci: measure what a key costs in find-file-in-workspace's prompt over a repository of 100,000 files, and the time from a key to its updated list (lean/ConfigTest/Editor/Workspace/Bench.lean). It asserts nothing"
 depends = ["lean"]
 dir = "lean"
 run = '''

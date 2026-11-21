@@ -666,8 +666,13 @@ environment.
 
 It is one headless host of the test scheme over the library's real process
 and file services and its queue, its working directory the repository,
-registered with the file commands, the minibuffer's and the workspace
-commands, their jobs and sources. It opens `src/m0/f0.rs` and joins, which
+registered with `files-api`'s fake (which opens the first file over the
+real file service and runs its hooks), the minibuffer's and the workspace
+commands, their jobs and sources. It is the workspace's
+(`ConfigTest.WorkspaceBench.workspaceFiles`,
+`lean/ConfigTest/Editor/Workspace/Bench.lean`), written on the linked
+test kit's `Editor.Test.Linked.benchHost`, so it names no other
+feature. It opens `src/m0/f0.rs` and joins, which
 runs the git finder; runs `find-file-in-workspace` and joins, the first
 listing, and prints the prompt's status line, which names the workspace
 (`repo@main`, so git found it). A sample is one key of `m`, `1`, `2`, `f`,
