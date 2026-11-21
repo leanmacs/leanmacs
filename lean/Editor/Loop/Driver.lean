@@ -439,36 +439,18 @@ def started (driver : Loop.Driver scheme) (starts : Array JobStart) : Loop.Drive
 its jobs read, in order, as the host hands them its file service
 unobserved: each request is answered by `FileModel.handle` over the text
 model's snapshots, and the snapshot it names is then released in the text
-model. A refusal is kept, its path and why (`journalFailures`). -/
+model. A refusal is kept, its path and why, as `Restore.Order.failed` says
+them (`journalFailures`). -/
 def journaled (driver : Loop.Driver scheme) (orders : Array Restore.Order) : Loop.Driver scheme :=
   orders.foldl
     (fun driver order =>
       let files := { driver.jobs.files with snapshots := driver.model.texts.snapshots }
-      let path : String :=
+      let (failure, files) : Option (String × String) × FileModel :=
         match order.request with
-        | .append path _ | .remove path | .save _ path _ => path.toString
-        | _ => ""
-      let (failure, files) : Option String × FileModel :=
-        match order.request with
-        | .append path bytes =>
-          let (reply, files) := files.append path bytes
-          ((match reply with
-            | .error error => some error.describe
-            | .ok () => none),
-            files)
-        | .remove path =>
-          let (reply, files) := files.remove path
-          ((match reply with
-            | .error error => some error.describe
-            | .ok () => none),
-            files)
-        | .save source path expect =>
-          let (reply, files) := files.save source path expect
-          ((match reply with
-            | .error error => some error.describe
-            | .ok _ => none),
-            files)
-        | _ => (some "not a journal's request", files)
+        | .append .. | .remove _ | .save .. =>
+          let (reply, files) := files.handle order.request
+          (order.failed reply, files)
+        | _ => (some (order.path, "not a journal's request"), files)
       let texts :=
         match order.release with
         | some snapshot => ((TextSource.snapshot snapshot).release.runModel driver.model.texts).2
@@ -476,7 +458,8 @@ def journaled (driver : Loop.Driver scheme) (orders : Array Restore.Order) : Loo
       { driver with
         jobs := { driver.jobs with files }
         model := { driver.model with texts }
-        journalFailures := driver.journalFailures ++ failure.toArray.map (s!"{path}: " ++ ·) })
+        journalFailures :=
+          driver.journalFailures ++ failure.toArray.map fun (path, why) => s!"{path}: {why}" })
     driver
 
 /-- The driver once each of `spawns` is run (`Loop.Spawn`): the job of its
