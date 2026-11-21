@@ -25,12 +25,16 @@
 // - `sentence-14.png`: 14 pt at scale 1, black on white.
 // - `sentence-14-dark.png`: 14 pt at scale 1, `#d8dee9` on `#2e3440`.
 // - `sentence-grey.png`: at scale 2, `#808080` on white, which tells a
-//   luminance bucket of the encoded value (2) from one of linear light (1).
+//   luminance bucket of the encoded value (1) from one of linear light (0).
 // - `positions.txt`: each glyph's place on the line, at scale 1 and 2.
 //
-// Each of the four new drawings sets the flags the rasteriser sets
-// (crates/editor-raster-coretext): smoothing on, subpixel positioning on,
-// subpixel quantisation off. Its values are the coverage, 255 being full
+// Every drawing is made as native apps draw text (`CTLineDraw` with the
+// context's default subpixel flags), so that Core Text places each glyph
+// on its own grid, x floored to a quarter of a point: a quarter of a pixel
+// at scale 1 and a half at scale 2. The renderer's painter places glyphs
+// on the same grid, so the Core Text adapter's masks are compared with
+// these drawings as they are. Smoothing is on. The values of each of the
+// four drawings after `sentence.png` are the coverage, 255 being full
 // ink: each channel's value mapped back through its ground and its text
 // colour, `(value - ground) / (text - ground)`.
 //
@@ -131,10 +135,10 @@ struct Layout {
 }
 
 /// The bitmap of `line` drawn on `layout` over `ground`, with font smoothing
-/// on or off, as bytes in memory order blue, green, red, alpha. With
-/// `flags`, subpixel positioning is set on and quantisation off, as the
-/// rasteriser sets them; without, they are left at the context's defaults.
-func draw(_ line: CTLine, _ layout: Layout, ground: RGB, smoothed: Bool, flags: Bool) -> [UInt8] {
+/// on or off, as bytes in memory order blue, green, red, alpha. Subpixel
+/// positioning and quantisation are left at the context's defaults, as
+/// native apps leave them.
+func draw(_ line: CTLine, _ layout: Layout, ground: RGB, smoothed: Bool) -> [UInt8] {
     let (pixelsWide, pixelsHigh, scale) = (layout.pixelsWide, layout.pixelsHigh, layout.scale)
     let space = CGColorSpace(name: CGColorSpace.sRGB)!
     let info =
@@ -152,12 +156,6 @@ func draw(_ line: CTLine, _ layout: Layout, ground: RGB, smoothed: Bool, flags: 
     context.setShouldAntialias(true)
     context.setAllowsFontSmoothing(true)
     context.setShouldSmoothFonts(smoothed)
-    if flags {
-        context.setAllowsFontSubpixelPositioning(true)
-        context.setShouldSubpixelPositionFonts(true)
-        context.setAllowsFontSubpixelQuantization(true)
-        context.setShouldSubpixelQuantizeFonts(false)
-    }
     context.scaleBy(x: scale, y: scale)
     context.textPosition = CGPoint(
         x: CGFloat(margin) / scale, y: CGFloat(layout.baseline) / scale)
@@ -327,8 +325,8 @@ func path(_ name: String) -> String { (directory as NSString).appendingPathCompo
 // The weight sentence, as it was captured on 2026-11-14.
 let line = makeLine(font, black)
 let large = Layout(line, scale: 2)
-let smoothed = gray(draw(line, large, ground: white, smoothed: true, flags: false), large)
-let unsmoothed = gray(draw(line, large, ground: white, smoothed: false, flags: false), large)
+let smoothed = gray(draw(line, large, ground: white, smoothed: true), large)
+let unsmoothed = gray(draw(line, large, ground: white, smoothed: false), large)
 write(smoothed, large, to: path("sentence.png"))
 
 /// How many values are below 128, and how far below 255 they are, summed.
@@ -344,7 +342,7 @@ print("capture: smoothed: \(darkCount) dark pixels, ink \(ink)")
 print("capture: not smoothed: \(plainDark) dark pixels, ink \(plainInk)")
 print("capture: smoothing changes the drawing: \(smoothed != unsmoothed)")
 
-// The drawings the rasteriser is compared with, its flags set.
+// The drawings the rasteriser is also compared with.
 let small = Layout(line, scale: 1)
 for (name, layout, text, ground) in [
     ("sentence-dark.png", large, light, dark),
@@ -352,7 +350,7 @@ for (name, layout, text, ground) in [
     ("sentence-14-dark.png", small, light, dark),
     ("sentence-grey.png", large, grey, white),
 ] {
-    let drawn = draw(makeLine(font, text), layout, ground: ground, smoothed: true, flags: true)
+    let drawn = draw(makeLine(font, text), layout, ground: ground, smoothed: true)
     let values = coverage(drawn, layout, text: text, ground: ground, name: name)
     write(values, layout, to: path(name))
     let total = values.reduce(0) { $0 + Int($1) }

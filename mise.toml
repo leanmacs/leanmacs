@@ -1979,9 +1979,12 @@ run = ".lake/build/bin/ffi-test excerpt-picture ../tests/render/excerpts ../test
 # - `sentence-dark.png`, at scale 2, the default theme's `#d8dee9` on
 #   `#2e3440`; `sentence-14.png` and `sentence-14-dark.png`, at scale 1,
 #   black on white and light on dark; `sentence-grey.png`, at scale 2,
-#   `#808080` on white. Each is the coverage, drawn with the rasteriser's
-#   flags, and is what the Core Text adapter's masks are compared with
-#   (`mise run coretext-check`).
+#   `#808080` on white. Each is the coverage, and is what the Core Text
+#   adapter's masks are compared with (`mise run coretext-check`).
+#
+# Every drawing is made with the context's default subpixel flags, as
+# native apps draw text: Core Text floors each glyph's place to a quarter
+# of a point, the grid the renderer's painter places glyphs on.
 # - `positions.txt`, each glyph's place on the line at scale 1 and 2, which
 #   the shaper's and the painter's placement tests hold to
 #   (`crates/editor-shape-parley/tests/core_text.rs`,

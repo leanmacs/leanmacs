@@ -25,10 +25,10 @@ reference image is still `tests/render/frame.png`.
 | File | Size | Bytes | sha256 |
 |---|---|---|---|
 | `sentence.png` | 385 by 71 pixels, 8-bit grayscale | 2658 | `1c16d8153eecfacc12ae57b4dafa010de3f9a0b9059affe9afb890b5af76ab85` |
-| `sentence-dark.png` | 385 by 71 pixels, 8-bit grayscale | 2731 | `dd66afd05c6743edfca74c29fdc2f1ad871d41188045a782b51b695a910809a6` |
-| `sentence-14.png` | 209 by 52 pixels, 8-bit grayscale | 1255 | `16ac7f2af0a77ecfc7fa639496bc7ca8c3dbddfffc771d754cd580b8417d80da` |
-| `sentence-14-dark.png` | 209 by 52 pixels, 8-bit grayscale | 1250 | `4a14121de90f3d8732129676d0605f00b90706b6c913ad530b3c6384a6983572` |
-| `sentence-grey.png` | 385 by 71 pixels, 8-bit grayscale | 2677 | `b75c425c2dbdbba56af8c5ab1c5f5ca8705e40edc7137ed18506edc23e331ea5` |
+| `sentence-dark.png` | 385 by 71 pixels, 8-bit grayscale | 2585 | `207d8ca2dd3d5eb348ca2ae23711ce0e2fd3ab87dc38934f1139bd02bc303161` |
+| `sentence-14.png` | 209 by 52 pixels, 8-bit grayscale | 1263 | `5d1b64efef153df73e9bdfe65e244698cd2bb4810fa4bc1f19eae919a86dc243` |
+| `sentence-14-dark.png` | 209 by 52 pixels, 8-bit grayscale | 1268 | `8973fc4c2ada4f8cfb3f64afd5864ced493b6316f2d774037214f4bdcd5e2195` |
+| `sentence-grey.png` | 385 by 71 pixels, 8-bit grayscale | 2540 | `a89c76d7908102bc4318475c8714ea2bf8595de73d18d0b8556fd84cb612dfb0` |
 | `positions.txt` | 42 lines of glyphs, under 2 of comment | 1295 | `f73652a3ad732f80da4b8606185067cd45351fcdbd687505a6d8333aa514c81d` |
 
 ## What they show
@@ -47,9 +47,10 @@ border.
 | `sentence-14-dark.png` | 1 (14) | `#d8dee9` on `#2e3440` | 21 | coverage |
 | `sentence-grey.png` | 2 (28) | `#808080` on white | 25 | coverage |
 
-`#808080` is in the luminance bucket 2 by its encoded value and in bucket
-1 by its linear light (0.22), so its drawing tells which of the two Core
-Text's smoothing follows.
+`#808080` is in the luminance bucket 1 by its encoded value (0.502) and
+in bucket 0 by its linear light (0.216), counted against Core Text's
+smoothing levels (`editor_raster::SMOOTHING_LEVELS`), so its drawing tells
+which of the two Core Text's smoothing follows.
 
 `positions.txt` has one line for each glyph at scale 1 and at scale 2,
 `<scale> <glyph id> <x px> <y px> <advance px>`, in device pixels from the
@@ -76,18 +77,24 @@ tests/fonts/NotoSansMono-Regular.subset.ttf tests/coretext`.
   drew it again to the same bytes, so the weight fit's target is still
   the 2026-11-14 capture.
 - The other files: on 2026-11-20, on the same machine, macOS 27.2.1
-  (26B131), with Apple Swift 6.4.2, `AppleFontSmoothing` not set. Two runs
-  gave the same bytes, for every file.
+  (26B131), with Apple Swift 6.4.2, `AppleFontSmoothing` not set. They
+  were first drawn that day with subpixel quantisation off, and drawn
+  again the same day with the context's default flags, as below; these
+  are the second drawings. Two runs gave the same bytes, for every file,
+  and `sentence.png` came out the same bytes as before.
 - The font is loaded from the file's bytes (`CGDataProvider`, `CGFont`,
   `CTFontCreateWithGraphicsFont` at 14 pt); nothing is installed or
   registered on the system.
 - Each bitmap is 8-bit RGB with alpha, premultiplied first, little-endian,
   in the sRGB colour space, filled with its ground, its transform scaled
   by its scale. Antialiasing and font smoothing are allowed and on.
-- For `sentence.png`, subpixel positioning and quantisation are left at
-  the context's defaults, as they were on 2026-11-14. For the other four,
-  they are set as the rasteriser sets them: subpixel positioning on, and
-  quantisation off.
+- For every drawing, subpixel positioning and quantisation are left at
+  the context's defaults, as native apps leave them and as `sentence.png`
+  was drawn on 2026-11-14. Core Text then floors each glyph's place to a
+  quarter of a point: a quarter of a pixel at scale 1, a half at scale 2.
+  The renderer's painter places glyphs on the same grid
+  (`crates/editor-render-wgpu/src/glyphs.rs`, `bin_of`), so the Core Text
+  adapter's masks are compared with these drawings as they are.
 - The script checked each drawing before writing it: nothing drawn on the
   border; for `sentence.png`, red, green and blue within 1 of each other
   at every pixel, and the red channel written as it is; for the others,
@@ -102,10 +109,10 @@ What the script printed:
 |---|---|---|---|
 | `sentence.png`, smoothed: the file | 1891 | 503470 | |
 | `sentence.png` not smoothed, for comparison | 1638 | 429519 | |
-| `sentence-dark.png` | | | 564477 |
-| `sentence-14.png` | | | 126131 |
-| `sentence-14-dark.png` | | | 149163 |
-| `sentence-grey.png` | | | 536580 |
+| `sentence-dark.png` | | | 564423 |
+| `sentence-14.png` | | | 126109 |
+| `sentence-14-dark.png` | | | 149127 |
+| `sentence-grey.png` | | | 536558 |
 
 So font smoothing makes the black drawing about 15% darker in dark pixels
 and 17% in ink, and light text on a dark ground has about 12% more
