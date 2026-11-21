@@ -430,16 +430,24 @@ def fileChecks (context : Context) : List Check :=
               let found ← stampOf path
               unless ← Event.post (.commit "x") do
                 return false
-              let saved ← session.ran Files.saveName
-              let (echo, lines) ← session.viewsAndStatus
               -- The commit was the buffer's first edit, which starts a check:
               -- it finds the file changed, so the status line has the
-              -- changed field too.
-              return saved && (← IO.FS.readBinFile path) == other &&
-                  lines ==
-                    #[viewLine ("x" ++ noteText) 1,
-                      noteStatus path (modified := true) (column := 1) (changed := true)] &&
-                  echo == (Files.notSaved path (.changed (some found))).quote },
+              -- changed field too. Its job is joined before the save, so the
+              -- echo area's last word is the save's refusal, not the check's:
+              -- the two jobs reach the file service apart, and nothing else
+              -- orders their ends.
+              unless (← session.host.join hangGuard) == .settled do
+                return false
+              let saved ← session.ran Files.saveName
+              let (echo, lines) ← session.viewsAndStatus
+              let bytes ← IO.FS.readBinFile path
+              saw
+                  (saved && bytes == other &&
+                    lines ==
+                      #[viewLine ("x" ++ noteText) 1,
+                        noteStatus path (modified := true) (column := 1) (changed := true)] &&
+                    echo == (Files.notSaved path (.changed (some found))).quote)
+                  s!"saved={saved} same={bytes == other} echo={echo} lines={lines} output={← session.output.get}" },
     { name :=
         "the open command on a path with no file: the echo area says the refusal, and the focused view still shows the buffer it showed, with its text, its cursor and its name"
       run :=
