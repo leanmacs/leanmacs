@@ -288,6 +288,11 @@ pub struct Record {
     pub waiting: Vec<u32>,
     /// How many reads are parked on the hold now.
     pub reads_parked: usize,
+    /// How many reads are blocked now on an empty pipe that is still
+    /// open: counted under the fake's lock just before such a read waits,
+    /// and no longer once it returns (one that wakes to a pipe still empty
+    /// and open waits on). A read parked on the hold is not one.
+    pub reads_waiting: usize,
     /// How many waits are parked on the hold of reaps now: their child has
     /// ended and is not yet reaped.
     pub reaps_parked: usize,
@@ -799,20 +804,23 @@ impl FakeProcesses {
     /// bytes in its pipe, waiting for the child to write some; or 0 once
     /// they have all been read and the stream has closed; or the refusal
     /// the script gives once they have all been read and the child is done
-    /// with its steps.
+    /// with its steps. While it waits for the child, it is counted in
+    /// [`Record::reads_waiting`].
     fn read(&self, id: u32, stream: Stream, buffer: &mut [u8]) -> Result<usize, Refusal> {
         let slot = usize::from(stream == Stream::Err);
         let mut state = self.shared.state();
+        // Whether this read is counted in `reads_waiting`.
+        let mut waiting = false;
         if state.reads_held {
             state.record.reads_parked += 1;
             self.shared.changed.notify_all();
             state = self.shared.wait_until(state, |state| !state.reads_held);
             state.record.reads_parked -= 1;
         }
-        loop {
+        let read = loop {
             let State { groups, record, .. } = &mut *state;
             let (Some(group), Some(io)) = (groups.get(&id), record.children.get_mut(&id)) else {
-                return Ok(0);
+                break Ok(0);
             };
             let at = io.read[slot];
             let unread = &group.pipes[slot][at..];
@@ -821,9 +829,7 @@ impl FakeProcesses {
                 buffer[..count].copy_from_slice(&unread[..count]);
                 io.read[slot] += count;
                 state.advance();
-                drop(state);
-                self.shared.changed.notify_all();
-                return Ok(count);
+                break Ok(count);
             }
             if group.done()
                 && let Some((_, refusal)) = group
@@ -832,17 +838,31 @@ impl FakeProcesses {
                     .iter()
                     .find(|(failing, _)| *failing == stream)
             {
-                return Err(refusal.clone());
+                break Err(refusal.clone());
             }
             if group.closed() {
-                return Ok(0);
+                break Ok(0);
+            }
+            // Blocked on an empty pipe that is still open. Counted once,
+            // however often it wakes to find the pipe still empty, so two
+            // blocked reads never wake each other.
+            if !waiting {
+                record.reads_waiting += 1;
+                waiting = true;
+                self.shared.changed.notify_all();
             }
             state = self
                 .shared
                 .changed
                 .wait(state)
                 .unwrap_or_else(PoisonError::into_inner);
+        };
+        if waiting {
+            state.record.reads_waiting -= 1;
         }
+        drop(state);
+        self.shared.changed.notify_all();
+        read
     }
 
     /// The port's write, to the input of the child `id`: as many of
@@ -1436,6 +1456,58 @@ mod tests {
         child.wait();
 
         assert_eq!(reading.join().expect("the read ends"), b"a");
+    }
+
+    #[test]
+    fn a_read_on_an_empty_open_pipe_is_counted_as_waiting_only_while_it_blocks() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .steps([
+                    Step::AwaitInputClosed,
+                    Step::Write(Stream::Out, b"a".to_vec()),
+                ])
+                .hold(Hold::UntilKilled)),
+        )]);
+        let mut child = fake.spawn(&command("x"), Input::Pipe).expect("spawned");
+        let input = child.take_input().expect("an input");
+        let mut out = child.take_output(Stream::Out).expect("out");
+        assert_eq!(fake.record().reads_waiting, 0, "before any read");
+
+        // Each scope reads what it checks while the read is blocked, and
+        // checks it once the read is let go: a check that failed while it
+        // was blocked would leave it blocked.
+        let (parked, while_parked, blocked, read) = thread::scope(|scope| {
+            fake.hold_reads();
+            let reading = scope.spawn(|| read_some(&mut out));
+            let parked = fake.until(DEADLINE, |record| record.reads_parked == 1);
+            let while_parked = fake.record().reads_waiting;
+            fake.release_reads();
+            let blocked = fake.until(DEADLINE, |record| record.reads_waiting == 1);
+            // The child writes once its input is closed.
+            drop(input);
+            let read = reading.join().expect("the read ends");
+            (parked, while_parked, blocked, read)
+        });
+        assert!(parked, "the read parks on the hold");
+        assert_eq!(
+            while_parked, 0,
+            "a read parked on the hold is not blocked on the pipe"
+        );
+        assert!(blocked, "the read blocks on the empty open pipe");
+        assert_eq!(read, b"a");
+        assert_eq!(fake.record().reads_waiting, 0, "woken by the bytes");
+
+        let (blocked, read) = thread::scope(|scope| {
+            let reading = scope.spawn(|| read_some(&mut out));
+            let blocked = fake.until(DEADLINE, |record| record.reads_waiting == 1);
+            child.kill();
+            (blocked, reading.join().expect("the read ends"))
+        });
+        assert!(blocked, "the read blocks on the empty open pipe");
+        assert_eq!(read, b"", "the end of the stream");
+        assert_eq!(fake.record().reads_waiting, 0, "woken by the close");
+        child.wait();
     }
 
     fn read_some(output: &mut FakeOutput) -> Vec<u8> {

@@ -1177,6 +1177,10 @@ never a poll.
 - **A render loop's rest** (`RenderHandle::wait_resting`, for C
   `editor_ffi_render_await_rest`): the step that records rest signals it,
   under the lock the wait reads the rest under.
+- **The render park's wait** (`CondvarPark::when_waits`, a `#[cfg(test)]`
+  hook of `editor-render`'s own tests): it fires under the park's lock
+  just before a wait goes into its wait, so a test knows the wait found no
+  notification and is waiting, on the hook and not on a window of time.
 
 **Per host, never per stage.** A host whose collaborators track it
 (`Collaborators.tracksIdle`: a test stage's and the headless mode's) starts

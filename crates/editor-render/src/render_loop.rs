@@ -187,6 +187,10 @@ pub struct CondvarPark {
     notified: Mutex<bool>,
     /// What a waiting thread is woken through.
     wake: Condvar,
+    /// Called each time a wait goes into its wait, under the lock, just
+    /// before the lock is released to it. Set once, by a test.
+    #[cfg(test)]
+    waits: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 impl CondvarPark {
@@ -196,6 +200,26 @@ impl CondvarPark {
             clock,
             notified: Mutex::new(false),
             wake: Condvar::new(),
+            #[cfg(test)]
+            waits: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Has `told` called each time a wait goes into its wait: it found no
+    /// notification and, with a deadline, time left. It is called under
+    /// the lock a notification takes, so once it has been called the wait
+    /// is in its wait before any notification is made. Set once, by a
+    /// test.
+    #[cfg(test)]
+    pub(crate) fn when_waits(&self, told: impl Fn() + Send + Sync + 'static) {
+        assert!(self.waits.set(Box::new(told)).is_ok(), "set once");
+    }
+
+    /// Calls the hook [`CondvarPark::when_waits`] set, if one was.
+    #[cfg(test)]
+    fn told_waits(&self) {
+        if let Some(told) = self.waits.get() {
+            told();
         }
     }
 }
@@ -206,6 +230,8 @@ impl Park for CondvarPark {
         match until {
             None => {
                 while !*notified {
+                    #[cfg(test)]
+                    self.told_waits();
                     notified = self
                         .wake
                         .wait(notified)
@@ -217,6 +243,8 @@ impl Park for CondvarPark {
                 if !*notified && left > 0 {
                     // Once, for as long as the clock says is left: the
                     // loop reads its clock again when this returns.
+                    #[cfg(test)]
+                    self.told_waits();
                     notified = self
                         .wake
                         .wait_timeout(notified, Duration::from_nanos(left))
@@ -1802,23 +1830,87 @@ mod tests {
         returned
     }
 
-    /// Whether the wait behind `returned` has not returned, a little
-    /// while on: it is still waiting, or its thread has yet to begin.
-    fn still_waits(returned: &Receiver<()>) -> bool {
-        returned.recv_timeout(Duration::from_millis(30)).is_err()
+    /// Whether the next wait on the park `waits` is told of goes into its
+    /// wait: its hook fired, under the lock ([`CondvarPark::when_waits`]),
+    /// so it found no notification and, with a deadline, time left, and
+    /// it is in its wait before any notification made from here on.
+    fn goes_into_its_wait(waits: &Receiver<bool>) -> bool {
+        // hang guard: the wait's hook; only a wait that never goes into
+        // its wait reaches the bound, and the test then fails as a hang.
+        waits.recv_timeout(BOUND) == Ok(true)
     }
 
-    /// Whether the wait behind `returned` returns. The bound is only so
-    /// that a wait that never ends fails its test and hangs nothing.
+    /// Whether the wait with no deadline behind `returned`, on the park
+    /// `waits` is told of, still waits: it went into its wait, and nothing
+    /// has woken it. A wait with no deadline goes on waiting through a
+    /// stray wake-up, so it has returned only if it was notified.
+    fn still_waits(waits: &Receiver<bool>, returned: &Receiver<()>) -> bool {
+        goes_into_its_wait(waits) && returned.try_recv().is_err()
+    }
+
+    /// Whether the wait behind `returned` returns.
     fn ends(returned: &Receiver<()>) -> bool {
-        returned.recv_timeout(Duration::from_secs(10)).is_ok()
+        // hang guard: the wait's return; only a wait that never ends
+        // reaches the bound, and the test then fails as a hang.
+        returned.recv_timeout(BOUND).is_ok()
+    }
+
+    /// Where a word arrives each time a wait on `park` goes into its wait,
+    /// saying whether the wait held the park's lock as it did.
+    fn waits_told(park: &Arc<CondvarPark>) -> Receiver<bool> {
+        let (told, waits) = channel();
+        let told = Mutex::new(told);
+        let held = Arc::downgrade(park);
+        park.when_waits(move || {
+            let locked = held
+                .upgrade()
+                .is_some_and(|park| park.notified.try_lock().is_err());
+            let _ = told
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(locked);
+        });
+        waits
+    }
+
+    #[test]
+    fn the_hook_fires_under_the_lock_and_a_notification_made_after_it_wakes_the_wait() {
+        let clock = FakeClock::new();
+        for until in [None, Some(an_hour_on(&clock))] {
+            let park = condvar_park(&clock);
+            let waits = waits_told(&park);
+            let returned = waiting(&park, until);
+            // A hook fired with the lock released could see a notification
+            // made before the wait goes into its wait, and lost to it.
+            assert_eq!(
+                waits.recv_timeout(BOUND),
+                Ok(true),
+                "{until:?}: the hook fires under the lock"
+            );
+            park.notify();
+            assert!(ends(&returned), "{until:?}: the notification wakes it");
+        }
+    }
+
+    #[test]
+    fn a_wait_that_finds_a_notification_fires_no_hook() {
+        let clock = FakeClock::new();
+        for until in [None, Some(an_hour_on(&clock))] {
+            let park = condvar_park(&clock);
+            let waits = waits_told(&park);
+            park.notify();
+            assert!(ends(&waiting(&park, until)));
+            // The wait has returned, so a hook it fired has been heard.
+            assert!(waits.try_recv().is_err(), "{until:?}: no hook");
+        }
     }
 
     #[test]
     fn a_wait_with_no_deadline_ends_only_when_it_is_notified() {
         let park = condvar_park(&FakeClock::new());
+        let waits = waits_told(&park);
         let returned = waiting(&park, None);
-        assert!(still_waits(&returned));
+        assert!(still_waits(&waits, &returned));
         park.notify();
         assert!(ends(&returned));
     }
@@ -1826,12 +1918,13 @@ mod tests {
     #[test]
     fn a_notification_made_before_a_wait_is_not_lost_and_wakes_one_wait() {
         let park = condvar_park(&FakeClock::new());
+        let waits = waits_told(&park);
         park.notify();
         park.notify();
         assert!(ends(&waiting(&park, None)));
         // The two were one notification: the next wait has none to take.
         let returned = waiting(&park, None);
-        assert!(still_waits(&returned));
+        assert!(still_waits(&waits, &returned));
         park.notify();
         assert!(ends(&returned));
     }
@@ -1863,13 +1956,14 @@ mod tests {
     fn a_notification_made_before_a_wait_with_a_deadline_is_not_lost() {
         let clock = FakeClock::new();
         let park = condvar_park(&clock);
+        let waits = waits_told(&park);
         let far = an_hour_on(&clock);
         park.notify();
         // The wait returns at once, an hour before its deadline.
         assert!(ends(&waiting(&park, Some(far))));
         // And it took the notification: the next wait has none to take.
         let returned = waiting(&park, None);
-        assert!(still_waits(&returned));
+        assert!(still_waits(&waits, &returned));
         park.notify();
         assert!(ends(&returned));
     }
@@ -1878,12 +1972,13 @@ mod tests {
     fn a_wait_with_a_deadline_ahead_waits_and_is_woken_by_a_notification() {
         let clock = FakeClock::new();
         let park = condvar_park(&clock);
+        let waits = waits_told(&park);
         let far = an_hour_on(&clock);
-        // A wait with a deadline may end for no reason, as a condition
-        // variable's may: one that does is begun again, so that a wait
-        // that never lasts fails here and one stray wake-up does not.
-        let lasting = (0..3).map(|_| waiting(&park, Some(far))).find(still_waits);
-        let returned = lasting.expect("a wait with its deadline ahead that lasts");
+        let returned = waiting(&park, Some(far));
+        // It went into its wait, with its deadline ahead. A wait with a
+        // deadline may end for no reason after that, as a condition
+        // variable's may, so whether it has returned since is not asked.
+        assert!(goes_into_its_wait(&waits));
         park.notify();
         assert!(ends(&returned));
     }

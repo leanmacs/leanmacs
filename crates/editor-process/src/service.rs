@@ -2457,8 +2457,11 @@ mod tests {
         let (service, completed) = service(&fake);
 
         assert!(service.start(1, command("x"), ROOMY));
-        assert!(fake.until(DEADLINE, |record| record.reaped.len() == 1));
-        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
+        // Reaped, and both readers blocked on the pipes the escaped process
+        // holds open: the run cannot end, so nothing has been queued.
+        assert!(fake.until(DEADLINE, |record| record.reaped.len() == 1
+            && record.reads_waiting == 2));
+        assert!(completed.try_recv().is_err());
         fake.end(fake.record().spawned[0].0 + 1);
 
         assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
@@ -3515,9 +3518,15 @@ mod streaming {
         let child = fake.record().spawned[0].0;
 
         assert!(service.read(1, 2));
-        assert!(fake.until(DEADLINE, |record| record.children[&child].read[0] == 4));
+        // The line read, and both readers blocked on the open pipes: out's
+        // in its probe for one byte more, err's on nothing written. The read
+        // cannot be answered until one of them returns.
         assert!(
-            completed.recv_timeout(Duration::from_millis(50)).is_err(),
+            fake.until(DEADLINE, |record| record.children[&child].read[0] == 4
+                && record.reads_waiting == 2)
+        );
+        assert!(
+            completed.try_recv().is_err(),
             "not too long while the stream may yet end"
         );
         assert!(fake.record().killed.is_empty());
