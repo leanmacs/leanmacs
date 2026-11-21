@@ -43,4 +43,17 @@ This exists for `FfiTest`, which uses it to see a counter's finaliser run. -/
 @[extern "editor_glue_counter_live"]
 opaque Counter.live : IO UInt64
 
+/-- `Counter.awaitLive` as it crosses: the kind 3 names counters. -/
+@[extern "editor_glue_live_await"]
+private opaque Counter.liveAwaitRaw (kind : UInt8) (target boundMs : UInt64) : IO Bool
+
+/-- Waits until at most `target` counters the Rust library holds are not freed
+(`Counter.live`), and says whether that came: false once `boundMs`
+milliseconds have passed first. A readout for tests, which use it to see a
+finaliser run on another thread: it returns on the free, never by a poll of
+`Counter.live`. `boundMs` is a hang guard: only a handle that is never freed
+reaches it. -/
+def Counter.awaitLive (target boundMs : UInt64) : IO Bool :=
+  Counter.liveAwaitRaw 3 target boundMs
+
 end Editor.Ffi

@@ -66,6 +66,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use editor_text::Text;
 
 use crate::excerpts::Excerpted;
+use crate::live::Live;
 use crate::snapshot::Snapshot;
 use crate::text;
 
@@ -269,13 +270,13 @@ impl Drop for Document {
 /// How many document handles this library has handed out (the module docs
 /// list the functions that do) that [`editor_ffi_document_free`] has not
 /// taken back.
-static LIVE: AtomicU64 = AtomicU64::new(0);
+pub(crate) static LIVE: Live = Live::new();
 
 /// Hands `document` out as a handle the caller owns, who must hand it to
 /// [`editor_ffi_document_free`] exactly once, and counts it live: the one
 /// place a document handle is made.
 pub(crate) fn hand_out(document: Document) -> *mut Document {
-    LIVE.fetch_add(1, Ordering::Relaxed);
+    LIVE.add();
     Box::into_raw(Box::new(document))
 }
 
@@ -383,16 +384,17 @@ pub unsafe extern "C" fn editor_ffi_document_free(document: *mut Document) {
     let document = unsafe { Box::from_raw(document) };
     crate::syntax::detach(document.key());
     drop(document);
-    LIVE.fetch_sub(1, Ordering::Relaxed);
+    LIVE.free();
 }
 
 /// How many document handles this library has handed out that have not been
 /// freed, whichever function handed each out. This is what makes a handle's
 /// finaliser, and the lifetime of the editor's table of texts, observable
-/// to a test.
+/// to a test, which waits for it to come down with
+/// [`editor_ffi_live_await`](crate::live::editor_ffi_live_await).
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_document_live() -> u64 {
-    LIVE.load(Ordering::Relaxed)
+    LIVE.count()
 }
 
 #[cfg(test)]

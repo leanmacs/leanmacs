@@ -83,4 +83,17 @@ its documents. -/
 @[extern "editor_glue_document_live"]
 opaque Document.live : IO UInt64
 
+/-- `Document.awaitLive` as it crosses: the kind 2 names documents. -/
+@[extern "editor_glue_live_await"]
+private opaque Document.liveAwaitRaw (kind : UInt8) (target boundMs : UInt64) : IO Bool
+
+/-- Waits until at most `target` documents the Rust library holds are not freed
+(`Document.live`), and says whether that came: false once `boundMs`
+milliseconds have passed first. A readout for tests, which use it to see a
+finaliser run on another thread: it returns on the free, never by a poll of
+`Document.live`. `boundMs` is a hang guard: only a handle that is never freed
+reaches it. -/
+def Document.awaitLive (target boundMs : UInt64) : IO Bool :=
+  Document.liveAwaitRaw 2 target boundMs
+
 end Editor.Ffi

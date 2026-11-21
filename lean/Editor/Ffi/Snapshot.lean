@@ -189,6 +189,19 @@ its snapshots. -/
 @[extern "editor_glue_snapshot_live"]
 opaque Snapshot.live : IO UInt64
 
+/-- `Snapshot.awaitLive` as it crosses: the kind 1 names snapshots. -/
+@[extern "editor_glue_live_await"]
+private opaque Snapshot.liveAwaitRaw (kind : UInt8) (target boundMs : UInt64) : IO Bool
+
+/-- Waits until at most `target` snapshots the Rust library holds are not freed
+(`Snapshot.live`), and says whether that came: false once `boundMs`
+milliseconds have passed first. A readout for tests, which use it to see a
+finaliser run on another thread: it returns on the free, never by a poll of
+`Snapshot.live`. `boundMs` is a hang guard: only a handle that is never freed
+reaches it. -/
+def Snapshot.awaitLive (target boundMs : UInt64) : IO Bool :=
+  Snapshot.liveAwaitRaw 1 target boundMs
+
 /-- A new document holding what `snapshot` holds: a text of its own, at
 revision 0, with an empty log, no markers and no kept inverses, whatever the
 snapshot's revision. It copies none of the text. An edit to it changes

@@ -2,6 +2,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::live::Live;
+
 /// A number that only goes up. Lean shares a handle between threads, so
 /// every method takes `&self` and the type is `Send + Sync`.
 pub struct Counter {
@@ -26,13 +28,13 @@ impl Counter {
 
 /// How many counters [`editor_ffi_counter_new`] has handed out that
 /// [`editor_ffi_counter_free`] has not taken back.
-static LIVE: AtomicU64 = AtomicU64::new(0);
+pub(crate) static LIVE: Live = Live::new();
 
 /// A new counter starting at `start`, owned by the caller, who must hand it
 /// to [`editor_ffi_counter_free`] exactly once.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_counter_new(start: u64) -> *mut Counter {
-    LIVE.fetch_add(1, Ordering::Relaxed);
+    LIVE.add();
     Box::into_raw(Box::new(Counter::new(start)))
 }
 
@@ -58,14 +60,16 @@ pub unsafe extern "C" fn editor_ffi_counter_free(counter: *mut Counter) {
     // SAFETY: the caller guarantees `counter` is a box
     // `editor_ffi_counter_new` gave up, taken back this once.
     drop(unsafe { Box::from_raw(counter) });
-    LIVE.fetch_sub(1, Ordering::Relaxed);
+    LIVE.free();
 }
 
 /// How many counters [`editor_ffi_counter_new`] has made that have not been
-/// freed. This is what makes a handle's finaliser observable to a test.
+/// freed. This is what makes a handle's finaliser observable to a test,
+/// which waits for it to come down with
+/// [`editor_ffi_live_await`](crate::live::editor_ffi_live_await).
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_counter_live() -> u64 {
-    LIVE.load(Ordering::Relaxed)
+    LIVE.count()
 }
 
 #[cfg(test)]

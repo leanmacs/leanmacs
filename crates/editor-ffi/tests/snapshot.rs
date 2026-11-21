@@ -7,12 +7,13 @@
 //! one test below owns both counts of this process.
 
 use std::mem::MaybeUninit;
-use std::{ptr, slice};
+use std::{ptr, slice, thread};
 
 use editor_ffi::document::{
     Document, RawText, ReplaceStatus, editor_ffi_document_free, editor_ffi_document_new,
     editor_ffi_document_replace,
 };
+use editor_ffi::live::{SNAPSHOTS, editor_ffi_live_await};
 use editor_ffi::motion;
 use editor_ffi::snapshot::{
     ColumnUnit, RawPoint, RawSnapshotInfo, Snapshot, editor_ffi_document_snapshot,
@@ -36,6 +37,10 @@ const NO_UNIT: u8 = 3;
 
 /// A tag that names no motion.
 const NO_MOTION: u8 = motion::TAGS;
+
+/// hang guard: the free a wait for the live count ends on; only a hang
+/// reaches the bound, and the test then fails as a hang.
+const HANG_GUARD_MS: u64 = 10_000;
 
 /// A new document holding `text`.
 fn document_new(text: &str) -> *mut Document {
@@ -379,7 +384,13 @@ fn a_snapshot_is_taken_and_read_through_c_and_is_live_from_the_call_that_made_it
         assert_eq!(editor_ffi_snapshot_live(), before + 1);
         assert_eq!(snapshot_info(second), (2, 15, 3));
 
-        editor_ffi_snapshot_free(second);
+        // Freed on another thread, as a finaliser may free it, and waited
+        // for on the free. A pointer is not `Send`, so it crosses as its
+        // address.
+        let second = second as usize;
+        let freeing = thread::spawn(move || editor_ffi_snapshot_free(second as *mut Snapshot));
+        assert!(editor_ffi_live_await(SNAPSHOTS, before, HANG_GUARD_MS));
+        freeing.join().expect("the free's thread");
         assert_eq!(editor_ffi_snapshot_live(), before);
     }
 }

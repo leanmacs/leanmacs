@@ -15,7 +15,7 @@ use std::thread;
 use std::time::Duration;
 
 use editor_ffi::counter::{
-    editor_ffi_counter_free, editor_ffi_counter_increment, editor_ffi_counter_live,
+    Counter, editor_ffi_counter_free, editor_ffi_counter_increment, editor_ffi_counter_live,
     editor_ffi_counter_new,
 };
 use editor_ffi::document::{
@@ -27,10 +27,12 @@ use editor_ffi::events::{
     editor_ffi_events_next, editor_ffi_events_post, editor_ffi_events_quit,
     editor_ffi_events_script_feed, editor_ffi_events_waiting,
 };
+use editor_ffi::live::{COUNTERS, DOCUMENTS, editor_ffi_live_await};
 use editor_ffi::text::{ByteRange, editor_ffi_text_find, editor_ffi_text_free};
 
-/// How long a test waits for something that should happen at once. Only
-/// broken code takes this long, and the test then fails instead of hanging.
+/// hang guard: the event each wait here ends on; only a hang reaches the
+/// bound, and the test then fails as a hang. How long a test waits for
+/// something that should happen at once: only broken code takes this long.
 const DEADLINE: Duration = Duration::from_secs(5);
 
 /// [`DEADLINE`] in milliseconds, as the C functions take it.
@@ -152,6 +154,18 @@ fn find_bytes(haystack: &[u8], needle: &[u8], start: Option<usize>) -> Option<(u
         .map(|range| (range.start, range.end))
 }
 
+/// Runs `free`, which frees one handle of `kind`, on a thread of its own,
+/// as a finaliser may, and waits on the free for the count of `kind` to
+/// come down to `target` (`editor_ffi_live_await`).
+fn freed_on_another_thread(kind: u8, target: u64, free: impl FnOnce() + Send + 'static) {
+    let freeing = thread::spawn(free);
+    assert!(
+        editor_ffi_live_await(kind, target, DEADLINE_MS),
+        "the count of kind {kind} did not come down to {target} after {DEADLINE:?}"
+    );
+    freeing.join().expect("the free's thread");
+}
+
 #[test]
 fn a_counter_is_live_from_new_until_free() {
     let before = editor_ffi_counter_live();
@@ -173,9 +187,14 @@ fn a_counter_is_live_from_new_until_free() {
     // SAFETY: `other` came from `editor_ffi_counter_new` and is not freed.
     assert_eq!(unsafe { editor_ffi_counter_increment(other) }, 1);
 
-    // SAFETY: `other` came from `editor_ffi_counter_new`, and this is the
-    // one time it is freed.
-    unsafe { editor_ffi_counter_free(other) };
+    // Freed on another thread, as a finaliser may free it. A pointer is
+    // not `Send`, so it crosses as its address.
+    let other = other as usize;
+    freed_on_another_thread(COUNTERS, before, move || {
+        // SAFETY: `other` came from `editor_ffi_counter_new`, and this is
+        // the one time it is freed.
+        unsafe { editor_ffi_counter_free(other as *mut Counter) };
+    });
     assert_eq!(editor_ffi_counter_live(), before);
 }
 
@@ -300,9 +319,13 @@ fn a_document_is_edited_and_read_through_c_and_is_live_from_new_until_free() {
     // SAFETY: `other` is not freed yet.
     assert_eq!(unsafe { document_read(other) }, "a\u{FFFD}\u{FFFD}c");
 
-    // SAFETY: `other` came from `document_new`, and this is the one time it
-    // is freed.
-    unsafe { editor_ffi_document_free(other) };
+    // Freed on another thread, as a finaliser may free it.
+    let other = other as usize;
+    freed_on_another_thread(DOCUMENTS, before, move || {
+        // SAFETY: `other` came from `document_new`, and this is the one
+        // time it is freed.
+        unsafe { editor_ffi_document_free(other as *mut Document) };
+    });
     assert_eq!(editor_ffi_document_live(), before);
 }
 

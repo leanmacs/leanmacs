@@ -48,7 +48,8 @@
 //! from a string or from a snapshot
 //! ([`document::editor_ffi_document_from_snapshot`]). The module that owns
 //! the handle lists the functions that hand one out, and has one place that
-//! counts a handle live. [`display`] is a handle over a `Mutex` because its
+//! counts a handle live ([`live`]: a test that frees one on another thread
+//! waits there for the count to come down). [`display`] is a handle over a `Mutex` because its
 //! layout is a cache its queries fill: the layout of `editor-layout` over
 //! that crate's fake shaper, asked about a snapshot handle.
 //! Tests: `a_counter_is_live_from_new_until_free` and
@@ -608,6 +609,7 @@ pub mod grep;
 pub mod interrupt;
 pub mod inverse;
 pub mod launch;
+pub mod live;
 pub mod log;
 pub mod main_thread;
 pub mod marker;

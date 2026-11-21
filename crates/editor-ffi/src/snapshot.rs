@@ -78,7 +78,6 @@
 //! ([`editor_ffi_snapshot_extents`]) is asked and answered in words; the
 //! module docs of [`crate::marker`] give both layouts.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use std::ops::Range;
@@ -89,6 +88,7 @@ use editor_text::{
 };
 
 use crate::document::{Document, RawText, next_key};
+use crate::live::Live;
 use crate::log::RawWords;
 use crate::marker::{self, MarkStatus};
 use crate::pair::{self, PairStatus};
@@ -246,7 +246,7 @@ impl Snapshot {
     /// exactly once. This is the one place a snapshot handle is made, so it
     /// is the one place one is counted.
     pub(crate) fn hand_out(snapshot: Self) -> *mut Self {
-        LIVE.fetch_add(1, Ordering::Relaxed);
+        LIVE.add();
         Box::into_raw(Box::new(snapshot))
     }
 
@@ -362,7 +362,7 @@ impl Snapshot {
 /// How many snapshot handles this library has handed out
 /// ([`Snapshot::hand_out`]) that [`editor_ffi_snapshot_free`] has not taken
 /// back.
-static LIVE: AtomicU64 = AtomicU64::new(0);
+pub(crate) static LIVE: Live = Live::new();
 
 /// A snapshot of the text of `document` as it is now, owned by the caller,
 /// who must hand it to [`editor_ffi_snapshot_free`] exactly once. Later
@@ -706,16 +706,17 @@ pub unsafe extern "C" fn editor_ffi_snapshot_free(snapshot: *mut Snapshot) {
     // SAFETY: the caller guarantees `snapshot` is a box
     // `Snapshot::hand_out` gave up, taken back this once.
     drop(unsafe { Box::from_raw(snapshot) });
-    LIVE.fetch_sub(1, Ordering::Relaxed);
+    LIVE.free();
 }
 
 /// How many snapshot handles this library has handed out that have not been
 /// freed, whichever function handed each out. This is what makes a
 /// snapshot's finaliser, and the lifetime of the editor's table of
-/// snapshots, observable to a test.
+/// snapshots, observable to a test, which waits for it to come down with
+/// [`editor_ffi_live_await`](crate::live::editor_ffi_live_await).
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_snapshot_live() -> u64 {
-    LIVE.load(Ordering::Relaxed)
+    LIVE.count()
 }
 
 #[cfg(test)]

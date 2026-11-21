@@ -387,6 +387,7 @@ bool editor_ffi_snapshot_slice(const editor_ffi_snapshot *snapshot,
                                editor_ffi_raw_text *out);
 void editor_ffi_snapshot_free(editor_ffi_snapshot *snapshot);
 uint64_t editor_ffi_snapshot_live(void);
+bool editor_ffi_live_await(uint8_t kind, uint64_t target, uint64_t bound_ms);
 
 static lean_external_class *snapshot_class;
 static pthread_once_t snapshot_class_once = PTHREAD_ONCE_INIT;
@@ -658,6 +659,14 @@ lean_obj_res editor_glue_snapshot_slice(b_lean_obj_arg snapshot, size_t start,
 // `Editor.Ffi.Snapshot.live : IO UInt64`
 lean_obj_res editor_glue_snapshot_live(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_snapshot_live()));
+}
+
+// `Editor.Ffi.liveAwaitRaw : UInt8 → UInt64 → UInt64 → IO Bool`, the wait
+// behind `Snapshot.awaitLive`, `Document.awaitLive` and `Counter.awaitLive`.
+lean_obj_res editor_glue_live_await(uint8_t kind, uint64_t target,
+                                    uint64_t bound_ms) {
+  return lean_io_result_mk_ok(
+      lean_box(editor_ffi_live_await(kind, target, bound_ms) ? 1 : 0));
 }
 
 // ---- A document's markers, and what a selection covers ----

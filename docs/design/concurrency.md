@@ -1181,6 +1181,11 @@ never a poll.
   hook of `editor-render`'s own tests): it fires under the park's lock
   just before a wait goes into its wait, so a test knows the wait found no
   notification and is waiting, on the hook and not on a window of time.
+- **A live count coming down** (`editor_ffi_live_await(kind, target,
+  bound_ms)`, `crates/editor-ffi/src/live.rs`; kinds 1 snapshots, 2
+  documents, 3 counters): each free signals a wait under way, so a test
+  whose handle a finaliser frees on another thread waits on the free; a
+  free with no wait under way takes no lock.
 
 **Per host, never per stage.** A host whose collaborators track it
 (`Collaborators.tracksIdle`: a test stage's and the headless mode's) starts
