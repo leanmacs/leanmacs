@@ -53,6 +53,8 @@ import FilesApi
 import FilesApiTest.Fake
 import ModelTest.Check
 import ModelTest.Support.Listings
+import ShellApi
+import ShellApiTest.Fake
 
 /-!
 # Model tests: `Editor/Ex.lean`
@@ -94,7 +96,8 @@ def exListed (pattern : String) (chosen : Option Nat := none)
 compiled code registers for the ex line (`Ex.package.registered.commands`),
 `files-api`'s fake's (`FilesApiTest.fake.registered.commands`) and
 the kit's minibuffer's (`Test.Minibuffer.package.registered.commands`,
-`Editor/Test/Minibuffer.lean`), each under the
+`Editor/Test/Minibuffer.lean`), and those `extra` registers (`shell-api`'s
+fake, for the bang lines' checks), each under the
 name it is registered under, and then the commands of the prompt checks:
 `greet`, which says what it was called with, `boom`, `other` and the test
 scheme's self-insert. The ex bindings a command is told of are `bindings`,
@@ -112,10 +115,12 @@ candidate, and `C-e o` runs `other`. The extension points are answered as
 `FilesApi.Files` value. Prompts are matched and shown by the
 style and the display written for the core's tests (`marking`,
 `windowed`). -/
-def exKeys (bindings : Array Ex.Binding := exTestBindings) : Loop.Keys TestScheme.scheme :=
+def exKeys (bindings : Array Ex.Binding := exTestBindings) (extra : Array Package := #[]) :
+    Loop.Keys TestScheme.scheme :=
   let compiled : List (String × Dispatched) :=
     (Ex.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
-          FilesApiTest.fake.registered.commands).toList.filterMap
+          FilesApiTest.fake.registered.commands ++
+          extra.flatMap (·.registered.commands)).toList.filterMap
       fun registration =>
       match registration.action with
       | .call run =>
@@ -143,15 +148,36 @@ and its save, with `files-api`'s hooks as their runners
 (`Opener.jobsWith FilesApi.runOpened FilesApi.runSaved`; the fake's
 `check-files` and `follow-file` are left out, as the file command checks'
 jobs leave the files feature's out), and the files of the file command
-checks; `none` if making the state was refused. -/
-def exDriver (bindings : Array Ex.Binding := exTestBindings) : Option TestDriver :=
-  (Loop.Driver.over (exKeys bindings) (Opener.jobsWith FilesApi.runOpened FilesApi.runSaved)
+checks, with the commands `extra` registers (`exKeys`); `none` if making
+the state was refused. -/
+def exDriver (bindings : Array Ex.Binding := exTestBindings) (extra : Array Package := #[]) :
+    Option TestDriver :=
+  (Loop.Driver.over (exKeys bindings extra) (Opener.jobsWith FilesApi.runOpened FilesApi.runSaved)
         (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => { driver with jobs := { files := commandFiles } }
 
 /-- The echo area of each scene `after` recorded that `before` had not. -/
 def echoesSince (before after : TestDriver) : Array String :=
   (after.model.display.scenes.map (·.echo)).extract before.model.display.scenes.size
+
+/-- The ex command called with the line `line` as its first argument, a
+string, in view 0 of `driver`, as one step (`Loop.invoke`): the driver after
+it, with what it answered run, and the invocations the step answered, which
+are what the line asked to be run after it, or `none` for a step that was
+refused. -/
+def exRan (driver : TestDriver) (line : String) : TestDriver × Option (Array Invocation) :=
+  let (after, stepped) :=
+    driver.stepped
+      (driver.loop.invoke driver.handed { command := Ex.name, arguments := [.str line] })
+  (after, stepped.toOption.map (·.answered))
+
+/-- A driver of the ex checks told of the `ex` package's ex names, with
+`shell-api`'s fake registered (`ShellApiTest.fake`), and with the file
+`lf.txt`, of three lines, open in view 0 by the ex line `e` and its path,
+its load finished, so that its cursor is on its first line. -/
+def exShellLines : Option TestDriver :=
+  (exDriver Ex.package.registered.ex #[ShellApiTest.fake]).map fun driver =>
+    ((fedTo driver (exLine s!"e {inFiles "lf.txt"}")).1.finish 1).1
 
 /-- A driver of the ex checks told of the `ex` package's ex names
 (`Ex.package.registered.ex`), with the file `note.txt` open in view 0 by the ex line
@@ -649,6 +675,66 @@ def exChecks : List Check :=
               (candidatesOf typed).map (·.listed.map (·.text)) ==
                 some #["e", "e!", "autoread", "noautoread", "reload"] &&
               opening.loop.state.prompt == none &&
-              echoOf opening == some Opener.noPath }]
+              echoOf opening == some Opener.noPath },
+    { name :=
+        "a bang line with no range hands shell-command, and nothing else, the command's text and then the line as typed, trimmed, both strings; on shell-api's fake, typed on the ex line, the fake says it ran that line"
+      run :=
+        pure <|
+          match exShellLines with
+          | none => false
+          | some driver =>
+            let (ran, answered) := exRan driver "  !make  check "
+            let (typed, _) := fedTo driver (exLine "!make check")
+            answered ==
+                some
+                  #[{ command := ShellApi.commandName
+                      arguments := [.str "make  check", .str "!make  check"] }] &&
+              promptEcho ran == ShellApiTest.ranText "!make  check" &&
+              promptEcho typed == ShellApiTest.ranText "!make check" &&
+              closed typed },
+    { name :=
+        "a bang line with a range hands shell-filter, and nothing else, the range's first and last line resolved against the view's buffer and cursor, then the command's text and the line as typed: on a buffer of three lines with the cursor on the first, .,$ is lines 1 to 3, . is line 1, $ is line 3, 2,3 is lines 2 to 3 and % is 1 to 3; on shell-api's fake the fake says it filters nothing"
+      run :=
+        pure <|
+          match exShellLines with
+          | none => false
+          | some driver =>
+            let filtered (line : String) (first last : Nat) : Bool :=
+              let (ran, answered) := exRan driver line
+              answered ==
+                  some
+                    #[{ command := ShellApi.filterName
+                        arguments := [.nat first, .nat last, .str "sort -r", .str line] }] &&
+                promptEcho ran == "the fake shell filters nothing" &&
+                ran.pending.isEmpty
+            (showing driver).map (·.buffer.name) == some "lf.txt" && filtered ".,$!sort -r" 1 3 &&
+              filtered ".!sort -r" 1 1 &&
+              filtered "$!sort -r" 3 3 &&
+              filtered "2,3!sort -r" 2 3 &&
+              filtered "%!sort -r" 1 3 },
+    { name :=
+        "a bang line whose range resolves to no lines says the line as typed and why, by the range's own message, in the echo area, and hands the shell nothing: past the end of the buffer, backwards, and line 0"
+      run :=
+        pure <|
+          match exShellLines with
+          | none => false
+          | some driver =>
+            let refused (line why : String) : Bool :=
+              let (ran, answered) := exRan driver line
+              answered == some #[] && promptEcho ran == s!"{line}: {why}" && ran.pending.isEmpty
+            refused "2,5!sort" (Ex.pastEnd 5 3) && refused "4!sort" (Ex.pastEnd 4 3) &&
+              refused "3,2!sort" (Ex.backwards 3 2) &&
+              refused "0,2!sort" Ex.lineZero },
+    { name :=
+        "a bang line with nothing after the bang, with a range or none, says there is no command, by shell-api's message, and hands the shell nothing; and so with no shell registered, where it is ex that says it"
+      run :=
+        pure <|
+          match exShellLines, exDriver Ex.package.registered.ex with
+          | some shell, some bare =>
+            let refused (driver : TestDriver) (line : String) : Bool :=
+              let (ran, answered) := exRan driver line
+              answered == some #[] && promptEcho ran == ShellApi.noCommand
+            ["!", "!   ", "%!", ".,$! "].all fun line => refused shell line && refused bare line
+          | _, _ => false }]
 
 end ModelTest

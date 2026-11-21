@@ -598,7 +598,13 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   nobody bound, an argument a name does not take, an empty line, a bound
   command that is not registered or is refused, and a cancelled line;
   `wq` with no files implementation said under `save-and-quit`'s name and
-  no quit asked. Each message is read from the function that makes it;
+  no quit asked; and a bang line, on `shell-api`'s fake: what it hands
+  `shell-command` (the command's text, then the line as typed) and
+  `shell-filter` (its range resolved against the buffer and cursor first),
+  a range that resolves to no lines refused by ex, and `:!` with nothing
+  after it said by `ShellApi.noCommand`, with a shell registered and with
+  none, handing the shell nothing. Each message is read from the function
+  that makes it;
 - `themeChecks`: the command that loads a theme (`Editor/Themes.lean`) on
   that driver, told of two registered themes: with no name it asks among
   them, with a registered name the step hands the name back, and a name
