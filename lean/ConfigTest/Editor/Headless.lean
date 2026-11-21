@@ -920,38 +920,50 @@ def setup : SetupM Unit := do
     discard <| (⟨0⟩ : ViewId).setMajorMode \"json\"
 "
 
-/-- Runs `check` against a host over a config of `highlightText`, whose
-syntax tree collaborator is the real binding over the library's syntax
-service with every request recorded (`recordedRequest`) in the array `check`
-is handed, and which after an attach waits, with a bound, for the attached
-text's tree to be delivered, and stops the host. `check` is handed too how many scenes the
-host's display has had published to it, read from the display the host's
-collaborator made, with no request of the driver's. `false` if the check
-did not hold or the host did not stop. The directory is removed. -/
+/-- The stage of a host over a config of `highlightText`, in `directory`,
+whose syntax tree collaborator is the real binding over the library's syntax
+service with every request recorded (`recordedRequest`) in the array handed
+back, and which after an attach waits, with a bound, for the attached text's
+tree to be delivered; and how many scenes the host's display has had
+published to it, read from the display the host's collaborator made, with no
+request of the driver's. -/
+def recordedStage (context : Context) (directory : System.FilePath) :
+    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle × IO.Ref (Array String) × IO Nat) := do
+  writeConfig directory [("init.lean", highlightText)]
+  let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+  let asked ← IO.mkRef #[]
+  let syntaxTree := recordingSyntaxTree asked
+  let made : IO.Ref (Option Headless.Host.Display) ← IO.mkRef none
+  let display (snapshots : SnapshotReader) : IO Headless.Host.Display := do
+    let shown ← Headless.Host.Display.recorder Headless.cells snapshots
+    made.set (some shown)
+    return shown
+  let published : IO Nat := do
+    match ← made.get with
+    | some shown =>
+      shown.count.get
+    | none =>
+      return 0
+  return ({ stage with
+        collaborators :=
+          { stage.collaborators with
+            syntaxTree, display } },
+      asked, published)
+
+/-- Runs `check` against a stepped host over `recordedStage`'s stage. -/
 def withRecordedSyntaxTree (context : Context)
+    (check : Session → IO.Ref (Array String) → IO Nat → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    let (stage, asked, published) ← recordedStage context directory
+    onStage stage fun drive stage => check (Session.ofStage drive directory stage) asked published
+
+/-- `withRecordedSyntaxTree` with a real host (`onRealStage`). -/
+def withRealRecordedSyntaxTree (context : Context)
     (check : RealSession → IO.Ref (Array String) → IO Nat → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    writeConfig directory [("init.lean", highlightText)]
-    let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-    let asked ← IO.mkRef #[]
-    let syntaxTree := recordingSyntaxTree asked
-    let made : IO.Ref (Option Headless.Host.Display) ← IO.mkRef none
-    let display (snapshots : SnapshotReader) : IO Headless.Host.Display := do
-      let shown ← Headless.Host.Display.recorder Headless.cells snapshots
-      made.set (some shown)
-      return shown
-    let published : IO Nat := do
-      match ← made.get with
-      | some shown =>
-        shown.count.get
-      | none =>
-        return 0
-    onRealStage
-        { stage with
-          collaborators :=
-            { stage.collaborators with
-              syntaxTree, display } }
-        fun host stage => check (RealSession.ofStage host directory stage) asked published
+    let (stage, asked, published) ← recordedStage context directory
+    onRealStage stage fun host stage =>
+        check (RealSession.ofStage host directory stage) asked published
 
 /-- The thread that emitted the first line of the host's output that is
 `line`, if there is one. -/
@@ -1352,17 +1364,17 @@ def jobChecks (context : Context) : List Check :=
         -- Seen to bite once by hand: a host that prints a job's line where
         -- the job ended, from the runner's `finished`, prints it from a pool
         -- thread, and the thread ids differ.
-        withRealHost context jobsConfig fun session => do
+        withHost context jobsConfig fun session => do
           session.ask [.reload]
           session.ask [.run "greet", .spawn "count"]
-          unless ← eventually (return (← session.clock.waiting) == 1) do
+          unless (← session.idle) == .working && (← session.clock.waiting) == 1 do
             return false
           -- The job is in its sleep: nothing has been said of its result, and
           -- the editor still answers.
           session.ask [.run "greet"]
           let waiting ← session.output.get
           session.clock.advance 10
-          let joined ← session.host.join patience
+          let joined ← session.join
           session.ask [.show]
           let command ← session.threadOf "run greet: ok"
           let handler ← session.threadOf "job 1 count: ok"
@@ -1376,14 +1388,14 @@ def jobChecks (context : Context) : List Check :=
                     "text 2: \"v1\"", "text 3: \"counted 42\""] &&
               command.isSome &&
               handler == command &&
-              command != some (← IO.getTID) },
+              command == some (← IO.getTID) },
     { name :=
         "a reload cancels the old config's jobs when it installs: the job is cancelled before the reload is reported, its wait is withdrawn, and its handler never runs"
       run :=
-        withRealHost context jobsConfig fun session => do
+        withHost context jobsConfig fun session => do
           session.ask [.reload]
           session.ask [.spawn "count"]
-          unless ← eventually (return (← session.clock.waiting) == 1) do
+          unless (← session.idle) == .working && (← session.clock.waiting) == 1 do
             return false
           session.write "Config/Greet.lean" (greetText "v2")
           session.ask [.reload]
@@ -1400,16 +1412,16 @@ def jobChecks (context : Context) : List Check :=
     { name :=
         "a rejected reload cancels nothing: the old config's job runs on, and its handler runs when it finishes"
       run :=
-        withRealHost context jobsConfig fun session => do
+        withHost context jobsConfig fun session => do
           session.ask [.reload]
           session.ask [.spawn "count"]
-          unless ← eventually (return (← session.clock.waiting) == 1) do
+          unless (← session.idle) == .working && (← session.clock.waiting) == 1 do
             return false
           session.write "Config/Greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
           session.ask [.reload]
           let stillWaiting := (← session.clock.waiting) == 1 && (← session.clock.withdrawn).isEmpty
           session.clock.advance 10
-          let joined ← session.host.join patience
+          let joined ← session.join
           return stillWaiting && joined == .settled &&
               (← session.lines) ==
                 #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1",
@@ -1418,14 +1430,14 @@ def jobChecks (context : Context) : List Check :=
     { name :=
         "a job that throws is reported as failed with its message, a handler whose command the library refuses as refused, and a name that is not registered as no such job"
       run :=
-        withRealHost context jobsConfig fun session => do
+        withHost context jobsConfig fun session => do
           session.ask [.reload]
           session.ask [.spawn "boom", .spawn "bad", .spawn "nope"]
-          unless ← eventually (return (← session.clock.waiting) == 2) do
+          unless (← session.idle) == .working && (← session.clock.waiting) == 2 do
             return false
           let spawned ← session.output.get
           session.clock.advance 10
-          let joined ← session.host.join patience
+          let joined ← session.join
           -- The two jobs end at one instant, in either order.
           let ended := ((← session.output.get).extract spawned.size).qsort (· < ·)
           return spawned ==
@@ -1515,10 +1527,10 @@ def jobChecks (context : Context) : List Check :=
         withRecordedSyntaxTree context fun session asked _ => do
           session.ask [.reload]
           session.ask [.spawn "highlight"]
-          unless ← eventually (return (← session.clock.waiting) == 1) do
+          unless (← session.idle) == .working && (← session.clock.waiting) == 1 do
             return false
           session.clock.advance 10
-          let joined ← session.host.join patience
+          let joined ← session.join
           let scene ← session.sceneLines
           return joined == .settled && (← session.output.get).contains "job 1 highlight: ok" &&
               (← asked.get) ==
@@ -1533,7 +1545,7 @@ def jobChecks (context : Context) : List Check :=
         -- Seen to bite once by hand: a host whose `handle` returns at once
         -- for an event from the library's source publishes nothing for the
         -- parse, and the count stays at the edit's.
-        withRecordedSyntaxTree context fun session _ published => do
+        withRealRecordedSyntaxTree context fun session _ published => do
           session.ask [.reload]
           session.ask [.spawn "highlight"]
           unless ← eventually (return (← session.clock.waiting) == 1) do
@@ -2480,16 +2492,15 @@ wait 2" with
     { name :=
         "the scene is published again after a reload installs and after a job's command runs, once a frame exists"
       run :=
-        withRealHost context jobsConfig fun session => do
+        withHost context jobsConfig fun session => do
           session.ask [.reload]
-          unless ← Event.post (.commit "kept") do
-            return false
+          session.commit "kept"
           session.ask [.scene]
           session.ask [.spawn "count"]
-          unless ← eventually (return (← session.clock.waiting) == 1) do
+          unless (← session.idle) == .working && (← session.clock.waiting) == 1 do
             return false
           session.clock.advance 10
-          unless (← session.host.join patience) == .settled do
+          unless (← session.join) == .settled do
             return false
           session.ask [.reload]
           session.ask [.scene]
@@ -2510,13 +2521,11 @@ wait 2" with
     { name :=
         "once a command has released the focused buffer's text, a commit is still followed by a scene: its echo is the refusal, and it has no view of that buffer"
       run :=
-        withRealHost context forgetConfig fun session => do
+        withHost context forgetConfig fun session => do
           session.ask [.reload]
-          unless ← Event.post (.commit "a") do
-            return false
+          session.commit "a"
           session.ask [.scene, .run "forget"]
-          unless ← Event.post (.commit "b") do
-            return false
+          session.commit "b"
           session.ask [.scene]
           -- Between the two scene requests the editor thread handles four
           -- events, each followed by a scene: the first scene request, the
@@ -2555,11 +2564,11 @@ wait 2" with
     { name := "a window's close request with nothing unsaved ends the host's loop"
       run := do
         let stage ← Stage.new context context.elaborator (memorySource [])
-        Headless.withHost stage.collaborators (guard := patience) fun host => do
-            unless ← Event.post .closeRequested do
-              return false
-            let ended ← eventually (IO.hasFinished host.thread)
-            return ended && (← host.halt patience) },
+        leavingLibraryQueue <|
+            Headless.withStepped stage.collaborators stage.memory (guard := patience) (grace :=
+              some hangGuard) fun stepped => do
+              stepped.input .closeRequested
+              return (← stepped.await hangGuard) == .ended },
     { name := "each failure is described differently, and a settle's names its line"
       run :=
         let reloading := Headless.Failure.describe 30000 (.reloading (some 12))
@@ -3237,12 +3246,13 @@ def exScriptChecks (context : Context) : List Check :=
           let started := s!"job 1 {Files.loadJob}: started"
           let ran (name : String) : IO (Option (Headless.Wait × Array String)) := do
             let stage ← Stage.new context context.elaborator (memorySource []) compiled
-            Headless.withHost stage.collaborators (guard := patience) fun host => do
-                host.send (.run name)
-                let joined ← host.join patience
-                let halted ← host.halt patience
-                let output ← stage.output.get
-                return if halted then some (joined, output) else none
+            leavingLibraryQueue <|
+                Headless.withStepped stage.collaborators stage.memory (guard := patience) (grace :=
+                  some hangGuard) fun stepped => do
+                  stepped.send (.run name)
+                  let joined ← stepped.join hangGuard
+                  let output ← stage.output.get
+                  return some (joined, output)
           let left ← ran s!"hand-{Ex.quitName}"
           let went ← ran "hand-other"
           return left == some (.ended, #[s!"run hand-{Ex.quitName}: ok"]) &&
@@ -3641,7 +3651,7 @@ def watchReloadChecks (context : Context) : List Check :=
   [{  name :=
         "after a reload installs, only the watches the new config made deliver: the old config's job is cancelled before the reload is reported, its watch ends, and the new config's job is told of the change and says the new version"
       run :=
-        withRealHost context followConfig fun session => do
+        withHost context followConfig fun session => do
           session.ask [.reload]
           session.ask [.spawn "follow"]
           unless ← eventually (return (← session.watches.watching) == 1) do
@@ -3658,7 +3668,7 @@ def watchReloadChecks (context : Context) : List Check :=
           unless ← eventually (return (← session.watches.watching) == 1) do
             return false
           session.watches.change "/watched/f" #[.written]
-          let joined ← session.host.join patience
+          let joined ← session.join
           session.ask [.show]
           let lines ← session.output.get
           let later := lines.extract afterReload.size lines.size
@@ -3672,7 +3682,7 @@ def watchReloadChecks (context : Context) : List Check :=
     { name :=
         "a rejected reload leaves the old config's watch watching: its job is told of the change and says the old version"
       run :=
-        withRealHost context followConfig fun session => do
+        withHost context followConfig fun session => do
           session.ask [.reload]
           session.ask [.spawn "follow"]
           unless ← eventually (return (← session.watches.watching) == 1) do
@@ -3682,7 +3692,7 @@ def watchReloadChecks (context : Context) : List Check :=
           let stillWatching :=
             (← session.watches.watching) == 1 && (← session.watches.ended).isEmpty
           session.watches.change "/watched/f" #[.written]
-          let joined ← session.host.join patience
+          let joined ← session.join
           session.ask [.show]
           let lines ← session.lines
           return stillWatching && joined == .settled && lines.contains "reload 2: rejected" &&
@@ -3741,7 +3751,7 @@ def environmentHostChecks (context : Context) : List Check :=
   [{  name :=
         "an installed reload whose setup sets the process environment puts that setting in the host's environments and drops every entry; a rejected reload changes neither"
       run :=
-        withRealEnvironments context [("init.lean", environmentText ".inherited")]
+        withEnvironments context [("init.lean", environmentText ".inherited")]
           fun session state _ => do
           state.set { entries := #[("/p/d", failedLookup)] }
           session.ask [.reload]
@@ -3755,15 +3765,15 @@ def environmentHostChecks (context : Context) : List Check :=
               rejected.entries == #[(("/p/d" : System.FilePath), failedLookup)] },
     { name := "a config that does not set the process environment installs auto"
       run :=
-        withRealEnvironments context [("init.lean", "def setup : SetupM Unit := pure ()")]
+        withEnvironments context [("init.lean", "def setup : SetupM Unit := pure ()")]
           fun session state _ => do
           state.set { setting := .mise none }
           session.ask [.reload]
           return (← state.get).setting == .auto },
     { name := "a failed lookup the host's environments record is the echo of the next scene"
       run :=
-        withRealEnvironments context [] fun session _ environments => do
-          session.host.resize 160 96
+        withEnvironments context [] fun session _ environments => do
+          session.resize 160 96
           session.ask []
           environments.ask (.record "/p/d" failedLookup)
           let (echo, _) ← session.scene

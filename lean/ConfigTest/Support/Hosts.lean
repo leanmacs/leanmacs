@@ -438,6 +438,14 @@ def handled (driven : Driven) (waitGuard : Nat) : IO Headless.Wait :=
   driven.waitWhile waitGuard (fun _ => pure false) none .unanswered "answer" waitGuard none
     IO.eprintln (fun _ => pure ()) false
 
+/-- `join` that publishes nothing (its marker is a probe): until no job is
+running, `working` at idle with one still running. What replaces a poll for
+a state the host reaches by itself, such as a job in its sleep, so the
+scene count stays the poll's. -/
+def idle (driven : Driven) (waitGuard : Nat) : IO Headless.Wait :=
+  driven.waitWhile waitGuard (fun progress => pure (progress.jobs > 0)) (some .working) .busy "join"
+    waitGuard none IO.eprintln (fun _ => pure ()) false
+
 /-- An advance's wait, as the script's `advance` makes it: until the fake
 clock holds a wait due within `milliseconds`, publishing nothing.
 `settled` once one is due, and `working` at idle with none due, which is a
@@ -569,6 +577,11 @@ is running, with `hangGuard` and the session's `waitHung` and
 `waitBlocked`: whether it did. -/
 def settle (session : Session) : IO Bool :=
   session.drive.settle hangGuard (waitHung := session.waitHung) (waitBlocked := session.waitBlocked)
+
+/-- `join` with `hangGuard` that publishes nothing (`Driven.idle`): what a
+check waits on in place of a poll for a job in its sleep. -/
+def idle (session : Session) : IO Headless.Wait :=
+  session.drive.idle hangGuard
 
 /-- Waits until the host has handled everything sent so far, with
 `hangGuard`, and publishes nothing (`Driven.handled`): whether it did. -/
