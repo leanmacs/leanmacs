@@ -1671,13 +1671,23 @@ def idleChecks (context : Context) : List Check :=
     { name :=
         "a wait's later rounds publish nothing: the scene count after a join that took two rounds, its job's sleep held until the join blocked on it, is the count after the same join that took one"
       run := do
-        -- One host's run: a resize makes the frame, a spawn of `count`, a
-        -- join, then the scene's count. With `held`, the job's start of its
+        -- One host's run: a command makes the frame, a spawn of `count`, a
+        -- join, then the scene's count. The frame is made by a request on the
+        -- editor queue, in order with the waits' markers, and the host has no
+        -- syntax tree, so no publish comes from the library at a time of its
+        -- own: the count is the waits'. With `held`, the job's start of its
         -- sleep is held until the join has blocked on it, so the join
         -- takes a second round; without, the job is in its sleep before the
         -- join, which answers in one.
         let ran (held : Bool) : IO (Option Nat × Headless.Wait × Nat) := do
-          let stage ← Stage.new context context.elaborator (memorySource []) { jobs := #[countJob] }
+          let stage ←
+            Stage.new context context.elaborator (memorySource [])
+                { jobs := #[countJob],
+                  commands := #[{ name := "noop", action := .plain (pure ()) }] }
+          let stage :=
+            { stage with
+              collaborators :=
+                { stage.collaborators with syntaxTree := fun _ => pure SyntaxTree.none } }
           let blocks ← IO.mkRef 0
           let joined ←
             onStage stage fun host stage => do
@@ -1685,7 +1695,7 @@ def idleChecks (context : Context) : List Check :=
                 unless held do
                   hold.resolve ()
                 try
-                  host.resize 640 480
+                  host.send (.run "noop")
                   host.send (.spawn "count")
                   unless ← host.settle hangGuard do
                     return false
