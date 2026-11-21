@@ -1097,6 +1097,13 @@ def countJob : Config.JobRegistration :=
           return 42)
         fun n => discard <| createText s!"counted {n}" }
 
+/-- A job `load` written in Lean: it loads a file that is not there and
+finishes with a command that does nothing. On a file service whose
+completions are held, it waits in its load for good. -/
+def loadJob : Config.JobRegistration :=
+  { name := "load"
+    work := fun _ => Work.of (fun _ => File.load "/nowhere/at-all" 100) fun _ => pure () }
+
 /-- Runs `check` with a hold for the editor thread (`hold`) and a wait's
 `waitBlocked` hook (`blocked`) that meet: the hold, called on the editor
 thread inside an event, lets the thread go once a wait has said it blocks
@@ -2197,6 +2204,52 @@ wait 2" with
                 some hangGuard)
           saw (failure == some (.waited 0 (.notRestarted 1))) s!"failure={repr failure}" },
     { name :=
+        "a join and an advance on a job held for good in a wait that ends by itself reach their guard: each says its hang once, and fails as busy with its line"
+      run := do
+        -- Pins of a bound of the headless mode. The job's load is held for
+        -- good on the fake files (`holdCompletions`), a wait that ends by
+        -- itself, so the job keeps its unit: the host is never idle, and
+        -- only the wait's guard, a fifth of a second, ends it.
+        let hosted {α : Type}
+          (check :
+            Headless.Collaborators Config.Elaborate.Base Config.Elaborate.Handle TestScheme.scheme →
+              IO α) :
+          IO α := do
+          let stage ← Stage.new context context.elaborator (memorySource []) { jobs := #[loadJob] }
+          let fake ← Job.FakeFiles.new stage.collaborators.services.completions {}
+          fake.holdCompletions
+          try
+            check
+                { stage.collaborators with
+                  services := { stage.collaborators.services with files := fake.files } }
+          finally
+            fake.letGo
+        let ran (wait : Headless.Directive) : IO (Option Headless.Failure × Array String) := do
+          let said ← IO.mkRef (#[] : Array String)
+          let failure ←
+            hosted fun collaborators =>
+                Headless.run collaborators #[⟨1, .request (.spawn "load")⟩, ⟨2, wait⟩] 200
+                  (waitHung := fun line => said.modify (·.push line))
+          return (failure, ← said.get)
+        let (joined, joinSaid) ← ran .join
+        let (advanced, advanceSaid) ← ran (.advance 5)
+        let hostSaid ← IO.mkRef (#[] : Array String)
+        let waited ←
+          hosted fun collaborators =>
+              Headless.withHost collaborators fun host => do
+                host.send (.spawn "load")
+                host.join 200 (waitHung := fun line => hostSaid.modify (·.push line))
+        let hostSaid ← hostSaid.get
+        saw
+            (joined == some (.busy (some 2)) && joinSaid.size == 1 &&
+              joinSaid.all (·.startsWith "editor: a hang: the join on line 2") &&
+              advanced == some (.busy (some 2)) &&
+              advanceSaid.size == 1 &&
+              advanceSaid.all (·.startsWith "editor: a hang: the advance on line 2") &&
+              waited == .busy &&
+              hostSaid.size == 1)
+            s!"joined={repr joined} joinSaid={joinSaid} advanced={repr advanced} advanceSaid={advanceSaid} waited={repr waited} hostSaid={hostSaid}" },
+    { name :=
         "a script that ends while a reload cannot finish fails at its end, with a reload still running and no line"
       run := do
         let gate ← Gate.new
@@ -2479,6 +2532,18 @@ wait 2" with
           (!others.contains hung && (hung.splitOn "30000 ms").length == 2 &&
             (hung.splitOn "5000 ms").length == 2)
           s!"hung={hung}" },
+    { name :=
+        "a join or an advance that reached its guard with work still running is described as a hang, with its line or at the script's end, and with its guard"
+      run :=
+        let line := Headless.Failure.describe 30000 (.busy (some 3))
+        let atEnd := Headless.Failure.describe 30000 (.busy none)
+        saw
+          (line.startsWith "a hang:" && atEnd.startsWith "a hang:" && line != atEnd &&
+            (line.splitOn "line 3").length == 2 &&
+            (line.splitOn "30000 ms").length == 2 &&
+            (atEnd.splitOn "30000 ms").length == 2 &&
+            line != Headless.Failure.describe 30000 (.working (some 3)))
+          s!"line={line} atEnd={atEnd}" },
     { name := "a wait that had its own patience is described with that patience, not the run's"
       run :=
         let waited := Headless.Failure.describe 30000 (.waited 90000 (.reloading (some 9)))
@@ -2504,12 +2569,14 @@ wait 2" with
             Headless.Wait.settled.failureIn line 30000 200,
             Headless.Wait.ended.failureIn line 30000 200,
             Headless.Wait.settled.failureIn line 30000 200 (own := some 90000),
-            Headless.Wait.ended.failureIn line 30000 200 (own := some 90000)]
+            Headless.Wait.ended.failureIn line 30000 200 (own := some 90000),
+            Headless.Wait.busy.failureIn line 30000 200,
+            Headless.Wait.busy.failureIn line 30000 200 (own := some 90000)]
         let expected : List (Option Headless.Failure) :=
           [some (.waited 200 (.unanswered line)), some (.unanswered line), some (.reloading line),
             some (.working line), some (.waited 90000 (.reloading line)),
             some (.waited 90000 (.unanswered line)), some (.waited 90000 (.unanswered line)), none,
-            none, none, none]
+            none, none, none, some (.busy line), some (.waited 90000 (.busy line))]
         saw
           (failures == expected &&
             Headless.Failure.within 200 30000 (.unanswered none) ==
