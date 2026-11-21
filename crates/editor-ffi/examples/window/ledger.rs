@@ -305,13 +305,23 @@ trait Handed: Sized {
 
 impl Handed for WgpuRenderer {
     fn handed(self, rasteriser: Rasteriser) -> Self {
-        handed(self, rasteriser, WgpuRenderer::rasterizing_with)
+        handed(
+            self,
+            rasteriser,
+            #[cfg(target_os = "macos")]
+            WgpuRenderer::rasterizing_with,
+        )
     }
 }
 
 impl Handed for HeadlessRenderer {
     fn handed(self, rasteriser: Rasteriser) -> Self {
-        handed(self, rasteriser, HeadlessRenderer::rasterizing_with)
+        handed(
+            self,
+            rasteriser,
+            #[cfg(target_os = "macos")]
+            HeadlessRenderer::rasterizing_with,
+        )
     }
 }
 
@@ -344,8 +354,13 @@ fn handed<R>(
 }
 
 /// `renderer` as it is: off macOS no rasteriser but swash is chosen.
+///
+/// It is handed no `rasterizing_with`, and its callers name none here:
+/// that function takes any rasteriser, and off macOS there is none to
+/// name it with (the Core Text one is macOS's alone), so a renderer's
+/// `rasterizing_with` handed on would leave its type unknown.
 #[cfg(not(target_os = "macos"))]
-fn handed<R, H>(renderer: R, _: Rasteriser, _: H) -> R {
+fn handed<R>(renderer: R, _: Rasteriser) -> R {
     renderer
 }
 
