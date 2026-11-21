@@ -20,12 +20,21 @@
 //!    in plain masks, as a display of scale 2 gets them, with the headless
 //!    adapter's picture of the same frame drawn the same way. No channel
 //!    of any pixel may differ by more than 3 of 255. Then the same again
-//!    with the macOS setting (`Settings::core_text`, Core Text's weight
-//!    of text): in plain masks, and in subpixel masks when the adapter
+//!    with the macOS setting (`Settings::core_text`: Core Text's weight
+//!    of text, blended in sRGB-encoded values through a target that is
+//!    not sRGB): in plain masks, and in subpixel masks when the adapter
 //!    blends by a coverage for each channel, each against the headless
 //!    adapter's picture drawn with the same settings, since the reference
-//!    image is the default's. The fixture has no colour glyph, so a
-//!    colour image is never drawn here;
+//!    image is the default's. Then the fixture with its text in grey
+//!    (`#808080`), blended encoded at a contrast of 1, against the CPU:
+//!    the contrast is reckoned from the colour's linear light in either
+//!    space, and a shader that took it from the encoded value would miss
+//!    by about 9 of 255 at half coverage. Then a control that must miss:
+//!    the GPU's encoded picture against the CPU's linear one, with the
+//!    settings otherwise the same, must differ by more than 3, or the
+//!    comparison cannot see the blending (`WITHIN`, and exit 1). Each
+//!    renderer says which space it blends in. The fixture has no colour
+//!    glyph, so a colour image is never drawn here;
 //! 3. prints how long a first frame, a frame with a row edited and a
 //!    frame that differs only in its cursor took, with the rows each
 //!    built. The times are for a person to read: nothing is asserted of
@@ -35,11 +44,12 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use editor_layout::face::Color;
 use editor_layout::frame::Frame;
 use editor_render::contract;
 use editor_render::port::{DrawRequest, Drawn, Renderer};
 use editor_render_wgpu::{
-    Antialiasing, HeadlessRenderer, Image, NoAdapter, Settings, WgpuRenderer,
+    Antialiasing, Blending, HeadlessRenderer, Image, NoAdapter, Settings, Weight, WgpuRenderer,
 };
 
 #[path = "../tests/common/mod.rs"]
@@ -94,6 +104,40 @@ fn on_the_cpu(frame: &Arc<Frame>, settings: Settings) -> Image {
     renderer.image().clone()
 }
 
+/// What a GPU renderer with `settings` draws of `frame`, read back, after
+/// it says which space it blends in; `None`, said, when there is no
+/// renderer or the draw is refused.
+fn on_the_gpu(frame: &Arc<Frame>, settings: Settings) -> Option<Image> {
+    let mut renderer = match on_this_machine(settings) {
+        Ok(renderer) => renderer,
+        Err(none) => {
+            println!("render-gpu: {none}");
+            return None;
+        }
+    };
+    let (drawn, _) = draw(&mut renderer, frame);
+    println!(
+        "render-gpu: asked to blend in {}, the renderer blends in {}",
+        settings.blending,
+        renderer.blending()
+    );
+    if !drawn.presented {
+        println!(
+            "render-gpu: the draw was refused: {}",
+            renderer.refused().unwrap_or("no reason given")
+        );
+        return None;
+    }
+    Some(renderer.read_back())
+}
+
+/// Whether the GPU's picture of `frame` with `settings` is within the
+/// tolerance of the CPU's with the same settings, which is `against`.
+fn held_to_the_cpu(frame: &Arc<Frame>, settings: Settings, against: &str) -> bool {
+    on_the_gpu(frame, settings)
+        .is_some_and(|image| compared(&image, &on_the_cpu(frame, settings), against))
+}
+
 /// Says how `image`, read back from the GPU, differs from `expected`,
 /// which is `against`: whether no channel of any pixel differs by more
 /// than [`TOLERANCE`].
@@ -114,6 +158,18 @@ fn compared(image: &Image, expected: &Image, against: &str) -> bool {
     within
 }
 
+/// The fixture frame with the default face's text in grey, `#808080`,
+/// whose linear light (0.216) is far from its encoded value (0.502).
+fn grey_text(layout: &mut editor_layout::Layout<editor_shape_parley::ParleyShaper>) -> Arc<Frame> {
+    let mut scene = common::scene_of(common::TEXT, common::SELECTED);
+    for def in scene.faces.iter_mut().flatten() {
+        if def.name == "default" {
+            def.face.foreground = Some(Color::rgb(0x80, 0x80, 0x80));
+        }
+    }
+    Arc::new(layout.frame(&scene))
+}
+
 fn main() -> ExitCode {
     let mut renderer = match on_this_machine(common::settings()) {
         Ok(renderer) => renderer,
@@ -124,8 +180,9 @@ fn main() -> ExitCode {
     };
     let per_channel = renderer.per_channel();
     println!(
-        "render-gpu: adapter {}; blends by a coverage for each channel: {per_channel}",
-        renderer.adapter()
+        "render-gpu: adapter {}; blends by a coverage for each channel: {per_channel}; blends in {}",
+        renderer.adapter(),
+        renderer.blending()
     );
     let mut held = true;
 
@@ -151,12 +208,10 @@ fn main() -> ExitCode {
     // the selection; then that with its cursor elsewhere, which differs
     // in nothing else.
     let mut layout = common::layout();
-    let mut frame =
-        |text: &str, selected| Arc::new(layout.frame(&common::scene_of(text, selected)));
-    let fixture = frame(common::TEXT, common::SELECTED);
+    let fixture = Arc::new(layout.frame(&common::scene_of(common::TEXT, common::SELECTED)));
     let edited = common::TEXT.replacen("under", "undor", 1);
-    let changed = frame(&edited, 7..7);
-    let moved = frame(&edited, 1..1);
+    let changed = Arc::new(layout.frame(&common::scene_of(&edited, 7..7)));
+    let moved = Arc::new(layout.frame(&common::scene_of(&edited, 1..1)));
 
     let plain = Settings {
         antialiasing: Antialiasing::Grayscale,
@@ -195,38 +250,70 @@ fn main() -> ExitCode {
         held &= compared(&image, &on_the_cpu(&fixture, plain), masks);
     }
 
-    // The same frame at the macOS weight: the contrast reaches the
-    // shader and the dilation the atlas, and the GPU is held to the CPU
-    // drawing it with the same settings.
+    // The same frame at the macOS weight, blended as macOS blends: the
+    // contrast and the blending reach the shader, the dilation the atlas,
+    // and the GPU is held to the CPU drawing it with the same settings.
+    // Until `Settings::core_text` blends encoded itself, it is asked to.
+    let macos = Settings {
+        blending: Blending::Encoded,
+        ..Settings::core_text()
+    };
     let macos_plain = Settings {
         antialiasing: Antialiasing::Grayscale,
-        ..Settings::core_text()
+        ..macos
     };
     let macos_subpixel = Settings {
         antialiasing: common::settings().antialiasing,
-        ..Settings::core_text()
+        ..macos
     };
     let mut weighed = vec![(
         macos_plain,
-        "the headless adapter's picture at the macOS weight in plain masks",
+        "the headless adapter's picture at the macOS setting in plain masks",
     )];
     if per_channel {
         weighed.push((
             macos_subpixel,
-            "the headless adapter's picture at the macOS weight in subpixel masks",
+            "the headless adapter's picture at the macOS setting in subpixel masks",
         ));
     }
     for (settings, against) in weighed {
-        match on_this_machine(settings) {
-            Ok(mut other) => {
-                held &= draw(&mut other, &fixture).0.presented;
-                held &= compared(&other.read_back(), &on_the_cpu(&fixture, settings), against);
-            }
-            Err(none) => {
+        held &= held_to_the_cpu(&fixture, settings, against);
+    }
+
+    // Grey text, blended encoded at a contrast of 1: the contrast is
+    // reckoned from the colour's linear light on the GPU as on the CPU.
+    let grey = grey_text(&mut layout);
+    let contrasted = Settings {
+        antialiasing: Antialiasing::Grayscale,
+        weight: Weight {
+            contrast: 1.0,
+            dilation: 0.0,
+        },
+        blending: Blending::Encoded,
+        ..common::settings()
+    };
+    held &= held_to_the_cpu(
+        &grey,
+        contrasted,
+        "the headless adapter's picture of grey text, encoded, at a contrast of 1",
+    );
+
+    // The control: the GPU blending encoded against the CPU blending in
+    // linear light, otherwise alike, must differ past the tolerance.
+    let linear_plain = Settings {
+        blending: Blending::Linear,
+        ..macos_plain
+    };
+    match on_the_gpu(&fixture, macos_plain) {
+        Some(image) => {
+            let against =
+                "the headless adapter's picture in linear light (the control, which must miss)";
+            if compared(&image, &on_the_cpu(&fixture, linear_plain), against) {
                 held = false;
-                println!("render-gpu: {none}");
+                println!("render-gpu: WITHIN: the comparison cannot see the blending");
             }
         }
+        None => held = false,
     }
 
     // 3. The times, for a person.

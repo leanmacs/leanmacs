@@ -1397,13 +1397,21 @@ the first two held:
    of two physical pixels to a logical one gets them, with the headless
    adapter's picture of the same frame drawn the same way. An adapter
    that cannot blend by a coverage for each channel draws only the
-   second. Then the same frame at the macOS weight
-   (`Settings::core_text()`), in plain masks and, where the adapter can,
+   second. Then the same frame at the macOS setting
+   (`Settings::core_text()`, blended in sRGB-encoded values through a
+   target that is not sRGB), in plain masks and, where the adapter can,
    in subpixel masks, each against the headless adapter's picture drawn
-   with the same settings: the contrast reaches the shader and the
-   dilation the atlas. The fixture has no colour glyph, so a colour image is drawn by
-   no GPU here: that path of the shader is validated in the gate and has
-   never been seen;
+   with the same settings: the contrast and the blending reach the
+   shader and the dilation the atlas. Then the fixture with its text in
+   grey (`#808080`), blended encoded at a contrast of 1, against the CPU:
+   the contrast is reckoned from the colour's linear light in either
+   space, and a shader that took it from the encoded value misses. Then a
+   control that must miss: the GPU's encoded picture against the CPU's
+   linear one, otherwise alike, must differ by more than 3, or the check
+   prints `WITHIN: the comparison cannot see the blending` and fails.
+   Each renderer prints the space it blends in. The fixture has no colour
+   glyph, so a colour image is drawn by no GPU here: that path of the
+   shader is validated in the gate and has never been seen;
 3. prints how long a first frame, a frame with a row edited and a frame
    that differs only in its cursor took, with the rows each built. The
    times are of one run of a debug build: nothing is asserted of them and
@@ -1427,6 +1435,20 @@ masks and 64 in subpixel masks, the worst by 1 of 255 in each. With the
 contrast left out of the CPU's side only (a change made for the run and
 undone), the macOS weight's comparisons failed, the worst by 5: so the
 check sees the shader's contrast.
+
+Interim run, 2026-11-20, on the same machine (macOS 27.2.1, Metal on the
+Apple M5 Max), with encoded blending in the GPU (text-rendering phase 2,
+step 4), before the window's surface, `Settings::core_text()` and the
+macOS weight changed: these are not the phase's final figures. Exit
+status 0; all 9 properties held; 113 pixels differed from the reference
+image and 70 from the plain masks, the worst by 1 of 255 in each; at the
+macOS setting blended encoded (asked for explicitly, contrast 0.1 and
+dilation 0.8), 0 pixels differed in plain masks and 0 in subpixel masks;
+the grey text at a contrast of 1, encoded, 0 pixels. The control missed
+as it must: 1597 pixels differed, the worst by 73. With the shader's
+luminance taken from the encoded colour (a change made for the run and
+undone), the grey comparison failed, 1224 pixels differing, the worst by
+10: so the check sees which luminance the shader's contrast uses.
 
 ## The renderer on Linux, on demand
 

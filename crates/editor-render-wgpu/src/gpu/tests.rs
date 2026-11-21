@@ -33,7 +33,7 @@ use crate::glyphs::Kind;
 use crate::painter::Painter;
 use crate::quads::{Quad, QuadKind};
 use crate::surface::handles;
-use crate::{Antialiasing, Settings, SubpixelOrder, Weight, WgpuRenderer};
+use crate::{Antialiasing, Blending, Settings, SubpixelOrder, Weight, WgpuRenderer};
 
 /// An instance whose one adapter is wgpu's no-op back end.
 fn noop() -> wgpu::Instance {
@@ -43,10 +43,18 @@ fn noop() -> wgpu::Instance {
     wgpu::Instance::new(descriptor)
 }
 
-/// A device on the no-op back end.
+/// A device on the no-op back end, blending in linear light.
 fn device(allow_per_channel: bool) -> Device {
-    Device::new(&noop(), allow_per_channel).expect("the no-op adapter")
+    blending_in(allow_per_channel, Blending::Linear)
 }
+
+/// A device on the no-op back end, blending in `blending`'s space.
+fn blending_in(allow_per_channel: bool, blending: Blending) -> Device {
+    Device::new(&noop(), allow_per_channel, blending).expect("the no-op adapter")
+}
+
+/// Both spaces a device blends in.
+const BLENDINGS: [Blending; 2] = [Blending::Linear, Blending::Encoded];
 
 /// A target of 200 by 64 pixels at `scale`.
 fn target(scale: f32) -> Target {
@@ -127,75 +135,120 @@ fn the_wgpu_adapter_holds_the_renderer_contract_on_the_noop_back_end() {
 
 #[test]
 fn every_kind_of_quad_and_of_page_is_drawn_with_no_validation_error() {
-    let mut device = device(true);
-    assert!(device.per_channel());
-    let mut painter = painter(Antialiasing::Auto, device.per_channel());
-    let frame = dressed();
-    // At scale 1: fills, subpixel masks and a colour glyph.
-    painter.paint(&frame, target(1.0));
-    assert_eq!(
-        kinds(&painter),
-        vec![QuadKind::Fill, QuadKind::Subpixel, QuadKind::Color]
-    );
-    assert_eq!(
-        device.draw(painter.quads(), painter.atlas(), 200, 64),
-        Ok(())
-    );
-    // At scale 2: plain masks, from a third kind of page.
-    painter.paint(&frame, target(2.0));
-    assert_eq!(
-        kinds(&painter),
-        vec![QuadKind::Fill, QuadKind::Mask, QuadKind::Color]
-    );
-    assert_eq!(
-        device.draw(painter.quads(), painter.atlas(), 200, 64),
-        Ok(())
-    );
-    // The device holds a texture for each page of the atlas, as it was
-    // when it was sent.
-    let pages: Vec<(u32, Kind, u64)> = painter
-        .atlas()
-        .pages()
-        .map(|page| (page.number, page.kind, page.written))
-        .collect();
-    let kinds: Vec<Kind> = pages.iter().map(|(_, kind, _)| *kind).collect();
-    assert_eq!(kinds, vec![Kind::Subpixel, Kind::Color, Kind::Mask]);
-    assert_eq!(device.pages.len(), pages.len());
-    for (number, _, written) in pages {
+    for blending in BLENDINGS {
+        let mut device = blending_in(true, blending);
+        assert!(device.per_channel());
+        let mut painter = painter(Antialiasing::Auto, device.per_channel());
+        let frame = dressed();
+        // At scale 1: fills, subpixel masks and a colour glyph.
+        painter.paint(&frame, target(1.0));
         assert_eq!(
-            device.pages.get(&number).map(|page| page.sent),
-            Some(written)
+            kinds(&painter),
+            vec![QuadKind::Fill, QuadKind::Subpixel, QuadKind::Color]
         );
+        assert_eq!(
+            device.draw(painter.quads(), painter.atlas(), 200, 64),
+            Ok(()),
+            "{blending:?}"
+        );
+        // At scale 2: plain masks, from a third kind of page.
+        painter.paint(&frame, target(2.0));
+        assert_eq!(
+            kinds(&painter),
+            vec![QuadKind::Fill, QuadKind::Mask, QuadKind::Color]
+        );
+        assert_eq!(
+            device.draw(painter.quads(), painter.atlas(), 200, 64),
+            Ok(()),
+            "{blending:?}"
+        );
+        // The device holds a texture for each page of the atlas, as it
+        // was when it was sent.
+        let pages: Vec<(u32, Kind, u64)> = painter
+            .atlas()
+            .pages()
+            .map(|page| (page.number, page.kind, page.written))
+            .collect();
+        let kinds: Vec<Kind> = pages.iter().map(|(_, kind, _)| *kind).collect();
+        assert_eq!(kinds, vec![Kind::Subpixel, Kind::Color, Kind::Mask]);
+        assert_eq!(device.pages.len(), pages.len());
+        for (number, _, written) in pages {
+            assert_eq!(
+                device.pages.get(&number).map(|page| page.sent),
+                Some(written)
+            );
+        }
     }
 }
 
 #[test]
 fn a_device_without_dual_source_blending_draws_plain_masks_through_its_own_blend() {
-    // The no-op adapter has the feature; the device is told not to ask
-    // for it, as on an adapter that has none.
-    let mut device = device(false);
-    assert!(!device.per_channel());
-    let stripes = Antialiasing::Subpixel(SubpixelOrder::Rgb);
-    let mut painter = painter(stripes, device.per_channel());
-    painter.paint(&dressed(), target(1.0));
+    for blending in BLENDINGS {
+        // The no-op adapter has the feature; the device is told not to
+        // ask for it, as on an adapter that has none.
+        let mut device = blending_in(false, blending);
+        assert!(!device.per_channel());
+        let stripes = Antialiasing::Subpixel(SubpixelOrder::Rgb);
+        let mut painter = painter(stripes, device.per_channel());
+        painter.paint(&dressed(), target(1.0));
+        assert_eq!(
+            kinds(&painter),
+            vec![QuadKind::Fill, QuadKind::Mask, QuadKind::Color]
+        );
+        assert_eq!(
+            device.draw(painter.quads(), painter.atlas(), 200, 64),
+            Ok(()),
+            "{blending:?}"
+        );
+        // And the renderer made over such a device says so, and still
+        // draws.
+        let settings = Settings {
+            blending,
+            ..Settings::default()
+        };
+        let mut renderer = WgpuRenderer::over(&noop(), settings, false).expect("the no-op adapter");
+        assert!(!renderer.per_channel());
+        let drawn = renderer.draw(&DrawRequest {
+            frame: &std::sync::Arc::new(dressed()),
+            target: target(1.0),
+        });
+        assert!(drawn.presented, "{:?}", renderer.refused());
+        assert_eq!(renderer.refused(), None);
+    }
+}
+
+#[test]
+fn a_device_that_blends_encoded_draws_on_its_own_target_in_the_non_srgb_format() {
+    let encoded = blending_in(true, Blending::Encoded);
+    assert_eq!(encoded.format, wgpu::TextureFormat::Rgba8Unorm);
+    assert_eq!(encoded.blending(), Blending::Encoded);
+    let linear = blending_in(true, Blending::Linear);
+    assert_eq!(linear.format, wgpu::TextureFormat::Rgba8UnormSrgb);
+    assert_eq!(linear.blending(), Blending::Linear);
+    // And what it draws on is of that format, and is read back.
+    let mut encoded = encoded;
+    assert_eq!(encoded.draw(&[], &Atlas::new(64), 20, 10), Ok(()));
     assert_eq!(
-        kinds(&painter),
-        vec![QuadKind::Fill, QuadKind::Mask, QuadKind::Color]
+        encoded
+            .target
+            .as_ref()
+            .map(|target| target.texture.format()),
+        Some(wgpu::TextureFormat::Rgba8Unorm)
     );
-    assert_eq!(
-        device.draw(painter.quads(), painter.atlas(), 200, 64),
-        Ok(())
-    );
-    // And the renderer made over such a device says so, and still draws.
-    let mut renderer =
-        WgpuRenderer::over(&noop(), Settings::default(), false).expect("the no-op adapter");
-    assert!(!renderer.per_channel());
-    let drawn = renderer.draw(&DrawRequest {
-        frame: &std::sync::Arc::new(dressed()),
-        target: target(1.0),
-    });
-    assert!(drawn.presented, "{:?}", renderer.refused());
-    assert_eq!(renderer.refused(), None);
+    let image = encoded.read_back().expect("the target read back");
+    assert_eq!((image.width, image.height), (20, 10));
+}
+
+#[test]
+fn a_renderer_blends_as_its_settings_say() {
+    for blending in BLENDINGS {
+        let settings = Settings {
+            blending,
+            ..Settings::default()
+        };
+        let renderer = WgpuRenderer::over(&noop(), settings, true).expect("the no-op adapter");
+        assert_eq!(renderer.blending(), blending);
+    }
 }
 
 #[test]
@@ -645,12 +698,14 @@ fn an_instance_is_a_quads_box_its_source_and_its_colour() {
 }
 
 #[test]
-fn the_globals_are_the_targets_size_and_the_contrast() {
-    let mut expected = Vec::new();
-    for value in [200.0_f32, 64.0, 0.5, 0.0] {
-        expected.extend_from_slice(&value.to_ne_bytes());
+fn the_globals_are_the_targets_size_the_contrast_and_the_blending() {
+    for (blending, flag) in [(Blending::Encoded, 1.0_f32), (Blending::Linear, 0.0)] {
+        let mut expected = Vec::new();
+        for value in [200.0_f32, 64.0, 0.5, flag] {
+            expected.extend_from_slice(&value.to_ne_bytes());
+        }
+        assert_eq!(globals(200, 64, 0.5, blending).to_vec(), expected);
     }
-    assert_eq!(globals(200, 64, 0.5).to_vec(), expected);
 }
 
 #[test]

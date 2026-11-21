@@ -371,7 +371,10 @@ impl WgpuRenderer {
         settings: Settings,
         allow_per_channel: bool,
     ) -> Result<Self, NoAdapter> {
-        Self::with(gpu::Device::new(instance, allow_per_channel), settings)
+        Self::with(
+            gpu::Device::new(instance, allow_per_channel, settings.blending),
+            settings,
+        )
     }
 
     /// A renderer over `device`, if there is one.
@@ -423,6 +426,13 @@ impl WgpuRenderer {
     /// the settings say.
     pub fn per_channel(&self) -> bool {
         self.device.per_channel()
+    }
+
+    /// The space it blends in: its settings' ([`Settings::blending`]),
+    /// unless it draws on a window whose surface cannot blend in that
+    /// space, which then blends in linear light.
+    pub fn blending(&self) -> Blending {
+        self.device.blending()
     }
 
     /// The kind of mask the last draw asked its glyph images in, whether

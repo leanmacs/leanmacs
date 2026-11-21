@@ -1,15 +1,25 @@
 // The one shader of the wgpu device: instanced quads, each laid over what
 // is already drawn.
 //
-// It states the same arithmetic as `blend.rs` (`source` and `blend`), and
-// the two are kept alike by hand: a change to one is a change to the
-// other. A quad's pixel is a colour in linear light and a coverage for
-// each of red, green, blue and alpha, and
+// It states the same arithmetic as `blend.rs` (`source_with` and
+// `blend`), and the two are kept alike by hand: a change to one is a
+// change to the other. A quad's pixel is a colour and a coverage for each
+// of red, green, blue and alpha, and
 //
 //     out = colour * coverage + under * (1 - coverage)
 //
-// for each channel. The target is an sRGB format, so the GPU makes what
-// is under linear before blending and encodes the result after.
+// for each channel, in one of two spaces (`Blending`), which the globals
+// say:
+//
+// - in linear light, the colour made linear here, through a view of the
+//   target in an sRGB format, so that the GPU makes what is under linear
+//   before blending and encodes the result after;
+// - in sRGB-encoded values, the colour as given, through a view of the
+//   target in a format that is not sRGB, so that the GPU blends the
+//   stored values / 255 as they are and rounds once.
+//
+// In either space the contrast is reckoned from the colour's luminance in
+// linear light, as `blend::source_with` reckons it.
 //
 // The fragment's output is one of two, put before this text when the
 // module is made (`gpu.rs`): with dual-source blending the colour times
@@ -22,7 +32,8 @@ struct Globals {
     // How much the coverage of dark text is raised: the renderer's
     // settings' `Weight::contrast`, as `blend::source_with` takes it.
     contrast: f32,
-    unused: f32,
+    // 1 when the device blends in sRGB-encoded values, 0 in linear light.
+    encoded: f32,
 }
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -83,13 +94,17 @@ struct Laid {
     coverage: vec4<f32>,
 }
 
-// `blend::source`.
+// `blend::source_with`.
 fn laid(in: Varying) -> Laid {
     let within = vec2<i32>(floor(in.position.xy)) - in.corner;
     let texel = textureLoad(page, vec2<i32>(in.source.xy) + within, 0);
-    var rgb = to_linear(in.color.rgb);
+    let encoded = globals.encoded > 0.5;
+    // The colour in linear light, which the contrast is reckoned from in
+    // either space; what is blended is the colour in the device's space.
+    let light = to_linear(in.color.rgb);
+    var rgb = select(light, in.color.rgb, encoded);
     let alpha = in.color.a;
-    let luminance = dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let luminance = dot(light, vec3<f32>(0.2126, 0.7152, 0.0722));
     var coverage = vec4<f32>(alpha);
     switch in.source.z {
         case 1u {
@@ -105,12 +120,16 @@ fn laid(in: Varying) -> Laid {
         }
         case 3u {
             // The image's colours are multiplied by its alpha, as sRGB
-            // values: divided out before they are made linear.
+            // values: divided out, then made linear for linear light.
             coverage = vec4<f32>(texel.a);
             rgb = vec3<f32>(0.0);
             if texel.a > 0.0 {
-                let own = round(texel.rgb / texel.a * 255.0) / 255.0;
-                rgb = to_linear(min(own, vec3<f32>(1.0)));
+                if encoded {
+                    rgb = min(texel.rgb / texel.a, vec3<f32>(1.0));
+                } else {
+                    let own = round(texel.rgb / texel.a * 255.0) / 255.0;
+                    rgb = to_linear(min(own, vec3<f32>(1.0)));
+                }
             }
         }
         default {}

@@ -694,6 +694,25 @@ mod tests {
     }
 
     #[test]
+    fn an_encoded_source_reckons_its_contrast_from_the_colours_linear_light() {
+        // Grey, whose linear light (0.216) is far from its encoded value
+        // (0.502): at a contrast of 1 and half coverage the two would
+        // raise the coverage by 0.196 and by 0.125.
+        let grey = Color::rgb(0x80, 0x80, 0x80);
+        let half = [128, 0, 0, 0];
+        let coverage = 128.0 / 255.0;
+        let by_light = adjusted(coverage, to_linear(0x80), 1.0);
+        let by_value = adjusted(coverage, coverage, 1.0);
+        assert!(by_light - by_value > 0.05);
+        for blending in [Blending::Linear, Blending::Encoded] {
+            let laid = source_with(QuadKind::Mask, grey, half, 1.0, blending);
+            for each in laid.coverage {
+                assert!((each - by_light).abs() < 1e-6, "{blending:?}: {each}");
+            }
+        }
+    }
+
+    #[test]
     fn antialiasing_is_subpixel_below_scale_two() {
         let rgb = Some(SubpixelOrder::Rgb);
         for scale in [1.0, 1.25, 1.5, 1.99] {

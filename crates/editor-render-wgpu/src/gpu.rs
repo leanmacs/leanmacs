@@ -87,7 +87,7 @@ use crate::glyphs::Kind;
 use crate::present::{Asked, Offered};
 use crate::quads::{Quad, QuadKind};
 use crate::surface::{Answer, Calls, State};
-use crate::{Image, Weight};
+use crate::{Blending, Image, Weight};
 
 /// The body of the shader, shared by both blends.
 const SHADER: &str = include_str!("shader.wgsl");
@@ -119,10 +119,23 @@ fn fragment(in: Varying) -> @location(0) vec4<f32> {
 }
 ";
 
-/// The format of a target of the device's own: sRGB values, so that
-/// blending is in linear light. A window's surface has the format chosen
-/// from what it offers (`surface::choose_format`).
+/// The format of a target of the device's own that blends in linear
+/// light: sRGB values, which the GPU makes linear before it blends and
+/// encodes after. One that blends in encoded values draws on the same
+/// bytes in this format's non-sRGB form ([`own_format`]). A window's
+/// surface has the format chosen from what it offers
+/// (`surface::choose_format`).
 const OWN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+
+/// The format of a target of the device's own that blends in `blending`'s
+/// space: [`OWN_FORMAT`], or its non-sRGB form, through which the GPU's
+/// fixed-function blend works on the sRGB values themselves.
+fn own_format(blending: Blending) -> wgpu::TextureFormat {
+    match blending {
+        Blending::Linear => OWN_FORMAT,
+        Blending::Encoded => OWN_FORMAT.remove_srgb_suffix(),
+    }
+}
 
 /// How many bytes one quad takes in the instance buffer: its box, its
 /// source and its colour.
@@ -245,13 +258,16 @@ pub struct Device {
     adapter: String,
     /// Whether it blends by a coverage for each channel.
     per_channel: bool,
+    /// The space it blends in: what the format it draws through gives,
+    /// and what the shader is told.
+    blending: Blending,
     /// The format of what the pipeline draws on.
     format: wgpu::TextureFormat,
     /// The one pipeline.
     pipeline: wgpu::RenderPipeline,
     /// The layout of a page's bind group.
     page_layout: wgpu::BindGroupLayout,
-    /// The target's size and the contrast, for the shader.
+    /// The target's size, the contrast and the blending, for the shader.
     globals: wgpu::Buffer,
     /// What binds `globals`.
     globals_bind: wgpu::BindGroup,
@@ -273,11 +289,15 @@ pub struct Device {
 }
 
 /// The bytes of the shader's globals: the target's size, `width` by
-/// `height`, then `contrast`, then a float unused, each in the machine's
-/// byte order.
-fn globals(width: u32, height: u32, contrast: f32) -> [u8; 16] {
+/// `height`, then `contrast`, then whether `blending` is in encoded values
+/// (1) or in linear light (0), each a float in the machine's byte order.
+fn globals(width: u32, height: u32, contrast: f32, blending: Blending) -> [u8; 16] {
+    let encoded = match blending {
+        Blending::Linear => 0.0,
+        Blending::Encoded => 1.0,
+    };
     let mut bytes = [0; 16];
-    for (at, value) in [width as f32, height as f32, contrast, 0.0]
+    for (at, value) in [width as f32, height as f32, contrast, encoded]
         .into_iter()
         .enumerate()
     {
@@ -293,10 +313,14 @@ fn wait<T>(future: impl Future<Output = T>) -> T {
 
 impl Device {
     /// A device on an adapter of `instance` that draws on a target of its
-    /// own, blending by a coverage for each channel when the adapter can
-    /// and `allow_per_channel` says it may.
-    pub fn new(instance: &wgpu::Instance, allow_per_channel: bool) -> Result<Self, Unavailable> {
-        Self::build(instance, None, allow_per_channel)
+    /// own, blending in `blending`'s space, and by a coverage for each
+    /// channel when the adapter can and `allow_per_channel` says it may.
+    pub fn new(
+        instance: &wgpu::Instance,
+        allow_per_channel: bool,
+        blending: Blending,
+    ) -> Result<Self, Unavailable> {
+        Self::build(instance, None, allow_per_channel, blending)
     }
 
     /// A device on an adapter of `instance` that can present to `surface`,
@@ -310,15 +334,22 @@ impl Device {
         asked: Asked,
         allow_per_channel: bool,
     ) -> Result<Self, Unavailable> {
-        Self::build(instance, Some((surface, asked)), allow_per_channel)
+        Self::build(
+            instance,
+            Some((surface, asked)),
+            allow_per_channel,
+            Blending::Linear,
+        )
     }
 
     /// A device on an adapter of `instance`, drawing on `surface` when
-    /// there is one and on a target of its own otherwise.
+    /// there is one and on a target of its own otherwise, blending in
+    /// `blending`'s space.
     fn build(
         instance: &wgpu::Instance,
         surface: Option<(wgpu::Surface<'static>, Asked)>,
         allow_per_channel: bool,
+        blending: Blending,
     ) -> Result<Self, Unavailable> {
         let adapter = wait(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: surface.as_ref().map(|(surface, _)| surface),
@@ -332,7 +363,7 @@ impl Device {
             .map_err(|reason| Unavailable(format!("{reason} ({})", info.name)))?;
         let format = window
             .as_ref()
-            .map_or(OWN_FORMAT, |window| window.state.target());
+            .map_or(own_format(blending), |window| window.state.target());
         let dual = wgpu::Features::DUAL_SOURCE_BLENDING;
         let per_channel = allow_per_channel && adapter.features().contains(dual);
         let (device, queue) = wait(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -469,6 +500,7 @@ impl Device {
             queue,
             adapter: format!("{} ({:?})", info.name, info.backend),
             per_channel,
+            blending,
             format,
             pipeline,
             page_layout,
@@ -518,6 +550,11 @@ impl Device {
     /// subpixel masks may be drawn on it.
     pub fn per_channel(&self) -> bool {
         self.per_channel
+    }
+
+    /// The space the device blends in.
+    pub fn blending(&self) -> Blending {
+        self.blending
     }
 
     /// The adapter's name and back end, for a person.
@@ -596,7 +633,7 @@ impl Device {
     /// them 0. The error says why the window's surface gave no texture.
     fn draw_on(&mut self, quads: &[Quad], width: u32, height: u32) -> Result<(), String> {
         let (view, presented) = self.canvas(width, height)?;
-        let written = globals(width, height, self.contrast);
+        let written = globals(width, height, self.contrast, self.blending);
         self.queue.write_buffer(&self.globals, 0, &written);
 
         let (bytes, runs) = instances(quads, |page| self.pages.contains_key(&page));
