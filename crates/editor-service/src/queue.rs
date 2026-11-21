@@ -864,14 +864,13 @@ mod tests {
         queue.quit();
 
         assert_eq!(codes, [0, 1, 2]);
-        let deadline = Instant::now() + DEADLINE;
-        while !feeder.is_finished() {
-            assert!(
-                Instant::now() < deadline,
-                "the source was still feeding a quit queue after {DEADLINE:?}"
-            );
-            thread::sleep(Duration::from_millis(1));
-        }
+        // The feeder stops at the push the quit queue refuses: its thread
+        // ends, and is joined.
+        let joined = finish(
+            &start(move || feeder.join()),
+            "the source feeding a quit queue",
+        );
+        joined.expect("the feeder's thread");
     }
 
     #[test]

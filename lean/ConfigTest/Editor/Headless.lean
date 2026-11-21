@@ -790,8 +790,7 @@ def threadChecks (context : Context) : List Check :=
               -- and stays there until the gate opens.
               unless ← eventually gate.holding.get do
                 return false
-              unless ← Ffi.feedScript .editor 77 100 do
-                return false
+              let some fed ← Ffi.feedScript .editor 77 100 hangGuard.toUInt64 | return false
               session.host.send (.run "greet")
               -- With the job on the editor thread these lines never come while
               -- the file is held: the wait runs out and the check fails.
@@ -806,7 +805,9 @@ def threadChecks (context : Context) : List Check :=
               gate.open
               session.ask []
               let after ← session.output.get
-              return answered && held &&
+              -- The feed's thread has ended before the check returns.
+              let joined := (← IO.wait fed) matches .ok true
+              return answered && held && joined &&
                   lines.extract 0 1 == #["reload 1: installed, 2 files, 1 commands"] &&
                   (lines.filter (·.startsWith "event ")) == eventLines 77 100 &&
                   !lines.any (·.startsWith "reload 2") &&

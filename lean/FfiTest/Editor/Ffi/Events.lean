@@ -85,24 +85,24 @@ def queueChecks (_ : Unit) : List Check :=
         return (← IO.ofExcept task.get) == message 6 1 "wake" },
     { name := "a script fed from a Rust thread arrives in order, tagged with its source"
       run := do
-        unless ← Editor.Ffi.feedScript .completion 9 3 do
-          return false
+        let some fed ← Editor.Ffi.feedScript .completion 9 3 patience.toUInt64 | return false
         for code in ([0, 1, 2] : List UInt64) do
           let some event ← pull .completion | return false
           unless
             event.source == { kind := .script, id := 9 } && event.kind == .message &&
               event.code == code do
             return false
-        return true },
+        -- The feed's thread has ended before the check returns.
+        return (← IO.wait fed) matches .ok true },
     { name :=
         "an event's words cross whole and in order: each scripted event carries its code and the largest word less its code"
       run := do
-        unless ← Editor.Ffi.feedScript .completion 9 2 do
-          return false
+        let some fed ← Editor.Ffi.feedScript .completion 9 2 patience.toUInt64 | return false
         let first ← pull .completion
         let second ← pull .completion
         return (first.map (·.words)) == some #[0, 0xFFFFFFFFFFFFFFFF] &&
-            (second.map (·.words)) == some #[1, 0xFFFFFFFFFFFFFFFE] },
+            (second.map (·.words)) == some #[1, 0xFFFFFFFFFFFFFFFE] &&
+            (← IO.wait fed) matches .ok true },
     { name := "an event posted from Lean has no words"
       run := do
         unless ← Editor.Ffi.postEvent .editor 12 1 "" do

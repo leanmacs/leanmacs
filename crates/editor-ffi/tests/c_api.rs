@@ -25,7 +25,7 @@ use editor_ffi::document::{
 use editor_ffi::events::{
     Event, EventKind, QueueId, RawEvent, Source, SourceKind, editor_ffi_events_await_waiting,
     editor_ffi_events_next, editor_ffi_events_post, editor_ffi_events_quit,
-    editor_ffi_events_script_feed, editor_ffi_events_waiting,
+    editor_ffi_events_script_feed, editor_ffi_events_script_join, editor_ffi_events_waiting,
 };
 use editor_ffi::live::{COUNTERS, DOCUMENTS, editor_ffi_live_await};
 use editor_ffi::text::{ByteRange, editor_ffi_text_find, editor_ffi_text_free};
@@ -414,7 +414,8 @@ fn the_process_wide_queues_carry_events_until_they_are_quit() {
     );
 
     // A scripted feed arrives in order, from the script source asked for.
-    assert!(editor_ffi_events_script_feed(COMPLETION, 9, 3));
+    let feed = editor_ffi_events_script_feed(COMPLETION, 9, 3);
+    assert_ne!(feed, 0, "the feed starts");
     for code in 0..3 {
         let event = next(COMPLETION).expect("the completion queue exists");
         let source = Source {
@@ -425,11 +426,15 @@ fn the_process_wide_queues_carry_events_until_they_are_quit() {
         assert_eq!(event.code, code);
         assert_eq!(event.words, [code, u64::MAX - code]);
     }
+    // Its whole script fed, the feed ends, and is joined once.
+    assert!(editor_ffi_events_script_join(feed, DEADLINE_MS));
+    assert!(!editor_ffi_events_script_join(feed, DEADLINE_MS));
 
     // A tag that names no queue is refused, not acted on.
     assert!(!post(NO_QUEUE, 1, 1, "nowhere"));
     assert_eq!(next(NO_QUEUE), None);
-    assert!(!editor_ffi_events_script_feed(NO_QUEUE, 1, 1));
+    assert_eq!(editor_ffi_events_script_feed(NO_QUEUE, 1, 1), 0);
+    assert!(!editor_ffi_events_script_join(0, DEADLINE_MS));
     assert_eq!(editor_ffi_events_waiting(NO_QUEUE), 0);
     assert!(!editor_ffi_events_await_waiting(NO_QUEUE, 0, DEADLINE_MS));
 
@@ -447,9 +452,11 @@ fn the_process_wide_queues_carry_events_until_they_are_quit() {
 
     // A feed of any length returns at once: the script is not built before
     // the thread starts. The queue is quit, so the feeder stops at its first
-    // push and nothing is queued.
-    assert!(within_deadline("a feed of the longest script", || {
+    // push, nothing is queued, and the feed ends.
+    let feed = within_deadline("a feed of the longest script", || {
         editor_ffi_events_script_feed(COMPLETION, 9, u64::MAX)
-    }));
+    });
+    assert_ne!(feed, 0, "the feed starts");
+    assert!(editor_ffi_events_script_join(feed, DEADLINE_MS));
     assert_eq!(next(COMPLETION), Some(Event::quit()));
 }

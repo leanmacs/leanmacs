@@ -26,7 +26,9 @@
 //! [`ScriptedSource`] is the fake event source. It is public, not
 //! `cfg(test)`, so the tests of any crate, and the Lean test executable
 //! through [`editor_ffi_events_script_feed`], can feed a queue a script of
-//! events.
+//! events. A feed started through C is kept by its id until
+//! [`editor_ffi_events_script_join`] joins its thread, so no feeder a test
+//! starts outlives the test.
 //!
 //! A service reports that a request has finished with an
 //! [`EventKind::Completion`] on the completion queue, whose code is the id
@@ -50,6 +52,11 @@ pub use editor_service::queue::{
     Event, EventKind, Queue, QueueId, ScriptedSource, Source, SourceKind,
 };
 
+use std::collections::BTreeMap;
+use std::ops::Deref;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use editor_service::queue::{COMPLETION, EDITOR};
@@ -232,32 +239,245 @@ pub extern "C" fn editor_ffi_events_queued(queue: u8) -> u64 {
 }
 
 /// Feeds the queue `queue` the script [`ScriptedSource::numbered`] makes of
-/// `source_id` and `count`, from a new Rust thread.
+/// `source_id` and `count`, from a new Rust thread, and returns the feed's
+/// id, which [`editor_ffi_events_script_join`] joins the thread by.
 ///
-/// Returns false, feeding nothing, if `queue` names no queue or if the
-/// operating system refuses the thread. Otherwise it returns true as soon as
-/// the thread has started. The events are made on that thread as they are
+/// Returns 0, feeding nothing, if `queue` names no queue or if the
+/// operating system refuses the thread. Otherwise it returns as soon as the
+/// thread has started. The events are made on that thread as they are
 /// pushed, so no `count` is too large and the caller never waits for the
 /// script.
 ///
-/// True says only that the thread started, not that anything was delivered.
-/// The thread stops at the first event the queue refuses
+/// An id says only that the thread started, not that anything was
+/// delivered. The thread stops at the first event the queue refuses
 /// ([`ScriptedSource::feed`]), so a feed to a queue that has been quit
 /// delivers nothing, and one that is quit part-way delivers only what was
-/// queued before the quit.
+/// queued before the quit. A test joins each feed it starts, so no feeder
+/// outlives it.
 #[unsafe(no_mangle)]
-pub extern "C" fn editor_ffi_events_script_feed(queue: u8, source_id: u64, count: u64) -> bool {
+pub extern "C" fn editor_ffi_events_script_feed(queue: u8, source_id: u64, count: u64) -> u64 {
     let Some(queue) = self::queue(queue) else {
-        return false;
+        return 0;
     };
-    ScriptedSource::numbered(source_id, count)
-        .feed_from_thread(queue)
-        .is_ok()
+    FEEDS.start(queue, ScriptedSource::numbered(source_id, count))
+}
+
+/// Waits until the feed `feed` ([`editor_ffi_events_script_feed`]) has
+/// ended and joins its thread, and says whether it did: false once
+/// `bound_ms` milliseconds have passed first, when the feed is kept to be
+/// joined later, and at once for an id that names no feed, among them one
+/// already joined. A feed ends once its script is fed, or at the first
+/// event its queue refuses.
+///
+/// `bound_ms` is a hang guard: only a feed that never ends reaches it.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_events_script_join(feed: u64, bound_ms: u64) -> bool {
+    FEEDS.join(feed, Duration::from_millis(bound_ms))
+}
+
+/// The process's feeds, started by [`editor_ffi_events_script_feed`].
+static FEEDS: Feeds = Feeds::new();
+
+/// The script feeds started and not yet joined, each by its id: what keeps
+/// a feeder's thread to be joined, so it never outlives the test that
+/// started it.
+struct Feeds {
+    /// The feeds, and the id the next one takes.
+    table: Mutex<Table>,
+    /// Called on a feeder's thread before its first push. Set once, by a
+    /// test.
+    #[cfg(test)]
+    before_feed: std::sync::OnceLock<std::sync::Arc<dyn Fn() + Send + Sync>>,
+    /// Called each time a join reads whether its feed has ended, with what
+    /// it read. Set once, by a test.
+    #[cfg(test)]
+    read: std::sync::OnceLock<Box<dyn Fn(bool) + Send + Sync>>,
+}
+
+/// What [`Feeds::table`] guards.
+struct Table {
+    /// The id the next feed takes: never 0, which is a refusal.
+    next: u64,
+    /// The feeds not yet joined.
+    feeds: BTreeMap<u64, Feed>,
+}
+
+/// One feed's thread, and how its end is heard.
+struct Feed {
+    /// The feeder.
+    thread: JoinHandle<()>,
+    /// Disconnected once the feeder has fed what it will: it holds the
+    /// sender, and drops it at its end.
+    ended: Receiver<()>,
+}
+
+impl Feeds {
+    /// No feed.
+    const fn new() -> Self {
+        Self {
+            table: Mutex::new(Table {
+                next: 1,
+                feeds: BTreeMap::new(),
+            }),
+            #[cfg(test)]
+            before_feed: std::sync::OnceLock::new(),
+            #[cfg(test)]
+            read: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// The table, locked. A poisoned lock is used as it is: an entry is
+    /// added or taken whole.
+    fn table(&self) -> MutexGuard<'_, Table> {
+        self.table.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Feeds `source` to `queue` from a new thread, and returns the feed's
+    /// id; 0 when the operating system refuses the thread.
+    fn start<Q>(&self, queue: Q, source: ScriptedSource) -> u64
+    where
+        Q: Deref<Target = Queue> + Send + 'static,
+    {
+        let (ending, ended) = mpsc::channel::<()>();
+        #[cfg(test)]
+        let before_feed = self.before_feed.get().cloned();
+        let feeder = thread::Builder::new()
+            .name("script feed".into())
+            .spawn(move || {
+                let _ending = ending;
+                #[cfg(test)]
+                if let Some(held) = before_feed {
+                    held();
+                }
+                source.feed(&queue);
+            });
+        let Ok(thread) = feeder else {
+            return 0;
+        };
+        let mut table = self.table();
+        let id = table.next;
+        table.next += 1;
+        table.feeds.insert(id, Feed { thread, ended });
+        id
+    }
+
+    /// Waits up to `bound` for the feed `id` to end and joins its thread
+    /// ([`editor_ffi_events_script_join`]).
+    fn join(&self, id: u64, bound: Duration) -> bool {
+        let Some(feed) = self.table().feeds.remove(&id) else {
+            return false;
+        };
+        // Taken out of the table while it is waited for, so other feeds
+        // start and are joined meanwhile.
+        let mut ended = matches!(feed.ended.try_recv(), Err(TryRecvError::Disconnected));
+        self.told_read(ended);
+        if !ended {
+            ended = matches!(
+                feed.ended.recv_timeout(bound),
+                Err(RecvTimeoutError::Disconnected)
+            );
+            self.told_read(ended);
+        }
+        if !ended {
+            // Kept, to be joined later.
+            self.table().feeds.insert(id, feed);
+            return false;
+        }
+        // The feeder has dropped its sender, so its thread is ending: a
+        // feed that panicked has ended too.
+        let _ = feed.thread.join();
+        true
+    }
+
+    /// Calls the hook a test set to hear each reading of a join, if one
+    /// was.
+    fn told_read(&self, ended: bool) {
+        #[cfg(test)]
+        if let Some(read) = self.read.get() {
+            read(ended);
+        }
+        let _ = ended;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::sync::Arc;
+
+    /// hang guard: the step of another thread each wait ends on; only a
+    /// hang reaches the bound, and the test then fails as a hang.
+    const BOUND: Duration = Duration::from_secs(10);
+
+    /// Where each reading a join of `feeds` makes of whether its feed has
+    /// ended arrives.
+    fn join_readings(feeds: &Feeds) -> Receiver<bool> {
+        let (read, readings) = mpsc::channel();
+        let read = Mutex::new(read);
+        let hook = move |ended| {
+            let _ = read
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(ended);
+        };
+        assert!(feeds.read.set(Box::new(hook)).is_ok(), "set once");
+        readings
+    }
+
+    #[test]
+    fn a_join_answers_only_once_a_feed_held_at_its_first_push_has_ended() {
+        let feeds = Feeds::new();
+        // The feeder is held before its first push until the test lets it
+        // go.
+        let (holding, held) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let hold = Mutex::new((holding, released));
+        let hook: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let hold = hold.lock().unwrap_or_else(PoisonError::into_inner);
+            let _ = hold.0.send(());
+            let _ = hold.1.recv();
+        });
+        assert!(feeds.before_feed.set(hook).is_ok(), "set once");
+        let readings = join_readings(&feeds);
+        let queue = Arc::new(Queue::new());
+
+        let feed = feeds.start(Arc::clone(&queue), ScriptedSource::numbered(9, 2));
+        assert_ne!(feed, 0, "the feeder starts");
+        held.recv_timeout(BOUND)
+            .expect("the feeder reaches its first push");
+        thread::scope(|scope| {
+            let joined = scope.spawn(|| (feeds.join(feed, BOUND), queue.queued()));
+            assert_eq!(
+                readings.recv_timeout(BOUND),
+                Ok(false),
+                "the join reads no end while the feeder is held"
+            );
+            release.send(()).expect("the feeder is held");
+
+            // A join that answered at its first reading never reads the end.
+            assert_eq!(
+                readings.recv_timeout(BOUND),
+                Ok(true),
+                "the join reads the end once the feeder is let go"
+            );
+            assert_eq!(
+                joined.join().expect("the join's thread"),
+                (true, 2),
+                "the join answers once the whole script is queued"
+            );
+        });
+        // Joined once: the id names no feed any more.
+        assert!(!feeds.join(feed, Duration::ZERO));
+    }
+
+    #[test]
+    fn a_join_of_an_id_that_names_no_feed_is_refused_at_once() {
+        let feeds = Feeds::new();
+        assert!(!feeds.join(0, BOUND));
+        assert!(!feeds.join(1, BOUND));
+        assert!(!editor_ffi_events_script_join(0, 10_000));
+    }
 
     #[test]
     fn a_raw_event_lends_its_text_and_its_words_as_buffers_that_read_back_whole() {

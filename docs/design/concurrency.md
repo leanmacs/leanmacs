@@ -1186,6 +1186,11 @@ never a poll.
   documents, 3 counters): each free signals a wait under way, so a test
   whose handle a finaliser frees on another thread waits on the free; a
   free with no wait under way takes no lock.
+- **A script feed's end** (`editor_ffi_events_script_join(feed,
+  bound_ms)`): `editor_ffi_events_script_feed` returns the feed's id (0
+  when refused) and keeps the feeder's thread in a process-wide table,
+  and the join waits for the feeder to end and joins it, so a Rust poster
+  a test starts never outlives the test.
 
 **Per host, never per stage.** A host whose collaborators track it
 (`Collaborators.tracksIdle`: a test stage's and the headless mode's) starts

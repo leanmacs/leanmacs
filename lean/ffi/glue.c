@@ -1183,8 +1183,9 @@ uint64_t editor_ffi_events_waiting(uint8_t queue);
 bool editor_ffi_events_await_waiting(uint8_t queue, uint64_t pulls,
                                      uint64_t bound_ms);
 uint64_t editor_ffi_events_queued(uint8_t queue);
-bool editor_ffi_events_script_feed(uint8_t queue, uint64_t source_id,
-                                   uint64_t count);
+uint64_t editor_ffi_events_script_feed(uint8_t queue, uint64_t source_id,
+                                       uint64_t count);
+bool editor_ffi_events_script_join(uint64_t feed, uint64_t bound_ms);
 
 // `Editor.Ffi.postEvent : Queue → UInt64 → UInt64 → @& String → IO Bool`
 lean_obj_res editor_glue_events_post(uint8_t queue, uint64_t source_id,
@@ -1243,11 +1244,17 @@ lean_obj_res editor_glue_events_queued(uint8_t queue) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_events_queued(queue)));
 }
 
-// `Editor.Ffi.feedScript : Queue → UInt64 → UInt64 → IO Bool`
+// `Editor.Ffi.feedScriptRaw : Queue → UInt64 → UInt64 → IO UInt64`
 lean_obj_res editor_glue_events_script_feed(uint8_t queue, uint64_t source_id,
                                             uint64_t count) {
   return lean_io_result_mk_ok(
-      lean_box(editor_ffi_events_script_feed(queue, source_id, count)));
+      lean_box_uint64(editor_ffi_events_script_feed(queue, source_id, count)));
+}
+
+// `Editor.Ffi.feedJoin : UInt64 → UInt64 → IO Bool`
+lean_obj_res editor_glue_events_script_join(uint64_t feed, uint64_t bound_ms) {
+  return lean_io_result_mk_ok(
+      lean_box(editor_ffi_events_script_join(feed, bound_ms) ? 1 : 0));
 }
 
 // ---- The timer service ----

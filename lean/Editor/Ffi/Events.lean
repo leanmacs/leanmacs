@@ -212,10 +212,29 @@ leave on the editor queue without parking a pull on an empty queue. -/
 @[extern "editor_glue_events_queued"]
 opaque queued (queue : Queue) : IO UInt64
 
+/-- `feedScript` as it crosses: the feed's id, 0 when it was refused. -/
+@[extern "editor_glue_events_script_feed"]
+private opaque feedScriptRaw (queue : Queue) (sourceId count : UInt64) : IO UInt64
+
+/-- Joins the feed `feed`: waits until it has pushed its last event (or been
+refused by a quit queue) and its thread has ended, and says whether it had;
+false for an id that names no feed, one already joined among them, and once
+`boundMs` milliseconds have passed first, when the feed is kept to be joined
+later. `boundMs` is a hang guard: only a feed that never ends reaches it. -/
+@[extern "editor_glue_events_script_join"]
+opaque feedJoin (feed boundMs : UInt64) : IO Bool
+
 /-- Has the library's scripted source, a fake for tests, feed `queue` from a
 new Rust thread: `count` messages from the script source `sourceId`, with the
-codes 0, 1, 2 and so on. `false` when the thread could not be started. -/
-@[extern "editor_glue_events_script_feed"]
-opaque feedScript (queue : Queue) (sourceId count : UInt64) : IO Bool
+codes 0, 1, 2 and so on. `none` when the thread could not be started;
+otherwise the task of the feed's end, which joins the thread (`feedJoin`,
+bounded by `guard` milliseconds, a hang guard): `true` once the feed has
+ended. A check waits on it, so the thread it started does not outlive it. -/
+def feedScript (queue : Queue) (sourceId count : UInt64) (guard : UInt64) :
+    IO (Option (Task (Except IO.Error Bool))) := do
+  let feed ← feedScriptRaw queue sourceId count
+  if feed == 0 then
+    return none
+  some <$> IO.asTask (prio := .dedicated) (feedJoin feed guard)
 
 end Editor.Ffi
