@@ -6,6 +6,7 @@ import Editor.Config.Reload
 import Editor.Extension
 import Editor.Package
 import Editor.Setup
+import Editor.Test.Config
 import Editor.Test.Models
 import ModelTest.Check
 import ModelTest.Editor.Config.Reload
@@ -67,6 +68,17 @@ def projectRoot (path : String) : EditorM (Option String) := do
       return some root
   return none
 
+/-- A consumer that reads the point in a job: `finder-names`, whose work,
+made when it is started, finishes with a command that makes a text of the
+names of the finders registered, in order, joined with `, `. It names no
+backend. -/
+def namesJobPackage : Package :=
+  { name := "project-names"
+    setup :=
+      Extension.workJob Finder "finder-names" fun finders _ =>
+        Work.of (fun _ => pure (finders.map (·.name))) fun names =>
+          makes (", ".intercalate names.toList) }
+
 end ExtensionExample
 
 open Editor
@@ -109,6 +121,12 @@ def chosen (state : ModelState) (name : String) : Option (Option String) :=
   askedOf state do
     let some finder ← Extension.named Finder (·.name) name | return none
     finder.find "/repo/x"
+
+/-- How the job `finder-names` ends when `state` starts it
+(`Config.State.work?`), run against the job model: the texts its command
+makes. -/
+def finderJobNames (state : ModelState) : Option (Job.Outcome (Array String)) :=
+  (state.work? "finder-names").map fun (_, work) => worked work
 
 /-- The checks of extension points (`Editor/Extension.lean`). -/
 def extensionChecks : List Check :=
@@ -167,6 +185,37 @@ def extensionChecks : List Check :=
         pure
           (chosen installed "git" == some (some "config's") &&
             chosen emptied "git" == some (some "/repo") &&
-            chosen emptied "nobody" == some none) }]
+            chosen emptied "nobody" == some none) },
+    { name :=
+        "a job over an extension point is made, when it is started, from the values two packages registered there, in registration order"
+      run :=
+        let (state, refused) :=
+          Config.State.ofPackages #[gitPackage, everywherePackage, namesJobPackage]
+        let (swapped, _) :=
+          Config.State.ofPackages #[everywherePackage, gitPackage, namesJobPackage]
+        pure
+          (refused.isEmpty && finderJobNames state == some (.finished #["git, everywhere"]) &&
+            finderJobNames swapped == some (.finished #["everywhere, git"])) },
+    { name := "with no value registered at its point, a job over it is made from none"
+      run :=
+        let (state, _) : ModelState × Array String := Config.State.ofPackages #[namesJobPackage]
+        pure (finderJobNames state == some (.finished #[""])) },
+    { name :=
+        "a job over an extension point sees config's value once a reload installs it, and the package's alone after a reload that drops config's"
+      run :=
+        let (state, _) : ModelState × Array String :=
+          Config.State.ofPackages #[gitPackage, namesJobPackage]
+        let installed := reloadedTo state (findingAs "a" "/a")
+        let dropped := reloadedTo installed (pure ())
+        pure
+          (finderJobNames installed == some (.finished #["git, a"]) &&
+            finderJobNames dropped == some (.finished #["git"])) },
+    { name :=
+        "a value of another type, registered at its own point, does not reach a job over `Finder`'s"
+      run :=
+        let impostor : Package :=
+          { name := "impostor", setup := Extension.add ({ n := 3 } : Impostor) }
+        let (state, refused) := Config.State.ofPackages #[impostor, gitPackage, namesJobPackage]
+        pure (refused.isEmpty && finderJobNames state == some (.finished #["git"])) }]
 
 end ModelTest

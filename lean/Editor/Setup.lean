@@ -712,6 +712,14 @@ inductive SetupRequest where
   /-- Register `value` at the extension point `key`, the name of the type
   `value` was made from (`Editor/Extension.lean`). -/
   | extend (key : Lean.Name) (value : Dynamic)
+  /-- Register the job called `name` over the extension point `key`: its
+  work is made each time it is started, by `work` applied to the values
+  registered at `key` then, in registration order, and the arguments it is
+  started with (`Extension.workJob`, `Editor/Extension.lean`, "To a job").
+  `reported` and `restarted` are as for `job`. -/
+  |
+  jobOver (key : Lean.Name) (name : String) (work : Array Dynamic → List Argument → Work)
+    (reported : Bool := false) (restarted : Bool := false)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -756,6 +764,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .useAtPoint .. => Unit
   | .menu _ => Unit
   | .extend .. => Unit
+  | .jobOver .. => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=

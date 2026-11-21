@@ -481,6 +481,26 @@ structure JobRegistration where
   running when the process ends is not counted as stopped by the next
   start's restore (`workJob … (restarted := true)`, `Editor/Setup.lean`). -/
   restarted : Bool := false
+  /-- For a job registered over an extension point (`Extension.workJob`,
+  `Editor/Extension.lean`, "To a job"): the point's key, and what makes the
+  job's work from the values registered there. Its `work` then fails at
+  once (`overMessage`), and the work is made by `workWith`. -/
+  over : Option (Lean.Name × (Array Dynamic → List Argument → Work)) := none
+
+/-- What the `work` of the job called `name`, registered over an extension
+point, fails with: it is made, with the point's values, where the job is
+started. -/
+def JobRegistration.overMessage (name : String) : String :=
+  s!"{name}: made over an extension point; it is started through Config.State.work?"
+
+/-- The work of `registration`, started with `arguments`, with `values` the
+values registered at each extension point: `over` applied to its point's
+values for a job registered over one, and `work` otherwise. -/
+def JobRegistration.workWith (registration : JobRegistration) (values : Lean.Name → Array Dynamic)
+    (arguments : List Argument) : Work :=
+  match registration.over with
+  | some (key, work) => work (values key) arguments
+  | none => registration.work arguments
 
 /-- A job entry of the registry: a registered job and its owner. -/
 structure JobEntry where
@@ -1647,6 +1667,13 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .menu menu, collected => ((), { collected with menus := collected.menus.push menu })
   | .extend key value, collected =>
     ((), { collected with extensions := collected.extensions.push (key, value) })
+  | .jobOver key name work reported restarted, collected =>
+    ((),
+      { collected with
+        jobs :=
+          collected.jobs.push
+            { name, work := fun _ _ => throw (JobRegistration.overMessage name), reported, restarted
+              over := some (key, work) } })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/

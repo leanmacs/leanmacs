@@ -234,7 +234,8 @@ show:
   elaborated at runtime registers at that point, the compiled package
   reads config's value typed and runs its interpreted program, and a
   reload without the registration replaces config's value and keeps the
-  package's;
+  package's; and the package's job over the point is made, when it is
+  started, from config's value after the package's;
 - `indentChecks`: `=` and the indented new lines through a host of the Vim
   scheme that ships, over the library's Rust grammar: `gg=G` on the
   mangled Rust indent fixture (`tests/syntax/rust/indent.rs`, read from the

@@ -10,7 +10,8 @@ and the same process imports the module's `.olean` at runtime, as part of
 the base config is elaborated on. It is laid out as an interface package
 and an implementation package would be (`docs/design/extension-points.md`):
 the extension point `Greeter`, and a compiled package, `package`, that
-registers a greeter of its own and reads every greeter registered.
+registers a greeter of its own and reads every greeter registered, in a
+command and in a job registered over the point.
 
 The checks that use it (`ConfigTest.extensionChecks`) show that config
 elaborated by the running editor registers at this compiled point, that the
@@ -34,7 +35,10 @@ structure Greeter where
 /-- A compiled package: it registers a greeter called `compiled`, and the
 commands `greeter-names`, which says the names of every greeter registered,
 in order and joined with `, `, in the echo area, and `greet-config`, which
-runs the greeter called `from-config`, or says none is registered. -/
+runs the greeter called `from-config`, or says none is registered; and the
+job `greeter-job`, registered over the point, whose work is made when it
+is started from the greeters registered then, and says `job sees` and
+their names. -/
 def package : Package :=
   { name := "extension-fixture"
     setup := do
@@ -46,6 +50,9 @@ def package : Package :=
           | some greeter =>
             greeter.greet
           | none =>
-            message "no greeter from-config is registered" }
+            message "no greeter from-config is registered"
+      Extension.workJob Greeter "greeter-job" fun greeters _ =>
+          Work.of (fun _ => pure (greeters.map (·.name))) fun names =>
+            message s!"job sees {", ".intercalate names.toList}" }
 
 end ExtensionFixture

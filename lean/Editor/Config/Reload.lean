@@ -647,10 +647,13 @@ def keptCells (state : State β σ) : Array KeptCell :=
   kept ++ state.parked
 
 /-- The job registered under `name`, to be started with `arguments`, and the
-owner the runtime is to start it for; `none` if there is no such job. -/
+owner the runtime is to start it for; `none` if there is no such job. A job
+registered over an extension point is made from the values registered there
+now (`JobRegistration.workWith`, `Editor/Extension.lean`, "To a job"). -/
 def work? (state : State β σ) (name : String) (arguments : List Argument := []) :
     Option (Owner × Work) :=
-  (state.registry.findJob? name).map fun entry => (entry.owner, entry.registration.work arguments)
+  (state.registry.findJob? name).map fun entry =>
+    (entry.owner, entry.registration.workWith state.registry.extensionsAt arguments)
 
 end State
 

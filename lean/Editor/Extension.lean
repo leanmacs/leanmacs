@@ -55,6 +55,20 @@ each value with its owner (`Config.Registry.replaceExtensions`), so a
 reload of config replaces config's values and leaves a package's. A command
 asks for the values at a key (`RegistryRequest.extensions`) and gets them
 back typed by `Dynamic.get?`.
+
+## To a job
+
+A job's work is fixed when it is registered, and a running job cannot ask
+the registry, so a job that needs a point's values is registered over the
+point (`workJob`): one generic request, `SetupRequest.jobOver`, keyed as
+`add`'s is. The registry keeps the registration's function
+(`JobRegistration.over`), and the work is made each time the job is
+started, where every job's work is made (`Config.State.work?`), from the
+values registered at the key then, in registration order
+(`JobRegistration.workWith`). So the job sees config's value once a reload
+installs it, and the package's alone after a reload that drops config's.
+The registration's own `work` fails at once, saying so, so code that takes
+it without the values fails loudly rather than running with none.
 -/
 
 namespace Editor.Extension
@@ -73,5 +87,17 @@ def values (α : Type) [TypeName α] : EditorM (Array α) := do
 `name` reads it, is `wanted`, or `none` when no value has that name. -/
 def named (α : Type) [TypeName α] (name : α → String) (wanted : String) : EditorM (Option α) := do
   return (← values α).findRev? (name · == wanted)
+
+/-- Registers the job called `name` over the extension point `α`: each time
+the job is started its work is `work` applied to every value registered at
+`α` then, in registration order, and the arguments it is started with ("To
+a job", in the module docs). `reported` and `restarted` are as for
+`Editor.workJob`. Registering starts nothing. -/
+def workJob (α : Type) [TypeName α] (name : String) (work : Array α → List Argument → Work)
+    (reported : Bool := false) (restarted : Bool := false) : SetupM Unit :=
+  ExceptT.lift
+    (Program.request (port := setupPort)
+      (.jobOver (TypeName.typeName α) name (fun values => work (values.filterMap (·.get? α)))
+        reported restarted))
 
 end Editor.Extension

@@ -7,12 +7,14 @@ import Editor.Completion.Candidate
 import Editor.Completion.Display
 import Editor.Completion.Style
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Reload
 import Editor.Config.Session
 import Editor.Config.Stores
 import Editor.DisplayRules
 import Editor.Ex.Line
+import Editor.Extension
 import Editor.Face
 import Editor.Fuzzy
 import Editor.Fuzzy.Model
@@ -125,6 +127,12 @@ def cappedDisplay (rows : Nat) : Completion.Display :=
   { name := "minibuffer"
     sheet := fun showing =>
       { rows := (showing.listed.extract 0 rows).map fun listed => { text := listed.text } } }
+
+/-- A value of an extension point of the registry's checks: a number. -/
+structure Counted where
+  /-- The number. -/
+  n : Nat
+  deriving TypeName
 
 /-- The checks of the registry (`Editor/Config/Registry.lean`). -/
 def registryChecks : List Check :=
@@ -1004,7 +1012,48 @@ def registryChecks : List Check :=
                         items :=
                           #[.item "Open…" (some opened) (.command "open"), .separator,
                             .item "Save" none (.command "save"),
-                            .item "Close" none (.command "close")] }] }) }]
+                            .item "Close" none (.command "close")] }] }) },
+    { name :=
+        "a job registered over an extension point holds a work that fails at once, saying it is started through `Config.State.work?`, and `workWith` makes its work from the values handed it at its point; a job with no point's `workWith` is its work"
+      run :=
+        let counting : Package :=
+          { name := "counting"
+            setup :=
+              Extension.workJob Counted "count-values" fun values arguments =>
+                Work.of (fun _ => pure (values.map (·.n), arguments.length)) fun (ns, count) =>
+                  makes s!"{ns.toList} {count}" }
+        let job := (Package.registered counting).jobs.find? (·.name == "count-values")
+        let values (key : Lean.Name) : Array Dynamic :=
+          if key == TypeName.typeName Counted then
+            #[.mk ({ n := 1 } : Counted), .mk ({ n := 2 } : Counted)]
+          else #[]
+        pure
+          ((job.map fun job => worked (job.work [])) ==
+              some
+                (.failed
+                  "count-values: made over an extension point; it is started through Config.State.work?") &&
+            (job.map fun job => worked (job.workWith values [.nat 7])) ==
+              some (.finished #["[1, 2] 1"]) &&
+            (job.map fun job => worked (job.workWith (fun _ => #[]) [])) ==
+              some (.finished #["[] 0"]) &&
+            worked ((jobRegistration "plain" "p").workWith values []) == .finished #["p"]) },
+    { name :=
+        "the collector keeps a job over an extension point with its point, a host installs it with its owner, and `Package.registered` lists its name among the jobs"
+      run :=
+        let counting : Package :=
+          { name := "counting"
+            setup :=
+              Extension.workJob Counted "count-values" (reported := true) fun _ _ =>
+                Work.of (fun _ => pure ()) fun _ => pure () }
+        let (state, refused) : Config.State Unit Unit × Array String :=
+          Config.State.ofPackages #[counting]
+        pure
+          (refused.isEmpty &&
+            ((Package.registered counting).jobs.map (·.name)) == #["count-values"] &&
+            ((Package.registered counting).jobs.map fun job =>
+                (job.over.map (·.1), job.reported)) ==
+              #[(some (TypeName.typeName Counted), true)] &&
+            (state.registry.findJob? "count-values").map (·.owner.name) == some "counting") }]
 
 /-- The invocation of the command `filling name` fills `role` with. -/
 def filled (name : String) (role : Role) : Invocation :=

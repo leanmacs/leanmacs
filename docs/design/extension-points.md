@@ -189,13 +189,14 @@ def projectRoot (path : System.FilePath) : EditorM (Option System.FilePath) := d
   return none
 ```
 
-The core's whole API for it is three functions:
+The core's whole API for it is four functions:
 
 | Function | What it does |
 |---|---|
 | `Extension.add (value : α) : SetupM Unit` | Registers `value` at the extension point `α`, for whoever runs this `setup`: a package or config |
 | `Extension.values (α) : EditorM (Array α)` | Every value registered at `α`, in registration order |
 | `Extension.named (α) (name : α → String) (wanted : String) : EditorM (Option α)` | The latest value registered at `α` whose name is `wanted` |
+| `Extension.workJob (α) (name) (work : Array α → List Argument → Work) (reported restarted) : SetupM Unit` | Registers the job `name` over `α`: each time it is started, its work is `work` applied to every value registered at `α` then, in registration order ("To a job", below) |
 
 ### A hook, or a choice
 
@@ -234,6 +235,33 @@ at-point source is run through a control request and not handed to the
 command (`Editor/Command/Registry.lean`, "The rules"). `Dynamic` is an
 opaque `Type`, so a record of `EditorM` functions travels in it, and the
 command that reads it runs those functions itself.
+
+#### To a job
+
+A job's work is fixed when it is registered (`workJob`,
+`Editor/Setup.lean`), its arguments are plain values, and a running job
+(`JobM`) cannot ask the registry. So a job that needs a point's values, such
+as a job that asks the version-control backend for a commit, is registered
+over the point:
+
+- `Extension.workJob α name work` makes one generic request,
+  `SetupRequest.jobOver key name work`, keyed as `extend` is, with the work
+  taking the point's values as `Dynamic`s.
+- The registry keeps the job as any other, with the point and the function
+  beside it (`JobRegistration.over`). Its plain `work` fails at once,
+  saying the job is started through `Config.State.work?`, so code that took
+  it without the values would fail loudly rather than run with none.
+- The work is made where every job's work is made, `Config.State.work?`,
+  by one function (`JobRegistration.workWith`): the function applied to the
+  values registered at the key when the job starts, in registration order.
+  So the job sees config's value once a reload installs it, and the
+  package's alone after a reload that drops it.
+
+A source answered later is a job too (`sourceJob` registers
+`Completion.answering answer`), so a source's job is registered over a
+point the same way. Pinned by `ModelTest.extensionChecks` and
+`ModelTest.registryChecks` on the models, and by `ConfigTest.extensionChecks`
+with config elaborated at runtime.
 
 ### What is checked when the code is built
 

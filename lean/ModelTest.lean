@@ -725,7 +725,10 @@ The config session's decisions are tested here too, with no elaborator:
   the latest owner's found, and the jobs reported by one, as the loop is
   told them; and the style and the display a prompt gets with no choice:
   the one registered first, config's of that name in its place, or with
-  none registered the core's own, owned by `compiled`;
+  none registered the core's own, owned by `compiled`; and a job
+  registered over an extension point (`Extension.workJob`), kept with its
+  point and its owner, whose own work fails saying how it is started and
+  whose work `workWith` makes from the values handed it;
 - `registryHintChecks`: a binding's description on the registry's keymap,
   and its prefix names, by owner, expanded against the leaders in force,
   and two names a scheme's leaders make one prefix, which are refused;
@@ -802,7 +805,11 @@ The config session's decisions are tested here too, with no elaborator:
   are programs over the editor's port; a point nobody registered at holds
   nothing, bare too; a value is registered at its own type's point only;
   a reload replaces config's values and keeps a package's; and `named`
-  finds the latest value of a name, config's over a package's;
+  finds the latest value of a name, config's over a package's; and a job
+  over a point (`Extension.workJob`) is made, when it is started, from the
+  values registered there then, in registration order, from none when
+  none is, from config's once a reload installs it and the package's alone
+  after one drops it, and never from another type's point;
 - the shipped styles and displays are the default package `completion`'s
   (`packages/completion/`), the shipped segments the default package
   `mode-line`'s (`packages/mode-line/`), and the `code` mode with the
