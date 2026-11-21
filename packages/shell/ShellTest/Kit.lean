@@ -2,20 +2,20 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Invocation
 import Editor.Job
-import Editor.Shell
-import Editor.Shell.Compiled
 import Editor.Test.Ex
 import Editor.Test.Keys
 import Editor.Test.Minibuffer
 import Editor.Test.Shell
 import Editor.Test.Workspace
 import Editor.Workspace
+import Shell
+import Shell.Compiled
 
 /-!
-# The shell feature's test kit
+# The shell package's test kit
 
 The shell checks' jobs, bindings and commands, made of the shell's modules
-(`Editor/Shell.lean`, `Editor/Shell/Compiled.lean`) over the half of the
+(`Shell.lean`, `Shell/Compiled.lean`) over the half of the
 workspace driver that names no workspace module, the core kit's
 (`Editor/Test/Workspace.lean`): its jobs and the shell's run job
 (`shellJobs`), its keys and the shell checks' (`shellBindings`), and its
@@ -27,10 +27,11 @@ finder's answer (`openAttach`). The shell's child and its replies, and
 what a check reads of a driver, are the core's kit's
 (`Editor/Test/Shell.lean`).
 
-It is the shell feature's kit: a test double, which a package's test modules
-may import and its library may not (`docs/design/packages.md`, "What a
-package may import"), and which moves into the shell package's test library
-when the feature moves out.
+It was the shell feature's kit in the core (`Editor.Shell.Kit`,
+`lean/Editor/Shell/Kit.lean`) while the shell was modules of the core, and
+moved here when it moved out; its declarations keep their names. A module of
+the package's tests imports it; the package's library may not
+(`docs/design/packages.md`, "What a package may import").
 -/
 
 namespace Editor.Test

@@ -11,7 +11,6 @@ import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
 import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
-import Editor.Shell
 import Editor.TabCommands
 import Editor.Themes
 import Editor.VersionControl.Commit
@@ -237,12 +236,11 @@ comes with the attach). Its model and its contract
 (`Editor/Workspace/Model.lean`, `Editor/Workspace/Contract.lean`) are for
 tests, and are not imported.
 
-`:!` is here too (`Editor/Shell.lean`, imported here: the ex line reaches
-it through `shell-api`, `ShellApi.lean`, since phase 6): a
-shell command run in the buffer's workspace as a job, and what comes of it
-said in the echo area or shown in the workspace's output buffer. Its
-registrations (`Editor/Shell/Compiled.lean`) name the registry and are not
-imported.
+`:!` is not here: the shell is a default package outside the core
+(`packages/shell/`), and the ex line reaches it through the core's staged
+interface library `shell-api` (`ShellApi.lean`), whose names and history
+this base brings. Config reaches the shell's commands through the set's
+base, the package's entry module `Shell.EditorPackage` among it.
 
 `compile` is not here: the compile mode is a package outside the core
 (`packages/compile/`), and the core requires no package, so this module

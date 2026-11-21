@@ -9,6 +9,7 @@ project-search-api	interface	-
 project-search	implementation	project-search-api
 working-set-api	interface	-
 working-set	implementation	working-set-api
+shell	implementation	-
 completion-api	interface	-
 completion	implementation	completion-api
 mode-line	implementation	-

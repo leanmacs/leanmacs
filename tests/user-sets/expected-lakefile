@@ -21,6 +21,10 @@ name = "working-set"
 path = "@REPO@/packages/working-set"
 
 [[require]]
+name = "shell"
+path = "@REPO@/packages/shell"
+
+[[require]]
 name = "completion"
 path = "@REPO@/packages/completion"
 

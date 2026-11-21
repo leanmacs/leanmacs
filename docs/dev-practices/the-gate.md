@@ -1623,9 +1623,10 @@ stops at the first that fails:
   each root of the build, builds nothing and writes nothing under `lean/`
   or `packages/`: the build has written the generated root already.
 - **The gate sees each rule bite.** `ffi-test` runs it told that a feature
-  still in the core, the shell, is moving (`core-imports-check.sh
-  Editor.Core Editor.Shell`), and requires exit 1, with `Editor.Shell` and
-  `Editor.Shell.Compiled` found in the root's closure; pointed at the root
+  still in the core, evil, is moving (`core-imports-check.sh
+  Editor.Core Editor.Evil`), and requires exit 1, with `Editor.Evil` and
+  its modules found in the root's closure (the shell, named here until it
+  moved out of the core in features-as-packages phase 6, is a package now); pointed at the root
   `Editor.Setup`, which imports no moving
   module and is not the whole core, and requires exit 3; and told with
   `--base Editor.Core` that the config base is a module no executable's

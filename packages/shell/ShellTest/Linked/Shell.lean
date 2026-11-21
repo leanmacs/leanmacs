@@ -1,4 +1,3 @@
-import ContractTest.Check
 import Editor.Clipboard
 import Editor.Command
 import Editor.Command.Call
@@ -20,8 +19,6 @@ import Editor.ModeLine
 import Editor.Program
 import Editor.ProjectMode
 import Editor.Scene
-import Editor.Shell
-import Editor.Shell.Compiled
 import Editor.State
 import Editor.SyntaxTree
 import Editor.TabBar
@@ -31,16 +28,20 @@ import Editor.Text
 import Editor.Value
 import Editor.Watch
 import Editor.Workspace
+import Shell
+import Shell.Compiled
+import ShellTest.Check
 
 /-!
-# Contract tests: `Editor/Shell.lean`
+# Linked tests: `Shell.lean`
 
-The tests of `Editor/Shell.lean`: `shellChecks`, `:!` over the real process
-service. The root module `ContractTest` runs them; its module doc says what each
-shows.
+The tests of `Shell.lean`: `shellChecks`, `:!` over the real process
+service. They were the contract test's (`ContractTest.shellChecks`) while
+the shell was modules of the core. The linked test's root,
+`ShellTest/Linked.lean`, runs them; its module doc says what each shows.
 -/
 
-namespace ContractTest
+namespace ShellTest.Linked
 
 open Editor
 open Editor.Test.Linked
@@ -100,7 +101,7 @@ loop's working directory the fixtures' (`fixtures`, `tests/shell`). Each
 check runs `shell-command` or `shell-filter` by name, with the arguments
 ex's line hands it (`Ex.run`): that ex hands a `:!` line to those names is
 ex's, held by the model checks of the shell typed through the kit's ex line
-(`ModelTest.shellChecks`). -/
+(`ShellTest.shellChecks`). -/
 def shellChecks (services : Job.Services) (fixtures : System.FilePath) : List Check :=
   let ran (invocation : Invocation) (contents : String) : IO (Option (String × String)) := do
     let published ← Snapshots.new
@@ -142,4 +143,4 @@ def shellChecks (services : Job.Services) (fixtures : System.FilePath) : List Ch
         let reaped ← eventually (return (← Ffi.processesPending) == before)
         return said == some ("3 lines filtered", "a\nb\nc\n") && reaped }]
 
-end ContractTest
+end ShellTest.Linked

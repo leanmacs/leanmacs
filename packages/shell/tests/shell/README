@@ -1,0 +1,8 @@
+The fixture of the shell package's linked checks (ShellTest/Linked/Shell.lean,
+shellChecks), which the linked test reads under the package's directory,
+where it runs. It was the core's tests/shell, handed to contract-test, until
+the shell moved out of the core. It must stay executable (mode 100755).
+
+- hello: prints `hello` and a line feed, and exits 0. The linked test runs
+  it with `shell-command` over the real process service, in this
+  directory, and expects the echo area to say `hello`. Shell builtins only.

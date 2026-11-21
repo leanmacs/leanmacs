@@ -18,9 +18,6 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Scene
-import Editor.Shell
-import Editor.Shell.Compiled
-import Editor.Shell.Kit
 import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Keys
@@ -30,17 +27,20 @@ import Editor.Test.Shell
 import Editor.Test.Workspace
 import Editor.Text.Model
 import Editor.Workspace
-import ModelTest.Check
+import Shell
+import Shell.Compiled
 import ShellApiTest.Contract
+import ShellTest.Check
+import ShellTest.Kit
 
 /-!
-# Model tests: `Editor/Shell.lean`
+# Model tests: `Shell.lean`
 
-The model tests of `Editor/Shell.lean`: `shellChecks`. The root module
-`ModelTest` runs them; its module doc says what each shows.
+The model tests of `Shell.lean`: `shellChecks`. The test driver's root,
+`ShellTest/Model.lean`, runs them; its module doc says what each shows.
 -/
 
-namespace ModelTest
+namespace ShellTest
 
 open Editor
 open Editor.Test
@@ -100,7 +100,7 @@ def shellRan (driver : TestDriver) (line : String) : TestDriver :=
 def outputBuffers (driver : TestDriver) : Array String :=
   (driver.loop.state.buffers.filterMap id).map (·.name) |>.filter (·.startsWith "*shell output")
 
-/-- The checks of `:!` (`Editor/Shell.lean`), on the loop's driver over the
+/-- The checks of `:!` (`Shell.lean`), on the loop's driver over the
 editor's models, the job model and the process model, in the open driver
 checks' world, whose workspaces the core kit's stand-in for the finder gives
 (`openFound`): a main checkout `/r`, a linked worktree `/w` of one project,
@@ -531,4 +531,4 @@ def shellChecks : List Check :=
               Shell.keyOf none == "shell outside" &&
               Shell.keyOf (some (.local "/w")) != Shell.keyOf (some (.local "/r"))) }]
 
-end ModelTest
+end ShellTest

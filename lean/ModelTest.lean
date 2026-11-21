@@ -127,7 +127,6 @@ import ModelTest.Editor.Scene
 import ModelTest.Editor.Scroll
 import ModelTest.Editor.SearchRoot
 import ModelTest.Editor.Setup
-import ModelTest.Editor.Shell
 import ModelTest.Editor.State
 import ModelTest.Editor.State.Request
 import ModelTest.Editor.Store
@@ -880,8 +879,8 @@ The config session's decisions are tested here too, with no elaborator:
   they make every entry's owner is one of them, the ex names are bound in
   the order the headless fixtures show, the `ex` package's and then
   version control's, and the one theme is `default`; and the set keeps
-  exactly the shell's history and version control's reviews across a
-  restart, reports exactly the jobs a person waits on, and leaves exactly
+  exactly version control's reviews across a restart (the shell's history
+  is `ShellTest.shellChecks`', in its package), reports exactly the jobs a person waits on, and leaves exactly
   the restore's four and the gutter's three to their owners to
   start again.
 
@@ -1627,7 +1626,6 @@ def checks : List Check :=
     workspaceGitChecks ++
     workspaceStateChecks ++
     modeMarkerChecks ++
-    shellChecks ++
     readOnlyChecks ++
     excerptBufferChecks ++
     excerptDisplayChecks ++

@@ -16,7 +16,7 @@ wait and a job may, so a run is three programs, as opening a file is
 `shell-run`; the job, which runs the child; and the job's command, which
 says what came of it. The ex line hands the command its line
 (`Editor/Ex.lean`, "Running a line"). The command and the job as compiled
-code registers them are in `Editor/Shell/Compiled.lean`.
+code registers them are in `Shell/Compiled.lean`.
 
 ## The scope
 
@@ -140,9 +140,9 @@ The names others reach the shell by, and its history (`Scope`,
 `shell-api`'s (`ShellApi.lean`), in this namespace, so ex and the compile
 mode reach them without this module.
 
-Pinned by `ModelTest.shellChecks`, on the loop's driver over the editor's
+Pinned by `ShellTest.shellChecks`, on the loop's driver over the editor's
 models, the job model and the process model, and over the real process
-service by `ContractTest.shellChecks`.
+service by `ShellTest.Linked.shellChecks`.
 -/
 
 namespace Editor.Shell

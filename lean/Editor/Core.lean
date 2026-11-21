@@ -19,7 +19,6 @@ import Editor.Menu.Compiled
 import Editor.PackageSet.Compiled
 import Editor.Restore.Compiled
 import Editor.SearchRoot
-import Editor.Shell.Kit
 import Editor.TabCommands.Compiled
 import Editor.Test.Excerpt
 import Editor.Test.Hosted
@@ -83,10 +82,10 @@ hand-written minibuffer (`Editor.Test.Minibuffer`), and
 at-point (`Editor.Test.AtPoint`), which no other kit module imports) and the
 linked tests' (`Editor.Test.Linked.…`, `Editor/Test/Linked/`: its rig, its
 services, its trees and its hosts over the real elaborator, which bring
-their listings); and the feature kits still in the core (the files
-feature's, `FilesTest.Kit`, is the files package's since phase 6, and the
-workspace's, `WorkspaceTest.Kit`, with the finder's model and contract, the
-workspace package's): the shell's (`Editor.Shell.Kit`). Everything else comes with them: the kit is the support the
+their listings); and the feature kits still in the core: none since phase
+6, which moved the files feature's (`FilesTest.Kit`), the workspace's
+(`WorkspaceTest.Kit`, with the finder's model and contract) and the
+shell's (`ShellTest.Kit`) into their packages. Everything else comes with them: the kit is the support the
 core's own tests are written on, so it imports the driver of the loop that
 tests run it with (`Editor.Loop.Driver`) and the modules that define the
 packages its fixtures register, and those are not named here again. The theorem modules are also the config base's imports

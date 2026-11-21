@@ -15,7 +15,7 @@
 # with its interface package project-search-api/, which it requires), the
 # working sets (working-set/,
 # with its interface package working-set-api/, which it requires), the
-# completion styles and displays
+# shell (shell/), the completion styles and displays
 # (completion/, with its interface package completion-api/, which it
 # requires), the mode line's segments (mode-line/), the minibuffer's
 # commands and its mode (minibuffer/, with minibuffer-api/), the shipped
@@ -77,6 +77,13 @@ path = "project-search"
 [[require]]
 name = "working-set"
 path = "working-set"
+
+# The shell: `shell-command`, `shell-filter` and `keyboard-quit`, and the
+# history of the lines run per workspace. It implements the core's interface
+# library shell-api, through which ex hands it a `:!` line.
+[[require]]
+name = "shell"
+path = "shell"
 
 # The completion styles and displays that ship, `fuzzy`, `orderless`,
 # `path` and `minibuffer`: the first default package to register a style or

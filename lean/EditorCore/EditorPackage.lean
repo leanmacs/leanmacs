@@ -4,7 +4,6 @@ import Editor.FrameCommands.Compiled
 import Editor.Menu.Compiled
 import Editor.PackageSet.Compiled
 import Editor.Restore.Compiled
-import Editor.Shell.Compiled
 import Editor.TabCommands.Compiled
 import Editor.Themes.Compiled
 import Editor.VersionControl.Compiled
@@ -72,8 +71,8 @@ language table read as they did:
   theme, so the themes of a Lake package that requires the core (the
   palettes of `shipped-themes`, `packages/shipped-themes/`) follow
   `default`, as the theme prompt lists them;
-- `restore` comes after `themes` and before `shell`: it keeps state under
-  the state directory, and what it registers follows the themes';
+- `restore` comes after `themes`: it keeps state under the state
+  directory, and what it registers follows the themes';
 - `package-set` comes right after `restore`: a user's package-set build
   restarts the editor through the restore's restart, and its ex names
   follow `restart`'s;
@@ -131,7 +130,10 @@ package `working-set` (`packages/working-set/`), and registers right after
 Project search's package, which was eighth here, after `themes`, is the
 default package `project-search` (`packages/project-search/`), and
 registers between `workspace` and `working-set`: its commands follow the
-workspaces' in the command prompt, and the working sets' follow its.
+workspaces' in the command prompt, and the working sets' follow its. The
+shell's package, which was twelfth here, after `package-set`, is the
+default package `shell` (`packages/shell/`), and registers right after
+`working-set`: its commands follow the working sets' in the command prompt.
 -/
 
 namespace EditorCore.EditorPackage
@@ -142,7 +144,7 @@ open Editor
 them ("The order", in the module docs). -/
 def packages : Array Package :=
   #[Evil.package, Ex.package, FrameCommands.package, Menu.package, WindowCommands.package,
-    TabCommands.package, Themes.package, Restore.package, PackageSet.package, Shell.package,
+    TabCommands.package, Themes.package, Restore.package, PackageSet.package,
     VersionControl.package, VersionControl.gutterPackage]
 
 end EditorCore.EditorPackage

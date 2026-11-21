@@ -2501,6 +2501,16 @@ def shippedChecks (_ : Unit) : List Check :=
             registry.sourcesIn "file" == #[] &&
             !(registry.extensions.any (·.owner == owned "files")) },
     { name :=
+        "the executable's hosts start with nothing of the shell package: no command shell-command, shell-filter or keyboard-quit, no job shell-run, no codec shell-history, and no codec or value of an interface registered by the shell, registered by a package of the core's Lake package"
+      run := do
+        let registry := shippedRegistry
+        return ["shell-command", "shell-filter", "keyboard-quit"].all
+              (fun name => (registry.find? name).isNone) &&
+            (registry.findJob? "shell-run").isNone &&
+            !registry.codecs.any
+                (fun (owner, codec) => owner == owned "shell" || codec.name == "shell-history") &&
+            !(registry.extensions.any (·.owner == owned "shell")) },
+    { name :=
         "the executable's hosts start with nothing of the project-search package: no command project-search, project-search-found, project-search-symbol or project-search-visit, no mode project-search, no job project-search or project-search-load, and no value of an interface, registered by a package of the core's Lake package"
       run := do
         let registry := shippedRegistry

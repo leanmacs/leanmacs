@@ -1,15 +1,15 @@
 import Editor.Package
-import Editor.Shell
+import Shell
 
 /-!
 # The `shell` package: the shell's commands and its job
 
-What a host registers so that `:!` runs (`Editor/Shell.lean`): the package
-`shell` (`Shell.package`, `Editor/Package.lean`). A host registers it for
-the owner `shell` when its loop starts, before any config
-(`Editor/Config/Packages.lean`), beside the `ex` package
-(`Editor/Ex/Compiled.lean`), whose commands hand a `:!` line to
-`shell-command`.
+What a host registers so that `:!` runs (`Shell.lean`): the package
+`shell` (`Shell.package`, `Editor/Package.lean`). A host of a set that
+holds this Lake package registers it for the owner `shell` when its loop
+starts, before any config (`Editor/Config/Packages.lean`), after the core's
+`ex` package (`Editor/Ex/Compiled.lean`), whose commands hand a `:!` line to
+`shell-command` by `shell-api`'s name (`ShellApi.commandName`).
 
 - **The commands**: `shell-command`, which starts a run
   (`Shell.command`); `shell-filter`, which starts a filter's
@@ -23,10 +23,11 @@ the owner `shell` when its loop starts, before any config
   output buffers (`shell-output`), which hold buffer numbers, nor the run
   in flight (`shell-running`), which the report says stopped.
 
-This module is apart from `Editor/Shell.lean` because it is what a host is
+This module is apart from `Shell.lean` because it is what a host is
 handed, not what config calls.
 
-Pinned by `ModelTest.shellChecks`, on the models.
+Pinned by `ShellTest.shellChecks`, on the models, which also hold the
+package to `shell-api`'s contract (`ShellApiTest.contractChecks`).
 -/
 
 namespace Editor.Shell
