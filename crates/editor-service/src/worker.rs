@@ -150,19 +150,32 @@ mod tests {
 
     #[test]
     fn a_worker_whose_body_panicked_is_joined_on_drop_and_join_gives_the_panic() {
+        // The body is held on a gate that only the drop's hook opens, then
+        // notes that it ended and panics: a drop that did not join returns
+        // with the body still on the gate.
+        let (gate, gated) = mpsc::channel::<()>();
         let ended = Arc::new(AtomicBool::new(false));
         let dropped = Worker::spawn("worker-test", || {}, {
             let ended = Arc::clone(&ended);
             move || {
+                let _ = gated.recv();
                 ended.store(true, Ordering::SeqCst);
                 panic!("the body panicked");
             }
         })
         .expect("the thread starts");
+        let opener = gate.clone();
+        dropped.when_join_waits(move || {
+            let _ = opener.send(());
+        });
         drop(dropped);
+        let ended_at_drop = ended.load(Ordering::SeqCst);
+        // On a drop that does not join, the body is still on the gate: let
+        // it go, so the stray thread ends.
+        drop(gate);
         assert!(
-            ended.load(Ordering::SeqCst),
-            "the drop did not join the body"
+            ended_at_drop,
+            "the drop returned with the panicking body still on its gate"
         );
 
         let joined = Worker::spawn("worker-test", || {}, || panic!("the body panicked"))
