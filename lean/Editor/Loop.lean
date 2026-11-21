@@ -1265,7 +1265,7 @@ is kept here.
   too, and a motion has no snapshot.
 
 Pinned by `ModelTest.viewChecks`, on the loop's driver over the editor's
-models; by a case of `Editor/Api/Cases.lean`, on the models and on the
+models under the test scheme; by a case of `Editor/Api/Cases.lean`, on the models and on the
 real text binding with the recorder; and by the fixture
 `tests/headless/view`, on the executable. The floats' places are pinned by
 `ModelTest.floatViewChecks`, on the same driver, and by the fixture

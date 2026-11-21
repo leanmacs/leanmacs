@@ -115,7 +115,7 @@ or the last (`Scroll.lineTo`), and does nothing else.
   margin is held as set, and not at half the text's rows.
 - **A view that shows no row**: nothing moves and nothing is said.
 
-Pinned by `ModelTest.viewChecks`, by key, on the loop's driver over the
+Pinned by `ModelTest.evilScrollChecks`, by key, on the loop's driver over the
 editor's models under the Vim scheme that ships, and the keys through the
 grammar by `ModelTest.vimDefaultChecks`.
 -/

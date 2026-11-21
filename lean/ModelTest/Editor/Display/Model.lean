@@ -17,6 +17,7 @@ what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The rows the display model over `texts` answers to `query`. -/
 def shownBy (texts : List String) (query : Display.RowsQuery)

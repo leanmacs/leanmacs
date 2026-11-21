@@ -47,6 +47,7 @@ import Editor.Test.Models
 import Editor.Test.Opener
 import Editor.Test.Prompts
 import Editor.Test.States
+import Editor.Test.Views
 import Editor.Test.Workspace
 import Editor.Text
 import Editor.Text.Contract
@@ -58,7 +59,6 @@ import ModelTest.Check
 import ModelTest.Support.Excerpt
 import ModelTest.Support.Frame
 import ModelTest.Support.Listings
-import ModelTest.Support.Views
 
 /-!
 # Model tests: `Editor/State.lean`

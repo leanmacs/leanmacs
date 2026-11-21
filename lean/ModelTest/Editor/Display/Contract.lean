@@ -15,6 +15,7 @@ them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The cell sizes the display interface's contract is run at against the
 model: one pixel each way, and 8 by 16. -/

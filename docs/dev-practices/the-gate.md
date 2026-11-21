@@ -748,13 +748,16 @@ checks:
   costs in requests, on the counting model; and the anchors a scroll by
   rows and a scroll to the cursor's row place, swept the same way.
   `viewChecks` press keys on the loop's driver over the editor's models,
-  under the Vim scheme that ships with evil's commands, in frames a few
-  rows tall: a view follows its cursor after `j`, `k`, `g g` and `$` on a
-  wrapped line, after a resize, and after an edit through another window
-  on the same buffer; a motion that leaves the cursor shown leaves the
-  anchor; the margin holds after every motion of the vocabulary; a failed
-  command and a view whose selection marker was given up leave the
-  anchor; `C-d`, `C-u`, `C-f` and `C-b` move the anchor and the cursor by
+  under the test scheme with the test kit's editing keys, in frames a few
+  rows tall: a view follows its cursor after a move down, up, to the
+  text's start and to the end of a wrapped line, after a resize, and after
+  an edit through another window on the same buffer; a move that leaves
+  the cursor shown leaves the anchor; the margin holds after every move of
+  the kit's editing keys; and a failed command and a view whose selection
+  marker was given up leave the anchor. `evilScrollChecks` press keys on
+  the same driver under the Vim scheme that ships with evil's commands:
+  the margin holds after every motion of the vocabulary; `C-d`, `C-u`,
+  `C-f` and `C-b` move the anchor and the cursor by
   half the rows and by the rows the view fits, with a count, at the
   text's two ends, in a text that ends in a line feed, in a visual state,
   and stopped by the interrupt before each of their requests; and `z t`,

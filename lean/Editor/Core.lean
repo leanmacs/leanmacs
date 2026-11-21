@@ -33,6 +33,7 @@ import Editor.Test.Listing
 import Editor.Test.Modes
 import Editor.Test.Prompts
 import Editor.Test.Sources
+import Editor.Test.Views
 import Editor.Theme.Check
 import Editor.Theme.Picture
 import Editor.Themes.Compiled

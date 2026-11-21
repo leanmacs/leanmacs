@@ -50,6 +50,7 @@ import ModelTest.Editor.Evil.Objects
 import ModelTest.Editor.Evil.Operators
 import ModelTest.Editor.Evil.Registers
 import ModelTest.Editor.Evil.Repeat
+import ModelTest.Editor.Evil.Scroll
 import ModelTest.Editor.Evil.TreeObjects
 import ModelTest.Editor.Evil.Undo
 import ModelTest.Editor.Ex
@@ -1071,14 +1072,18 @@ restated here: the word motions' rows are ASCII, and one text with letters
 Vim and the editor agree on.
 
 A view that follows its cursor (`Editor/Loop.lean`, "Following the
-cursor") is checked on the same driver, under the same scheme and commands
-(`viewChecks`), in frames a few rows tall (`viewDriver`): keys are pressed,
-the frame is resized, and what the next scene shows of a view is asked of
-the driver's models (`viewSeen`): where its scroll anchor is, the rows the
-display model answers from it for the scene's view, and the row it answers
-for the cursor. So no check says where a text wraps. They are the phase's
+cursor") is checked on the loop's driver under the test scheme, with the
+kit's editing keys (`viewChecks`), in frames a few rows tall
+(`viewDriver`): keys are pressed, the frame is resized, and what the next
+scene shows of a view is asked of the driver's models (`viewSeen`,
+`Editor/Test/Views.lean`): where its scroll anchor is, the rows the display
+model answers from it for the scene's view, and the row it answers for the
+cursor. So no check says where a text wraps. They are the phase's
 acceptance criteria for following, the scroll margin among them, and what
-following costs in requests, as a difference between two frames.
+following costs in requests, as a difference between two frames. Evil's
+scroll commands by key, and the margin after every motion of its
+vocabulary, are checked the same way under the Vim scheme that ships
+(`evilScrollChecks`, `ModelTest/Editor/Evil/Scroll.lean`).
 
 Modes are checked on the test scheme, by the roles and the leader it reports
 (`InputScheme.roleKey`, `InputScheme.leader`), so that no check of a mode
@@ -1527,6 +1532,7 @@ def checks : List Check :=
     evilJumpChecks ++
     evilMarkChecks ++
     viewChecks ++
+    evilScrollChecks ++
     floatViewChecks ++
     tabBarChecks ++
     frameCommandChecks ++

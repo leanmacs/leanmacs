@@ -78,7 +78,7 @@ imports the default tables.
 
 Pinned by `ModelTest.evilMotionChecks`, `ModelTest.evilStateChecks` and
 `ModelTest.evilInsertChecks`, on the models, the scroll commands by
-`ModelTest.viewChecks`, and the clipboard commands by
+`ModelTest.evilScrollChecks`, and the clipboard commands by
 `ModelTest.clipboardCommandChecks`.
 -/
 

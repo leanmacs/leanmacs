@@ -29,10 +29,11 @@ text and moves the cursor with these, and drives no key of a real scheme.
   **`edit-delete-backward`** removes each selected range, or, of a bar, the
   character before it.
 - **The moves**, `edit-left`, `edit-right`, `edit-up`, `edit-down`,
-  `edit-line-start`, `edit-buffer-start` and `edit-buffer-end`, move each
-  range to a bar: a character back or on (over a line's end to the next
-  line), a row up or down at the same column, counted in characters and
-  kept within the row, the start of the row, and the two ends of the text.
+  `edit-line-start`, `edit-line-end`, `edit-buffer-start` and
+  `edit-buffer-end`, move each range to a bar: a character back or on (over
+  a line's end to the next line), a row up or down at the same column,
+  counted in characters and kept within the row, the start and the end of
+  the row, and the two ends of the text.
 - **`edit-select-left`, `-right`, `-up` and `-down`** move each range's
   head so and keep its anchor: a selection extended.
 - **`edit-undo` and `edit-redo`** undo and redo one step of the buffer's
@@ -41,7 +42,7 @@ text and moves the cursor with these, and drives no key of a real scheme.
 
 `editingKeys` puts them on keys that print nothing, so none is ever the
 test scheme's self-insert: the arrows, `<Backspace>`, `RET`, `<Home>`,
-`C-<Home>`, `C-<End>`, the arrows with shift, `C-z` and `C-Z`.
+`<End>`, `C-<Home>`, `C-<End>`, the arrows with shift, `C-z` and `C-Z`.
 
 `editingDriver` is a driver of the test scheme with these, over a state a
 fixture writes with its cursor as a bar (`barred`, `barState`), and
@@ -130,6 +131,11 @@ def down (text : String) (offset : Nat) : Nat :=
 def lineStart (text : String) (offset : Nat) : Nat :=
   offsetAt text (placeOf text offset).1 0
 
+/-- The end of the row, before its line break. -/
+def lineEnd (text : String) (offset : Nat) : Nat :=
+  let row := (placeOf text offset).1
+  offsetAt text row (widthOf text row)
+
 /-- A command that moves each range's head by `motion`, a function of the
 text and the head's byte offset; the anchor follows the head, leaving a
 bar, unless `keep`. -/
@@ -182,6 +188,7 @@ def editingCommands : List (String × (Call → EditorM Unit)) :=
     ("edit-delete-backward", Editing.deleteBackward), ("edit-left", Editing.moved Editing.left),
     ("edit-right", Editing.moved Editing.right), ("edit-up", Editing.moved Editing.up),
     ("edit-down", Editing.moved Editing.down), ("edit-line-start", Editing.moved Editing.lineStart),
+    ("edit-line-end", Editing.moved Editing.lineEnd),
     ("edit-buffer-start", Editing.moved fun _ _ => 0),
     ("edit-buffer-end", Editing.moved fun text _ => text.utf8ByteSize),
     ("edit-select-left", Editing.moved Editing.left (keep := true)),
@@ -196,7 +203,7 @@ of the command it runs: keys that print nothing (the module docs). -/
 def editingKeys : List (String × String) :=
   [("<ArrowLeft>", "edit-left"), ("<ArrowRight>", "edit-right"), ("<ArrowUp>", "edit-up"),
     ("<ArrowDown>", "edit-down"), ("<Backspace>", "edit-delete-backward"), ("RET", "edit-newline"),
-    ("<Home>", "edit-line-start"), ("C-<Home>", "edit-buffer-start"),
+    ("<Home>", "edit-line-start"), ("<End>", "edit-line-end"), ("C-<Home>", "edit-buffer-start"),
     ("C-<End>", "edit-buffer-end"), ("S-<ArrowLeft>", "edit-select-left"),
     ("S-<ArrowRight>", "edit-select-right"), ("S-<ArrowUp>", "edit-select-up"),
     ("S-<ArrowDown>", "edit-select-down"), ("C-z", "edit-undo"), ("C-Z", "edit-redo")]

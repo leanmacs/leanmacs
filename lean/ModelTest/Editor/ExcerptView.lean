@@ -11,10 +11,10 @@ import Editor.Program
 import Editor.Scene
 import Editor.Scroll
 import Editor.State
+import Editor.Test.Views
 import Editor.Text
 import ModelTest.Check
 import ModelTest.Support.Excerpt
-import ModelTest.Support.Views
 
 /-!
 # Model tests: `Editor/ExcerptView.lean`

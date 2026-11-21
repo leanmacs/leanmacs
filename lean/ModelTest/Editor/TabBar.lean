@@ -16,9 +16,9 @@ import Editor.TabBar
 import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Test.States
+import Editor.Test.Views
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Views
 import ModelTest.Support.Windows
 
 /-!

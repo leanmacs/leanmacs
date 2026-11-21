@@ -2679,7 +2679,7 @@ operation by a case of `lean/Editor/Api/Cases.lean`).
 Status: built, by the command loop's phase 15
 (`lean/Editor/Evil/Scroll.lean`, over the policy in
 `lean/Editor/Scroll.lean` and `Target.anchor`, `Target.scrollTo` and
-`Target.onArea` in `lean/Editor/Api.lean`; pinned by `viewChecks` and
+`Target.onArea` in `lean/Editor/Api.lean`; pinned by `evilScrollChecks` and
 `scrollChecks`, by three cases of `lean/Editor/Api/Cases.lean`, and by the
 headless fixture `tests/headless/view`). How a view follows its cursor
 between commands is the loop's
@@ -5676,7 +5676,8 @@ the command loop's phase 15):
 | List | Checks |
 |---|---|
 | `scrollChecks` | On the display model alone, with a view's anchor and cursor as offsets: the follow policy (which anchors are kept, how far one moves, a wrapped line's last row, the margin, swept from every row and every position, and what it costs in requests), and the anchors a scroll by rows and a scroll to the cursor's row place |
-| `viewChecks` | On the loop's driver over the editor's models, under the Vim scheme that ships with evil's commands, in frames a few rows tall: a view follows its cursor after a motion, a resize and an edit through another window; the margin after every motion of the vocabulary; `C-d`, `C-u`, `C-f` and `C-b`, by key, at the text's two ends, with a count, in a visual state and stopped by the interrupt; and `z t`, `z z` and `z b` |
+| `viewChecks` | On the loop's driver over the editor's models, under the test scheme with the kit's editing keys (`Editor.Test.Editing`), in frames a few rows tall: a view follows its cursor after a move, a resize and an edit through another window; the margin after every move of the kit's editing keys; a failed command and a view whose selection marker was given up; and what following costs |
+| `evilScrollChecks` | On the same driver under the Vim scheme that ships with evil's commands: the margin after every motion of the vocabulary; `C-d`, `C-u`, `C-f` and `C-b`, by key, at the text's two ends, with a count, in a visual state and stopped by the interrupt; and `z t`, `z z` and `z b` |
 
 - **A check asks the model and restates no layout.** What a view shows is
   read by asking the display model for the rows of the scene's view from
