@@ -19,44 +19,44 @@ open Editor.Test
 def sameThreads (threads others : Array UInt64) : Bool :=
   distinct threads == threads.size && threads.size == others.size && threads.all others.contains
 
+/-- The threads `Pool.holdAll` held for `Pool.expected` tasks, or a hang
+thrown past `patience`, a hang guard: only a pool with fewer threads than
+expected reaches it. -/
+def heldAll : IO (Array UInt64) := do
+  let expected ← Job.Pool.expected
+  let some threads ←
+    Job.Pool.holdAll expected
+        patience | throw <| IO.userError s!"a hang: {expected} pool tasks had not all started within {patience} ms"
+  return threads
+
 /-- The checks of warming the pool (`Editor/Job/Pool.lean`). They are about
 the process's one pool, so they run first, while nothing else has used it.
 
-None of them knows how many threads the pool has: that number is Lean's, and
-`LEAN_NUM_THREADS` changes it. Each learns the pool's threads from a warming
-that stopped short of its limit (`Pool.whole`), and states what must hold
-relative to that. -/
+They take the pool's size as Lean's runtime does (`Pool.expected`:
+`LEAN_NUM_THREADS` when it is set, else the machine's), and pin what this
+module promises: `holdAll` holds that many tasks at once, on that many
+threads, each start an event it waits for. That a task more than the pool
+has threads does not start is Lean's rule, not this module's, and could only
+be shown by a window, so no check pins it. -/
 def poolChecks : List Check :=
-  [{
-      name :=
-        "warming the pool holds one task on every thread it has, at once: the threads are all different, and a task more than the pool has threads does not start",
+  [{  name :=
+        "holding the pool's expected size of tasks holds them all at once, on as many different threads"
       run := do
-        let threads ← Job.Pool.whole warmPatience
-        return !threads.isEmpty && distinct threads == threads.size },
+        let threads ← heldAll
+        return threads.size == (← Job.Pool.expected) && distinct threads == threads.size },
     { name :=
-        "warming stops at the pool's size, and a second warming adds no thread: asked for two threads more than the pool was seen to have, it holds the same threads"
+        "a second hold of the pool's expected size holds the same threads: the threads exist before the burst, which is what warming is for"
       run := do
-        let first ← Job.Pool.whole warmPatience
-        let second ← Job.Pool.warm (first.size + 2) warmPatience
+        let first ← heldAll
+        let second ← heldAll
         return !first.isEmpty && sameThreads second first },
     { name :=
-        "a burst after warming starts no thread: a task for each thread of the pool, all running at once, are on the threads the warming held"
+        "a burst after warming starts no thread: warmed to its expected size, the pool's expected size of tasks, all running at once, are on the threads the warming held"
       run := do
-        let warmed ← Job.Pool.whole warmPatience
-        let release : IO.Promise Unit ← IO.Promise.new
-        let running ← IO.mkRef #[]
-        try
-          for _ in [0:warmed.size] do
-            discard <|
-                IO.asTask do
-                  running.modify (·.push (← IO.getTID))
-                  -- Holds its thread in a system call, which Lean does not
-                  -- count as blocked, so no thread is added for it.
-                  while !(← release.isResolved) do
-                    IO.sleep 1
-          let together ← eventually (return (← running.get).size == warmed.size)
-          return !warmed.isEmpty && together && sameThreads (← running.get) warmed
-        finally
-          release.resolve () }]
+        -- Warmed to the expected size, every task starts: the bound is a
+        -- hang guard, never the warming's stop.
+        let warmed ← Job.Pool.warm (← Job.Pool.expected) patience
+        let burst ← heldAll
+        return !warmed.isEmpty && sameThreads burst warmed }]
 
 end ModelTest

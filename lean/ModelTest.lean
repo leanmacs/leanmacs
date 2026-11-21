@@ -684,10 +684,10 @@ of the model is in step.
 
 The job system is tested here with no Rust library:
 
-- `poolChecks`: warming Lean's task pool (`Editor/Job/Pool.lean`). They pin
-  no size: how many threads the pool has is Lean's to say, and
-  `LEAN_NUM_THREADS` in the environment changes it. Each check learns the
-  pool's threads by warming it, and says what must hold relative to them;
+- `poolChecks`: warming Lean's task pool (`Editor/Job/Pool.lean`). They take
+  the pool's size as Lean's runtime does (`Pool.expected`:
+  `LEAN_NUM_THREADS` when it is set, else the machine's), and hold that many
+  tasks at once with `Pool.holdAll`, each start an event, never a window;
 - `jobModelChecks`: the job port's pure model (`Editor/Job/Model.lean`), its
   clock and its cancellation, and what only the model's exact clock can
   show: that a timer does not drift;

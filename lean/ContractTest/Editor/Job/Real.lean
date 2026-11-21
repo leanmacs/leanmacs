@@ -310,18 +310,19 @@ def sleepers (services : Job.Services) (count : Nat) : IO (Array Job.Handle) := 
               (pure ()))
   return jobs
 
-/-- How long a warming waits, in milliseconds, for a task to start before it
-takes the pool to be full. A task starts on a free thread in microseconds. -/
+/-- hang guard: each pool task's start, which `Pool.holdAll` waits for; only
+a pool with fewer free threads than it is asked to hold reaches it, and the
+check then fails as a hang. A task starts on a free thread in microseconds;
+the guard is `ConfigTest.hangGuard`'s measured 120 000 ms. -/
 def warmPatience : Nat :=
-  200
+  120000
 
 /-- The checks of the runner over the library's timer service
 (`Editor/Job/Real.lean`): what only the real service can show. It is a
 function, not a constant, because it calls bindings.
 
-`pool` is the threads the pool was seen to have before the pump was started
-(`Pool.whole`). No check knows the pool's size otherwise: that number is
-Lean's, and `LEAN_NUM_THREADS` changes it. -/
+`pool` is the threads the pool was seen to have before the pump was started:
+`Pool.holdAll` of the size Lean's runtime gives it (`Pool.expected`). -/
 def jobChecks (services : Job.Services) (pool : Array UInt64) : List Check :=
   -- More jobs than the pool has threads, and at least 64.
   let many := max 64 (pool.size + 1)
@@ -415,8 +416,8 @@ def jobChecks (services : Job.Services) (pool : Array UInt64) : List Check :=
         unless ← eventually (return (← Ffi.waiting .completion) == 1) do
           return false
         -- A pump that was a pool task would be parked on one of these
-        -- threads, and the warming would stop one short.
-        let threads ← Job.Pool.warm (pool.size + 2) warmPatience
+        -- threads, and the last of the hold could never start.
+        let some threads ← Job.Pool.holdAll pool.size warmPatience | return false
         return !pool.isEmpty && threads.size == pool.size && threads.all pool.contains }]
 
 /-- A file's bytes, in the checks below: "héllo", a line feed, "😀" and the

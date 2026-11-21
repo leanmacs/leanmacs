@@ -236,11 +236,6 @@ def distinct (threads : Array UInt64) : Nat :=
   (threads.foldl (fun seen thread => if seen.contains thread then seen else seen.push thread)
       #[]).size
 
-/-- How long a warming waits, in milliseconds, for a task to start before it
-takes the pool to be full. A task starts on a free thread in microseconds. -/
-def warmPatience : Nat :=
-  200
-
 /-- An owner of jobs. -/
 def anna : Config.Owner :=
   { name := "anna" }

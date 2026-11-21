@@ -117,9 +117,9 @@ run = [
 # builds it.
 #
 # Nothing is removed from the environment. LEAN_NUM_THREADS sets the size of
-# Lean's task pool, and the checks that warm the pool and count the threads
-# jobs wait from pin no size: they pass under a bare `lake test` whatever the
-# variable says.
+# Lean's task pool, and the checks that hold the pool and count the threads
+# jobs wait from read it as Lean's runtime does (`Pool.expected`): they pass
+# under a bare `lake test` whatever the variable says.
 #
 # First, the toolchain check (tools/toolchain-check.sh;
 # docs/dev-practices/the-gate.md, "The toolchain check"): every Lake package

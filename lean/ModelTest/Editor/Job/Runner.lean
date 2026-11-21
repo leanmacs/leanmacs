@@ -285,7 +285,7 @@ def runnerChecks : List Check :=
       run := do
         let rig ← Rig.new
         -- More jobs than the pool has threads, whatever its size is here.
-        let count := max 64 ((← Job.Pool.whole warmPatience).size + 1)
+        let count := max 64 ((← Job.Pool.expected) + 1)
         let mut jobs := #[]
         for _ in [0:count] do
           jobs :=
@@ -322,7 +322,7 @@ def runnerChecks : List Check :=
               ((({} : FileModel).withDirectory fileRoot).withFile (fileRoot / "a.txt")
                 JobContract.rawFile)
         files.holdCompletions
-        let count := max 64 ((← Job.Pool.whole warmPatience).size + 1)
+        let count := max 64 ((← Job.Pool.expected) + 1)
         let mut jobs := #[]
         for _ in [0:count] do
           jobs :=

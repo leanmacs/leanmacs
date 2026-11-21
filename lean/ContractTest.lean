@@ -364,7 +364,10 @@ def main (arguments : List String) : IO UInt32 := do
       IO.eprintln
           "usage: contract-test <the directory of the process-environment fixtures> <the directory of the workspace fixtures> <the directory of the shell fixtures> <the directory of the syntax fixtures> <the directory of the completion fixtures>"
       return 2
-  let pool ← Editor.Job.Pool.whole ContractTest.warmPatience
+  let some pool ← Editor.Job.Pool.holdAll (← Editor.Job.Pool.expected) ContractTest.warmPatience |
+    IO.eprintln
+        s!"contract-test: a hang: the pool's tasks had not all started within {ContractTest.warmPatience} ms"
+    return 1
   -- The real services, over a table of waits of their own, with the pump
   -- started (`Editor/Test/Linked/Services.lean`). No command of this run
   -- publishes a snapshot to them: the file properties save what their own
