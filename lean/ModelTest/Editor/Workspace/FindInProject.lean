@@ -57,18 +57,19 @@ def listRun : Process.Command :=
 
 /-- `vc-api`'s fake backend over `repository` (`VcApiTest.backend`) that
 records each worktree list it is asked for (`listRun`), then answers it
-from the model. -/
+from the model; named `git`, as the backend a consumer chooses. -/
 def recordingBackend (repository : VersionControl.Model.Repository) : VcApi.Backend :=
-  { name := "recording"
+  { name := VcApi.gitBackendName
     connect := fun git root request => do
       if request matches .worktrees then
         discard <| Process.runWithin listRun 1024 1000
       (VcApiTest.backend repository).connect git root request }
 
 /-- A backend whose worktree list is refused, as git's that exits 128 is,
-and that answers every other request from `repository`. -/
+and that answers every other request from `repository`; named `git`, as the
+backend a consumer chooses. -/
 def refusingBackend (repository : VersionControl.Model.Repository) : VcApi.Backend :=
-  { name := "refusing"
+  { name := VcApi.gitBackendName
     connect := fun git root request =>
       match request with
       | .worktrees => pure (.error (.failed (.code 128) "fatal: not a git repository"))

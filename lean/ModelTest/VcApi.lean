@@ -62,13 +62,17 @@ def vcKeeps (packages : Array Package) : Bool :=
 /-- The checks of `vc-api` (`VcApi.lean`). -/
 def vcApiChecks : List Check :=
   [{  name :=
-        "a consumer connects through the latest backend registered, as a choice's latest value wins, so config's, registered after a package's, is the one used; with none it has no connection"
+        "the backend point is a choice by the name git: a consumer connects through the latest backend named git, so config's git, registered after a package's, is the one used; a backend of another name, registered after it, is not; with no git backend, one of another name alone or none at all, it has no connection"
       run :=
         pure <|
           branchThrough
-                (VcApi.connect? #[namedBackend "git" "package", namedBackend "jj" "config"]) ==
+                (VcApi.connect? #[namedBackend "git" "package", namedBackend "git" "config"]) ==
               some "config" &&
+            branchThrough
+                (VcApi.connect? #[namedBackend "git" "package", namedBackend "jj" "config"]) ==
+              some "package" &&
             branchThrough (VcApi.connect? #[namedBackend "git" "package"]) == some "package" &&
+            (VcApi.connect? #[namedBackend "jj" "config"]).isNone &&
             (VcApi.connect? #[]).isNone },
     { name :=
         "the gutter's job names are the core's (`Gutter.headJob`, `.diffJob`, `.refsJob`), the review segment's name is the one the mode line's default order names, and the backend the implementation registers is called git"

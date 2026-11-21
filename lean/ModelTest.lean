@@ -1190,9 +1190,10 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   (`Editor/VersionControl/Git/Model.lean`): the real parser reads what its
   printer prints as the model's status, in every state and for every
   repository of the contract;
-- `vcApiChecks`: the interface library `vc-api` (`VcApi.lean`): a consumer
-  connects through the latest backend registered, config's after a
-  package's, and with none has no connection; its names are the core's
+- `vcApiChecks`: the interface library `vc-api` (`VcApi.lean`): the backend
+  point is a choice by the name `git`, so a consumer connects through the
+  latest backend of that name, config's after a package's, never through
+  one of another name, and with no `git` backend has no connection; its names are the core's
   gutter jobs and the default order's `review`; the fake's backend answers
   from the model; and its registration check holds of a package that
   registers the backend `git`, the gutter jobs and the segment, and fails

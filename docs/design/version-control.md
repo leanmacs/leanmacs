@@ -48,9 +48,11 @@ are the core's, `lean/Editor/Gutter/Track.lean`.
 **The backend point.** `VcApi.Backend { name; connect }` is how a feature
 that is not version control reaches a repository: working-set's write asks
 for `HEAD`'s commit and find-in-project for the worktrees, each from a job
-registered over the point (`Extension.workJob`), through the latest
-backend registered (`VcApi.connect?`), so config's replaces version
-control's; with none each takes the case "no repository". Version control
+registered over the point (`Extension.workJob`). The point is a choice by
+the name `git` (`VcApi.connect?`): the latest backend of that name is used,
+so config's `git` replaces version control's, and a backend of another
+name is not used; with none named `git` each takes the case "no
+repository". Version control
 registers `{ name := "git", connect := Git.handler }`. Open, and not
 changed by phase 5: the program a consumer passes `connect` is the
 workspace settings' `git`, so a second backend (jj) would need a setting

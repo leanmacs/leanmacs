@@ -174,16 +174,22 @@ model build one the same way:
 
 ## The backend point
 
-`VcApi.Backend` is a **hook**: every value registered, a name and how to
-connect to a repository (`connect`, given the git program of the workspace
-settings and the repository's root). A consumer connects through the
-latest one registered (`VcApi.connect?`), as a choice's latest value wins,
-so config's backend, registered after a package's, replaces it. With none
-it takes the case "no repository": working-set writes an empty commit, and
-find-in-project lists no other worktree. Version control registers
-`{ name := "git", connect := VersionControl.Git.handler }`. A consumer that
-reads it from a job registers that job over the point
-(`Extension.workJob`).
+`VcApi.Backend` is a **choice** by name (docs/design/extension-points.md,
+"A hook, or a choice"): each value is a name and how to connect to a
+repository (`connect`, given the git program of the workspace settings and
+the repository's root), and a consumer connects through one of them, the
+latest registered under the name `git` (`gitBackendName`, `VcApi.connect?`),
+as `Extension.named` reads a choice. So config's backend named `git`,
+registered after version control's, replaces it, and a backend of another
+name is never used, however late it registers: which backend a workspace
+uses is not configurable yet (a second backend needs a setting of its own,
+docs/design/extension-points.md, "Open questions"). With no backend named
+`git` it takes the case "no repository": working-set writes an empty
+commit, and find-in-project lists no other worktree. Version control
+registers `{ name := "git", connect := VersionControl.Git.handler }`. A
+consumer that reads it from a job registers that job over the point
+(`Extension.workJob`), which hands it every value; `connect?` makes the
+choice among them.
 
 ## Names others reach
 
@@ -829,7 +835,7 @@ open Editor
 /-- A version-control backend: its name, and how to connect to the
 repository at a root with a program (the workspace settings' `git`), the
 handler that answers the port's requests inside a job ("The backend
-point", in the module docs). A hook. -/
+point", in the module docs). A choice, by the name `gitBackendName`. -/
 structure Backend where
   /-- The backend's name. -/
   name : String
@@ -837,16 +843,19 @@ structure Backend where
   connect : String → System.FilePath → VersionControl.Handler
   deriving TypeName
 
-/-- How a consumer connects: through the latest backend registered, so
-config's, registered after a package's, is the one used; `none` with no
-backend, the case "no repository". -/
-def connect? (backends : Array Backend) :
-    Option (String → System.FilePath → VersionControl.Handler) :=
-  backends.back?.map (·.connect)
-
-/-- The name of the backend version control registers. -/
+/-- The name of the backend version control registers, and the name the
+choice at `Backend` is made by. -/
 def gitBackendName : String :=
   "git"
+
+/-- How a consumer connects, given every value registered at `Backend`
+(registration order): through the latest one named `gitBackendName`, so
+config's `git`, registered after a package's, is the one used, and a backend
+of another name is not; `none` with no backend of that name, the case "no
+repository". -/
+def connect? (backends : Array Backend) :
+    Option (String → System.FilePath → VersionControl.Handler) :=
+  (backends.findRev? (·.name == gitBackendName)).map (·.connect)
 
 /-- The names of the gutter's three jobs, which the core's reconciler starts
 and version control registers: the core's. -/

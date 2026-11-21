@@ -904,10 +904,12 @@ open Editor
 
 /-- A backend over the model of `repository`: its handler answers every
 request from the repository as it is (`Model.readHandler`), whatever
-program and root it is connected with. A consumer's tests register it in
+program and root it is connected with, named `git` as the backend a
+consumer chooses (`VcApi.connect?`). A consumer's tests register it in
 place of an implementation's. -/
 def backend (repository : VersionControl.Model.Repository) : VcApi.Backend :=
-  { name := "model", connect := fun _ _ => VersionControl.Model.readHandler repository }
+  { name := VcApi.gitBackendName,
+    connect := fun _ _ => VersionControl.Model.readHandler repository }
 
 /-- The values registered at each extension point when `backends` alone
 are registered at `VcApi.Backend`: what a test hands a job registered over

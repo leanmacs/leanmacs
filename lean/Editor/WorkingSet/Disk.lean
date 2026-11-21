@@ -42,7 +42,7 @@ older one still asking:
 
 - **the job** (`writeWork`) asks the version-control interface for the
   commit `HEAD` is at (`log "HEAD" 1`), through the backend a set
-  registers (`VcApi.Backend`, the latest one, `VcApi.connect?`): the job is
+  registers (`VcApi.Backend`, the latest named `git`, `VcApi.connect?`): the job is
   registered over that point (`Extension.workJob`); no backend, no
   repository, or an unborn `HEAD`, is an empty commit;
 - **its command** (`writeNow`) refreshes every held range's stored form from

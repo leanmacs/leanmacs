@@ -484,7 +484,10 @@ and it is not routed through an extension point.**
 
 ## Open questions
 
-- **A second version-control backend's program.** `VcApi.Backend.connect`
+- **A second version-control backend's program and selection.**
+  `VcApi.Backend` is a choice by the name `git` (`VcApi.connect?`): a
+  backend of another name, such as `jj`, is never used, so choosing one
+  for a workspace needs a setting that names it. `VcApi.Backend.connect`
   is handed the workspace settings' `git`: a jj backend would need a
   setting of its own. And the workspace finder runs git itself
   (`Workspace.Finder`, through the core's `Workspace.Git`), so a jj
