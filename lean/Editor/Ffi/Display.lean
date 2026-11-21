@@ -288,7 +288,7 @@ whose family `family` is the default family of a font set with no font of
 the machine: a face naming any other family is drawn in it. An `IO` error
 with the library's reason when the bytes are not a font or hold no such
 family. For tests, as `Display.frameText` is: what it lays out is the same
-on every machine (`Themes.Picture.themePicturesScenario`, `Editor/Themes/Picture.lean`). -/
+on every machine (`Themes.Picture.themePicturesScenario`, `Editor/Theme/Picture.lean`). -/
 @[extern "editor_glue_display_new_font"]
 opaque Display.newFont (bytes : @& ByteArray) (family : @& String) : IO Display
 

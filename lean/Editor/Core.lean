@@ -32,8 +32,9 @@ import Editor.Test.Listing
 import Editor.Test.Modes
 import Editor.Test.Prompts
 import Editor.Test.Sources
+import Editor.Theme.Check
+import Editor.Theme.Picture
 import Editor.Themes.Compiled
-import Editor.Themes.Picture
 import Editor.Watch.Contract
 import Editor.WindowCommands.Compiled
 

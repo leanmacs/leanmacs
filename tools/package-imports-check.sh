@@ -58,7 +58,7 @@
 # - A test double (`is_double`): the pure models of the ports, the
 #   contracts and cases, the fakes, the test scheme, the loop's driver, the
 #   reading of what a package registers (`Editor.Config.Packages`), the
-#   theme picture check (`Editor.Themes.Picture`), the core's model test
+#   theme picture check (`Editor.Theme.Picture`), the core's model test
 #   kit, `Editor.Test` and everything under it but `Editor.Test.Linked`:
 #   the support its own model tests are written on, and a feature's test
 #   kit still in the core (`Editor.*.Kit`, such as `Editor.Files.Kit`, the
@@ -146,7 +146,7 @@ is_double() {
   case $1 in
     Editor.Completion.Fake | Editor.Job.Fake) return 0 ;;
     Editor.InputScheme.Test | Editor.Loop.Driver) return 0 ;;
-    Editor.Config.Packages | Editor.Themes.Picture) return 0 ;;
+    Editor.Config.Packages | Editor.Theme.Picture) return 0 ;;
     Editor.Test | Editor.Test.*) return 0 ;;
     Editor.*.Kit) return 0 ;;
     Editor.*.Model | Editor.*.Model.*) return 0 ;;

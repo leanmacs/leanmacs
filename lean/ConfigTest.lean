@@ -19,8 +19,8 @@ import ConfigTest.Editor.Loop
 import ConfigTest.Editor.Minibuffer
 import ConfigTest.Editor.PackageSet.Edit
 import ConfigTest.Editor.Setup
+import ConfigTest.Editor.Theme.Check
 import ConfigTest.Editor.Themes
-import ConfigTest.Editor.Themes.Check
 import ConfigTest.Lsp
 
 /-!

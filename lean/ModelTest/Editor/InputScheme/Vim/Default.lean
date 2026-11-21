@@ -3,6 +3,8 @@ import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Event
 import Editor.Evil.Compiled
+import Editor.Face
+import Editor.Face.Vocabulary
 import Editor.InputScheme
 import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
@@ -15,6 +17,7 @@ import Editor.Test.AtPoint
 import Editor.Test.Keys
 import Editor.Test.Minibuffer
 import Editor.Text
+import Editor.Theme.Check
 import Editor.WindowCommands
 import Editor.WindowCommands.Compiled
 import ModelTest.Check
@@ -58,7 +61,33 @@ def vimListingMaps (_ : ViewId) : List (Keymap Vim.Bound) :=
 the grammar, by what the default keys parse to, and restate no table: a
 check names a key, and no vocabulary or command name. -/
 def vimDefaultChecks : List Check :=
-  [{  name :=
+  [{  name := "the Vim scheme lists the cursor face of each of its states"
+      run :=
+        let states := Vim.Default.states.initial :: Vim.Default.states.others
+        pure
+          (!states.isEmpty &&
+            Vim.Default.scheme.cursorFaces == states.map (Vim.cursorFace ·.name)) },
+    { name :=
+        "every cursor face the Vim scheme draws is a cursor face of the vocabulary, which every shipped theme is held to"
+      run := pure ((Themes.cursorFaces Vim.Default.scheme).all Face.cursorNames.contains) },
+    { name :=
+        "every face the Vim scheme that ships reports, and each state's badge, is in the vocabulary, and it has as many states as a theme written from a palette colours"
+      run :=
+        let scheme := Vim.Default.scheme
+        let fed (text : String) : Vim.State :=
+          (scheme.feed (fun _ => []) ⟨0⟩ scheme.init (keys text)).1
+        let told : Vim.State := scheme.openMinibuffer ⟨0⟩ scheme.init
+        let reports := #[scheme.init, fed "i", fed "v", fed "V", told].map (scheme.report · ⟨0⟩)
+        let states := Vim.Default.states.initial :: Vim.Default.states.others
+        let drawn :=
+          reports.map (·.cursor.face) ++ reports.flatMap (·.status.map (·.face)) ++
+            states.toArray.map (Vim.cursorFace ·.name)
+        pure
+          (drawn.all Face.vocabularyNames.contains &&
+            (reports.map (·.cursor.face)).toList.eraseDups.length == states.length &&
+            states.all (fun state => Face.vocabularyNames.contains (Vim.stateFace state.name)) &&
+            states.length == Theme.cursorStates.size) },
+    { name :=
         "under the Vim scheme that ships, a mode's suffix is reached at SPC m and the suffix in normal state, SPC m alone is pending, and in insert state SPC m and the suffix are typed text"
       run :=
         let parsed := vimParsed "SPC m x" vimListingMaps (states := Vim.Default.states)

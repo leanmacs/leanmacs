@@ -5,7 +5,7 @@ built-in theme, `default` (`Theme.builtin`, `lean/Editor/Face.lean`), as
 the headless CPU renderer draws it. The gate draws the same picture again
 and compares it with the file: `ffi-test theme-pictures` in `mise run
 ffi-test` (`FfiTest.themePictures`, `lean/FfiTest.lean`), which runs the
-core's theme picture check (`lean/Editor/Themes/Picture.lean`,
+core's theme picture check (`lean/Editor/Theme/Picture.lean`,
 `themePicturesScenario`) on that theme. The scene is built in Lean and
 published through the display's real binding, so what is compared is what
 the editor sends, not a theme written again in Rust.

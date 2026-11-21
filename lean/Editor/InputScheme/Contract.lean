@@ -84,6 +84,15 @@ the pending keys the scheme reports. Nothing here knows what a binding is.
   what the binding search offers is a sequence the walk completes. A
   scheme that lists nothing keeps it.
 
+- `cursorFacesReported`: every report of the scheme over the contract's
+  runs (from its initial state, once the view is the minibuffer's, after a
+  menu item's invocation, after each complete input, after each strict
+  prefix of one and after the unbound key that resets it) draws the view's
+  cursor in the face `cursor` or in a face the scheme lists
+  (`InputScheme.cursorFaces`). So what the scheme says of its cursor faces
+  cannot drift from what it reports, and the completeness check of a theme
+  can read the list in place of the scheme's states.
+
 The contract compares no states: a scheme's state may hold what a reset
 must keep, such as its last edit, and the record carries no equality on it.
 A reset is seen in the pending keys and in what the scheme does next.
@@ -328,12 +337,33 @@ def keyBindingsWalk : Property :=
         let yields := (subject.feed entry.keys).2
         !yields.isEmpty && yields.dropLast.all (·.isNone) && (yields.getLast?.join).isSome }
 
+/-- Every report of the scheme over the contract's runs draws the subject's
+view's cursor in the face `cursor` or in a face the scheme lists
+(`InputScheme.cursorFaces`): from the initial state, once the view is the
+minibuffer's, after a menu item's invocation of `namedCommand`, after each
+sequence, after each strict prefix of one, and after the unbound key that
+resets it. -/
+def cursorFacesReported : Property :=
+  { name :=
+      "every report of the scheme draws its view's cursor in the face cursor or in a face the scheme lists as one it draws a cursor in"
+    holds := fun subject =>
+      let listed (state : subject.scheme.State) : Bool :=
+        let face := (subject.scheme.report state subject.view).cursor.face
+        face == ⟨"cursor"⟩ || subject.scheme.cursorFaces.contains face
+      listed subject.scheme.init &&
+        listed (subject.scheme.openMinibuffer subject.view subject.scheme.init) &&
+        listed
+          (subject.scheme.invoked subject.view subject.scheme.init { command := namedCommand }).1 &&
+        subject.sequences.all (fun sequence => listed (subject.feed sequence).1) &&
+        subject.allPrefixes fun _ typed =>
+          listed (subject.feed typed).1 && listed (subject.feed (typed ++ [subject.unbound])).1 }
+
 /-- Every property of the contract. -/
 def properties : List Property :=
   [hasPrefixes, strictPrefixEmitsNothing, strictPrefixIsPending, completeEmits, unboundResets,
     namedCommandRuns, everyRoleHasKey, leaderAndRolesApart, modeCommandRuns, minibufferTakesText,
     quietKeyKeepsReport, unaskedAnswerYieldsNothing, invokedKeepsUnknown, continuationsWalk,
-    keyBindingsWalk]
+    keyBindingsWalk, cursorFacesReported]
 
 /-- The names of the properties that do not hold of `subject`; none when the
 scheme keeps the contract. -/

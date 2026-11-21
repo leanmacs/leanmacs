@@ -1,6 +1,5 @@
 import Editor.Package
 import Editor.Themes
-import Editor.Themes.Check
 
 /-!
 # The `themes` package: the command that loads a theme, and the theme `default`

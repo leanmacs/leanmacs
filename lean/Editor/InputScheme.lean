@@ -146,6 +146,20 @@ scheme with no states of its own, as the test scheme is, leaves the field
 out. The report is data: a new fact every scheme can say of a view is a
 field of it, with a default.
 
+## The faces a scheme draws a cursor in
+
+`cursorFaces` lists the faces the scheme's reports draw a cursor in, other
+than `cursor`, the face of a report that names none. It is the scheme's
+answer to whoever must know those faces without running the scheme: the
+completeness check of a theme (`Themes.cursorFaces`,
+`Editor/Theme/Check.lean`) reads it, so that check names no scheme's
+states. The contract holds the answer to `report`
+(`cursorFacesReported`, `Editor/InputScheme/Contract.lean`): no report
+over the contract's runs draws a cursor in a face that is neither `cursor`
+nor listed. The faces themselves are the core's, declared in the
+vocabulary with their mark (`Face.cursorNames`,
+`Editor/Face/Vocabulary.lean`).
+
 ## What a scheme reports for modes
 
 A mode names roles and suffixes, never keys (`Editor/Role.lean`,
@@ -219,6 +233,7 @@ scheme written in the test.
 | Something every scheme must report to the core | A field of `InputScheme`, and a property of the contract, as `continuations` and `continuationsWalk` are |
 | Which key sequences run a command, for the binding search and the command prompt | `keyBindings`, which `keyBindingsWalk` in the contract holds to the walk |
 | What a scheme makes of an invocation no key yielded, such as a menu item's | `invoked`, which `invokedKeepsUnknown` in the contract holds to its default for a name the scheme does not know |
+| A face a scheme draws a cursor in | The scheme's `cursorFaces`, which `cursorFacesReported` in the contract holds to its reports, and an entry of the vocabulary marked `cursor` (`Editor/Face/Vocabulary.lean`) |
 | Something a scheme says of one view, for the scene, the loop or a command | A field of `InputScheme.Report`, with the default a scheme that says nothing reports |
 | Something one scheme remembers between keys | That scheme's `State`; nothing here |
 | A fact about a key that more than one scheme reads | A function of `Key` here, as `Key.printed?` is |
@@ -335,6 +350,11 @@ structure InputScheme where
   loop and a command act on. A scheme that says nothing of a view reports
   the default. -/
   report : State → ViewId → InputScheme.Report := fun _ _ => {}
+  /-- The faces the scheme draws a view's cursor in, other than `cursor`:
+  every face `report` gives a cursor is `cursor` or one of these ("The
+  faces a scheme draws a cursor in", in the module docs). A scheme that
+  draws every cursor in `cursor` lists none. -/
+  cursorFaces : List FaceName := []
   /-- The scheme's hand-tuned keys: each a mode's name, a key sequence as
   chords, and its binding, consulted with that mode ahead of its roles and
   suffixes. -/

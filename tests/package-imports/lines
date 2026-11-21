@@ -1,6 +1,6 @@
 demo	Demo	library	Editor.Api
 demo	Demo	library	FilesApi
-demo	Demo	library	Editor.Themes.Check
+demo	Demo	library	Editor.Theme.Check
 demo	Demo	library	Editor.Loop
 demo	Demo	library	Editor.Text.Model
 demo	Demo	library	Editor.Test.Keys
@@ -12,7 +12,7 @@ demo	Demo	library	ModelTest.Check
 demo	Demo.Commands	library	Editor.Shell.Compiled
 demo	DemoTest.Demo	test	Editor.Text.Model
 demo	DemoTest.Demo	test	Editor.Completion.AtPointContract
-demo	DemoTest.Demo	test	Editor.Themes.Picture
+demo	DemoTest.Demo	test	Editor.Theme.Picture
 demo	DemoTest.Demo	test	Editor.Loop.Driver
 demo	DemoTest.Demo	test	Editor.Test.Driver
 demo	DemoTest.Demo	test	Editor.Files.Kit
@@ -39,7 +39,7 @@ demo	DemoTest.Linked	linked	Editor.Text.Real
 demo	DemoTest.Linked	linked	Editor.Headless
 demo	DemoTest.Linked	linked	Editor
 demo	DemoTest.Linked	linked	EditorCore.EditorPackage
-demo	DemoTest.Linked	linked	Editor.Themes.Picture
+demo	DemoTest.Linked	linked	Editor.Theme.Picture
 demo	DemoTest.Linked	linked	Editor.Ffi.Display
 demo	DemoTest.Linked	linked	Editor.Loop
 demo	DemoTest.Linked	linked	Editor.Config.Session

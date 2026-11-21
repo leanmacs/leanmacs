@@ -697,9 +697,9 @@ set, holds its three themes.
 
 - **It imports the core's API alone**: `Editor.Face` and `Editor.Package`.
   Its model tests also import `Editor.Appearance`, `Editor.Scene`,
-  `Editor.TabBar` and `Editor.Themes.Check`, which are API, and the test
+  `Editor.TabBar` and `Editor.Theme.Check`, which are API, and the test
   double `Editor.Config.Packages`; its linked test module imports the test
-  double `Editor.Themes.Picture`. The package imports check holds that
+  double `Editor.Theme.Picture`. The package imports check holds that
   ("What a package may import", below).
 - **Its declarations are in the namespace `ShippedThemes`**
   (`ShippedThemes.themes`, `ShippedThemes.Solarized.dark`), where they
@@ -1897,7 +1897,7 @@ the core alone.
   (`Editor.Loop.Driver`), the reading of what a package registers
   (`Editor.Config.Packages`: `Package.registered`,
   `Config.State.ofPackages`), the theme picture check
-  (`Editor.Themes.Picture`), and the core's model test kit, `Editor.Test`
+  (`Editor.Theme.Picture`), and the core's model test kit, `Editor.Test`
   and every module under it but `Editor.Test.Linked`: the support the
   core's own model tests are written on (`Editor.Test.…`, 20 modules); and
   a feature's test kit still in the core (`Editor.….Kit`, such as
@@ -3158,9 +3158,15 @@ that opens and takes no input.
   `EditorCore.EditorPackage.scheme` is `Evil.scheme`, the Vim scheme over
   its default states and bindings (`lean/Editor/Evil/Compiled.lean`). The
   keyword and the declaration move with evil when it becomes a package,
-  and the set of the core alone then has no scheme. The completeness check
-  of themes still reads the Vim states' cursor faces
-  (`lean/Editor/Themes/Check.lean`).
+  and the set of the core alone then has no scheme.
+- **What themes asks of a scheme** is `InputScheme.cursorFaces`: the faces
+  the scheme draws a cursor in, other than `cursor`, which the scheme
+  contract holds to its reports (`cursorFacesReported`). The completeness
+  check of a theme is the core's (`lean/Editor/Theme/Check.lean`, with the
+  picture check `lean/Editor/Theme/Picture.lean`) and names no scheme: it
+  holds a theme to the vocabulary's cursor faces (`Face.cursorNames`, the
+  entries marked `cursor`), and a scheme's tests hold that each face it
+  draws a cursor in is one of them (`ModelTest.vimDefaultChecks`).
 
 ## The core imports check
 

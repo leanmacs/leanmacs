@@ -7,7 +7,7 @@ test (`ShippedThemesTest/Linked.lean`,
 `ShippedThemesTest/Linked/ShippedThemes.lean`), which the package steps
 build and run (`tools/package-set.sh`, in `mise run lean` and `mise run
 ffi-test`). It hands the three themes, as `ShippedThemes.themes` holds
-them, to the core's theme picture check (`lean/Editor/Themes/Picture.lean`,
+them, to the core's theme picture check (`lean/Editor/Theme/Picture.lean`,
 `themePicturesScenario`), a test double of the core a package's tests may
 import. The scene is built in Lean and published through the display's
 real binding, so what is compared is what the editor sends, not a theme

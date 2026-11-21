@@ -12,13 +12,13 @@ import Editor.Menu
 import Editor.Scene
 import Editor.Text
 import Editor.Text.Real
-import Editor.Themes.Check
+import Editor.Theme.Check
 import Editor.Themes.Compiled
 
 /-!
-# Config tests: `Editor/Themes/Check.lean`
+# Config tests: `Editor/Theme/Check.lean`
 
-The tests of `Editor/Themes/Check.lean`: `cursorResolutionChecks`, of
+The tests of `Editor/Theme/Check.lean`: `cursorResolutionChecks`, of
 `Themes.effective`. The root module `ConfigTest` runs them; its module doc says
 what each shows.
 -/
@@ -40,9 +40,9 @@ def resolutionThemes : Array (String × Theme) :=
       ("a foreground alone", alone { foreground := some (Color.rgb 0 200 0) })]
 
 /-- The contract check of the completeness check's model of a cursor's
-colours (`Themes.effective`, `Editor/Themes/Check.lean`) against the real
+colours (`Themes.effective`, `Editor/Theme/Check.lean`) against the real
 layout. For each theme of `resolutionThemes` and each cursor face the check
-holds (`Themes.cursorFaces`), a scene of one view whose block cursor is in
+holds (`Face.cursorNames`), a scene of one view whose block cursor is in
 that face is laid out through the display's real binding twice: in the theme
 as written, and in a mirror of it whose last definition sets that face's
 foreground and background to the colours the model says it has. The two
@@ -85,7 +85,7 @@ def cursorResolutionChecks (_ : Unit) : List Check :=
           real.display.frameText
         let mut failed : Array String := #[]
         for (called, theme) in resolutionThemes do
-          for face in Themes.cursorFaces do
+          for face in Face.cursorNames do
             let (foreground, background) := Themes.effective theme face
             let mirror (foreground background : Option Color) : Theme :=
               theme.push { name := face, face := { foreground, background } }

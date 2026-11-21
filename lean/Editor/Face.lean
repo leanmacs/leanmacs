@@ -13,7 +13,7 @@ cover the same text, and what an attribute no face sets falls back to, are
 layout's rules in the Rust library (`crates/editor-layout/src/face.rs`, "The
 precedence"). The one exception is for checking a theme: `Face.over` and
 `Theme.merged` model layout's merge so that the completeness check
-(`Editor/Themes/Check.lean`) can know a cursor's colours with no layout.
+(`Editor/Theme/Check.lean`) can know a cursor's colours with no layout.
 What they give is never sent or drawn, and `ConfigTest.cursorResolutionChecks`
 holds the model to the real layout. What matters here is the one rule that orders a list of
 definitions: **where a list defines a name more than once, a later

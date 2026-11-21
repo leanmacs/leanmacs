@@ -15,7 +15,7 @@ import Editor.Scene
 import Editor.State
 import Editor.Text
 import Editor.Text.Real
-import Editor.Themes.Picture
+import Editor.Theme.Picture
 import FfiTest.Support.Scenes
 
 /-!

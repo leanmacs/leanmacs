@@ -1,13 +1,13 @@
 import Editor.Face
 import Editor.Ffi.Display
-import Editor.Themes.Picture
+import Editor.Theme.Picture
 import FfiTest.Check
 import FfiTest.Support.Files
 
 /-!
-# FFI tests: `Editor/Themes/Picture.lean`
+# FFI tests: `Editor/Theme/Picture.lean`
 
-The tests of `Editor/Themes/Picture.lean`, the theme picture check:
+The tests of `Editor/Theme/Picture.lean`, the theme picture check:
 `pictureChecks`, of the helpers it reads pictures with, and
 `themePicturesChecks`, of the scenario's own reporting; and `defaultRoles`,
 what the core hands the scenario for its own theme, `default`, which the
@@ -34,7 +34,7 @@ def pictureOf (colors : List Editor.Color) : Editor.Ffi.Picture :=
     rgba := ⟨(colors.flatMap fun color => (channels color).map (·.toUInt8)).toArray⟩ }
 
 /-- The checks of the helpers the theme picture check reads its pictures
-with (`Editor/Themes/Picture.lean`), on pictures 2 by 2 written here, and of a picture's round
+with (`Editor/Theme/Picture.lean`), on pictures 2 by 2 written here, and of a picture's round
 trip through a PNG file by the real binding. -/
 def pictureChecks (_ : Unit) : List Check :=
   let black := Editor.Color.rgb 0 0 0

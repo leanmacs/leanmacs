@@ -7,7 +7,6 @@ import Editor.Ffi.Marker
 import Editor.Ffi.Snapshot
 import Editor.Ffi.Window
 import Editor.File
-import Editor.InputScheme.Vim
 import Editor.Loop
 import Editor.Menu
 import Editor.ModeLine
@@ -25,8 +24,8 @@ import Std.Data.HashMap
 A test double of the core: the check that a theme, drawn, carries its
 palette's colours and matches a reference image. Whoever owns a theme runs
 it on that theme, as each runs the completeness check
-(`Themes.problems`, `Editor/Themes/Check.lean`): the core on the theme
-`default` (`ffi-test theme-pictures`, `FfiTest/Editor/Themes/Picture.lean`),
+(`Themes.problems`, `Editor/Theme/Check.lean`): the core on the theme
+`default` (`ffi-test theme-pictures`, `FfiTest/Editor/Theme/Picture.lean`),
 and a package that ships themes on its own, from its linked test
 (`docs/design/packages.md`, "A package's tests and the gate's steps over
 them"). A package's tests may import this module; its library may not
@@ -174,8 +173,9 @@ def offsetOf (haystack needle : String) : Option Nat :=
 
 /-- The status line of the theme pictures: the shipped mode line
 (`ModeLine.standard`) of the selected window on `source.lean`, opened as
-`source.lean` and not modified, of which the Vim scheme reports `VISUAL` in
-`Vim.stateFace "visual"`, with its cursor at the byte `head` of `text`, the
+`source.lean` and not modified, of which a scheme reports `VISUAL` in the
+badge face `mode-line.state.visual`, as the Vim scheme does in its visual
+state, with its cursor at the byte `head` of `text`, the
 fixture's own text, and `text`'s rows: what the editor sends of such a
 window. -/
 def themeStatus (text : String) (head : Nat) : Array Editor.StatusField :=
@@ -188,7 +188,7 @@ def themeStatus (text : String) (head : Nat) : Array Editor.StatusField :=
       file :=
         some { path := "source.lean", stamp := { seconds := 0, nanoseconds := 0, size := 0 } } }
   Editor.ModeLine.standard.fields
-    { buffer, reported := #[{ text := "VISUAL", face := Editor.Vim.stateFace "visual" }]
+    { buffer, reported := #[{ text := "VISUAL", face := ⟨"mode-line.state.visual"⟩ }]
       cursor := some ⟨rows.length - 1, ((rows.getLast?).getD "").length⟩, lines }
 
 /-- One picture of the theme-pictures scene, drawn through the real
@@ -280,7 +280,7 @@ def themePictures (font : ByteArray) (theme : Editor.Theme) (source : String) : 
   do
   let spaces := String.ofList (source.toList.map fun c => if c == '\n' then c else ' ')
   return {
-      scene := ← themePicture font theme source source (some (Editor.Vim.cursorFace "visual"))
+      scene := ← themePicture font theme source source (some ⟨"cursor.visual"⟩)
       unthemed := ← themePicture font theme source source (some unthemedFace)
       text := ← themePicture font theme source source none
       blank := ← themePicture font theme spaces source none }

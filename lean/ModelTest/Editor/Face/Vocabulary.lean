@@ -3,10 +3,8 @@ import Editor.Completion.Display
 import Editor.Face
 import Editor.Face.Vocabulary
 import Editor.InputScheme
-import Editor.InputScheme.Vim
-import Editor.InputScheme.Vim.Default
+import Editor.InputScheme.Test
 import Editor.Invocation
-import Editor.Keymap
 import Editor.Loop
 import Editor.ModeLine
 import Editor.Scene
@@ -14,9 +12,8 @@ import Editor.State
 import Editor.TabBar
 import Editor.Test.Completion
 import Editor.Test.Config
-import Editor.Test.Keys
 import Editor.Text
-import Editor.Themes.Check
+import Editor.Theme.Check
 import ModelTest.Check
 
 /-!
@@ -31,40 +28,45 @@ namespace ModelTest
 open Editor
 open Editor.Test
 
-/-- The faces the code on this branch draws, read from the values that draw
-them, not from their text: the cursors and status fields the shipped Vim
-scheme reports in each of its states, its cursor face of each default
-state, the cursor of a scheme that names no face, and the status fields the
-loop gives a modified buffer and a prompt with candidates listed, one of
-them chosen, and the faces of a status row and of a divider. The shipped
+/-- A scheme written here that draws its cursor in two faces of its own:
+the test scheme, except that it reports a cursor in `cursor.normal` at
+rest and in `cursor.insert` while keys are pending, and lists both, and
+`cursor` itself, which the check lists once. -/
+def twoCursors : InputScheme :=
+  { TestScheme.scheme with
+    report := fun state _ =>
+      {
+        cursor :=
+          { shape := .bar
+            face := if state.pending.isEmpty then ⟨"cursor.normal"⟩ else ⟨"cursor.insert"⟩ } }
+    cursorFaces := [⟨"cursor.normal"⟩, ⟨"cursor"⟩, ⟨"cursor.insert"⟩] }
+
+/-- The faces the core draws, read from the values that draw them, not from
+their text: the cursor of a scheme that names no face, the status fields
+the loop gives a modified buffer and a prompt with candidates listed, one
+of them chosen, and the faces of a status row and of a divider. The faces a
+scheme draws are held to the vocabulary by that scheme's tests (the Vim
+scheme's by `vimDefaultChecks`), and the shipped
 minibuffer display's faces are checked with it
 (`CompletionTest.minibufferDisplayChecks`, the `completion` package's). -/
 def drawnFaces : Array FaceName :=
-  let scheme := Vim.Default.scheme
-  let fed (text : String) : Vim.State := (scheme.feed (fun _ => []) ⟨0⟩ scheme.init (keys text)).1
-  let told : Vim.State := scheme.openMinibuffer ⟨0⟩ scheme.init
-  let reports := #[scheme.init, fed "i", fed "v", fed "V", told].map (scheme.report · ⟨0⟩)
-  let states := Vim.Default.states.initial :: Vim.Default.states.others
   let context : ModeLine.Context :=
     { loopContext with
-      reported := (reports[0]?.map (·.status)).getD #[], cursor := some ⟨4, 2⟩, lines := 10 }
+      cursor := some ⟨4, 2⟩, lines := 10 }
   let asked : Prompt :=
     { label := "Theme: ", view := ⟨1⟩, asker := ⟨0⟩, continuation := { command := "load-theme" }
       candidates :=
         { all := offered #["a", "b"], listedFor := some ""
           listed := (offered #["a", "b"]).map Completion.Listed.of, chosen := some 0 } }
-  reports.map (·.cursor.face) ++ reports.flatMap (·.status.map (·.face)) ++
-    states.toArray.map (Vim.cursorFace ·.name) ++
-    #[({} : InputScheme.Report).cursor.face] ++
-    (ModeLine.standard.fields context).map (·.face) ++
+  #[({} : InputScheme.Report).cursor.face] ++ (ModeLine.standard.fields context).map (·.face) ++
     (ModeLine.standard.fields { context with selected := false }).map (·.face) ++
     (Loop.promptStatus asked).map (·.face) ++
     #[ModeLine.activeFace, ModeLine.inactiveFace, Loop.dividerFace]
 
 /-- The checks of the face vocabulary (`Editor/Face/Vocabulary.lean`), of a
 theme written from a palette (`Palette.theme`, `Editor/Face.lean`) and of
-the completeness check (`Themes.problems`, `Editor/Themes/Check.lean`), on
-themes and palettes written here. -/
+the completeness check (`Themes.problems`, `Editor/Theme/Check.lean`), on
+themes, palettes and a scheme written here. -/
 def faceVocabularyChecks : List Check :=
   [{  name := "the vocabulary names each face once, and says what each is"
       run :=
@@ -76,7 +78,7 @@ def faceVocabularyChecks : List Check :=
                 (List.range later).all fun earlier => names[later]? != names[earlier]?) &&
             Face.vocabulary.all (!·.meaning.isEmpty)) },
     { name :=
-        "the vocabulary lists every face the shipped Vim scheme, the mode line, the loop and a scheme that names no cursor face draw, and the mode line's, the prompt's, the selected window's row and the divider among them"
+        "the vocabulary lists every face the mode line, the loop and a scheme that names no cursor face draw, and the mode line's, the prompt's, the selected window's row and the divider among them"
       run :=
         pure
           (drawnFaces.all Face.vocabularyNames.contains &&
@@ -84,12 +86,14 @@ def faceVocabularyChecks : List Check :=
                   ModeLine.inactiveFace, ModeLine.activeFace, Loop.promptFace, Loop.dividerFace].all
               drawnFaces.contains) },
     { name :=
-        "the vocabulary holds the badge face of every state of the shipped Vim scheme, read from the scheme, and no status. face"
+        "the vocabulary holds a badge face and a cursor face for each state a theme written from a palette colours, and no status. face"
       run :=
-        let states := Vim.Default.states.initial :: Vim.Default.states.others
         pure
-          (states.all (fun state => Face.vocabularyNames.contains (Vim.stateFace state.name)) &&
-            states.length == Theme.cursorStates.size &&
+          (!Theme.cursorStates.isEmpty &&
+            Theme.cursorStates.all
+              (fun state =>
+                Face.vocabularyNames.contains ⟨s!"mode-line.state.{state}"⟩ &&
+                  Face.cursorNames.contains ⟨s!"cursor.{state}"⟩) &&
             ["status.state", "status.name", "status.modified"].all fun name =>
               !Face.vocabularyNames.contains ⟨name⟩) },
     { name :=
@@ -125,10 +129,39 @@ def faceVocabularyChecks : List Check :=
             "review-unexamined", "mode-line.inactive", "block-header"]
         pure ((captures ++ ahead).all fun name => Face.vocabularyNames.contains ⟨name⟩) },
     { name :=
-        "the cursor faces the check holds are cursor and the shipped Vim scheme's face of each of its states"
+        "the vocabulary's cursor faces are faces of the vocabulary: cursor first, then every face named cursor. and a state, and no other"
       run :=
-        let states := Vim.Default.states.initial :: Vim.Default.states.others
-        pure (Themes.cursorFaces == #[⟨"cursor"⟩] ++ states.toArray.map (Vim.cursorFace ·.name)) },
+        let named :=
+          Face.vocabularyNames.filter fun face =>
+            face == ⟨"cursor"⟩ || face.name.startsWith "cursor."
+        pure
+          (Face.cursorNames.all Face.vocabularyNames.contains &&
+            Face.cursorNames[0]? == some ⟨"cursor"⟩ &&
+            Face.cursorNames.size > 1 &&
+            Face.cursorNames == named) },
+    { name :=
+        "the check's cursor faces of a scheme are cursor and the faces the scheme lists, cursor once, and of a scheme that lists none cursor alone"
+      run :=
+        pure
+          (Themes.cursorFaces twoCursors == #[⟨"cursor"⟩, ⟨"cursor.normal"⟩, ⟨"cursor.insert"⟩] &&
+            Themes.cursorFaces TestScheme.scheme == #[⟨"cursor"⟩]) },
+    { name :=
+        "a theme is held to the vocabulary's cursor faces, or to the ones the caller names: one that defines cursor alone has no cursor problem over a scheme that lists none, and lacks each face the two-cursor scheme draws"
+      run :=
+        let bare :=
+          Theme.builtin.filter fun definition => !(definition.name.name.startsWith "cursor.")
+        -- What the check says of the cursors: the faces `bare` leaves out
+        -- are faces of the vocabulary, so each is also undefined.
+        let ofCursors (problems : Array Themes.Problem) :=
+          problems.filter fun problem =>
+            match problem with
+            | .undefined _ => false
+            | _ => true
+        pure
+          (ofCursors (Themes.problems bare (Themes.cursorFaces TestScheme.scheme)) == #[] &&
+            ofCursors (Themes.problems bare (Themes.cursorFaces twoCursors)) ==
+              #[.noCursor ⟨"cursor.normal"⟩, .noCursor ⟨"cursor.insert"⟩] &&
+            (Themes.problems bare).contains (.noCursor ⟨"cursor.visual"⟩)) },
     { name :=
         "the compilation faces are in the vocabulary, each with a meaning, and the built-in theme defines each once, bold, in its palette's red, orange and green"
       run :=
@@ -155,13 +188,13 @@ def faceVocabularyChecks : List Check :=
             [Themes.Problem.noPaper, .noInk].all
               (Themes.problems (without ⟨"default"⟩)).contains) },
     { name :=
-        "a theme that leaves the cursor face of a shipped Vim state undefined has no such cursor, for each of them"
+        "a theme that leaves a cursor face of the vocabulary undefined has no such cursor, for each of them"
       run :=
         pure
-          (Themes.cursorFaces.all fun face =>
+          (Face.cursorNames.all fun face =>
             (Themes.problems (Theme.builtin.filter (·.name != face))).contains (.noCursor face)) },
     { name :=
-        "a cursor whose foreground is its own background has that problem and no other, set so or with no foreground set over a background that is the ink, for each shipped cursor face"
+        "a cursor whose foreground is its own background has that problem and no other, set so or with no foreground set over a background that is the ink, for each cursor face of the vocabulary"
       run :=
         let theme := Theme.builtin
         let paper := (theme.merged ⟨"default"⟩).background
@@ -169,7 +202,7 @@ def faceVocabularyChecks : List Check :=
         let odd := Color.rgb 1 2 3
         pure
           (some odd != paper && ink != paper &&
-            Themes.cursorFaces.all fun face =>
+            Face.cursorNames.all fun face =>
               Themes.problems
                     (theme.push
                       { name := face,
@@ -180,7 +213,7 @@ def faceVocabularyChecks : List Check :=
                       { name := face, face := { background := ink } }) ==
                   #[.cursorInkOnItself face]) },
     { name :=
-        "a cursor whose background is the paper has that problem: set so, with no background set, and when a later default moves the paper to the cursors' background, for each shipped cursor face"
+        "a cursor whose background is the paper has that problem: set so, with no background set, and when a later default moves the paper to the cursors' background, for each cursor face of the vocabulary"
       run :=
         let theme := Theme.builtin
         let paper := (theme.merged ⟨"default"⟩).background
@@ -189,7 +222,7 @@ def faceVocabularyChecks : List Check :=
         let moved := theme.push { name := ⟨"default"⟩, face := { background := cursors } }
         pure
           (some odd != paper && cursors.isSome &&
-            Themes.cursorFaces.all fun face =>
+            Face.cursorNames.all fun face =>
               (Themes.problems
                       (theme.push { name := face, face := { background := paper } })).contains
                   (.cursorOnPaper face) &&

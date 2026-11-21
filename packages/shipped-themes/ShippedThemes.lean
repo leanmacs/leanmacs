@@ -32,7 +32,7 @@ module of the core, under `lean/`.
 A new shipped theme is a palette's theme (`Palette.theme`,
 `Editor/Face.lean`), plus that theme's own definitions after it, appended to
 `themes`, and must pass the core's completeness check (`Themes.problems`,
-`Editor/Themes/Check.lean`), which `ShippedThemesTest.shippedThemesChecks`
+`Editor/Theme/Check.lean`), which `ShippedThemesTest.shippedThemesChecks`
 runs on every theme in the list; its picture gets a reference image
 (`tests/render/README.md`).
 

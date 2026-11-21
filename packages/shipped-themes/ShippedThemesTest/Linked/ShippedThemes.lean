@@ -1,5 +1,5 @@
 import Editor.Face
-import Editor.Themes.Picture
+import Editor.Theme.Picture
 import ShippedThemes.FairyFloss
 import ShippedThemes.Solarized
 
@@ -9,7 +9,7 @@ import ShippedThemes.Solarized
 The tests of the shipped palettes that need the Rust library: their
 pictures. `themePictures` hands the core's theme picture check
 (`Themes.Picture.themePicturesScenario`, the core's
-`Editor/Themes/Picture.lean`, a test double a package's tests may import)
+`Editor/Theme/Picture.lean`, a test double a package's tests may import)
 the three themes with their roles (`shippedRoles`), so each palette's
 picture of the fixture `tests/render/source.lean`, drawn by the CPU
 renderer through the display's real binding, is held to its reference

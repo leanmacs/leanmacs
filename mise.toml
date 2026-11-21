@@ -1108,7 +1108,7 @@ run = [
   # move asked through the binding must land on the frame's next row.
   ".lake/build/bin/ffi-test display ../tests/display/frame.expected",
   # The picture of the theme `default` (the core's theme picture check,
-  # lean/Editor/Themes/Picture.lean): the fixture file tests/render/themes/
+  # lean/Editor/Theme/Picture.lean): the fixture file tests/render/themes/
   # source.lean, published from Lean through the display's real binding in
   # the built-in theme, over a display of the one fixture font given here,
   # and drawn by the CPU renderer, must match

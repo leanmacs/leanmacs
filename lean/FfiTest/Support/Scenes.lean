@@ -11,14 +11,14 @@ import Editor.Menu
 import Editor.Scene
 import Editor.Text
 import Editor.Text.Real
-import Editor.Themes.Picture
+import Editor.Theme.Picture
 
 /-!
 # FFI tests: support: Scenes
 
 Scenes published to a display: the scene fixture with its menu, and, by the
 names they had here, the marker in a document and the range marker of the
-theme picture check (`Editor/Themes/Picture.lean`). Shared by several test modules; it holds no checks
+theme picture check (`Editor/Theme/Picture.lean`). Shared by several test modules; it holds no checks
 of its own.
 -/
 

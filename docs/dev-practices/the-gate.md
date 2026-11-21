@@ -421,7 +421,7 @@ needs none. What it checks:
   (`tests/reuse.rs`) are the only two of that crate that run the real
   shaper, for the wiring alone.
 - **The themes' pictures.** The theme picture check
-  (`lean/Editor/Themes/Picture.lean`), in `mise run ffi-test`, publishes a
+  (`lean/Editor/Theme/Picture.lean`), in `mise run ffi-test`, publishes a
   fixture file from Lean through the display's real binding, in each
   theme it is handed, over a display of one fixture font, and the CPU
   renderer draws it. No channel of any pixel may be further than 2 of 255

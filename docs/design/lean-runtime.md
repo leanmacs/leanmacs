@@ -2332,7 +2332,7 @@ text requests. Config sees it through
 | The command `load-theme`, which switches the theme in force with no reload, with what it says in the echo area | `lean/Editor/Themes.lean` |
 | The package `themes`: the command that loads a theme and the theme `default` | `lean/Editor/Themes/Compiled.lean` |
 | The package `shipped-themes`: the palettes that ship, a default package outside the core | `packages/shipped-themes/ShippedThemes.lean` |
-| The theme picture check, a test double: a theme drawn, held to its palette's colours and to a reference image | `lean/Editor/Themes/Picture.lean` |
+| The theme picture check, a test double: a theme drawn, held to its palette's colours and to a reference image | `lean/Editor/Theme/Picture.lean` |
 | The command prompt, `execute-command`, which lists every registered command's name and runs the one accepted, with its completion source `commands` and what it says in the echo area | `lean/Editor/ExecuteCommand.lean` |
 | The package `execute-command`: the command prompt and its source | `lean/Editor/ExecuteCommand/Compiled.lean` |
 | The binding search, `search-bindings`, which lists every key binding the input scheme reaches in the asking view and runs the one accepted as its key would, with its completion source `bindings` and what it says in the echo area | `lean/Editor/BindingSearch.lean` |

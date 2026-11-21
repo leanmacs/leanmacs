@@ -1712,7 +1712,7 @@ and hinting, with no render session, thread or clock (`Display.picture`);
 and a picture read from and written to a PNG file (`Picture.ofPng`,
 `Picture.toPng`, over `Image::from_png` and `Image::to_png` in
 `editor-render-wgpu`, which keeps `png` behind it). The theme picture
-check (`lean/Editor/Themes/Picture.lean`, `themePicturesScenario`)
+check (`lean/Editor/Theme/Picture.lean`, `themePicturesScenario`)
 publishes a fixture file through the display's real binding in each theme
 it is handed and compares the picture with a reference image. It is a
 test double of the core, run by whoever owns a theme: `ffi-test
@@ -1724,7 +1724,7 @@ theme-pictures` runs it on the built-in theme
 have no font bytes, so it draws no text.
 
 **The completeness check** (`Themes.problems`,
-`lean/Editor/Themes/Check.lean`) holds that a theme defines every
+`lean/Editor/Theme/Check.lean`) holds that a theme defines every
 vocabulary face, that its `default` states a paper and an ink (its merged
 background and foreground; the check takes none of layout's base colours),
 and that `cursor` and each shipped Vim state's cursor face are defined,

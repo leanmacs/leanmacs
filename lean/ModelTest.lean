@@ -610,9 +610,12 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   them, with a registered name the step hands the name back, and a name
   nobody registered, or a prompt already open, is said in the echo area;
 - `faceVocabularyChecks`: the face vocabulary (`Editor/Face/Vocabulary.lean`)
-  names each face once with its meaning, and lists every face the shipped
-  Vim scheme and the loop draw, layout's four and the faces declared
-  ahead; the completeness check (`Editor/Themes/Check.lean`) finds each
+  names each face once with its meaning, marks its cursor faces, and
+  lists every face the mode line and the loop draw, layout's four and the
+  faces declared ahead (the faces the Vim scheme draws are held to it by
+  `vimDefaultChecks`); the completeness check (`Editor/Theme/Check.lean`)
+  holds a theme to the vocabulary's cursor faces or to the ones a scheme
+  written there lists, and finds each
   problem in a theme spoiled from the built-in one, a cursor colour that
   falls through to the default face's among them; one palette mapping over
   two palettes gives two complete themes; and the built-in theme is
@@ -902,7 +905,8 @@ need no model and no fake of a collaborator:
 - `schemeContractChecks`: the scheme contract
   (`Editor/InputScheme/Contract.lean`) holds of the test scheme, and
   reports schemes written here that each break one property of it, `eager`
-  among them, which emits on a strict prefix;
+  among them, which emits on a strict prefix, and `miscoloured`, which
+  draws a cursor in a face it does not list;
 - `continuationsContractChecks`: the contract's property of what can
   follow a pending prefix reports a scheme that lists a prefix key its walk
   does not continue, and one that lists keys at rest;
@@ -943,7 +947,10 @@ with no model:
 - `vimDefaultChecks`: the default states and bindings
   (`Editor/InputScheme/Vim/Default.lean`), observed through the grammar:
   what each default key parses to, and what the scheme reports of the view
-  after it. They restate no table and name no vocabulary or command name;
+  after it. They restate no table and name no vocabulary or command name.
+  The scheme lists the cursor face of each of its states, each is a cursor
+  face of the face vocabulary, which every shipped theme is held to, and
+  every face it reports, with each state's badge, is in that vocabulary;
 - `vimDefaultHintChecks`: over every default state, every key the scheme
   lists after a keymap prefix is what `Vim.parse` and the walk make of it,
   and every chord of the defaults it leaves out walks to nothing;

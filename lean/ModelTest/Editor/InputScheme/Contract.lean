@@ -222,6 +222,15 @@ def menuStartled : InputScheme :=
     report := fun state _ => { session := state.2 }
     invoked := fun _ state invocation => ((state.1, true), invocation) }
 
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that it draws its cursor in `cursor.odd` while keys are pending, a
+face it does not list. -/
+def miscoloured : InputScheme :=
+  { TestScheme.scheme with
+    report := fun state _ =>
+      if state.pending.isEmpty then {}
+      else { cursor := { shape := .bar, face := ⟨"cursor.odd"⟩ } } }
+
 /-- The subject the scheme contract is run on: `scheme` over the scheme
 checks' keymaps for view 0, the sequences those bind, a key none of them
 goes on with, and that same key as the one that prints and that nothing
@@ -397,7 +406,15 @@ def schemeContractChecks : List Check :=
       run :=
         pure
           (failsOnly (subjectOf meddling schemeMaps) [SchemeContract.invokedKeepsUnknown] &&
-            failsOnly (subjectOf menuStartled schemeMaps) [SchemeContract.invokedKeepsUnknown]) }]
+            failsOnly (subjectOf menuStartled schemeMaps) [SchemeContract.invokedKeepsUnknown]) },
+    { name :=
+        "the scheme contract reports a scheme that draws a cursor in a face it does not list, for that property and the quiet key's alone, and keeps it once the scheme lists the face"
+      run :=
+        let listing : InputScheme := { miscoloured with cursorFaces := [⟨"cursor.odd"⟩] }
+        pure
+          (failsOnly (subjectOf miscoloured schemeMaps)
+              [SchemeContract.quietKeyKeepsReport, SchemeContract.cursorFacesReported] &&
+            failsOnly (subjectOf listing schemeMaps) [SchemeContract.quietKeyKeepsReport]) }]
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that after a pending prefix it also lists `z`, which the walk does
