@@ -1033,6 +1033,48 @@ def heldAtCommands {β σ : Type} (stage : Stage β σ) (hold : BaseIO Unit)
         hold
       stage.collaborators.emit line }
 
+/-- `collaborators`, with the editor thread held (`hold`) inside each line of
+the host's output that `holds` accepts. -/
+def heldAtLine {β σ : Type} {scheme : InputScheme}
+    (collaborators : Headless.Collaborators β σ scheme) (holds : String → Bool)
+    (hold : BaseIO Unit) : Headless.Collaborators β σ scheme :=
+  { collaborators with
+    emit := fun line => do
+      if holds line then
+        hold
+      collaborators.emit line }
+
+/-- The script of a run that reaches its end with a job in its wait: a reload
+of `jobsConfig`, settled with a patience of its own, and a spawn of `count`. -/
+def jobScript : Array Headless.Line :=
+  #[⟨1, .request .reload⟩, ⟨2, .settleWithin patience⟩, ⟨3, .request (.spawn "count")⟩]
+
+/-- `stage`'s collaborators, for a run of `jobScript` that reaches its end:
+the loop's withdrawal of the job's wait, as the loop ends, is held (`hold`)
+and then noted in `withdrew`, and each dispose pushes onto `order` whether
+the withdrawal came first. The spawn's line waits for the job to be in its
+wait, so there is a wait to withdraw when the loop ends. -/
+def withdrawingHeld {β σ : Type} (stage : Stage β σ) (hold : BaseIO Unit) (withdrew : IO.Ref Bool)
+    (order : IO.Ref (Array Bool)) : Headless.Collaborators β σ TestScheme.scheme :=
+  let staged := stage.collaborators
+  let timers := staged.services.timers
+  { staged with
+    emit := fun line => do
+      if line == "spawn count: job 1" then
+        discard <| eventually (return (← stage.clock.waiting) == 1)
+      staged.emit line
+    services :=
+      { staged.services with
+        timers :=
+          { timers with
+            cancel := fun id => do
+              hold
+              timers.cancel id
+              withdrew.set true } }
+    dispose := do
+      order.modify (·.push (← withdrew.get))
+      staged.dispose }
+
 /-- The checks of `Headless.withHost`, the bracket a host lives in
 (`Editor/Headless.lean`), on the real queue and the real text binding: it
 returns only once the host's loop has ended, whether its body returned or
@@ -1269,6 +1311,7 @@ def jobChecks (context : Context) : List Check :=
             let opener ←
               IO.asTask (prio := .dedicated) do
                   if ← eventually gate.holding.get then
+                    -- real time on purpose: the wait's patience under test; phase 6
                     IO.sleep 400
                   gate.open
             try
@@ -1295,6 +1338,7 @@ def jobChecks (context : Context) : List Check :=
           -- The editor thread is held inside the spawn's line for twice the
           -- join's patience: the join's marker waits behind it.
           let failure ←
+            -- real time on purpose: the wait's patience under test; phase 6
             holdingLine stage.collaborators (· == "spawn count: job 1") 400 fun collaborators =>
                 Headless.run collaborators
                   #[⟨1, .request .reload⟩, ⟨2, .settleWithin patience⟩,
@@ -1983,6 +2027,20 @@ wait 2" with
             (reloading.splitOn "line 12").length == 2 &&
             (unanswered.splitOn "line 12").length == 2 &&
             (atEnd.splitOn "line").length == 1) },
+    { name :=
+        "a run that gave up on a hung loop is described differently from every other failure, with its guard and its grace"
+      run :=
+        let line := some 3
+        let hung := Headless.Failure.describe 30000 (.hung 30000 5000)
+        let others :=
+          [Headless.Failure.reloading line, .reloading none, .working line, .working none,
+                .unanswered line, .unanswered none, .stalled 3 5, .noClock 3, .notRestarted 3,
+                .waited 90000 (.unanswered none)].map
+            (Headless.Failure.describe 30000)
+        saw
+          (!others.contains hung && (hung.splitOn "30000 ms").length == 2 &&
+            (hung.splitOn "5000 ms").length == 2)
+          s!"hung={hung}" },
     { name := "a wait that had its own patience is described with that patience, not the run's"
       run :=
         let waited := Headless.Failure.describe 30000 (.waited 90000 (.reloading (some 9)))
@@ -2054,12 +2112,16 @@ wait 2" with
         "a run whose advance stalls while the editor thread is inside an event disposes only after its loop has ended"
       run := do
         let stage ← Stage.new context context.elaborator (memorySource [])
-        -- The editor thread is held inside the commands line for longer than
-        -- the stall's patience and the halt after it together.
+        -- The editor thread is held inside the commands line until the
+        -- run's bracket says that its loop has not ended at once
+        -- (`guard := 0`): the stall comes first, and the bracket's end
+        -- waits for the line, every run.
         let (failure, _) ←
-          holdingLine stage.collaborators (·.startsWith "commands:") 1000 fun collaborators =>
-              Headless.runAndDispose collaborators #[⟨1, .request .show⟩, ⟨2, .advance 5⟩] 200
-                (answer := patience)
+          holdingUntil fun hold letGo =>
+              Headless.runAndDispose
+                (heldAtLine stage.collaborators (·.startsWith "commands:") hold)
+                #[⟨1, .request .show⟩, ⟨2, .advance 5⟩] 200 (answer := patience) (guard := 0)
+                (hung := fun _ => letGo)
         let disposed ← stage.disposed.get
         let output ← stage.output.get
         saw
@@ -2070,20 +2132,21 @@ wait 2" with
         "a run whose join runs out while the editor thread is inside an event disposes only after its loop has ended"
       run := do
         let stage ← Stage.new context context.elaborator (memorySource [])
-        -- The editor thread is held inside the commands line for a second
-        -- longer than its answer to the join may take: the join runs out
-        -- unanswered with the line pending, and the halt after it waits
-        -- for the loop to print the line, reach the join's marker and stop.
-        let held := (patience + 1000).toUInt32
+        -- The editor thread is held inside the commands line until the
+        -- run's bracket says that its loop has not ended at once: the
+        -- join's answer, a fifth of a second, runs out unanswered with the
+        -- line pending, the deadline under test, and the bracket's end
+        -- waits for the loop to print the line and stop.
         let script : Array Headless.Line := #[⟨1, .request .show⟩, ⟨2, .join⟩]
         let (failure, _) ←
-          holdingLine stage.collaborators (·.startsWith "commands:") held fun collaborators =>
-              Headless.runAndDispose collaborators script 200 (answer := patience)
+          holdingUntil fun hold letGo =>
+              Headless.runAndDispose
+                (heldAtLine stage.collaborators (·.startsWith "commands:") hold) script patience
+                (answer := 200) (guard := 0) (hung := fun _ => letGo)
         let disposed ← stage.disposed.get
         let output ← stage.output.get
         saw
-            (failure == some (.waited patience (.unanswered (some 2))) &&
-              disposed == #[output.size] &&
+            (failure == some (.waited 200 (.unanswered (some 2))) && disposed == #[output.size] &&
               output.any (·.startsWith "commands:"))
             s!"failure={repr failure} disposed={disposed} output={output}" },
     { name :=
@@ -2093,39 +2156,17 @@ wait 2" with
           writeConfig directory jobsConfig
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           -- The script leaves its job in its wait, and the loop withdraws
-          -- that wait as it ends, on its own thread: held there for longer
-          -- than the run's patience, the loop ends that long after the
-          -- script's end stopped it. A held line could not show this: the
-          -- wait at the script's end waits for the editor thread's answer,
-          -- so a line held before it is printed before the stop. The
-          -- spawn's line waits for the job to be in its wait, so there is a
-          -- wait to withdraw when the loop ends.
-          let staged := stage.collaborators
-          let timers := staged.services.timers
+          -- that wait as it ends, on its own thread: held there until the
+          -- run's bracket says that its loop has not ended at once. A held
+          -- line could not show this: the wait at the script's end waits
+          -- for the editor thread's answer, so a line held before it is
+          -- printed before the stop.
           let withdrew ← IO.mkRef false
           let order ← IO.mkRef #[]
           let (failure, _) ←
-            holdingOnce 1000 fun hold =>
-                Headless.runAndDispose
-                  { staged with
-                    emit := fun line => do
-                      if line == "spawn count: job 1" then
-                        discard <| eventually (return (← stage.clock.waiting) == 1)
-                      staged.emit line
-                    services :=
-                      { staged.services with
-                        timers :=
-                          { timers with
-                            cancel := fun id => do
-                              hold
-                              timers.cancel id
-                              withdrew.set true } }
-                    dispose := do
-                      order.modify (·.push (← withdrew.get))
-                      staged.dispose }
-                  #[⟨1, .request .reload⟩, ⟨2, .settleWithin patience⟩,
-                    ⟨3, .request (.spawn "count")⟩]
-                  200 (answer := patience)
+            holdingUntil fun hold letGo =>
+                Headless.runAndDispose (withdrawingHeld stage hold withdrew order) jobScript 200
+                  (answer := patience) (guard := 0) (hung := fun _ => letGo)
           let withdrawn ← stage.clock.withdrawn
           let disposed ← stage.disposed.get
           let output ← stage.output.get
@@ -2135,6 +2176,67 @@ wait 2" with
                 disposed == #[output.size] &&
                 output == #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"])
               s!"failure={repr failure} withdrawn={withdrawn} withdrew before dispose={order} disposed={disposed} output={output}" },
+    { name :=
+        "a headless run whose loop is held past its guard and its grace says the hang once and fails as hung, which exits 1, and hands the loop it left to `abandoned`"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeConfig directory jobsConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- Held in the withdrawal as the loop ends, and let go only by the
+          -- check, after the run: a grace of 0 runs out on a held loop
+          -- every time. The exit status is the failure's: `main` exits 1
+          -- when there is one.
+          let withdrew ← IO.mkRef false
+          let order ← IO.mkRef #[]
+          let said ← IO.mkRef (#[] : Array String)
+          let left ← IO.mkRef (none : Option (Task (Except IO.Error Unit)))
+          let failure ←
+            holdingUntil fun hold letGo => do
+                let (failure, _) ←
+                  Headless.runAndDispose (withdrawingHeld stage hold withdrew order) jobScript 200
+                      (answer := patience) (guard := 0) (grace := some 0) (hung := fun line =>
+                      said.modify (·.push line)) (abandoned := fun task => left.set (some task))
+                letGo
+                return failure
+          -- The loop the run left has ended before the check does.
+          let abandoned := (← left.get).isSome
+          if let some task← left.get then
+            discard <| IO.wait task
+          let said ← said.get
+          let withdrawn ← stage.clock.withdrawn
+          let described := Headless.Failure.describe Headless.settlePatience (.hung 0 0)
+          saw
+              (failure == some (.hung 0 0) && said.size == 1 &&
+                said.all (·.startsWith "editor: a hang:") &&
+                abandoned &&
+                (described.splitOn "giving up").length == 2 &&
+                withdrawn.size == 1)
+              s!"failure={repr failure} said={said} abandoned={abandoned} described={described} withdrawn={withdrawn}" },
+    { name :=
+        "a headless run whose loop is slow but ends within its grace succeeds, after saying the hang once"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeConfig directory jobsConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- Held in the withdrawal as the loop ends, and let go by the hang
+          -- the run says: the grace, a guard against a hang, is not reached.
+          let withdrew ← IO.mkRef false
+          let order ← IO.mkRef #[]
+          let said ← IO.mkRef (#[] : Array String)
+          let left ← IO.mkRef (none : Option (Task (Except IO.Error Unit)))
+          let (failure, _) ←
+            holdingUntil fun hold letGo =>
+                Headless.runAndDispose (withdrawingHeld stage hold withdrew order) jobScript 200
+                  (answer := patience) (guard := 0) (grace := some patience) (hung := fun line => do
+                  said.modify (·.push line)
+                  letGo) (abandoned := fun task => left.set (some task))
+          let abandoned := (← left.get).isSome
+          if let some task← left.get then
+            discard <| IO.wait task
+          let said ← said.get
+          let order ← order.get
+          saw (failure.isNone && said.size == 1 && order == #[true] && !abandoned)
+              s!"failure={repr failure} said={said} withdrew before dispose={order} abandoned={abandoned}" },
     { name :=
         "the executable's hosts dispose of the directory of the config files' module data: their dispose removes it once it was made, through the module files, and removes nothing before"
       run :=

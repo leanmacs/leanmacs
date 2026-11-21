@@ -32,7 +32,16 @@ the config session.
 
 ## The loop
 
-`start` runs the loop on a dedicated task: the editor thread. It pulls the
+A host is had only inside its bracket, `withHost`, which starts the loop on a
+dedicated task, the editor thread, runs its body against the host, and
+returns only once the loop has ended, whether the body returned or threw: a
+loop still running is asked to stop, and its task is waited for with no
+deadline. A loop not ended `guard` milliseconds after it was asked is said
+as a hang, once (`editor: a hang: …`), and still waited for: the guard
+reports a hang, it never ends the wait. `Host`'s constructor and `start` are
+private, so nothing outside this module makes a host, and none outlives
+its loop. `withHostEnding` hands the loop's end back instead of throwing
+its error, for the window mode, whose exit status says it. The loop pulls the
 editor queue and handles one event to its end before the next. It owns the
 config half of the editor's state (`Config.State`) and the table of texts
 (`RealTexts`), feeds the reload reducer (`Config.step`) and performs its
@@ -418,10 +427,11 @@ events: hosts in one process follow one another and never overlap. A host
 posts under source ids it is given, and its loop ignores an event from a
 Lean source it was not given, so a late event from an earlier host is
 dropped. `stop` ends this loop only; quitting the queues is for the process
-(`Ffi.quit`). `run` and `runAndDispose` return only once their host's loop
-has ended, or their `answer` ran out waiting for it, a wait's own patience
-bounding only what that wait is for: so the next host does not start beside
-a loop that is still taking events.
+(`Ffi.quit`). No host exists outside its bracket (`withHost`), and `run` and
+`runAndDispose` run on it, so they return only once their host's loop has
+ended: the next host does not start beside a loop that is still taking
+events. Only the headless mode bounds that wait (`main`, "The driver, and
+the command line").
 
 ## What it prints
 
@@ -556,7 +566,8 @@ library's timers.
 A host is driven from another thread: `Host.send` posts a request,
 `Host.settle` waits, with a bound, until the editor thread has handled
 everything sent so far and no reload is running, `Host.join` waits the same
-way until no job is running, and `Host.stop` ends the loop. Requests are
+way until no job is running, and the bracket the host lives in (`withHost`)
+ends the loop. Requests are
 handled in the order they were sent, and a request sent while a reload runs
 is handled before that reload is installed: settle first to see its effect.
 
@@ -596,17 +607,18 @@ say what a wait came to (`Wait`): settled, or run out with a reload or a job
 still running, or run out before the editor thread had handled everything
 sent to it, or ended, because the loop has. `run` returns a `Failure` for a
 wait that ran out, with the line of the `settle` or the `join`, or with no
-line for the wait at the end of the script and for a loop that did not stop.
+line for the wait at the end of the script.
 
 A run has two patiences (`runFrom`). Its `patience` bounds what a wait is
 for: a reload or a job ending, an `advance`'s wait coming due. Its `answer`
-bounds what should happen at once: the editor thread's answer to a wait,
-and the loop's end when the run stops it. The headless mode gives both the
-same value (`settlePatience`), and then every wait is one window of it, as a
-`settle <milliseconds>` always is of its milliseconds. A check gives a short
-`patience` to the one wait it means to run out and a long `answer`, so that a
-loaded machine neither turns that wait's failure into another one nor
-leaves the loop running after `run` returns. A failure is `waited` the
+bounds what should happen at once: the editor thread's answer to a wait.
+The headless mode gives both the same value (`settlePatience`), and then
+every wait is one window of it, as a `settle <milliseconds>` always is of
+its milliseconds. A check gives a short `patience` to the one wait it means
+to run out and a long `answer`, so that a loaded machine does not turn that
+wait's failure into another one. The loop's end is not a patience: the run
+returns once the loop has ended, and its `guard` (`answer` unless it is
+given) only says a hang. A failure is `waited` the
 patience that ran out when that is not the run's `patience`
 (`Wait.failureIn`), since the run's failures are described with it.
 
@@ -648,11 +660,19 @@ with the packages `main` is handed, the real elaborator, a directory as the
 source, stdout as the output, and the library's timer service and file
 service for the jobs, then the quit and the explicit exit. Before the loop starts it warms the pool (`Editor/Job/Pool.lean`) and
 starts the completion pump on a dedicated task (`Editor/Job/Real.lean`),
-which the quit ends. Its exit status is 0 when the script ran to its end, or
-a command quit the editor before it, and
+which the quit ends. Once the script has ended or failed, it waits for its
+loop to end. Only the headless mode bounds that wait, so that CI and
+fixtures never hang: a loop not ended 30 seconds (`settlePatience`) after
+the script stopped it is said on stderr once, `editor: a hang: …`, and the
+run waits up to `hangGrace` (5 seconds) more. A loop that ends within the
+grace leaves the run as it was; one that does not fails it as `Failure.hung`,
+said as `editor: the editor loop had not ended …; giving up`. Its exit
+status is 0 when the script ran to its end, or a command quit the editor
+before it, and
 1 when it could not, and then it says why on stderr: the script cannot be
 read, a wait ran out (after 30 seconds) with a reload or a job still
-running, or the editor thread did not answer. A rejected reload is something
+running, the editor thread did not answer, or the run gave up on a loop
+that did not end. A rejected reload is something
 to print, not a failure, and so is a job that fails. A command line it does
 not take is status 2, with its usage on stderr: two paths outside a bundle
 among them, which say first that there is no toolchain.
@@ -669,10 +689,17 @@ nothing draws.
 
 `config-test` drives a host in-process on the real queue, the real text
 binding and the real elaborator, and compares the lines it emits
-(`ConfigTest.hostChecks`, `ConfigTest.threadChecks`), checks jobs on a fake
+(`ConfigTest.hostChecks`, `ConfigTest.threadChecks`), checks the bracket a
+host lives in (`ConfigTest.bracketChecks`: it returns only once the loop has
+ended, a loop held inside an event being waited for past the guard, which
+says a hang once and is what lets the hold go), checks jobs on a fake
 clock it moves, with the thread each line was emitted from
 (`ConfigTest.jobChecks`), and checks the script reader and the driver
-(`ConfigTest.scriptChecks`). Two of those are the loop's refusals: a scene
+(`ConfigTest.scriptChecks`), among them that a run disposes only once its
+loop has ended, when the loop is held inside an event or in the end of a
+wait, and that the headless mode's run gives up, as `hung`, on a loop held
+past its guard and its grace, and succeeds on one that ends within the
+grace. Two of those are the loop's refusals: a scene
 whose echo is the refusal once a command has released the focused buffer's
 text, and `Running.attempt` on a program that is refused, which no script
 can make the loop run. `ConfigTest.hostChecks` also start a host handed no
@@ -2418,8 +2445,10 @@ def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β
   -- Nor will anything take a key off the queue, so none is to raise the flag.
   discard <| Event.setInterruptKey none
 
-/-- A running host, as its driver holds it. -/
-structure Host where
+/-- A running host, as its driver holds it. Only its bracket makes one
+(`withHost`), so no host outlives its loop: its constructor and `start` are
+private to this module. Its fields are read inside the bracket. -/
+structure Host where private mk ::
   /-- The Lean source id the driver's events are posted under. -/
   requests : UInt64
   /-- How many markers the driver has posted. -/
@@ -2443,11 +2472,12 @@ def Collaborators.hosting {β σ : Type} {scheme : InputScheme}
             loop.state.hostedBy collaborators.workingDirectory collaborators.home
               collaborators.stateDirectory collaborators.launch collaborators.packageSet } }
 
-/-- Starts a host: its loop runs on a dedicated task until `stop` or `halt`.
-The loop it makes, when it is first needed, has the collaborators' working
-directory, home directory and state directory in its state
-(`Collaborators.hosting`). -/
-def start {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme) :
+/-- Starts a host: its loop runs on a dedicated task until it is asked to stop
+or it ends by itself. The loop it makes, when it is first needed, has the
+collaborators' working directory, home directory and state directory in its
+state (`Collaborators.hosting`). Private: a host is had only inside its
+bracket (`withHost`), which ends the loop. -/
+private def start {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme) :
     IO Host := do
   let collaborators := collaborators.hosting
   let progress ← IO.mkRef {}
@@ -2592,7 +2622,8 @@ def settle (host : Host) (patience : Nat) (answer : Nat := patience) : IO Bool :
 
 /-- Ends the loop at once, whether a reload is running or not; `false` if it
 has not ended after `patience` milliseconds. Throws the error the loop ended
-with, if it ended with one. -/
+with, if it ended with one. Inside a host's bracket (`withHost`), which
+ends the loop whatever this answered. -/
 def halt (host : Host) (patience : Nat) : IO Bool := do
   unless ← IO.hasFinished host.thread do
     host.post .stop
@@ -2603,7 +2634,8 @@ def halt (host : Host) (patience : Nat) : IO Bool := do
 
 /-- Ends the loop once no reload is running; `false` if it did not settle or
 did not end, each within `patience` milliseconds. A loop that had ended by
-itself, because a command quit the editor, has nothing to settle. -/
+itself, because a command quit the editor, has nothing to settle. Inside a
+host's bracket (`withHost`), which ends the loop whatever this answered. -/
 def stop (host : Host) (patience : Nat) : IO Bool := do
   let wait ← host.await patience
   let ended ← host.halt patience
@@ -2627,14 +2659,22 @@ milliseconds after it was asked to stop: a hang, once, never a result. -/
 def hangLine (guard : Nat) : String :=
   s!"editor: a hang: the editor loop had not ended {guard} ms after it was asked to stop; waiting for it"
 
-/-- Asks `host`'s loop to stop, unless it has ended, and waits for its task
-with no deadline; says what the loop ended with. A loop not ended `guard`
-milliseconds after it was asked is said through `hung` as a hang
-(`hangLine`), once, and still waited for. The stop is posted only when the
-queue takes it: a queue already quit (`Ffi.quit`) ends the loop with its
-quit event. -/
-private def endLoop (host : Host) (guard : Nat) (hung : String → IO Unit) :
-    IO (Except IO.Error Unit) := do
+/-- How long the headless mode waits, after it has said a hang, for its loop
+to end before it gives up and exits 1, in milliseconds: a guard so that CI
+and fixtures never hang, never a result. -/
+def hangGrace : Nat :=
+  5000
+
+/-- Asks `host`'s loop to stop, unless it has ended, and waits for its task;
+says what the loop ended with. A loop not ended `guard` milliseconds after
+it was asked is said through `hung` as a hang (`hangLine`), once, and still
+waited for: with no deadline when `grace` is `none`, and otherwise for at
+most `grace` milliseconds more, after which the loop's task is handed to
+`abandoned` and this answers `none`, the loop still running. The stop is
+posted only when the queue takes it: a queue already quit (`Ffi.quit`) ends
+the loop with its quit event. -/
+private def endLoop (host : Host) (guard : Nat) (grace : Option Nat) (hung : String → IO Unit)
+    (abandoned : Task (Except IO.Error Unit) → IO Unit) : IO (Option (Except IO.Error Unit)) := do
   unless ← IO.hasFinished host.thread do
     try
       host.post .stop
@@ -2642,7 +2682,30 @@ private def endLoop (host : Host) (guard : Nat) (hung : String → IO Unit) :
       pure ()
   if (← Job.awaitWithin guard host.thread).isNone then
     hung (hangLine guard)
-  IO.wait host.thread
+    if let some grace := grace then
+      if (← Job.awaitWithin grace host.thread).isNone then
+        abandoned host.thread
+        return none
+  return some (← IO.wait host.thread)
+
+/-- `withHostEnding`'s end, with a bound for the headless mode: as
+`withHostEnding`, but when `grace` is given and the loop has still not
+ended `grace` milliseconds after the hang was said, hands the loop's task to
+`abandoned` and answers `none` with the loop still running. With `grace :=
+none` it never answers `none`. -/
+private def hostedWithin {α β σ : Type} {scheme : InputScheme}
+    (collaborators : Collaborators β σ scheme) (body : Host → IO α) (guard : Nat)
+    (grace : Option Nat) (hung : String → IO Unit)
+    (abandoned : Task (Except IO.Error Unit) → IO Unit) : IO (Option (α × Except IO.Error Unit)) :=
+  do
+  let host ← start collaborators
+  let result ←
+    try
+      body host
+    catch error =>
+      discard <| endLoop host guard grace hung abandoned
+      throw error
+  return (← endLoop host guard grace hung abandoned).map (result, ·)
 
 /-- Runs `body` against a host started on `collaborators`, and returns only
 once the host's loop has ended, whether `body` returned or threw: a loop
@@ -2657,14 +2720,12 @@ throws it. -/
 def withHostEnding {α β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
     (body : Host → IO α) (guard : Nat := settlePatience) (hung : String → IO Unit := IO.eprintln) :
     IO (α × Except IO.Error Unit) := do
-  let host ← start collaborators
-  let result ←
-    try
-      body host
-    catch error =>
-      discard <| endLoop host guard hung
-      throw error
-  return (result, ← endLoop host guard hung)
+  match ← hostedWithin collaborators body guard none hung fun _ => pure () with
+  | some ended =>
+    return ended
+  | none =>
+    -- With no grace the loop is waited for until it ends.
+    throw (IO.userError "a host's bracket gave up on its loop with no grace to give up after")
 
 /-- Runs `body` against a host started on `collaborators`, and returns only
 once the host's loop has ended, whether `body` returned or threw, as
@@ -2949,7 +3010,7 @@ inductive Failure where
   /-- A `join` ran out with a job still running. -/
   | working (line : Option Nat)
   /-- The editor thread did not answer: a wait ran out before it had handled
-  everything sent to it, or, with no line, it did not stop. -/
+  everything sent to it, with no line the wait at the script's end. -/
   | unanswered (line : Option Nat)
   /-- The `advance` on `line` of `milliseconds` found no wait due within
   them on the clock. -/
@@ -2959,6 +3020,10 @@ inductive Failure where
   /-- The `restarted` on `line` found the loop not ended for a restart within
   the patience. -/
   | notRestarted (line : Nat)
+  /-- The loop had not ended `grace` milliseconds after the hang was said,
+  itself `guard` milliseconds after the run stopped it: the headless mode
+  gave up on it (`runFrom`'s `grace`). -/
+  | hung (guard grace : Nat)
   /-- A wait that had its own patience of `milliseconds`, a
   `settle <milliseconds>`, or a `join`, `indexed` or `restarted` with its
   seconds, failed so. -/
@@ -2983,12 +3048,14 @@ def Failure.describe (patience : Nat) : Failure → String
   | .unanswered (some line) =>
     s!"the settle or join on line {line} of the script did not finish within {patience} ms: the editor thread had not handled everything sent to it. It is still inside a command or another event, or it has ended"
   | .unanswered none =>
-    s!"the script ended, and the editor thread did not stop within {patience} ms"
+    s!"the script ended, and the editor thread had not handled everything sent to it within {patience} ms"
   | .stalled line milliseconds =>
     s!"the advance on line {line} found no wait due within {milliseconds} ms on the clock within {patience} ms"
   | .noClock line => s!"the advance on line {line}: {advanceNeedsClock}"
   | .notRestarted line =>
     s!"the restarted on line {line} of the script found no restart within {patience} ms: the loop did not end with the session handed over"
+  | .hung guard grace =>
+    s!"the editor loop had not ended {grace} ms after the hang was said ({guard} ms after the script stopped it); giving up"
   | .waited milliseconds failure => failure.describe milliseconds
 
 /-- The failure a wait that did not settle is, at `line` of the script. -/
@@ -3088,44 +3155,13 @@ brings up the crash reporter. -/
 def abortStatus : UInt8 :=
   134
 
-/-- Runs `script` against a host of its own, as its driver, and stops the
-host: sends each request in order and waits at each `settle` and each
-`join`. `none` when the script ran to its end, or a command quit the editor
-before it, and otherwise why it could not: a reload or a job did not end
-within `patience` milliseconds, or the editor thread did not answer, or the
-loop did not stop, within `answer` (`Wait.failureIn`). With it, the plan of
-the restart the loop ended for, when a `restarted` found one: the script
-stops there ("Restarting", in the module docs). A run started with
-`--resume <resume>` runs the script from after its `resume`-th `restarted`
-(`resumed`).
-
-Once the loop has ended by itself, because a command quit the editor, the
-lines that are left are not run: the script is read no further at a wait
-that answered `ended`, and before each line when the loop's task has
-finished.
-
-A `settle` or a `join` that runs out ends the loop at once, whether a reload
-or a job is running or not. A rejected reload is something to print, not a
-failure, and so is a job that fails. A job the script leaves running is
-cancelled when the loop ends.
-
-Two patiences bound the run's waits. `patience` bounds what a wait is for: a
-reload or a job ending, an `advance`'s wait coming due, a `restarted`'s
-hand-over. `answer`, `patience` unless it is given, bounds what should
-happen at once: the editor thread's answer to a wait (`Host.waitWhile`) and
-the loop's end when the run stops it. So the run returns only once its
-loop has ended, or `answer` ran out waiting for that. A `settle
-<milliseconds>` or a `join <seconds>` bounds its whole wait, the answer
-too, by its own patience alone; an `indexed <seconds>` bounds the index's
-write and a `restarted <seconds>` the hand-over by theirs, in place of
-`patience`. A failure of a wait with its own patience is `waited` it. The
-headless mode passes one patience for both
-(`settlePatience`); a check gives a short `patience` to the one wait it
-means to run out, and a long `answer`. -/
-def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (script : Array Line) (patience : Nat) (resume : Nat := 0) (answer : Nat := patience) :
+/-- The driver's part of a run (`runFrom`): runs `script` against `host`, from
+after its `resume`-th `restarted`, and says why it could not run to its end,
+or the plan of the restart a `restarted` found. It never stops the loop:
+the bracket it runs in does. -/
+private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
+    (host : Host) (script : Array Line) (patience resume answer : Nat) :
     IO (Option Failure × Option Restart.Plan) := do
-  let host ← start collaborators
   -- With a state directory, the session is restored first: the index a
   -- restart handed over, when there is one.
   if collaborators.stateDirectory.isSome then
@@ -3159,7 +3195,6 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
         let wait ← host.await milliseconds
         if let some failure :=
             wait.failureIn (some line.number) patience answer (own := some milliseconds) then
-          discard <| host.halt answer
           return (some failure, none)
         pure wait
       | .join none =>
@@ -3171,7 +3206,6 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
         let wait ← host.join milliseconds
         if let some failure :=
             wait.failureIn (some line.number) patience answer (own := some milliseconds) then
-          discard <| host.halt answer
           return (some failure, none)
         pure wait
       | .idle milliseconds =>
@@ -3193,7 +3227,6 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
           -- only as a guard against a stuck file system.
           let drained ← Job.awaitWithin patience (← collaborators.journal.drained)
           unless drained == some true do
-            discard <| host.halt answer
             return (some (.unanswered (some line.number)), none)
         pure wait
       | .indexed seconds =>
@@ -3224,7 +3257,6 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
             else
               pure none
           unless drained == some true do
-            discard <| host.halt answer
             return (some (Failure.ownedBy own (.unanswered (some line.number))), none)
         pure wait
       | .abort =>
@@ -3242,52 +3274,107 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
           IO.ofExcept host.thread.get
           return (none, some plan)
         | _, _ =>
-          discard <| host.halt answer
           return (some (Failure.ownedBy own (.notRestarted line.number)), none)
       | .advance milliseconds =>
-        let some clock := collaborators.clock |
-          discard <| host.halt answer
-          return (some (.noClock line.number), none)
+        let some clock := collaborators.clock | return (some (.noClock line.number), none)
         -- Only once a wait is due within the move: so a job that is about
         -- to sleep is in its sleep before the clock moves past it.
         unless ← within patience (clock.dueWithin milliseconds) do
-          discard <| host.halt answer
           return (some (.stalled line.number milliseconds), none)
         clock.advance milliseconds
         continue
     if wait == .ended then
       break
     if let some failure := wait.failureIn (some line.number) patience answer then
-      discard <| host.halt answer
       return (some failure, none)
-  -- The end of the script: wait for a reload that is still running, then
-  -- stop the loop. A loop that has ended by itself is neither waited for
-  -- nor stopped, and `halt` throws the error it ended with, if it did.
-  let unsettled := (← host.await patience answer).failureIn none patience answer
-  let stopped ← host.halt answer
-  let unstopped :=
-    if stopped then none else some (Failure.within answer patience (.unanswered none))
-  return (unsettled <|> unstopped, none)
+  -- The end of the script: wait for a reload that is still running. The
+  -- bracket the script runs in then stops the loop and waits for it to end.
+  return ((← host.await patience answer).failureIn none patience answer, none)
+
+/-- Runs `script` against a host of its own, in its bracket (`withHost`), as
+its driver: sends each request in order and waits at each `settle` and each
+`join`, and returns once the loop has ended. `none` when the script ran to
+its end, or a command quit the editor before it, and otherwise why it could
+not: a reload or a job did not end within `patience` milliseconds, or the
+editor thread did not answer within `answer` (`Wait.failureIn`), or the run
+gave up on a loop that did not end (`hung`, below). With it, the plan of
+the restart the loop ended for, when a `restarted` found one: the script
+stops there ("Restarting", in the module docs). A run started with
+`--resume <resume>` runs the script from after its `resume`-th `restarted`
+(`resumed`).
+
+Once the loop has ended by itself, because a command quit the editor, the
+lines that are left are not run: the script is read no further at a wait
+that answered `ended`, and before each line when the loop's task has
+finished.
+
+A `settle` or a `join` that runs out ends the script, and the bracket ends
+the loop at once, whether a reload or a job is running or not. A loop that
+ended with an error has it thrown, as `Host.halt` throws it. A rejected reload is something to print, not a
+failure, and so is a job that fails. A job the script leaves running is
+cancelled when the loop ends.
+
+Two patiences bound the run's waits. `patience` bounds what a wait is for: a
+reload or a job ending, an `advance`'s wait coming due, a `restarted`'s
+hand-over. `answer`, `patience` unless it is given, bounds what should
+happen at once: the editor thread's answer to a wait (`Host.waitWhile`).
+The loop's end is not bounded: a loop not ended `guard` milliseconds
+(`answer` unless it is given) after the run stopped it is said through
+`hung` as a hang, once, and waited for. With `grace := none`, the default,
+the wait has no deadline; with `some grace`, which only the headless mode
+gives (`main`), a loop still running `grace` milliseconds after the hang
+was said is handed to `abandoned`, so a check can wait for it, and the run
+fails as `Failure.hung`, beside the live loop. A `settle
+<milliseconds>` or a `join <seconds>` bounds its whole wait, the answer
+too, by its own patience alone; an `indexed <seconds>` bounds the index's
+write and a `restarted <seconds>` the hand-over by theirs, in place of
+`patience`. A failure of a wait with its own patience is `waited` it. The
+headless mode passes one patience for both
+(`settlePatience`); a check gives a short `patience` to the one wait it
+means to run out, and a long `answer`; a check that holds the loop's end
+gives `guard := 0`, so that the hang, said at once, is what lets it go. -/
+def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
+    (script : Array Line) (patience : Nat) (resume : Nat := 0) (answer : Nat := patience)
+    (guard : Nat := answer) (grace : Option Nat := none) (hung : String → IO Unit := IO.eprintln)
+    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) :
+    IO (Option Failure × Option Restart.Plan) := do
+  let ran ←
+    hostedWithin collaborators
+        (fun host => runScript collaborators host script patience resume answer) guard grace hung
+        abandoned
+  match ran with
+  | some (result, ended) =>
+    -- The loop's error is thrown, as `Host.halt` throws it.
+    IO.ofExcept ended
+    return result
+  | none =>
+    return (some (.hung guard (grace.getD 0)), none)
 
 /-- Runs `script` against a host of its own, as `runFrom` does from its
-start, with the same `patience` and `answer`, and says only why it could not
-run to its end. -/
+start, with the same patiences, guard and grace, and says only why it could
+not run to its end. -/
 def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (script : Array Line) (patience : Nat) (answer : Nat := patience) : IO (Option Failure) :=
-  (·.1) <$> runFrom collaborators script patience (answer := answer)
+    (script : Array Line) (patience : Nat) (answer : Nat := patience) (guard : Nat := answer)
+    (grace : Option Nat := none) (hung : String → IO Unit := IO.eprintln)
+    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) : IO (Option Failure) :=
+  (·.1) <$> runFrom collaborators script patience 0 answer guard grace hung abandoned
 
 /-- Runs `script` against a host of its own, as `runFrom` does, and then, the
 host's loop having ended, removes what the collaborators left outside the
 process (`Collaborators.dispose`): once, whether the run returned or threw.
-The loop has ended unless `answer` ran out waiting for it (`runFrom`), so
-nothing is disposed of under a live loop that ends within it. A dispose
-that throws is ignored, so it neither hides the run's failure nor replaces
-it. What the headless mode runs (`main`). -/
+With `grace := none`, the default, the loop has always ended by then
+(`runFrom`), so nothing is disposed of under a live loop. Only when the
+headless mode gives up on a hung loop (`grace := some hangGrace`,
+`Failure.hung`) is it disposed beside the live loop, just before the process
+exits. A dispose that throws is ignored, so it neither hides the run's
+failure nor replaces it. What the headless mode runs (`main`). -/
 def runAndDispose {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (script : Array Line) (patience : Nat) (resume : Nat := 0) (answer : Nat := patience) :
+    (script : Array Line) (patience : Nat) (resume : Nat := 0) (answer : Nat := patience)
+    (guard : Nat := answer) (grace : Option Nat := none) (hung : String → IO Unit := IO.eprintln)
+    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) :
     IO (Option Failure × Option Restart.Plan) := do
   try
-    runFrom collaborators script patience resume answer
+    runFrom collaborators script patience resume answer guard grace hung abandoned
   finally
     try
       collaborators.dispose
@@ -3609,7 +3696,11 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
       display :=
         if drawn then drawnDisplay else fun snapshots => Host.Display.recorder cells snapshots
       render := if drawn then some Render.library else none }
-  let (failure, handOver) ← runAndDispose collaborators directives settlePatience resume
+  -- The run returns once its loop has ended, but for a loop still running
+  -- `hangGrace` after its hang was said: the run then gives up, as `hung`,
+  -- so the process exits 1 and never hangs.
+  let (failure, handOver) ←
+    runAndDispose collaborators directives settlePatience resume (grace := some hangGrace)
   if let some plan := handOver then
     IO.println
         s!"restart: the session is handed over{if plan.launcher.isSome then "" else " (no launcher, so no fallback)"}"
@@ -3619,7 +3710,8 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
   if drawn then
     discard Ffi.renderStop
   -- Every child the library started is killed and reaped before the queues
-  -- are quit: `run` has returned, so the loop has cancelled every job.
+  -- are quit: `run` has returned, so the loop has cancelled every job,
+  -- unless the run gave up on it, and the process then exits 1.
   Ffi.processesShutdown
   -- And every watch is ended, and every search.
   Ffi.watchesShutdown

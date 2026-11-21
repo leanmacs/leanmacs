@@ -2175,7 +2175,17 @@ status 1 a line on stderr says why: the script cannot be read; with
 reason (the system refused its render thread); a `settle`, named by its
 line, ran out with a reload still running (a file or `setup` is slow or
 does not end); a `join`, named by its line, ran out with a job still
-running; or the editor thread did not answer.
+running; the editor thread did not answer; or the editor loop did not end
+(`editor: the editor loop had not ended …; giving up`).
+
+When the script ends or fails, the headless mode waits for its loop to
+end. A loop that has not ended 30 s (the patience) after the script
+stopped it is said on stderr once, `editor: a hang: the editor loop had not
+ended 30000 ms after it was asked to stop; waiting for it`, and the run
+then waits up to 5 s more (`Headless.hangGrace`). A loop that ends within
+that grace leaves the exit status as it was: a loop slow to stop is no
+failure by itself. One that does not is the failure above, with status 1,
+so the run never hangs.
 
 ## A package's fixtures
 
