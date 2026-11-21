@@ -795,6 +795,11 @@ is one read of the state or one state request (`Editor/State.lean`,
   its buffer-local value (`Workspace.bufferLocal`), or `none`.
 - `BufferId.inheritWorkspace id source` gives a buffer the workspace of the
   buffer it was made from; a source with none gives none.
+- `Workspace.setBufferWorkspace id location` gives a buffer the workspace
+  at `location`, as its buffer-local value; and `readOnlyBufferOf name
+  content location` makes a read-only buffer of generated text under the
+  first free name of `name`, given that workspace, as the version-control
+  views and the working sets' drifted quotes are made.
 - `BufferId.workingDirectory` is where a command run for a buffer runs: its
   workspace's root on this machine, its workspace's location when that is
   elsewhere, the directory of its file when it has no workspace, or none.
@@ -2418,7 +2423,22 @@ decode. -/
 def Table.getUnscoped {α : Type} (table : Table) (store : Store α) : α :=
   ((table.unscopedValue? store.name).bind store.decode).getD store.initial
 
+/-- Gives the buffer `id` the workspace at `location`, as its local value. -/
+def setBufferWorkspace (id : BufferId) (location : Location) : EditorM Unit :=
+  discard <| id.setValue bufferLocal location.encode
+
 end Workspace
+
+/-- A read-only buffer holding `content`, under the first free name of
+`name`, given the workspace at `location`; none when it cannot be made. The
+version-control buffers of generated text make theirs with it
+(`Editor/VersionControl/Views.lean`), and so do the working sets' drifted
+quotes (`Editor/WorkingSet/Run.lean`). -/
+def readOnlyBufferOf (name content : String) (location : Location) : EditorM (Option BufferId) := do
+  let .ok id ← createBuffer ((← editorState).freeName name) content | return none
+  discard <| id.setReadOnly true
+  Workspace.setBufferWorkspace id location
+  return some id
 
 namespace Project
 

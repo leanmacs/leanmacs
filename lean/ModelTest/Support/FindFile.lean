@@ -19,7 +19,6 @@ import Editor.Test.Minibuffer
 import Editor.Test.Prompts
 import Editor.Test.Workspace
 import Editor.Workspace
-import Editor.Workspace.Attach
 import Editor.Workspace.FindFile
 import Editor.Workspace.Lister
 import Editor.Workspace.Model

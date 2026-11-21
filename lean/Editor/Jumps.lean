@@ -66,6 +66,12 @@ commands, going to a place in a closed file, is the upper module's
 - **Attach** (`attach`): once a buffer holds a file, the places of that
   file become places held by markers of its text again, at their row and
   column, clamped as a visit clamps (`Marks.offsetAt`).
+- **Visiting the source of an excerpt buffer's place** (`visitLocated`, the
+  activate key of project search's results and of a working set's
+  buffer): the place of an excerpt text is located in its source
+  (`TextId.locate`), the jump is recorded, the source's buffer is shown
+  and the cursor put at the place; what was not located is said. It needs
+  only the editor API, so it is here, below the file commands.
 
 Pinned by `ModelTest.jumpChecks`; the moves that go to another buffer or a
 file by `ModelTest.jumpGoChecks`.
@@ -268,5 +274,17 @@ def attach (id : BufferId) (path : System.FilePath) : EditorM Unit := do
   for (char, place) in state.remembered.globalMarks do
     if (inFile place).isSome then
       discard <| setGlobalMark char (change place)
+
+/-- Visits the place in its source of the offset `head` of the excerpt text
+`text` in `view` ("Visiting the source of an excerpt buffer's place", in
+the module docs): says `nothing` when it is in no excerpt, or no buffer
+holds its source. -/
+def visitLocated (view : ViewId) (text : TextId) (head : Nat) (nothing : String) : EditorM Unit :=
+  do
+  let some located ← (text.locate head : TextM (Option Located)) | message nothing
+  let some source := (← editorState).bufferOver? located.source | message nothing
+  record view
+  let .ok () ← view.show source | message nothing
+  placeCursor view located.offset
 
 end Editor.Jumps

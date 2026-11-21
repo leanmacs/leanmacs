@@ -1,6 +1,6 @@
 import Editor.Api
 import Editor.Command.Call
-import Editor.Files
+import Editor.Language
 import Editor.VersionControl.Git
 import Editor.VersionControl.Views
 

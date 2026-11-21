@@ -46,7 +46,6 @@ import Editor.VersionControl.Show
 import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
 import Editor.Workspace
-import Editor.Workspace.Attach
 
 /-!
 # Model tests: support: VersionControl

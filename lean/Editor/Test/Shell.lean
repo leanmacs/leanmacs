@@ -33,7 +33,6 @@ import Editor.Text
 import Editor.Text.Model
 import Editor.Value
 import Editor.Workspace
-import Editor.Workspace.Attach
 
 /-!
 # The test kit: Shell

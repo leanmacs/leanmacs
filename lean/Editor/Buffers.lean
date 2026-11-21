@@ -1,6 +1,6 @@
 import Editor.Api
 import Editor.Command.Call
-import Editor.Files
+import Editor.Jumps
 import Editor.WorkingSet.Places
 
 /-!
@@ -29,7 +29,7 @@ checks compare the echo area with that function, never with a sentence.
   another style for `buffer`. Nothing matching is said (`noMatch`), and
   the window keeps its buffer. A window
   that is the minibuffer's shows the buffer in the window the prompt was
-  asked from (`Files.shownIn`), as the open command does. Switching is a
+  asked from (`EditorState.shownIn`), as the open command does. Switching is a
   jump, as opening a file is: the window records one before it shows the
   buffer (`Jumps.record`).
 - **With anything else first** it asks, with a prompt labelled
@@ -246,16 +246,16 @@ def resolve (state : EditorState) (asking : BufferId) (text : String) : EditorM 
 
 /-- Shows the open buffer `text` names (`resolve`) in `view`, or, for the
 minibuffer's view, in the window its prompt was asked from
-(`Files.shownIn`), whose buffer is the asking one. Nothing matching is said
+(`EditorState.shownIn`), whose buffer is the asking one. Nothing matching is said
 (`noMatch`), and the window keeps its buffer. -/
 def switchTo (view : ViewId) (text : String) : EditorM Unit := do
   let state ← editorState
-  let some target := state.target? (Files.shownIn state view) | message (noMatch text)
+  let some target := state.target? (state.shownIn view) | message (noMatch text)
   let some id ← resolve state target.window.buffer text | message (noMatch text)
   let name := ((state.buffer? id).map (·.name)).getD text
   -- Switching buffers is a jump, as opening a file is.
-  Jumps.record (Files.shownIn state view)
-  if let .error _← (Files.shownIn state view).show id then
+  Jumps.record (state.shownIn view)
+  if let .error _← (state.shownIn view).show id then
     message (notShown name)
 
 /-- The switch command as it is called ("Switch", in the module docs): shows

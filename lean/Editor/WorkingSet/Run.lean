@@ -2,10 +2,9 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Files
 import Editor.Job
-import Editor.Jumps.Go
+import Editor.Jumps
 import Editor.WorkingSet.Disk
 import Editor.WorkingSet.Places
-import Editor.Workspace.Attach
 
 /-!
 # `working-set-add` and `working-set-open`
