@@ -244,8 +244,8 @@ fn a_glyphs_quad_is_at_the_frames_own_x_plus_dx_and_baseline_plus_dy() {
         vec![
             (20 + 13, top(10), GLYPH.0, GLYPH.1),
             (20 + 20, top(12), GLYPH.0, GLYPH.1),
-            // 25.5 across: the pixel 25, and the image of its second
-            // quarter, which the fake draws a column wider.
+            // 25.5 across: the pixel 25, and the image of its first
+            // third, which the fake draws a column wider.
             (20 + 25, top(17), GLYPH.0 + 1, GLYPH.1),
         ]
     );
@@ -255,20 +255,22 @@ fn a_glyphs_quad_is_at_the_frames_own_x_plus_dx_and_baseline_plus_dy() {
         .iter()
         .map(|(key, _, _)| key.bin)
         .collect();
-    assert_eq!(bins, vec![0, 0, 2]);
+    assert_eq!(bins, vec![0, 0, 4]);
 }
 
 #[test]
 fn a_glyph_is_floored_to_core_texts_grid_of_the_targets_scale() {
-    // At 10.9, 20.3 and 30.6 across. At scale 1 the grid is a quarter of a
-    // pixel: 10.75, 20.25 and 30.5. At scale 2 it is a half: 10.5, 20 and
-    // 30.5. Each is floored, never rounded up into the next: rounded,
-    // 10.9 would be the pixel 11.
+    // At 10.9, 20.3 and 30.6 across. At scale 1 the grid is a third of a
+    // pixel: 10 2/3, 20 and 30 1/3, bins 8, 0 and 4 of twelve. At scale 2
+    // it is a half: 10.5, 20 and 30.5. At scale 3 it is a whole pixel.
+    // Each is floored, never rounded up into the next: rounded, 10.9
+    // would be the pixel 11.
     let glyphs = vec![glyph(7, 0, 10.9), glyph(8, 1, 20.3), glyph(9, 2, 30.6)];
     let shown = || view(vec![row(16.0, glyphs.clone(), vec![(0..3, ink(RED))], 1)]);
     for (scale, expected) in [
-        (1.0, vec![(10, 3), (20, 1), (30, 2)]),
-        (2.0, vec![(10, 2), (20, 0), (30, 2)]),
+        (1.0, vec![(10, 8), (20, 0), (30, 4)]),
+        (2.0, vec![(10, 6), (20, 0), (30, 6)]),
+        (3.0, vec![(10, 0), (20, 0), (30, 0)]),
     ] {
         let mut painter = painter();
         painter.paint(&frame(vec![shown()]), target(scale));
@@ -292,7 +294,8 @@ fn a_glyph_is_floored_to_core_texts_grid_of_the_targets_scale() {
 #[test]
 fn a_glyph_is_drawn_from_the_image_of_its_fractions_bin() {
     // Cells 10.25 pixels across: each glyph is a quarter of a pixel
-    // further into its pixel than the one before.
+    // further into its pixel than the one before, so they fall in
+    // different thirds.
     let rect = Rect {
         x: 0,
         y: 0,

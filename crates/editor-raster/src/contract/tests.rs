@@ -59,6 +59,9 @@ enum Fault {
     Counter,
     /// Every bin drawn as bin 0.
     Still,
+    /// Each bin drawn a quarter of a pixel on from the last, as the bins
+    /// once were, and not at its own fraction of a pixel.
+    Quarters,
     /// Every image's top on the baseline.
     TopAtZero,
     /// Says it reads the luminance, and draws every bucket alike.
@@ -91,16 +94,19 @@ impl Broken {
 impl Rasterize for Broken {
     fn rasterize(&mut self, request: &GlyphRequest<'_>) -> Option<GlyphImage> {
         self.count = self.count.wrapping_add(1);
-        let asked = if self.fault == Fault::Still {
-            GlyphRequest {
+        let asked = match self.fault {
+            Fault::Still | Fault::Quarters => GlyphRequest {
                 key: GlyphKey {
-                    bin: 0,
+                    bin: if self.fault == Fault::Still {
+                        0
+                    } else {
+                        (request.key.bin * 3).min(crate::SUBPIXEL_BINS - 1)
+                    },
                     ..request.key
                 },
                 ..*request
-            }
-        } else {
-            *request
+            },
+            _ => *request,
         };
         let mut image = self.inner.rasterize(&asked)?;
         match self.fault {
@@ -136,6 +142,7 @@ fn a_rasteriser_written_to_break_each_property_fails_by_its_name() {
         (Fault::SubpixelForMask, KINDS),
         (Fault::Counter, SAME),
         (Fault::Still, BIN),
+        (Fault::Quarters, BIN),
         (Fault::TopAtZero, BASELINE),
         (Fault::TintedNoChange, LUMINANCE),
         (Fault::UntintedChange, LUMINANCE),

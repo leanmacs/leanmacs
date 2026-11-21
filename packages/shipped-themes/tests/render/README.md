@@ -30,9 +30,9 @@ nothing of the repository outside itself:
 
 | File | Size | Bytes | sha256 |
 |---|---|---|---|
-| `solarized-dark.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15943 | `469e71b1a669682bb0bdfb69650b90df15a7afa7725903ea2ed32242526cb0d6` |
-| `solarized-light.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 16008 | `359460eb89ad153ce0f09866aa5a5ce3d82edc4e4c7d1d7f8b7abb148fe84987` |
-| `fairy-floss.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 16577 | `16c2c881d51ac6a8116ccf61088c5e6bb23ea31660221463b83b391e4be864d0` |
+| `solarized-dark.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15071 | `86d70514d8ced6bcb8679a1855bfa07b426cc86ff7d96de03afc818ab8318f48` |
+| `solarized-light.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15164 | `4512793d61d37297b8fae125d7ae632dc9256f71fb3d64d58a0a31473b8b842c` |
+| `fairy-floss.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15851 | `df38e217981f84462cf28c80c7c4c11727fba0af5861d9726e3fc170855eaabd` |
 
 Each is kept small on purpose: the scene's size, 320 by 160, and at most
 20 KB, which the scenario checks.
@@ -72,12 +72,12 @@ not in the set and falls through to it. It is drawn at 16 points, the
 theme's default size, at scale 1, with grayscale antialiasing and hinting,
 at the linear weight.
 
-The three files: Made again on 2026-11-20, when the painter began to floor
-each glyph's place to Core Text's grid of a quarter of a point instead of
-rounding it to the nearest quarter of a pixel (`crates/editor-render-
-wgpu/src/glyphs.rs`, `bin_of`): at scale 1 a glyph moves left by up to a
-quarter of a pixel, so the text's edges changed and nothing else did;
-looked at, enlarged, by the agent that made them.
+The three files were made again on 2026-11-20, when the painter began to
+floor each glyph's place to Core Text's own grid, thirds of a pixel at
+scale 1, instead of rounding it to the nearest quarter of a pixel
+(`crates/editor-render-wgpu/src/glyphs.rs`, `bin_of`): at scale 1 a glyph
+moves by up to a third of a pixel, so the text's edges changed and
+nothing else did; looked at, enlarged, by the agent that made them.
 
 The three files were made again for the window padding and looked at,
 enlarged four times, when they were (2026-11-16), by the agent that

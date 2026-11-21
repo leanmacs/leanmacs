@@ -17,7 +17,7 @@ of the font, so that package reads nothing here.
 
 | File | Size | Bytes | sha256 |
 |---|---|---|---|
-| `default.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 16089 | `c4d42f8b80cb23433d388dac805388087bd47842120c9913b04f6d76b0666490` |
+| `default.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15201 | `9d4e89a3d34a01326e9d39cd1c01cfea139f1155e2eab18a554554d8e0fec75c` |
 
 It is kept small on purpose: the scene's size, 320 by 160, and at most
 20 KB, which the scenario checks.
@@ -58,11 +58,11 @@ theme's default size, at scale 1, with grayscale antialiasing and hinting,
 at the linear weight.
 
 Made again on 2026-11-20, when the painter began to floor each glyph's
-place to Core Text's grid of a quarter of a point instead of rounding it to
-the nearest quarter of a pixel (`crates/editor-render-wgpu/src/glyphs.rs`,
-`bin_of`): at scale 1 a glyph moves left by up to a quarter of a pixel, so
-the text's edges changed and nothing else did; looked at, enlarged, by the
-agent that made it.
+place to Core Text's own grid, thirds of a pixel at scale 1, instead of
+rounding it to the nearest quarter of a pixel
+(`crates/editor-render-wgpu/src/glyphs.rs`, `bin_of`): at scale 1 a glyph
+moves by up to a third of a pixel, so the text's edges changed and
+nothing else did; looked at, enlarged, by the agent that made it.
 
 The file was made when the picture check became the core's (2026-11-19)
 and looked at, enlarged four times, by the agent that made it, and not yet

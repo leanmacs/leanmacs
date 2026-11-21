@@ -32,12 +32,12 @@
 //!
 //! A glyph's image is placed by the frame's own numbers and no others. Its
 //! place across is its `x` plus its `dx`, from its row's left, floored to
-//! Core Text's grid of a quarter of a point (a quarter of a pixel at scale
-//! 1, a half at scale 2): the whole pixels place the quad and the quarters
-//! of a pixel pick the image ([`bin_of`]). A row's left is its view's left edge plus
+//! Core Text's grid (thirds of a pixel at scale 1, halves at scale 2,
+//! whole pixels from scale 3): the whole pixels place the quad and the
+//! fraction picks the image ([`bin_of`]). A row's left is its view's left edge plus
 //! the row's `x` (a padded view's padding across), rounded to a pixel as
 //! its top is, so a fractional padding draws on a whole pixel and the
-//! glyph's quarters are its own. Its place down is its row's
+//! glyph's fraction is its own. Its place down is its row's
 //! top, rounded to a pixel, plus the row's baseline plus its `dy`, rounded
 //! to a pixel: a baseline is a whole pixel. The image's own offsets from
 //! that point are the rasteriser's.
@@ -89,7 +89,7 @@
 //!   bar cursor, an underline cursor and the edge of a hollow cursor;
 //! - the kind of mask glyph images are asked in ([`stripes`]), which
 //!   [`Painter::masks`] says of the last paint;
-//! - the grid a glyph is placed on, a quarter of a point ([`bin_of`]).
+//! - the grid a glyph is placed on ([`bin_of`]).
 //!
 //! Rows built at one scale are built again at another. A frame laid out
 //! at one scale may be painted once for a target at another, between a

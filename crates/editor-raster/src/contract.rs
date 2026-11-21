@@ -31,8 +31,9 @@ pub const KINDS: &str = "a mask asked for is a mask, and a subpixel mask a subpi
 /// The same request gives the same image, twice and on a fresh
 /// rasteriser.
 pub const SAME: &str = "the same request gives the same image, twice and on a fresh rasteriser";
-/// Each bin moves the ink a quarter of a pixel right, and keeps it.
-pub const BIN: &str = "each bin moves the ink a quarter of a pixel right, and keeps it";
+/// Each bin moves the ink right of the bin before it by the difference of
+/// their offsets, and keeps it.
+pub const BIN: &str = "each bin moves the ink right of the bin before it by the difference of their offsets, and keeps it";
 /// A capital stands on the baseline, and glyphs are placed from the pen.
 pub const BASELINE: &str = "a capital stands on the baseline, and glyphs are placed from the pen";
 /// The luminance changes the image only for a rasteriser that reads it,
@@ -42,9 +43,12 @@ pub const LUMINANCE: &str = "the luminance changes the image only for a rasteris
 /// Every property, by name.
 pub const PROPERTIES: [&str; 6] = [SHAPE, KINDS, SAME, BIN, BASELINE, LUMINANCE];
 
-/// How far each bin may move the ink from a quarter of a pixel, in
-/// pixels.
-pub const BIN_TOLERANCE: f64 = 0.08;
+/// How far the ink's move from one bin to the next may be from the
+/// difference of their offsets ([`GlyphKey::offset`], a twelfth of a
+/// pixel), in pixels: under half a twelfth, so that a bin drawn as the bin
+/// before it fails, and wide enough for a hinter that moves a stem in
+/// steps of its own (swash's hinted moves were 0.061 to 0.115 px a bin).
+pub const BIN_TOLERANCE: f64 = 0.04;
 
 /// How much the ink may change across the bins, as a part of the least.
 pub const BIN_INK: f64 = 0.03;
@@ -251,14 +255,16 @@ pub fn check(make: &mut dyn FnMut() -> Box<dyn Rasterize>, fixture: &Fixture) ->
         match centres {
             None => fail(BIN, "H has no ink at some bin".to_owned()),
             Some(centres) => {
-                for (bin, pair) in centres.windows(2).enumerate() {
+                let offset = |bin: u8| f64::from(key(fixture.h, bin, false, 0).offset());
+                for (bin, pair) in (1..crate::SUBPIXEL_BINS).zip(centres.windows(2)) {
                     let moved = pair[1] - pair[0];
-                    if (moved - 0.25).abs() > BIN_TOLERANCE {
+                    let step = offset(bin) - offset(bin - 1);
+                    if (moved - step).abs() > BIN_TOLERANCE {
                         fail(
                             BIN,
                             format!(
-                                "from bin {bin} to {} the ink moves {moved:.3} px ({centres:.3?})",
-                                bin + 1
+                                "from bin {} to {bin} the ink moves {moved:.3} px, not {step:.3} ({centres:.3?})",
+                                bin - 1
                             ),
                         );
                     }

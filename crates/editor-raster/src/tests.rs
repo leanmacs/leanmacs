@@ -70,10 +70,16 @@ fn key(glyph: u32, bin: u8) -> GlyphKey {
 }
 
 #[test]
-fn a_bin_is_its_fraction_of_a_pixel() {
-    assert_eq!(SUBPIXEL_BINS, 4);
+fn a_bin_is_its_twelfth_of_a_pixel() {
+    assert_eq!(SUBPIXEL_BINS, 12);
     let offsets: Vec<f32> = (0..SUBPIXEL_BINS).map(|bin| key(1, bin).offset()).collect();
-    assert_eq!(offsets, vec![0.0, 0.25, 0.5, 0.75]);
+    let twelfths: Vec<f32> = (0..12_u8).map(|bin| f32::from(bin) / 12.0).collect();
+    assert_eq!(offsets, twelfths);
+    // Core Text's grids are whole numbers of bins: thirds, halves and
+    // whole pixels.
+    assert_eq!(key(1, 4).offset(), 1.0 / 3.0);
+    assert_eq!(key(1, 6).offset(), 0.5);
+    assert_eq!(key(1, 8).offset(), 2.0 / 3.0);
 }
 
 #[test]

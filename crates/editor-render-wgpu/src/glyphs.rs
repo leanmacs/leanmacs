@@ -22,13 +22,14 @@
 //!
 //! A glyph's place across a row is a fraction of a pixel, and its image
 //! depends on that fraction. Keeping an image for every fraction would
-//! keep nothing, so a place is floored to Core Text's own grid, a quarter
-//! of a point ([`bin_of`]): a quarter of a pixel at scale 1 and a half at
-//! scale 2. That is where macOS's own text puts a glyph (`CTLineDraw`
-//! with the context's default flags, and TextEdit), on every platform
-//! here, so a glyph has at most four images ([`SUBPIXEL_BINS`]), and two
-//! at scale 2. There are no bins down the page: a baseline is a whole
-//! pixel.
+//! keep nothing, so a place is floored to Core Text's own grid
+//! ([`bin_of`], [`places_per_pixel`]): thirds of a pixel at scale 1,
+//! halves at scale 2 and whole pixels from scale 3. That is where macOS's
+//! own text puts a glyph (`CTLineDraw` with the context's default flags,
+//! and TextEdit), and it is the rule on every platform here. The bins are
+//! twelfths of a pixel ([`SUBPIXEL_BINS`]), which hold each grid, so a
+//! glyph has at most three images at scale 1, two at scale 2 and one from
+//! scale 3. There are no bins down the page: a baseline is a whole pixel.
 //!
 //! # Kinds
 //!
@@ -84,25 +85,29 @@ use crate::atlas::{Atlas, Slot};
 /// less than any step of the grid.
 const ON_THE_LINE: f64 = 1.0 / 1024.0;
 
+/// How many places across a pixel Core Text puts a glyph at on a target
+/// of `scale`, drawn as native apps draw (the context's default subpixel
+/// flags): `4 - scale`, and never fewer than one. Thirds of a pixel at
+/// scale 1, halves at scale 2 and whole pixels from scale 3, measured on
+/// macOS 27.2.1 (2026-11-20) by drawing one glyph across a pixel in steps
+/// of 1/400. A scale that is not whole is taken as the nearest whole
+/// scale, and one below 1, or none, as 1.
+pub fn places_per_pixel(scale: f32) -> u8 {
+    let scale = scale.round().max(1.0);
+    (4.0 - scale).max(1.0) as u8
+}
+
 /// The whole pixel and the bin of a place `x` pixels across on a target of
-/// `scale`: `x` floored to Core Text's grid of a quarter of a point, which
-/// is `scale / 4` pixels (a quarter of a pixel at scale 1, a half at
-/// scale 2), as the pixel it falls in and how many quarters of a pixel
-/// past that pixel's left edge the line it is floored to is. A place
-/// within [`ON_THE_LINE`] under a line is on it. At a scale whose grid is
-/// not of whole quarters of a pixel, the line is floored again, to a
-/// quarter of a pixel. A scale that is not above 0 places as 1.
+/// `scale`: `x` floored to Core Text's grid ([`places_per_pixel`]), as the
+/// pixel it falls in and the bin of the grid's line it is floored to, in
+/// twelfths of a pixel ([`SUBPIXEL_BINS`]). A place within
+/// [`ON_THE_LINE`] under a line is on it.
 pub fn bin_of(x: f32, scale: f32) -> (i32, u8) {
-    let scale = if scale > 0.0 { f64::from(scale) } else { 1.0 };
-    let bins = f64::from(SUBPIXEL_BINS);
-    let lines = (f64::from(x) + ON_THE_LINE) * bins / scale;
-    let place = lines.floor() * scale / bins;
-    let quarters = (place * bins + 1e-9).floor() as i64;
-    let bins = i64::from(SUBPIXEL_BINS);
-    (
-        quarters.div_euclid(bins) as i32,
-        quarters.rem_euclid(bins) as u8,
-    )
+    let places = places_per_pixel(scale);
+    let lines = ((f64::from(x) + ON_THE_LINE) * f64::from(places)).floor() as i64;
+    let per = i64::from(places);
+    let bin = lines.rem_euclid(per) as u8 * (SUBPIXEL_BINS / places);
+    (lines.div_euclid(per) as i32, bin)
 }
 
 /// A glyph image the cache holds, as what draws it needs it.
@@ -379,7 +384,9 @@ mod tests {
     use editor_raster::ResolvedFontId;
     use editor_raster::fake::{FakeRasterizer, font};
 
-    use super::{GlyphCache, GlyphKey, Kind, Placed, SUBPIXEL_BINS, Stats, bin_of};
+    use super::{
+        GlyphCache, GlyphKey, Kind, Placed, SUBPIXEL_BINS, Stats, bin_of, places_per_pixel,
+    };
 
     /// A page size for the tests: small, so a page fills quickly.
     const PAGE: u32 = 32;
@@ -851,25 +858,33 @@ mod tests {
     }
 
     #[test]
-    fn at_scale_one_a_place_is_floored_to_a_quarter_of_a_pixel() {
-        assert_eq!(SUBPIXEL_BINS, 4);
+    fn core_texts_grid_is_thirds_at_scale_one_halves_at_two_and_whole_pixels_from_three() {
+        assert_eq!(SUBPIXEL_BINS, 12);
+        let grids: Vec<u8> = [1.0, 2.0, 3.0, 4.0, 1.4, 1.5, 0.0, f32::NAN]
+            .into_iter()
+            .map(places_per_pixel)
+            .collect();
+        // 1.4 is drawn as scale 1 and 1.5 as 2; a scale that is no scale
+        // as 1.
+        assert_eq!(grids, vec![3, 2, 1, 1, 3, 2, 3, 3]);
+    }
+
+    #[test]
+    fn at_scale_one_a_place_is_floored_to_a_third_of_a_pixel() {
         let places = [
             (10.0, (10, 0)),
-            (10.1, (10, 0)),
-            (10.2, (10, 0)),
-            (10.25, (10, 1)),
-            (10.4, (10, 1)),
-            (10.5, (10, 2)),
-            (10.7, (10, 2)),
-            (10.75, (10, 3)),
+            (10.3, (10, 0)),
+            (10.34, (10, 4)),
+            (10.5, (10, 4)),
+            (10.67, (10, 8)),
             // Short of the next pixel by any amount: still this one.
-            (10.9, (10, 3)),
+            (10.9, (10, 8)),
             (11.0, (11, 0)),
             (0.0, (0, 0)),
             // Left of the row's start.
-            (-0.1, (-1, 3)),
-            (-0.25, (-1, 3)),
-            (-1.5, (-2, 2)),
+            (-0.1, (-1, 8)),
+            (-0.5, (-1, 4)),
+            (-1.5, (-2, 4)),
         ];
         for (x, expected) in places {
             assert_eq!(bin_of(x, 1.0), expected, "at {x}");
@@ -877,55 +892,48 @@ mod tests {
     }
 
     #[test]
-    fn at_scale_two_a_place_is_floored_to_half_a_pixel_a_quarter_point() {
-        // Core Text's grid is a quarter of a point: half a pixel at scale
-        // 2, so only bins 0 and 2 are ever asked for.
+    fn at_scale_two_a_place_is_floored_to_half_a_pixel() {
         let places = [
             (16.0, (16, 0)),
             (16.3, (16, 0)),
-            (16.5, (16, 2)),
-            (16.8, (16, 2)),
-            (32.6, (32, 2)),
+            (16.5, (16, 6)),
+            (16.8, (16, 6)),
             (33.4, (33, 0)),
-            (-0.2, (-1, 2)),
+            (-0.2, (-1, 6)),
         ];
         for (x, expected) in places {
             assert_eq!(bin_of(x, 2.0), expected, "at {x}");
         }
         for tenth in 0..100 {
             let (_, bin) = bin_of(tenth as f32 / 10.0, 2.0);
-            assert!(bin == 0 || bin == 2, "at {tenth} tenths: bin {bin}");
+            assert!(bin == 0 || bin == 6, "at {tenth} tenths: bin {bin}");
+        }
+    }
+
+    #[test]
+    fn at_scale_three_and_above_a_place_is_floored_to_a_whole_pixel() {
+        for scale in [3.0, 4.0] {
+            assert_eq!(bin_of(10.9, scale), (10, 0));
+            assert_eq!(bin_of(-0.1, scale), (-1, 0));
         }
     }
 
     #[test]
     fn a_place_a_hair_under_a_grid_line_is_on_it() {
-        // A place that is a whole quarter in exact arithmetic can come out
-        // of f32 sums just under it: within 1/1024 of a pixel it is on the
+        // A place that is on a line in exact arithmetic can come out of
+        // f32 sums just under it: within 1/1024 of a pixel it is on the
         // line, and further under it is not.
         let under = |x: f32| f32::from_bits(x.to_bits() - 1);
-        assert_eq!(bin_of(under(10.25), 1.0), (10, 1));
         assert_eq!(bin_of(under(11.0), 1.0), (11, 0));
-        assert_eq!(bin_of(under(16.5), 2.0), (16, 2));
-        assert_eq!(bin_of(10.25 - 1.0 / 2048.0, 1.0), (10, 1));
-        assert_eq!(bin_of(10.25 - 1.0 / 512.0, 1.0), (10, 0));
+        assert_eq!(bin_of(under(16.5), 2.0), (16, 6));
+        assert_eq!(bin_of(under(10.0 + 1.0 / 3.0), 1.0), (10, 4));
+        assert_eq!(bin_of(10.0 + 1.0 / 3.0 - 1.0 / 2048.0, 1.0), (10, 4));
+        assert_eq!(bin_of(10.0 + 1.0 / 3.0 - 1.0 / 512.0, 1.0), (10, 0));
         assert_eq!(bin_of(16.5 - 1.0 / 512.0, 2.0), (16, 0));
     }
 
     #[test]
-    fn at_another_scale_a_place_is_floored_to_its_quarter_point_then_to_a_bin() {
-        // At 1.5 a quarter point is 0.375 pixels: 10.4 is floored to the
-        // line at 10.125, which is bin 0 of the pixel 10; 10.6 to the line
-        // at 10.5, bin 2.
-        assert_eq!(bin_of(10.4, 1.5), (10, 0));
-        assert_eq!(bin_of(10.6, 1.5), (10, 2));
-        // A scale that is no scale places as scale 1.
-        assert_eq!(bin_of(10.3, 0.0), (10, 1));
-        assert_eq!(bin_of(10.3, f32::NAN), (10, 1));
-    }
-
-    #[test]
-    fn positions_within_a_quarter_pixel_share_an_entry_and_others_do_not() {
+    fn positions_within_a_third_of_a_pixel_share_an_entry_at_scale_one_and_others_do_not() {
         let (mut cache, mut rasterizer) = (roomy(), FakeRasterizer::new());
         let font = font(16.0);
         let mut image = |x: f32| {
@@ -935,19 +943,16 @@ mod tests {
         let at = image(3.0);
         // The same bin, at another pixel and a little off it.
         assert_eq!(image(8.0), at);
-        assert_eq!(image(8.1), at);
-        // Each other quarter is an image of its own.
-        let quarter = image(8.25);
-        let half = image(8.5);
-        let three = image(8.75);
-        assert_eq!(image(20.3), quarter);
-        for (index, one) in [&at, &quarter, &half, &three].iter().enumerate() {
-            for other in [&at, &quarter, &half, &three].iter().skip(index + 1) {
-                assert_ne!(one, other);
-            }
-        }
-        assert_eq!(rasterizer.asked.len(), 4);
-        assert_eq!(cache.len(), 4);
+        assert_eq!(image(8.3), at);
+        // Each other third is an image of its own.
+        let third = image(8.4);
+        let two = image(8.7);
+        assert_eq!(image(20.5), third);
+        assert_ne!(at, third);
+        assert_ne!(at, two);
+        assert_ne!(third, two);
+        assert_eq!(rasterizer.asked.len(), 3);
+        assert_eq!(cache.len(), 3);
     }
 
     #[test]

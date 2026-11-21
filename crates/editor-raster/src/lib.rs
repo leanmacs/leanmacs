@@ -33,8 +33,11 @@ pub use editor_layout::shaper::{ResolvedFont, ResolvedFontId};
 pub mod contract;
 pub mod fake;
 
-/// How many places across a pixel a glyph is rasterised at.
-pub const SUBPIXEL_BINS: u8 = 4;
+/// How many places across a pixel a glyph may be rasterised at: twelfths,
+/// so that each of Core Text's grids is whole bins (thirds of a pixel at
+/// scale 1, halves at scale 2, whole pixels at scale 3). Which places a
+/// glyph is put at is the painter's rule, not the port's.
+pub const SUBPIXEL_BINS: u8 = 12;
 
 /// What a glyph image holds for each pixel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -66,7 +69,8 @@ pub struct GlyphKey {
     pub font: ResolvedFontId,
     /// The glyph's id in that font.
     pub glyph: u32,
-    /// Which quarter of a pixel it is drawn at, from 0.
+    /// Which twelfth of a pixel it is drawn at, from 0
+    /// ([`SUBPIXEL_BINS`], [`GlyphKey::offset`]).
     pub bin: u8,
     /// Whether a subpixel mask was asked for, and not a plain one.
     pub subpixel: bool,

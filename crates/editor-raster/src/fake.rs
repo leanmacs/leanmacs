@@ -9,7 +9,7 @@
 //!   its top [`FakeRasterizer::HEIGHT`] above the baseline.
 //! - A bin moves it right by its fraction of a pixel ([`GlyphKey::offset`]):
 //!   its edge columns are then partly covered, and the image is one column
-//!   wider at bins 1 to 3.
+//!   wider at every bin but 0.
 //! - A tinted fake ([`FakeRasterizer::tinted`]) reads the luminance: each
 //!   bucket widens the box by a quarter of a column. An untinted one draws
 //!   every bucket alike.

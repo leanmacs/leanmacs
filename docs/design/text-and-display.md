@@ -3408,15 +3408,19 @@ bound submits nothing.
   bytes, and differ in the blend of one quad, which is one function and
   one shader that state the same arithmetic.
 - **Where a glyph goes.** At its `x` plus its `dx` across, floored to
-  Core Text's grid of a quarter of a point (a quarter of a pixel at scale
-  1, a half at scale 2, with 1/1024 of a pixel's grace under a line for
-  the error of f32 sums), as `CTLineDraw` with the context's default flags
-  and TextEdit place it; on every platform (owner's decision,
-  2026-11-20). Down, at its row's top plus the baseline plus its `dy`,
+  Core Text's grid: thirds of a pixel at scale 1, halves at scale 2 and
+  whole pixels from scale 3 (`max(1, 4 − scale)` places a pixel, with
+  1/1024 of a pixel's grace under a line for the error of f32 sums), as
+  `CTLineDraw` with the context's default flags and TextEdit place it,
+  measured on macOS 27.2.1 by sweeping one glyph across a pixel in steps
+  of 1/400 (its image changed at 0.3325 and 0.6675 px at scale 1, at 0.5
+  at scale 2, and only at whole pixels at scale 3); on every platform
+  (owner's decision, 2026-11-20). Down, at its row's top plus the baseline plus its `dy`,
   each rounded to a whole pixel: a baseline is a whole pixel.
 - **The glyph cache.** A glyph image is kept by resolved font id, glyph
-  id, one of 4 horizontal bins of a quarter pixel, and the kind asked
-  for. There are three kinds, each in atlas pages of its own format:
+  id, one of 12 horizontal bins of a twelfth of a pixel (which hold each
+  of Core Text's grids), the kind asked for and the run's luminance
+  bucket. There are three kinds, each in atlas pages of its own format:
   masks (one coverage a pixel), subpixel masks (a coverage for each of
   red, green and blue) and colour images. An image is pinned by every
   kept row that draws it, and rows are kept for the frame last drawn, so
