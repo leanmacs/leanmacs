@@ -102,6 +102,7 @@ use editor_layout::face::Color;
 use crate::atlas::{Atlas, PageView};
 use crate::blend::to_linear;
 use crate::glyphs::Kind;
+use crate::layer::{Layer, LayerReading, metal_format};
 use crate::present::{Asked, Offered};
 use crate::quads::{Quad, QuadKind};
 use crate::surface::{Answer, Calls, State};
@@ -342,6 +343,39 @@ fn clear_color(ground: Color, blending: Blending) -> wgpu::Color {
         b: channel(blue),
         a: 1.0,
     }
+}
+
+/// What `surface`'s Metal layer reads now: the layer wgpu-hal draws on
+/// (`render_layer`), reached through wgpu's re-export of wgpu-hal. Every
+/// read is a method of the layer or a field of what it returns, whose type
+/// is never named, so this crate depends on no binding of Core Animation
+/// or Core Graphics (`deny.toml`). The colour space is read as present or
+/// not.
+#[cfg(target_os = "macos")]
+fn read_layer(surface: &wgpu::Surface<'_>) -> Option<LayerReading> {
+    // SAFETY: the layer is only read, on the thread that holds the
+    // renderer, under wgpu-hal's own lock of it, and nothing of it is kept
+    // past this call: the surface is not destroyed, and wgpu-hal's state is
+    // left as it was.
+    let hal = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }?;
+    let layer = hal.render_layer().lock();
+    let bounds = layer.bounds();
+    let drawable = layer.drawableSize();
+    Some(LayerReading {
+        bounds: (bounds.size.width, bounds.size.height),
+        contents_scale: layer.contentsScale(),
+        drawable: (drawable.width, drawable.height),
+        opaque: layer.isOpaque(),
+        colorspace: layer.colorspace().is_some(),
+        format: layer.pixelFormat().0 as u64,
+        gravity: layer.contentsGravity().to_string(),
+    })
+}
+
+/// No surface off macOS has a Metal layer.
+#[cfg(not(target_os = "macos"))]
+fn read_layer(_: &wgpu::Surface<'_>) -> Option<LayerReading> {
+    None
 }
 
 /// Waits for `future`, which wgpu resolves without an executor.
@@ -589,6 +623,20 @@ impl Device {
     /// a target of its own, and before the surface is first configured.
     pub fn presentation(&self) -> Option<Offered> {
         self.window.as_ref()?.state.presentation()
+    }
+
+    /// The window's Metal layer as read now, with the format its surface
+    /// is configured with (`layer`); `None` off macOS, for a device that
+    /// draws on a target of its own, and for a surface whose format has
+    /// no Metal number of this crate's.
+    pub fn layer(&self) -> Option<Layer> {
+        let window = self.window.as_ref()?;
+        let configured = metal_format(window.state.configured_format())?;
+        let reading = read_layer(&window.surface)?;
+        Some(Layer {
+            reading,
+            configured,
+        })
     }
 
     /// Whether the device blends by a coverage for each channel, so that

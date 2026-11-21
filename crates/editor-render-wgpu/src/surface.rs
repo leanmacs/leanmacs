@@ -512,6 +512,12 @@ impl State {
         Some(order_of(self.config.format))
     }
 
+    /// The format the surface is configured with, or is to be: one it
+    /// offers, which its layer's pixel format is made from.
+    pub(crate) fn configured_format(&self) -> wgpu::TextureFormat {
+        self.config.format
+    }
+
     /// The format the surface's texture is drawn on through: what the
     /// pipeline is made for.
     pub(crate) fn target(&self) -> wgpu::TextureFormat {

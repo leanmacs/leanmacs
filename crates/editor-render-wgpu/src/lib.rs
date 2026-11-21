@@ -38,6 +38,7 @@ mod blend;
 mod cpu;
 mod glyphs;
 mod gpu;
+pub mod layer;
 mod painter;
 mod png;
 pub mod present;
@@ -421,6 +422,13 @@ impl WgpuRenderer {
     /// draw configures the surface.
     pub fn presentation(&self) -> Option<Offered> {
         self.device.presentation()
+    }
+
+    /// The Metal layer the renderer draws on, read now and held with the
+    /// format its surface was configured with, for [`layer::misses`];
+    /// `None` off macOS and for a renderer with no window.
+    pub fn layer(&self) -> Option<layer::Layer> {
+        self.device.layer()
     }
 
     /// The adapter's name and back end, for a person.

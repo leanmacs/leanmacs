@@ -711,6 +711,19 @@ fn an_instance_is_a_quads_box_its_source_and_its_colour() {
 }
 
 #[test]
+fn a_renderer_with_no_window_has_no_layer_to_read() {
+    let mut renderer =
+        WgpuRenderer::over(&noop(), Settings::default(), true).expect("the no-op adapter");
+    assert_eq!(renderer.layer(), None);
+    // Nor after a draw: the no-op back end draws on a target of its own.
+    renderer.draw(&DrawRequest {
+        frame: &std::sync::Arc::new(Frame::default()),
+        target: target(1.0),
+    });
+    assert_eq!(renderer.layer(), None);
+}
+
+#[test]
 fn the_clear_is_the_ground_in_the_space_the_device_blends_in() {
     let half = Color::rgba(0x2e, 0x34, 0x40, 0x80);
     for ground in [GROUND, half] {
