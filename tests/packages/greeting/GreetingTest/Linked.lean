@@ -91,6 +91,8 @@ def configCheck (sysroot oleans : String) : IO Bool := do
           workingDirectory := ← IO.currentDir
           display := fun snapshots =>
             Editor.Headless.Host.Display.recorder Editor.Headless.cells snapshots }
+        -- hang guard: each wait of the script ends on its event;
+        -- `settlePatience` only turns a hang into the run's failure.
         directives Editor.Headless.settlePatience
   let lines ← printed.get
   let greeted := lines.any fun line => (line.splitOn Greeting.helloText).length > 1

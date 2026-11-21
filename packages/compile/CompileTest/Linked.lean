@@ -110,6 +110,8 @@ def hostCheck {β σ : Type} {scheme : Editor.InputScheme}
                 workingDirectory := ← IO.FS.realPath directory
                 display := fun snapshots =>
                   Editor.Headless.Host.Display.recorder Editor.Headless.cells snapshots }
+              -- hang guard: each wait of the script ends on its event;
+              -- `settlePatience` only turns a hang into the run's failure.
               directives Editor.Headless.settlePatience
         let lines ← printed.get
         let missing :=

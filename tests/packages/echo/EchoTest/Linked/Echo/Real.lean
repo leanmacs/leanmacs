@@ -22,7 +22,7 @@ open Editor
 /-- The binding as the contract's subject, over the table of waits
 `completions`, whose pump is running: each fresh id is a wait registered
 there, and a request has completed when the pump ended its wait as
-completed, within the kit's patience. -/
+completed, waited for on the wait itself, the kit's patience a hang guard. -/
 def realSubject (completions : Job.Completions) : IO Echo.Contract.Subject := do
   let waits ← IO.mkRef (∅ : Std.HashMap UInt64 (IO.Promise Job.Completion))
   return {
@@ -33,8 +33,9 @@ def realSubject (completions : Job.Completions) : IO Echo.Contract.Subject := do
         return id
       completed := fun id => do
         let some wait := (← waits.get)[id]? | return false
-        let ended ← Test.Linked.eventually wait.isResolved
-        return ended && wait.result?.get == some .completed }
+        -- Waited for on the wait itself; the kit's patience is a hang guard.
+        let ended ← Job.awaitWithin Test.Linked.patience wait.result?
+        return ended == some (some .completed) }
 
 /-- The checks of the binding, each with what must hold as a sentence: every
 property of the contract, over `completions`. -/

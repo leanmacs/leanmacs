@@ -83,18 +83,6 @@ def untilIdle (activity : Job.Activity) : IO Unit := do
     hangGuarded s!"a change of the count from {repr seen}" (← activity.changedSince seen.epoch)
   throw <| IO.userError "unreachable"
 
-/-- Polls `condition` until it holds; `false` if it still does not after
-`patience` milliseconds. -/
-def eventually (condition : IO Bool) : IO Bool := do
-  let deadline := (← IO.monoMsNow) + patience
-  repeat
-    if ← condition then
-      return true
-    if (← IO.monoMsNow) >= deadline then
-      break
-    IO.sleep 1
-  return false
-
 /-- A job's outcome as a check compares it: the command it finished with is
 replaced by the texts that command leaves when it runs against the editor's
 models, since commands cannot be compared. -/

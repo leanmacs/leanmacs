@@ -13,7 +13,6 @@ import Editor.Program
 import Editor.ProjectMode.Listing
 import Editor.State
 import Editor.SyntaxTree
-import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
@@ -148,17 +147,22 @@ def materializeProjects (base compile : System.FilePath) : IO Unit := do
   writeFixtureGit (base / "cargo-wt") (base / "cargo" / ".git") "feature"
 
 /-- Runs `check` in a base of its own holding the project trees
-(`materializeProjects`), on a rig whose children find the fixture programs
-of `compile` and the git fixture of `workspaces` first on their `PATH`;
-then whether every child it started was reaped. -/
+(`materializeProjects`), its real path, so that what the git fixture prints
+names it as the finder does, on a rig whose children find the fixture
+programs of `compile` and the git fixture of `workspaces` first on their
+`PATH`; then whether every child it started was reaped, read once a flush of
+the process service is completed (`childrenReapedTo`). The base is removed
+only once the process service has worked what was handed to it under it
+(`Linked.withFiles`, with the process service's flush). -/
 def withProjects (services : Job.Services) (compile workspaces : System.FilePath)
     (check : ProjectRig → System.FilePath → IO Bool) : IO Bool :=
-  withBase fun base => do
+  withFiles services (targets := [.processes]) fun directory => do
+    let base ← IO.FS.realPath directory
     materializeProjects base compile
     let rig ← ProjectRig.new services s!"{compile / "bin"}:{workspaces}:/usr/bin:/bin"
     let before ← pendingChildren
     let held ← check rig base
-    let reaped ← eventually (return (← pendingChildren) == before)
+    let reaped ← childrenReapedTo services before
     return held && reaped
 
 /-- What only the real process service shows of the shipped modes, with
