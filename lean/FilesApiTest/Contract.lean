@@ -19,8 +19,11 @@ What every implementation of the interface library `files-api`
   (`Editor.Test.hostedDriver`, `probe`): opening a file through `open-file`
   runs every `FilesApi.Opened` value once, with the buffer and the path,
   once the buffer holds the file; a save that writes runs every
-  `FilesApi.Saved` value once; and `adopt` with no view answers the buffer
-  that holds the path and shows it nowhere.
+  `FilesApi.Saved` value once; `adopt` with no view answers the buffer
+  that holds the path and shows it nowhere; and the `Files` value's `save`
+  with a follow-up starts the follow-up only once the file is written,
+  not in the step that asked, while a save refused because the file changed
+  on disk starts nothing and is said as the save command's refusal is.
 
 It is a list of sentences, each with whether it holds, as the fixture
 interface package `greeting-api`'s (`tests/packages/greeting-api`).
@@ -31,9 +34,16 @@ namespace FilesApiTest
 open Editor
 open Editor.Test
 
+/-- The follow-up job the probe hands a save: it finishes with a command that
+makes the text `followed`. -/
+def followJob : String :=
+  "files-api-follow"
+
 /-- The probe's hook values at `Opened`, and the one at `Saved`: each makes
 a text saying what it was handed, and, for `Opened`, whether the buffer then
-held the path. -/
+held the path; the follow-up job `followJob`; and two commands over the
+implementation's `Files` value: `files-api-adopt` and `files-api-save`, a
+save of `note.txt`'s buffer with `followJob` as its follow-up. -/
 def probe : Package :=
   { name := "files-api-probe"
     setup := do
@@ -55,7 +65,12 @@ def probe : Package :=
           let before := (← editorState).window? ⟨0⟩ |>.map (·.buffer)
           let some id ← files.adopt (inFiles "note.txt") loaded none | message "adopted none"
           let after := (← editorState).window? ⟨0⟩ |>.map (·.buffer)
-          message s!"adopted {id.index}, view 0 kept {before == after}" }
+          message s!"adopted {id.index}, view 0 kept {before == after}"
+      workJob followJob fun _ _ => pure (discard <| createText "followed")
+      command "files-api-save" do
+          let some files ← FilesApi.files? | message "no files implementation"
+          let some id := (← editorState).findFile (inFiles "note.txt") | message "no note"
+          files.save id false (some { name := followJob }) }
 
 /-- The texts `driver`'s model holds that start with `lead`. -/
 def textsStarting (driver : TestDriver) (lead : String) : Array String :=
@@ -77,6 +92,13 @@ def contractChecks (package : Package) : List (String × Bool) :=
   let id := opened.bind fun driver => driver.loop.state.findFile note
   let saved := opened.map fun driver => hostedRan driver { command := FilesApi.saveName }
   let adopted := opened.map fun driver => hostedRan driver { command := "files-api-adopt" }
+  let asked :=
+    opened.map fun driver =>
+      (driver.stepped (driver.loop.invoke driver.handed { command := "files-api-save" })).1
+  let changed := opened.map fun driver => rewritten driver note "behind the editor\n".toUTF8
+  let refused := changed.map fun driver => hostedRan driver { command := "files-api-save" }
+  let refusedByCommand :=
+    changed.map fun driver => hostedRan driver { command := FilesApi.saveName }
   (FilesApi.names.toList.map fun name =>
       (s!"`{package.name}` registers a command under `{name}`, a name `files-api` declares",
         commands.contains name)) ++
@@ -98,6 +120,18 @@ def contractChecks (package : Package) : List (String × Bool) :=
       (s!"`adopt` of `{package.name}`'s `FilesApi.Files` value with no view answers the buffer that holds the path and shows it nowhere",
         match adopted, id with
         | some driver, some id => driver.loop.state.echo == s!"adopted {id.index}, view 0 kept true"
+        | _, _ => false),
+      (s!"`save` of `{package.name}`'s `FilesApi.Files` value with a follow-up starts the follow-up only once the file is written: no job of it is started in the step that asked, and it runs once the save's jobs have finished",
+        match asked with
+        | some driver =>
+          !(driver.pending.any (·.name == followJob)) && textsStarting driver "followed" == #[] &&
+            textsStarting (hostedSettled driver) "followed" == #["followed"]
+        | none => false),
+      (s!"a refused save through `save` of `{package.name}`'s `FilesApi.Files` value, its file changed on disk, starts no follow-up, and is said as a refused `{FilesApi.saveName}` is",
+        match refused, refusedByCommand with
+        | some driver, some byCommand =>
+          textsStarting driver "followed" == #[] && !driver.loop.state.echo.isEmpty &&
+            driver.loop.state.echo == byCommand.loop.state.echo
         | _, _ => false)]
 
 end FilesApiTest

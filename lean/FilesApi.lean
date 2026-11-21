@@ -29,8 +29,13 @@ out.
   `files?`: what files does for others, `adopt` (the buffer of a path
   whose load answered, shown in a view or nowhere), `visit` (a path at a
   point, in a view) and `save` (a buffer, forced or not, with a follow-up
-  job). The latest value of the name wins, so config's replaces the
-  feature's. With none a caller says `noImplementation`.
+  job). A save writes its file in a job, and starts the follow-up only once
+  the file is written; a refused save, its file changed on disk or its
+  write failed, starts nothing, and the implementation says the refusal as
+  any save's is, so a caller says nothing of it. The latest value of the
+  name wins, so config's replaces the feature's. With none a caller says
+  `noImplementation`. The contract holds every implementation to these
+  (`FilesApiTest.contractChecks`).
 
 ## Its names and constants
 
@@ -89,8 +94,12 @@ structure Files where
   /-- Visits the path in the view at the point, focusing the view when the
   flag says so. -/
   visit : ViewId → System.FilePath → At → Bool → EditorM Unit
-  /-- Saves the buffer, whatever is on disk when the flag says so, then
-  starts the follow-up job when one is given. -/
+  /-- Saves the buffer, whatever is on disk when the flag says so. The write
+  runs in a job; the follow-up job, when one is given, is started only once
+  the file is written, never in the step that asked. A refused save (the
+  file changed on disk since it was loaded, without the flag, or the write
+  failed) starts nothing, and the implementation reports the refusal as
+  any save's is. -/
   save : BufferId → Bool → Option JobStart → EditorM Unit
   deriving TypeName
 

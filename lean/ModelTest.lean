@@ -1200,8 +1200,10 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
 - `filesApiChecks`: the interface library `files-api` (`FilesApi.lean`):
   its names; its fake (`FilesApiTest.fake`, the kit's opener with the
   hooks as its runners) keeps its contract; the contract fails a package
-  that lacks a command, one that registers none, and one whose open and
-  save run no hook; and a set's own `Files` value of the name `files`,
+  that lacks a command, one that registers none, one whose open and save
+  run no hook, and one whose save starts its follow-up at once, before the
+  file is written and on a refused save; and a set's own `Files` value of
+  the name `files`,
   registered after the feature's, is the one `files?` answers;
 - `buffersApiChecks`: the interface library `buffers-api` (`BuffersApi.lean`):
   its names; its fake (`BuffersApiTest.fake`, a close over the core's API)

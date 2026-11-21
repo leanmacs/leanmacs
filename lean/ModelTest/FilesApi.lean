@@ -37,6 +37,20 @@ def filesFakeLacking (dropped : List String := []) (hooks : Bool := true) : Pack
   { name := FilesApiTest.fake.name
     setup := FilesApiTest.fakeSetup (dropped := dropped) (hooks := hooks) }
 
+/-- The fake, but its `Files` value's save starts the follow-up at once and
+saves with none: an implementation that starts the follow-up before the
+file is written, and on a refused save too. -/
+def filesFakeFollowingAtOnce : Package :=
+  { name := FilesApiTest.fake.name
+    setup := do
+      FilesApiTest.fakeSetup
+      Extension.add
+          { FilesApiTest.files with
+            save := fun id force after => do
+              if let some job := after then
+                discard <| startJob job.name job.arguments
+              Opener.save id force none } }
+
 /-- The checks of `files-api` (`FilesApi.lean`). -/
 def filesApiChecks : List Check :=
   [{  name :=
@@ -70,6 +84,14 @@ def filesApiChecks : List Check :=
           ((FilesApiTest.contractChecks silent).filter (!·.2)).length == 2 &&
             filesFailsOn silent "FilesApi.Opened" &&
             filesFailsOn silent "FilesApi.Saved" },
+    { name :=
+        "an implementation whose save starts the follow-up at once fails the contract: the checks that the follow-up waits for the file to be written and that a refused save starts it not are false, and the rest hold"
+      run :=
+        pure <|
+          let hasty := filesFakeFollowingAtOnce
+          ((FilesApiTest.contractChecks hasty).filter (!·.2)).length == 2 &&
+            filesFailsOn hasty "only once the file is written" &&
+            filesFailsOn hasty "a refused save" },
     { name :=
         "a set's own Files value of the name files, registered after the feature's, as config's is, is the one files? answers: its visit runs in place of the feature's"
       run :=
