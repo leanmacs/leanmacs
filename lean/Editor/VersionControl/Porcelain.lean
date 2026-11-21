@@ -1,4 +1,4 @@
-import Editor.VersionControl
+import VcApi
 
 /-!
 # Reading git's porcelain status

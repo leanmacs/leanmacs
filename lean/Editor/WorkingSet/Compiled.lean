@@ -1,3 +1,4 @@
+import Editor.Extension
 import Editor.Package
 import Editor.WorkingSet.Run
 
@@ -23,7 +24,9 @@ set and a set opened as an excerpt buffer of its ranges
   set's ranges that no buffer holds, keyed by the set's buffer's name; and
   `working-set-load`, `working-set-write` and `working-set-save`, which
   read a workspace's sets from the state directory and write them back
-  (`Editor/WorkingSet/Disk.lean`).
+  (`Editor/WorkingSet/Disk.lean`); `working-set-write` is registered over
+  the version-control backend point (`VcApi.Backend`), which it asks for
+  the commit `HEAD` is at.
 
 Pinned by `ModelTest.workingSetRunChecks`, on the models, and by
 `ConfigTest.shippedChecks` over the hosts' registry.
@@ -46,7 +49,7 @@ def package : Package :=
       defineMode mode
       workJob filesJob filesWork
       workJob loadJob loadWork
-      workJob writeJob writeWork
+      Extension.workJob VcApi.Backend writeJob fun backends => writeWork (VcApi.connect? backends)
       workJob saveJob saveWork }
 
 end Editor.WorkingSet

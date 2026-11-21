@@ -1,6 +1,5 @@
 import Editor.Restore.Value
 import Editor.Shell
-import Editor.VersionControl.Review
 import ModelTest.Check
 
 /-!
@@ -27,15 +26,6 @@ def roundTrips (value : Value) : Bool :=
 as its escape (`File.decodeBytes`). -/
 def survivors : String :=
   File.decodeBytes ⟨#[0x61, 0xff, 0xfe, 0x62]⟩
-
-/-- A review store with a round, a hunk and what was viewed of it. -/
-def reviewed : VersionControl.ReviewStore :=
-  { buffer := some 7
-    rounds :=
-      #[{ against := "main", base := "abc", head := "def"
-          hunks :=
-            #[{ path := "a.txt", header := "@@ -1 +1 @@", decision := .kept
-                viewed := #[{ scenes := 2, firstAt := some 3, shownFor := 40 }] }] }] }
 
 end RestoreValueTest
 
@@ -89,12 +79,10 @@ def restoreValueChecks : List Check :=
                 .object #[("record", .array #[.array #[.null, .null]])]].all
             (Value.ofJson? · == none) },
     { name :=
-        "the shipped stores that are kept across a restart round-trip, initial and populated: shell-history and vc-review"
+        "the shell's store that is kept across a restart round-trips, initial and populated: shell-history"
       run :=
         pure <|
           roundTrips (Shell.historyStore.encode Shell.historyStore.initial) &&
-            roundTrips (Shell.historyStore.encode #[":!make", "ls -la", "echo é\x00"]) &&
-            roundTrips (VersionControl.reviewStore.encode VersionControl.reviewStore.initial) &&
-            roundTrips (VersionControl.reviewStore.encode reviewed) }]
+            roundTrips (Shell.historyStore.encode #[":!make", "ls -la", "echo é\x00"]) }]
 
 end ModelTest

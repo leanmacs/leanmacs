@@ -1,12 +1,12 @@
 import Editor.State
 import Editor.Test.Driver
-import Editor.VersionControl
-import Editor.VersionControl.Contract
 import Editor.VersionControl.Log
 import Editor.VersionControl.Review
 import ModelTest.Check
 import ModelTest.Editor.VersionControl.Review
 import ModelTest.Support.VersionControl
+import VcApi
+import VcApiTest.Contract
 
 /-!
 # Model tests: `Editor/VersionControl/Log.lean`

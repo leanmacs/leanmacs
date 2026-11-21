@@ -9,13 +9,14 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Text.Model
-import Editor.VersionControl
-import Editor.VersionControl.Contract
 import Editor.VersionControl.Git
+import Editor.VersionControl.Git.Model
 import Editor.VersionControl.Hunk
-import Editor.VersionControl.Model
 import ModelTest.Check
 import ModelTest.Support.Git
+import VcApi
+import VcApiTest.Contract
+import VcApiTest.Fake
 
 /-!
 # Model tests: `Editor/VersionControl/Hunk.lean`

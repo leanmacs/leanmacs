@@ -10,15 +10,15 @@ import Editor.Test.Files
 import Editor.Test.Keys
 import Editor.Text
 import Editor.Text.Model
-import Editor.VersionControl
 import Editor.VersionControl.Compiled
-import Editor.VersionControl.Contract
-import Editor.VersionControl.Model
 import Editor.VersionControl.Review
 import Editor.VersionControl.ReviewHunks
 import ModelTest.Check
 import ModelTest.Editor.VersionControl.ReviewHunks
 import ModelTest.Support.VersionControl
+import VcApi
+import VcApiTest.Contract
+import VcApiTest.Fake
 
 /-!
 # Model tests: `Editor/VersionControl/Review.lean`

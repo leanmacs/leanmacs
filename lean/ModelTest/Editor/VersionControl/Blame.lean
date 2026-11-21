@@ -1,12 +1,12 @@
 import Editor.State
 import Editor.Test.Driver
-import Editor.VersionControl
 import Editor.VersionControl.Blame
 import Editor.VersionControl.Review
 import ModelTest.Check
 import ModelTest.Editor.VersionControl.Log
 import ModelTest.Editor.VersionControl.Review
 import ModelTest.Support.VersionControl
+import VcApi
 
 /-!
 # Model tests: `Editor/VersionControl/Blame.lean`

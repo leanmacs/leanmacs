@@ -1,22 +1,25 @@
+import Editor.Config.Packages
 import Editor.Diff.Model
-import Editor.VersionControl
-import Editor.VersionControl.Hunk
-import Editor.VersionControl.Model
+import VcApi
+import VcApiTest.Fake
 
 /-!
 # The contract of the version-control interface
 
-Properties every implementation of the version-control port
-(`Editor/VersionControl.lean`) must have, each a program over the port and
-the repository it starts from. One list, run three ways, so the model
-cannot drift from git:
+The contract check of the interface library `vc-api` (`VcApi.lean`), in
+two parts.
 
-- by `model-test`, against the model (`Model.handle`), from the property's
-  repository;
+Properties every implementation of the version-control port must have,
+each a program over the port and the repository it starts from. One list,
+run three ways, so the model cannot drift from git:
+
+- by `model-test`, against the model (`Model.handle`, `VcApiTest/Fake.lean`),
+  from the property's repository;
 - by `model-test`, the git implementation's status read of each property's
   repository, on the job model whose scripts print the model's status as
-  git would (`Repository.jobModel`): the job model holds static scripts, so
-  only a read runs there;
+  git would (`Repository.jobModel`, version control's
+  `Editor/VersionControl/Git/Model.lean`): the job model holds static
+  scripts, so only a read runs there;
 - by `contract-test`, against the git implementation over the library's
   process service, each property in a temporary repository of its own,
   eight properties at a time, written from the property's
@@ -57,7 +60,14 @@ changed line is close to the line it replaced, so git would hand it to the
 parent were the hostile config's `blame.ignoreRevsFile` read: property 4
 fails if the blame's command line stops clearing it. The range-diff
 properties hold where git's pairing by diff cost and the model's by subject
-agree (`Model.lean`, "The graph").
+agree (`VcApiTest/Fake.lean`, "The graph").
+
+And what an implementation registers (`registrationChecks`), collected with
+`Package.registered` over its packages together, so nothing is registered
+in an editor: a backend called `git` at `VcApi.Backend`, the gutter's three
+jobs and the segment `review`. It is a list of sentences, each with whether
+it holds, as the fixture interface package `greeting-api`'s
+(`tests/packages/greeting-api`).
 
 ## Adding to this
 
@@ -947,3 +957,30 @@ def properties : List Property :=
     historyProperties
 
 end Editor.VersionControlContract
+
+namespace VcApiTest
+
+open Editor
+
+/-- The checks of what an implementation registers over `packages`, taken
+together ("And what an implementation registers", in the module docs), each
+with what must hold as a sentence. -/
+def registrationChecks (packages : Array Package) : List (String × Bool) :=
+  let registered := packages.map Package.registered
+  let names := ", ".intercalate (packages.map (·.name)).toList
+  let backends : Array VcApi.Backend :=
+    registered.flatMap fun collected =>
+      collected.extensions.filterMap fun (key, value) =>
+        if key == TypeName.typeName VcApi.Backend then value.get? VcApi.Backend else none
+  let jobs := registered.flatMap fun collected => collected.jobs.map (·.name)
+  let segments := registered.flatMap fun collected => collected.segments.map (·.name)
+  [(s!"`{names}` register a backend at `VcApi.Backend` named `{VcApi.gitBackendName}`",
+        backends.any (·.name == VcApi.gitBackendName))] ++
+    VcApi.gutterJobs.toList.map
+      (fun job =>
+        (s!"`{names}` register a job under `{job}`, a gutter job `vc-api` declares",
+          jobs.contains job)) ++
+    [(s!"`{names}` register a segment under `{VcApi.reviewSegmentName}`, the segment `vc-api` declares",
+        segments.contains VcApi.reviewSegmentName)]
+
+end VcApiTest

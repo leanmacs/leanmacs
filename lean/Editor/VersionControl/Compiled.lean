@@ -1,3 +1,4 @@
+import Editor.Extension
 import Editor.Package
 import Editor.VersionControl.Blame
 import Editor.VersionControl.Commit
@@ -98,6 +99,12 @@ The `version-control` package:
   package (`Editor/Ex/Compiled.lean`) for a line to run them; neither
   package names the other.
 
+It registers the git implementation as the version-control backend of the
+interface library `vc-api` (`VcApi.Backend`, named `git`, connecting with
+`Git.handler`), which working-set's write and find-in-project's jobs
+connect through. Together with the gutter's package it is held to
+`vc-api`'s registration check (`VcApiTest.registrationChecks`).
+
 The `version-control-gutter` package: the gutter's command,
 `vc-gutter-moved`, which its watch job posts
 (`Editor/VersionControl/Gutter.lean`), and its jobs, `vc-gutter-head`,
@@ -116,10 +123,11 @@ namespace Editor.VersionControl
 
 /-- The package `version-control`: the status buffer's commands and those
 of the buffers it opens, their jobs, their modes, the mode line's segment
-`review`, and the `vc-…` ex names. -/
+`review`, the `vc-…` ex names, and the backend `git` at `VcApi.Backend`. -/
 def package : Package :=
   { name := "version-control"
     setup := do
+      Extension.add ({ name := VcApi.gitBackendName, connect := Git.handler } : VcApi.Backend)
       commandWith statusName statusCommand
       commandWith refreshName refreshCommand
       commandWith visitName visitCommand

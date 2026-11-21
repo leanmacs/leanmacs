@@ -1,9 +1,8 @@
 import Editor.File
 import Editor.Files
 import Editor.Job
-import Editor.VersionControl
-import Editor.VersionControl.Git
 import Editor.WorkingSet.Places
+import VcApi
 
 /-!
 # Working sets on disk
@@ -42,8 +41,10 @@ starts `working-set-write` keyed by the root, so a newer write cancels an
 older one still asking:
 
 - **the job** (`writeWork`) asks the version-control interface for the
-  commit `HEAD` is at (`log "HEAD" 1`, through `connect`, git by default);
-  no repository, or an unborn `HEAD`, is an empty commit;
+  commit `HEAD` is at (`log "HEAD" 1`), through the backend a set
+  registers (`VcApi.Backend`, the latest one, `VcApi.connect?`): the job is
+  registered over that point (`Extension.workJob`); no backend, no
+  repository, or an unborn `HEAD`, is an empty commit;
 - **its command** (`writeNow`) refreshes every held range's stored form from
   its text now and fills the commit in; detached ranges keep the form they
   were detached with, and drifted ones are written exactly as read. It
@@ -203,14 +204,15 @@ def writeNow (root state commit : String) : EditorM Unit := do
     (snapshot.release : TextM Unit)
     message (notSavedSentence (labelAt (← editorState) location root) refusal.describe)
 
-/-- The write job: asks `connect`'s version-control interface, git by
-default, for the commit `HEAD` is at, an empty one when there is none, and
-finishes with the write (`writeNow`). -/
-def writeWork
-    (connect : String → System.FilePath → VersionControl.Handler := VersionControl.Git.handler)
+/-- The write job: asks the version-control interface through `connect`, the
+backend a set registers (`VcApi.connect?`), for the commit `HEAD` is at, an
+empty one when there is none or no backend is registered, and finishes with
+the write (`writeNow`). -/
+def writeWork (connect : Option (String → System.FilePath → VersionControl.Handler))
     (arguments : List Argument) : Work := fun _ => do
   let .str root :: .str git :: .str state :: _ :=
     arguments | throw s!"{writeJob}: its arguments are not a write's"
+  let some connect := connect | return writeNow root state ""
   let commit :=
     match ← Program.runM (connect git (System.FilePath.mk root)) (VersionControl.log "HEAD" 1) with
     | .ok entries => (entries[0]?.map (·.id)).getD ""

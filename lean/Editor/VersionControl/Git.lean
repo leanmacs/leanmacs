@@ -1,8 +1,8 @@
-import Editor.VersionControl
 import Editor.VersionControl.HistoryRead
 import Editor.VersionControl.Plumbing
 import Editor.VersionControl.Porcelain
 import Editor.Workspace
+import VcApi
 
 /-!
 # The git implementation of the version-control interface

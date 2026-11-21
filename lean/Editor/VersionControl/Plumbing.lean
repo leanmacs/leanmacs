@@ -1,5 +1,5 @@
-import Editor.VersionControl
 import Editor.VersionControl.Porcelain
+import VcApi
 
 /-!
 # Reading git's plumbing

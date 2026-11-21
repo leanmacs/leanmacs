@@ -48,6 +48,24 @@ editor: it is a library of its own, outside `Editor/`, that the generated
 root and the tests that need the list import. -/
 lean_lib EditorCore where roots := #[`EditorCore.EditorPackage]
 
+/-- The interface library `vc-api` (`VcApi.lean`): the version-control port,
+its hunk helpers, the backend point and the names others reach. It is
+staged in the core's Lake package with exactly the layout and names it will
+have as the package `packages/vc-api/` (decided 2026-11-21, the
+features-as-packages roadmap's phase 5): it imports only the core's API, so
+the phase where its last user in the core moves out moves it with a
+`git mv` and a lakefile, changing no import line in it. The core's modules
+import it as they import any library of this package; no package may yet
+(`tools/package-imports-check.sh` classes a module outside `Editor` as no
+module of the editor). -/
+lean_lib VcApi
+
+/-- The test library of `vc-api` (`VcApiTest/`): its fake, the pure model of
+a repository (`VcApiTest.Fake`), and its contract check
+(`VcApiTest.Contract`). Staged here as `VcApi` is, it imports only the core's
+API, `VcApi` and the core's test kit. -/
+lean_lib VcApiTest where globs := #[.submodules `VcApiTest]
+
 /-- Code that `ffi-test overflow` has Lean's interpreter run
 (`InterpretedFixture.lean`; `mise run ffi-overflow`). It is a library of its
 own that no executable imports, so it is compiled to an `.olean` and never
@@ -1115,12 +1133,22 @@ def relativeUnder (dir file : FilePath) : Option String :=
 
 #guard relativeUnder "/r/lean" "/r/other/Api.lean" == none
 
+/-- The interface libraries staged in the core's Lake package, each with its
+test library (`lean_lib VcApi`, above): the config base imports them through
+the features still in the core, so the bundle ships them as it ships
+`Editor`. One moves out of this list when it moves to `packages/`. -/
+def stagedInterfaceLibraries : List Lean.Name :=
+  [`VcApi, `VcApiTest]
+
 /-- Whether a library of `pkg` ships its modules built in the bundle
 (`editorShipped`): of the core, `Editor` and `EditorCore`, the libraries
-`coreIdentity` reads; of another package, each library but its tests,
-`<P>Test`. -/
+`coreIdentity` reads, and the interface libraries staged in it
+(`stagedInterfaceLibraries`), whose changes reach the identity through the
+traces of the core's modules that import them; of another package, each
+library but its tests, `<P>Test`. -/
 def shipsLibrary (pkg : Package) (lib : LeanLib) : Bool :=
-  if pkg.keyName == __name__ then lib.name == `Editor || lib.name == `EditorCore
+  if pkg.keyName == __name__ then
+    lib.name == `Editor || lib.name == `EditorCore || stagedInterfaceLibraries.contains lib.name
   else
     match toUpperCamelCase pkg.baseName with
     | .str namespace_ base => lib.name != .str namespace_ (base ++ "Test")

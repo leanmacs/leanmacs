@@ -18,7 +18,6 @@ import ContractTest.Editor.Shell
 import ContractTest.Editor.SyntaxTree.Contract
 import ContractTest.Editor.SyntaxTree.Real
 import ContractTest.Editor.Text.Contract
-import ContractTest.Editor.VersionControl.Contract
 import ContractTest.Editor.VersionControl.Git
 import ContractTest.Editor.VersionControl.Log
 import ContractTest.Editor.VersionControl.Review
@@ -44,9 +43,9 @@ import Editor.SyntaxTree.Contract
 import Editor.Test.Linked.Services
 import Editor.Text.Contract
 import Editor.UndoTree.Cases
-import Editor.VersionControl.Contract
 import Editor.Watch.Contract
 import Editor.Workspace.Contract
+import VcApiTest.Contract
 
 /-!
 # The contract checks against the real bindings

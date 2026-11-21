@@ -1,7 +1,7 @@
-import Editor.VersionControl
 import Editor.VersionControl.Porcelain
 import ModelTest.Check
 import ModelTest.Support.Git
+import VcApi
 
 /-!
 # Model tests: `Editor/VersionControl/Porcelain.lean`

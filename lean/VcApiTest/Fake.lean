@@ -1,22 +1,19 @@
 import Editor.Diff.Model
 import Editor.Job.Model
-import Editor.VersionControl
-import Editor.VersionControl.Git
-import Editor.VersionControl.Hunk
+import VcApi
 
 /-!
-# The pure model of a repository
+# The fake of `vc-api`: the pure model of a repository
 
-A repository as a value: what is checked out, `HEAD`'s files, the index and
-the working tree, each a path and its content. `Repository.status` answers
-a status as a pure function, `Model.handle` answers each request of the
-version-control port (`Editor/VersionControl.lean`), and
-`Repository.porcelain` prints the status as git prints it with the git
-implementation's flags, so the real parser reads the model's status
-(`Editor/VersionControl/Porcelain.lean`). `Repository.jobModel` is the job
-model (`JobModel`, `Editor/Job/Model.lean`) whose process scripts answer
-the git implementation's command lines in a repository, so the git
-implementation runs on the models too. `Model.readHandler` answers the
+The interface library `vc-api`'s fake (`VcApi.lean`): a repository as a
+value: what is checked out, `HEAD`'s files, the index and the working tree,
+each a path and its content. `Repository.status` answers a status as a pure
+function, and `Model.handle` answers each request of the version-control
+port. It knows nothing of git: what git prints of a repository and the job
+model that answers git's command lines are the git implementation's
+(`Editor/VersionControl/Git/Model.lean`). A consumer connects to it through
+`VcApiTest.backend`, a backend whose handler answers from the model, in
+place of any implementation's. `Model.readHandler` answers the
 port's requests inside a job from a repository as it is, for a read whose
 replies the job model's scripts do not print (the review's, the log's and
 the blame's reads, `Editor/VersionControl/Review.lean`,
@@ -149,8 +146,8 @@ the blame's reads, `Editor/VersionControl/Review.lean`,
   one (128, `contains modified or untracked files`) are refused; otherwise
   it is dropped, and its branch kept.
 
-The contract (`Editor/VersionControl/Contract.lean`) is what says the model
-and the git implementation agree.
+The contract (`VcApiTest/Contract.lean`) is what says the model and an
+implementation agree.
 -/
 
 namespace Editor.VersionControl.Model
@@ -350,62 +347,6 @@ def status (repository : Repository) : Status :=
   { head := repository.head
     files := sorted (repository.paired (repository.paths.flatMap repository.statesOf)) }
 
-/-- An object name of none of git's objects, which the printer prints in
-every place git prints one. -/
-def zeros : String :=
-  "0000000000000000000000000000000000000000"
-
-/-- The letter git prints for a change, `.` for none. -/
-def letter : Option Change → Char
-  | none => '.'
-  | some .added => 'A'
-  | some .modified => 'M'
-  | some .deleted => 'D'
-
-/-- The `XY` git prints for a conflict. -/
-def conflictCode : Conflict → String
-  | .bothModified => "UU"
-  | .bothAdded => "AA"
-  | .bothDeleted => "DD"
-  | .addedByUs => "AU"
-  | .addedByThem => "UA"
-  | .deletedByUs => "DU"
-  | .deletedByThem => "UD"
-
-/-- The record git prints for `file`, its NUL included, with placeholder
-modes and object names. -/
-def record (file : FileStatus) : String :=
-  match file.state with
-  | .changed staged unstaged =>
-    s!"1 {letter staged}{letter unstaged} N... 100644 100644 100644 {zeros} {zeros} {file.path}\x00"
-  | .renamed origin unstaged =>
-    s!"2 R{letter unstaged} N... 100644 100644 100644 {zeros} {zeros} R100 {file.path}\x00{origin}\x00"
-  | .conflicted how =>
-    s!"u {conflictCode how} N... 100644 100644 100644 100644 {zeros} {zeros} {zeros} {file.path}\x00"
-  | .untracked => s!"? {file.path}\x00"
-
-/-- Where git lists a file: changes and renames, then conflicts, then
-untracked files. -/
-def listing : FileState → Nat
-  | .changed .. | .renamed .. => 0
-  | .conflicted _ => 1
-  | .untracked => 2
-
-/-- What the git implementation's status read (`Git.statusArguments`)
-prints of `repository`: the `branch.oid` and `branch.head` headers, then a
-record for each file in git's order. -/
-def porcelain (repository : Repository) : ByteArray :=
-  let status := repository.status
-  let oid := if repository.committed.isEmpty then "(initial)" else zeros
-  let head :=
-    match status.head with
-    | .branch name => name
-    | .detached => "(detached)"
-  let listed :=
-    (List.range 3).toArray.flatMap fun place => status.files.filter (listing ·.state == place)
-  (s!"# branch.oid {oid}\x00# branch.head {head}\x00" ++
-      String.join (listed.map record).toList).toUTF8
-
 /-- `repository` with `path` staged: the working tree's content in the
 index, or the path removed from it when the working tree lacks it. -/
 def stageOne (repository : Repository) (path : String) : Repository :=
@@ -419,10 +360,6 @@ def unstageOne (repository : Repository) (path : String) : Repository :=
   match lookup repository.committed path with
   | some content => { repository with index := setting repository.index path (.file content) }
   | none => { repository with index := without repository.index path }
-
-/-- A run of `git` that exits 0 having written `stdout`. -/
-def ran (stdout : ByteArray) : Except ProcessError Process.Ran :=
-  .ok { exit := .code 0, stdout, stderr := .empty }
 
 /-- The checked-out branch's name, if `HEAD` is on one. -/
 def checkedOut (repository : Repository) : Option String :=
@@ -885,80 +822,6 @@ def removingWorktree (repository : Repository) (path : System.FilePath) : Except
           s!"fatal: '{path}' contains modified or untracked files, use --force to delete it")
   return { repository with linked := repository.linked.filter (·.path != path) }
 
-/-- What the git implementation's worktree list read
-(`Git.worktreeListArguments`) prints of `repository`, as git prints it with
-`-z`: a record for each worktree, its path, `HEAD` and its branch or
-`detached`. -/
-def worktreePorcelain (repository : Repository) : ByteArray :=
-  String.join
-      (repository.worktreesOf.toList.map fun worktree =>
-        let head :=
-          match worktree.head with
-          | .branch name => s!"branch refs/heads/{name}"
-          | .detached => "detached"
-        s!"worktree {worktree.path}\x00HEAD {zeros}\x00{head}\x00\x00") |>.toUTF8
-
-end Repository
-
-/-- The id the job model gives the blob of `content`: made of its content
-alone, so equal contents share it, as git's do. -/
-def blobId (content : String) : String :=
-  s!"blob{hash content}"
-
-namespace Repository
-
-/-- The job model in which the git implementation, running `git` in `root`,
-meets `repository`: its status read prints `porcelain`; each of `writes`
-exits 0; `fileAt`'s two runs answer each file of `HEAD`, of the index (the
-empty revision) and of each named revision, its id and then its bytes; its first run exits 1 for each
-revision and path of `missing`; and `watched` prints the git and the common
-directories; and its worktree list read prints `worktreePorcelain`. A hunk's apply of `writes` exits 0 whatever it is fed, and so
-does its commit, but in a repository with a `hook`, where it exits 1 with
-the hook's output on its standard error. A command no script names is refused as `notFound`, as a
-program that is not there is. -/
-def jobModel (repository : Repository) (git : String) (root : System.FilePath)
-    (writes : Array Request := #[]) (missing : Array (String × String) := #[]) : JobModel :=
-  let script (arguments : Array String) (stdout : ByteArray) : Process.Script :=
-    { command := Git.command git root arguments, reply := ran stdout }
-  let files :=
-    (("HEAD", repository.committed) ::
-          ("", repository.indexFiles) :: repository.revisions.toList).toArray.flatMap
-      fun (revision, files) => files.map fun (path, content) => (revision, path, content)
-  {
-    processes :=
-      {
-        scripts :=
-          #[script Git.statusArguments repository.porcelain,
-              script Git.worktreeListArguments repository.worktreePorcelain] ++
-            writes.filterMap
-              (fun write =>
-                match write with
-                | .stage paths => some (script (Git.stageArguments paths) .empty)
-                | .unstage paths => some (script (Git.unstageArguments paths) .empty)
-                | .stageHunk .. => some (script (Git.applyArguments false) .empty)
-                | .unstageHunk .. => some (script (Git.applyArguments true) .empty)
-                | .commit _ =>
-                  some
-                    { command := Git.commitCommand git root
-                      reply :=
-                        match repository.hook with
-                        | some printed =>
-                          .ok {
-                              exit := .code 1, stdout := .empty
-                              stderr := File.encodeText printed }
-                        | none => ran .empty }
-                | _ => none) ++
-            files.flatMap
-              (fun (revision, path, content) =>
-                #[script (Git.revisionArguments revision path) s!"{blobId content}\n".toUTF8,
-                  script (Git.blobArguments (blobId content)) (File.encodeText content)]) ++
-            missing.map
-              (fun (revision, path) =>
-                { command := Git.command git root (Git.revisionArguments revision path)
-                  reply := .ok { exit := .code 1, stdout := .empty, stderr := .empty } }) ++
-            #[script Git.watchedArguments
-                s!"{repository.gitDir}\n{repository.commonDir}\n".toUTF8] } }
-
 end Repository
 
 /-- The model's answer to `request` in `repository`, and the repository
@@ -1034,3 +897,22 @@ def readHandler (repository : Repository) : Handler := fun request =>
   pure (handle request repository).1
 
 end Editor.VersionControl.Model
+
+namespace VcApiTest
+
+open Editor
+
+/-- A backend over the model of `repository`: its handler answers every
+request from the repository as it is (`Model.readHandler`), whatever
+program and root it is connected with. A consumer's tests register it in
+place of an implementation's. -/
+def backend (repository : VersionControl.Model.Repository) : VcApi.Backend :=
+  { name := "model", connect := fun _ _ => VersionControl.Model.readHandler repository }
+
+/-- The values registered at each extension point when `backends` alone
+are registered at `VcApi.Backend`: what a test hands a job registered over
+the point (`JobRegistration.workWith`) in place of a host's registry. -/
+def backendValues (backends : Array VcApi.Backend) (key : Lean.Name) : Array Dynamic :=
+  if key == TypeName.typeName VcApi.Backend then backends.map (.mk ·) else #[]
+
+end VcApiTest

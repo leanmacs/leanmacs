@@ -1,6 +1,6 @@
 import Editor.Invocation
-import Editor.VersionControl
 import Editor.Workspace
+import VcApi
 
 /-!
 # The project's workspaces

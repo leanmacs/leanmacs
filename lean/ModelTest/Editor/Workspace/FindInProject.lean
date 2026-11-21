@@ -1,4 +1,3 @@
-import Editor.Completion.Later
 import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.InputScheme.Vim
@@ -7,13 +6,13 @@ import Editor.Setup
 import Editor.Test.Driver
 import Editor.Test.Minibuffer
 import Editor.Test.Workspace
-import Editor.VersionControl.Contract
-import Editor.VersionControl.Git
-import Editor.VersionControl.Model
 import Editor.Workspace.Compiled
 import Editor.Workspace.FindInProject
 import ModelTest.Check
 import ModelTest.Support.FindFile
+import VcApi
+import VcApiTest.Contract
+import VcApiTest.Fake
 
 /-!
 # Model tests: `Editor/Workspace/FindInProject.lean`
@@ -49,15 +48,49 @@ def repository (linked : Array VersionControl.Model.Linked) : VersionControl.Mod
 def threeLinked : Array VersionControl.Model.Linked :=
   #[{ path := "/u", branch := some "fix" }, { path := "/w", branch := some "feature" }]
 
-/-- The jobs of the checks: the finder checks', and the picker's three. -/
-def projectJobs (name : String) : Option (List Argument → Work) :=
-  if name == Workspace.FindInProject.job then
-    some (Completion.answering Workspace.FindInProject.answer)
+/-- What the recording backend runs, through the job port, before it answers
+a worktree list: a command the job model records when it starts
+(`ProcessModel.started`), so a check counts how often the backend was asked
+for the list, as it counted git's runs. It runs nothing real. -/
+def listRun : Process.Command :=
+  { program := "vc-api-fake", arguments := #["worktrees"], directory := "/r" }
+
+/-- `vc-api`'s fake backend over `repository` (`VcApiTest.backend`) that
+records each worktree list it is asked for (`listRun`), then answers it
+from the model. -/
+def recordingBackend (repository : VersionControl.Model.Repository) : VcApi.Backend :=
+  { name := "recording"
+    connect := fun git root request => do
+      if request matches .worktrees then
+        discard <| Process.runWithin listRun 1024 1000
+      (VcApiTest.backend repository).connect git root request }
+
+/-- A backend whose worktree list is refused, as git's that exits 128 is,
+and that answers every other request from `repository`. -/
+def refusingBackend (repository : VersionControl.Model.Repository) : VcApi.Backend :=
+  { name := "refusing"
+    connect := fun git root request =>
+      match request with
+      | .worktrees => pure (.error (.failed (.code 128) "fatal: not a git repository"))
+      | other => (VcApiTest.backend repository).connect git root other }
+
+/-- The jobs of the checks with `backends` registered at the version-control
+backend point: the finder checks', and the picker's three, the source's job
+and the accept's made as a host makes them, over the point
+(`JobRegistration.workWith`) from the workspace package's registrations. -/
+def projectJobsOver (backends : Array VcApi.Backend) (name : String) :
+    Option (List Argument → Work) :=
+  if name == Workspace.FindInProject.job || name == Workspace.FindInProject.chooseJob then
+    (Workspace.package.registered.jobs.find? (·.name == name)).map
+      (·.workWith (VcApiTest.backendValues backends))
   else
-    if name == Workspace.FindInProject.chooseJob then some Workspace.FindInProject.chooseWork
-    else
-      if name == Workspace.FindInProject.findJob then some Workspace.FindInProject.findWork
-      else FindFileTest.jobs name
+    if name == Workspace.FindInProject.findJob then some Workspace.FindInProject.findWork
+    else FindFileTest.jobs name
+
+/-- The jobs of the checks, with the recording backend over `repository
+threeLinked` registered. -/
+def projectJobs (name : String) : Option (List Argument → Work) :=
+  projectJobsOver #[recordingBackend (repository threeLinked)] name
 
 /-- The commands of the checks: the finder checks', the picker,
 `register-agent`, which registers `FindFileTest.remote` as a workspace of
@@ -90,19 +123,22 @@ def idle (name : String) : Option (List Argument → Work) :=
   else projectJobs name
 
 /-- The driver of the checks: the finder checks' over the world `over`,
-`projectWorld` by default, with the jobs `registered`, git's worktree list in
-`/r` meeting `repository linked`, and the finder scripted for `found`, the
+`projectWorld` by default, with the jobs `registered`, whose version-control
+backend is `vc-api`'s fake of `repository linked` recording each worktree
+list (`recordingBackend`), and the finder scripted for `found`, the
 worktrees' directories. -/
 def projectDriver (linked : Array VersionControl.Model.Linked := threeLinked)
     (found : Array System.FilePath := #["/u", "/w"]) (over : Workspace.World := projectWorld)
-    (registered : String → Option (List Argument → Work) := projectJobs)
+    (registered : String → Option (List Argument → Work) :=
+      projectJobsOver #[recordingBackend (repository linked)])
     (commands : List (String × Dispatched) := projectCommands)
     (bindings : List (String × Invocation) := projectBindings) : Option TestDriver :=
   (FindFileTest.driver (world := over) (registered := registered) (commands := commands)
         (bindings := bindings)).map
     fun driver =>
     let extra :=
-      ((repository linked).jobModel "git" "/r").processes.scripts ++
+      #[{ command := listRun,
+          reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }] ++
         (over.jobModel "git" found).processes.scripts
     { driver with
       jobs :=
@@ -110,19 +146,11 @@ def projectDriver (linked : Array VersionControl.Model.Linked := threeLinked)
           processes :=
             { driver.jobs.processes with scripts := driver.jobs.processes.scripts ++ extra } } }
 
-/-- Git's worktree list, run in `/r`. -/
-def listRun : Process.Command :=
-  VersionControl.Git.command "git" "/r" VersionControl.Git.worktreeListArguments
-
-/-- `driver` with git's worktree list in `/r` no longer scripted, so the
-process model refuses it. -/
+/-- `driver` with its version-control backend one whose worktree list is
+refused (`refusingBackend`), in place of the backend over `/r`'s three
+worktrees. -/
 def unlisted (driver : TestDriver) : TestDriver :=
-  { driver with
-    jobs :=
-      { driver.jobs with
-        processes :=
-          { driver.jobs.processes with
-            scripts := driver.jobs.processes.scripts.filter (·.command != listRun) } } }
+  { driver with registered := projectJobsOver #[refusingBackend (repository threeLinked)] }
 
 /-- How many times `driver` started `command`. -/
 def runs (driver : TestDriver) (command : Process.Command) : Nat :=
@@ -219,7 +247,7 @@ editor's models, the job model, the finder's world and the model of `/r`'s
 repository, every process scripted by its exact command line. -/
 def findInProjectChecks : List Check :=
   [{  name :=
-        "criterion 1 on the models: in a buffer of /r, find-file-in-project lists r@fix, r@feature and r@main, annotated /u, /w and /r, the two no file was opened in among them and the current one last; git worktree list runs once in /r, and the table still holds /r alone"
+        "criterion 1 on the models: in a buffer of /r, find-file-in-project lists r@fix, r@feature and r@main, annotated /u, /w and /r, the two no file was opened in among them and the current one last; the version-control backend is asked for the worktree list once, and the table still holds /r alone"
       run :=
         pure <|
           match projectDriver with
@@ -373,28 +401,28 @@ def findInProjectChecks : List Check :=
             listedTexts asked == some #["m@m"] &&
               labelOf asked == some "Find file in a workspace of m: " &&
               asked.jobs.processes.started == opened.jobs.processes.started },
-    { name := "a git worktree list that fails is said in the echo area, named by the source"
+    { name := "a worktree list the backend refuses is said in the echo area, named by the source"
       run :=
         pure <|
           match projectDriver with
           | none => false
           | some driver =>
-            -- No worktree list is scripted in /w, so the process model
-            -- refuses it, as a program that is not there is.
-            let asked := drainedAfter (settledAfter driver "C-o w") "C-o p"
+            -- The backend refuses the worktree list, as git does outside a
+            -- repository.
+            let asked := drainedAfter (settledAfter (unlisted driver) "C-o w") "C-o p"
             asked.loop.state.echo.startsWith s!"{Workspace.FindInProject.sourceName}: " &&
               listedTexts asked == some #[] },
     { name :=
-        "a git worktree list that succeeds for the source but fails when the accept lists again is said as find-file-in-project: <why>, with no prompt open and no find started"
+        "a worktree list that succeeds for the source but that the backend refuses when the accept lists again is said as find-file-in-project: <why>, with no prompt open and no find started"
       run :=
         pure <|
           match projectDriver with
           | none => false
           | some driver =>
             let asked := askedInR driver
-            -- The accept's list runs with /r's worktree list no longer
-            -- scripted, so the process model refuses it; the source asked
-            -- so says why under its own name.
+            -- The accept's list runs with a backend that refuses the
+            -- worktree list; the source asked so says why under its own
+            -- name.
             let chosen := drainedAfter (unlisted asked) "C-o j C-o j C-o y"
             let why :=
               (askedInR (unlisted driver)).loop.state.echo.drop
@@ -412,7 +440,7 @@ def findInProjectChecks : List Check :=
         pure <|
           let failed :=
             match
-              ((Workspace.FindInProject.answer { text := "", view := ⟨0⟩ } fun _ =>
+              ((Workspace.FindInProject.answer none { text := "", view := ⟨0⟩ } fun _ =>
                       pure ()).runModel
                   {}).1 with
             | .failed said => some said
@@ -428,7 +456,7 @@ def findInProjectChecks : List Check :=
                 { choose with typed := "b" }.arguments ==
               some { choose with typed := "b" } },
     { name :=
-        "phase 4 criterion 1 on the models: the escape key in the workspace finder closes it and opens the project's workspace picker, its input empty, listing r@fix, r@feature and r@main; git's worktree list runs once"
+        "phase 4 criterion 1 on the models: the escape key in the workspace finder closes it and opens the project's workspace picker, its input empty, listing r@fix, r@feature and r@main; the backend is asked for the worktree list once"
       run :=
         pure <|
           match escapeDriver shipped with
@@ -528,6 +556,15 @@ def findInProjectChecks : List Check :=
                 labelOf feature == some "Find file in r@feature: " &&
                 minibufferText feature == some "b"
           !configBindings.isEmpty && stepsOut configured "C-o e" && stepsOut both "C-o e" &&
-            stepsOut both "C-x C-d" }]
+            stepsOut both "C-x C-d" },
+    { name :=
+        "with no version-control backend registered the picker takes the case no repository: in a buffer of /r it lists r@main alone, asks no backend, and runs no process for the list"
+      run :=
+        pure <|
+          match projectDriver (registered := projectJobsOver #[]) with
+          | none => false
+          | some driver =>
+            let asked := askedInR driver
+            listedTexts asked == some #["r@main"] && runs asked listRun == 0 }]
 
 end ModelTest

@@ -5,9 +5,9 @@ import Editor.Program
 import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Trees
-import Editor.VersionControl
 import Editor.VersionControl.Git
-import Editor.VersionControl.Model
+import VcApi
+import VcApiTest.Fake
 
 /-!
 # Contract tests: support: Git

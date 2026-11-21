@@ -1,10 +1,10 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.Job
-import Editor.VersionControl.Git
 import Editor.Workspace.FindFile
 import Editor.Workspace.Projects
 import Editor.Workspace.Reach
+import VcApi
 
 /-!
 # `find-file-in-project`
@@ -95,8 +95,9 @@ built; `minibuffer-cancel` leaves the picker.
 
 `source` answers later, from the job `project-workspaces` (`answer`): it
 decodes what is asked from the query's context, lists the repository's
-worktrees through git (`VersionControl.worktrees`), when there is one, and
-delivers one batch: each entry's text, annotated with its root. A git
+worktrees through the version-control backend a set registers
+(`VersionControl.worktrees`, over `VcApi.connect?`), when there is a
+repository and a backend, and delivers one batch: each entry's text, annotated with its root. A git
 failure throws, and the echo area says `project-workspaces: <why>`. It is
 asked once (`reask := .never`); the category's style matches as the text
 changes. No key waits on git: it runs only in the jobs.
@@ -183,27 +184,29 @@ def asked (state : EditorState) (settings : Settings) (call : Call) :
         repository := if foundByGit workspace then workspace.location.root? else none
         name := project.name, current := workspace.location, known }
 
-/-- The worktrees of what is asked: none with no repository, otherwise git's
-list of them, or why it failed. -/
-def worktreesOf (asked : Projects.Asked) : JobM (Except String (Array VersionControl.Worktree)) :=
-  do
-  match asked.repository with
-  | none =>
+/-- The worktrees of what is asked, through `connect`, the backend a set
+registers (`VcApi.connect?`): none with no repository or no backend,
+otherwise the backend's list of them, or why it failed. -/
+def worktreesOf (connect : Option (String → System.FilePath → VersionControl.Handler))
+    (asked : Projects.Asked) : JobM (Except String (Array VersionControl.Worktree)) := do
+  match asked.repository, connect with
+  | none, _ | _, none =>
     return .ok #[]
-  | some root =>
-    match ← Program.runM (VersionControl.Git.handler asked.git root) VersionControl.worktrees with
+  | some root, some connect =>
+    match ← Program.runM (connect asked.git root) VersionControl.worktrees with
     | .ok worktrees =>
       return .ok worktrees
     | .error error =>
       return .error error.describe
 
 /-- The source's job's answer ("The source and its jobs", in the module
-docs): one batch of the project's workspaces. Throws `noProjectAsked` for a
-query with nothing asked, and why git failed. -/
-def answer (query : Completion.Query) (deliver : Array Completion.Candidate → JobM Unit) :
-    JobM Unit := do
+docs): one batch of the project's workspaces, through `connect`. Throws
+`noProjectAsked` for a query with nothing asked, and why the backend
+failed. -/
+def answer (connect : Option (String → System.FilePath → VersionControl.Handler))
+    (query : Completion.Query) (deliver : Array Completion.Candidate → JobM Unit) : JobM Unit := do
   let some asked := Projects.Asked.ofArguments? query.context | throw noProjectAsked
-  match ← worktreesOf asked with
+  match ← worktreesOf connect asked with
   | .error said =>
     throw said
   | .ok worktrees =>
@@ -282,11 +285,13 @@ def chosen (order : ChooseOrder) (entries : Array Projects.Entry) : EditorM Unit
 
 /-- The accept's job: lists the project's workspaces again, as the source
 did, and finishes with what the answer chooses (`chosen`), or says why git
-failed. It fails only for arguments that are not a choose order. -/
-def chooseWork (arguments : List Argument) : Work := fun _ => do
+failed. It fails only for arguments that are not a choose order. The
+worktrees are listed through `connect`, as the source's are. -/
+def chooseWork (connect : Option (String → System.FilePath → VersionControl.Handler))
+    (arguments : List Argument) : Work := fun _ => do
   let some order :=
     ChooseOrder.ofArguments? arguments | throw s!"{chooseJob}: its arguments are not a choose order"
-  match ← worktreesOf order.asked with
+  match ← worktreesOf connect order.asked with
   | .error said =>
     return message s!"{name}: {said}"
   | .ok worktrees =>

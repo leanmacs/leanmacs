@@ -2,8 +2,8 @@ import Editor.Diff.Script
 import Editor.State
 import Editor.Text
 import Editor.Value
-import Editor.VersionControl
 import Editor.VersionControl.Hunk
+import VcApi
 
 /-!
 # Review hunks: what a review buffer shows, in what order, and its record

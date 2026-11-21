@@ -1,7 +1,7 @@
-import Editor.VersionControl
 import Editor.Workspace
 import Editor.Workspace.Projects
 import ModelTest.Check
+import VcApi
 
 /-!
 # Model tests: `Editor/Workspace/Projects.lean`

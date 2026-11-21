@@ -15,15 +15,14 @@ import Editor.Test.Keys
 import Editor.Test.Shell
 import Editor.Test.Workspace
 import Editor.Text.Model
-import Editor.VersionControl
-import Editor.VersionControl.Contract
 import Editor.VersionControl.Git
-import Editor.VersionControl.Hunk
-import Editor.VersionControl.Model
 import Editor.VersionControl.Stage
 import ModelTest.Check
 import ModelTest.Support.Git
 import ModelTest.Support.VersionControl
+import VcApi
+import VcApiTest.Contract
+import VcApiTest.Fake
 
 /-!
 # Model tests: `Editor/VersionControl/Stage.lean`

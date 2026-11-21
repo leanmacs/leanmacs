@@ -1,16 +1,16 @@
-import Editor.Process
-import Editor.VersionControl
-import Editor.VersionControl.Contract
-import Editor.VersionControl.Model
-import Editor.VersionControl.Porcelain
 import ModelTest.Check
-import ModelTest.Support.Git
+import ModelTest.Support.Repositories
+import VcApi
+import VcApiTest.Contract
+import VcApiTest.Fake
 
 /-!
-# Model tests: `Editor/VersionControl/Model.lean`
+# Model tests: `VcApiTest/Fake.lean`
 
-The model tests of `Editor/VersionControl/Model.lean`:
-`versionControlModelChecks`. The root module `ModelTest` runs them; its module
+The model tests of the fake of the interface library `vc-api`, the pure
+model of a repository (`VcApiTest/Fake.lean`): `versionControlModelChecks`.
+What git's half of the model prints is version control's
+(`ModelTest.gitModelChecks`). The root module `ModelTest` runs them; its module
 doc says what each shows.
 -/
 
@@ -18,17 +18,13 @@ namespace ModelTest
 
 open Editor
 
-/-- The checks of the model of a repository
-(`Editor/VersionControl/Model.lean`): its status of each state, how it
-pairs renames, what its writes do, and that the real parser reads what its
-printer prints as its status. -/
+/-- The checks of the model of a repository (`VcApiTest/Fake.lean`): its
+status of each state, how it pairs renames, and what its writes do. -/
 def versionControlModelChecks : List Check :=
   let pairs : VersionControl.Model.Repository :=
     { committed := #[("a.txt", "x"), ("b.txt", "x"), ("e.txt", "")]
       index := #[("c.txt", .file "x"), ("f.txt", .file ""), ("z.txt", .file "x")]
       worktree := #[("c.txt", "x"), ("f.txt", ""), ("z.txt", "x")] }
-  let printed (repository : VersionControl.Model.Repository) : Bool :=
-    (VersionControl.Porcelain.parseStatus repository.porcelain).toOption == some repository.status
   [{  name :=
         "the model's status of a repository in every state is each file with its state, sorted by path"
       run := pure (mixedRepository.status == mixedStatus) },
@@ -65,16 +61,6 @@ def versionControlModelChecks : List Check :=
           let (reply, after) :=
             VersionControl.Model.handle (.stage #["a.txt", "nope.txt"]) repository
           reply matches .error (.failed (.code 128) _) && after == repository },
-    { name := "the real parser reads what the model prints as the model's status, in every state"
-      run :=
-        pure <|
-          printed mixedRepository && printed pairs &&
-            printed { mixedRepository with head := .detached } &&
-            printed { index := #[("a.txt", .file "a")], worktree := #[("a.txt", "a")] } },
-    { name :=
-        "the real parser reads what the model prints as the model's status, for every repository of the contract"
-      run :=
-        pure (VersionControlContract.properties.all fun property => printed property.repository) },
     { name :=
         "the model resolves HEAD and the checked-out branch to HEAD's commit while it is born, a branch to its commit, a tag and a commit's id to themselves, and nothing else"
       run :=

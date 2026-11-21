@@ -1,8 +1,17 @@
+import Editor.Diff.Script
+import Editor.Gutter.Track
 import Editor.Job
 import Editor.Program
 
 /-!
-# The version-control interface
+# The interface library `vc-api`: the version-control interface
+
+The interface library `vc-api`, staged in the core's Lake package as its
+own `lean_lib` with the layout and names it will have as the package
+`packages/vc-api/` (`lean/lakefile.lean`, `lean_lib VcApi`): it moves there
+with a `git mv` and a lakefile in the phase where its last user in the core
+moves out. It imports only the core's API, and its test library
+(`VcApiTest`) only that, this library and the core's test kit.
 
 What the editor asks of a version-control system, in its own terms: which
 files of a repository have changed and how, to stage or unstage files or
@@ -11,9 +20,9 @@ branch's change against its base, to make and remove a worktree, and a
 branch's history: its log, a file's blame, and two ranges of commits
 compared.
 It is a port like the others (`Editor/Program.lean`): requests, a reply
-type for each, a pure model of a repository
-(`Editor/VersionControl/Model.lean`) and a contract every implementation is
-held to (`Editor/VersionControl/Contract.lean`). Git is one implementation
+type for each, a pure model of a repository (`VcApiTest/Fake.lean`, the
+interface's fake) and a contract every implementation is held to
+(`VcApiTest/Contract.lean`). Git is one implementation
 (`Editor/VersionControl/Git.lean`), which runs git as jobs; jj would be
 another handler of the same requests (`docs/design/version-control.md`).
 
@@ -143,10 +152,50 @@ both implementations behind it; none goes in ahead of them.
 | Another way a request fails | A constructor of `Error`, with its sentence in `Error.describe`; one refused before anything runs is a case of `Request.invalid?` |
 | Another system (jj) | A handler of these requests, held to the contract; nothing here |
 
-Pinned by the contract, which `model-test` runs against the model and
-against the git implementation on the job model, and `contract-test`
-against the git implementation over the real process service, in a
-temporary repository.
+## Hunks
+
+The port's own hunk helpers make a `LineHunk` of a hunk of the diff
+service (`Diff.Hunk`, byte ranges of whole lines), so a consumer and the
+model build one the same way:
+
+- **The context** (`Hunk.context`) is 3 lines on each side, git's default,
+  taken from the index, the text the change is applied to: the old side of
+  a hunk of the file against the index (`HunkSide.stage`), the new side of a
+  hunk of the index against `HEAD` (`HunkSide.unstage`). It is clamped at the
+  index's start and end, so short context is only ever at an end, where
+  git then holds the hunk.
+- **A hunk is located** (`LineHunk.locate`) through a `Lines` of each
+  text: the row of an offset, the offset of a row and a slice. The texts
+  as strings (`Lines.ofText`, used by `LineHunk.ofTexts`) and as snapshots
+  (`Editor/VersionControl/Stage.lean`) are both one, so the one walk is
+  pinned on strings.
+- **Rows** are counted in line feeds, from 0: `oldLine` and `newLine` are
+  the rows of the first context line, in the old and the new text.
+
+## The backend point
+
+`VcApi.Backend` is a **hook**: every value registered, a name and how to
+connect to a repository (`connect`, given the git program of the workspace
+settings and the repository's root). A consumer connects through the
+latest one registered (`VcApi.connect?`), as a choice's latest value wins,
+so config's backend, registered after a package's, replaces it. With none
+it takes the case "no repository": working-set writes an empty commit, and
+find-in-project lists no other worktree. Version control registers
+`{ name := "git", connect := VersionControl.Git.handler }`. A consumer that
+reads it from a job registers that job over the point
+(`Extension.workJob`).
+
+## Names others reach
+
+The three gutter jobs the core's reconciler starts (`VcApi.gutterJobs`,
+the core's `Gutter.headJob`, `.diffJob` and `.refsJob`) and the mode line's
+segment `review` (`VcApi.reviewSegmentName`), which the default order names.
+Its registration check (`VcApiTest.registrationChecks`) holds an
+implementation to them and to the backend `git`.
+
+Pinned by the contract, which `model-test` runs against the model, and
+`contract-test` against the git implementation over the real process
+service, in a temporary repository; and by `ModelTest.vcApiChecks`.
 -/
 
 namespace Editor.VersionControl
@@ -688,4 +737,125 @@ def blame (revision path : String) : VersionControlM (Except Error (Option Blame
 def rangeDiff (base old new : String) : VersionControlM (Except Error RangeDiff) :=
   Program.request (port := port) (.rangeDiff base old new)
 
+/-! ## Hunks -/
+
+/-- How many lines of context a hunk carries on each side: 3, git's
+default. -/
+def Hunk.context : Nat :=
+  3
+
+/-- Which way a hunk goes, which says which of its texts is the index: the
+old one of a hunk of the file against the index, the new one of a hunk of
+the index against `HEAD`. -/
+inductive HunkSide where
+  /-- A hunk of the file against the index, to stage. -/
+  | stage
+  /-- A hunk of the index against `HEAD`, to unstage. -/
+  | unstage
+  deriving DecidableEq, Repr
+
+/-- What locating a hunk asks of a text, in a monad `m`. -/
+structure Lines (m : Type → Type) where
+  /-- Its length in bytes. -/
+  size : Nat
+  /-- How many rows it has: one more than its line feeds. -/
+  rows : Nat
+  /-- The row, from 0, of a byte offset. -/
+  rowOf : Nat → m Nat
+  /-- The byte offset where a row starts, for a row it has. -/
+  rowStart : Nat → m Nat
+  /-- Its bytes from a start up to, not including, a stop. -/
+  slice : Nat → Nat → m String
+
+/-- Where `row` starts in `lines`, or its end for a row past its last. -/
+def Lines.startOf {m : Type → Type} [Monad m] (lines : Lines m) (row : Nat) : m Nat :=
+  if row < lines.rows then lines.rowStart row else pure lines.size
+
+/-- `text` as a `Lines`. -/
+def Lines.ofText (text : String) : Lines Id :=
+  let bytes := text.toUTF8
+  let starts :=
+    (List.range bytes.size).foldl
+      (fun (starts : Array Nat) offset =>
+        if bytes.get! offset == 10 then starts.push (offset + 1) else starts)
+      #[0]
+  { size := bytes.size, rows := starts.size
+    rowOf := fun offset => (starts.filter (· ≤ offset)).size - 1
+    rowStart := fun row => starts[row]?.getD bytes.size
+    slice := fun start stop => (String.fromUTF8? (bytes.extract start stop)).getD "" }
+
+/-- The hunk of the lines `before`, `removed`, `added` and `after`, each text
+split at its line feeds, which are kept (`linesOf`). -/
+def LineHunk.make (oldLine newLine : Nat) (before removed added after : String) : LineHunk :=
+  { oldLine, newLine, before := linesOf before, removed := linesOf removed
+    added := linesOf added, after := linesOf after }
+
+/-- The `LineHunk` of `hunk`, a hunk of `old` against `new` going `side`, its
+context taken from the index's text ("The context", in the module docs). -/
+def LineHunk.locate {m : Type → Type} [Monad m] (side : HunkSide) (old new : Lines m)
+    (hunk : Diff.Hunk) : m LineHunk := do
+  let (index, start, stop) :=
+    match side with
+    | .stage => (old, hunk.oldStart, hunk.oldStop)
+    | .unstage => (new, hunk.newStart, hunk.newStop)
+  let startRow ← index.rowOf start
+  let stopRow ← index.rowOf stop
+  let first := startRow - min Hunk.context startRow
+  let beforeStart ← index.startOf first
+  let afterStop ←
+    if stop == index.size then
+      pure index.size
+    else
+      index.startOf (stopRow + Hunk.context)
+  let before ← index.slice beforeStart start
+  let after ← index.slice stop afterStop
+  let count := startRow - first
+  let oldRow ← old.rowOf hunk.oldStart
+  let newRow ← new.rowOf hunk.newStart
+  return LineHunk.make (oldRow - count) (newRow - count) before
+      (← old.slice hunk.oldStart hunk.oldStop) (← new.slice hunk.newStart hunk.newStop) after
+
+/-- The `LineHunk` of `hunk`, a hunk of the text `old` against `new` going
+`side` (`LineHunk.locate`). -/
+def LineHunk.ofTexts (side : HunkSide) (old new : String) (hunk : Diff.Hunk) : LineHunk :=
+  LineHunk.locate side (Lines.ofText old) (Lines.ofText new) hunk
+
 end Editor.VersionControl
+
+namespace VcApi
+
+open Editor
+
+/-- A version-control backend: its name, and how to connect to the
+repository at a root with a program (the workspace settings' `git`), the
+handler that answers the port's requests inside a job ("The backend
+point", in the module docs). A hook. -/
+structure Backend where
+  /-- The backend's name. -/
+  name : String
+  /-- The handler of the repository at the root, run with the program. -/
+  connect : String → System.FilePath → VersionControl.Handler
+  deriving TypeName
+
+/-- How a consumer connects: through the latest backend registered, so
+config's, registered after a package's, is the one used; `none` with no
+backend, the case "no repository". -/
+def connect? (backends : Array Backend) :
+    Option (String → System.FilePath → VersionControl.Handler) :=
+  backends.back?.map (·.connect)
+
+/-- The name of the backend version control registers. -/
+def gitBackendName : String :=
+  "git"
+
+/-- The names of the gutter's three jobs, which the core's reconciler starts
+and version control registers: the core's. -/
+def gutterJobs : Array String :=
+  #[Gutter.headJob, Gutter.diffJob, Gutter.refsJob]
+
+/-- The name of the mode line's segment of a review's counts, which the mode
+line's default order names and version control registers. -/
+def reviewSegmentName : String :=
+  "review"
+
+end VcApi

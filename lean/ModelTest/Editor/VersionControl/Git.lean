@@ -8,12 +8,13 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Text.Model
-import Editor.VersionControl
-import Editor.VersionControl.Contract
 import Editor.VersionControl.Git
-import Editor.VersionControl.Model
+import Editor.VersionControl.Git.Model
 import ModelTest.Check
 import ModelTest.Support.Git
+import VcApi
+import VcApiTest.Contract
+import VcApiTest.Fake
 
 /-!
 # Model tests: `Editor/VersionControl/Git.lean`
@@ -56,81 +57,93 @@ def versionControlGitChecks : List Check :=
   let statusArguments :=
     #["-c", "status.renames=true", "-c", "diff.renames=true", "status", "--porcelain=v2", "-z",
       "--branch", "--untracked-files=all", "--find-renames"]
-  [{  name :=
-        "a status read runs git -c status.renames=true -c diff.renames=true status --porcelain=v2 -z --branch --untracked-files=all --find-renames in the root, once, with GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE removed, GIT_OPTIONAL_LOCKS=0 and GIT_LITERAL_PATHSPECS=1"
-      run :=
-        pure <|
-          let (read, after) := status (mixedRepository.jobModel "git" "/r")
-          read == .finished (.ok mixedStatus) &&
-            after.processes.started == #[gitRun statusArguments] },
-    { name := "staging runs git add --all -- and the paths, in the root, a path with a space whole"
-      run :=
-        pure <|
-          let (reply, after) :=
-            gitStage #["with space.txt", "b.txt"]
-              (mixedRepository.jobModel "git" "/r" #[.stage #["with space.txt", "b.txt"]])
-          reply == .finished (.ok ()) &&
-            after.processes.started ==
-              #[gitRun #["add", "--all", "--", "with space.txt", "b.txt"]] },
-    { name := "unstaging runs git reset -q -- and the paths, in the root"
-      run :=
-        pure <|
-          let (reply, after) :=
-            gitUnstage #["new.txt", "old.txt"]
-              (mixedRepository.jobModel "git" "/r" #[.unstage #["new.txt", "old.txt"]])
-          reply == .finished (.ok ()) &&
-            after.processes.started == #[gitRun #["reset", "-q", "--", "new.txt", "old.txt"]] },
-    { name := "with no git to run, a status read could not run, as notFound"
-      run := pure (status {} matches (.finished (.error (.couldNotRun (.notFound _))), _)) },
-    { name :=
-        "a status read git refuses with status 128 failed, with what git said on its standard error"
-      run :=
-        pure <|
-          (status
-                (statusAnswering
-                  (.ok
-                    { exit := .code 128, stdout := .empty
-                      stderr := "fatal: not a git repository\n".toUTF8 }))).1 ==
-            .finished (.error (.failed (.code 128) "fatal: not a git repository")) },
-    { name := "a write git refuses with status 128 failed, and is not read as a success"
-      run :=
-        pure <|
-          let model : JobModel :=
-            {
-              processes :=
-                {
-                  scripts :=
-                    #[{ command := gitRun #["add", "--all", "--", "nope.txt"]
-                        reply :=
-                          .ok {
-                              exit := .code 128, stdout := .empty
-                              stderr :=
-                                "fatal: pathspec 'nope.txt' did not match any files\n".toUTF8 } }] } }
-          (gitStage #["nope.txt"] model).1 ==
-            .finished
-              (.error (.failed (.code 128) "fatal: pathspec 'nope.txt' did not match any files")) },
-    { name := "a status read past the output limit could not run, and is never read cut short"
-      run :=
-        pure <|
-          (status
-                (statusAnswering
-                  (.error (.outputTooLarge .out VersionControl.Git.statusOutput)))).1 ==
-            .finished
-              (.error (.couldNotRun (.outputTooLarge .out VersionControl.Git.statusOutput))) },
-    { name := "a status read past its time limit could not run, as timedOut"
-      run :=
-        pure <|
-          (status
-                (statusAnswering (VersionControl.Model.Repository.ran porcelainClean.toUTF8)
-                  (VersionControl.Git.gitTime + 1))).1 ==
-            .finished (.error (.couldNotRun (.timedOut VersionControl.Git.gitTime))) },
-    { name := "a status read git answers with what cannot be read is unparsable"
-      run :=
-        pure <|
-          (status
-                (statusAnswering
-                  (VersionControl.Model.Repository.ran "x what\x00".toUTF8))).1 matches
-            .finished (.error (.unparsable _)) }]
+  -- The version-control contract's repositories, each read by the git
+  -- implementation's status on the job model that prints it
+  -- (`Repository.jobModel`): the third way the contract runs.
+  (VersionControlContract.properties.map fun property =>
+      { name :=
+          s!"the git implementation's status on the job model reads the repository of the version-control contract's property {property.name} as the model's"
+        run :=
+          pure
+            ((gitStatus (property.repository.jobModel "git" "/r")).1 ==
+              .finished (.ok property.repository.status)) }) ++
+    [{  name :=
+          "a status read runs git -c status.renames=true -c diff.renames=true status --porcelain=v2 -z --branch --untracked-files=all --find-renames in the root, once, with GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE removed, GIT_OPTIONAL_LOCKS=0 and GIT_LITERAL_PATHSPECS=1"
+        run :=
+          pure <|
+            let (read, after) := status (mixedRepository.jobModel "git" "/r")
+            read == .finished (.ok mixedStatus) &&
+              after.processes.started == #[gitRun statusArguments] },
+      { name :=
+          "staging runs git add --all -- and the paths, in the root, a path with a space whole"
+        run :=
+          pure <|
+            let (reply, after) :=
+              gitStage #["with space.txt", "b.txt"]
+                (mixedRepository.jobModel "git" "/r" #[.stage #["with space.txt", "b.txt"]])
+            reply == .finished (.ok ()) &&
+              after.processes.started ==
+                #[gitRun #["add", "--all", "--", "with space.txt", "b.txt"]] },
+      { name := "unstaging runs git reset -q -- and the paths, in the root"
+        run :=
+          pure <|
+            let (reply, after) :=
+              gitUnstage #["new.txt", "old.txt"]
+                (mixedRepository.jobModel "git" "/r" #[.unstage #["new.txt", "old.txt"]])
+            reply == .finished (.ok ()) &&
+              after.processes.started == #[gitRun #["reset", "-q", "--", "new.txt", "old.txt"]] },
+      { name := "with no git to run, a status read could not run, as notFound"
+        run := pure (status {} matches (.finished (.error (.couldNotRun (.notFound _))), _)) },
+      { name :=
+          "a status read git refuses with status 128 failed, with what git said on its standard error"
+        run :=
+          pure <|
+            (status
+                  (statusAnswering
+                    (.ok
+                      { exit := .code 128, stdout := .empty
+                        stderr := "fatal: not a git repository\n".toUTF8 }))).1 ==
+              .finished (.error (.failed (.code 128) "fatal: not a git repository")) },
+      { name := "a write git refuses with status 128 failed, and is not read as a success"
+        run :=
+          pure <|
+            let model : JobModel :=
+              {
+                processes :=
+                  {
+                    scripts :=
+                      #[{ command := gitRun #["add", "--all", "--", "nope.txt"]
+                          reply :=
+                            .ok {
+                                exit := .code 128, stdout := .empty
+                                stderr :=
+                                  "fatal: pathspec 'nope.txt' did not match any files\n".toUTF8 } }] } }
+            (gitStage #["nope.txt"] model).1 ==
+              .finished
+                (.error
+                  (.failed (.code 128) "fatal: pathspec 'nope.txt' did not match any files")) },
+      { name := "a status read past the output limit could not run, and is never read cut short"
+        run :=
+          pure <|
+            (status
+                  (statusAnswering
+                    (.error (.outputTooLarge .out VersionControl.Git.statusOutput)))).1 ==
+              .finished
+                (.error (.couldNotRun (.outputTooLarge .out VersionControl.Git.statusOutput))) },
+      { name := "a status read past its time limit could not run, as timedOut"
+        run :=
+          pure <|
+            (status
+                  (statusAnswering (VersionControl.Model.Repository.ran porcelainClean.toUTF8)
+                    (VersionControl.Git.gitTime + 1))).1 ==
+              .finished (.error (.couldNotRun (.timedOut VersionControl.Git.gitTime))) },
+      { name := "a status read git answers with what cannot be read is unparsable"
+        run :=
+          pure <|
+            (status
+                  (statusAnswering
+                    (VersionControl.Model.Repository.ran "x what\x00".toUTF8))).1 matches
+              .finished (.error (.unparsable _)) }]
 
 /-- The git implementation's worktree list in `/r` on `model`. -/
 def gitWorktrees (model : JobModel) :

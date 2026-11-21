@@ -20,15 +20,16 @@ import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Trees
 import Editor.Text
 import Editor.Text.Real
-import Editor.VersionControl
 import Editor.VersionControl.Commit
-import Editor.VersionControl.Contract
-import Editor.VersionControl.Model
+import Editor.VersionControl.Git.Model
 import Editor.VersionControl.Show
 import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
 import Editor.VersionControl.Worktrees
 import Editor.Watch
+import VcApi
+import VcApiTest.Contract
+import VcApiTest.Fake
 
 /-!
 # Contract tests: `Editor/VersionControl/Status.lean`

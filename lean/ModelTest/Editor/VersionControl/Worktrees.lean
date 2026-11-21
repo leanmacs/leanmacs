@@ -18,9 +18,7 @@ import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Shell
 import Editor.Test.Workspace
-import Editor.VersionControl
-import Editor.VersionControl.Contract
-import Editor.VersionControl.Model
+import Editor.VersionControl.Git.Model
 import Editor.VersionControl.Status
 import Editor.VersionControl.Worktrees
 import Editor.Workspace
@@ -28,6 +26,9 @@ import Editor.Workspace.Model
 import ModelTest.Check
 import ModelTest.Support.Git
 import ModelTest.Support.VersionControl
+import VcApi
+import VcApiTest.Contract
+import VcApiTest.Fake
 
 /-!
 # Model tests: `Editor/VersionControl/Worktrees.lean`

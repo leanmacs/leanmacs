@@ -9,16 +9,20 @@ import Editor.Jumps
 import Editor.Loop
 import Editor.ProjectSearch.Compiled
 import Editor.Test.Linked.Rig
-import Editor.VersionControl.Model
 import Editor.WorkingSet.Compiled
 import Editor.Workspace.Compiled
+import VcApiTest.Fake
 
 /-!
 # Contract tests: `Editor/WorkingSet/Run.lean`
 
 The tests of the working sets over the real bindings: `workingSetChecks`, both
 acceptance criteria of navigation-and-windows phase 5 with the library's file
-service, text store and fuzzy matcher and real git, through a restart.
+service, text store and fuzzy matcher and real git, which finds the
+workspace, through a restart. The commit a set is written with comes from
+the version-control interface, through `vc-api`'s fake backend
+(`VcApiTest.backend`): the working set names no version-control
+implementation.
 -/
 
 namespace ContractTest
@@ -26,13 +30,29 @@ namespace ContractTest
 open Editor
 open Editor.Test.Linked
 
+/-- The commit `HEAD` is at as the checks' version-control backend answers
+it: `vc-api`'s fake (`VcApiTest.backend`) over a model repository whose
+`HEAD` has this id, in place of the git implementation, which the working
+set reaches only through that interface. -/
+def fakeHead : String :=
+  "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00"
+
 /-- The jobs of the working set checks: the file commands', the workspace
 finder's, project search's and the working sets', as a host registers
-them. -/
+them, each made as a host makes it (`JobRegistration.workWith`) with
+`vc-api`'s fake backend over a repository at `fakeHead` registered, so the
+write asks it for the commit. -/
 def workingSetJobs : Array Config.JobRegistration :=
-  Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
-    ProjectSearch.package.registered.jobs ++
-    WorkingSet.package.registered.jobs
+  (Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
+        ProjectSearch.package.registered.jobs ++
+        WorkingSet.package.registered.jobs).map
+    fun job =>
+    { job with
+      work :=
+        job.workWith
+          (VcApiTest.backendValues
+            #[VcApiTest.backend { committed := #[("a.txt", "")], headId := fakeHead }])
+      over := none }
 
 /-- The commands of the checks beside those: `goto-row` puts the window's
 cursor at the start of the row its argument names; `select-rows` selects
@@ -118,7 +138,7 @@ def invoking (command : String) (arguments : List Argument := []) : Invocation :
 and a state directory of their own, both temporary. -/
 def workingSetChecks (services : Job.Services) : List Check :=
   [{  name :=
-        "criteria 1 and 2 over the real bindings and real git: a.txt's rows and a row of project search's results are added and open as the files' rows; the store on disk carries HEAD's id; a second host over the same state directory, a.txt rewritten outside the editor, opens demo as r1 changed, r2 moved and r3 drifted"
+        "criteria 1 and 2 over the real bindings and real git: a.txt's rows and a row of project search's results are added and open as the files' rows; the store on disk carries HEAD's id as the version-control backend, vc-api's fake, answers it; a second host over the same state directory, a.txt rewritten outside the editor, opens demo as r1 changed, r2 moved and r3 drifted"
       run := do
         withRepository fun home repository => do
             let state := (home.parent.getD home) / "state"
@@ -139,7 +159,7 @@ def workingSetChecks (services : Job.Services) : List Check :=
                     invoking WorkingSet.openName [.str "pins"]] | return false
             let some pins := bufferStarting added "*working-set: pins in " | return false
             let pinned ← bufferText rig texts added pins
-            let head := (← gitIn home repository #["rev-parse", "HEAD"]).trimAscii.toString
+            let head := fakeHead
             let stored ← IO.FS.readBinFile (WorkingSet.storeFile state repository.toString)
             let some document := (WorkingSet.Document.read stored).toOption | return false
             let demo := ((document.sets.find? (·.name == "demo")).map (·.ranges)).getD #[]

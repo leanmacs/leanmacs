@@ -1,12 +1,14 @@
 import Editor.Diff.Model
 import Editor.State
 import Editor.Text
-import Editor.VersionControl
-import Editor.VersionControl.Contract
-import Editor.VersionControl.Hunk
-import Editor.VersionControl.Model
+import Editor.VersionControl.Git.Model
+import Editor.VersionControl.Review
 import Editor.VersionControl.ReviewHunks
 import ModelTest.Check
+import ModelTest.Editor.Restore.Value
+import VcApi
+import VcApiTest.Contract
+import VcApiTest.Fake
 
 /-!
 # Model tests: `Editor/VersionControl/ReviewHunks.lean`
@@ -224,6 +226,15 @@ def threeHunks : ReviewRecord :=
         { path := "c.lean", header := "c.lean @@ -1 +0,0 @@", old? := some 3, oldBuffer? := some 5
           oldStart := 0, oldStop := 2 }] }
 
+/-- A review store with a round, a hunk and what was viewed of it. -/
+def reviewedStore : VersionControl.ReviewStore :=
+  { buffer := some 7
+    rounds :=
+      #[{ against := "main", base := "abc", head := "def"
+          hunks :=
+            #[{ path := "a.txt", header := "@@ -1 +1 @@", decision := .kept
+                viewed := #[{ scenes := 2, firstAt := some 3, shownFor := 40 }] }] }] }
+
 /-- The checks of what a review's record says
 (`Editor/VersionControl/ReviewHunks.lean`, "The record"). -/
 def reviewRecordChecks : List Check :=
@@ -287,6 +298,13 @@ def reviewRecordChecks : List Check :=
         pure <|
           threeHunks.hunks.map (·.headerText) ==
             #["a.lean @@ -1 +1 @@  kept", "b.lean @@ -0,0 +1 @@  reverted",
-              "c.lean @@ -1 +0,0 @@"] }]
+              "c.lean @@ -1 +0,0 @@"] },
+    { name :=
+        "the review's store, which is kept across a restart, round-trips through the session index's JSON, initial and populated: vc-review"
+      run :=
+        pure <|
+          RestoreValueTest.roundTrips
+              (VersionControl.reviewStore.encode VersionControl.reviewStore.initial) &&
+            RestoreValueTest.roundTrips (VersionControl.reviewStore.encode reviewedStore) }]
 
 end ModelTest

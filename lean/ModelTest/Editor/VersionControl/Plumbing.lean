@@ -1,7 +1,7 @@
-import Editor.VersionControl
-import Editor.VersionControl.Model
+import Editor.VersionControl.Git.Model
 import Editor.VersionControl.Plumbing
 import ModelTest.Check
+import VcApi
 
 /-!
 # Model tests: `Editor/VersionControl/Plumbing.lean`

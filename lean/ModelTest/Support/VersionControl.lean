@@ -35,18 +35,18 @@ import Editor.Test.Loop
 import Editor.Test.Shell
 import Editor.Test.Workspace
 import Editor.Text
-import Editor.VersionControl
 import Editor.VersionControl.Blame
 import Editor.VersionControl.Commit
 import Editor.VersionControl.Compiled
-import Editor.VersionControl.Hunk
+import Editor.VersionControl.Git.Model
 import Editor.VersionControl.Log
-import Editor.VersionControl.Model
 import Editor.VersionControl.Review
 import Editor.VersionControl.Show
 import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
 import Editor.Workspace
+import VcApi
+import VcApiTest.Fake
 
 /-!
 # Model tests: support: VersionControl

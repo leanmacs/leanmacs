@@ -7,13 +7,13 @@ import Editor.Test.Driver
 import Editor.Test.Keys
 import Editor.Test.Shell
 import Editor.Test.Workspace
-import Editor.VersionControl
-import Editor.VersionControl.Contract
-import Editor.VersionControl.Model
 import Editor.VersionControl.Show
 import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.VersionControl
+import VcApi
+import VcApiTest.Contract
+import VcApiTest.Fake
 
 /-!
 # Model tests: `Editor/VersionControl/Show.lean`

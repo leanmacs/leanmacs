@@ -1,5 +1,5 @@
 import Editor.File
-import Editor.VersionControl
+import VcApi
 
 /-!
 # Reading git's history

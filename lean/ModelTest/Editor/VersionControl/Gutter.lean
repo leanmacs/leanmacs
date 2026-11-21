@@ -33,17 +33,18 @@ import Editor.Test.Shell
 import Editor.Test.Workspace
 import Editor.Text
 import Editor.Text.Model
-import Editor.VersionControl
 import Editor.VersionControl.Compiled
-import Editor.VersionControl.Contract
 import Editor.VersionControl.Git
+import Editor.VersionControl.Git.Model
 import Editor.VersionControl.Gutter
-import Editor.VersionControl.Model
 import Editor.Workspace
 import Editor.Workspace.Model
 import ModelTest.Check
 import ModelTest.Support.Git
 import ModelTest.Support.VersionControl
+import VcApi
+import VcApiTest.Contract
+import VcApiTest.Fake
 
 /-!
 # Model tests: `Editor/VersionControl/Gutter.lean`

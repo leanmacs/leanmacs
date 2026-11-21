@@ -8,7 +8,6 @@ import Editor.Job.Contract
 import Editor.SyntaxTree.Contract
 import Editor.Text.Contract
 import Editor.UndoTree.Cases
-import Editor.VersionControl.Contract
 import Editor.Watch.Contract
 import Editor.Workspace.Contract
 import ModelTest.Check
@@ -152,13 +151,12 @@ import ModelTest.Editor.Version
 import ModelTest.Editor.VersionControl.Blame
 import ModelTest.Editor.VersionControl.Commit
 import ModelTest.Editor.VersionControl.Compiled
-import ModelTest.Editor.VersionControl.Contract
 import ModelTest.Editor.VersionControl.Git
+import ModelTest.Editor.VersionControl.Git.Model
 import ModelTest.Editor.VersionControl.Gutter
 import ModelTest.Editor.VersionControl.HistoryRead
 import ModelTest.Editor.VersionControl.Hunk
 import ModelTest.Editor.VersionControl.Log
-import ModelTest.Editor.VersionControl.Model
 import ModelTest.Editor.VersionControl.Plumbing
 import ModelTest.Editor.VersionControl.Porcelain
 import ModelTest.Editor.VersionControl.Review
@@ -188,6 +186,10 @@ import ModelTest.Editor.Workspace.Lister
 import ModelTest.Editor.Workspace.Projects
 import ModelTest.Editor.Workspace.Reach
 import ModelTest.EditorCore.EditorPackage
+import ModelTest.VcApi
+import ModelTest.VcApiTest.Contract
+import ModelTest.VcApiTest.Fake
+import VcApiTest.Contract
 
 /-!
 # The model tests
@@ -1177,16 +1179,27 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   (`Editor/VersionControl/HistoryRead.lean`): a log, a blame with two
   authors and a commit named twice, and a range-diff of each relation, on
   fixtures, and what each refuses;
-- `versionControlModelChecks`: the model of a repository: its status of
-  each state, how it pairs renames, what its writes do, and that the real
-  parser reads what its printer prints as its status;
+- `versionControlModelChecks`: the model of a repository, the fake of the
+  interface library `vc-api` (`VcApiTest/Fake.lean`): its status of each
+  state, how it pairs renames, and what its writes do;
+- `gitModelChecks`: git's half of that model
+  (`Editor/VersionControl/Git/Model.lean`): the real parser reads what its
+  printer prints as the model's status, in every state and for every
+  repository of the contract;
+- `vcApiChecks`: the interface library `vc-api` (`VcApi.lean`): a consumer
+  connects through the latest backend registered, config's after a
+  package's, and with none has no connection; its names are the core's
+  gutter jobs and the default order's `review`; the fake's backend answers
+  from the model; and its registration check holds of a package that
+  registers the backend `git`, the gutter jobs and the segment, and fails
+  one that leaves any of them out;
 - `versionControlContractFailures`: the version-control contract
-  (`Editor/VersionControl/Contract.lean`) against the model, and the git
-  implementation's status read of each of its repositories on the job
-  model that prints it (`Repository.jobModel`);
+  (`VcApiTest/Contract.lean`) against the model;
 - `versionControlGitChecks`, `versionControlWorktreeGitChecks`,
   `versionControlHistoryGitChecks` and `versionControlShowChecks`: the git
-  implementation (`Editor/VersionControl/Git.lean`) on the job model: the
+  implementation (`Editor/VersionControl/Git.lean`) on the job model: its
+  status read of each of the contract's repositories on the job model that
+  prints it (`Repository.jobModel`), the
   command lines it runs for the status and its writes, for worktrees,
   branches and changes, for a log, a blame, a range-diff and a change
   against no base, and for `show` and `watched`, their environments and limits, and how it
@@ -1689,6 +1702,8 @@ def checks : List Check :=
     versionControlPlumbingChecks ++
     versionControlHistoryParserChecks ++
     versionControlModelChecks ++
+    gitModelChecks ++
+    vcApiChecks ++
     versionControlGitChecks ++
     versionControlWorktreeGitChecks ++
     versionControlHistoryGitChecks ++
@@ -1756,6 +1771,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.grepProperties.length} search properties of both, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model; {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search hold of its model and of the search on the job model; {Editor.VersionControlContract.properties.length} properties of the version-control interface hold of its model, and the git implementation's status read of each of their repositories on the job model"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.grepProperties.length} search properties of both, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model; {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search hold of its model and of the search on the job model; {Editor.VersionControlContract.properties.length} properties of the version-control interface hold of its model"
   (← IO.getStdout).flush
   IO.Process.exit 0

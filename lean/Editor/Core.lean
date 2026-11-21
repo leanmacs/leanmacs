@@ -10,7 +10,6 @@ import Editor.Config.Elaborator.Model
 import Editor.Display.Contract
 import Editor.Evil.Compiled
 import Editor.Evil.Theorems
-import Editor.Extension
 import Editor.Files.Kit
 import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Contract
@@ -31,7 +30,7 @@ import Editor.Test.Sources
 import Editor.Themes.Compiled
 import Editor.Themes.Picture
 import Editor.VersionControl.Compiled
-import Editor.VersionControl.Contract
+import Editor.VersionControl.Git.Model
 import Editor.Watch.Contract
 import Editor.WindowCommands.Compiled
 import Editor.WorkingSet.Compiled
@@ -65,7 +64,10 @@ imports check (`tools/host-imports-check.sh`) does not meet it.
 The core modules no other core module imports: the modules that define
 the packages still in the core (`….Compiled`), the contracts, fakes, cases
 and theorems, the elaborator port's model
-(`Editor.Config.Elaborator.Model`), the executable's entry (`Editor.Main`, which brings the
+(`Editor.Config.Elaborator.Model`), the git implementation's half of the
+repository model (`Editor.VersionControl.Git.Model`, whose port and pure
+model are the interface library `vc-api`'s, `VcApi` and `VcApiTest`,
+libraries of their own outside `Editor`), the executable's entry (`Editor.Main`, which brings the
 hosts, the executable's modes and `Editor.Command.Append`),
 and the test kit the core publishes for a package's tests: the model
 tests' (`Editor.Test.…`, `Editor/Test/`: `Editor.Test.Listing` and

@@ -1,9 +1,9 @@
-import Editor.VersionControl.Model
 import Editor.WorkingSet.Compiled
 import ModelTest.Check
 import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
 import ModelTest.Support.WorkingSet
+import VcApiTest.Fake
 
 /-!
 # Model tests: `Editor/WorkingSet/Disk.lean`
@@ -48,23 +48,25 @@ def dEdited : String :=
 def storePath : System.FilePath :=
   WorkingSet.storeFile "/state" root.toString
 
-/-- The working set commands' jobs, the write's version-control interface
-the model of `repository`. -/
-def jobsOver (repository : VersionControl.Model.Repository) : Array Config.JobRegistration :=
+/-- The working set commands' jobs, each made as a host makes it
+(`JobRegistration.workWith`) with `backends` registered at the
+version-control backend point: the write's over `vc-api`'s fake of
+`repository` by default (`VcApiTest.backend`). -/
+def jobsOver (repository : VersionControl.Model.Repository)
+    (backends : Array VcApi.Backend := #[VcApiTest.backend repository]) :
+    Array Config.JobRegistration :=
   WorkingSet.package.registered.jobs.map fun job =>
-    if job.name == WorkingSet.writeJob then
-      { job with
-        work := WorkingSet.writeWork fun _ _ => VersionControl.Model.readHandler repository }
-    else job
+    { job with
+      work := job.workWith (VcApiTest.backendValues backends), over := none }
 
 /-- A driver of the checks with the working sets' commands, mode and jobs,
 the write's repository `repository`, the state directory `state`, and
 `files` as its world when given. -/
 def diskDriver (repository : VersionControl.Model.Repository := repository)
-    (state : Option System.FilePath := some "/state") (files : Option FileModel := none) :
-    Option EvilDriver :=
+    (state : Option System.FilePath := some "/state") (files : Option FileModel := none)
+    (backends : Array VcApi.Backend := #[VcApiTest.backend repository]) : Option EvilDriver :=
   (driverWith WorkingSet.package.registered.commands WorkingSet.package.registered.modes
-        (jobsOver repository)).map
+        (jobsOver repository backends)).map
     fun driver =>
     let driver :=
       { driver with
@@ -226,6 +228,15 @@ def workingSetDiskChecks : List Check :=
           | some driver =>
             let added := addedOn (opened driver "d.txt") "2 G"
             (storedDemo added).map (·.commit) == #[""] },
+    { name :=
+        "with no version-control backend registered the write takes the case no repository: the commit written is empty, though the repository has HEAD's commit"
+      run :=
+        pure <|
+          match diskDriver (backends := #[]), diskDriver with
+          | some bare, some backed =>
+            (storedDemo (addedOn (opened bare "d.txt") "2 G")).map (·.commit) == #[""] &&
+              (storedDemo (addedOn (opened backed "d.txt") "2 G")).map (·.commit) == #[headCommit]
+          | _, _ => false },
     { name :=
         "a save of a buffer holding a range writes the store with the range as edited, and closing the buffer writes its detached form"
       run :=

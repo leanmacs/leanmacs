@@ -14,6 +14,7 @@ import Editor.WorkingSet.Places
 import Editor.Workspace.Compiled
 import Editor.Workspace.Model
 import ModelTest.Support.Evil
+import VcApiTest.Fake
 
 /-!
 # Model tests: support: WorkingSet
@@ -105,7 +106,7 @@ def jobsWith (more : Array Config.JobRegistration) (name : String) :
             ProjectSearch.package.registered.jobs ++
             more).find?
         (·.name == name)).map
-    (·.work)
+    (·.workWith (VcApiTest.backendValues #[]))
 
 /-- A driver of the checks: evil's keys over an empty scratch buffer, with
 `commands`, `modes` and `jobs` handed in, whose jobs meet the workspace

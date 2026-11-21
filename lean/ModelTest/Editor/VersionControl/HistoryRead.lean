@@ -1,6 +1,6 @@
-import Editor.VersionControl
 import Editor.VersionControl.HistoryRead
 import ModelTest.Check
+import VcApi
 
 /-!
 # Model tests: `Editor/VersionControl/HistoryRead.lean`

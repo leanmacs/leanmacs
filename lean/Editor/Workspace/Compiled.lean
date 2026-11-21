@@ -1,3 +1,4 @@
+import Editor.Extension
 import Editor.Package
 import Editor.ProjectMode.Listing
 import Editor.Workspace.Attach
@@ -90,8 +91,10 @@ def package : Package :=
       workJob markerJob markerWork (restarted := true)
       workJob Compile.listJob Compile.listWork (restarted := true)
       sourceJob FindFile.job FindFile.answer
-      sourceJob FindInProject.job FindInProject.answer
-      workJob FindInProject.chooseJob FindInProject.chooseWork
+      Extension.workJob VcApi.Backend FindInProject.job fun backends =>
+          Completion.answering (FindInProject.answer (VcApi.connect? backends))
+      Extension.workJob VcApi.Backend FindInProject.chooseJob fun backends =>
+          FindInProject.chooseWork (VcApi.connect? backends)
       workJob FindInProject.findJob FindInProject.findWork
       defineSource FindFile.source
       defineSource FindInProject.source }
