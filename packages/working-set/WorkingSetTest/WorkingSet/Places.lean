@@ -1,22 +1,23 @@
 import Editor.Evil.Kit
-import Editor.WorkingSet.Places
 import FilesApi
-import ModelTest.Check
-import ModelTest.Support.WorkingSet
+import WorkingSet.Places
+import WorkingSetTest.Check
+import WorkingSetTest.Support.WorkingSet
 
 /-!
-# Model tests: `Editor/WorkingSet/Places.lean`
+# Model tests: `WorkingSet/Places.lean`
 
-The model tests of `Editor/WorkingSet/Places.lean`: `workingSetPlaceChecks`, on
-the loop's driver over the editor's models and the job model. The root module
-`ModelTest` runs them; its module doc says what each shows.
+The model tests of `WorkingSet/Places.lean`: `workingSetPlaceChecks`, on the
+loop's driver over the editor's models and the job model. The test driver's
+root, `WorkingSetTest/Model.lean`, runs them; its module doc says what each
+shows.
 -/
 
-namespace ModelTest
+namespace WorkingSetTest
 
 open Editor
 open Editor.Test
-open WorkingSetTest
+open WorkingSetTest.Support
 
 /-- A driver of the checks with `a.txt` open and its third line, `charlie
 three`, held in the set `demo`, the store read when `read`. -/
@@ -30,7 +31,7 @@ def heldEdited (driver : EvilDriver) : EvilDriver :=
   evilFed driver s!"g g O {typed "new"} <Escape> 4 G w i {typed "big "} <Escape>"
 
 /-- The checks of where a working set's ranges are held
-(`Editor/WorkingSet/Places.lean`), on the loop's driver over the models. -/
+(`WorkingSet/Places.lean`), on the loop's driver over the models. -/
 def workingSetPlaceChecks : List Check :=
   [{  name :=
         "a held range follows a line inserted before it and text typed inside it, through its markers"
@@ -103,4 +104,4 @@ def workingSetPlaceChecks : List Check :=
             let again := opened gone "a.txt"
             (kept again).disk == .notRead && (rangesOf again "demo").map (·.hold) == #[.detached] }]
 
-end ModelTest
+end WorkingSetTest

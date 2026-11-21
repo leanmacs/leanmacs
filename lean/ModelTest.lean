@@ -169,11 +169,6 @@ import ModelTest.Editor.Watch.Model
 import ModelTest.Editor.Window
 import ModelTest.Editor.WindowCheck
 import ModelTest.Editor.WindowCommands
-import ModelTest.Editor.WorkingSet
-import ModelTest.Editor.WorkingSet.Disk
-import ModelTest.Editor.WorkingSet.Places
-import ModelTest.Editor.WorkingSet.Refind
-import ModelTest.Editor.WorkingSet.Run
 import ModelTest.Editor.Workspace
 import ModelTest.EditorCore.EditorPackage
 import ModelTest.FilesApi
@@ -1314,45 +1309,11 @@ What the compile mode makes of them is checked in its package
 until the compile mode moved out of the core, with `.compileChecks`,
 `.compileErrorChecks`, `.compileLocationChecks` and
 `.compilePackageChecks`.
-Working sets (`Editor/WorkingSet.lean` and its modules) are checked in Lean
-alone too:
-
-- `workingSetChecks`: the stored form, pure: the document's JSON round trip
-  and the refusals of one it cannot read, a newer version first; a
-  workspace's key; a range captured from a text and its points found
-  again; the headers; and the excerpts' grouping by file and merging;
-- `workingSetRefindChecks`: the re-find ladder
-  (`Editor/WorkingSet/Refind.lean`), against the fuzzy model: exact, moved
-  past lines inserted above, the copy whose context matches over the
-  nearer one and the nearer of two alike, changed with one character
-  edited, drifted when deleted and when a short quote was edited, a long
-  quote found by its ends or drifted without its last lines, text that is
-  not ASCII, and a stored point past the text's end;
-- `workingSetPlaceChecks`: where a range is held while the editor runs
-  (`Editor/WorkingSet/Places.lean`), on the loop's driver over the models
-  with a workspace at `/r`: a held range follows edits through its
-  markers, closing its buffer detaches it as edited, opening the file
-  again holds it again, or leaves it drifted when another program removed
-  its text, and nothing is attached while the workspace's sets are not
-  read;
-- `workingSetRunChecks`: `working-set-add` and `working-set-open`
-  (`Editor/WorkingSet/Run.lean`) on that driver, the first acceptance
-  criterion of navigation-and-windows phase 5: a linewise selection added
-  and opened as the set's buffer, edited through it, visited and returned
-  from; a row of project search's results pinned as its file's range; a
-  selection across two files refused; a cursor's row; a range added twice;
-  overlapping ranges in one excerpt; the prompt; a set there is none of;
-  `working-set-remove`, `working-set-note` and `working-set-refresh` in the
-  set's buffer; and, with no files implementation registered, a file open
-  nowhere left unloaded and its range drifted, as for a refused load;
-- `workingSetDiskChecks`: the sets on disk (`Editor/WorkingSet/Disk.lean`)
-  on that driver with the state directory `/state` and the version-control
-  interface's model at `/r`, the second acceptance criterion: three ranges
-  written with `HEAD`'s commit; a fresh editor over the same files, one of
-  them edited by another program, opening the set as a changed, a moved
-  and a drifted range; the drifted form not moved by a later write; memory
-  only with no state directory; a newer or unparsable store left alone; no
-  repository; and the writes a save and a close make.
+The working sets are the `working-set` package's (`packages/working-set/`),
+and its test driver runs their checks (`WorkingSetTest.workingSetChecks`,
+`workingSetRefindChecks`, `workingSetPlaceChecks`, `workingSetRunChecks`
+and `workingSetDiskChecks`), which were this driver's while the working
+sets were modules of the core.
 
 Session restore is checked in Lean alone too:
 
@@ -1602,11 +1563,6 @@ def checks : List Check :=
     insertExcerptChecks ++
     projectSearchChecks ++
     projectSearchRunChecks ++
-    workingSetChecks ++
-    workingSetRefindChecks ++
-    workingSetPlaceChecks ++
-    workingSetRunChecks ++
-    workingSetDiskChecks ++
     journalFormatChecks ++
     restoreDocumentChecks ++
     restoreOffsetChecks ++

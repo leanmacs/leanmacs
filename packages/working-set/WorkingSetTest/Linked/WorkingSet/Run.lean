@@ -1,4 +1,3 @@
-import ContractTest.Check
 import Editor.Api
 import Editor.InputScheme.Test
 import Editor.Invocation
@@ -6,29 +5,33 @@ import Editor.Jumps
 import Editor.Test.Excerpt
 import Editor.Test.Linked.Rig
 import Editor.Test.Workspace
-import Editor.WorkingSet.Compiled
 import FilesApiTest.Fake
 import VcApiTest.Fake
 import VcApiTest.Linked.Repositories
+import WorkingSet.Compiled
+import WorkingSetTest.Check
 
 /-!
-# Contract tests: `Editor/WorkingSet/Run.lean`
+# Linked tests: `WorkingSet/Run.lean`
 
-The tests of the working sets over the real bindings: `workingSetChecks`, both
-acceptance criteria of navigation-and-windows phase 5 with the library's file
-service, text store and fuzzy matcher and real git, through a restart. The
-workspace is the core kit's stand-in for the finder's answer over the
-checks' repository (`Test.checkoutFound`, at `FilesApi.Opened`), and a
-search's results the kit's excerpt buffer (`Test.excerptFiles`): the working
-set names no other feature. That a range is added from project search's
-results is held by the default set's fixture
-`tests/headless/working-set-from-search`. The commit a set is written with comes from
-the version-control interface, through `vc-api`'s fake backend
+The tests of the working sets over the real bindings: `workingSetChecks`,
+both acceptance criteria of navigation-and-windows phase 5 with the
+library's file service, text store and fuzzy matcher and real git, through a
+restart. The workspace is the core kit's stand-in for the finder's answer
+over the checks' repository (`Test.checkoutFound`, at `FilesApi.Opened`),
+and a search's results the kit's excerpt buffer (`Test.excerptFiles`): the
+working set names no other feature. That a range is added from project
+search's results is held by the default set's fixture
+`tests/headless/working-set-from-search`. The commit a set is written with
+comes from the version-control interface, through `vc-api`'s fake backend
 (`VcApiTest.backend`): the working set names no version-control
-implementation.
+implementation. They were the contract test's
+(`ContractTest.workingSetChecks`) while the working sets were modules of the
+core. The linked test's root, `WorkingSetTest/Linked.lean`, runs them; its
+module doc says what each shows.
 -/
 
-namespace ContractTest
+namespace WorkingSetTest.Linked
 
 open Editor
 open Editor.Test.Linked
@@ -198,4 +201,4 @@ def workingSetChecks (services : Job.Services) : List Check :=
                       "\n" ++
                       "a line that will be deleted entirely\n") }]
 
-end ContractTest
+end WorkingSetTest.Linked

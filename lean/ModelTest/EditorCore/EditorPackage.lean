@@ -23,7 +23,7 @@ open Editor
 register. -/
 def shippedPackageNames : Array String :=
   #["evil", "ex", "frame-commands", "menu", "window-commands", "tab-commands", "themes",
-    "project-search", "working-set", "restore", "package-set", "shell", "version-control",
+    "project-search", "restore", "package-set", "shell", "version-control",
     "version-control-gutter"]
 
 /-- The checks of the packages of the core's Lake package
@@ -45,18 +45,19 @@ def packageSetChecks : List Check :=
               #["restore", "restore-files", "restore-write", "restore-save", "restart-probe",
                 "restart-save", "vc-gutter-head", "vc-gutter-diff", "vc-gutter-refs"] },
     { name :=
-        "every package of the shipped set is accepted, and their names are the 14 of the package table, each once, in its order, with no package of the shipped palettes and none of the file commands, the buffer commands, the workspaces, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
+        "every package of the shipped set is accepted, and their names are the 13 of the package table, each once, in its order, with no package of the shipped palettes and none of the file commands, the buffer commands, the workspaces, the working sets, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
       run :=
         let (state, refused) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (refused == #[] &&
             EditorCore.EditorPackage.packages.map (·.name) == shippedPackageNames &&
-            shippedPackageNames.size == 14 &&
-            shippedPackageNames.toList.eraseDups.length == 14 &&
+            shippedPackageNames.size == 13 &&
+            shippedPackageNames.toList.eraseDups.length == 13 &&
             !shippedPackageNames.contains "files" &&
             !shippedPackageNames.contains "buffers" &&
             !shippedPackageNames.contains "workspace" &&
+            !shippedPackageNames.contains "working-set" &&
             !shippedPackageNames.contains "shipped-themes" &&
             !shippedPackageNames.contains "compile" &&
             !shippedPackageNames.contains "languages" &&

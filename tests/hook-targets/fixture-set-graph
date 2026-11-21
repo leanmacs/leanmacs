@@ -5,6 +5,8 @@ echo	implementation	-
 files	implementation	-
 buffers	implementation	-
 workspace	implementation	-
+working-set-api	interface	-
+working-set	implementation	working-set-api
 completion-api	interface	-
 completion	implementation	completion-api
 mode-line	implementation	-

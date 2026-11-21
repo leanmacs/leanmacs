@@ -10,7 +10,6 @@ import Editor.TabCommands.Compiled
 import Editor.Themes.Compiled
 import Editor.VersionControl.Compiled
 import Editor.WindowCommands.Compiled
-import Editor.WorkingSet.Compiled
 
 /-!
 # The core's entry module: the packages of the core's Lake package
@@ -74,11 +73,9 @@ language table read as they did:
   theme, so the themes of a Lake package that requires the core (the
   palettes of `shipped-themes`, `packages/shipped-themes/`) follow
   `default`, as the theme prompt lists them;
-- `working-set` comes after `project-search`, and their commands follow
-  the themes' in the command prompt;
-- `restore` comes after `working-set` and before `shell`: like project
-  search and the working sets it keeps state under the state directory,
-  and what it registers follows theirs;
+- `restore` comes after `project-search` and before `shell`: like project
+  search it keeps state under the state directory, and what it registers
+  follows project search's;
 - `package-set` comes right after `restore`: a user's package-set build
   restarts the editor through the restore's restart, and its ex names
   follow `restart`'s;
@@ -129,7 +126,10 @@ control's gutter's in the command prompt. The workspaces' package, which
 was eighth here, after `themes`, is the default package `workspace`
 (`packages/workspace/`), and registers right after `buffers`: its commands
 follow the buffer commands' in the command prompt, and its binding, the
-workspace finder's escape, still follows the menu's.
+workspace finder's escape, still follows the menu's. The working sets'
+package, which was ninth here, after `project-search`, is the default
+package `working-set` (`packages/working-set/`), and registers right after
+`workspace`: its commands follow the workspaces' in the command prompt.
 -/
 
 namespace EditorCore.EditorPackage
@@ -140,7 +140,7 @@ open Editor
 them ("The order", in the module docs). -/
 def packages : Array Package :=
   #[Evil.package, Ex.package, FrameCommands.package, Menu.package, WindowCommands.package,
-    TabCommands.package, Themes.package, ProjectSearch.package, WorkingSet.package, Restore.package,
-    PackageSet.package, Shell.package, VersionControl.package, VersionControl.gutterPackage]
+    TabCommands.package, Themes.package, ProjectSearch.package, Restore.package, PackageSet.package,
+    Shell.package, VersionControl.package, VersionControl.gutterPackage]
 
 end EditorCore.EditorPackage

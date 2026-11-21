@@ -6,7 +6,7 @@ import Editor.Json
 A working set is a named list of ranges of files, each with a note, kept per
 workspace (`docs/design/review-and-navigation.md`, "Working sets"). While the
 editor runs a range is held by two anchors of its file's buffer
-(`Editor/WorkingSet/Places.lean`); this module is the form a range is kept
+(`WorkingSet/Places.lean`); this module is the form a range is kept
 in when no buffer holds it, and on disk. It is pure: no port, no state.
 
 ## The stored form
@@ -53,8 +53,8 @@ agent.
 
 ## The thresholds
 
-The re-find ladder (`Editor/WorkingSet/Refind.lean`) is tuned by the
-constants here, which are pinned by `ModelTest.workingSetRefindChecks` and
+The re-find ladder (`WorkingSet/Refind.lean`) is tuned by the
+constants here, which are pinned by `WorkingSetTest.workingSetRefindChecks` and
 are not config: `fuzzyRatio`, `fuzzyMinimum`, `fuzzyWindow`, `fuzzyWhole`
 and `fuzzyEnds`.
 
@@ -67,7 +67,7 @@ merges its matches' (`ProjectSearch.excerptRows`), so no two excerpts are
 over one source byte. Each excerpt's header (`header`, `driftedHeader`) is
 its path and line, with what is known of its ranges.
 
-Pinned by `ModelTest.workingSetChecks`.
+Pinned by `WorkingSetTest.workingSetChecks`.
 -/
 
 namespace Editor.WorkingSet

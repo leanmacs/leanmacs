@@ -1,5 +1,5 @@
 import Editor.Fuzzy
-import Editor.WorkingSet
+import WorkingSet
 
 /-!
 # Finding a stored range again
@@ -36,7 +36,7 @@ clamped (`Point.offsetIn`).
    - a span found is placed, `changed`.
 4. **Drifted**: none of these. The stored form is not moved.
 
-Pinned by `ModelTest.workingSetRefindChecks`.
+Pinned by `WorkingSetTest.workingSetRefindChecks`.
 -/
 
 namespace Editor.WorkingSet

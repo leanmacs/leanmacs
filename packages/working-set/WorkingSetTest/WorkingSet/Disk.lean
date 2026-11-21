@@ -1,25 +1,25 @@
 import Editor.Evil.Kit
 import Editor.Test.Excerpt
-import Editor.WorkingSet.Compiled
 import FilesApi
-import ModelTest.Check
-import ModelTest.Support.WorkingSet
 import VcApiTest.Fake
+import WorkingSet.Compiled
+import WorkingSetTest.Check
+import WorkingSetTest.Support.WorkingSet
 
 /-!
-# Model tests: `Editor/WorkingSet/Disk.lean`
+# Model tests: `WorkingSet/Disk.lean`
 
-The model tests of `Editor/WorkingSet/Disk.lean`: `workingSetDiskChecks`, on the
-loop's driver over the editor's models, the job model and the version-control
-interface's model. The root module `ModelTest` runs them; its module doc says
-what each shows.
+The model tests of `WorkingSet/Disk.lean`: `workingSetDiskChecks`, on the
+loop's driver over the editor's models, the job model and the
+version-control interface's model. The test driver's root,
+`WorkingSetTest/Model.lean`, runs them; its module doc says what each shows.
 -/
 
-namespace ModelTest
+namespace WorkingSetTest
 
 open Editor
 open Editor.Test
-open WorkingSetTest
+open WorkingSetTest.Support
 
 namespace WorkingSetDiskTest
 
@@ -122,7 +122,7 @@ def restarted (driver : EvilDriver) : Option EvilDriver :=
 end WorkingSetDiskTest
 
 open WorkingSetDiskTest in
-/-- The checks of the working sets on disk (`Editor/WorkingSet/Disk.lean`),
+/-- The checks of the working sets on disk (`WorkingSet/Disk.lean`),
 on the loop's driver over the models: the second acceptance criterion of
 navigation-and-windows phase 5, and the store's refusals. -/
 def workingSetDiskChecks : List Check :=
@@ -255,4 +255,4 @@ def workingSetDiskChecks : List Check :=
               (storedDemo gone).map (·.start.line) == #[3] &&
               (rangesOf gone "demo").map (·.hold) == #[.detached] }]
 
-end ModelTest
+end WorkingSetTest

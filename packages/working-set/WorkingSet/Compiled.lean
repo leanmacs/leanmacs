@@ -1,7 +1,7 @@
 import BuffersApi
 import Editor.Extension
 import Editor.Package
-import Editor.WorkingSet.Run
+import WorkingSet.Run
 
 /-!
 # The `working-set` package: the working sets' commands, mode and jobs
@@ -9,11 +9,14 @@ import Editor.WorkingSet.Run
 What a host registers, as the package `working-set` (`WorkingSet.package`,
 `Editor/Package.lean`), so that a selection can be added to a named working
 set and a set opened as an excerpt buffer of its ranges
-(`Editor/WorkingSet/Run.lean`). A host registers it for the owner
-`working-set` when its loop starts, before any config
-(`Editor/Config/Packages.lean`).
+(`WorkingSet/Run.lean`). A host of a set that holds this Lake package
+registers it for the owner `working-set` when its loop starts, before any
+config (`Editor/Config/Packages.lean`), after the `workspace` package.
 
-- **The commands**: `working-set-add`, `working-set-open`,
+- **The commands**: `working-set-add` and `working-set-open`, under the
+  names of the interface package `working-set-api`
+  (`WorkingSetApi.addName`, `WorkingSetApi.openName`), which a reacher
+  names,
   `working-set-visit`, `working-set-remove`, `working-set-note` and
   `working-set-refresh`.
 - **The mode**: `working-set`, a set's buffer's mode, whose
@@ -25,7 +28,7 @@ set and a set opened as an excerpt buffer of its ranges
   set's ranges that no buffer holds, keyed by the set's buffer's name; and
   `working-set-load`, `working-set-write` and `working-set-save`, which
   read a workspace's sets from the state directory and write them back
-  (`Editor/WorkingSet/Disk.lean`); `working-set-write` is registered over
+  (`WorkingSet/Disk.lean`); `working-set-write` is registered over
   the version-control backend point (`VcApi.Backend`), which it asks for
   the commit `HEAD` is at.
 - **The hooks** of the interface library `files-api`: at `FilesApi.Opened`
@@ -36,8 +39,9 @@ set and a set opened as an excerpt buffer of its ranges
   `BuffersApi.Closing` they detach the ranges a closing buffer holds and
   free a set's buffer's drifted quotes.
 
-Pinned by `ModelTest.workingSetRunChecks`, on the models, and by
-`ConfigTest.shippedChecks` over the hosts' registry.
+Pinned by `WorkingSetTest.workingSetRunChecks`, on the models, and by
+`WorkingSetTest.workingSetPackageChecks`: `working-set-api`'s contract over
+the package, and what it registers, over the registry it makes alone.
 -/
 
 namespace Editor.WorkingSet

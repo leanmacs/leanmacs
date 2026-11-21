@@ -1,14 +1,15 @@
-import Editor.WorkingSet
-import ModelTest.Check
+import WorkingSet
+import WorkingSetTest.Check
 
 /-!
-# Model tests: `Editor/WorkingSet.lean`
+# Model tests: `WorkingSet.lean`
 
-The model tests of `Editor/WorkingSet.lean`: `workingSetChecks`. The root module
-`ModelTest` runs them; its module doc says what each shows.
+The model tests of `WorkingSet.lean`: `workingSetChecks`. The test driver's
+root, `WorkingSetTest/Model.lean`, runs them; its module doc says what each
+shows.
 -/
 
-namespace ModelTest
+namespace WorkingSetTest
 
 open Editor
 
@@ -25,7 +26,7 @@ def workingSetDocument : WorkingSet.Document :=
                 start := ⟨12, 5⟩, stop := ⟨12, 21⟩, note := "look here" }] },
         { name := "empty" }] }
 
-/-- The checks of the working set's stored form (`Editor/WorkingSet.lean`):
+/-- The checks of the working set's stored form (`WorkingSet.lean`):
 its JSON round trip and the refusals of a document it cannot read, the key
 of a workspace's directory, a range captured from a text and found again by
 its points, the headers, and the excerpts' grouping. Pure. -/
@@ -144,4 +145,4 @@ def workingSetChecks : List Check :=
             WorkingSet.openedSentence "demo" 3 1 == "demo: 3 ranges, 1 drifted" &&
             WorkingSet.notSavedSentence "w" "denied" == "working sets of w not saved: denied" }]
 
-end ModelTest
+end WorkingSetTest

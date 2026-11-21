@@ -2,15 +2,16 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Job
 import Editor.Jumps
-import Editor.WorkingSet.Disk
-import Editor.WorkingSet.Places
 import FilesApi
+import WorkingSet.Disk
+import WorkingSet.Places
+import WorkingSetApi
 
 /-!
 # `working-set-add` and `working-set-open`
 
 A working set is a named list of ranges of a workspace's files
-(`Editor/WorkingSet.lean` has the stored form, `Editor/WorkingSet/Places.lean`
+(`WorkingSet.lean` has the stored form, `WorkingSet/Places.lean`
 where each is held). These are its commands.
 
 ## Adding
@@ -38,7 +39,7 @@ called with.
 - A range whose file and span are in the set already is not added, and
   `already in <name>` is said; otherwise `<name>: added <path>:<line>`.
 - The workspace's sets are read first (`ensureRead`,
-  `Editor/WorkingSet/Disk.lean`); when that starts their load, the add runs
+  `WorkingSet/Disk.lean`); when that starts their load, the add runs
   again once it is done. A range added asks for the sets to be written
   (`requestWrite`). With no state directory the first add also says, once,
   that working sets are not kept across restarts.
@@ -102,19 +103,21 @@ the set's ranges each of its excerpts shows (`Shown.excerpts`).
   again, so its drifted ranges whose files are open are tried again, and
   says what it holds.
 
-Pinned by `ModelTest.workingSetRunChecks`, on the loop's driver over the
+Pinned by `WorkingSetTest.workingSetRunChecks`, on the loop's driver over the
 models.
 -/
 
 namespace Editor.WorkingSet
 
-/-- The name `working-set-add` is registered under. -/
+/-- The name `working-set-add` is registered under: the interface
+package's (`WorkingSetApi.addName`), which a reacher names. -/
 def addName : String :=
-  "working-set-add"
+  WorkingSetApi.addName
 
-/-- The name `working-set-open` is registered under. -/
+/-- The name `working-set-open` is registered under: the interface
+package's (`WorkingSetApi.openName`), which a reacher names. -/
 def openName : String :=
-  "working-set-open"
+  WorkingSetApi.openName
 
 /-- The name `working-set-visit` is registered under. -/
 def visitName : String :=

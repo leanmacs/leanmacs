@@ -39,7 +39,6 @@ import Editor.VersionControl.Compiled
 import Editor.VersionControl.Git.Model
 import Editor.Watch.Contract
 import Editor.WindowCommands.Compiled
-import Editor.WorkingSet.Compiled
 
 /-!
 # The core

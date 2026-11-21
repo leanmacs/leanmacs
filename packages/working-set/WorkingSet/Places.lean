@@ -1,6 +1,6 @@
 import Editor.Api
 import Editor.Marks
-import Editor.WorkingSet.Refind
+import WorkingSet.Refind
 
 /-!
 # Working sets: where each range is held while the editor runs
@@ -8,7 +8,7 @@ import Editor.WorkingSet.Refind
 A workspace's working sets as the editor holds them (`WorkingSet.Kept`):
 its store (`WorkingSet.store`, kept per workspace with `Workspace.set` and
 `Table.get`, as the review's rounds are), with each range's stored form
-(`Editor/WorkingSet.lean`) and where it is held now (`Hold`):
+(`WorkingSet.lean`) and where it is held now (`Hold`):
 
 - **held** by two anchor markers of its file's buffer's text, the start
   with the bias `before` and the stop with `after`, as an excerpt's ends
@@ -40,7 +40,7 @@ file commands (`Editor/Files.lean`) and the buffer commands
   for a write of them (`fileSaved`, run at the hook `FilesApi.Saved`, which
   `Files.saved` runs, once the file
   is written). The write is a job started by name, so this module does not
-  import the one that does it (`Editor/WorkingSet/Disk.lean`).
+  import the one that does it (`WorkingSet/Disk.lean`).
 - **Attach** (`attach`, run at the hook `FilesApi.Opened`, which `Files.adopt` runs once a buffer holds a
   file): in every workspace whose sets are read, or kept in memory, each
   detached range of the file (by its path relative to the workspace's root)
@@ -57,7 +57,7 @@ file commands (`Editor/Files.lean`) and the buffer commands
   none; or nothing, when the set has that file's range at that span
   already.
 
-Pinned by `ModelTest.workingSetPlaceChecks`, on the loop's driver over the
+Pinned by `WorkingSetTest.workingSetPlaceChecks`, on the loop's driver over the
 models.
 -/
 
@@ -289,12 +289,12 @@ def refreshed (range : Range) : EditorM Range := do
 
 /-- The name of the job that writes a workspace's working sets: it reads the
 commit `HEAD` is at, and its command refreshes and renders the sets and
-starts the save (`Editor/WorkingSet/Disk.lean`). -/
+starts the save (`WorkingSet/Disk.lean`). -/
 def writeJob : String :=
   "working-set-write"
 
 /-- Asks for the working sets of the workspace at `location` to be written
-("When it is written", `Editor/WorkingSet/Disk.lean`): the job `writeJob`
+("When it is written", `WorkingSet/Disk.lean`): the job `writeJob`
 is started by name, keyed by the root, so a newer write cancels an older
 one still asking for the commit. Nothing is asked when the sets are not
 read (not read yet, unreadable or in memory only), when there is no state

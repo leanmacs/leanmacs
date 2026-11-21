@@ -1,15 +1,16 @@
 import Editor.Fuzzy.Model
-import Editor.WorkingSet.Refind
-import ModelTest.Check
+import WorkingSet.Refind
+import WorkingSetTest.Check
 
 /-!
-# Model tests: `Editor/WorkingSet/Refind.lean`
+# Model tests: `WorkingSet/Refind.lean`
 
-The model tests of `Editor/WorkingSet/Refind.lean`: `workingSetRefindChecks`.
-The root module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `WorkingSet/Refind.lean`: `workingSetRefindChecks`. The
+test driver's root, `WorkingSetTest/Model.lean`, runs them; its module doc
+says what each shows.
 -/
 
-namespace ModelTest
+namespace WorkingSetTest
 
 open Editor
 
@@ -41,7 +42,7 @@ def longQuote : String :=
     "pebble hurricane saffron typewriter\n" ++
     "glacier waffle compass nebula ending"
 
-/-- The checks of the re-find ladder (`Editor/WorkingSet/Refind.lean`), run
+/-- The checks of the re-find ladder (`WorkingSet/Refind.lean`), run
 against the fuzzy model: each step, the order among occurrences, the short
 and the long quote, text that is not ASCII, and a point past the end. -/
 def workingSetRefindChecks : List Check :=
@@ -122,4 +123,4 @@ def workingSetRefindChecks : List Check :=
         let edited := text.replace "load_settings" "load_setting5"
         return refoundIn text past == .moved start stop && refoundIn edited past == .changed start stop }]
 
-end ModelTest
+end WorkingSetTest

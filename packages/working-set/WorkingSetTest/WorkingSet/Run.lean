@@ -1,22 +1,23 @@
 import Editor.Evil.Kit
 import Editor.Test.Excerpt
-import Editor.WorkingSet.Compiled
-import ModelTest.Check
-import ModelTest.Support.WorkingSet
+import WorkingSet.Compiled
+import WorkingSetTest.Check
+import WorkingSetTest.Support.WorkingSet
 
 /-!
-# Model tests: `Editor/WorkingSet/Run.lean`
+# Model tests: `WorkingSet/Run.lean`
 
-The model tests of `Editor/WorkingSet/Run.lean`: `workingSetRunChecks`, on the
-loop's driver over the editor's models and the job model, with evil's keys. The
-root module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `WorkingSet/Run.lean`: `workingSetRunChecks`, on the
+loop's driver over the editor's models and the job model, with evil's keys.
+The test driver's root, `WorkingSetTest/Model.lean`, runs them; its module
+doc says what each shows.
 -/
 
-namespace ModelTest
+namespace WorkingSetTest
 
 open Editor
 open Editor.Test
-open WorkingSetTest
+open WorkingSetTest.Support
 
 namespace WorkingSetRunTest
 
@@ -67,7 +68,7 @@ end WorkingSetRunTest
 
 open WorkingSetRunTest in
 /-- The checks of `working-set-add` and `working-set-open`
-(`Editor/WorkingSet/Run.lean`), on the loop's driver over the models: the
+(`WorkingSet/Run.lean`), on the loop's driver over the models: the
 first acceptance criterion of navigation-and-windows phase 5. -/
 def workingSetRunChecks : List Check :=
   [{  name :=
@@ -260,4 +261,4 @@ def workingSetRunChecks : List Check :=
             none_.loop.state.echo == WorkingSet.noSuchSet "nope" "r@main" &&
               (none_.loop.state.findBuffer (setBuffer "nope")).isNone }]
 
-end ModelTest
+end WorkingSetTest

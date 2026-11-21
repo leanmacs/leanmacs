@@ -1,8 +1,8 @@
 import Editor.File
 import Editor.Job
-import Editor.WorkingSet.Places
 import FilesApi
 import VcApi
+import WorkingSet.Places
 
 /-!
 # Working sets on disk
@@ -10,7 +10,7 @@ import VcApi
 Each workspace keeps its working sets in a file under the editor's state
 directory (`EditorState.stateDirectory`):
 `<state>/workspaces/<key>/working-sets.json` (`WorkingSet.storeFile`), as
-JSON of the stored form (`Editor/WorkingSet.lean`). Only jobs touch it,
+JSON of the stored form (`WorkingSet.lean`). Only jobs touch it,
 through the job port's file request.
 
 ## When it is read
@@ -36,7 +36,7 @@ run (`ensureRead`, called by `working-set-add` and `working-set-open`):
 
 On every change to a set (an add, a remove, a note), when a buffer holding
 one of the workspace's ranges is saved, and when such a buffer is closed,
-through `WorkingSet.requestWrite` (`Editor/WorkingSet/Places.lean`), which
+through `WorkingSet.requestWrite` (`WorkingSet/Places.lean`), which
 starts `working-set-write` keyed by the root, so a newer write cancels an
 older one still asking:
 
@@ -61,7 +61,7 @@ older one still asking:
 Nothing is written while the sets are not read, unreadable or in memory
 only.
 
-Pinned by `ModelTest.workingSetDiskChecks`, on the loop's driver over the
+Pinned by `WorkingSetTest.workingSetDiskChecks`, on the loop's driver over the
 models: the second acceptance criterion of navigation-and-windows phase 5.
 -/
 

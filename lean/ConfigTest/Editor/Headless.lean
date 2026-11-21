@@ -2428,20 +2428,6 @@ def shippedChecks (_ : Unit) : List Check :=
               given.state.workingDirectory == "/"
           | _, _ => false) },
     { name :=
-        "the executable's hosts start with working-set-add, working-set-open, working-set-visit, working-set-remove, working-set-note and working-set-refresh registered by the working-set package, the mode working-set, and the jobs working-set-files, working-set-load, working-set-write and working-set-save, registered by it"
-      run := do
-        let registry := shippedRegistry
-        let owner := owned "working-set"
-        return ["working-set-add", "working-set-open", "working-set-visit", "working-set-remove",
-                  "working-set-note", "working-set-refresh"].all
-              (fun name => (registry.find? name).any (·.owner == owner)) &&
-            registry.modes.any
-              (fun entry => entry.mode.name == "working-set" && entry.owner == owner) &&
-            ["working-set-files", "working-set-load", "working-set-write", "working-set-save"].all
-              fun name =>
-              registry.jobs.any fun entry =>
-                entry.registration.name == name && entry.owner == owner },
-    { name :=
         "the executable's hosts start with nothing of the at-point package: no command at-point-complete, at-point-next, at-point-previous, at-point-tab, at-point-backtab, at-point-return, at-point-quit, at-point-triggered or at-point-paused, no source words and none in the category word, no job words, no at-point source, and a modeless buffer's at-point chain is empty, registered by a package of the core's Lake package"
       run := do
         let registry := shippedRegistry
@@ -2527,6 +2513,17 @@ def shippedChecks (_ : Unit) : List Check :=
             (registry.source? "files").isNone &&
             registry.sourcesIn "file" == #[] &&
             !(registry.extensions.any (·.owner == owned "files")) },
+    { name :=
+        "the executable's hosts start with nothing of the working-set package: no command working-set-add, working-set-open, working-set-visit, working-set-remove, working-set-note or working-set-refresh, no mode working-set, no job working-set-files, working-set-load, working-set-write or working-set-save, and no value of an interface, files-api's Opened and Saved and buffers-api's Closing among them, registered by a package of the core's Lake package"
+      run := do
+        let registry := shippedRegistry
+        return ["working-set-add", "working-set-open", "working-set-visit", "working-set-remove",
+                  "working-set-note", "working-set-refresh"].all
+              (fun name => (registry.find? name).isNone) &&
+            (registry.mode? "working-set").isNone &&
+            ["working-set-files", "working-set-load", "working-set-write", "working-set-save"].all
+              (fun name => (registry.findJob? name).isNone) &&
+            !(registry.extensions.any (·.owner == owned "working-set")) },
     { name :=
         "the executable's hosts start with nothing of the workspace package: no command workspace-current, find-file-in-workspace, find-file-in-project or find-file-in-another-workspace, no job find-workspace, find-mode-markers, compile-list, workspace-files, project-workspaces, project-workspace-choose or project-workspace-find, no source workspace-files or project-workspaces, no source in the category workspace-file or project-workspace, no binding of find-file-in-another-workspace and none of C-x in the global keymap, and no value of an interface, project-api's Workspaces or files-api's Opened among them, registered by a package of the core's Lake package"
       run := do

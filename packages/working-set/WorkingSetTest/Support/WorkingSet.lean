@@ -9,10 +9,10 @@ import Editor.Test.Excerpt
 import Editor.Test.Hosted
 import Editor.Test.Loop
 import Editor.Test.Workspace
-import Editor.WorkingSet.Compiled
-import Editor.WorkingSet.Places
 import FilesApiTest.Fake
 import VcApiTest.Fake
+import WorkingSet.Compiled
+import WorkingSet.Places
 
 /-!
 # Model tests: support: WorkingSet
@@ -28,15 +28,15 @@ workspace through the kit's stand-in at the hook `FilesApi.Opened`
 sets' own hooks are registered. No project search: that a range is added from
 its results is held by the default set's fixture
 `tests/headless/working-set-from-search`. Shared by the
-test modules of `Editor/WorkingSet/`; it holds no checks of its own.
+test modules of `WorkingSet/`; it holds no checks of its own.
 -/
 
-namespace ModelTest
+namespace WorkingSetTest
 
 open Editor
 open Editor.Test
 
-namespace WorkingSetTest
+namespace Support
 
 /-- The workspace of the checks. -/
 def root : System.FilePath :=
@@ -186,6 +186,6 @@ def typed (text : String) : String :=
   " ".intercalate
     (text.toList.map fun character => if character == ' ' then "SPC" else character.toString)
 
-end WorkingSetTest
+end Support
 
-end ModelTest
+end WorkingSetTest
