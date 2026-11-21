@@ -88,19 +88,17 @@ service, on real files: how the job ended, and the files afterwards.
 The files are in a temporary directory made here for this one property,
 whose path the job is handed; nothing else is written anywhere. The
 property's files are written into it, the job runs, every file then in it is
-read back, and it is removed, whatever happened. -/
+read back, and it is removed, whatever happened, once the file service has
+worked what was handed to it (`Linked.withFiles`). -/
 def runFilesOnService (services : Job.Services) (property : JobContract.FileProperty) :
     IO (Job.Outcome Bool × Array (String × ByteArray)) := do
-  let directory ← IO.FS.createTempDir
-  try
-    for (name, bytes) in property.files do
-      IO.FS.writeBinFile (directory / name) bytes
-    for name in property.directories do
-      IO.FS.createDirAll (directory / name)
-    let outcome ← runOnTimers services (property.holds directory)
-    return (outcome, ← filesOf directory)
-  finally
-    IO.FS.removeDirAll directory
+  Editor.Test.Linked.withFiles services fun directory => do
+      for (name, bytes) in property.files do
+        IO.FS.writeBinFile (directory / name) bytes
+      for name in property.directories do
+        IO.FS.createDirAll (directory / name)
+      let outcome ← runOnTimers services (property.holds directory)
+      return (outcome, ← filesOf directory)
 
 /-- What must hold of the library's objects once the file properties have
 run: it is about the library's counts, so the port cannot say it. -/
@@ -141,16 +139,14 @@ service, on real processes: how the job ended.
 
 Its commands run in a temporary directory made here for this one property,
 whose path the job is handed; the property's files are written into it, and
-it is removed, whatever happened. -/
+it is removed, whatever happened, once the process service has ended every
+child it ran there (`Linked.withFiles`). -/
 def runProcessesOnService (services : Job.Services) (property : JobContract.ProcessProperty) :
     IO (Job.Outcome Bool) := do
-  let directory ← IO.FS.createTempDir
-  try
-    for (name, bytes) in property.files do
-      IO.FS.writeBinFile (directory / name) bytes
-    runOnTimers services (property.holds directory)
-  finally
-    IO.FS.removeDirAll directory
+  Editor.Test.Linked.withFiles services (targets := [.processes]) fun directory => do
+      for (name, bytes) in property.files do
+        IO.FS.writeBinFile (directory / name) bytes
+      runOnTimers services (property.holds directory)
 
 /-- What must hold of the library's process service once the process
 properties have run: it is about the library's count, so the port cannot say
@@ -176,18 +172,16 @@ process services, on real files: how the job ended.
 
 Its directories and files are made in a temporary directory made here for
 this one property, whose path the job is handed, and it is removed, whatever
-happened. -/
+happened, once the watch and process services have worked what was handed to
+them (`Linked.withFiles`). -/
 def runWatchesOnService (services : Job.Services) (property : JobContract.FileWatchProperty) :
     IO (Job.Outcome Bool) := do
-  let directory ← IO.FS.createTempDir
-  try
-    for name in property.directories do
-      IO.FS.createDir (directory / name)
-    for (name, bytes) in property.files do
-      IO.FS.writeBinFile (directory / name) bytes
-    runOnTimers services (property.holds directory)
-  finally
-    IO.FS.removeDirAll directory
+  Editor.Test.Linked.withFiles services (targets := [.fileWatches, .processes]) fun directory => do
+      for name in property.directories do
+        IO.FS.createDir (directory / name)
+      for (name, bytes) in property.files do
+        IO.FS.writeBinFile (directory / name) bytes
+      runOnTimers services (property.holds directory)
 
 /-- What must hold of the library's watch service once the watch properties
 have run: it is about the library's count, so the port cannot say it. -/

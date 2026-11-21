@@ -340,6 +340,12 @@ directory, the probe as the shipped and the only candidate, and the
 options as given. 0 when all of that holds; 1 otherwise, saying why on
 stderr. -/
 def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 := do
+  -- No flush before the directory goes, on purpose: the window mode's own
+  -- shutdown (`Editor.Window.shutdown`, which this scenario's shutdown runs)
+  -- drains the journal, a flush of the file service behind every order it
+  -- handed out, before it quits the queues, and `Window.host` returns only
+  -- after the closer ran it. Once the queues are quit no completion can be
+  -- pulled, so no flush could be waited for here.
   let dir ← IO.FS.createTempDir
   try
     let probe := dir / "probe"

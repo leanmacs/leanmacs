@@ -2608,7 +2608,7 @@ def exScriptChecks (context : Context) : List Check :=
   [{  name :=
         "criterion 1 through the host: a script that runs e on a file, joins, commits text, runs w, joins, runs q, and then has a show line: the script has no failure, the file holds the committed text before what it held, and the show line was not run"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
           let (failure, output) ←
@@ -2623,7 +2623,7 @@ def exScriptChecks (context : Context) : List Check :=
     { name :=
         "criterion 2 through the host: the same script with wq in place of w, the join and q, and a join after it: the script has no failure, the file holds the buffer's text, and the show line was not run"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
           let (failure, output) ←
@@ -2636,7 +2636,7 @@ def exScriptChecks (context : Context) : List Check :=
     { name :=
         "a script whose q is refused, for a file's buffer that was edited, runs its later lines: the show line prints the commands, the script has no failure, and the file is as it was"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
           let (failure, output) ←
@@ -2648,7 +2648,7 @@ def exScriptChecks (context : Context) : List Check :=
     { name :=
         "once a step said stop the host runs no further invocation: a command that asks for quit and then for the open command, with a path, to be run after it ends the loop at quit, and the open command never runs: the host prints the run alone and starts no job; with a command that says other in place of quit, the load job is started"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
           let handing (first : String) : Config.Registration :=
@@ -3228,7 +3228,7 @@ def withRestoreFiles (context : Context) (files : List (String × String))
     (check : Headless.Host → IO.Ref (Array String) → System.FilePath → IO Bool)
     (restore : Package := Restore.package) : IO Bool :=
   IO.FS.withTempDir fun directory =>
-    IO.FS.withTempDir fun state => do
+    withFiles context fun state => do
       writeConfig directory files
       IO.FS.createDirAll (Restore.journalsDirectory state)
       IO.FS.writeBinFile (Restore.basePath state 1 0 1) "hello".toUTF8
@@ -3354,7 +3354,7 @@ the flag; and the host is stopped. -/
 def withFailingJournal (context : Context) (files : List (String × String))
     (check : Headless.Host → IO.Ref (Array String) → IO.Ref Bool → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory =>
-    IO.FS.withTempDir fun state => do
+    withFiles context fun state => do
       writeConfig directory files
       let stage ←
         Stage.overFiles context (Config.Directory.source directory)
@@ -3500,7 +3500,7 @@ def restoreOrderChecks (context : Context) : List Check :=
     { name :=
         "a package's declared store kept across a restart, end to end: bumped twice and left uncleanly, the next host shows it before any reload, since packages register before the restore; a host handed the package at version 2 shows it migrated"
       run :=
-        IO.FS.withTempDir fun state => do
+        withFiles context fun state => do
           let first ←
             withStateHost context state [] #[countedPackage 1] fun host stage => do
                 host.send (.restore none)
@@ -3522,7 +3522,7 @@ def restoreOrderChecks (context : Context) : List Check :=
     { name :=
         "a config's store kept across a restart: the start-up reload restores it; a config whose setup throws keeps it parked, and the index written after still lists it; a later good reload claims it"
       run :=
-        IO.FS.withTempDir fun state => do
+        withFiles context fun state => do
           let first ←
             withStateHost context state keptConfig #[] fun host stage => do
                 host.send (.restore none)
@@ -3653,7 +3653,7 @@ def journalDrainChecks (context : Context) : List Check :=
           { completions, timers := clock.timers
             files := Job.realFiles completions published.reader held }
         let journal := Headless.Journal.real published.reader services
-        IO.FS.withTempDir fun directory => do
+        Editor.Test.Linked.withFiles services fun directory => do
             let stale := directory / "session-1.json"
             IO.FS.writeFile stale "{}"
             let hold ← holdFiles completions

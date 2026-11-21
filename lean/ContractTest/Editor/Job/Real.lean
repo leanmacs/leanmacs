@@ -64,59 +64,53 @@ def fileWatchChecks (services : Job.Services) : List Check :=
   [{  name :=
         "a job's watch does not outlive it: once the job has ended the watch service holds nothing of it, and a write is delivered to no one"
       run := do
-        let directory ← IO.FS.createTempDir
-        try
-          let before ← Ffi.watchesPending
-          let job : JobM Bool := do
-            let .ok _ ←
-              FileWatch.start (.file (directory / "f")) JobContract.watchCoalescing | return false
-            return true
-          let outcome ← runOnTimers services job
-          -- Every start of the watch has returned once a flush of the
-          -- service is completed; the count is read once then.
-          let ended :=
-            (← Editor.Test.Linked.flushedAll services [.fileWatches]) &&
-              (← Ffi.watchesPending) == before
-          IO.FS.writeFile (directory / "f") "x"
-          let stillEnded := (← Ffi.watchesPending) == before
-          return outcome == .finished true && ended && stillEnded
-        finally
-          IO.FS.removeDirAll directory },
+        Editor.Test.Linked.withFiles services (targets := [.fileWatches]) fun directory => do
+            let before ← Ffi.watchesPending
+            let job : JobM Bool := do
+              let .ok _ ←
+                FileWatch.start (.file (directory / "f")) JobContract.watchCoalescing | return false
+              return true
+            let outcome ← runOnTimers services job
+            -- Every start of the watch has returned once a flush of the
+            -- service is completed; the count is read once then.
+            let ended :=
+              (← Editor.Test.Linked.flushedAll services [.fileWatches]) &&
+                (← Ffi.watchesPending) == before
+            IO.FS.writeFile (directory / "f") "x"
+            let stillEnded := (← Ffi.watchesPending) == before
+            return outcome == .finished true && ended && stillEnded },
     { name :=
         "a change whose path is not UTF-8 is delivered as missed of the watch's own path, where the volume allows such a name"
       run := do
-        let directory ← IO.FS.createTempDir
-        try
-          let job : JobM Bool := do
-            let watch ← JobContract.watching (.directory directory false)
-            let made ←
-              Process.run (JobContract.sh directory "printf x > \"$(printf '\\377')\"") 1000
-            match made with
-            | .ok { exit := .code 0, .. } =>
-              let told ← JobContract.readUntil watch (JobContract.toldIn · directory .missed)
-              -- Lean cannot name the file to remove it: its name is not a
-              -- string. So the shell that made it removes it.
-              discard <| Process.run (JobContract.sh directory "rm -f \"$(printf '\\377')\"") 1000
-              return told
-            | made =>
-              -- The volume refuses the name (APFS does): there is nothing
-              -- to deliver. The job leaves a marker saying why, and the
-              -- check says so on stderr.
-              let why :=
-                match made with
-                | .ok ran => s!"{repr ran.exit}: {String.fromUTF8! ran.stderr}"
-                | .error error => error.describe
-              discard <|
-                  Process.run (JobContract.sh directory s!"printf '%s' '{why}' > refused") 1000
-              return true
-          let outcome ← runOnTimers services job
-          if outcome == .finished true then
-            if ← (directory / "refused").pathExists then
-              IO.eprintln
-                  s!"contract-test: the volume refuses a name that is not UTF-8, so the change of one was not checked here ({← IO.FS.readFile (directory / "refused")})"
-          return outcome == .finished true
-        finally
-          IO.FS.removeDirAll directory }]
+        Editor.Test.Linked.withFiles services (targets := [.fileWatches]) fun directory => do
+            let job : JobM Bool := do
+              let watch ← JobContract.watching (.directory directory false)
+              let made ←
+                Process.run (JobContract.sh directory "printf x > \"$(printf '\\377')\"") 1000
+              match made with
+              | .ok { exit := .code 0, .. } =>
+                let told ← JobContract.readUntil watch (JobContract.toldIn · directory .missed)
+                -- Lean cannot name the file to remove it: its name is not a
+                -- string. So the shell that made it removes it.
+                discard <| Process.run (JobContract.sh directory "rm -f \"$(printf '\\377')\"") 1000
+                return told
+              | made =>
+                -- The volume refuses the name (APFS does): there is nothing
+                -- to deliver. The job leaves a marker saying why, and the
+                -- check says so on stderr.
+                let why :=
+                  match made with
+                  | .ok ran => s!"{repr ran.exit}: {String.fromUTF8! ran.stderr}"
+                  | .error error => error.describe
+                discard <|
+                    Process.run (JobContract.sh directory s!"printf '%s' '{why}' > refused") 1000
+                return true
+            let outcome ← runOnTimers services job
+            if outcome == .finished true then
+              if ← (directory / "refused").pathExists then
+                IO.eprintln
+                    s!"contract-test: the volume refuses a name that is not UTF-8, so the change of one was not checked here ({← IO.FS.readFile (directory / "refused")})"
+            return outcome == .finished true }]
 
 /-- Whether `reply` is the refusal `expected`. -/
 def refusedAs (expected : ProcessError) : Except ProcessError Process.Ran → Bool
@@ -131,21 +125,19 @@ def occupy (id : UInt64) (directory : System.FilePath) : IO Bool :=
   Ffi.processesRun id "/bin/sleep" #["600"] false #[] #[] directory.toString 10
 
 /-- Runs `check` in a temporary directory of its own, removed whatever
-happened, on `services` with a real process service whose table of the runs
+happened once the process service has ended every child it ran there
+(`Linked.withFiles`), on `services` with a real process service whose table of the runs
 with a time limit armed is one the check holds, so it can read how many
 there are. -/
 def timedCheck (services : Job.Services)
     (check : System.FilePath → Job.Services → Job.TimedRuns → IO Bool) : IO Bool := do
-  let directory ← IO.FS.createTempDir
-  let timed ← Job.TimedRuns.new
-  let services :=
-    { services with
-      processes :=
-        Job.realProcesses services.completions (← Job.RefusedRuns.new) services.timers timed }
-  try
-    check directory services timed
-  finally
-    IO.FS.removeDirAll directory
+  Editor.Test.Linked.withFiles services (targets := [.processes]) fun directory => do
+      let timed ← Job.TimedRuns.new
+      let services :=
+        { services with
+          processes :=
+            Job.realProcesses services.completions (← Job.RefusedRuns.new) services.timers timed }
+      check directory services timed
 
 /-- What only the real process service can show: that cancelling a job
 whose child is running kills the child, which the service then reaps; and
@@ -177,84 +169,81 @@ def processChecks (services : Job.Services) : List Check :=
   [{  name :=
         "a job whose child sleeps for ten minutes is cancelled: it ends cancelled, and the process service reaps the child, so nothing is pending that was not before"
       run := do
-        let directory ← IO.FS.createTempDir
-        try
-          let before ← Ffi.processesPending
-          let handle ←
-            Job.spawn services
-                (reporting fun _ => do
-                  discard <| Process.run (JobContract.sh directory "/bin/sleep 600") 10
-                  return true)
-                (pure ())
-          -- The run is in the library once the service counts it.
-          -- work started, not finished: phase 4's idle signal
-          let started ← eventually (return (← Ffi.processesPending) == before + 1)
-          handle.cancel
-          let cancelled ← endedAs handle .cancelled
-          let reaped ← Editor.Test.Linked.childrenReapedTo services before
-          return started && cancelled && reaped
-        finally
-          IO.FS.removeDirAll directory },
+        Editor.Test.Linked.withFiles services (targets := [.processes]) fun directory => do
+            let before ← Ffi.processesPending
+            let handle ←
+              Job.spawn services
+                  (reporting fun _ => do
+                    discard <| Process.run (JobContract.sh directory "/bin/sleep 600") 10
+                    return true)
+                  (pure ())
+            -- The run is in the library once the service counts it.
+            -- work started, not finished: phase 4's idle signal
+            let started ← eventually (return (← Ffi.processesPending) == before + 1)
+            handle.cancel
+            let cancelled ← endedAs handle .cancelled
+            let reaped ← Editor.Test.Linked.childrenReapedTo services before
+            return started && cancelled && reaped },
     { name :=
         "a run the library does not take, its id being in use there, is refused at once as failed, and the job goes on to a run that ends; the refusal is gone once taken"
       run := do
-        let directory ← IO.FS.createTempDir
-        let refused ← Job.RefusedRuns.new
-        let services :=
-          { services with
-            processes :=
-              Job.realProcesses services.completions refused services.timers (← Job.TimedRuns.new) }
-        let (probe, _) ← services.completions.register
-        services.completions.finish probe .completed
-        let taken := probe + 1
-        let before ← Ffi.processesPending
-        try
-          let occupied ← occupy taken directory
-          let handle ←
-            Job.spawn services
-                (reporting fun _ => do
-                  let first ← Process.run (JobContract.sh directory "exit 0") 10
-                  let second ← Process.run (JobContract.sh directory "exit 0") 10
-                  return refusedAs Job.runNotTaken first &&
-                      match second with
-                      | .ok ran => ran.exit == .code 0
-                      | .error _ => false)
-                (pure ())
-          let ended ← endedAs handle (.finished #["true"])
-          unless ended do
-            handle.cancel
-          -- Asked again, the refusal is not there: the library answers, and
-          -- it has no result for its own run under the id, still sleeping.
-          let again ← services.processes.take taken (.run (JobContract.sh directory "exit 0") 10)
-          discard <| Ffi.processesCancel taken
-          let reaped ← Editor.Test.Linked.childrenReapedTo services before
-          return occupied && ended && refusedAs Job.runNoResult again && reaped
-        finally
-          discard <| Ffi.processesCancel taken
-          IO.FS.removeDirAll directory },
+        Editor.Test.Linked.withFiles services (targets := [.processes]) fun directory => do
+            let refused ← Job.RefusedRuns.new
+            let services :=
+              { services with
+                processes :=
+                  Job.realProcesses services.completions refused services.timers
+                    (← Job.TimedRuns.new) }
+            let (probe, _) ← services.completions.register
+            services.completions.finish probe .completed
+            let taken := probe + 1
+            let before ← Ffi.processesPending
+            try
+              let occupied ← occupy taken directory
+              let handle ←
+                Job.spawn services
+                    (reporting fun _ => do
+                      let first ← Process.run (JobContract.sh directory "exit 0") 10
+                      let second ← Process.run (JobContract.sh directory "exit 0") 10
+                      return refusedAs Job.runNotTaken first &&
+                          match second with
+                          | .ok ran => ran.exit == .code 0
+                          | .error _ => false)
+                    (pure ())
+              let ended ← endedAs handle (.finished #["true"])
+              unless ended do
+                handle.cancel
+              -- Asked again, the refusal is not there: the library answers, and
+              -- it has no result for its own run under the id, still sleeping.
+              let again ←
+                services.processes.take taken (.run (JobContract.sh directory "exit 0") 10)
+              discard <| Ffi.processesCancel taken
+              let reaped ← Editor.Test.Linked.childrenReapedTo services before
+              return occupied && ended && refusedAs Job.runNoResult again && reaped
+            finally
+              discard <| Ffi.processesCancel taken },
     { name :=
         "a run the library does not take completes its wait at once, and withdrawing the wait erases the refusal kept for it"
       run := do
-        let directory ← IO.FS.createTempDir
-        let processes :=
-          Job.realProcesses services.completions (← Job.RefusedRuns.new) services.timers
-            (← Job.TimedRuns.new)
-        let (id, wait) ← services.completions.register
-        let before ← Ffi.processesPending
-        let request := ProcessRequest.run (JobContract.sh directory "exit 0") 10
-        try
-          let occupied ← occupy id directory
-          processes.start id request
-          let completed ← wait.isResolved
-          -- The withdrawal also cancels the library's run under the id.
-          processes.cancel id
-          let taken ← processes.take id request
-          let reaped ← Editor.Test.Linked.childrenReapedTo services before
-          return occupied && completed && refusedAs Job.runNoResult taken && reaped
-        finally
-          discard <| Ffi.processesCancel id
-          services.completions.finish id .completed
-          IO.FS.removeDirAll directory },
+        Editor.Test.Linked.withFiles services (targets := [.processes]) fun directory => do
+            let processes :=
+              Job.realProcesses services.completions (← Job.RefusedRuns.new) services.timers
+                (← Job.TimedRuns.new)
+            let (id, wait) ← services.completions.register
+            let before ← Ffi.processesPending
+            let request := ProcessRequest.run (JobContract.sh directory "exit 0") 10
+            try
+              let occupied ← occupy id directory
+              processes.start id request
+              let completed ← wait.isResolved
+              -- The withdrawal also cancels the library's run under the id.
+              processes.cancel id
+              let taken ← processes.take id request
+              let reaped ← Editor.Test.Linked.childrenReapedTo services before
+              return occupied && completed && refusedAs Job.runNoResult taken && reaped
+            finally
+              discard <| Ffi.processesCancel id
+              services.completions.finish id .completed },
     { name :=
         "a run with a time limit that ends well inside it, once taken, leaves no run in the table of time limits and its alarm disarmed: the table of waits is as it was"
       run :=
@@ -440,14 +429,14 @@ def noteText : String :=
   "héllo\n😀".push (Char.ofNat 0x10DCFF)
 
 /-- Runs `check` on a directory of its own holding `note.txt`, which holds
-`noteBytes`, and removes the directory afterwards, whatever happened. -/
-def withNote (check : System.FilePath → IO Bool) : IO Bool := do
-  let directory ← IO.FS.createTempDir
-  try
-    IO.FS.writeBinFile (directory / "note.txt") noteBytes
-    check directory
-  finally
-    IO.FS.removeDirAll directory
+`noteBytes`, and removes the directory afterwards, whatever happened, once
+the library's file service, flushed through `completions`, has worked what
+was handed to it (`Linked.withFiles`). -/
+def withNote (completions : Job.Completions) (check : System.FilePath → IO Bool) : IO Bool := do
+  Editor.Test.Linked.withFiles (← Editor.Test.Linked.Services.over completions).jobs
+      fun directory => do
+      IO.FS.writeBinFile (directory / "note.txt") noteBytes
+      check directory
 
 /-- The checks of the runner over the library's file service and the real
 text binding (`Editor/Job/Real.lean`, `Editor/Text/Real.lean`): what only the
@@ -459,7 +448,7 @@ def fileChecks (completions : Job.Completions) : List Check :=
       name :=
         "a load writes nothing to the editor's table: with a job parked after its load the published table is as it was and the library holds one snapshot more; the job's command adopts it into the table; and once the command has released it and the job is settled the library holds what it held",
       run :=
-        withNote fun directory => do
+        withNote completions fun directory => do
           let rig ← FileRig.new completions
           let size ← rig.published.size
           let live ← Ffi.Snapshot.live
@@ -526,7 +515,7 @@ def fileChecks (completions : Job.Completions) : List Check :=
     { name :=
         "a snapshot a job loaded that no command adopted is freed when the job is settled: the library holds what it held, and the editor's table never grew"
       run :=
-        withNote fun directory => do
+        withNote completions fun directory => do
           let rig ← FileRig.new completions
           let live ← Ffi.Snapshot.live
           let handle ←
@@ -546,7 +535,7 @@ def fileChecks (completions : Job.Completions) : List Check :=
     { name :=
         "cancelling a job whose load is in the file service behind other requests leaves the service and the runner with nothing of it, whether the cancel found the load waiting, being worked or done: the service's count is that of the requests ahead, and nothing is held"
       run :=
-        withNote fun directory => do
+        withNote completions fun directory => do
           let rig ← FileRig.new completions
           let before ← Ffi.filesPending
           let live ← Ffi.Snapshot.live
@@ -602,7 +591,7 @@ def fileChecks (completions : Job.Completions) : List Check :=
     { name :=
         "a job saves a snapshot a command took, found through the published table, and a snapshot the command has released since is refused as naming none, and writes no file"
       run :=
-        withNote fun directory => do
+        withNote completions fun directory => do
           let rig ← FileRig.new completions
           let take : TextM SnapshotId := do
             let text ← createText noteText
@@ -636,6 +625,7 @@ def grepChecks (completions : Job.Completions) : List Check :=
   [{  name :=
         "a job's search does not outlive the job: cancelled while its search is held, the grep service holds nothing more"
       run := do
+        -- no flush on the grep service: a residual (task grep-search-outlives-directory)
         let directory ← IO.FS.createTempDir
         try
           IO.FS.writeFile (directory / "a") "needle\n"
@@ -663,6 +653,7 @@ def grepChecks (completions : Job.Completions) : List Check :=
     { name :=
         "an overlay of a snapshot a command took is searched in place of a file whose text on disk differs, and answered as the buffer's"
       run := do
+        -- no flush on the grep service: a residual (task grep-search-outlives-directory)
         let directory ← IO.FS.createTempDir
         try
           IO.FS.writeFile (directory / "a") "nothing\n"

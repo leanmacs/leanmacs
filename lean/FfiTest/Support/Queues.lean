@@ -25,12 +25,33 @@ def eventually (condition : IO Bool) : IO Bool := do
     IO.sleep 1
   return false
 
+/-- The pull of each queue that ran out its patience (`pull`), still parked in
+the library, if there is one. -/
+initialize strayPulls : IO.Ref (List (Editor.Ffi.Queue × Task (Except IO.Error Editor.Ffi.Event))) ←
+  IO.mkRef []
+
+/-- A pull of `queue` on a dedicated task: the pull a `pull` left parked when
+it ran out its patience, if there is one, or a new one. So at most one pull
+of a queue is ever parked for the checks, and an event that pull takes is
+handed to the next caller, never lost to a pull nothing waits for. -/
+def pullTask (queue : Editor.Ffi.Queue) : IO (Task (Except IO.Error Editor.Ffi.Event)) := do
+  let stray ←
+    strayPulls.modifyGet fun strays =>
+        ((strays.find? (·.1 == queue)).map (·.2), strays.filter (·.1 != queue))
+  match stray with
+  | some task =>
+    return task
+  | none =>
+    IO.asTask (prio := .dedicated) (Editor.Ffi.nextEvent queue)
+
 /-- One event pulled from `queue`, or `none` if the pull does not return in
 time. The pull runs on a dedicated task, so one that never returns fails its
-check instead of hanging the executable. -/
+check instead of hanging the executable; a pull that ran out is kept parked
+for the next pull of the queue (`pullTask`). -/
 def pull (queue : Editor.Ffi.Queue) : IO (Option Editor.Ffi.Event) := do
-  let task ← IO.asTask (prio := .dedicated) (Editor.Ffi.nextEvent queue)
+  let task ← pullTask queue
   unless ← eventually (IO.hasFinished task) do
+    strayPulls.modify ((queue, task) :: ·)
     return none
   return some (← IO.ofExcept task.get)
 

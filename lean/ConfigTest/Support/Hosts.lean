@@ -31,6 +31,7 @@ import Editor.Setup
 import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
+import Editor.Test.Linked.Services
 import Editor.Text
 import Editor.Text.Real
 import Editor.Watch
@@ -403,6 +404,20 @@ jobs ask `fuzzy` for the matcher, the library's unless a check holds it. -/
 def withHost (context : Context) (files : List (String × String)) (check : Session → IO Bool)
     (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real) : IO Bool :=
   withHostOver context files id id check compiled fuzzy
+
+/-- Runs `body` in a fresh temporary directory, removed only once the
+library's services among `targets` have worked what was handed to them under
+it (`Editor.Test.Linked.withFiles`): the file service unless a check names
+others. The flushes go through the table of waits the checks of files share
+(`Context.fileWaits`), whose pump runs, over services made of it here
+(`Linked.Services.over`): refs and no threads, and the library's services
+are process-wide, so a flush through them covers every check's requests. A
+check that runs a host over the directory nests the host's bracket inside,
+so the loop has ended before the flushes are asked. -/
+def withFiles {α : Type} (context : Context) (body : System.FilePath → IO α)
+    (targets : List Job.Service := [.files]) : IO α := do
+  let services ← Editor.Test.Linked.Services.over (← context.fileWaits)
+  Editor.Test.Linked.withFiles services.jobs body targets
 
 /-- Polls `condition` until it holds; `false` if it still does not after
 `patience` milliseconds. -/

@@ -46,15 +46,15 @@ def withEnvironment (services : Job.Services) (setting : Process.Setting) (limit
 
 /-- A temporary directory of its own for `check`, holding the file
 `fixture-path` with the line `<directory>/tools:/usr/bin:/bin`, the `PATH`
-the mise fixture prints there; removed afterwards, whatever happened. -/
-def withFixturePath (check : System.FilePath → String → IO Bool) : IO Bool := do
-  let directory ← IO.FS.createTempDir
-  try
-    let path := s!"{directory}/tools:/usr/bin:/bin"
-    IO.FS.writeFile (directory / "fixture-path") s!"{path}\n"
-    check directory path
-  finally
-    IO.FS.removeDirAll directory
+the mise fixture prints there; removed afterwards, whatever happened, once
+the process service of `services` has ended every child it ran there
+(`Linked.withFiles`). -/
+def withFixturePath (services : Job.Services) (check : System.FilePath → String → IO Bool) :
+    IO Bool := do
+  Editor.Test.Linked.withFiles services (targets := [.processes]) fun directory => do
+      let path := s!"{directory}/tools:/usr/bin:/bin"
+      IO.FS.writeFile (directory / "fixture-path") s!"{path}\n"
+      check directory path
 
 /-- What `command` prints when a job runs it through `services`; `none`
 when the job did not finish with it. -/
@@ -81,8 +81,8 @@ def environmentChecks (services : Job.Services) (fixtures : System.FilePath) : L
   [{  name :=
         "with mise standing in as a fixture, a child started in each of two directories, by its path and by a bare name, gets that directory's fixture PATH, and nothing is reported"
       run :=
-        withFixturePath fun first firstPath =>
-          withFixturePath fun second secondPath => do
+        withFixturePath services fun first firstPath =>
+          withFixturePath services fun second secondPath => do
             let said ← IO.mkRef #[]
             let services ← withEnvironment services (.mise (some (fixtures / "mise"))) 1000 said
             let before ← Ffi.processesPending
@@ -97,7 +97,7 @@ def environmentChecks (services : Job.Services) (fixtures : System.FilePath) : L
     { name :=
         "with a mise that sleeps past a limit of 1 s, the lookup is killed within 2 s of its start, its group reaped, the child gets the inherited environment, and the timeout is reported once"
       run :=
-        withFixturePath fun directory _ => do
+        withFixturePath services fun directory _ => do
           let some inherited ← printedThrough services (printenv directory) | return false
           let said ← IO.mkRef #[]
           let services ← withEnvironment services (.mise (some (fixtures / "slow-mise"))) 1000 said
@@ -122,16 +122,13 @@ def environmentFailures (services : Job.Services) (fixtures : System.FilePath) :
   do
   let env (directory : System.FilePath) : Process.Command :=
     { program := "/usr/bin/env", directory }
-  let directory ← IO.FS.createTempDir
-  try
-    let before ← printedThrough services (env directory)
-    let failed ← checkFailures (environmentChecks services fixtures)
-    let after ← printedThrough services (env directory)
-    return failed ++
-        if before.isSome && before == after then []
-        else
-          ["the test process's environment after the environment checks is what it was before them"]
-  finally
-    IO.FS.removeDirAll directory
+  Editor.Test.Linked.withFiles services (targets := [.processes]) fun directory => do
+      let before ← printedThrough services (env directory)
+      let failed ← checkFailures (environmentChecks services fixtures)
+      let after ← printedThrough services (env directory)
+      return failed ++
+          if before.isSome && before == after then []
+          else
+            ["the test process's environment after the environment checks is what it was before them"]
 
 end ContractTest

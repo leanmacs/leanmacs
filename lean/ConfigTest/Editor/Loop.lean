@@ -383,7 +383,7 @@ def autoReloadChecks (context : Context) : List Check :=
   [{  name :=
         "criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown within a second; once the buffer is edited, another rewrite leaves its text and marks its status line within a second"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context (targets := [.files, .fileWatches]) fun files => do
           let path := files / "note.txt"
           let (old, new, again) := ("one\ntwo\n", "one\ntwo\nthree\n", "rewritten again\n")
           IO.FS.writeBinFile path old.toUTF8

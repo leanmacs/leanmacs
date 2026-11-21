@@ -8,6 +8,7 @@ import Editor.Job.Runner
 import Editor.Loop
 import Editor.ProjectSearch.Compiled
 import Editor.Test.Linked.Rig
+import Editor.Test.Linked.Services
 
 /-!
 # Contract tests: `Editor/ProjectSearch/Run.lean`
@@ -67,35 +68,33 @@ def searchKeys : Loop.Keys TestScheme.scheme :=
     registered := { jobs := fun name => searchJobs.any (·.name == name) } }
 
 /-- The checks of project search over the real bindings
-(`Editor/ProjectSearch/Run.lean`), in a fresh temporary directory: a
+(`Editor/ProjectSearch/Run.lean`), in a fresh temporary directory, removed
+once the file service has worked what was handed to it (`Linked.withFiles`): a
 `.gitignore`d `ignored.txt`, `a.txt` open with `needle` inserted unsaved, and
 `b.txt` holding a match on disk. -/
 def projectSearchChecks (services : Job.Services) : List Check :=
   [{  name :=
         "criteria 2 and 3 over the real bindings: the results hold a.txt's unsaved match and b.txt's on-disk match, not ignored.txt's; a change typed over b.txt's match in the results changes b.txt's buffer, and the file on disk is unchanged"
       run := do
-        let directory ← IO.FS.createTempDir
-        try
-          IO.FS.writeFile (directory / ".gitignore") "ignored.txt\n"
-          IO.FS.writeFile (directory / "ignored.txt") "needle\n"
-          IO.FS.writeFile (directory / "a.txt") "a\n"
-          IO.FS.writeFile (directory / "b.txt") "x needle\n"
-          let rig ← ProjectRig.over services
-          let some (searched, texts) ←
-            runSettled rig directory
-                [openFile (directory / "a.txt"), { command := "insert-needle" },
-                  { command := ProjectSearch.name, arguments := [.str "needle"] }]
-                (keys := searchKeys) (jobs := searchJobs) | return false
-          let results := ProjectSearch.bufferName "needle" directory.toString
-          let found ← bufferText rig texts searched results
-          let some (edited, texts) ←
-            runSettledFrom rig searched texts [{ command := "edit-b" }] (keys := searchKeys)
-                (jobs := searchJobs) | return false
-          let b ← bufferText rig texts edited "b.txt"
-          let onDisk ← IO.FS.readFile (directory / "b.txt")
-          return found == some "needle a\n\nx needle\n" && b == some "x pin\n" &&
-              onDisk == "x needle\n"
-        finally
-          IO.FS.removeDirAll directory }]
+        Editor.Test.Linked.withFiles services fun directory => do
+            IO.FS.writeFile (directory / ".gitignore") "ignored.txt\n"
+            IO.FS.writeFile (directory / "ignored.txt") "needle\n"
+            IO.FS.writeFile (directory / "a.txt") "a\n"
+            IO.FS.writeFile (directory / "b.txt") "x needle\n"
+            let rig ← ProjectRig.over services
+            let some (searched, texts) ←
+              runSettled rig directory
+                  [openFile (directory / "a.txt"), { command := "insert-needle" },
+                    { command := ProjectSearch.name, arguments := [.str "needle"] }]
+                  (keys := searchKeys) (jobs := searchJobs) | return false
+            let results := ProjectSearch.bufferName "needle" directory.toString
+            let found ← bufferText rig texts searched results
+            let some (edited, texts) ←
+              runSettledFrom rig searched texts [{ command := "edit-b" }] (keys := searchKeys)
+                  (jobs := searchJobs) | return false
+            let b ← bufferText rig texts edited "b.txt"
+            let onDisk ← IO.FS.readFile (directory / "b.txt")
+            return found == some "needle a\n\nx needle\n" && b == some "x pin\n" &&
+                onDisk == "x needle\n" }]
 
 end ContractTest

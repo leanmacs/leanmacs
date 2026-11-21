@@ -1228,7 +1228,7 @@ def journal : IO UInt8 := do
   let services : Job.Services :=
     { completions, timers := Job.realTimers completions
       files := Job.realFiles completions published.reader held }
-  IO.FS.withTempDir fun directory => do
+  Editor.Test.Linked.withFiles services fun directory => do
       for (size, label) in [(4096, "4KiB"), (1048576, "1MiB"), (10485760, "10MiB")] do
         for position in ["start", "middle", "end"] do
           let times ← journalTimes services published directory size position 10000

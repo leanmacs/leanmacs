@@ -72,7 +72,13 @@ the Rust functions themselves compute is pinned by `editor-ffi`'s own tests.
 
 A check never waits without a bound: a pull runs on a dedicated task that the
 check polls (`pull`, `eventually`), so broken code fails a check within
-seconds instead of hanging the executable.
+seconds instead of hanging the executable. A pull that ran out stays parked
+and is handed to the next pull of its queue (`pullTask`), so no event goes
+to a pull nothing waits for. The one wait with no deadline is a check's
+directory's end (`inOwnDirectory`): it waits for the event that a flush of
+the file service has been completed, pulled through the same `pullTask`,
+behind every file request the check handed out, and only says a hang on
+stderr, once, when that takes longer than the poll bound.
 -/
 
 namespace FfiTest

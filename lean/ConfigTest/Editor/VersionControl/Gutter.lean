@@ -93,7 +93,7 @@ def gutterChecks (context : Context) : List Check :=
   [{  name :=
         "criterion 6 through the host over real git: a tracked file with a line changed shows a changed mark, and after git commit -a run by another process its gutter has no mark"
       run :=
-        IO.FS.withTempDir fun base => do
+        withFiles context (targets := [.files, .diffs]) fun base => do
           let base ← IO.FS.realPath base
           let (home, repo, configDir) := (base / "home", base / "repo", base / "config")
           for directory in [home, repo, configDir] do

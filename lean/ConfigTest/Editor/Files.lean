@@ -171,7 +171,7 @@ def languageChecks (context : Context) : List Check :=
   [{  name :=
         "opening a .rs file gives its buffer the language rust and the major mode code, and its text is attached with rust and highlighted with Rust's shipped query in the default faces, with no refusal said"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "main.rs"
           IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
           withLanguageHost context "" [("open-rs", path)] fun session asked => do
@@ -183,7 +183,7 @@ def languageChecks (context : Context) : List Check :=
     { name :=
         "opening a .json file and a .md file gives each buffer that language and the major mode code, and highlights its text with that grammar's shipped query; Markdown's inline grammar is injected"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let json := files / "data.json"
           let markdown := files / "notes.md"
           IO.FS.writeFile json "{\"a\": [1, true]}\n"
@@ -206,7 +206,7 @@ def languageChecks (context : Context) : List Check :=
     { name :=
         "opening a .toml file and a file named Cargo.lock gives each buffer the language toml and the major mode code, and highlights its text with TOML's shipped query, keys and table headers in the type face, strings in the string face, brackets in the punctuation face and booleans in the constant face, with no refusal said"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let toml := files / "mise.toml"
           let lock := files / "Cargo.lock"
           IO.FS.writeFile toml "[tools]\nrust = \"1.91\"\nenabled = true\n"
@@ -226,7 +226,7 @@ def languageChecks (context : Context) : List Check :=
     { name :=
         "opening a .lean file and a file named lakefile.lean gives each buffer the language lean and the major mode code, and asks the syntax tree port to highlight its text with Lean's shipped query and the lean entry's captures, the faces asked for including the keyword, string, comment, constant and module faces, with no refusal said"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let main := files / "Main.lean"
           let lakefile := files / "lakefile.lean"
           IO.FS.writeFile main
@@ -247,7 +247,7 @@ def languageChecks (context : Context) : List Check :=
     { name :=
         "opening a file whose name matches no language gives its buffer no language and no major mode, and asks the syntax tree port nothing"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "notes.txt"
           IO.FS.writeFile path "plain\n"
           withLanguageHost context "" [("open-txt", path)] fun session asked => do
@@ -256,7 +256,7 @@ def languageChecks (context : Context) : List Check :=
     { name :=
         "a major mode with no syntax tree set over the code mode of an opened .rs file detaches its text"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "main.rs"
           IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
           let plain :=
@@ -275,7 +275,7 @@ def languageChecks (context : Context) : List Check :=
     { name :=
         "config's language rust, over the shipped one, with its own highlights query, is the one an opened .rs file is highlighted with: its query is compiled in place of the shipped one, and its one capture drawn in its default face"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "main.rs"
           IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
           withLanguageHost context rustOverride [("open-rs", path)] fun session asked => do
@@ -305,7 +305,7 @@ def fileChecks (context : Context) : List Check :=
       name :=
         "a job loads a file through the host and its handler makes a text of it, with its two-byte character: the job's line says ok, show prints the text, and the library then holds no snapshot more than before but the one of the loop's scene; a job whose file is not there fails with the refusal's description",
       run :=
-        IO.FS.withTempDir fun files =>
+        withFiles context fun files =>
           IO.FS.withTempDir fun config => do
             IO.FS.writeBinFile (files / "note.txt") "héllo\n".toUTF8
             writeConfig config [("init.lean", openText files)]
@@ -339,7 +339,7 @@ def fileChecks (context : Context) : List Check :=
     { name :=
         "the open command on a file in a temporary directory: the host says the load job started and ended, and the focused view shows a buffer whose text is the file's, with its cursor at the start, and whose status line is the file's base name alone"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
           withFileHost context [("open-note", path)] fun session => do
@@ -354,7 +354,7 @@ def fileChecks (context : Context) : List Check :=
     { name :=
         "the save command on a modified buffer: after a commit the view's status line has the modified field, and once the save job has ended the file's bytes are the buffer's text, the echo area says the file was written, and the status line has the name alone"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
           withFileHost context [("open-note", path)] fun session => do
@@ -380,7 +380,7 @@ def fileChecks (context : Context) : List Check :=
     { name :=
         "opening a path that is open starts no second load and makes no second text: the open command a second time prints its own line alone, and show lists the texts it listed before"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
           withFileHost context [("open-note", path)] fun session => do
@@ -397,7 +397,7 @@ def fileChecks (context : Context) : List Check :=
     { name :=
         "open then save with no edit writes the file and leaves its bytes as they were, for a file whose lines end in line feeds and one whose lines end in CRLF: each save job ends ok, the echo area says the file was written, and the bytes read back are the bytes the check wrote"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let cases : List (String × System.FilePath × ByteArray × Nat) :=
             [("open-lf", files / "lf.txt", "one\ntwo\n".toUTF8, 2),
               ("open-crlf", files / "crlf.txt", "one\r\ntwo\r\n".toUTF8, 4)]
@@ -417,7 +417,7 @@ def fileChecks (context : Context) : List Check :=
     { name :=
         "a save of a buffer whose file changed on disk after it was loaded leaves the file as it is: the file's bytes are the ones written behind the editor, the view's status line still has the modified field, and the echo area says the changed-on-disk refusal with the stamp the file now has"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
           withFileHost context [("open-note", path)] fun session => do
@@ -443,7 +443,7 @@ def fileChecks (context : Context) : List Check :=
     { name :=
         "the open command on a path with no file: the echo area says the refusal, and the focused view still shows the buffer it showed, with its text, its cursor and its name"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "missing.txt"
           withFileHost context [("open-missing", path)] fun session => do
               unless ← Event.post (.commit "kept") do
@@ -456,7 +456,7 @@ def fileChecks (context : Context) : List Check :=
     { name :=
         "the open command with no path asks for one and opens the answer: run by its name, it lists the stage's working directory, /; with the path of a file in a temporary directory committed into the minibuffer after its /, read by the restart after //, which lists that directory, and the accept key pressed, the host says the listing jobs and the load job started and ended, the prompt is closed, and the view the command was asked from shows the file's text in a buffer called by its base name"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
           withFileHost context [] fun session => do
@@ -508,7 +508,7 @@ def reloadChecks (context : Context) : List Check :=
   [{  name :=
         "criterion 1: a file rewritten behind its buffer is reloaded by e: the reload job ends ok, show prints the new text, the scene's view shows it with the cursor on the same character of the unchanged second row, and the status line has neither the modified field nor any other"
       run :=
-        IO.FS.withTempDir fun files => do
+        withFiles context fun files => do
           let path := files / "note.txt"
           let (old, new) := ("one\ntwo\nthree\n", "one, and more\ntwo\nthree\n")
           IO.FS.writeBinFile path old.toUTF8
@@ -651,7 +651,7 @@ def filePromptChecks (context : Context) : List Check :=
     { name :=
         "AC 4 over the recorder, on real files: in a temporary directory holding alpha.txt and alps.md, committed after the prompt's /, a l C-n RET opens the first listed file: view 0's status line names it, the view holds its text, and the load job ended"
       run :=
-        IO.FS.withTempDir fun directory => do
+        withFiles context fun directory => do
           IO.FS.writeFile (directory / "alpha.txt") "alpha\n"
           IO.FS.writeFile (directory / "alps.md") "alps\n"
           withVimHost context [] (realFiles := true) fun session => do
@@ -681,7 +681,7 @@ def filePromptChecks (context : Context) : List Check :=
     { name :=
         "the host's home reaches the editor, on real files: started with a temporary directory as its home and its notes/ as its working directory, open-file asks with ~/notes/ and lists todo.md, and ~/alpha.txt RET opens the home's alpha.txt"
       run :=
-        IO.FS.withTempDir fun home => do
+        withFiles context fun home => do
           IO.FS.writeFile (home / "alpha.txt") "alpha\n"
           IO.FS.createDir (home / "notes")
           IO.FS.writeFile (home / "notes" / "todo.md") "todo\n"
