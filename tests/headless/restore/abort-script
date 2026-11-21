@@ -8,13 +8,12 @@
 
 # The restore is first, and finds nothing. `:e` opens the file; its load is
 # a job, and once it has made the buffer the session index changes, so a
-# write of it waits on the clock: `advance` fires it and `join` waits for
-# both.
+# write of it waits on the clock: `indexed` moves the clock past each write
+# as it comes and waits for both.
 key : Semicolon shift
 commit e @FILE@
 key <Enter> Enter -
-advance 500
-join
+indexed
 
 # Typed in insert state: each key is one record of the file's journal.
 key i KeyI -

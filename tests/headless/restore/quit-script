@@ -5,21 +5,18 @@
 key : Semicolon shift
 commit e @FILE@
 key <Enter> Enter -
-advance 500
-join
+indexed
 key i KeyI -
 key z KeyZ -
 key <Escape> Escape -
-advance 500
-join
+indexed
 # The save is a job, and once it has written the file the index changes
-# with the file's stamp: `advance` fires that write and `join` waits for
-# both.
+# with the file's stamp: `indexed` moves the clock past that write, and any
+# other as it comes, and waits for both.
 key : Semicolon shift
 commit w
 key <Enter> Enter -
-advance 500
-join
+indexed
 key : Semicolon shift
 commit q
 key <Enter> Enter -

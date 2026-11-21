@@ -3,6 +3,5 @@
 # does not know. What is known is restored, the report says the rest, and
 # the editor starts; afterwards both files are as they were, byte for byte.
 settle
-advance 500
-join
+indexed
 show

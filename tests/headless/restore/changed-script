@@ -3,8 +3,7 @@
 # marked changed on disk, and `:w` is refused as changed, the file left as
 # the other program wrote it.
 settle
-advance 500
-join
+indexed
 scene
 key : Semicolon shift
 commit w
