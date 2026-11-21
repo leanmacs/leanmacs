@@ -27,6 +27,26 @@
 // - `sentence-grey.png`: at scale 2, `#808080` on white, which tells a
 //   luminance bucket of the encoded value (1) from one of linear light (0).
 // - `positions.txt`: each glyph's place on the line, at scale 1 and 2.
+// - `composited/<name>.png`, for each of the five drawings above: the
+//   bitmap's own pixels, what macOS put there, as 8-bit RGB, ground and
+//   text blended as Core Graphics blends them. The ground is opaque, so
+//   the bitmap's premultiplied values are its straight values. Before it
+//   writes one, the script checks that the alpha is 255 at every pixel and
+//   that every pixel of the border is the ground exactly.
+// - `blend.txt`: Core Graphics' own result for uniform fills at known
+//   alphas, one line per case:
+//
+//     <text #rrggbb> <ground #rrggbb> <alpha 0..255> <r> <g> <b>
+//
+//   Each case is a bitmap of the same kind filled with the ground, with a
+//   4 by 4 rectangle of the text colour filled over it at the colour's
+//   alpha / 255; the line holds the middle pixel. Texts `#000000`,
+//   `#ffffff`, `#d8dee9`, `#808080`; grounds `#ffffff`, `#000000`,
+//   `#2e3440`; alphas 32, 64, 128, 192, 224; a text equal to its ground is
+//   left out. The script prints, for a person reading the log, how far
+//   the encoded and the linear-light predictions are from what Core
+//   Graphics gave, and asserts nothing about either: the renderer's gate
+//   does that (`crates/editor-render-wgpu/src/blend.rs`).
 //
 // Every drawing is made as native apps draw text (`CTLineDraw` with the
 // context's default subpixel flags), so that Core Text places each glyph
@@ -140,6 +160,23 @@ struct Layout {
 /// native apps leave them.
 func draw(_ line: CTLine, _ layout: Layout, ground: RGB, smoothed: Bool) -> [UInt8] {
     let (pixelsWide, pixelsHigh, scale) = (layout.pixelsWide, layout.pixelsHigh, layout.scale)
+    let context = bitmap(pixelsWide, pixelsHigh, ground: ground)
+    context.setAllowsAntialiasing(true)
+    context.setShouldAntialias(true)
+    context.setAllowsFontSmoothing(true)
+    context.setShouldSmoothFonts(smoothed)
+    context.scaleBy(x: scale, y: scale)
+    context.textPosition = CGPoint(
+        x: CGFloat(margin) / scale, y: CGFloat(layout.baseline) / scale)
+    CTLineDraw(line, context)
+    let bytes = context.data!.bindMemory(to: UInt8.self, capacity: pixelsWide * pixelsHigh * 4)
+    return Array(UnsafeBufferPointer(start: bytes, count: pixelsWide * pixelsHigh * 4))
+}
+
+/// A bitmap of `pixelsWide` by `pixelsHigh` of the kind every drawing is
+/// made on: 8-bit RGB with alpha, premultiplied first, little-endian, in
+/// the sRGB colour space, filled with `ground`.
+func bitmap(_ pixelsWide: Int, _ pixelsHigh: Int, ground: RGB) -> CGContext {
     let space = CGColorSpace(name: CGColorSpace.sRGB)!
     let info =
         CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
@@ -152,16 +189,7 @@ func draw(_ line: CTLine, _ layout: Layout, ground: RGB, smoothed: Bool) -> [UIn
     }
     context.setFillColor(ground.cgColor)
     context.fill(CGRect(x: 0, y: 0, width: pixelsWide, height: pixelsHigh))
-    context.setAllowsAntialiasing(true)
-    context.setShouldAntialias(true)
-    context.setAllowsFontSmoothing(true)
-    context.setShouldSmoothFonts(smoothed)
-    context.scaleBy(x: scale, y: scale)
-    context.textPosition = CGPoint(
-        x: CGFloat(margin) / scale, y: CGFloat(layout.baseline) / scale)
-    CTLineDraw(line, context)
-    let bytes = context.data!.bindMemory(to: UInt8.self, capacity: pixelsWide * pixelsHigh * 4)
-    return Array(UnsafeBufferPointer(start: bytes, count: pixelsWide * pixelsHigh * 4))
+    return context
 }
 
 /// The red channel of `bgra`, row by row from the top, checked: nothing
@@ -214,6 +242,137 @@ func coverage(_ bgra: [UInt8], _ layout: Layout, text: RGB, ground: RGB, name: S
         }
     }
     return values
+}
+
+/// The pixels of `bgra` as red, green, blue, row by row from the top,
+/// checked: the alpha 255 everywhere, so the premultiplied values are the
+/// straight ones, and every pixel of the border the ground exactly.
+func composited(_ bgra: [UInt8], _ layout: Layout, ground: RGB, name: String) -> [UInt8] {
+    let (pixelsWide, pixelsHigh) = (layout.pixelsWide, layout.pixelsHigh)
+    var values = [UInt8](repeating: 0, count: pixelsWide * pixelsHigh * 3)
+    for y in 0..<pixelsHigh {
+        for x in 0..<pixelsWide {
+            let at = (y * pixelsWide + x) * 4
+            let (blue, green, red, alpha) = (
+                Int(bgra[at]), Int(bgra[at + 1]), Int(bgra[at + 2]), Int(bgra[at + 3])
+            )
+            if alpha != 255 {
+                fail("\(name): the pixel \(x), \(y) has the alpha \(alpha), not 255")
+            }
+            let border = x == 0 || y == 0 || x == pixelsWide - 1 || y == pixelsHigh - 1
+            if border && (red, green, blue) != (ground.red, ground.green, ground.blue) {
+                fail("\(name): the pixel \(x), \(y) on the border is \(red), \(green), \(blue), not the ground")
+            }
+            let to = (y * pixelsWide + x) * 3
+            values[to] = UInt8(red)
+            values[to + 1] = UInt8(green)
+            values[to + 2] = UInt8(blue)
+        }
+    }
+    return values
+}
+
+/// Writes `values`, red, green and blue a pixel, as an 8-bit RGB PNG file
+/// tagged sRGB.
+func writeRGB(_ values: [UInt8], _ layout: Layout, to path: String) {
+    let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue)
+    guard let data = CFDataCreate(nil, values, values.count),
+        let source = CGDataProvider(data: data),
+        let image = CGImage(
+            width: layout.pixelsWide, height: layout.pixelsHigh, bitsPerComponent: 8,
+            bitsPerPixel: 24, bytesPerRow: layout.pixelsWide * 3,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: info, provider: source,
+            decode: nil, shouldInterpolate: false, intent: .defaultIntent),
+        let destination = CGImageDestinationCreateWithURL(
+            URL(fileURLWithPath: path) as CFURL, UTType.png.identifier as CFString, 1, nil)
+    else {
+        fail("cannot make the PNG file \(path)")
+    }
+    CGImageDestinationAddImage(destination, image, nil)
+    guard CGImageDestinationFinalize(destination) else {
+        fail("cannot write \(path)")
+    }
+}
+
+/// `color` as `#rrggbb`.
+func hex(_ color: RGB) -> String {
+    String(format: "#%02x%02x%02x", color.red, color.green, color.blue)
+}
+
+/// The linear-light value of the sRGB value `value`, from 0 to 1.
+func linear(_ value: Int) -> Double {
+    let unit = Double(value) / 255
+    return unit <= 0.04045 ? unit / 12.92 : pow((unit + 0.055) / 1.055, 2.4)
+}
+
+/// The sRGB value, from 0 to 255, of the linear-light value `value`.
+func encoded(_ value: Double) -> Int {
+    let value = max(0, min(1, value))
+    let unit = value <= 0.003_130_8 ? value * 12.92 : 1.055 * pow(value, 1 / 2.4) - 0.055
+    return Int((unit * 255).rounded())
+}
+
+/// Core Graphics' blend of `text` at `alpha` / 255 over `ground`, in a
+/// bitmap of the drawings' kind: the middle pixel of a 4 by 4 rectangle
+/// filled over the ground, as red, green, blue.
+func blendCase(text: RGB, ground: RGB, alpha: Int) -> (Int, Int, Int) {
+    let side = 8
+    let context = bitmap(side, side, ground: ground)
+    context.setFillColor(
+        CGColor(
+            srgbRed: CGFloat(text.red) / 255, green: CGFloat(text.green) / 255,
+            blue: CGFloat(text.blue) / 255, alpha: CGFloat(alpha) / 255))
+    context.fill(CGRect(x: 2, y: 2, width: 4, height: 4))
+    let bytes = context.data!.bindMemory(to: UInt8.self, capacity: side * side * 4)
+    let at = (4 * side + 4) * 4
+    if bytes[at + 3] != 255 {
+        fail("blend.txt: the pixel over an opaque ground has the alpha \(bytes[at + 3])")
+    }
+    return (Int(bytes[at + 2]), Int(bytes[at + 1]), Int(bytes[at]))
+}
+
+/// Writes `blend.txt` into `directory`, and prints how far the encoded
+/// and the linear-light predictions are from Core Graphics' results.
+func writeBlendTable(to path: String) {
+    let texts = [black, white, light, grey]
+    let grounds = [white, black, dark]
+    let alphas = [32, 64, 128, 192, 224]
+    var lines = [
+        "# Core Graphics' blend of a uniform fill over a ground, from tools/coretext/capture.swift.",
+        "# Each case: a bitmap, 8-bit RGB with alpha, premultiplied first, little-endian, in",
+        "# the sRGB colour space, filled with the ground, then a 4 by 4 rectangle filled over",
+        "# it in the text colour at the alpha / 255; the line holds its middle pixel.",
+        "# <text #rrggbb> <ground #rrggbb> <alpha 0..255> <r> <g> <b>",
+    ]
+    var (worstEncoded, worstLinear) = (0, 0)
+    for text in texts {
+        for ground in grounds {
+            if (text.red, text.green, text.blue) == (ground.red, ground.green, ground.blue) {
+                continue
+            }
+            for alpha in alphas {
+                let (red, green, blue) = blendCase(text: text, ground: ground, alpha: alpha)
+                lines.append("\(hex(text)) \(hex(ground)) \(alpha) \(red) \(green) \(blue)")
+                let a = Double(alpha) / 255
+                let pairs = [(text.red, ground.red, red), (text.green, ground.green, green), (text.blue, ground.blue, blue)]
+                for (over, under, got) in pairs {
+                    let byEncoded = Int((Double(under) + a * Double(over - under)).rounded())
+                    let byLinear = encoded(linear(under) + a * (linear(over) - linear(under)))
+                    worstEncoded = max(worstEncoded, abs(byEncoded - got))
+                    worstLinear = max(worstLinear, abs(byLinear - got))
+                }
+            }
+        }
+    }
+    let text = lines.joined(separator: "\n") + "\n"
+    do {
+        try text.write(toFile: path, atomically: true, encoding: .utf8)
+    } catch {
+        fail("cannot write \(path): \(error)")
+    }
+    print("capture: wrote blend.txt: \(lines.count - 5) cases")
+    print("capture: blend.txt against encoded blending: worst \(worstEncoded) of 255")
+    print("capture: blend.txt against linear-light blending: worst \(worstLinear) of 255")
 }
 
 /// Writes `values`, one byte a pixel, as an 8-bit grayscale PNG file.
@@ -325,7 +484,8 @@ func path(_ name: String) -> String { (directory as NSString).appendingPathCompo
 // The weight sentence, as it was captured on 2026-11-14.
 let line = makeLine(font, black)
 let large = Layout(line, scale: 2)
-let smoothed = gray(draw(line, large, ground: white, smoothed: true), large)
+let drawnLarge = draw(line, large, ground: white, smoothed: true)
+let smoothed = gray(drawnLarge, large)
 let unsmoothed = gray(draw(line, large, ground: white, smoothed: false), large)
 write(smoothed, large, to: path("sentence.png"))
 
@@ -360,3 +520,28 @@ for (name, layout, text, ground) in [
 let lines = positions(line, font, scale: 1) + positions(line, font, scale: 2)
 writePositions(lines, font: (fontPath as NSString).lastPathComponent, to: path("positions.txt"))
 print("capture: wrote positions.txt: \(lines.count) glyph positions")
+
+// What macOS put in each bitmap, ground and text composited.
+let compositedDirectory = path("composited")
+do {
+    try FileManager.default.createDirectory(
+        atPath: compositedDirectory, withIntermediateDirectories: true)
+} catch {
+    fail("cannot make \(compositedDirectory): \(error)")
+}
+for (name, layout, text, ground) in [
+    ("sentence.png", large, black, white),
+    ("sentence-dark.png", large, light, dark),
+    ("sentence-14.png", small, black, white),
+    ("sentence-14-dark.png", small, light, dark),
+    ("sentence-grey.png", large, grey, white),
+] {
+    let drawn =
+        name == "sentence.png"
+        ? drawnLarge : draw(makeLine(font, text), layout, ground: ground, smoothed: true)
+    let values = composited(drawn, layout, ground: ground, name: "composited/\(name)")
+    writeRGB(values, layout, to: (compositedDirectory as NSString).appendingPathComponent(name))
+    print("capture: wrote composited/\(name): \(layout.pixelsWide) by \(layout.pixelsHigh) pixels")
+}
+
+writeBlendTable(to: path("blend.txt"))

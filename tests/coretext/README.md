@@ -13,6 +13,17 @@ text, which the renderer is held to:
   compared with, black on white and light on dark at 14 and 28 pixels,
   and grey on white (`crates/editor-raster-coretext/examples/check/`,
   `mise run coretext-check`, run on demand on macOS).
+- `composited/` holds the same five drawings as macOS composited them:
+  each bitmap's own pixels, ground and text blended by Core Graphics, as
+  8-bit RGB. They are what the renderer's composite of the sentence, drawn
+  through the Core Text rasteriser on the CPU and the GPU, is compared
+  with (`crates/editor-ffi/examples/coretext/`, the second half of
+  `mise run coretext-check`, run on demand on macOS).
+- `blend.txt` is Core Graphics' own result for a uniform fill over a
+  ground: four text colours over three grounds at five alphas, in the
+  same kind of bitmap. The renderer's encoded blending is held to it in
+  the gate, and linear-light blending must miss it
+  (`crates/editor-render-wgpu/src/blend.rs`, compiled in).
 - `positions.txt` is where Core Text puts each glyph on the line. The
   shaper's test and the painter's test hold their places to it
   (`crates/editor-shape-parley/tests/core_text.rs`,
@@ -30,6 +41,12 @@ reference image is still `tests/render/frame.png`.
 | `sentence-14-dark.png` | 209 by 52 pixels, 8-bit grayscale | 1268 | `8973fc4c2ada4f8cfb3f64afd5864ced493b6316f2d774037214f4bdcd5e2195` |
 | `sentence-grey.png` | 385 by 71 pixels, 8-bit grayscale | 2540 | `a89c76d7908102bc4318475c8714ea2bf8595de73d18d0b8556fd84cb612dfb0` |
 | `positions.txt` | 42 lines of glyphs, under 2 of comment | 1295 | `f73652a3ad732f80da4b8606185067cd45351fcdbd687505a6d8333aa514c81d` |
+| `composited/sentence.png` | 385 by 71 pixels, 8-bit RGB | 4508 | `1663380a73827fcb42c37b404baed1ac7c34865209afb7975123fa0020b9c7e4` |
+| `composited/sentence-dark.png` | 385 by 71 pixels, 8-bit RGB | 5085 | `c51f8639a1ebbc1c650ce8da55741cdbe35a5d290713bb5bfab3cc8750b3a9cf` |
+| `composited/sentence-14.png` | 209 by 52 pixels, 8-bit RGB | 2444 | `5b1e31d3f096f96499c104ac45260071cacbf9999f685c8ef00076233713484b` |
+| `composited/sentence-14-dark.png` | 209 by 52 pixels, 8-bit RGB | 2761 | `1b117dba7acbb77b360d681738b3c7f5ffb08e8482192edc2659855273f32b04` |
+| `composited/sentence-grey.png` | 385 by 71 pixels, 8-bit RGB | 4497 | `177c3a642185b1689587afaa06c0df277af948fe976910d13a2baa11e0a9f568` |
+| `blend.txt` | 50 lines of cases, under 5 of comment | 1912 | `cb073e0c65d081ab12bbd01db15768a24c956a86e11939b6c2421c9bbcbecdd8` |
 
 ## What they show
 
@@ -82,6 +99,20 @@ tests/fonts/NotoSansMono-Regular.subset.ttf tests/coretext`.
   again the same day with the context's default flags, as below; these
   are the second drawings. Two runs gave the same bytes, for every file,
   and `sentence.png` came out the same bytes as before.
+- `composited/` and `blend.txt`: on 2026-11-20, on the same machine,
+  macOS 27.2.1 (26B131), with Apple Swift 6.4.2, `AppleFontSmoothing` not
+  set. The same run drew the five coverage files and `positions.txt` to
+  the bytes already committed, and a second run gave the same bytes for
+  every file. Each composited file is the bitmap's red, green and blue as
+  they are; the script checked that the alpha was 255 at every pixel and
+  that the border was the ground exactly. Each case of `blend.txt` is a
+  bitmap of the same kind, 8 by 8, filled with the ground, with a 4 by 4
+  rectangle of the text colour filled over it at the alpha / 255 (four
+  texts, three grounds, alphas 32, 64, 128, 192 and 224, a text equal to
+  its ground left out); the line holds the middle pixel. The script
+  printed that the encoded prediction, `round(ground + alpha · (text −
+  ground))` over sRGB values, is at worst 1 of 255 from every channel of
+  every case, and the linear-light prediction at worst 73.
 - The font is loaded from the file's bytes (`CGDataProvider`, `CGFont`,
   `CTFontCreateWithGraphicsFont` at 14 pt); nothing is installed or
   registered on the system.

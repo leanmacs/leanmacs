@@ -1985,6 +1985,14 @@ run = ".lake/build/bin/ffi-test excerpt-picture ../tests/render/excerpts ../test
 #   the shaper's and the painter's placement tests hold to
 #   (`crates/editor-shape-parley/tests/core_text.rs`,
 #   `crates/editor-render-wgpu/src/placement_tests.rs`).
+# - `composited/<drawing>.png`, for each of the five drawings: the
+#   bitmap's own pixels as 8-bit RGB, what macOS composited, which the
+#   renderer's composite of the sentence is compared with on demand
+#   (`mise run coretext-check`, its second half).
+# - `blend.txt`, Core Graphics' own result for uniform fills of four text
+#   colours over three grounds at five alphas, which the renderer's encoded
+#   blending is held to in the gate (`crates/editor-render-wgpu/src/
+#   blend.rs`).
 #
 # Every drawing is made with the context's default subpixel flags, as
 # native apps draw text: Core Text floors each glyph's place to its own
