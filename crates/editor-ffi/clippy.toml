@@ -34,13 +34,17 @@
 # A third place is marked, for another thing no test may do: make a
 # renderer on a window. `editor_render_wgpu::WgpuRenderer::on_window` is on
 # the list, since it needs a window and a real adapter and the gate has
-# neither. It has two callers, each under its own `expect`:
+# neither. It has three callers, each under its own `expect`:
 #
 # - `window_renderer` in `src/window.rs`, the factory of the process's
 #   window, which Lean's window mode runs on the winit platform;
 # - `renderer` in the example `examples/window/ledger.rs`: the window that
 #   draws, run on demand
-#   (`mise run linux-window`, `mise run window-contract`).
+#   (`mise run linux-window`, `mise run window-contract`);
+# - `check` in the example `examples/layer/main.rs`: the Metal layer of a
+#   renderer on the window, read on demand (`mise run window-layer`).
+#   `window_renderer` is private and gives a `WindowRenderer`, which has no
+#   `layer()`, so the example makes its own.
 #
 # No test runs the winit platform: the crate's tests of the session and of
 # the window run on `editor-render`'s recording renderer, on the scripted
@@ -50,7 +54,10 @@
 # not yet on the list, it failed on the `expect` itself ("this lint
 # expectation is unfulfilled"). And again on 2026-11-15, for the window's:
 # with its `expect` taken off, `mise run lint` fails with "use of a
-# disallowed method `editor_render_wgpu::WgpuRenderer::on_window`".
+# disallowed method `editor_render_wgpu::WgpuRenderer::on_window`". And on
+# 2026-11-20, for the layer example's: with its `expect` taken off, clippy
+# over the example fails with "use of a disallowed method
+# `editor_render_wgpu::WgpuRenderer::on_window`".
 #
 # A fourth place is marked, for the fonts of the machine:
 # `editor_shape_parley::FontSet::system` is on the list, as it is on that
@@ -160,7 +167,7 @@ disallowed-methods = [
   # The desktop's clipboard: what it holds is the person's.
   { path = "editor_platform_arboard::SystemClipboard::open", reason = "no test reads or writes the desktop's clipboard: the process's clipboard is opened in one place, for Lean's window mode; every test is on `MemoryClipboard`" },
   # A renderer on a window: it needs a window, and a real adapter.
-  { path = "editor_render_wgpu::WgpuRenderer::on_window", reason = "no test makes a renderer on a window: the gate opens none; it is done for the process's window, which Lean's window mode runs (`window_renderer`), and in the example `window`" },
+  { path = "editor_render_wgpu::WgpuRenderer::on_window", reason = "no test makes a renderer on a window: the gate opens none; it is done for the process's window, which Lean's window mode runs (`window_renderer`), in the example `window`, and in the example `layer`, which reads its Metal layer" },
   # A renderer on this machine's GPU: what it finds differs from machine to machine.
   { path = "editor_render_wgpu::WgpuRenderer::on_this_machine", reason = "no test asks for this machine's GPU: the example `coretext` does, in one place, run on demand on macOS" },
   # The user's font smoothing: it differs from machine to machine.

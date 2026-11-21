@@ -2091,6 +2091,22 @@ run = "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && swift tools/coretext/c
 # checked. Run it after a change to the shader, the device, the painter or
 # `blend`, and when the pin of wgpu moves; `linux-render` runs the same in
 # the container, on Mesa's software Vulkan.
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to
+# hk.pkl. It opens the window, so it needs a desktop session, but it draws
+# nothing it waits on and presents nothing it judges, so it passes with the
+# screen locked. Its first half is `editor-platform-winit`'s example
+# `settings`, whose pure module's tests run in the gate; its second is
+# `editor-ffi`'s example `layer`, whose rules (`editor-render-wgpu`'s
+# `layer::misses`) are tested in the gate on readings built in code.
+# `docs/dev-practices/on-demand-checks.md`, "The window's settings and its
+# Metal layer, on demand", says when to run it and what it read.
+[tasks.window-layer]
+description = "Opt-in, never part of ci; macOS only: open the window, ask it for a paper and the dark appearance and read back its settings, then read the Metal layer the renderer draws on and hold it to the surface's configuration. Presents nothing, so it passes with the screen locked"
+run = [
+  "cargo run --locked --package editor-platform-winit --example settings",
+  "cargo run --locked --package editor-ffi --example layer",
+]
+
 [tasks.render-gpu]
 description = "Opt-in, never part of ci: hold the wgpu renderer on this machine's GPU to the renderer port's contract, and compare the frame it draws with the reference image. Opens no window; needs a GPU"
 run = "cargo run --locked --package editor-render-wgpu --example gpu"

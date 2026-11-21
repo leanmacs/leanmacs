@@ -721,6 +721,7 @@ fn a_renderer_with_no_window_has_no_layer_to_read() {
         target: target(1.0),
     });
     assert_eq!(renderer.layer(), None);
+    assert_eq!(renderer.follow_scale(1.0), None);
 }
 
 #[test]

@@ -102,7 +102,7 @@ use editor_layout::face::Color;
 use crate::atlas::{Atlas, PageView};
 use crate::blend::to_linear;
 use crate::glyphs::Kind;
-use crate::layer::{Layer, LayerReading, metal_format};
+use crate::layer::{Followed, Layer, LayerReading, metal_format};
 use crate::present::{Asked, Offered};
 use crate::quads::{Quad, QuadKind};
 use crate::surface::{Answer, Calls, State};
@@ -378,6 +378,36 @@ fn read_layer(_: &wgpu::Surface<'_>) -> Option<LayerReading> {
     None
 }
 
+/// Sets the `contentsScale` of the view layer `surface`'s Metal layer
+/// follows (its superlayer) to `asked`, reads the Metal layer's, sets it
+/// back and reads again (`layer::Followed`). Key-value observation tells
+/// the Metal layer as the value is set, on this thread.
+#[cfg(target_os = "macos")]
+fn follow_scale(surface: &wgpu::Surface<'_>, asked: f64) -> Option<Followed> {
+    // SAFETY: as `read_layer`'s; the one thing changed, the view layer's
+    // scale, is set back before the call returns.
+    let hal = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }?;
+    let layer = hal.render_layer().lock();
+    let view_layer = layer.superlayer()?;
+    let before = view_layer.contentsScale();
+    view_layer.setContentsScale(asked);
+    let read = layer.contentsScale();
+    view_layer.setContentsScale(before);
+    let back = layer.contentsScale();
+    Some(Followed {
+        before,
+        asked,
+        read,
+        back,
+    })
+}
+
+/// No surface off macOS has a Metal layer.
+#[cfg(not(target_os = "macos"))]
+fn follow_scale(_: &wgpu::Surface<'_>, _: f64) -> Option<Followed> {
+    None
+}
+
 /// Waits for `future`, which wgpu resolves without an executor.
 fn wait<T>(future: impl Future<Output = T>) -> T {
     pollster::block_on(future)
@@ -637,6 +667,13 @@ impl Device {
             reading,
             configured,
         })
+    }
+
+    /// What the window's Metal layer read across a change of the view
+    /// layer's scale to `asked` and back (`layer::Followed`); `None` as for
+    /// [`Device::layer`].
+    pub fn follow_scale(&self, asked: f64) -> Option<Followed> {
+        follow_scale(&self.window.as_ref()?.surface, asked)
     }
 
     /// Whether the device blends by a coverage for each channel, so that

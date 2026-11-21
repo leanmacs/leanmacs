@@ -431,6 +431,16 @@ impl WgpuRenderer {
         self.device.layer()
     }
 
+    /// Sets the scale of the view layer the renderer's Metal layer
+    /// follows to `asked`, reads the Metal layer's, and sets it back
+    /// ([`layer::Followed`]): the observation of a change of scale, seen
+    /// on a machine with one display. For the on-demand layer check alone,
+    /// on the main thread; `None` off macOS and for a renderer with no
+    /// window.
+    pub fn follow_scale(&self, asked: f64) -> Option<layer::Followed> {
+        self.device.follow_scale(asked)
+    }
+
     /// The adapter's name and back end, for a person.
     pub fn adapter(&self) -> String {
         self.device.adapter().to_owned()

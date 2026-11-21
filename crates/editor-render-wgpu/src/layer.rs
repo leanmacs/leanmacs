@@ -54,6 +54,17 @@
 //! The gravity is printed and never a miss: changing it is a task of its
 //! own. This module calls nothing of wgpu's; its rules run in the gate on
 //! readings built in code.
+//!
+//! # Following a change of scale
+//!
+//! A change of the window's backing scale reaches the layer only through
+//! raw-window-metal's observation of the view layer's `contentsScale`. A
+//! machine with one display cannot change the backing scale, but the
+//! observation itself can be seen: `WgpuRenderer::follow_scale` sets the
+//! view layer's `contentsScale` to another value, reads the Metal layer's,
+//! and sets it back and reads again ([`Followed`]). That shows a change
+//! of the view layer's scale arrives, not that AppKit makes one when the
+//! window moves to a display of another scale.
 
 use std::fmt;
 
@@ -164,6 +175,28 @@ impl fmt::Display for Miss {
     }
 }
 
+/// What the Metal layer read when the view layer it follows was set to
+/// another scale and then back.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Followed {
+    /// The view layer's `contentsScale` before.
+    pub before: f64,
+    /// The scale the view layer was set to.
+    pub asked: f64,
+    /// The Metal layer's `contentsScale` right after.
+    pub read: f64,
+    /// The Metal layer's `contentsScale` once the view layer was set back.
+    pub back: f64,
+}
+
+impl Followed {
+    /// Whether the layer followed the view layer both ways: to the scale
+    /// asked, which must be another than the one before, and back.
+    pub fn holds(&self) -> bool {
+        self.asked != self.before && self.read == self.asked && self.back == self.before
+    }
+}
+
 /// Metal's pixel-format number for `format`, as wgpu-hal 30.0.2's
 /// `map_format` gives it, for the formats a window's surface is configured
 /// with; `None` for any other.
@@ -226,7 +259,7 @@ pub fn misses(layer: &Layer, target: Target) -> Vec<Miss> {
 mod tests {
     use editor_render::port::Target;
 
-    use super::{Layer, LayerReading, Miss, metal_format, misses};
+    use super::{Followed, Layer, LayerReading, Miss, metal_format, misses};
 
     /// 800 by 600 pixels at scale 2.
     const TARGET: Target = Target {
@@ -389,6 +422,41 @@ mod tests {
         );
         // All at the new scale.
         assert_eq!(misses(&passing(), TARGET), []);
+    }
+
+    #[test]
+    fn a_layer_follows_a_change_of_scale_only_when_it_reads_it_both_ways() {
+        let followed = Followed {
+            before: 2.0,
+            asked: 1.0,
+            read: 1.0,
+            back: 2.0,
+        };
+        assert!(followed.holds());
+        // A layer that missed the change, or the change back.
+        assert!(
+            !Followed {
+                read: 2.0,
+                ..followed
+            }
+            .holds()
+        );
+        assert!(
+            !Followed {
+                back: 1.0,
+                ..followed
+            }
+            .holds()
+        );
+        // A change to the scale it had already shows nothing.
+        assert!(
+            !Followed {
+                asked: 2.0,
+                read: 2.0,
+                ..followed
+            }
+            .holds()
+        );
     }
 
     #[test]
