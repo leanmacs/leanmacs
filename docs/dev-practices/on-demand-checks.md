@@ -509,7 +509,7 @@ it owns, and detaches it however it ends. Then:
 - a user's package set must build from the read-only volume alone: the
   image's `leanmacs headless --generate`, on a temporary config of
   `tests/headless/generate`'s `init.lean`, writes a lakefile naming the
-  volume's set, and the volume's own `lake -d <config> build
+  volume's set and core, and the volume's own `lake -d <config> build
   :editorInstall`, with an empty environment but `PATH=/usr/bin:/bin`,
   `HOME` in the temporary directory and the app's `editor.build`, exits 0
   and installs an editor with the app's core that starts. The volume is
