@@ -634,7 +634,26 @@ def evilInsertChecks : List Check :=
               evilHistory typed == some (1, true) &&
               evilShown ended == "axyz|wbc" &&
               evilHistory ended == some (2, false) &&
-              evilText (evilUndone ended) == some "abc" }]
+              evilText (evilUndone ended) == some "abc" },
+    { name :=
+        "under the Vim scheme the reserved keys invocation runs a key as pressing it does: i enters insert state, and x deletes the character under the cursor"
+      run :=
+        pure <|
+          match evilDriver "|x foo" with
+          | none => false
+          | some driver =>
+            let report (driver : EvilDriver) := Vim.Default.scheme.report driver.loop.input ⟨0⟩
+            let pressing (driver : EvilDriver) (text : String) : EvilDriver :=
+              (driver.stepped
+                  (driver.loop.invoke driver.handed (InputScheme.keysInvocation (keys text)))).1
+            let pressedI := pressing driver "i"
+            let typedI := evilFed driver "i"
+            let pressedX := pressing driver "x"
+            let typedX := evilFed driver "x"
+            report pressedI == report typedI && report pressedI != report driver &&
+              evilShown pressedI == evilShown typedI &&
+              evilText pressedX == some " foo" &&
+              evilShown pressedX == evilShown typedX }]
 
 /-- The checks of the two commands that open a line (`Evil.openBelow`,
 `Evil.openAbove`), by key, as `evilOperatorChecks` are. -/

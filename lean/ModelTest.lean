@@ -418,10 +418,11 @@ registered command:
 - `pressedChecks`: the reserved invocation that presses keys
   (`InputScheme.keysName`, `Loop.pressed`): its keys are fed from rest,
   even with a prefix pending, and what they complete runs with those keys
-  as pressing them does, under the test scheme and, over evil's driver,
-  under the Vim scheme (`i` enters insert, `x` deletes); a sequence they do
-  not complete is said (`Loop.notBound`) and runs nothing. They are
-  registered after `dispatchChecks`;
+  as pressing them does, under the test scheme and under a scheme written
+  in the test whose report a key switches; a sequence they do not complete
+  is said (`Loop.notBound`) and runs nothing. That the Vim scheme's keys
+  run so (`i` enters insert, `x` deletes) is evil's (`evilInsertChecks`).
+  They are registered after `dispatchChecks`;
 - `dispatchSlowChecks`: on the watch model's clock, which a command's
   requests move, a command slower than the threshold is logged once;
 - `dispatchGiveUpChecks`: what the loop gives up once a command has run to
@@ -986,7 +987,9 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   rests, and that the head steps back;
 - `evilInsertChecks`: `i a I A`, typed text and `<Escape>`; that an insert
   session is one step of the history, by an undo request; a key typed into
-  a prompt; and a committed text in normal state and inside a session;
+  a prompt; a committed text in normal state and inside a session; and
+  the reserved invocation that presses keys, which runs `i` and `x` as
+  pressing them does;
 - `evilOperatorChecks`: the operators (`Editor/Evil/Operators.lean`). An
   operator's keys are pressed with a sentinel in the unnamed register
   (`evilEdited`), so a register left as it was is seen, and a row

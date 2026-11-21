@@ -5330,8 +5330,9 @@ accepted as its key would, as Embark's `embark-bindings` and Doom's
 Pinned by `ModelTest.keymapChecks` (`reachableOver`),
 `keyBindingsContractChecks` and the contract over every scheme
 (`keyBindingsWalk`), `vimKeyBindingChecks` (what the Vim scheme lists),
-`pressedChecks` (the reserved keys invocation, under the test scheme and
-the Vim scheme), `bindingSearchChecks` (the prompt, its candidates,
+`pressedChecks` and `evilInsertChecks` (the reserved keys invocation,
+under the test scheme and a scheme written in the test, and under the Vim
+scheme), `bindingSearchChecks` (the prompt, its candidates,
 accepting, resolution, a refusal and a fake style, on the loop's driver),
 `dispatchStateChecks` and `stateRequestChecks` (the request),
 the source's contract on the kit's runner (in `bindingSearchChecks`, as

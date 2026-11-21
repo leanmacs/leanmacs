@@ -34,7 +34,6 @@ import Editor.Fuzzy.Model
 import Editor.GeneratedView
 import Editor.InputScheme
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Contract
@@ -59,6 +58,7 @@ import Editor.State
 import Editor.State.Request
 import Editor.SyntaxTree
 import Editor.TabBar
+import Editor.Test.AtPoint
 import Editor.Test.Completion
 import Editor.Test.Driver
 import Editor.Test.Editing
@@ -74,6 +74,7 @@ import Editor.Test.States
 import Editor.Test.Views
 import Editor.Text
 import Editor.Text.Model
+import Editor.Text.Word
 import Editor.UndoTree
 import Editor.Value
 import Editor.Watch
@@ -83,7 +84,6 @@ import ModelTest.Check
 import ModelTest.Support.AtPoint
 import ModelTest.Support.Candidates
 import ModelTest.Support.Display
-import ModelTest.Support.Evil
 import ModelTest.Support.Listings
 import ModelTest.Support.Modes
 
@@ -6848,20 +6848,22 @@ def pressedChecks : List Check :=
             TestScheme.scheme.pending waiting.loop.input == keys "C-c" &&
               promptEcho (pressing waiting "C-c m") == "marked C-c m" },
     { name :=
-        "under the Vim scheme the reserved keys invocation runs a key as pressing it does: i enters insert state, and x deletes the character under the cursor"
+        "under a scheme with a report of its own the reserved keys invocation runs a key as pressing it does: a key that switches what the scheme reports of the view switches it, and a printable key types"
       run :=
         pure <|
-          match evilDriver "|x foo" with
+          match
+            (Loop.Driver.over (switchingKeys [] editingDispatched) (fun _ => none)
+                (barState "x foo" 0) editorModel).toOption with
           | none => false
           | some driver =>
-            let report (driver : EvilDriver) := Vim.Default.scheme.report driver.loop.input ⟨0⟩
-            let pressedI := pressing driver "i"
-            let typedI := evilFed driver "i"
+            let report (driver : Loop.Driver switching) := switching.report driver.loop.input ⟨0⟩
+            let pressedMark := pressing driver "C-m"
+            let typedMark := keysFed driver "C-m"
             let pressedX := pressing driver "x"
-            let typedX := evilFed driver "x"
-            report pressedI == report typedI && report pressedI != report driver &&
-              evilShown pressedI == evilShown typedI &&
-              evilText pressedX == some " foo" &&
-              evilShown pressedX == evilShown typedX }]
+            let typedX := keysFed driver "x"
+            report pressedMark == report typedMark && report pressedMark != report driver &&
+              report pressedMark == markedReport &&
+              shownOf pressedX == "x|x foo" &&
+              shownOf pressedX == shownOf typedX }]
 
 end ModelTest
