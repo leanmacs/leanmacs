@@ -1527,6 +1527,39 @@ and 0.071 off at the worst pixel, and the best fit of the two places,
 a grid of a quarter of a pixel instead, the scale-1 captures were 0.169
 and 0.173 off.
 
+## The shaper's places in Menlo, on demand
+
+```sh
+mise run coretext-menlo
+```
+
+This holds the shaper's places of the glyphs of "the window draws this" to
+Core Text's in Menlo, the font the owner reads, which its licence keeps
+out of the repository. On macOS, it has `tools/coretext/capture.swift
+--positions` write Core Text's places of the sentence in
+`/System/Library/Fonts/Menlo.ttc` at 14 pt, at scale 1 and 2, into a
+temporary directory removed when it ends, and runs the example
+`core_text` of `crates/editor-shape-parley`: the sentence laid out through
+Parley over Menlo alone at 28 and 14 pixels, each glyph's error printed,
+and its exit status non-zero when a glyph is not Core Text's or a place is
+more than an eighth of a pixel from Core Text's. The gate holds the
+fixture font, Noto Sans Mono, to the same bound
+(`crates/editor-shape-parley/tests/core_text.rs`), with the painter's
+grid checked beside it (`crates/editor-render-wgpu/src/placement_tests.rs`).
+Run it when macOS's major version changes, when the pin of Parley or
+fontique moves, and when the shaper changes, and record the result here.
+
+On 2026-11-20, on macOS 27.2.1 (26B131): exit 0. Every glyph was Core
+Text's, and every pen place and the line's end were 0.0000 px from Core
+Text's at 28 and at 14 pixels. The capture tool found no pen step that
+differs from the glyph's advance (`CTFontGetAdvancesForGlyphs`): Core Text
+applies no tracking or kerning to this sentence in Menlo, so the
+letter-spacing the owner saw in Menlo on 2026-11-14 was not in the
+places. What drew the glyphs from them then, the 0.8 px dilation and the
+rounding to quarters of a pixel, is replaced on macOS by Core Text's own
+masks on Core Text's own grid; the window is judged again after the
+blending phase.
+
 ## The editor on a file, on demand
 
 `mise run edit -- <file>` (`lean/Editor/Window/Real.lean`) opens the

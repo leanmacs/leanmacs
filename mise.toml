@@ -2024,6 +2024,28 @@ run = "swift tools/coretext/capture.swift tests/fonts/NotoSansMono-Regular.subse
 description = "Opt-in, never part of ci; macOS only: hold the Core Text rasteriser to the rasteriser port's contract and compare its masks with Core Text's own drawings under tests/coretext/"
 run = "cargo run --locked -p editor-raster-coretext --example check"
 
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to
+# hk.pkl. It reads a font of the machine, Menlo, whose licence keeps it out
+# of the repository, and it needs the system's `swift`.
+#
+# It writes Core Text's places of the glyphs of "the window draws this" in
+# Menlo at 14 pt, at scale 1 and 2 (`tools/coretext/capture.swift
+# --positions`), into a temporary directory that is removed when it ends,
+# and runs the shaper's example (`crates/editor-shape-parley/examples/
+# core_text/`): the same sentence laid out through Parley over Menlo
+# alone, each glyph's error against Core Text's printed, and its exit
+# status non-zero when a glyph is not Core Text's or a place is more than
+# an eighth of a pixel off. The gate holds the fixture font to the same
+# bound (`crates/editor-shape-parley/tests/core_text.rs`); this is the
+# font the owner reads. The gate builds the example and never runs it.
+#
+# Run it when macOS's major version changes, when the pin of Parley or
+# fontique moves, and when the shaper changes, and record its result,
+# dated, in `docs/dev-practices/on-demand-checks.md`.
+[tasks.coretext-menlo]
+description = "Opt-in, never part of ci; macOS only: hold the shaper's places of a sentence in Menlo to Core Text's"
+run = "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && swift tools/coretext/capture.swift --positions /System/Library/Fonts/Menlo.ttc \"$dir/menlo.txt\" && cargo run --locked -p editor-shape-parley --example core_text -- /System/Library/Fonts/Menlo.ttc \"$dir/menlo.txt\" Menlo"
+
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. What it
 # finds depends on this machine's GPU and its driver, so it is no part of
 # a gate that must give the same answer everywhere, and a machine with no
