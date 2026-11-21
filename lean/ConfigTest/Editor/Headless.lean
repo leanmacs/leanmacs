@@ -1256,6 +1256,31 @@ def bracketChecks (context : Context) : List Check :=
         saw (answered == 7 && error == some "no display here")
             s!"answered={answered} error={error}" },
     { name :=
+        "a check's settle on a host whose loop ended before the requests settled says the loop ended, with the error it ended with, and not a hang"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        let broken :=
+          { stage.collaborators with display := fun _ => throw (IO.userError "no display here") }
+        let thrown (action : IO Unit) : IO (Option String) := do
+          try
+            action
+            return none
+          catch error =>
+            return some (toString error)
+        let ((asked, settledSaid), _) ←
+          Headless.withHostEnding broken fun host => do
+              let session : Session :=
+                { host, directory := "/", output := stage.output, threads := stage.threads
+                  clock := stage.clock, watches := stage.watches, log := stage.log }
+              let asked ← thrown (session.ask [.show])
+              let settledSaid ← thrown (discard <| settled host)
+              return (asked, settledSaid)
+        let ended (said : Option String) : Bool :=
+          said.any fun text =>
+            !text.startsWith "a hang" && (text.splitOn "ended").length > 1 &&
+              (text.splitOn "no display here").length == 2
+        saw (ended asked && ended settledSaid) s!"asked={asked} settled={settledSaid}" },
+    { name :=
         "a host's bracket returns only once its reload job has ended: a reload held at the gate inside elaboration when the body returns is waited for by the loop's end, which says so once (`endWaits`), and the gate is let go only then"
       run := do
         let gate ← Gate.new

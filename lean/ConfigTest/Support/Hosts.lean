@@ -353,20 +353,39 @@ structure Session where
   on it. -/
   waitBlocked : String → IO Unit := fun _ => pure ()
 
+/-- What a check says of `host`'s loop when it ended before what was sent to
+it settled (`Headless.Wait.ended`): that it ended, and what it ended with,
+the error it threw or a quit. Not a hang: nothing was waited for in vain. -/
+def loopEnded (host : Headless.Host) : String :=
+  let how :=
+    match host.thread.get with
+    | .error error => s!"it threw: {error}"
+    | .ok () => "it ended by itself, as a quit ends it"
+  s!"the editor loop ended before the requests sent to it settled: {how}"
+
 /-- Waits until `host`'s editor thread has handled everything sent so far
 and no reload is running: for the reload's end, however long a real
-elaboration takes, with `hangGuard` as a guard against a hang only. `false`
-at the guard, a hang said once through `waitHung`. -/
+elaboration takes, with `hangGuard` as a guard against a hang only. `true`
+once it has; `false` at a guard, the hang said once through `waitHung`.
+Throws when the loop ended first (`loopEnded`), with what it ended with: a
+loop that ended is not a hang. -/
 def settled (host : Headless.Host) (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
-  host.settle hangGuard (waitHung := waitHung) (waitBlocked := waitBlocked)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool := do
+  match ← host.await hangGuard (waitHung := waitHung) (waitBlocked := waitBlocked) with
+  | .settled =>
+    return true
+  | .ended =>
+    throw (IO.userError (loopEnded host))
+  | _ =>
+    return false
 
 namespace Session
 
 /-- Sends `requests` to the editor thread in order, and waits until it has
 handled them and no reload is running (`settled`): for the reload's end,
 with the session's `waitHung` and `waitBlocked`. Throws a hang if the wait
-reaches `hangGuard`. -/
+reaches `hangGuard`, and says the loop ended, with what it ended with, if
+it ended first. -/
 def ask (session : Session) (requests : List Headless.Request) : IO Unit := do
   for request in requests do
     session.host.send request
