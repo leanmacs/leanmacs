@@ -1,6 +1,10 @@
 name = "config"
 
 [[require]]
+name = "buffers"
+path = "@REPO@/packages/buffers"
+
+[[require]]
 name = "completion"
 path = "@REPO@/packages/completion"
 

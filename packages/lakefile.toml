@@ -10,7 +10,8 @@
 # from it (`mise run app`).
 #
 # It requires the core and each default package. A default package has a
-# directory here and a `require` below: the completion styles and displays
+# directory here and a `require` below: the buffer commands (buffers/), the
+# completion styles and displays
 # (completion/, with its interface package completion-api/, which it
 # requires), the mode line's segments (mode-line/), the minibuffer's
 # commands and its mode (minibuffer/, with minibuffer-api/), the shipped
@@ -34,22 +35,30 @@ name = "default-set"
 name = "editor-core"
 path = "../lean"
 
+# The buffer commands, `switch-buffer`, `list-buffers` and
+# `close-buffer`: the first default package (features-as-packages phase 6,
+# D5: the features that left the core's list register first, in the core's
+# order). It implements the core's interface library buffers-api.
+[[require]]
+name = "buffers"
+path = "buffers"
+
 # The completion styles and displays that ship, `fuzzy`, `orderless`,
-# `path` and `minibuffer`: the first default package, so its style and its
-# display are the first registered and the defaults. It requires its
+# `path` and `minibuffer`: the first default package to register a style or
+# a display, so its style and its display are the first registered and the defaults. It requires its
 # interface package, completion-api, which so is in the set too and
 # registers nothing.
 [[require]]
 name = "completion"
 path = "completion"
 
-# The segments of the mode line that ship: the second default package.
+# The segments of the mode line that ship: a default package.
 [[require]]
 name = "mode-line"
 path = "mode-line"
 
-# The minibuffer's commands, which answer a prompt, and its mode: the
-# third default package. It requires its interface package,
+# The minibuffer's commands, which answer a prompt, and its mode: a
+# default package. It requires its interface package,
 # minibuffer-api, which so is in the set too and registers nothing; the
 # command prompt, the binding search and the compile mode require it too,
 # for their tests.
@@ -57,19 +66,19 @@ path = "mode-line"
 name = "minibuffer"
 path = "minibuffer"
 
-# The shipped themes, Solarized and Fairy Floss: the fourth default package.
+# The shipped themes, Solarized and Fairy Floss: a default package.
 [[require]]
 name = "shipped-themes"
 path = "shipped-themes"
 
-# The command prompt, `execute-command`: the fifth default package. It
+# The command prompt, `execute-command`: a default package. It
 # requires its interface package, execute-command-api, which so is in the
 # set too and registers nothing.
 [[require]]
 name = "execute-command"
 path = "execute-command"
 
-# The binding search, `search-bindings`: the sixth default package. It
+# The binding search, `search-bindings`: a default package. It
 # requires its interface package, binding-search-api, which so is in the
 # set too and registers nothing.
 [[require]]
@@ -77,19 +86,19 @@ name = "binding-search"
 path = "binding-search"
 
 # The compile mode, `compile` into a workspace's compilation buffer, with
-# the modes that ship (cargo, lake, mise): the seventh default package.
+# the modes that ship (cargo, lake, mise): a default package.
 [[require]]
 name = "compile"
 path = "compile"
 
-# Completion at point, its commands and the source `words`: the eighth
+# Completion at point, its commands and the source `words`: a
 # default package. It requires its interface package, at-point-api, which
 # so is in the set too and registers nothing.
 [[require]]
 name = "at-point"
 path = "at-point"
 
-# The languages that ship and the `code` mode: the ninth default package.
+# The languages that ship and the `code` mode: a default package.
 [[require]]
 name = "languages"
 path = "languages"

@@ -1,6 +1,5 @@
 import Editor.Api.Cases
 import Editor.Api.Theorems
-import Editor.Buffers.Compiled
 import Editor.Clipboard.Contract
 import Editor.Completion.AtPointContract
 import Editor.Completion.DisplayContract

@@ -22,8 +22,8 @@ open Editor
 /-- The names of the packages of the core's Lake package, in the order they
 register. -/
 def shippedPackageNames : Array String :=
-  #["files", "evil", "ex", "buffers", "frame-commands", "menu", "window-commands", "tab-commands",
-    "themes", "workspace", "project-search", "working-set", "restore", "package-set", "shell",
+  #["files", "evil", "ex", "frame-commands", "menu", "window-commands", "tab-commands", "themes",
+    "workspace", "project-search", "working-set", "restore", "package-set", "shell",
     "version-control", "version-control-gutter"]
 
 /-- The checks of the packages of the core's Lake package
@@ -46,15 +46,16 @@ def packageSetChecks : List Check :=
                 "restore", "restore-files", "restore-write", "restore-save", "restart-probe",
                 "restart-save", "vc-gutter-head", "vc-gutter-diff", "vc-gutter-refs"] },
     { name :=
-        "every package of the shipped set is accepted, and their names are the 17 of the package table, each once, in its order, with no package of the shipped palettes and none of the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
+        "every package of the shipped set is accepted, and their names are the 16 of the package table, each once, in its order, with no package of the shipped palettes and none of the buffer commands, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
       run :=
         let (state, refused) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (refused == #[] &&
             EditorCore.EditorPackage.packages.map (·.name) == shippedPackageNames &&
-            shippedPackageNames.size == 17 &&
-            shippedPackageNames.toList.eraseDups.length == 17 &&
+            shippedPackageNames.size == 16 &&
+            shippedPackageNames.toList.eraseDups.length == 16 &&
+            !shippedPackageNames.contains "buffers" &&
             !shippedPackageNames.contains "shipped-themes" &&
             !shippedPackageNames.contains "compile" &&
             !shippedPackageNames.contains "languages" &&

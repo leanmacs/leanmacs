@@ -2,6 +2,7 @@ greeting-api	interface	-
 greeting	implementation	greeting-api
 greeting-loud	implementation	greeting greeting-api
 echo	implementation	-
+buffers	implementation	-
 completion-api	interface	-
 completion	implementation	completion-api
 mode-line	implementation	-

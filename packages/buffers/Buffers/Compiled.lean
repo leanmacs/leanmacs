@@ -1,4 +1,4 @@
-import Editor.Buffers
+import Buffers
 import Editor.Extension
 import Editor.Package
 
@@ -6,7 +6,7 @@ import Editor.Package
 # The `buffers` package: the buffer commands
 
 What a host registers so that it has the buffer commands
-(`Editor/Buffers.lean`): the package `buffers` (`Buffers.package`,
+(`Buffers.lean`): the package `buffers` (`Buffers.package`,
 `Editor/Package.lean`), whose `setup` registers them and the buffer source.
 A host registers it for the owner `buffers` when its loop starts, before
 any config (`Editor/Config/Packages.lean`).
@@ -26,8 +26,8 @@ any config (`Editor/Config/Packages.lean`).
   - `close-buffer` closes the buffer its first argument names, or the
     buffer of the window it was called with, unless it has unsaved changes
     (`Buffers.closeCommand`).
-  - The ex names `b`, `ls` and `bd` are bound to these three
-    (`Editor/Ex/Compiled.lean`).
+  - The ex names `b`, `ls` and `bd` are bound to these three, by their
+    names in `buffers-api` (the core's `lean/Editor/Ex/Compiled.lean`).
 
 - **The source**: the buffer completion source, so config can ask for it
   by name.
@@ -35,11 +35,12 @@ any config (`Editor/Config/Packages.lean`).
   `BuffersApi.Buffers`, named `buffers`: `close`, which version control's
   commit closes its message buffer with.
 
-This module is apart from `Editor/Buffers.lean` because it is what a host
-is handed, not what config calls: `Editor.lean` imports the commands, so
-that config calls them, and not this.
+This module is apart from `Buffers.lean` because it is what a host is
+handed, not what config calls: the set's base, through the package's entry
+module (`Buffers/EditorPackage.lean`), brings both to config.
 
-Pinned by `ModelTest.bufferCommandChecks`, on the models, and by
+Pinned by `BuffersTest.bufferCommandChecks` and
+`BuffersTest.buffersPackageChecks`, on the models, and by
 `ConfigTest.shippedChecks`, which reads what the hosts are handed.
 -/
 

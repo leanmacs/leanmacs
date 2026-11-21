@@ -15,8 +15,6 @@ import ModelTest.Check
 import ModelTest.Editor.Api
 import ModelTest.Editor.Api.Cases
 import ModelTest.Editor.Appearance
-import ModelTest.Editor.Buffers
-import ModelTest.Editor.Buffers.Compiled
 import ModelTest.Editor.Clipboard.Contract
 import ModelTest.Editor.Clipboard.Model
 import ModelTest.Editor.Command
@@ -579,8 +577,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   runner over `twoBuffers` and the editor's models
   (`Editor.Test.sourceRunner`, `Editor/Test/Sources.lean`), and seen to
   report a source that writes and one that is refused. The files feature's
-  file source is held to it by `pathsChecks`, the buffers feature's
-  buffer source by `bufferCommandChecks`, and the workspace's find-file and
+  file source is held to it by `pathsChecks`, the buffers package's
+  buffer source by `BuffersTest.bufferCommandChecks` (in its package), and the workspace's find-file and
   find-in-project sources by `findFileChecks` and `findInProjectChecks`;
 - `keyHintSourceChecks`: the key hints' source
   (`Editor/Completion/Keys.lean`): a candidate of each kind of hint, its
@@ -1729,8 +1727,6 @@ def checks : List Check :=
     fileReloadChecks ++
     stalenessChecks ++
     autoReloadChecks ++
-    bufferCommandChecks ++
-    buffersPackageChecks ++
     themeChecks ++
     appearanceChecks ++
     faceVocabularyChecks ++

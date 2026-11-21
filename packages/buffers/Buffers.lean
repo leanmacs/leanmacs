@@ -7,15 +7,15 @@ import Editor.Jumps
 # Buffers: switching a window to another buffer, listing them, closing one
 
 The commands over the editor's open buffers, written over the editor API
-(`Editor/Api.lean`): `switch-buffer`, `list-buffers` and `close-buffer`,
+(the core's `lean/Editor/Api.lean`): `switch-buffer`, `list-buffers` and `close-buffer`,
 which the ex names `b`, `ls` and `bd` run (`Editor/Ex/Compiled.lean`). Each
 reads the order the buffers were last used in, which the state keeps
 (`EditorState.recent`, `openBuffers`, `mostRecent`: `Editor/State.lean`,
 "Most recently used"), so none of them keeps that order by hand.
 
-`Editor.lean` imports this module, so config calls the commands. Their
-registrations, which name the registry, are in
-`Editor/Buffers/Compiled.lean`. Each message is a function here, and the
+The set's base imports this module, through the package's entry module
+(`Buffers/EditorPackage.lean`), so config calls the commands. Their
+registrations, which name the registry, are in `Buffers/Compiled.lean`. Each message is a function here, and the
 checks compare the echo area with that function, never with a sentence.
 
 ## Switch
@@ -134,7 +134,7 @@ checks compare the echo area with that function, never with a sentence.
 - **Not built**: a buffer's last cursor, which Vim gives back when a window
   shows it again.
 
-Pinned by `ModelTest.bufferCommandChecks`, on the loop's driver over the
+Pinned by `BuffersTest.bufferCommandChecks`, on the loop's driver over the
 editor's models, and the order the state keeps by `ModelTest.stateChecks`.
 -/
 

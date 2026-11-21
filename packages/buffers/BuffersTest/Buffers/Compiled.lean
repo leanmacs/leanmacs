@@ -1,19 +1,20 @@
+import Buffers.Compiled
 import BuffersApiTest.Contract
-import Editor.Buffers.Compiled
-import ModelTest.Check
+import BuffersTest.Check
 
 /-!
-# Model tests: `Editor/Buffers/Compiled.lean`
+# Model tests: `Buffers/Compiled.lean`
 
-The model tests of `Editor/Buffers/Compiled.lean`: `buffersPackageChecks`.
-The root module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `Buffers/Compiled.lean`: `buffersPackageChecks`. The
+test driver's root, `BuffersTest/Model.lean`, runs them; its module doc says
+what each shows.
 -/
 
-namespace ModelTest
+namespace BuffersTest
 
 open Editor
 
-/-- The checks of the `buffers` package (`Editor/Buffers/Compiled.lean`): the
+/-- The checks of the `buffers` package (`Buffers/Compiled.lean`): the
 contract of the interface library `buffers-api`
 (`BuffersApiTest.contractChecks`), each of its sentences one check, and a
 check that it bites. -/
@@ -26,4 +27,4 @@ def buffersPackageChecks : List Check :=
           let broken : Package := { name := Buffers.package.name, setup := pure () }
           pure ((BuffersApiTest.contractChecks broken).all (!·.2)) }]
 
-end ModelTest
+end BuffersTest

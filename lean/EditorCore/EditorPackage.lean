@@ -1,4 +1,3 @@
-import Editor.Buffers.Compiled
 import Editor.Evil.Compiled
 import Editor.Ex.Compiled
 import Editor.Files.Compiled
@@ -122,7 +121,11 @@ minibuffer's package, which was second here, after `files`, is the
 default package `minibuffer` (`packages/minibuffer/`), and registers after
 the mode line's, before the shipped themes': its commands follow version
 control's gutter's in the command prompt, and its mode follows version
-control's modes.
+control's modes. The buffer commands' package, which was fourth here,
+after `ex`, is the default package `buffers` (`packages/buffers/`), the
+first of the default packages to register (features-as-packages phase 6,
+D5): its commands follow version control's gutter's in the command prompt,
+before the completion styles' package's.
 -/
 
 namespace EditorCore.EditorPackage
@@ -132,7 +135,7 @@ open Editor
 /-- The packages of the core's Lake package, in the order a host registers
 them ("The order", in the module docs). -/
 def packages : Array Package :=
-  #[Files.package, Evil.package, Ex.package, Buffers.package, FrameCommands.package, Menu.package,
+  #[Files.package, Evil.package, Ex.package, FrameCommands.package, Menu.package,
     WindowCommands.package, TabCommands.package, Themes.package, Workspace.package,
     ProjectSearch.package, WorkingSet.package, Restore.package, PackageSet.package, Shell.package,
     VersionControl.package, VersionControl.gutterPackage]

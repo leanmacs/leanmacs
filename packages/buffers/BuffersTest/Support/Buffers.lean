@@ -1,6 +1,6 @@
+import Buffers
+import Buffers.Compiled
 import Editor.Api
-import Editor.Buffers
-import Editor.Buffers.Compiled
 import Editor.Command
 import Editor.Command.Call
 import Editor.Config.Packages
@@ -38,11 +38,11 @@ import FilesApiTest.Fake
 # Model tests: support: Buffers
 
 The buffer commands' keys and the driver they are pressed on, with buffers
-opened on it. Shared by several test modules under `ModelTest/Editor/`; it holds
+opened on it. Shared by several test modules under `BuffersTest/`; it holds
 no checks of its own.
 -/
 
-namespace ModelTest
+namespace BuffersTest
 
 open Editor
 open Editor.Test
@@ -146,4 +146,4 @@ def buffersOpen : Option TestDriver :=
 def shownName (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option String :=
   (showing driver view).map (·.buffer.name)
 
-end ModelTest
+end BuffersTest

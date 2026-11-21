@@ -2511,7 +2511,7 @@ def shippedChecks (_ : Unit) : List Check :=
         let registry := shippedRegistry
         return registry.segments.map (·.segment.name) == #["review"] },
     { name :=
-        "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, the first two commands the frame-commands package's and quit the ex package's, and the three bindings the frame-commands package's; with switch-buffer, list-buffers and close-buffer registered by the buffers package, and the ex names b, ls and bd bound to them"
+        "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, the first two commands the frame-commands package's and quit the ex package's, and the three bindings the frame-commands package's; and the ex names b, ls and bd bound to switch-buffer, list-buffers and close-buffer"
       run := do
         let registry := shippedRegistry
         let bound (text : String) : Option Invocation :=
@@ -2529,8 +2529,6 @@ def shippedChecks (_ : Unit) : List Check :=
             ownedBy FrameCommands.package "minimise-window" &&
             ownedBy Ex.package Ex.quitName &&
             frameKeys == #["toggle-fullscreen", "minimise-window", Ex.quitName] &&
-            ["switch-buffer", "list-buffers", "close-buffer"].all
-              (fun name => (registry.find? name).any (·.owner == owned "buffers")) &&
             ex "b" == some "switch-buffer" &&
             ex "ls" == some "list-buffers" &&
             ex "bd" == some "close-buffer" },
@@ -2553,16 +2551,25 @@ def shippedChecks (_ : Unit) : List Check :=
             TabCommands.package.registered.commands.all (compiled ·.name) &&
             Vim.Default.tabKeys.all (compiled ·.2) },
     { name :=
-        "the executable's hosts start with the completion sources that ship each registered by its package, so config can ask for each by name: the ex line's history and its names, the buffers, the tabs and the themes"
+        "the executable's hosts start with the completion sources that ship each registered by its package, so config can ask for each by name: the ex line's history and its names, the tabs and the themes"
       run := do
         let registry := shippedRegistry
         let ownedBy (package : String) (name : String) : Bool :=
           registry.sources.any fun entry =>
             entry.source.name == name && entry.owner == ({ name := package } : Config.Owner)
         return [(Ex.package.name, Ex.historySource.name), (Ex.package.name, Ex.namesSource.name),
-                ("buffers", "buffers"), (TabCommands.package.name, TabCommands.source.name),
+                (TabCommands.package.name, TabCommands.source.name),
                 (Themes.package.name, Themes.source.name)].all
             fun (package, name) => ownedBy package name && (registry.source? name).isSome },
+    { name :=
+        "the executable's hosts start with nothing of the buffers package: no command switch-buffer, list-buffers or close-buffer, no source buffers, no source in the category buffer, and no value of buffers-api's Buffers, registered by a package of the core's Lake package"
+      run := do
+        let registry := shippedRegistry
+        return ["switch-buffer", "list-buffers", "close-buffer"].all
+              (fun name => (registry.find? name).isNone) &&
+            (registry.source? "buffers").isNone &&
+            registry.sourcesIn "buffer" == #[] &&
+            !(registry.extensions.any (·.owner == owned "buffers")) },
     { name :=
         "the executable's hosts start with nothing of the execute-command package: no command execute-command, no source commands, and no source in the category command, registered by a package of the core's Lake package"
       run := do
@@ -2594,7 +2601,6 @@ def shippedChecks (_ : Unit) : List Check :=
       run := do
         let registry := shippedRegistry
         return registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] &&
-            registry.sourcesIn "buffer" == #["buffers"] &&
             registry.sourcesIn "tab" == #[TabCommands.source.name] &&
             registry.sourcesIn "theme" == #[Themes.source.name] },
     { name :=

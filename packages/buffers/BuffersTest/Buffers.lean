@@ -1,4 +1,6 @@
-import Editor.Buffers
+import Buffers
+import BuffersTest.Check
+import BuffersTest.Support.Buffers
 import Editor.Command.Model
 import Editor.Completion.Candidate
 import Editor.Display.Model
@@ -23,17 +25,16 @@ import Editor.Test.Prompts
 import Editor.Test.Sources
 import Editor.Text
 import Editor.Text.Model
-import ModelTest.Check
-import ModelTest.Support.Buffers
 
 /-!
-# Model tests: `Editor/Buffers.lean`
+# Model tests: `Buffers.lean`
 
-The model tests of `Editor/Buffers.lean`: `bufferCommandChecks`. The root module
-`ModelTest` runs them; its module doc says what each shows.
+The model tests of `Buffers.lean`: `bufferCommandChecks`. The test driver's
+root, `BuffersTest/Model.lean`, runs them; its module doc says what each
+shows.
 -/
 
-namespace ModelTest
+namespace BuffersTest
 
 open Editor
 open Editor.Test
@@ -483,4 +484,4 @@ def bufferCommandChecks : List Check :=
     -- it over the model and the core's sources.
     (sourceHolds Buffers.source).map fun (name, held) => { name, run := pure held }
 
-end ModelTest
+end BuffersTest
