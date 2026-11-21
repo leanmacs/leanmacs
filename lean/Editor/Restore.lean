@@ -241,6 +241,21 @@ structure Order where
   release : Option SnapshotId := none
   deriving DecidableEq, Repr
 
+/-- The path `order` writes, as a failure of it says it: an append's, a
+remove's or a save's; empty for a request the reconciler never makes. -/
+def Order.path (order : Order) : String :=
+  match order.request with
+  | .append path _ | .remove path | .save _ path _ => path.toString
+  | _ => ""
+
+/-- What `reply`, the reply to `order`'s request, says of the order: its path
+and why it failed, in `FileError.describe`'s words, as the model driver says
+it (`Loop.Driver.journaled`); `none` once it was worked. For a journal that
+hands its orders through handles (`Job.Services.fileWorked`), as the restore
+checks' does. -/
+def Order.failed (order : Order) (reply : order.request.Reply) : Option (String × String) :=
+  (order.request.refusal reply).map fun error => (order.path, error.describe)
+
 /-- The place of `window` of `state`, whose buffer's text is `text`: its
 selection, its scroll's top row and its jump list (`jumpsOf`). -/
 def placeOf (state : EditorState) (text : TextId) (window : Window) : TextM (Option Place) := do

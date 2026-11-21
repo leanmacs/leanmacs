@@ -357,4 +357,35 @@ def FileRequest.Reply : FileRequest → Type
   | .append .. => Except FileError Unit
   | .remove _ => Except FileError Unit
 
+/-- The refusal a reply to `request` holds; `none` for a result. -/
+def FileRequest.refusal : (request : FileRequest) → request.Reply → Option FileError
+  | .load .., reply =>
+    match (reply : Except FileError File.Loaded) with
+    | .error error => some error
+    | .ok _ => none
+  | .save .., reply =>
+    match (reply : Except FileError File.Stamp) with
+    | .error error => some error
+    | .ok _ => none
+  | .stamp _, reply =>
+    match (reply : Except FileError (Option File.Stamp)) with
+    | .error error => some error
+    | .ok _ => none
+  | .list _, reply =>
+    match (reply : Except FileError (Array File.Entry)) with
+    | .error error => some error
+    | .ok _ => none
+  | .makeDirectory _, reply =>
+    match (reply : Except FileError Unit) with
+    | .error error => some error
+    | .ok _ => none
+  | .append .., reply =>
+    match (reply : Except FileError Unit) with
+    | .error error => some error
+    | .ok _ => none
+  | .remove _, reply =>
+    match (reply : Except FileError Unit) with
+    | .error error => some error
+    | .ok _ => none
+
 end Editor
