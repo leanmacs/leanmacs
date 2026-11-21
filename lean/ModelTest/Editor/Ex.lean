@@ -43,6 +43,7 @@ import Editor.State
 import Editor.Test.Completion
 import Editor.Test.Driver
 import Editor.Test.Files
+import Editor.Test.Hosted
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
@@ -51,6 +52,7 @@ import Editor.Test.Prompts
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
+import FilesApi
 import ModelTest.Check
 import ModelTest.Support.Listings
 
@@ -107,7 +109,9 @@ runs it with the arguments the Vim scheme gives a command a key is bound
 to, a count and a register, `C-e l` runs it with the line `say hello there`
 as its first argument, `C-e y` and `C-e n` run the minibuffer's accept and
 cancel commands, `C-e t` runs its command that moves to the next
-candidate, and `C-e o` runs `other`. Prompts are matched and shown by the
+candidate, and `C-e o` runs `other`. The extension points are answered as
+the files feature registers them, so `save-and-quit` saves through its
+`FilesApi.Files` value. Prompts are matched and shown by the
 style and the display written for the core's tests (`marking`,
 `windowed`). -/
 def exKeys (bindings : Array Ex.Binding := exTestBindings) : Loop.Keys TestScheme.scheme :=
@@ -132,7 +136,8 @@ def exKeys (bindings : Array Ex.Binding := exTestBindings) : Loop.Keys TestSchem
     matching := markingMatching,
     displaying := windowedDisplaying
     registered :=
-      { ex := fun name => bindings.findRev? (·.name == name), exNames := exNamesOf bindings } }
+      { ex := fun name => bindings.findRev? (·.name == name), exNames := exNamesOf bindings
+        extensions := (hostedRegistry #[Files.package]).extensionsAt } }
 
 /-- A driver of the ex checks over the initial state, told of the ex
 bindings `bindings`, with the file commands' jobs and the files of the file
@@ -332,7 +337,8 @@ def exChecks : List Check :=
             let (asking, _) := fedTo driver (exLine "e")
             asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
                 some
-                  (Files.openPrompt, { command := Files.openName, arguments := Files.typedMark }) &&
+                  (Files.openPrompt,
+                    { command := FilesApi.openFileName, arguments := Files.typedMark }) &&
               asking.pending.all (·.name == Completion.Paths.job) },
     { name :=
         "the ex name w after an edit starts a save, which is in flight until its job is finished: the file then holds the buffer's text, the buffer is not modified, and the echo area says the file was written"
@@ -493,6 +499,19 @@ def exChecks : List Check :=
           | some driver =>
             let (refused, _) := fedTo driver ([.commit "typed"] ++ exLine "wq")
             promptEcho refused == Files.noFile "scratch" && refused.pending.isEmpty &&
+              !refused.stopped &&
+              !refused.loop.state.quitting },
+    { name :=
+        "the ex name wq with no files implementation says so under save-and-quit's name, starts nothing and does not ask to quit"
+      run :=
+        pure <|
+          match exNoteOpen with
+          | none => false
+          | some opened =>
+            let bare := { opened with keys := withoutExtension FilesApi.Files opened.keys }
+            let (refused, _) := fedTo bare ([.commit "x"] ++ exLine "wq")
+            promptEcho refused == FilesApi.noImplementation Ex.saveQuitName &&
+              refused.pending.isEmpty &&
               !refused.stopped &&
               !refused.loop.state.quitting },
     { name :=

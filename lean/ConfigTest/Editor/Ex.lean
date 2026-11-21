@@ -11,6 +11,7 @@ import Editor.Files.Compiled
 import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.Text
+import FilesApi
 
 /-!
 # Config tests: `Editor/Ex.lean`
@@ -186,8 +187,9 @@ def scriptOf (directives : List Headless.Directive) : Array Headless.Line :=
 /-- Runs `directives` as a script (`Headless.run`) against a host of its own
 over the library's file service (`Stage.overFiles`), with an empty config
 directory, that is handed what the executable is handed for the ex line,
-the ex line's commands and the `ex` package's ex names, and the file
-commands with their jobs, and the kit's minibuffer's commands and its mode
+the ex line's commands and the `ex` package's ex names, the files package
+(its commands, its jobs and its `FilesApi.Files` value, which `wq` saves
+through), and the kit's minibuffer's commands and its mode
 (`Editor/Test/Minibuffer.lean`) where the executable has the shipped ones. What `run`
 answered, and every line the host printed. -/
 def ranScript (context : Context) (directives : List Headless.Directive) :
@@ -195,10 +197,9 @@ def ranScript (context : Context) (directives : List Headless.Directive) :
   IO.FS.withTempDir fun directory => do
     let stage ←
       Stage.overFiles context (Config.Directory.source directory)
-          { commands :=
-              Ex.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
-                Files.package.registered.commands
-            jobs := Files.package.registered.jobs
+          { packages := #[Files.package]
+            commands :=
+              Ex.package.registered.commands ++ Test.Minibuffer.package.registered.commands
             modes := Test.Minibuffer.package.registered.modes
             ex := Ex.package.registered.ex }
     let failure ← Headless.run stage.collaborators (scriptOf directives) patience
@@ -271,7 +272,8 @@ def exScriptChecks (context : Context) : List Check :=
               action :=
                 .plain do
                   Editor.invoke { command := first }
-                  Editor.invoke { command := Files.openName, arguments := [.str path.toString] } }
+                  Editor.invoke
+                      { command := FilesApi.openFileName, arguments := [.str path.toString] } }
           let compiled : Compiled :=
             { exCompiled with
               commands := exCompiled.commands ++ #[handing Ex.quitName, handing "other"]

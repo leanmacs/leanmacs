@@ -1,8 +1,8 @@
 import Editor.Evil.Clipboard
-import Editor.Files
 import Editor.FrameCommands
 import Editor.Menu
 import Editor.Package
+import FilesApi
 
 /-!
 # The `menu` package: the menu bar that ships
@@ -76,8 +76,8 @@ def standard : Menu :=
               .item s!"Quit {appName}" (some (commandKey 'q')) (.system .quit)] },
         { title := "File"
           items :=
-            #[.item "Open…" none (.command Files.openName),
-              .item "Save" none (.command Files.saveName)] },
+            #[.item "Open…" none (.command FilesApi.openFileName),
+              .item "Save" none (.command FilesApi.saveName)] },
         -- The names of evil's commands (`Editor/Evil/Compiled.lean`).
         { title := "Edit"
           items :=
@@ -100,8 +100,8 @@ are `Editor/Evil/Clipboard.lean`'s. -/
 def package : Package :=
   { name := "menu"
     setup := do
-      bindKeys [chord "o"] Files.openName
-      bindKeys [chord "s"] Files.saveName
+      bindKeys [chord "o"] FilesApi.openFileName
+      bindKeys [chord "s"] FilesApi.saveName
       bindKeys [chord "z"] "undo"
       bindKeys [chord "Z"] "redo"
       bindKeys [chord "x"] Evil.cutName

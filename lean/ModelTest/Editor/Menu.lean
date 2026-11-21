@@ -12,7 +12,6 @@ import Editor.DisplayRules
 import Editor.Event
 import Editor.Ex
 import Editor.Ex.Line
-import Editor.Files
 import Editor.FrameCommands
 import Editor.InputScheme
 import Editor.InputScheme.Test
@@ -43,6 +42,7 @@ import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import Editor.Workspace
+import FilesApi
 import ModelTest.Check
 import ModelTest.Support.Evil
 import ModelTest.Support.Frame
@@ -193,7 +193,8 @@ def menuChecks : List Check :=
             command? := fun
               | "noop" => some ran
               | "balk" => some refused
-              | name => if name == Files.openName || name == Ex.quitName then some ran else none }
+              | name =>
+                if name == FilesApi.openFileName || name == Ex.quitName then some ran else none }
         let status : Array StatusField :=
           #[{ text := "All", face := ModeLine.secondaryFace, padding := 4 },
             { text := "scratch", face := ModeLine.bufferFace, side := .right, padding := 4 }]
@@ -249,13 +250,13 @@ def menuChecks : List Check :=
         "a chord a system item shows is no command item's, as AppKit runs the system item: config's s-q, s-h or M-s-h alone to save-buffer shows none on Save, and beside the compiled s-s Save shows s-s"
       run :=
         let bound := fun text =>
-          ({} : Config.Registry).replaceBindings .config #[.ofKeys (keys text) Files.saveName]
-        let beside := frameRegistry #[.ofKeys (keys "s-q") Files.saveName]
+          ({} : Config.Registry).replaceBindings .config #[.ofKeys (keys text) FilesApi.saveName]
+        let beside := frameRegistry #[.ofKeys (keys "s-q") FilesApi.saveName]
         pure
           (["s-q", "s-h", "M-s-h"].all
               (fun text =>
-                ((menuShown (bound text)).bind (keyShown · Files.saveName)) == some none) &&
-            ((menuShown beside).bind (keyShown · Files.saveName)) == some (equivalent 's') &&
+                ((menuShown (bound text)).bind (keyShown · FilesApi.saveName)) == some none) &&
+            ((menuShown beside).bind (keyShown · FilesApi.saveName)) == some (equivalent 's') &&
             (menuShown beside).map (·.systemKeys) == some Menu.standard.systemKeys) }]
 
 end ModelTest

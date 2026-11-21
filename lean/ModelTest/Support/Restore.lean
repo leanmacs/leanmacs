@@ -16,11 +16,10 @@ through `files-api`'s fake and attaches its workspace through the kit's
 stand-in, as in the working set checks, so the support names no module of
 the files feature or the workspace's, and the core's checks of the
 journal's reconciler (`Editor/Restore.lean`, `Editor/Restore/Restart.lean`)
-run on it. Session restore's own run (`Editor/Restore/Run.lean`), a feature
-still in the core and left for phase 6 to cut, adopts a restored file with
-the files feature (`Files.adopt`) and attaches its workspace
-(`Workspace.attach`) itself, so its checks hand the drivers the files
-feature's jobs and the workspace's (`jobs`), which come before the fake's.
+run on it. Session restore's own run (`Editor/Restore/Run.lean`) reaches
+the files through `files-api` too; its checks still hand the drivers the
+files feature's jobs and the workspace's (`jobs`), which come before the
+fake's.
 Shared by the test modules of `Editor/Restore.lean`,
 `Editor/Restore/Restart.lean` and `Editor/Restore/Run.lean`; it holds no
 checks of its own.

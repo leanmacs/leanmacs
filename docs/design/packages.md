@@ -2628,7 +2628,7 @@ Computed again at the end of the features-as-packages roadmap's phase 5, which c
 - **Modules** (2): `Buffers`, `Buffers.Compiled`.
 - **Core modules that import it**: none; `Editor.Core` imports `Buffers.Compiled`, as it imports every feature's.
 - **The test kit's modules that import it**: none. The kit's buffers are `BuffersApiTest.fake`'s.
-- **Other features' modules that import it**: ex: `Ex.Compiled` (`Buffers`). Version-control's `vc-commit` and working-set's close hook reach it through `BuffersApi` (`BuffersApi.buffers?`, `BuffersApi.Closing`).
+- **Other features' modules that import it**: none. Ex's `Ex.Compiled` binds `b`, `ls` and `bd` to `BuffersApi`'s names since phase 6. Version-control's `vc-commit` and working-set's close hook reach it through `BuffersApi` (`BuffersApi.buffers?`, `BuffersApi.Closing`).
 - **Other features it imports**: none. It runs `BuffersApi.Closing` where it imported `WorkingSet.Places`.
 - **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (5): `ModelTest`: `Completion.Contract`, `DisplayRules`, `Evil.Marks`; `ConfigTest`: `Headless`, `Minibuffer`.
@@ -2706,7 +2706,7 @@ Computed again at the end of the features-as-packages roadmap's phase 5, which c
 - **Modules** (4): `Completion.Paths`, `Files`, `Files.Compiled`, `Files.Kit`. `Jumps.Go` is the core's since phase 6, over `FilesApi`. `Files.Kit`, the drivers of the real file commands, is a test double, which moves into its test library when it moves out.
 - **Core modules that import it**: none; `Editor.Core` imports `Files.Kit` and `Files.Compiled`. The loop's reconcilers run the jobs the core names (`Editor/FileJobs.lean`), where the loop imported `Files`.
 - **The test kit's modules that import it**: none. The kit opens files with its own opener (`Test.Opener`), and runs the hosted packages through `Test.Hosted`.
-- **Other features' modules that import it**: ex: `Ex` (`Files`), `Ex.Compiled` (`Files`); menu: `Menu.Compiled` (`Files`); project-search: `ProjectSearch.Run` (`Files`); restore: `Restore.Run` (`Files`); shell: `Shell` (`Files`). Buffers, working-set, workspace and version-control reach it through `FilesApi` (`FilesApi.files?`, its hooks `Opened` and `Saved`, and its names).
+- **Other features' modules that import it**: project-search: `ProjectSearch.Run` (`Files`); shell: `Shell` (`Files`). Buffers, working-set, workspace, version-control, and since phase 6 ex (`Ex`, `Ex.Compiled`), the menu (`Menu.Compiled`) and session restore (`Restore.Run`), reach it through `FilesApi` (`FilesApi.files?`, its hooks `Opened` and `Saved`, and its names).
 - **Other features it imports**: ex (`Ex`, `Ex.Compiled`), by `Files.Kit` alone. It runs `FilesApi.Opened` where it imported `Workspace.Attach` and `WorkingSet.Places`.
 - **Modules of packages outside the core that import it**: compile: `CompileTest.Compile` (`Files`), `CompileTest.Support.Compile` (`Files.Kit`), `CompileTest.Linked.Compile.Shipped` (`Files.Kit`).
 - **Test modules outside its own tests that import it** (7): `ModelTest`: `Ex`, `Evil.Marks`, `Menu`, `Restore.Run`; `ConfigTest`: `Ex`; `ContractTest`: `ProjectSearch.Run`, `Restore.Run`.

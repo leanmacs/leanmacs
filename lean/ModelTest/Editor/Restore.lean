@@ -1,3 +1,4 @@
+import BuffersApi
 import ModelTest.Check
 import ModelTest.Support.Restore
 
@@ -480,7 +481,7 @@ def journalReconcileChecks : List Check :=
           | some begun =>
             let noted := evilFed (ran begun "test-note") (typing "n")
             let index := indexNamed noted "note"
-            let closedNote := ran noted Buffers.closeName [.str "note"]
+            let closedNote := ran noted BuffersApi.closeName [.str "note"]
             journalFiles noted == filesOf index 1 && journalFiles closedNote == #[] },
     { name := "read-only, excerpt and minibuffer buffers are never journalled"
       run :=

@@ -1,5 +1,7 @@
 import Editor.Files.Compiled
+import Editor.Test.Hosted
 import Editor.Workspace.Compiled
+import FilesApi
 import ModelTest.Check
 import ModelTest.Editor.Restore
 import ModelTest.Support.Restore
@@ -12,11 +14,12 @@ driver over the editor's models and the job model, from the journals and
 indexes a first loop wrote, or that a check wrote by hand. The root module
 `ModelTest` runs them; its module doc says what each shows.
 
-Session restore's run is a feature still in the core, left for phase 6 to
-cut: it adopts a restored file with the files feature (`Files.adopt`) and
-attaches its workspace (`Workspace.attach`) itself, so every driver here
-has the files feature's jobs and the workspace's (`runJobs`), which the
-restore support's drivers, on `files-api`'s fake, take as `jobs`.
+Session restore's run adopts a restored file through `files-api`
+(`FilesApi.files?`) and runs its `Opened` hook for a journaled buffer that
+holds a file, so its drivers answer both from the restore support's
+extension points (`files-api`'s fake and the workspace's stand-in). The
+files feature's jobs and the workspace's (`runJobs`) are still handed in
+beside them, until the core's tests stop naming the features.
 -/
 
 namespace ModelTest
@@ -983,6 +986,51 @@ def restoreChecks : List Check :=
                 missing.loop.state.restore.deferred.isEmpty &&
                 missing.loop.state.echo ==
                   s!"restore: no mode is registered as {configMode.name}: a.txt is restored without it"
-            | _, _, _ => false }]
+            | _, _, _ => false },
+    { name :=
+        "a journaled buffer that holds a file runs every FilesApi.Opened value once, with the buffer and its path, as an open does: an Opened value the check registers sees the restored a.txt"
+      run :=
+        pure <|
+          match first with
+          | none => false
+          | some begun =>
+            let edited := drained (evilFed (opened begun "a.txt") "x")
+            let probe : Package :=
+              { name := "restore-opened-probe"
+                setup :=
+                  Extension.add
+                    ({  name := "probe"
+                        opened := fun id path =>
+                          discard <| createText s!"restore-opened {id.index} {path}" } :
+                      FilesApi.Opened) }
+            let withProbe (driver : EvilDriver) : EvilDriver :=
+              { driver with
+                keys := Test.withExtensionsOf driver.keys (WorkingSetTest.hooks.push probe) }
+            match secondWith edited withProbe with
+            | none => false
+            | some again =>
+              match again.loop.state.findFile (root / "a.txt") with
+              | none => false
+              | some id =>
+                (bufferNamed again "a.txt").map (·.isModified) == some true &&
+                  again.model.texts.contents.filter (·.startsWith "restore-opened ") ==
+                    #[s!"restore-opened {id.index} {root / "a.txt"}"] },
+    { name :=
+        "with no files implementation, an unmodified file of the index to reopen is reported and not restored, and a journaled one is restored all the same"
+      run :=
+        pure <|
+          match first with
+          | none => false
+          | some begun =>
+            let both := drained (evilFed (opened (opened begun "b.txt") "a.txt") "x")
+            let bare (driver : EvilDriver) : EvilDriver :=
+              { driver with keys := Test.withoutExtension FilesApi.Files driver.keys }
+            match secondWith both bare with
+            | none => false
+            | some again =>
+              (bufferNamed again "b.txt").isNone && (bufferNamed again "a.txt").isSome &&
+                ((reportOf again).splitOn
+                      s!"/r/b.txt: {FilesApi.noImplementation "restore"}: it is not restored").length ==
+                  2 }]
 
 end ModelTest

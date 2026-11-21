@@ -1,7 +1,7 @@
-import Editor.Buffers
+import BuffersApi
 import Editor.Ex
-import Editor.Files
 import Editor.Package
+import FilesApi
 
 /-!
 # The `ex` package: the ex line's commands and the core's ex names
@@ -31,7 +31,10 @@ shipped ex name runs in its place until a reload drops it.
     (`Ex.reloadCommand`).
 - **The ex names** of the files, of the ex line itself and of the buffers
   (`exCommand`). Each is bound to a command by its name, so a host must be
-  handed that command's package too.
+  handed that command's package too. The names of the files' and the
+  buffers' commands are the interface libraries' (`FilesApi.saveName`,
+  `.editName`, `.autoReloadName`; `BuffersApi.switchName`, `.listName`,
+  `.closeName`): this module imports neither feature.
   - `w` runs `save-buffer` (`Editor/Files.lean`) and takes nothing: it
     saves the buffer of the window the line was asked from. `w` with an
     argument is refused by the ex line (`Ex.noArgument`): saving under
@@ -104,18 +107,18 @@ def package : Package :=
       commandWith quitName quitCommand
       commandWith saveQuitName saveQuitCommand
       commandWith reloadName reloadCommand
-      Editor.exCommand "w" Files.saveName
-      Editor.exCommand "w!" Files.saveName (arguments := [.bool true])
-      Editor.exCommand "e" Files.editName (takes := .text)
-      Editor.exCommand "e!" Files.editName (takes := .text) (arguments := [.bool true])
-      Editor.exCommand "autoread" Files.autoReloadName (arguments := [.bool true])
-      Editor.exCommand "noautoread" Files.autoReloadName (arguments := [.bool false])
+      Editor.exCommand "w" FilesApi.saveName
+      Editor.exCommand "w!" FilesApi.saveName (arguments := [.bool true])
+      Editor.exCommand "e" FilesApi.editName (takes := .text)
+      Editor.exCommand "e!" FilesApi.editName (takes := .text) (arguments := [.bool true])
+      Editor.exCommand "autoread" FilesApi.autoReloadName (arguments := [.bool true])
+      Editor.exCommand "noautoread" FilesApi.autoReloadName (arguments := [.bool false])
       Editor.exCommand "q" quitName
       Editor.exCommand "wq" saveQuitName
       Editor.exCommand "reload" reloadName
-      Editor.exCommand "b" Buffers.switchName (takes := .text)
-      Editor.exCommand "ls" Buffers.listName
-      Editor.exCommand "bd" Buffers.closeName (takes := .text)
+      Editor.exCommand "b" BuffersApi.switchName (takes := .text)
+      Editor.exCommand "ls" BuffersApi.listName
+      Editor.exCommand "bd" BuffersApi.closeName (takes := .text)
       defineSource historySource
       defineSource namesSource }
 

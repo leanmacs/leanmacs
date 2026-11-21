@@ -650,8 +650,9 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   a prompt, and the accepted line runs the command its name is bound to,
   as a step of its own, with the rest of the line as its argument; a name
   nobody bound, an argument a name does not take, an empty line, a bound
-  command that is not registered or is refused, and a cancelled line.
-  Each message is read from the function that makes it;
+  command that is not registered or is refused, and a cancelled line;
+  `wq` with no files implementation said under `save-and-quit`'s name and
+  no quit asked. Each message is read from the function that makes it;
 - `themeChecks`: the command that loads a theme (`Editor/Themes.lean`) on
   that driver, told of two registered themes: with no name it asks among
   them, with a registered name the step hands the name back, and a name
@@ -1458,7 +1459,9 @@ Session restore is checked in Lean alone too:
   table and (f) its stores, met, never written or parked and claimed, (g)
   a reported job said stopped and the host's count of other jobs said,
   other jobs alone counted, and (j) a package's declared store met with its
-  codec.
+  codec; and through `files-api`, a journaled buffer that holds a file run
+  through every `FilesApi.Opened` value once, and with no files
+  implementation a file to reopen said and not restored.
 
 Listing a workspace's files is checked in Lean alone too:
 
