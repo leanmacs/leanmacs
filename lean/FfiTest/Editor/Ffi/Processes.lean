@@ -17,6 +17,12 @@ namespace FfiTest
 def processService : UInt64 :=
   3
 
+/-- The library's process service, as a directory's bracket flushes it: its
+flush is completed once every run started before has ended and every child
+cancelled before has been reaped. -/
+def processesFlushed : Flushed :=
+  { name := "process", flush := Editor.Ffi.processesFlush, service := processService }
+
 /-- Whether the next completion on the queue is the process service's, for
 the run `id`. -/
 def processCompleted (id : UInt64) : IO Bool := do
@@ -66,7 +72,7 @@ def processChecks (_ : Unit) : List Check :=
   [{  name :=
         "a command runs through the process service: its completion comes back on the completion queue with the run's id, and its result, taken once, is its status and both its streams, with the environment it was given"
       run :=
-        inOwnDirectory fun directory => do
+        inOwnDirectory (targets := [filesFlushed, processesFlushed]) fun directory => do
           let result ←
             processResult 1101 "printf %s \"$EDITOR_FFI_SET\"; printf 'e\\377' >&2; exit 3"
                 directory (set := #[("EDITOR_FFI_SET", "given")])
@@ -76,7 +82,7 @@ def processChecks (_ : Unit) : List Check :=
     { name :=
         "a refusal crosses with its words: a program that is not there is not found, naming it, and a directory that is not absolute is refused as itself"
       run :=
-        inOwnDirectory fun directory => do
+        inOwnDirectory (targets := [filesFlushed, processesFlushed]) fun directory => do
           let missing := "/nonexistent/editor-ffi-test"
           unless ← Editor.Ffi.processesRun 1110 missing #[] false #[] #[] directory.toString 10 do
             return false
@@ -92,14 +98,14 @@ def processChecks (_ : Unit) : List Check :=
           return notFound && relative matches some (.relativeDirectory _) },
     { name := "a stream past the limit crosses as too large, with the stream and the limit"
       run :=
-        inOwnDirectory fun directory => do
+        inOwnDirectory (targets := [filesFlushed, processesFlushed]) fun directory => do
           let out ← processResult 1120 "printf abc" directory 2
           let err ← processResult 1121 "printf abc >&2" directory 2
           return out == some (.outputTooLarge .out 2) && err == some (.outputTooLarge .err 2) },
     { name :=
         "a run cancelled while its child sleeps is never completed, its child is reaped, and a cancel says whether there was anything to cancel"
       run :=
-        inOwnDirectory fun directory => do
+        inOwnDirectory (targets := [filesFlushed, processesFlushed]) fun directory => do
           let before ← Editor.Ffi.processesPending
           unless
             ←
@@ -148,7 +154,7 @@ def processChecks (_ : Unit) : List Check :=
     { name :=
         "a streaming child crosses the bindings: it opens, its first line is read as it writes it, a line written reaches it, a close ends its input, and its last delivery is its exit"
       run :=
-        inOwnDirectory fun directory => do
+        inOwnDirectory (targets := [filesFlushed, processesFlushed]) fun directory => do
           let script := "echo one; read x; echo \"$x\"; read y; exit 4"
           unless
             ←
@@ -186,7 +192,7 @@ def processChecks (_ : Unit) : List Check :=
     { name :=
         "whether a streaming child is held crosses the bindings: a child that writes for ever, never read, comes to be held at its bound, an id the service does not hold is 2, and a cancel reaps the held child and forgets it"
       run :=
-        inOwnDirectory fun directory => do
+        inOwnDirectory (targets := [filesFlushed, processesFlushed]) fun directory => do
           let before ← Editor.Ffi.processesPending
           unless
             ←

@@ -17,6 +17,11 @@ namespace FfiTest
 def watchService : UInt64 :=
   4
 
+/-- The library's watch service, as a directory's bracket flushes it: its
+flush is completed once every start asked before is done. -/
+def watchesFlushed : Flushed :=
+  { name := "watch", flush := Editor.Ffi.watchesFlush, service := watchService }
+
 /-- Whether the next completion is the watch service's for `id`. -/
 def watchCompleted (id : UInt64) : IO Bool := do
   let some event ← pull .completion | return false
@@ -34,7 +39,7 @@ def watchChecks (_ : Unit) : List Check :=
   [{  name :=
         "a watch starts through the watch service, its completion comes back with its id, and a write to its file comes back as a change of the file's path, written, taken once"
       run :=
-        inOwnDirectory fun directory => do
+        inOwnDirectory (targets := [filesFlushed, watchesFlushed]) fun directory => do
           let file := directory / "f"
           IO.FS.writeFile file "a"
           unless ← Editor.Ffi.watchesStart 1201 0 0 64 file.toString do
@@ -64,7 +69,7 @@ def watchChecks (_ : Unit) : List Check :=
     { name :=
         "words that spell no start start no watch, and a missing directory is refused as not found, naming it"
       run :=
-        inOwnDirectory fun directory => do
+        inOwnDirectory (targets := [filesFlushed, watchesFlushed]) fun directory => do
           let malformed ← Editor.Ffi.watchesStart 1210 9 0 64 directory.toString
           let missing := directory / "missing"
           unless ← Editor.Ffi.watchesStart 1211 1 0 64 missing.toString do
@@ -80,7 +85,7 @@ def watchChecks (_ : Unit) : List Check :=
           return !malformed && refused },
     { name := "a watch flush asked behind a start is completed after it, and keeps no reply"
       run :=
-        inOwnDirectory fun directory => do
+        inOwnDirectory (targets := [filesFlushed, watchesFlushed]) fun directory => do
           let started ← Editor.Ffi.watchesStart 1220 1 0 64 directory.toString
           let flushing ← Editor.Ffi.watchesFlush 1221
           let first ← watchCompleted 1220

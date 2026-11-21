@@ -19,6 +19,12 @@ namespace FfiTest
 def grepService : UInt64 :=
   7
 
+/-- The library's grep service, as a directory's bracket flushes it: its
+flush is completed once the thread of every search started before has
+returned, a cancelled search's among them. -/
+def grepsFlushed : Flushed :=
+  { name := "grep", flush := Editor.Ffi.grepFlush, service := grepService }
+
 /-- Whether the next completion is the grep service's for `id`. -/
 def grepCompleted (id : UInt64) : IO Bool := do
   let some event ← pull .completion | return false
@@ -53,7 +59,7 @@ def grepChecks (_ : Unit) : List Check :=
   [{  name :=
         "a search starts through the grep service, and its deliveries answer the files under the root in walk order, an overlay's text in place of its file, an ignored file left out"
       run :=
-        inOwnDirectory fun directory => do
+        inOwnDirectory (targets := [filesFlushed, grepsFlushed]) fun directory => do
           IO.FS.writeFile (directory / "a.txt") "nothing\n"
           IO.FS.writeFile (directory / "b.txt") "x needle\n"
           IO.FS.writeFile (directory / "ignored.txt") "needle\n"
@@ -81,7 +87,7 @@ def grepChecks (_ : Unit) : List Check :=
     { name :=
         "a pattern the syntax refuses is the start's refusal with Vim's sentence, and a root that is not there ends the first delivery refused"
       run :=
-        inOwnDirectory fun directory => do
+        inOwnDirectory (targets := [filesFlushed, grepsFlushed]) fun directory => do
           unless ← Editor.Ffi.grepStart 1310 directory.toString "\\(" 100 1000 64 #[] do
             return false
           unless ← grepCompleted 1310 do
@@ -103,7 +109,7 @@ def grepChecks (_ : Unit) : List Check :=
               notFound },
     { name := "a search cancelled is held no more, and a cancel of an unknown id cancels nothing"
       run :=
-        inOwnDirectory fun directory => do
+        inOwnDirectory (targets := [filesFlushed, grepsFlushed]) fun directory => do
           IO.FS.writeFile (directory / "a") "x\n"
           unless ← Editor.Ffi.grepStart 1320 directory.toString "x" 100 1000 64 #[] do
             return false
