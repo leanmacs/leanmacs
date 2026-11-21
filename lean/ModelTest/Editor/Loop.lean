@@ -27,6 +27,7 @@ import Editor.Face
 import Editor.File
 import Editor.File.Cases
 import Editor.File.Model
+import Editor.FileJobs
 import Editor.FileWatch
 import Editor.FileWatch.Model
 import Editor.Files
@@ -67,7 +68,6 @@ import Editor.Test.Completion
 import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Geometry
-import Editor.Test.Jobs
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
@@ -103,8 +103,8 @@ The model tests of `Editor/Loop.lean`: `loopChecks`, `commitChecks`,
 `dispatchCommandGivesUpChecks`, `dispatchCommandBreaksOffChecks`,
 `dispatchRunCommandChecks`, `dispatchChecks`, `modeDispatchChecks`,
 `candidateChecks`, `completionJobChecks`, `directoryChecks`,
-`laterLoopChecks`, `openFilesChecks`, `dispatchQuitChecks`,
-`systemQuitChecks`, `stalenessChecks`, `autoReloadChecks`,
+`laterLoopChecks`, `loopFileJobChecks`, `openFilesChecks`,
+`dispatchQuitChecks`, `systemQuitChecks`,
 `searchDecorationChecks`, `viewChecks`, `floatViewChecks`,
 `atPointRepeatChecks`, `atPointLoopChecks`, `atPointAskChecks`,
 `atPointByItselfChecks` and `pressedChecks`. `searchDecorationChecks` are of the loop's
@@ -115,8 +115,11 @@ asked again (`Editor/State.lean`), through the loop's reconciler of a
 prompt's jobs. The checks of completion at point in the loop run on the
 evil driver (`ModelTest/Support/AtPoint.lean`), through the kit's at-point
 package (`Editor/Test/AtPoint.lean`) and at-point sources written for them,
-so nothing of the package that ships is asked. The root module `ModelTest`
-runs them; its module doc says what each shows.
+so nothing of the package that ships is asked. `loopFileJobChecks` are of
+when the loop starts the file jobs, under the core's names, on stand-in
+works; what those jobs do through the loop is the files feature's
+(`stalenessChecks` and `autoReloadChecks`, `ModelTest/Editor/Files.lean`).
+The root module `ModelTest` runs them; its module doc says what each shows.
 -/
 
 namespace ModelTest
@@ -5028,6 +5031,70 @@ def laterLoopChecks : List Check :=
                   (lastStep steps).map (·.spawns.size) == some 1 &&
                   (candidatesOf listed).map (·.listed) == some (pickListed "w").listed }]
 
+/-- Stand-in works under the core's names of the file jobs (`FileJobs`), for
+`jobs` of them: each finishes with nothing, and none is run here. They
+stand in for the files feature, which registers the real ones, so the
+checks below are of when the loop starts the jobs, not what they do. -/
+def standInFileJobs (jobs : List String := [FileJobs.checkJob, FileJobs.followJob])
+    (name : String) : Option (List Argument → Work) :=
+  if jobs.contains name then some fun _ _ => pure (pure ()) else none
+
+/-- The initial state at 640 by 480 with a file buffer, `note.txt`, the
+buffer 1, holding `notePath` at `noteStamp`, shown by no view, and
+auto-reload's choice `autoReload`. -/
+def fileBufferState (autoReload : Option Bool := none) : TextM EditorState := do
+  let state ← EditorState.initial ⟨640, 480⟩
+  let text ← createText "note\n"
+  let history ← UndoTree.over text
+  let (.ok id, state) := state.addBuffer "note.txt" text history | return state
+  return { (state.attachFile id notePath noteStamp .lf).2 with autoReload }
+
+/-- The loop's driver over `fileBufferState autoReload`, with no keys and the
+stand-in works of `jobs`. -/
+def fileJobDriver (jobs : List String := [FileJobs.checkJob, FileJobs.followJob])
+    (autoReload : Option Bool := none) : Option TestDriver :=
+  (Loop.Driver.over (dispatchKeys []) (standInFileJobs jobs) (fileBufferState autoReload)
+      editorModel).toOption
+
+/-- The jobs `events` start on `driver`, every step's, in order. -/
+def startsOn (driver : TestDriver) (events : List Event) : Array JobStart :=
+  (fedTo driver events).2.flatMap fun step => (step.map (·.starts)).getD #[]
+
+/-- The checks of when the loop starts the file jobs (`Loop.fileJobs`,
+`Editor/Loop.lean`, "Files that changed on disk" and "Auto-reload"), under
+the core's names (`Editor/FileJobs.lean`), on the loop's driver with
+stand-in works and no files feature. -/
+def loopFileJobChecks : List Check :=
+  [{  name :=
+        "where `check-files` is registered, the frame gaining the keyboard focus starts one check of every file buffer, with the core's order of the buffer, its path and its stamp; with no such job registered it starts none"
+      run :=
+        pure <|
+          let focus := [Event.focus false, .focus true]
+          match fileJobDriver, fileJobDriver (jobs := [FileJobs.followJob]) with
+          | some driver, some unchecked =>
+            let checks := (startsOn driver focus).filter (·.name == FileJobs.checkJob)
+            checks.map (·.arguments) ==
+                #[FileJobs.checkArguments
+                    #[{ buffer := ⟨1⟩, path := notePath, stamp := noteStamp }]] &&
+              (startsOn unchecked focus).isEmpty
+          | _, _ => false },
+    { name :=
+        "with auto-reload on and `follow-file` registered, each open file buffer gets one follow keyed by the buffer, with the core's order, its own stamp expected; with it off, or the job not registered, none"
+      run :=
+        pure <|
+          let step := [Event.focus true]
+          let order : FileJobs.FollowOrder :=
+            { buffer := ⟨1⟩, path := notePath, stamp := noteStamp, expected := some noteStamp }
+          match fileJobDriver (autoReload := some true), fileJobDriver (autoReload := some false),
+            fileJobDriver (jobs := [FileJobs.checkJob]) (autoReload := some true) with
+          | some on, some off, some unregistered =>
+            (startsOn on step).filter (·.name == FileJobs.followJob) ==
+                #[{ name := FileJobs.followJob, arguments := order.arguments
+                    key := some (Following.keyOf ⟨1⟩) }] &&
+              ((startsOn off step).filter (·.name == FileJobs.followJob)).isEmpty &&
+              ((startsOn unregistered step).filter (·.name == FileJobs.followJob)).isEmpty
+          | _, _, _ => false }]
+
 /-- The checks of the files a window asks to open (`Event.openFiles`): the
 loop runs the open command with them (`Editor/Loop.lean`, "What each event
 does"), on the driver of the file command checks. No file is touched. -/
@@ -5576,329 +5643,6 @@ def systemQuitChecks : List Check :=
             let (refused, _) := fedTo driver ([.commit "x"] ++ presses "C-l q")
             !refused.stopped && echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
               keptRunning refused == 0 }]
-
-/-- The mode line's field that says a buffer's file changed on disk: the
-`changed` segment's (`ModeLine.changed`). -/
-def changedField : StatusField :=
-  ModeLine.field ModeLine.changedMark ModeLine.changedFace
-
-/-- `driver` once the file at `path` is gone. -/
-def removed (driver : TestDriver) (path : System.FilePath) : TestDriver :=
-  { driver with
-    jobs :=
-      { driver.jobs with
-        files :=
-          { driver.jobs.files with files := driver.jobs.files.files.filter (·.path != path) } } }
-
-/-- `driver` after the frame lost the keyboard focus and gained it again, and
-the check that started finished. -/
-def focusChecked (driver : TestDriver) : TestDriver :=
-  finishNamed (fedTo driver [.focus false, .focus true]).1 Files.checkJob
-
-/-- The checks of the staleness check (`Files.checkWork`, `Loop.fileJobs`,
-`Editor/Loop.lean`, "Files that changed on disk"), with auto-reload off, on
-the loop's driver over the editor's models and the model of files, with the
-commands and the jobs compiled code registers. -/
-def stalenessChecks : List Check :=
-  let textOf (driver : TestDriver) : Option String := (showing driver).bind (·.text)
-  let note := inFiles "note.txt"
-  [{  name :=
-        "criterion 5: the first edit to a buffer whose file changed is refused and the next lands: after a check started by the focus coming back, the first edit leaves the text, says the file changed and names :e, with no modified field, and the second edit lands"
-      run :=
-        pure <|
-          match noteRewritten with
-          | none => false
-          | some rewritten =>
-            let checked := focusChecked rewritten
-            let (refused, _) := fedTo checked (presses "C-o x")
-            let (landed, _) := fedTo refused (presses "C-o x")
-            textOf refused == some FileCases.noteText &&
-              echoOf refused == some (Files.changedOnDisk note) &&
-              statusOf refused == some (named "note.txt" ++ #[changedField]) &&
-              textOf landed == some ("x" ++ FileCases.noteText) &&
-              statusOf landed == some (namedModified "note.txt" ++ #[changedField]) },
-    { name :=
-        "a committed text after a change on disk is dropped the same way, and the next commit lands"
-      run :=
-        pure <|
-          match noteRewritten with
-          | none => false
-          | some rewritten =>
-            let (refused, _) := fedTo (focusChecked rewritten) [.commit "a"]
-            let (landed, _) := fedTo refused [.commit "b"]
-            textOf refused == some FileCases.noteText &&
-              echoOf refused == some (Files.changedOnDisk note) &&
-              textOf landed == some ("b" ++ FileCases.noteText) },
-    { name :=
-        "the first edit of an unmodified file buffer starts a check: the edit lands, and once the check is finished the buffer is marked and the echo area gives both resolutions"
-      run :=
-        pure <|
-          match noteRewritten with
-          | none => false
-          | some rewritten =>
-            let (edited, _) := fedTo rewritten (presses "C-o x")
-            let checked := finishNamed edited Files.checkJob
-            textOf edited == some ("x" ++ FileCases.noteText) &&
-              (pendingOf edited Files.checkJob).isSome &&
-              statusOf checked == some (namedModified "note.txt" ++ #[changedField]) &&
-              echoOf checked == some (Files.changedUnderEdits note) },
-    { name :=
-        "a file that is gone is marked: the first edit is refused saying :w! writes it again, and the next lands"
-      run :=
-        pure <|
-          match noteRewritten with
-          | none => false
-          | some rewritten =>
-            let checked := focusChecked (removed rewritten note)
-            let (refused, _) := fedTo checked (presses "C-o x")
-            let (landed, _) := fedTo refused (presses "C-o x")
-            ((heldFile checked).bind (·.changed)).map (·.found) == some none &&
-              echoOf refused == some (Files.goneFromDisk note) &&
-              textOf refused == some FileCases.noteText &&
-              textOf landed == some ("x" ++ FileCases.noteText) },
-    { name :=
-        "criterion 6: switching to a buffer whose file changed marks its status line and leaves its text; switching to one whose file did not change adds no field; and the focus coming back marks every changed buffer"
-      run :=
-        pure <|
-          match noteRewritten with
-          | none => false
-          | some rewritten =>
-            let (both, _) := fedTo rewritten (presses "C-o l")
-            let both := finishNamed both Files.loadJob
-            let (switched, _) := fedTo both (exLine "b note.txt")
-            let switched := finishNamed switched Files.checkJob
-            let (back, _) := fedTo switched (exLine "b lf.txt")
-            let back := finishNamed back Files.checkJob
-            let focused := focusChecked both
-            let noteOf (driver : TestDriver) : Option Bool :=
-              (driver.loop.state.buffer? ⟨1⟩).bind (·.file.map (·.changed.isSome))
-            let lfOf (driver : TestDriver) : Option Bool :=
-              (driver.loop.state.buffer? ⟨2⟩).bind (·.file.map (·.changed.isSome))
-            (showing switched).map (·.buffer.name) == some "note.txt" &&
-              statusOf switched == some (named "note.txt" ++ #[changedField]) &&
-              textOf switched == some FileCases.noteText &&
-              statusOf back == some (named "lf.txt") &&
-              noteOf focused == some true &&
-              lfOf focused == some false },
-    { name :=
-        "with no check job registered nothing is checked: the focus coming back and a first edit start nothing"
-      run :=
-        pure <|
-          match noteOpen with
-          | none => false
-          | some opened =>
-            let rewritten := rewritten opened (inFiles "note.txt") reloadedBytes
-            let (stepped, steps) := fedTo rewritten [.focus false, .focus true, .commit "x"]
-            (steps.all fun step => (step.map (·.starts.isEmpty)).getD false) &&
-              stepped.pending.isEmpty },
-    { name :=
-        "the save criterion, with no check run: a save of a buffer whose file changed on disk writes nothing and says so, both with no check job registered and with the check the first edit started still unfinished; the file keeps the other program's bytes"
-      run :=
-        pure <|
-          match noteOpen, noteRewritten with
-          | some unchecked, some behind =>
-            -- No check job is registered here: the first edit starts none.
-            let changed := rewritten unchecked note reloadedBytes
-            let (saving, _) := fedTo changed ([.commit "x"] ++ presses "C-o w")
-            let refused := finishNamed saving Files.saveJob
-            -- The check the first edit starts is left unfinished.
-            let (pending, _) := fedTo behind [.commit "x"]
-            let (asked, _) := fedTo pending (exLine "w")
-            let held := finishNamed asked Files.saveJob
-            (pendingOf saving Files.checkJob).isNone && (pendingOf saving Files.saveJob).isSome &&
-              bytesOf refused note == some reloadedBytes &&
-              echoOf refused == some (Files.notSaved note (.changed (stampOf changed note))) &&
-              (pendingOf pending Files.checkJob).isSome &&
-              (pendingOf held Files.checkJob).isSome &&
-              (heldFile held).bind (·.changed) == none &&
-              (pendingOf asked Files.saveJob).isSome &&
-              bytesOf held note == some reloadedBytes &&
-              echoOf held == some (Files.notSaved note (.changed (stampOf behind note))) &&
-              textOf held == some ("x" ++ FileCases.noteText)
-          | _, _ => false },
-    { name :=
-        "the mark's state requests: a result for another stamp changes nothing, one for the buffer's stamp marks it, one that finds that stamp clears it, telling sets told, and a save that wrote the file clears it"
-      run :=
-        pure <|
-          match noteRewritten with
-          | none => false
-          | some rewritten =>
-            let state := rewritten.loop.state
-            match (heldFile rewritten) with
-            | none => false
-            | some file =>
-              let other : File.Stamp := { file.stamp with size := file.stamp.size + 1 }
-              let changedOf (state : EditorState) :=
-                (state.buffer? ⟨1⟩).bind (·.file.bind (·.changed))
-              let (_, stale) := state.markChanged ⟨1⟩ other (some other) false
-              let (_, marked) := state.markChanged ⟨1⟩ file.stamp (some other) false
-              let (_, cleared) := marked.markChanged ⟨1⟩ file.stamp (some file.stamp) false
-              let (_, told) := marked.tellChanged ⟨1⟩
-              let (_, began) := told.beginSave ⟨1⟩ ⟨0⟩ ⟨0⟩
-              let (_, saved) := began.endSave ⟨1⟩ ⟨0⟩ (some other)
-              let text := ((state.buffer? ⟨1⟩).map (·.text)).getD ⟨0⟩
-              changedOf stale == none &&
-                changedOf marked == some { found := some other, told := false } &&
-                changedOf cleared == none &&
-                changedOf told == some { found := some other, told := true } &&
-                (marked.untold? text).isSome &&
-                (told.untold? text).isNone &&
-                changedOf saved == none }]
-
-/-- `reloadDriver` whose watches may be made in `fileRoot`, with `note.txt`
-open in view 0 and its load finished. -/
-def watchedNote : Option TestDriver :=
-  reloadDriver.map fun driver =>
-    let driver :=
-      { driver with
-        jobs :=
-          { driver.jobs with
-            fileWatches := { driver.jobs.fileWatches with directories := #[fileRoot] } } }
-    finishNamed (fedTo driver (presses "C-o n")).1 Files.loadJob
-
-/-- The checks of auto-reload (`Editor/Loop.lean`, "Auto-reload"), on the
-loop's driver over the editor's models, the model of files and the model of
-watches, whose waiting jobs it holds parked (`Loop.Driver.touch`). -/
-def autoReloadChecks : List Check :=
-  let textOf (driver : TestDriver) : Option String := (showing driver).bind (·.text)
-  let note := inFiles "note.txt"
-  [{  name :=
-        "criterion 7: with auto-reload off no file buffer has a watch open: through opening two files, switching, the focus going and coming, an edit, a reload, closing one and a change on disk, no follow job is started, none is parked, and the watch model started none; with autoread two are open, bd ends one and noautoread the other"
-      run :=
-        pure <|
-          match watchedNote with
-          | none => false
-          | some opened =>
-            let (two, s1) := fedTo opened (presses "C-o l")
-            let two := finishNamed two Files.loadJob
-            let (switched, s2) := fedTo two (exLine "b note.txt")
-            let (focused, s3) :=
-              fedTo (finishNamed switched Files.checkJob) [.focus false, .focus true]
-            let (edited, s4) := fedTo (finishNamed focused Files.checkJob) (presses "C-o x")
-            let (reloading, s5) := fedTo (finishNamed edited Files.checkJob) (presses "C-o R")
-            let (closed, s6) := fedTo (finishNamed reloading Files.reloadJob) (exLine "bd lf.txt")
-            let touched := (rewritten closed note reloadedBytes).touch #[(note, .written)]
-            let steps := s1 ++ s2 ++ s3 ++ s4 ++ s5 ++ s6
-            let (on, _) := fedTo two (exLine "autoread")
-            let (one, _) := fedTo on (exLine "bd lf.txt")
-            let (off, _) := fedTo one (exLine "noautoread")
-            !(startNames steps).contains Files.followJob &&
-              [two, switched, focused, edited, reloading, closed, touched].all
-                (fun driver =>
-                  driver.openWatches == 0 && driver.jobs.fileWatches.next == 1 &&
-                    driver.jobs.fileWatches.ended.isEmpty) &&
-              on.openWatches == 2 &&
-              one.openWatches == 1 &&
-              off.openWatches == 0 &&
-              off.jobs.fileWatches.ended.size == 2 },
-    { name :=
-        "criterion 8: with auto-reload on, an injected change shows the file's new text: one watch is parked, the change resumes it, its follow finishes and reloads, and the buffer then holds the new text with no modified or changed field, and a watch parked again"
-      run :=
-        pure <|
-          match watchedNote with
-          | none => false
-          | some opened =>
-            let (on, _) := fedTo opened (exLine "autoread")
-            let changed := (rewritten on note reloadedBytes).touch #[(note, .written)]
-            let followed := finishNamed changed Files.followJob
-            let reloaded := finishNamed followed Files.reloadJob
-            -- After the reload the follow is on the new stamp: a later
-            -- change to the buffer, now edited, marks it.
-            let (edited, _) := fedTo reloaded (presses "C-o x")
-            let edited := finishNamed edited Files.checkJob
-            let again := rewritten edited note ("again\n".toUTF8 ++ reloadedBytes)
-            let marked := finishNamed (again.touch #[(note, .written)]) Files.followJob
-            on.openWatches == 1 && (pendingOf changed Files.followJob).isSome &&
-              (pendingOf followed Files.reloadJob).isSome &&
-              textOf reloaded == some reloadedText &&
-              statusOf reloaded == some (named "note.txt") &&
-              reloaded.openWatches == 1 &&
-              statusOf marked == some (namedModified "note.txt" ++ #[changedField]) &&
-              marked.openWatches == 1 },
-    { name :=
-        "a deleted file is marked and waited on: no reload, the text kept, the changed field with nothing found, one watch parked and a further step starts no follow; the file put back is reloaded"
-      run :=
-        pure <|
-          match watchedNote with
-          | none => false
-          | some opened =>
-            let (on, _) := fedTo opened (exLine "autoread")
-            let gone := finishNamed ((removed on note).touch #[(note, .removed)]) Files.followJob
-            let (later, steps) := fedTo gone [.preedit ""]
-            let back :=
-              finishNamed ((rewritten later note reloadedBytes).touch #[(note, .created)])
-                Files.followJob
-            let reloaded := finishNamed back Files.reloadJob
-            (pendingOf gone Files.reloadJob).isNone && textOf gone == some FileCases.noteText &&
-              statusOf gone == some (named "note.txt" ++ #[changedField]) &&
-              ((heldFile gone).bind (·.changed)).map (·.found) == some none &&
-              gone.openWatches == 1 &&
-              !(startNames steps).contains Files.followJob &&
-              textOf reloaded == some reloadedText &&
-              statusOf reloaded == some (named "note.txt") },
-    { name :=
-        "criterion 10 on the model: a modified buffer keeps its text and is marked, the follow armed again on what was found, so a touch with no further change starts nothing; two changes leave one parked watch, the mark on the second stamp"
-      run :=
-        pure <|
-          match watchedNote with
-          | none => false
-          | some opened =>
-            let (on, _) := fedTo opened (exLine "autoread")
-            let (edited, _) := fedTo on (presses "C-o x")
-            let edited := finishNamed edited Files.checkJob
-            let first := rewritten edited note reloadedBytes
-            let marked := finishNamed (first.touch #[(note, .written)]) Files.followJob
-            let quiet := marked.touch #[(note, .written)]
-            let second := rewritten quiet note ("again\n".toUTF8 ++ reloadedBytes)
-            let twice := finishNamed (second.touch #[(note, .written)]) Files.followJob
-            let (later, steps) := fedTo twice [.preedit ""]
-            textOf marked == some ("x" ++ FileCases.noteText) &&
-              (pendingOf marked Files.reloadJob).isNone &&
-              statusOf marked == some (namedModified "note.txt" ++ #[changedField]) &&
-              (pendingOf quiet Files.followJob).isNone &&
-              quiet.openWatches == 1 &&
-              ((heldFile twice).bind (·.changed)).map (·.found) == some (stampOf twice note) &&
-              twice.openWatches == 1 &&
-              (pendingOf twice Files.followJob).isNone &&
-              !(startNames steps).contains Files.followJob &&
-              later.openWatches == 1 },
-    { name :=
-        "a refused watch is said in words and says how to retry: the echo area has the refusal's sentence, not its constructor, and that auto-reload is off for the buffer until noautoread then autoread, which starts a follow again"
-      run :=
-        pure <|
-          -- No directory may be watched here, so the follow's watch is
-          -- refused.
-          match reloadDriver with
-          | none => false
-          | some fresh =>
-            let opened := finishNamed (fedTo fresh (presses "C-o n")).1 Files.loadJob
-            let (on, _) := fedTo opened (exLine "autoread")
-            let refused := finishNamed on Files.followJob
-            let (later, steps) := fedTo refused [.preedit ""]
-            let (off, _) := fedTo later (exLine "noautoread")
-            let (retried, _) := fedTo off (exLine "autoread")
-            let error : FileWatchError := .notFound s!"cannot watch {note}: {fileRoot} is not there"
-            (pendingOf on Files.followJob).isSome &&
-              echoOf refused == some (Files.notFollowing note error.describe) &&
-              (echoOf refused).map (·.endsWith Files.followRetry) == some true &&
-              !((echoOf refused).getD "").contains "FileWatchError" &&
-              !(startNames steps).contains Files.followJob &&
-              (pendingOf retried Files.followJob).isSome },
-    { name :=
-        "config's setting decides while no command has: under it the next step arms the watches, and noautoread then wins over it"
-      run :=
-        pure <|
-          match watchedNote with
-          | none => false
-          | some opened =>
-            let configured :=
-              { opened with
-                keys :=
-                  { opened.keys with
-                    registered := { opened.keys.registered with autoReload := true } } }
-            let (armed, _) := fedTo configured [.preedit ""]
-            let (off, _) := fedTo armed (exLine "noautoread")
-            armed.openWatches == 1 && off.openWatches == 0 }]
 
 /-- The text of the decoration checks: a hundred rows of `foo` and the row's
 number, more than a view of the decoration checks' frame shows

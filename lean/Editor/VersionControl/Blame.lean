@@ -3,7 +3,6 @@ import Editor.Command.Call
 import Editor.Mode
 import Editor.VersionControl.Git
 import Editor.VersionControl.Review
-import Editor.VersionControl.Show
 import Editor.VersionControl.Status
 import Editor.VersionControl.Views
 
@@ -242,7 +241,7 @@ def blameCommand (call : Call) : EditorM Unit := do
   let state ← editorState
   let some path :=
     ((state.buffer? call.target.window.buffer).bind (·.file)).bind fun file =>
-      relativeTo read.root
+      Gutter.relativeTo read.root
         file.path | message s!"{blameName}: {call.target.buffer.name} has no file in {read.label}"
   if let some why := (Request.blame revision path).invalid? then
     message s!"{blameName}: {why}"

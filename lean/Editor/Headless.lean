@@ -759,7 +759,7 @@ inductive Request where
   /-- Print whether the last rows query about the focused view, at what it
   was published with, matches the frame the display laid out. -/
   | agree
-  /-- Run the open command (`Files.openName`) with the path `path`: the
+  /-- Run the open command (`FileJobs.openFileCommand`) with the path `path`: the
   window mode's first request when it was given a file. -/
   | «open» (path : String)
   /-- Say `text` in the echo area (`Running.said`): what the window mode has
@@ -2203,7 +2203,8 @@ def request (collaborators : Collaborators β σ scheme) (running : Running β �
     Request → IO (Running β σ scheme)
   | .reload => running.reduce collaborators .requested
   | .run name => running.run collaborators { command := name }
-  | .open path => running.run collaborators { command := Files.openName, arguments := [.str path] }
+  | .open path =>
+    running.run collaborators { command := FileJobs.openFileCommand, arguments := [.str path] }
   | .say text => return running.said text
   | .spawn name => running.spawn collaborators name
   | .show => do

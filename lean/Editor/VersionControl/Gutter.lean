@@ -1,6 +1,7 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.Files
+import Editor.Gutter.Track
 import Editor.VersionControl.Git
 import Editor.VersionControl.Show
 
@@ -20,8 +21,9 @@ hunks (`Diff.hunks`, `Editor/Diff.lean`), each time the buffer has changed.
 
 A buffer is tracked when it has a file, and its workspace is a local root
 that can run commands and is a repository (it has a `Workspace.branch`, a
-detached `HEAD` included), with the file under the root; and only where the host registered the gutter's jobs,
-the same gate auto-reload uses. An excerpt buffer and a buffer with no
+detached `HEAD` included), with the file under the root; and only where the
+host registered the gutter's jobs, the same gate auto-reload uses
+(`Gutter.trackedFile?`, `Editor/Gutter/Track.lean`). An excerpt buffer and a buffer with no
 file have none. The column appears once `HEAD`'s content has arrived, with
 no mark until its diff lands; a file `HEAD` lacks (untracked, new, an
 unborn branch) has no gutter and no column, nor does one whose fetch
@@ -29,31 +31,11 @@ failed: a gutter failure is not said, since nothing was asked.
 
 ## The reconciler
 
-`reconcile`, after each publish (`Loop.Stepped.published`, after auto-reload's),
-keeps `EditorState.tracked` and `EditorState.refWatches` in step with what is
-wanted. It is pure but for the text port, where it takes the snapshots the
-diffs are asked with:
-
-- **A new tracked buffer** gets a head fetch, the job `vc-gutter-head`, keyed
-  by the buffer (`headKey`).
-- **A stale one** (its repository moved, `vc-gutter-moved`) gets another
-  fetch, under a new epoch, so the reply of an older one is ignored. One
-  that moved while a fetch is in flight waits for that fetch's content,
-  then fetches again.
-- **A diff** (the job `vc-gutter-diff`, keyed by the buffer, `diffKey`) is
-  started when `HEAD`'s content is held, no fetch and no diff is in flight,
-  and the buffer's text is at a revision not diffed against it. So a diff's
-  epoch names the head it reads: none is started against a head a fetch in
-  flight will replace. One diff in flight
-  a buffer bounds the work with no timer: an edit made while one is in
-  flight is diffed when it lands, at the next publish. Between the two the
-  marks are carried through the edits.
-- **A repository** with a tracked buffer gets one watch job, `vc-gutter-refs`,
-  keyed by its root (`refsKey`); its last buffer gone, the job is cancelled.
-  A refused watch is not tried again while it has a buffer.
-- **A buffer no longer wanted** (closed, its file's path changed, its
-  workspace gone) has its jobs cancelled, its snapshots released, and its
-  gutter taken away.
+The reconciler that decides which buffers are tracked and starts and
+cancels these jobs after each publish is the core's
+(`Gutter.reconcile`, `Editor/Gutter/Track.lean`), as are the jobs' names,
+keys and orders (`Gutter.headJob`, `HeadOrder`, …); this module defines its
+names from those, registers the jobs under them, and works them.
 
 ## The jobs
 
@@ -88,40 +70,32 @@ them, `-` in `diff.removed`. The glyphs read on a grid of cells, as the
 headless mode draws one.
 
 Pinned by `ModelTest.gutterChecks` on the models and `ConfigTest.gutterChecks`
-over real git, the library's watch service and its diff engine.
+over real git, the library's watch service and its diff engine; the
+reconciler alone by `ModelTest.gutterTrackChecks`.
 -/
 
 namespace Editor.VersionControl
 
-/-- The name of the job that fetches a buffer's file at `HEAD`. -/
+/-- The name of the job that fetches a buffer's file at `HEAD`: the core's
+(`Gutter.headJob`, `Editor/Gutter/Track.lean`), which the loop's reconciler
+starts. -/
 def headJob : String :=
-  "vc-gutter-head"
+  Gutter.headJob
 
-/-- The name of the job that diffs a buffer against its file at `HEAD`. -/
+/-- The name of the job that diffs a buffer against its file at `HEAD`: the
+core's (`Gutter.diffJob`). -/
 def diffJob : String :=
-  "vc-gutter-diff"
+  Gutter.diffJob
 
 /-- The name of the job that watches a repository for `HEAD` or the index
-moving. -/
+moving: the core's (`Gutter.refsJob`). -/
 def refsJob : String :=
-  "vc-gutter-refs"
+  Gutter.refsJob
 
 /-- The name of the command the watch job posts when `HEAD` or the index of
-its repository may have moved. -/
+its repository may have moved: the core's (`Gutter.movedName`). -/
 def movedName : String :=
-  "vc-gutter-moved"
-
-/-- The key of the head fetch of `buffer`. -/
-def headKey (buffer : BufferId) : String :=
-  s!"{headJob} {buffer.index}"
-
-/-- The key of the diff of `buffer`. -/
-def diffKey (buffer : BufferId) : String :=
-  s!"{diffJob} {buffer.index}"
-
-/-- The key of the watch of the repository at `root`. -/
-def refsKey (root : System.FilePath) : String :=
-  s!"{refsJob} {(Location.local root).describe}"
+  Gutter.movedName
 
 /-- The face of the marks of lines added. -/
 def addedFace : FaceName :=
@@ -145,67 +119,11 @@ def marksOf (hunks : Diff.Hunks) : Array GutterMark :=
     | .removed =>
       { start := hunk.newStart, stop := hunk.newStart, text := "-", face := removedFace }
 
-/-! ## The orders -/
-
-/-- What a head fetch is started with. -/
-structure HeadOrder where
-  /-- The buffer. -/
-  buffer : BufferId
-  /-- The fetch's epoch. -/
-  epoch : Nat
-  /-- The repository's root. -/
-  root : System.FilePath
-  /-- The git program. -/
-  git : String
-  /-- The file's path, relative to the root. -/
-  path : String
-  deriving DecidableEq, Repr
-
-/-- The order as the arguments a job is started with. -/
-def HeadOrder.arguments (order : HeadOrder) : List Argument :=
-  [.nat order.buffer.index, .nat order.epoch, .str order.root.toString, .str order.git,
-    .str order.path]
-
-/-- The order `arguments` are, if they are one. -/
-def HeadOrder.ofArguments? : List Argument → Option HeadOrder
-  | [.nat buffer, .nat epoch, .str root, .str git, .str path] =>
-    some { buffer := ⟨buffer⟩, epoch, root, git, path }
-  | _ => none
-
-/-- What a diff is started with. -/
-structure DiffOrder where
-  /-- The buffer. -/
-  buffer : BufferId
-  /-- The epoch of the head it diffs against. -/
-  epoch : Nat
-  /-- The snapshot of the file at `HEAD`. -/
-  head : SnapshotId
-  /-- The snapshot of the buffer's text. -/
-  taken : SnapshotId
-  /-- The revision of the buffer's text it was taken at. -/
-  revision : Nat
-  deriving DecidableEq, Repr
-
-/-- The order as the arguments a job is started with. -/
-def DiffOrder.arguments (order : DiffOrder) : List Argument :=
-  [.nat order.buffer.index, .nat order.epoch, .nat order.head.index, .nat order.taken.index,
-    .nat order.revision]
-
-/-- The order `arguments` are, if they are one. -/
-def DiffOrder.ofArguments? : List Argument → Option DiffOrder
-  | [.nat buffer, .nat epoch, .nat head, .nat taken, .nat revision] =>
-    some { buffer := ⟨buffer⟩, epoch, head := ⟨head⟩, taken := ⟨taken⟩, revision }
-  | _ => none
-
-/-- What a watch of a repository is started with: its root and the git
-program. -/
-def refsArguments (root : System.FilePath) (git : String) : List Argument :=
-  [.str root.toString, .str git]
-
 /-! ## The jobs and what they come to -/
 
 /-- The command a head fetch finishes with ("The jobs", in the module docs). -/
-def headFetched (order : HeadOrder) (reply : Except Error (Option String)) : EditorM Unit := do
+def headFetched (order : Gutter.HeadOrder) (reply : Except Error (Option String)) : EditorM Unit :=
+  do
   let state ← editorState
   let some entry :=
     state.tracked.find? fun entry =>
@@ -231,12 +149,13 @@ def headFetched (order : HeadOrder) (reply : Except Error (Option String)) : Edi
 arguments that are not an order. -/
 def headWork (arguments : List Argument) : Work := fun _ => do
   let some order :=
-    HeadOrder.ofArguments? arguments | throw s!"{headJob}: its arguments are not a head order"
+    Gutter.HeadOrder.ofArguments?
+      arguments | throw s!"{headJob}: its arguments are not a head order"
   return headFetched order
       (← Program.runM (Git.handler order.git order.root) (fileAt "HEAD" order.path))
 
 /-- The command a diff finishes with ("The jobs", in the module docs). -/
-def diffed (order : DiffOrder) (reply : Except DiffError Diff.Hunks) : EditorM Unit := do
+def diffed (order : Gutter.DiffOrder) (reply : Except DiffError Diff.Hunks) : EditorM Unit := do
   order.taken.release
   let state ← editorState
   let latest :=
@@ -252,7 +171,8 @@ def diffed (order : DiffOrder) (reply : Except DiffError Diff.Hunks) : EditorM U
 arguments that are not an order. -/
 def diffWork (arguments : List Argument) : Work := fun _ => do
   let some order :=
-    DiffOrder.ofArguments? arguments | throw s!"{diffJob}: its arguments are not a diff order"
+    Gutter.DiffOrder.ofArguments?
+      arguments | throw s!"{diffJob}: its arguments are not a diff order"
   return diffed order
       (← Diff.hunks (.snapshot order.head) (.snapshot order.taken) Files.diffLineLimit)
 
@@ -297,106 +217,5 @@ again. -/
 def movedCommand (call : Call) : EditorM Unit := do
   if let .str root :: _ := call.arguments then
     discard <| EditorState.ask (.gutter (.moved root))
-
-/-! ## The reconciler -/
-
-/-- The root and the path relative to it of the file of the buffer `id`, when
-it is a tracked file ("Which buffers", in the module docs): it has a file,
-and its workspace is a local root that can run commands and is a
-repository, with the file under the root. The gutter tracks these
-buffers, and a hunk is staged in them (`Editor/VersionControl/Stage.lean`). -/
-def trackedFile? (state : EditorState) (id : BufferId) : Option (System.FilePath × String) := do
-  let buffer ← state.buffer? id
-  let file ← buffer.file
-  let (workspace, _) ← state.workspaceOf? id
-  let .local root := workspace.location | none
-  if !workspace.location.can.runCommands || workspace.branch.isNone then
-    none
-  let path ← relativeTo root file.path
-  return (root, path)
-
-/-- The buffers `state` wants tracked ("Which buffers", in the module docs):
-each with its root and its file's path relative to it (`trackedFile?`). -/
-def wantedBuffers (state : EditorState) : Array (BufferId × System.FilePath × String) :=
-  (List.range state.buffers.size).toArray.filterMap fun index => do
-    let id : BufferId := ⟨index⟩
-    let (root, path) ← trackedFile? state id
-    return (id, root, path)
-
-/-- The version-control gutter's reconciler ("The reconciler", in the module
-docs): the state with what it tracks and watches in step with what it
-wants, the jobs to start, and the keys of those to cancel. `registered`
-says which jobs the host registered, and `git` is the git program. -/
-def reconcile (registered : String → Bool) (git : String) (state : EditorState) :
-    TextM (EditorState × Array JobStart × Array String) := do
-  let on := [headJob, diffJob, refsJob].all registered
-  let wanted := if on then wantedBuffers state else #[]
-  let wants (entry : Tracked) : Bool :=
-    wanted.any fun (id, root, path) =>
-      id == entry.buffer && root == entry.root && path == entry.path
-  let mut state := state
-  let mut starts : Array JobStart := #[]
-  let mut cancels : Array String := #[]
-  -- What is no longer wanted gives up its jobs, its snapshots and its
-  -- gutter.
-  for entry in state.tracked.filter (!wants ·) do
-    cancels := cancels.push (headKey entry.buffer) |>.push (diffKey entry.buffer)
-    if let some head := entry.head then
-      head.release
-    if let some (_, taken) := entry.diffing then
-      taken.release
-    state := (state.setGutter entry.buffer none).2
-  let kept := state.tracked.filter wants
-  let added : Array Tracked :=
-    (wanted.filter fun (id, _, _) => !kept.any (·.buffer == id)).map fun (buffer, root, path) =>
-      { buffer, root, path, git }
-  let mut tracked : Array Tracked := #[]
-  for entry in kept ++ added do
-    let mut entry := entry
-    let mut fetch := added.any (·.buffer == entry.buffer)
-    if entry.stale && !entry.fetching then
-      entry :=
-        { entry with
-          stale := false, fetching := true, epoch := entry.epoch + 1 }
-      fetch := true
-    if fetch then
-      starts :=
-        starts.push
-          { name := headJob, key := some (headKey entry.buffer)
-            arguments :=
-              HeadOrder.arguments
-                { buffer := entry.buffer, epoch := entry.epoch, root := entry.root, git := entry.git
-                  path := entry.path } }
-    if let some head := entry.head then
-      if entry.diffing.isNone && !entry.fetching then
-        if let some buffer := state.buffer? entry.buffer then
-          let revision ← buffer.text.revision
-          if entry.diffed != some revision then
-            let taken ← buffer.text.snapshot
-            entry := { entry with diffing := some (revision, taken) }
-            starts :=
-              starts.push
-                { name := diffJob, key := some (diffKey entry.buffer)
-                  arguments :=
-                    DiffOrder.arguments
-                      { buffer := entry.buffer, epoch := entry.epoch, head, taken, revision } }
-    tracked := tracked.push entry
-  -- One watch a repository with a tracked buffer.
-  let roots :=
-    tracked.foldl
-      (fun (roots : Array System.FilePath) entry =>
-        if roots.contains entry.root then roots else roots.push entry.root)
-      #[]
-  let watching := state.refWatches.filter (roots.contains ·.root)
-  for watch in state.refWatches.filter (!roots.contains ·.root) do
-    cancels := cancels.push (refsKey watch.root)
-  let arming := roots.filter fun root => !watching.any (·.root == root)
-  for root in arming do
-    starts :=
-      starts.push
-        { name := refsJob, key := some (refsKey root), arguments := refsArguments root git }
-  return ({ state with
-        tracked, refWatches := watching ++ arming.map fun root => { root } },
-      starts, cancels)
 
 end Editor.VersionControl

@@ -8,15 +8,15 @@ import Editor.Config.Owner
 import Editor.Config.Stores
 import Editor.Event
 import Editor.Ex
-import Editor.Files
+import Editor.FileJobs
 import Editor.Gutter
+import Editor.Gutter.Track
 import Editor.InputScheme
 import Editor.Key.Notation
 import Editor.Marks.Follow
 import Editor.ModeLine
 import Editor.Restore
 import Editor.State
-import Editor.VersionControl.Gutter
 
 /-!
 # The command loop
@@ -853,7 +853,7 @@ is queued, and marks that event. What the loop does with the flag is here
 | `focus gained` | Sets whether the frame has the keyboard focus. A gain starts a check of every file buffer after the publish ("Files that changed on disk") |
 | `closeRequested` | Runs the quit rule (`Ex.closeRequested`) as a delivered command is run (`Loop.deliver`), labelled `quit`: it publishes a scene, and says stop only once the editor leaves ("Quit") |
 | `quit` | Nothing: the step says stop, and publishes nothing |
-| `openFiles paths` | Runs `open-file` (`Files.openName`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
+| `openFiles paths` | Runs `open-file` (`FileJobs.openFileCommand`, `Editor/FileJobs.lean`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
 | `quitRequested` | Remembers that the system asked to quit (`EditorState.systemQuit`) and runs `quit` (`Ex.quitName`) with no arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The step says stop when the editor leaves; otherwise the publish asks the frame `keepRunning` once ("Quit") |
 | `menu name` | Tells the scheme that a menu item named the command `name`, with no arguments, for the focused view (`InputScheme.invoked`), and runs the invocation it hands back as one no key yielded, in the focused window, with the report of the scheme's state it hands back: guarded, rolled back and published as every command is, and config's command of the name runs in its place. A name no command is registered under says so, as an invocation does. The scheme's states are then as after a key: a command that runs to its end keeps the state handed back, which is the state at rest when nothing is pending, and one that does not puts the scheme back at rest. A scheme that treats no menu item apart hands back the invocation and the state as they were, so the command `name` runs |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
@@ -1049,8 +1049,11 @@ Every edit the loop makes for an input event carries `Origin.user`.
 
 The editor watches no file unless auto-reload is on, and it is off by
 default: what notices that another program changed a buffer's file is a
-check, one stat a file (`Files.checkWork`, `Editor/Files.lean`), which the
-loop asks for at three moments, and a save's own check.
+check, one stat a file, which the loop asks for at three moments, and a
+save's own check. The loop names the job and its order by the core's
+`Editor/FileJobs.lean` (`FileJobs.checkJob`, `FileJobs.Checked`), and the
+files feature registers and works it (`Files.checkWork`,
+`Editor/Files.lean`).
 
 - **When.** After each publish, `Loop.fileJobs` compares the state with
   `Loop.seen`, what the last publish saw (`Loop.seenOf`: whether the frame
@@ -1078,8 +1081,9 @@ loop asks for at three moments, and a save's own check.
   `Guarded.superseded` (`Editor/Command/Dispatch.lean`). It is rolled back
   as one that gave up is; then the told flag is set on the restored state,
   so it survives the rollback, and the echo area reads
-  `Files.changedOnDisk`, which names `:e`, or for a file that is gone
-  `Files.goneFromDisk`, which names `:w!`, with no command name before it.
+  `FileJobs.changedOnDisk`, which names `:e`, or for a file that is gone
+  `FileJobs.goneFromDisk`, which names `:w!`, with no command name before
+  it.
   A committed text is dropped the same way (`handle`).
 - **The next edit lands**, since the user was told, as Emacs's supersession
   check lets the next modification through. The mark stays, and a save is
@@ -1090,7 +1094,8 @@ loop asks for at three moments, and a save's own check.
   marks the buffer and says so. Emacs stats synchronously at the first
   modification; the editor thread never blocks on I/O.
 
-Pinned by `ModelTest.stalenessChecks`.
+Pinned by `ModelTest.loopFileJobChecks` on stand-in works, and with the
+files feature by its `ModelTest.stalenessChecks`.
 
 ## Auto-reload
 
@@ -1108,7 +1113,8 @@ auto-reload is on.** A config's own jobs may still watch, as a plugin would.
   `Loop.fileJobs`) keeps `EditorState.following` in step with what is
   wanted: every open file buffer with no save in flight, while the mode is
   on and `follow-file` is registered, and nothing otherwise. A buffer
-  wanted and not followed gets a `follow-file` start of the key
+  wanted and not followed gets a `follow-file` start (`FileJobs.followJob`,
+  its order `FileJobs.FollowOrder`) of the key
   `follow <buffer>` (`JobStart.key`); one followed and no longer wanted (the
   mode off, the buffer closed, its path changed, a save started) gets a
   cancel of its key (`Loop.Stepped.cancels`). One whose buffer's stamp
@@ -1120,7 +1126,7 @@ auto-reload is on.** A config's own jobs may still watch, as a plugin would.
   `Loop.Driver`): starting a job of a key cancels the running job of that
   key, and a cancel ends the job of its key, even one that has finished
   and not been delivered, so its command never runs (`Job.Jobs.cancel`).
-- **The follow job** (`Files.followWork`) starts a watch on the file, with
+- **The follow job** (`Files.followWork`, the files feature's) starts a watch on the file, with
   a window of 50 ms and a bound of one path, then stats the file, and
   waits for the next delivery while the stat answers what its order
   expected: the last stamp found, which is the buffer's own unless it is
@@ -2670,8 +2676,8 @@ def insert (target : Target) (text : String) : TextM Unit :=
 refused because its file changed on disk, or, with `found = none`, is
 gone. -/
 def supersededSays (path : System.FilePath) : Option File.Stamp → String
-  | some _ => Files.changedOnDisk path
-  | none => Files.goneFromDisk path
+  | some _ => FileJobs.changedOnDisk path
+  | none => FileJobs.goneFromDisk path
 
 /-- `state` once the commit of `text` into an excerpt buffer, `excerpt`,
 shown by `target`, is dropped or inserted ("What each event does", in the
@@ -3134,7 +3140,7 @@ buffer with no save in flight, when the frame gained the keyboard focus;
 otherwise one shown now that was open and shown by no view then, and one
 modified now that was open and unmodified then. A buffer opened since is
 not due: its stamp is a moment old. -/
-def dueChecks (seen : Seen) (state : EditorState) : Array Files.Checked :=
+def dueChecks (seen : Seen) (state : EditorState) : Array FileJobs.Checked :=
   let now := seenOf state
   let gained := now.focused && !seen.focused
   now.present.filterMap fun id => do
@@ -3157,7 +3163,8 @@ file buffer with no save in flight while auto-reload is in effect and
 and is not armed again, while it is wanted. -/
 def reconcile (state : EditorState) (keys : Keys scheme) :
     EditorState × Array JobStart × Array String :=
-  let on := state.autoReload.getD keys.registered.autoReload && keys.registered.jobs Files.followJob
+  let on :=
+    state.autoReload.getD keys.registered.autoReload && keys.registered.jobs FileJobs.followJob
   let wanted : Array (BufferId × Buffer.File) :=
     if on then
       (seenOf state).present.filterMap fun id => do
@@ -3175,9 +3182,9 @@ def reconcile (state : EditorState) (keys : Keys scheme) :
   let arming := wanted.filter fun (id, _) => !kept.any (·.buffer == id)
   let starts : Array JobStart :=
     arming.map fun (id, file) =>
-      { name := Files.followJob
+      { name := FileJobs.followJob
         arguments :=
-          Files.FollowOrder.arguments
+          FileJobs.FollowOrder.arguments
             { buffer := id, path := file.path, stamp := file.stamp
               expected := (file.changed.map (·.found)).getD (some file.stamp) }
         key := some (Following.keyOf id) }
@@ -3195,8 +3202,8 @@ def fileJobs (loop : Loop scheme) (keys : Keys scheme) :
     Loop scheme × Array JobStart × Array String :=
   let due := dueChecks loop.seen loop.state
   let checks :=
-    if keys.registered.jobs Files.checkJob && !due.isEmpty then
-      #[{ name := Files.checkJob, arguments := Files.checkArguments due }]
+    if keys.registered.jobs FileJobs.checkJob && !due.isEmpty then
+      #[{ name := FileJobs.checkJob, arguments := FileJobs.checkArguments due }]
     else #[]
   let (state, follows, cancels) := reconcile loop.state keys
   ({ loop with
@@ -3404,7 +3411,7 @@ job (`Keys.inlineMatches`): its loop is
 the one the publish left, with the file jobs it starts and cancels
 (`fileJobs`) after the step's own, then the open prompt's jobs it starts,
 cancels and spawns (`completionJobs`), then the version-control gutter's
-(`VersionControl.reconcile`), handed the git program of the workspace
+(`Gutter.reconcile`, `Editor/Gutter/Track.lean`), handed the git program of the workspace
 settings `keys` was told of (`Registered.workspaceSettings`, what the
 version-control commands ask for), then the session journal's orders, its
 index write and the modes a restore deferred (`Restore.journalOrders`,
@@ -3419,7 +3426,7 @@ def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM 
   let (loop, starts, cancels) := loop.fileJobs keys
   let (loop, sourceStarts, sourceCancels, spawns) := loop.completionJobs keys
   let (state, gutterStarts, gutterCancels) ←
-    VersionControl.reconcile keys.registered.jobs keys.registered.workspaceSettings.git loop.state
+    Gutter.reconcile keys.registered.jobs keys.registered.workspaceSettings.git loop.state
   let loop := { loop with state }
   let reconciled ←
     Restore.journalOrders loop.state (keys.registered.jobs Restore.restoreJob)
@@ -3600,7 +3607,7 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
   | .openFiles (path :: rest) =>
     -- An invocation no key yielded, run as every command is, in the
     -- focused window: config's command of the name runs in its place.
-    loop.invoke keys { command := Files.openName, arguments := (path :: rest).map .str }
+    loop.invoke keys { command := FileJobs.openFileCommand, arguments := (path :: rest).map .str }
   | .quitRequested =>
     -- The system's quit is remembered first, so that a `quit` that is
     -- refused or interrupted rolls back to a state that still holds it,

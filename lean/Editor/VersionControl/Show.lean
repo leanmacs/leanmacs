@@ -1,5 +1,6 @@
 import Editor.Api
 import Editor.Command.Call
+import Editor.Gutter.Track
 import Editor.Language
 import Editor.VersionControl.Git
 import Editor.VersionControl.Views
@@ -103,11 +104,6 @@ def showTarget (text : String) : String × Option String :=
     | revision :: rest => (revision, some (" ".intercalate rest))
     | [] => ("HEAD", none)
 
-/-- `path`, which is absolute, relative to `root`, when it is under it. -/
-def relativeTo (root path : System.FilePath) : Option String :=
-  let lead := root.toString ++ if root.toString.endsWith "/" then "" else "/"
-  if path.toString.startsWith lead then some (path.toString.drop lead.length).toString else none
-
 /-- The command a finished read hands the loop ("What the read comes to", in
 the module docs). -/
 def revisionShown (order : ShowOrder) (reply : Except Error (Option String)) : EditorM Unit := do
@@ -153,7 +149,8 @@ def showCommand (call : Call) : EditorM Unit := do
     message s!"{showName}: {workspace.label} cannot run commands"
     return
   let path? :=
-    path? <|> ((state.buffer? buffer).bind (·.file)).bind fun file => relativeTo root file.path
+    path? <|>
+      ((state.buffer? buffer).bind (·.file)).bind fun file => Gutter.relativeTo root file.path
   let some path :=
     path? | message s!"{showName}: {call.target.buffer.name} has no file in {workspace.label}"
   let order : ShowOrder :=

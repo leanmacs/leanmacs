@@ -65,6 +65,7 @@ import ModelTest.Editor.Face
 import ModelTest.Editor.Face.Vocabulary
 import ModelTest.Editor.File.Cases
 import ModelTest.Editor.File.Model
+import ModelTest.Editor.FileJobs
 import ModelTest.Editor.FileWatch.Model
 import ModelTest.Editor.Files
 import ModelTest.Editor.Files.Compiled
@@ -74,6 +75,7 @@ import ModelTest.Editor.Fuzzy.Contract
 import ModelTest.Editor.Fuzzy.Model
 import ModelTest.Editor.Grep.Model
 import ModelTest.Editor.Gutter
+import ModelTest.Editor.Gutter.Track
 import ModelTest.Editor.Headless.CommandLine
 import ModelTest.Editor.Highlight
 import ModelTest.Editor.Indent
@@ -596,6 +598,17 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   file (`Editor/Jumps/Go.lean`) on that driver: the index moving at once,
   the cursor at the entry once the load lands, and no entry recorded by
   the visit of a `C-o` or of a jump to a place;
+- `loopFileJobChecks`: when the loop starts the file jobs
+  (`Loop.fileJobs`, `Editor/Loop.lean`) under the core's names, on that
+  driver with stand-in works and no files feature: the focus coming back
+  starts one `check-files` with every file buffer in the core's order, and
+  none with no such job; with auto-reload on and `follow-file` registered
+  each file buffer gets one follow keyed by it, and none with it off or the
+  job not registered;
+- `fileJobChecks`: the names and orders of the file jobs the loop starts
+  (`Editor/FileJobs.lean`), pure: a check's files and a follow's order
+  through their arguments and back, the names, and what the loop says of a
+  first edit refused for a file changed or gone;
 - `openFilesChecks`: the loop's handling of the files a window asks to open
   (`Event.openFiles`, `Editor/Loop.lean`) on that driver: it runs
   `open-file` with the paths, so two paths leave two buffers and the last
@@ -1193,6 +1206,14 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   model does;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
+- `gutterTrackChecks`: the version-control gutter's reconciler, the core's
+  (`Editor/Gutter/Track.lean`), as the pure function it is on states built
+  in the test, with the gutter's job names registered and no version-control
+  job: a tracked buffer's head fetch and its root's watch, nothing tracked
+  with any of the three jobs unregistered, no branch, no file or a file
+  outside the root, a detached HEAD tracked, a diff once a head is held, a
+  closed buffer's jobs cancelled and its head released, and the paths
+  relative to a root;
 - `gutterChecks`: the version-control gutter
   (`Editor/VersionControl/Gutter.lean`) on that driver and the model of
   watches, whose waiting jobs it holds parked: the head fetched, the marks
@@ -1600,6 +1621,8 @@ def checks : List Check :=
     fileCommandChecks ++
     jumpChecks ++
     jumpGoChecks ++
+    loopFileJobChecks ++
+    fileJobChecks ++
     openFilesChecks ++
     languageOpenChecks ++
     dispatchQuitChecks ++
@@ -1675,6 +1698,7 @@ def checks : List Check :=
     worktreeBufferChecks ++
     revisionBufferChecks ++
     gutterCarryChecks ++
+    gutterTrackChecks ++
     gutterChecks ++
     stageHunkChecks ++
     commitBufferChecks ++

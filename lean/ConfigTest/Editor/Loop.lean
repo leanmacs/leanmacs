@@ -13,6 +13,7 @@ import Editor.Ex.Line
 import Editor.Face
 import Editor.Ffi.Events
 import Editor.Ffi.Interrupt
+import Editor.FileJobs
 import Editor.Files
 import Editor.Fuzzy.Real
 import Editor.Headless
@@ -395,7 +396,7 @@ def autoReloadChecks (context : Context) : List Check :=
               let armed ←
                 eventually do
                     return (← session.output.get).any fun line =>
-                        line.startsWith "job " && line.endsWith s!" {Files.followJob}: started"
+                        line.startsWith "job " && line.endsWith s!" {FileJobs.followJob}: started"
               unless armed do
                 return false
               unless ← rewriteFromOutside path new do

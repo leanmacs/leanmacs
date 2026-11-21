@@ -16,7 +16,7 @@ import Editor.Event
 import Editor.Evil.Undo
 import Editor.Ex.Line
 import Editor.File
-import Editor.Files
+import Editor.FileJobs
 import Editor.Floating
 import Editor.GeneratedView
 import Editor.InputScheme
@@ -3758,7 +3758,7 @@ def excerptBufferChecks : List Check :=
             let changed := excerptInvoked driver "one-changed"
             let refused := excerptInvoked changed "edit-both"
             let landed := excerptInvoked refused "edit-both"
-            refused.loop.state.echo == Files.changedOnDisk "one.txt" &&
+            refused.loop.state.echo == FileJobs.changedOnDisk "one.txt" &&
               excerptRead refused "one" == some "one\ntwo\nthree\n" &&
               excerptRead refused "two" == some "alpha\nbeta\n" &&
               excerptRead refused "ex" == some "two\n\nalpha\n" &&
@@ -3774,7 +3774,7 @@ def excerptBufferChecks : List Check :=
             let changed := excerptInvoked driver "one-changed"
             let refused := excerptFed (evilFed changed "i") [.commit "Q"]
             let landed := excerptFed refused [.commit "R"]
-            refused.loop.state.echo == Files.changedOnDisk "one.txt" &&
+            refused.loop.state.echo == FileJobs.changedOnDisk "one.txt" &&
               excerptRead refused "one" == some "one\ntwo\nthree\n" &&
               excerptRead refused "ex" == some "two\n\nalpha\n" &&
               excerptRead landed "one" == some "one\nRtwo\nthree\n" &&

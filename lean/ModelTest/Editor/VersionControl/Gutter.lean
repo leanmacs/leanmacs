@@ -85,7 +85,7 @@ def gutterKeys : Loop.Keys TestScheme.scheme :=
         ("gutter-stale-head", fun call => do
           let state ← editorState
           if let some entry := state.tracked.find? (·.buffer == call.target.window.buffer) then
-            let order : VersionControl.HeadOrder :=
+            let order : Gutter.HeadOrder :=
               { buffer := entry.buffer, epoch := entry.epoch + 1, root := entry.root
                 git := entry.git, path := entry.path }
             VersionControl.headFetched order (.ok (some "stale\n"))
@@ -176,14 +176,6 @@ def gutterChecks : List Check :=
   -- How many watches of `/r` `driver` has started.
   let watchReads (driver : TestDriver) : Nat :=
     (driver.jobs.processes.started.filter (· == watchRun)).size
-  -- Whether `driver` tracks nothing, starts no fetch and no watch, and its
-  -- view 0 shows no gutter and no gutter column.
-  let untracked (driver : TestDriver) : Bool :=
-    driver.loop.state.tracked.isEmpty && driver.loop.state.refWatches.isEmpty &&
-      heads driver == 0 &&
-      watchReads driver == 0 &&
-      ((showing driver).bind (·.buffer.gutter)).isNone &&
-      (gutterView driver).map (·.padding.gutter) == some 0
   -- The marks of `new\na\nB\nc\n` against the committed `a\nB\nc\nd\n`.
   let againstCommit : Array GutterMark :=
     #[{ start := 0, stop := 4, text := "+", face := ⟨"diff.added"⟩ },
@@ -465,28 +457,6 @@ def gutterChecks : List Check :=
                 (trackedShown fetched).map (·.head) == some none &&
                 (snapshotText fetched head).isNone },
     { name :=
-        "where the host registered no gutter jobs, a tracked file's buffer is not tracked: no fetch, no watch, no gutter"
-      run :=
-        pure <|
-          match gutterDriverOf gutterRepository with
-          | none => false
-          | some driver =>
-            let opened := settledAfter { driver with registered := statusJobs } "C-o a"
-            (showing opened).isSome && untracked opened },
-    { name :=
-        "a buffer whose workspace is no repository, found by its .git marker with git saying it is none, so with no branch, is not tracked"
-      run :=
-        pure <|
-          let bare :=
-            { workspaceWorld with
-              repositories :=
-                workspaceWorld.repositories.filter (·.toplevel != ("/r" : System.FilePath)) }
-          match gutterDriverOf gutterRepository (world := bare) with
-          | none => false
-          | some driver =>
-            let opened := settledAfter driver "C-o a"
-            (shownWorkspace opened).any (·.1.branch.isNone) && untracked opened },
-    { name :=
         "a buffer whose repository has HEAD detached is still tracked: a detached HEAD is a branch of the workspace's, and HEAD has the file"
       run :=
         pure <|
@@ -503,21 +473,6 @@ def gutterChecks : List Check :=
             let opened := settledAfter driver "C-o a"
             (shownWorkspace opened).any (·.1.branch == some .detached) &&
               ((trackedShown opened).bind (·.head)).bind (snapshotText opened) == some gutterHead },
-    { name :=
-        "a buffer with no file, though it has the tracked buffer's workspace, and a file in no repository are not tracked"
-      run :=
-        pure <|
-          match gutterDriverOf gutterRepository with
-          | none => false
-          | some driver =>
-            let opened := settledAfter driver "C-o a"
-            let made := settledAfter opened "C-o n"
-            let elsewhere := settledAfter made "C-o x"
-            let buffers (driver : TestDriver) : Array BufferId :=
-              driver.loop.state.tracked.map (·.buffer)
-            (made.loop.state.findBuffer "made").isSome && (buffers opened).size == 1 &&
-              buffers made == buffers opened &&
-              buffers elsewhere == buffers opened },
     { name := "a change to an object or a lock file alone in the git directory posts nothing"
       run :=
         pure <|
@@ -528,22 +483,6 @@ def gutterChecks : List Check :=
             let touched :=
               opened.touch
                 #[("/r/.git/objects/ab/cdef", .created), ("/r/.git/index.lock", .created)]
-            touched.posting.isEmpty && touched.openWatches == 1 },
-    { name :=
-        "closing the buffer cancels its jobs, releases its snapshot of HEAD, takes it off the tracked buffers, and, the last buffer of its repository, cancels the watch"
-      run :=
-        pure <|
-          match gutterDriverOf gutterRepository with
-          | none => false
-          | some driver =>
-            let opened := settledAfter driver "C-o a"
-            match (trackedShown opened).bind (·.head) with
-            | none => false
-            | some head =>
-              let closed := settledAfter opened "C-g k"
-              opened.openWatches == 1 && closed.openWatches == 0 &&
-                closed.loop.state.tracked.isEmpty &&
-                closed.loop.state.refWatches.isEmpty &&
-                (snapshotText closed head).isNone }]
+            touched.posting.isEmpty && touched.openWatches == 1 }]
 
 end ModelTest

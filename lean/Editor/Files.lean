@@ -1,4 +1,5 @@
 import Editor.Completion.Paths
+import Editor.FileJobs
 import Editor.Jumps
 import Editor.Language
 import Editor.WorkingSet.Places
@@ -339,9 +340,11 @@ namespace Editor.Files
 def limit : Nat :=
   1 <<< 30
 
-/-- The name the open command is registered under. -/
+/-- The name the open command is registered under: the core's
+(`FileJobs.openFileCommand`), which the loop runs for the files a window
+asks to open. -/
 def openName : String :=
-  "open-file"
+  FileJobs.openFileCommand
 
 /-- The name the job that loads a file is registered under. -/
 def loadJob : String :=
@@ -1057,48 +1060,34 @@ def editCommand (call : Call) : EditorM Unit := do
       message (notAsking refusal)
 
 /-- The name the job that checks files for a change on disk is registered
-under. -/
+under: the core's (`FileJobs.checkJob`), which the loop starts. -/
 def checkJob : String :=
-  "check-files"
+  FileJobs.checkJob
 
-/-- One file a check looks at: the buffer, its file's path, and the stamp the
-buffer recorded for it when the check was asked for. -/
-structure Checked where
-  /-- The buffer. -/
-  buffer : BufferId
-  /-- Its file's path. -/
-  path : System.FilePath
-  /-- The stamp the buffer recorded. -/
-  stamp : File.Stamp
-  deriving DecidableEq, Repr
+/-- One file a check looks at: the core's (`FileJobs.Checked`). -/
+abbrev Checked :=
+  FileJobs.Checked
 
-/-- The files of a check as the arguments a job is started with: for each,
-the buffer's number, the path and the stamp's seconds, nanoseconds and
-size. -/
+/-- The files of a check as the arguments a job is started with: the core's
+(`FileJobs.checkArguments`). -/
 def checkArguments (files : Array Checked) : List Argument :=
-  files.toList.flatMap fun file =>
-    [.nat file.buffer.index, .str file.path.toString, .int file.stamp.seconds,
-      .nat file.stamp.nanoseconds, .nat file.stamp.size]
+  FileJobs.checkArguments files
 
-/-- The files `arguments` are, if they are a check's (`checkArguments`). -/
-def checkOfArguments? : List Argument → Option (Array Checked)
-  | [] => some #[]
-  | .nat buffer :: .str path :: .int seconds :: .nat nanoseconds :: .nat size :: rest =>
-    (checkOfArguments? rest).map fun others =>
-      #[{ buffer := ⟨buffer⟩, path, stamp := { seconds, nanoseconds, size } }] ++ others
-  | _ => none
+/-- The files `arguments` are, if they are a check's: the core's
+(`FileJobs.checkOfArguments?`). -/
+def checkOfArguments? (arguments : List Argument) : Option (Array Checked) :=
+  FileJobs.checkOfArguments? arguments
 
 /-- What the echo area says when the first edit of the buffer of `path` was
-refused because its file changed on disk: how to reload, and that the next
-edit keeps the buffer's text. -/
+refused because its file changed on disk: the core's
+(`FileJobs.changedOnDisk`), which the loop says. -/
 def changedOnDisk (path : System.FilePath) : String :=
-  s!"{path} changed on disk; :e reloads it, or edit again to keep this text"
+  FileJobs.changedOnDisk path
 
 /-- What the echo area says when the first edit of the buffer of `path` was
-refused because its file is gone: `:e` cannot reload a file that is not
-there, and `:w!` writes it again. -/
+refused because its file is gone: the core's (`FileJobs.goneFromDisk`). -/
 def goneFromDisk (path : System.FilePath) : String :=
-  s!"{path} is gone from disk; :w! writes it again, or edit again to keep this text"
+  FileJobs.goneFromDisk path
 
 /-- What the echo area says when a check found that the file of a buffer with
 unsaved changes, at `path`, changed on disk: the two resolutions. -/
@@ -1168,9 +1157,10 @@ def autoReloadName : String :=
   "auto-reload-mode"
 
 /-- The name the job that follows a file for auto-reload is registered
-under. -/
+under: the core's (`FileJobs.followJob`), which the loop's reconciler
+starts. -/
 def followJob : String :=
-  "follow-file"
+  FileJobs.followJob
 
 /-- How a follow job's watch coalesces: a change is delivered 50 ms after the
 first, and a delivery holds one path, the file's own; past it, `missed`. -/
@@ -1192,47 +1182,22 @@ why, as a sentence (`FileWatchError.describe`, `FileError.describe`), then
 def notFollowing (path : System.FilePath) (detail : String) : String :=
   s!"cannot follow {path}: {detail}; {followRetry}"
 
-/-- What a follow job is started with: the buffer, its file's path, the stamp
-the buffer recorded, which `markChanged` is guarded by, and the last stamp
-found, which the job compares a stat with: `none` for a file that is gone.
-The two differ exactly while the buffer is marked. -/
-structure FollowOrder where
-  /-- The buffer. -/
-  buffer : BufferId
-  /-- The file's path. -/
-  path : System.FilePath
-  /-- The stamp the buffer recorded. -/
-  stamp : File.Stamp
-  /-- The last stamp found, or `none` for a file that is gone. -/
-  expected : Option File.Stamp
-  deriving DecidableEq, Repr
+/-- What a follow job is started with: the core's (`FileJobs.FollowOrder`). -/
+abbrev FollowOrder :=
+  FileJobs.FollowOrder
 
-/-- A stamp as three arguments. -/
+/-- A stamp as three arguments: the core's (`FileJobs.stampArguments`). -/
 def stampArguments (stamp : File.Stamp) : List Argument :=
-  [.int stamp.seconds, .nat stamp.nanoseconds, .nat stamp.size]
+  FileJobs.stampArguments stamp
 
-/-- The order as arguments: the buffer's number, the path, the stamp, and the
-expected stamp after `true`, or `false` alone for none. -/
+/-- The order as arguments: the core's (`FileJobs.FollowOrder.arguments`). -/
 def FollowOrder.arguments (order : FollowOrder) : List Argument :=
-  [.nat order.buffer.index, .str order.path.toString] ++ stampArguments order.stamp ++
-    match order.expected with
-    | some expected => .bool true :: stampArguments expected
-    | none => [.bool false]
+  FileJobs.FollowOrder.arguments order
 
-/-- The order `arguments` are, if they are one (`FollowOrder.arguments`). -/
-def FollowOrder.ofArguments? : List Argument → Option FollowOrder
-  |
-  [.nat buffer, .str path, .int seconds, .nat nanoseconds, .nat size, .bool true,
-      .int expectedSeconds, .nat expectedNanoseconds, .nat expectedSize] =>
-    some
-      { buffer := ⟨buffer⟩, path, stamp := { seconds, nanoseconds, size }
-        expected :=
-          some
-            { seconds := expectedSeconds, nanoseconds := expectedNanoseconds
-              size := expectedSize } }
-  | [.nat buffer, .str path, .int seconds, .nat nanoseconds, .nat size, .bool false] =>
-    some { buffer := ⟨buffer⟩, path, stamp := { seconds, nanoseconds, size }, expected := none }
-  | _ => none
+/-- The order `arguments` are, if they are one: the core's
+(`FileJobs.FollowOrder.ofArguments?`). -/
+def FollowOrder.ofArguments? (arguments : List Argument) : Option FollowOrder :=
+  FileJobs.FollowOrder.ofArguments? arguments
 
 /-- The command a follow job finishes with when the file's stat answered
 `found`, which is not what the order expected ("Auto-reload",

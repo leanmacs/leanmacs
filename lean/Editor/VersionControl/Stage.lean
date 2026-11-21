@@ -34,7 +34,7 @@ implementation.
 
 A file buffer whose workspace is a local root that can run commands and is
 a repository, with the file under the root: the gutter's gate
-(`trackedFile?`, `Editor/VersionControl/Gutter.lean`). Each refusal is
+(`Gutter.trackedFile?`, `Editor/Gutter/Track.lean`). Each refusal is
 said as `vc-stage-hunk: <why>` (`vc-unstage-hunk: ` for the other): a buffer
 with no file, a buffer that is not in a repository, a save in flight (`is
 being saved; try again`).
@@ -418,7 +418,7 @@ def hunkCommand (unstage : Bool) (call : Call) : EditorM Unit := do
   let some buffer := state.buffer? id | return
   let some file := buffer.file | message s!"{name}: {buffer.name} has no file"
   let some (root, path) :=
-    trackedFile? state id | message s!"{name}: {buffer.name} is not in a repository"
+    Gutter.trackedFile? state id | message s!"{name}: {buffer.name} is not in a repository"
   if file.saving.isSome then
     message s!"{name}: {path} is being saved; try again"
     return
