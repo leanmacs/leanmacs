@@ -23,6 +23,7 @@ import Editor.ProjectMode.Format
 import Editor.ProjectMode.Listing
 import Editor.Scene
 import Editor.Setup
+import Editor.Shell.Kit
 import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Files
@@ -35,6 +36,7 @@ import Editor.Test.Shell
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
+import Editor.Workspace.Kit
 import MinibufferApi
 
 /-!

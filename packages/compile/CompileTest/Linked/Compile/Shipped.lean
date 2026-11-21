@@ -21,6 +21,7 @@ import Editor.Test.Linked.Trees
 import Editor.Text
 import Editor.Watch
 import Editor.Workspace
+import Editor.Workspace.Kit
 
 /-!
 # Linked tests: `Compile/Shipped.lean`

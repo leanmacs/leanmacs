@@ -15,8 +15,8 @@ import Editor.Language
 import Editor.Loop
 import Editor.Process
 import Editor.Test.Minibuffer
-import Editor.Test.Workspace
 import Editor.VersionControl.Compiled
+import Editor.Workspace.Kit
 import FilesApiTest.Fake
 
 /-!

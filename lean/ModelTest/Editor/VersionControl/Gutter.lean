@@ -106,7 +106,8 @@ def gutterDriverOf (repository : VersionControl.Model.Repository) (git : String 
     let scripts :=
       (repository.jobModel git "/r" (missing := #[("HEAD", "src/b.lean")])).processes.scripts
     let keys :=
-      withExtensionsOf driver.keys #[attachPackage world, FilesApiTest.fake, BuffersApiTest.fake]
+      withExtensionsOf driver.keys
+        #[worldAttachPackage world, FilesApiTest.fake, BuffersApiTest.fake]
     { driver with
       keys := { keys with registered := { keys.registered with git } }
       jobs :=

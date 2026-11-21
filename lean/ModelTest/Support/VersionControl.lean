@@ -33,7 +33,6 @@ import Editor.Test.Hosted
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Shell
-import Editor.Test.Workspace
 import Editor.Text
 import Editor.VersionControl.Blame
 import Editor.VersionControl.Commit
@@ -45,6 +44,7 @@ import Editor.VersionControl.Show
 import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
 import Editor.Workspace
+import Editor.Workspace.Kit
 import FilesApiTest.Fake
 import ProjectApiTest.Fake
 import VcApi
@@ -144,7 +144,7 @@ def statusDriverOf (repository : VersionControl.Model.Repository)
       -- finder's model of the world, the workspace's reach.
       keys :=
         withExtensionsOf driver.keys
-          #[attachPackage, FilesApiTest.fake, BuffersApiTest.fake,
+          #[worldAttachPackage, FilesApiTest.fake, BuffersApiTest.fake,
             ProjectApiTest.fakeWith (workspaceWorld.find {} ·)]
       jobs :=
         { driver.jobs with

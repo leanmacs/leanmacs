@@ -10,10 +10,12 @@ import Editor.Process
 import Editor.Process.Model
 import Editor.ProjectMode
 import Editor.ProjectMode.Listing
+import Editor.Shell.Kit
 import Editor.State
 import Editor.Store
 import Editor.Test.Driver
 import Editor.Test.Files
+import Editor.Test.Hosted
 import Editor.Test.Keys
 import Editor.Test.Listing
 import Editor.Test.Loop
@@ -21,7 +23,10 @@ import Editor.Test.Models
 import Editor.Test.Shell
 import Editor.Test.Workspace
 import Editor.Workspace
+import Editor.Workspace.Kit
 import Editor.Workspace.Modes
+import FilesApi
+import FilesApiTest.Fake
 import ModelTest.Check
 
 /-!
@@ -119,7 +124,22 @@ def turnOnModesChecks : List Check :=
             Workspace.onModesOf turned.loop.state ⟨0⟩ == #[] &&
               turned.loop.state.value? ⟨0⟩ Workspace.modesLocal == none &&
               ((turned.loop.state.buffer? ⟨0⟩).map (·.minors)) == some #[] &&
-              !names.contains Compile.listJob }]
+              !names.contains Compile.listJob },
+    { name :=
+        "the kit's stand-in for modes on markers, markedPackage, turns its on-modes on in a buffer that takes in a file, at files-api's Opened hook: onModesOf reads them back, nearest first, and each is a minor mode"
+      run :=
+        pure <|
+          let on : Array Workspace.OnMode :=
+            #[{ mode := "t-mode", root := "/t" }, { mode := "u-mode", root := "/" }]
+          match hostedDriver #[FilesApiTest.fake, markedPackage on] (files := commandFiles) with
+          | none => false
+          | some driver =>
+            let opened :=
+              hostedRan driver
+                { command := FilesApi.openFileName,
+                  arguments := [.str (inFiles "note.txt").toString] }
+            shownOnModes opened == some on &&
+              (showing opened).map (·.buffer.minors) == some #["t-mode", "u-mode"] }]
 
 /-- The checks of a contribution's computed commands
 (`Editor/ProjectMode/Listing.lean`), on the loop's driver over the editor's

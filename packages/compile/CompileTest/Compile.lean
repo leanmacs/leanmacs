@@ -56,6 +56,7 @@ import Editor.Watch
 import Editor.Watch.Model
 import Editor.Workspace
 import Editor.Workspace.Attach
+import Editor.Workspace.Kit
 import Editor.Workspace.Model
 import Editor.Workspace.Modes
 

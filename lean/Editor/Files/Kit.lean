@@ -19,14 +19,14 @@ import Editor.Invocation
 import Editor.Job
 import Editor.Loop
 import Editor.Loop.Driver
+import Editor.Shell.Kit
 import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Models
-import Editor.Test.Shell
-import Editor.Test.Workspace
+import Editor.Workspace.Kit
 
 /-!
 # The files feature's test kit: the drivers of the real file commands

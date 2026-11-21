@@ -41,7 +41,6 @@ import Editor.Text.Real
 import Editor.Value
 import Editor.Watch
 import Editor.Workspace
-import Editor.Workspace.Compiled
 
 /-!
 # The linked test kit: Rig
@@ -58,7 +57,8 @@ checks of its own.
 runs with (`runSettled`'s `keys` and `jobs`), which `rigKeys` and `rigJobs`
 make of the packages it names, with no contribution told to the loop: a
 check of files in a workspace names the files package (the files feature's
-test kit hands it, `filesPackage`) and the workspace's (`rigWorkspace`), the
+test kit hands it, `filesPackage`) and the workspace's (`rigWorkspace`, the workspace feature's kit's,
+`Editor/Workspace/Kit.lean`), the
 version-control checks theirs (`ContractTest/Support/VersionControl.lean`),
 and the compile mode's, in its package, the compile mode's commands and jobs
 and the shipped contributions
@@ -126,13 +126,6 @@ def onChanged (services : Job.Services) (change : Process.Command → Process.Co
 (`onChanged`). -/
 def onFixturePath (services : Job.Services) (path : String) : Job.Services :=
   onChanged services (withPath path)
-
-/-- The workspace package, as a host registers it: what a rig's checks of
-files in a workspace pass beside the file commands' package, which the
-rig does not name (the files feature's test kit hands it,
-`Editor/Files/Kit.lean`, `filesPackage`). -/
-def rigWorkspace : Package :=
-  Workspace.package
 
 /-- The jobs a rig's checks run over `packages`: every package's, as a host
 registers them. -/

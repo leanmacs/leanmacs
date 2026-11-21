@@ -1,23 +1,27 @@
 import Editor.Config.Registry
-import Editor.File.Model
+import Editor.Extension
 import Editor.Job.Model
 import Editor.Loop.Driver
 import Editor.Process
 import Editor.Process.Model
 import Editor.ProjectMode
+import Editor.ProjectMode.Listing
 import Editor.Setup
 import Editor.Test.Driver
 import Editor.Test.Keys
 import Editor.Test.Shell
 import Editor.Workspace
-import Editor.Workspace.Model
+import FilesApi
 
 /-!
 # The test kit: Listing
 
 A contribution with a listing, `t-mode`, and its world: the repositories it
 is found in, what its listing prints in each, and what a driver is asked
-about it. It names core modules only, so the checks of the listing
+about it. The world it is found in (`listingWorld`, `listingJobModel`)
+names the workspace finder's model and is the workspace feature's kit's
+(`Editor/Workspace/Kit.lean`). It names core modules only, with the stand-in for modes on markers
+(`markedPackage`), so the checks of the listing
 (`ModelTest/Editor/ProjectMode/Listing.lean`) build their host from it with
 no package outside the core, and the compile mode's checks of what it makes
 of a listing, in its package (`packages/compile/CompileTest/Compile.lean`,
@@ -65,16 +69,6 @@ def listingRegistry : Config.Registry :=
 def tList (directory : System.FilePath) : Process.Command :=
   { program := "t-list", directory }
 
-/-- The world of the listing checks: the repositories `/t` and `/t2`, each
-holding `t.toml`, and `/u`, a directory holding `t.toml` in no
-repository. -/
-def listingWorld : Workspace.World :=
-  { repositories :=
-      #[{ toplevel := "/t", commonDir := "/t/.git" },
-        { toplevel := "/t2", commonDir := "/t2/.git" }]
-    markerDirectories := #["/t/.git", "/t2/.git"]
-    markers := #["/t/t.toml", "/t2/t.toml", "/u/t.toml"] }
-
 /-- What each run of the listing checks does: `t-list` in `/t` lists
 `build`, `fmt` and `sub`, in `sub`; in `/t2` it fails; in `/u` it lists
 `u-only`. -/
@@ -90,19 +84,18 @@ def listingFiles : List (String × System.FilePath) :=
   [("C-p 1", "/t/a.txt"), ("C-p 2", "/t/b.txt"), ("C-p 3", "/t2/a.txt"), ("C-p 4", "/u/a.txt"),
     ("C-p 5", "/t2/b.txt")]
 
-/-- The job model of the listing checks: `listingWorld`'s, with the files
-of `listingFiles`, the listings' runs (`listingScripts`) and the streaming
-children `streams`. -/
-def listingJobModel (streams : Array Process.StreamScript := #[]) : JobModel :=
-  let model := listingWorld.jobModel "git" #["/t", "/t2", "/u"]
-  let files :=
-    listingFiles.foldl (fun (files : FileModel) (_, path) => files.withFile path "a".toUTF8)
-      model.files
-  { model with
-    files
-    processes :=
-      { model.processes with
-        scripts := model.processes.scripts ++ listingScripts, streams } }
+/-- A package, standing in for the workspace's modes on markers, that
+registers at `files-api`'s hook `FilesApi.Opened` a value turning the
+on-modes `on`, nearest first, on in every buffer that takes in a file
+(`Workspace.turnOnModes`, the core's): what a check of a listing, the core's
+or the compile mode's, registers in place of the workspace package's marker
+search. -/
+def markedPackage (on : Array Workspace.OnMode) : Package :=
+  { name := "test-marked"
+    setup :=
+      Extension.add
+        ({ name := "marker-modes", opened := fun id _ => Workspace.turnOnModes id on } :
+          FilesApi.Opened) }
 
 /-- The on-modes of the buffer the view 0 of `driver` shows. -/
 def shownOnModes (driver : TestDriver) : Option (Array Workspace.OnMode) := do

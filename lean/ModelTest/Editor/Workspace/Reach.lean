@@ -6,6 +6,7 @@ import Editor.Test.Driver
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Workspace
+import Editor.Workspace.Kit
 import Editor.Workspace.Model
 import Editor.Workspace.Reach
 import ModelTest.Check

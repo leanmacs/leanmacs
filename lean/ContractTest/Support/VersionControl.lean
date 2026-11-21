@@ -1,8 +1,8 @@
 import BuffersApiTest.Fake
 import Editor.Config.Packages
 import Editor.Test.Linked.Rig
-import Editor.Test.Workspace
 import Editor.VersionControl.Compiled
+import Editor.Workspace.Kit
 import FilesApiTest.Fake
 
 /-!

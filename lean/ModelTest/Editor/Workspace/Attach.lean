@@ -24,6 +24,7 @@ import Editor.Text.Model
 import Editor.Value
 import Editor.Workspace
 import Editor.Workspace.Attach
+import Editor.Workspace.Kit
 import ModelTest.Check
 
 /-!

@@ -22,6 +22,7 @@ import Editor.Process.Model
 import Editor.Scene
 import Editor.Shell
 import Editor.Shell.Compiled
+import Editor.Shell.Kit
 import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Keys
@@ -31,6 +32,7 @@ import Editor.Test.Shell
 import Editor.Test.Workspace
 import Editor.Text.Model
 import Editor.Workspace
+import Editor.Workspace.Kit
 import ModelTest.Check
 import ShellApiTest.Contract
 

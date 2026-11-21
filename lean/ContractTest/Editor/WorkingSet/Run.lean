@@ -8,8 +8,8 @@ import Editor.Jumps
 import Editor.Loop
 import Editor.ProjectSearch.Compiled
 import Editor.Test.Linked.Rig
-import Editor.Test.Workspace
 import Editor.WorkingSet.Compiled
+import Editor.Workspace.Kit
 import FilesApiTest.Fake
 import VcApiTest.Fake
 

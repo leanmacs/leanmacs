@@ -9,9 +9,9 @@ import Editor.Loop.Driver
 import Editor.ProjectSearch.Compiled
 import Editor.State
 import Editor.Test.Hosted
-import Editor.Test.Workspace
 import Editor.WorkingSet.Compiled
 import Editor.WorkingSet.Places
+import Editor.Workspace.Kit
 import FilesApiTest.Fake
 import ModelTest.Support.Evil
 import VcApiTest.Fake
@@ -24,7 +24,7 @@ the editor's models, the job model with the workspace finder's git at `/r`
 (`workspaceWorld`), the files of the checks under `/r`, and the commands and
 jobs of `files-api`'s fake, the buffer commands, project search and whatever
 working set commands a check hands in; a file's open attaches its workspace
-through the kit's stand-in at the hook `FilesApi.Opened` (`attachPackage`),
+through the kit's stand-in at the hook `FilesApi.Opened` (`worldAttachPackage`),
 and the working sets' own hooks are registered. Shared by the
 test modules of `Editor/WorkingSet/`; it holds no checks of its own.
 -/
@@ -89,11 +89,11 @@ def baseCommands : Array Config.Registration :=
     #[{ name := "ws-hold", action := .call holdCommand }]
 
 /-- What the checks' extension points hold: the workspace's stand-in at
-`FilesApi.Opened` (`attachPackage`, the finder's model of `workspaceWorld`),
+`FilesApi.Opened` (`worldAttachPackage`, the finder's model of `workspaceWorld`),
 the fake's `FilesApi.Files` value, and the working sets' own hooks, in that
 order, as a host registers the workspace before the working sets. -/
 def hooks : Array Package :=
-  #[attachPackage, FilesApiTest.fake, BuffersApiTest.fake, WorkingSet.package]
+  #[worldAttachPackage, FilesApiTest.fake, BuffersApiTest.fake, WorkingSet.package]
 
 /-- Evil's keys with `commands` after the base ones, and `modes`, project
 search's among them, as a host's registry holds them, and the extension

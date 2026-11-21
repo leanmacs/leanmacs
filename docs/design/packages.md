@@ -1951,10 +1951,10 @@ those import them, and a kit that left them behind would not build.
 | `Editor.Test.Loop` | The command loop stepped on the editor's models, with keymaps and commands written in the test |
 | `Editor.Test.Driver` | The loop's driver over the editor's models and the job model, and what a check reads back from it |
 | `Editor.Test.Files` | The file commands' keys, files and driver |
-| `Editor.Test.Workspace` | The workspace's world, jobs, commands, keys and driver |
-| `Editor.Test.Shell` | The shell command's jobs, bindings, commands and replies |
+| `Editor.Test.Workspace` | The workspace a check sees settled, a store for the stores' checks, and since the features-as-packages roadmap's phase 6 the stand-in for the workspace's attach (`attachAt`, `attachPackage found`), which names no workspace module; the workspace's world, jobs, commands, keys and driver are the workspace feature's kit (`Editor.Workspace.Kit`) |
+| `Editor.Test.Shell` | A shell command's child and its replies on the process model, compiled commands as a driver dispatches them, and what a check reads of a driver; since phase 6 the shell checks' jobs, bindings and commands are the shell feature's kit (`Editor.Shell.Kit`) |
 | `Editor.Test.Prompts` | Prompts and the minibuffer: their bindings, registry and driver, over a minibuffer package a check hands in, the kit's own (`Editor.Test.Minibuffer`) when it hands none |
-| `Editor.Test.Listing` | A contribution with a listing and its world, which names core modules only |
+| `Editor.Test.Listing` | A contribution with a listing, its listings' runs and files, which names core modules only, and since phase 6 the stand-in for modes on markers (`markedPackage`); the world it is found in (`listingWorld`, `listingJobModel`) is the workspace feature's kit's |
 | `Editor.Test.Sources` | Added in the features-as-packages roadmap's phase 3: the completion sources' contract runner over the editor's models (`sourceRunner`), and the contract's properties over one source as sentences (`sourceHolds`) |
 | `Editor.Test.Shipped` | Added in the same phase: stand-ins for the default packages whose data the core keeps, `modeLine` and `languages` |
 | `Editor.Test.Minibuffer` | Added in the features-as-packages roadmap's phase 4: a minibuffer written over the core's prompt API, the package `minibuffer` with its nine commands and the mode `Prompt.mode`, and `names`, the nine in registration order; `minibuffer-api`'s fake |
@@ -2439,10 +2439,11 @@ of `echo` outside the repository is refused with its reason
 
 ## The module map
 
-Every module under `lean/Editor/`, 310 of them
+Every module under `lean/Editor/`, 312 of them
 (`find lean/Editor -name '*.lean' | wc -l`, in the features-as-packages
 roadmap's phase 6, which added the core's `Editor.Text.Word` and
-`Editor.SearchRoot`; 308 at the end of its phase 5; 254 at `6ba99de5`, phase 4
+`Editor.SearchRoot` and the feature kits `Editor.Workspace.Kit` and
+`Editor.Shell.Kit`; 308 at the end of its phase 5; 254 at `6ba99de5`, phase 4
 added `Editor.Main`, phase 5 added `Editor.Themes.Picture` and moved
 the three modules of the shipped palettes out, phase 6 moved the five
 of the compile mode out and added the 18 of the test kit, phase 7 added
@@ -2459,7 +2460,7 @@ model, the job names of the loop's two reconcilers (`Editor.FileJobs`,
 `Editor.Gutter.Track`), the kit's two (`Editor.Test.Hosted`, `.Opener`)
 and the files feature's kit (`Editor.Files.Kit`)), is
 **core** or part of a **feature that could become a package**. The counts
-below add up to 299: 221 core and 78 in 15 features. The rows were not
+below add up to 301: 222 core and 79 in 15 features. The rows were not
 counted again in full for phase 3 or 4: at phase 3's start they added up
 to 304 against 315 modules, so 11 modules are in no row (the task
 `module-map-count-drift`); phase 4 took its eight moved modules' rows out
@@ -2535,6 +2536,7 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Files`, `Editor.Completion.Paths` | 2 | feature: files | yes |
 | `Editor.Files.Compiled` | 1 | feature: files | no |
 | `Editor.Files.Kit`, the drivers of the real file commands | 1 | feature: files | in tests |
+| `Editor.Shell.Kit`, the shell checks' jobs, bindings and commands | 1 | feature: shell | in tests |
 | `Editor.FrameCommands` | 1 | feature: frame-commands | yes |
 | `Editor.FrameCommands.Compiled` | 1 | feature: frame-commands | no |
 | `Editor.Menu.Compiled` | 1 | feature: menu | no |
@@ -2558,6 +2560,7 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Restore.Compiled` | 1 | feature: restore | no |
 | `Editor.Workspace.Compiled` | 1 | feature: workspace | no |
 | `Editor.Workspace.Model`, `.Contract` | 2 | feature: workspace | in tests |
+| `Editor.Workspace.Kit`, the workspace's world, jobs, commands, keys and driver, the listing checks' world, and the rig's workspace package | 1 | feature: workspace | in tests |
 | `Editor.Workspace.Attach`, `.Finder`, `.FindFile`, `.FindInProject`, `.Lister`, `.Modes`, `.Projects`, `.Reach` | 8 | feature: workspace | yes |
 
 ### What each feature would have to cross

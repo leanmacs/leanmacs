@@ -18,10 +18,10 @@ import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Prompts
-import Editor.Test.Workspace
 import Editor.Workspace
 import Editor.Workspace.Compiled
 import Editor.Workspace.FindFile
+import Editor.Workspace.Kit
 import Editor.Workspace.Lister
 import Editor.Workspace.Model
 import FilesApiTest.Fake
