@@ -1,0 +1,5 @@
+# lean-fmt's config for this package (`mise run lean-fmt`, through
+# tools/package-set.sh fmt). The files under `tests/` are no modules of
+# this package: the fixtures that stand in for git and fzf in its linked
+# test. Everything else is checked with the defaults, as the core is.
+exclude = ["tests/**"]

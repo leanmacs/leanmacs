@@ -24,7 +24,7 @@ opentofu = "1.13.2"
 "aqua:zizmorcore/zizmor" = "1.32.0"
 "aqua:mikefarah/yq" = "4.54.1"
 # fzf, the default filter of `find-file-in-workspace`'s source
-# (lean/Editor/Workspace/FindFile.lean): for the workspace finder's benchmark
+# (packages/workspace/Workspace/FindFile.lean): for the workspace finder's benchmark
 # (`mise run find-file-bench`), never part of `ci`, whose checks stand in a
 # fixture for it (tests/completion), and on the PATH of an editor started
 # inside this project when dogfooding. Like cargo-deny, a prebuilt release
@@ -208,7 +208,7 @@ run = [
   # (packages/completion/CompletionTest/Model.lean), completion at
   # point's (packages/at-point/AtPointTest/Model.lean) and the
   # minibuffer's (packages/minibuffer/MinibufferTest/Model.lean).
-  "out=$(PATH=\"$PWD/no-cargo:$PATH\" sh ../tools/package-set.sh test ../tests/packages 2>&1) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for name in files buffers completion-api completion mode-line minibuffer-api minibuffer shipped-themes execute-command-api execute-command binding-search-api binding-search compile at-point-api at-point languages word-count; do printf '%s\\n' \"$out\" | grep -qF \"package-set: test $name (\" || { echo \"lean-test: the package steps did not test $name\"; exit 1; }; done",
+  "out=$(PATH=\"$PWD/no-cargo:$PATH\" sh ../tools/package-set.sh test ../tests/packages 2>&1) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for name in files buffers workspace completion-api completion mode-line minibuffer-api minibuffer shipped-themes execute-command-api execute-command binding-search-api binding-search compile at-point-api at-point languages word-count; do printf '%s\\n' \"$out\" | grep -qF \"package-set: test $name (\" || { echo \"lean-test: the package steps did not test $name\"; exit 1; }; done",
   # And a step refuses a set it would run over nothing of: the fixture set
   # tests/empty-set requires the core alone, so it holds no package and the
   # step must exit 2, saying so. Its output is shown only when it does not.
@@ -387,7 +387,7 @@ run = [
   # then the fixture package's: the root the check compiles is generated,
   # lists the fixture package after the core and the default set's
   # packages, and its modules are found.
-  "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage Files.EditorPackage Buffers.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage UserLink.EditorPackage '",
+  "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage UserLink.EditorPackage '",
   # The core's lakefile is elaborated against the toolchain of the `lake`
   # that runs it, never a `lean` found on the PATH (`leanSystemLibDir` in
   # lean/lakefile.lean; docs/design/lean-runtime.md, "Build"): an app
@@ -410,8 +410,8 @@ run = [
   # pairs, which a later move adds a pair to). That the core's own list
   # holds none of them is `ModelTest.packageSetChecks`', and that the
   # core's hosts start with nothing of them `ConfigTest.shippedChecks`'.
-  "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage Files.EditorPackage Buffers.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage '",
-  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point-api:AtPointApi ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the default set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans",
+  "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage '",
+  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/workspace:Workspace/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point-api:AtPointApi ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the default set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans",
   # The two records the package-set build writes beside a set's editor for
   # a user's set build (docs/design/packages.md, "User package sets"):
   # `editor.core`, the core's identity, one line of hex, which is the same
@@ -473,7 +473,7 @@ run = [
   # `Editor`, the shipped themes' entry module and the compile mode's, and
   # that of the set with no package (tests/empty-set) `Editor` alone: an
   # editor without the packages still loads config.
-  "test \"$(lake -d ../packages query :editorBase | tr '\\n' ' ')\" = 'Editor Files.EditorPackage Buffers.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage '",
+  "test \"$(lake -d ../packages query :editorBase | tr '\\n' ' ')\" = 'Editor Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage '",
   "test \"$(lake -d ../tests/empty-set query :editorBase | tr '\\n' ' ')\" = 'Editor '",
   # The Rust crates of a set (the facet `editorRustCrates`;
   # docs/design/packages.md, "Rust in a package"): the package-set build
@@ -644,22 +644,22 @@ run = [
   # The same properties `lean-test` runs against the pure models, here against
   # the Rust library: the text port's, and the job port's over the timer
   # service. Its check of Lean's task pool pins no size, so LEAN_NUM_THREADS
-  # in the developer's shell does it no harm. Its first two arguments are the
+  # in the developer's shell does it no harm. Its first argument is the
   # directory of the fixtures that stand in for mise in the checks of a
-  # child's environment (tests/process-environment), and the directory of
-  # the fixture that stands in for git in the workspace finder's checks,
-  # whose properties `lean-test` runs against the finder's model
-  # (tests/workspaces). Its third is the directory of the fixture `:!` runs
-  # over the real process service, which is also the editor's working
-  # directory in those checks (tests/shell). Its fourth is the directory of
-  # the syntax fixtures, whose Rust fixtures the indent and text-object
-  # checks read (tests/syntax). Its fifth is the directory of the fixture
-  # that stands in for fzf in the checks of a source a command filters
-  # (tests/completion). A compile over the real process service is no check
-  # of this executable any more: it is the compile package's linked test's
-  # (packages/compile/CompileTest/Linked.lean), which the package steps run
-  # below on that package's own fixtures (packages/compile/tests/compile).
-  ".lake/build/bin/contract-test ../tests/process-environment ../tests/workspaces ../tests/shell ../tests/syntax ../tests/completion",
+  # child's environment (tests/process-environment). Its second is the
+  # directory of the fixture `:!` runs over the real process service, which
+  # is also the editor's working directory in those checks (tests/shell). Its
+  # third is the directory of the syntax fixtures, whose Rust fixtures the
+  # indent and text-object checks read (tests/syntax). Its fourth is the
+  # directory of the fixture that stands in for fzf in the checks of a source
+  # a command filters (tests/completion). A compile over the real process
+  # service is no check of this executable any more, and nor are the
+  # workspace finder and the listers: they are the compile package's and the
+  # workspace package's linked tests' (packages/compile/CompileTest/Linked.lean,
+  # packages/workspace/WorkspaceTest/Linked.lean), which the package steps
+  # run below on those packages' own fixtures (packages/compile/tests/compile,
+  # packages/workspace/tests/workspaces and tests/completion).
+  ".lake/build/bin/contract-test ../tests/process-environment ../tests/shell ../tests/syntax ../tests/completion",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment; its third argument is the directory of the syntax
@@ -1200,7 +1200,7 @@ run = [
   # reaches through it (its five interface packages each before the
   # package that requires it), and last the writing guide's example package
   # `word-count`'s, which the set requires after the default set.
-  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../tests/packages/greeting-api:GreetingApi ../tests/packages/greeting:Greeting/EditorPackage ../tests/packages/greeting-loud:GreetingLoud/EditorPackage ../tests/packages/echo:Echo/EditorPackage ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point-api:AtPointApi ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage ../docs/packages/word-count:WordCount/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the fixture set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans",
+  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../tests/packages/greeting-api:GreetingApi ../tests/packages/greeting:Greeting/EditorPackage ../tests/packages/greeting-loud:GreetingLoud/EditorPackage ../tests/packages/echo:Echo/EditorPackage ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/workspace:Workspace/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point-api:AtPointApi ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage ../docs/packages/word-count:WordCount/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the fixture set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans",
   # The same wiring on the library's scripted platform whose renderer cannot
   # be made, as a machine with no usable GPU gives: the window runs with
   # nothing drawing in it. The scenario must exit 0, which it does only when
@@ -1273,7 +1273,7 @@ run = [
   # turns a canned task list into commands, with no process and no path of
   # the machine; what it prints was compared with what an editor built at
   # the commit before the move prints for it.
-  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test FilesTest.Linked of files' 'files linked test: 25 checks passed' 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test EchoTest.Linked of echo' \"echo linked test: the contract's 7 properties hold on the Rust-backed binding, each request completed through the completion queue\" 'package-set: linked test CompletionTest.Linked of completion' 'completion linked test: 6 checks passed' 'package-set: headless fixture completion-choices of completion' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture candidates of minibuffer' 'package-set: headless fixture prompt of minibuffer' 'package-set: headless fixture command-prompt of execute-command' 'package-set: headless fixture binding-search of binding-search' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture at-point of at-point' 'package-set: headless fixture at-point-tuned of at-point' 'package-set: headless fixture as-config of word-count' 'package-set: headless fixture count of word-count' 'package-set: headless fixture from-config of word-count' 'package-set: ran 6 linked tests and 20 headless fixtures over 21 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
+  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test FilesTest.Linked of files' 'files linked test: 25 checks passed' 'package-set: linked test WorkspaceTest.Linked of workspace' 'workspace linked test: 21 checks passed' 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test EchoTest.Linked of echo' \"echo linked test: the contract's 7 properties hold on the Rust-backed binding, each request completed through the completion queue\" 'package-set: linked test CompletionTest.Linked of completion' 'completion linked test: 6 checks passed' 'package-set: headless fixture completion-choices of completion' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture candidates of minibuffer' 'package-set: headless fixture prompt of minibuffer' 'package-set: headless fixture command-prompt of execute-command' 'package-set: headless fixture binding-search of binding-search' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture at-point of at-point' 'package-set: headless fixture at-point-tuned of at-point' 'package-set: headless fixture as-config of word-count' 'package-set: headless fixture count of word-count' 'package-set: headless fixture from-config of word-count' 'package-set: ran 7 linked tests and 20 headless fixtures over 22 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
   # With `--only`, `run` runs over the named packages alone, and still
   # refuses to run nothing: the interface package `greeting-api` has no
   # linked test and no headless fixture, so `--only greeting-api` is exit
@@ -1296,7 +1296,7 @@ run = [
   # lines do not give, is found through the record the build wrote beside
   # the editor. The lines of what it is here to run are required, as
   # above.
-  "out=$(sh ../tools/package-set.sh run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test FilesTest.Linked of files' 'files linked test: 25 checks passed' 'package-set: linked test CompletionTest.Linked of completion' 'completion linked test: 6 checks passed' 'package-set: headless fixture completion-choices of completion' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture candidates of minibuffer' 'package-set: headless fixture prompt of minibuffer' 'package-set: headless fixture command-prompt of execute-command' 'package-set: headless fixture binding-search of binding-search' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture at-point of at-point' 'package-set: headless fixture at-point-tuned of at-point' 'package-set: ran 4 linked tests and 15 headless fixtures over 16 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps over the default set did not print: $line\"; exit 1; }; done",
+  "out=$(sh ../tools/package-set.sh run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test FilesTest.Linked of files' 'files linked test: 25 checks passed' 'package-set: linked test WorkspaceTest.Linked of workspace' 'workspace linked test: 21 checks passed' 'package-set: linked test CompletionTest.Linked of completion' 'completion linked test: 6 checks passed' 'package-set: headless fixture completion-choices of completion' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture candidates of minibuffer' 'package-set: headless fixture prompt of minibuffer' 'package-set: headless fixture command-prompt of execute-command' 'package-set: headless fixture binding-search of binding-search' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture at-point of at-point' 'package-set: headless fixture at-point-tuned of at-point' 'package-set: ran 5 linked tests and 15 headless fixtures over 17 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps over the default set did not print: $line\"; exit 1; }; done",
   # And the editor of the default set, which does not hold the fixture
   # package, has no such command: on the same config and script its
   # headless mode must print `run greeting-hello: no such command`. So the
@@ -1747,8 +1747,10 @@ run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test
 # Opt-in: do not add it to `ci` or to hk.pkl. It runs real git and the fzf
 # `[tools]` pins over a repository of 100,000 files.
 #
-# `bench-workspace-files` measures `find-file-in-workspace`
-# (lean/Editor/Workspace/FindFile.lean) over a real repository, 120 keys a
+# `bench-workspace-files`, an opt-in argument of the workspace package's
+# linked test (packages/workspace/WorkspaceTest/Linked.lean), measures
+# `find-file-in-workspace` (packages/workspace/Workspace/FindFile.lean) over
+# a real repository, 120 keys a
 # row, each of `m`, `1`, `2`, `f`, `3` and `4` committed into the open
 # prompt. Rows: a key in a prompt with no candidates, the floor; a key in the
 # finder's prompt, each joined, from sending it to the editor thread having
@@ -1764,20 +1766,27 @@ run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test
 #
 # The repository is made by tools/workspace-bench-repo.sh in a temporary
 # directory, removed on exit; WORKSPACE_BENCH_REPO names a checkout to
-# measure instead. The host is a headless host on the real queue and the
-# library's process and file services; LEAN_NUM_THREADS and
-# LEAN_STACK_SIZE_KB are removed from the environment, as for `job-bench`.
+# measure instead. The task builds the linked test's executable as the
+# package steps do (`lake -d ../packages/workspace build
+# +WorkspaceTest.Linked:editorLinked`) and asks Lake for its path. The host
+# is a headless host on the real queue and the library's process and file
+# services; LEAN_NUM_THREADS and LEAN_STACK_SIZE_KB are removed from the
+# environment, as for `job-bench`, and LEAN_CC is the system compiler, as
+# for `lean`, which links the executable.
 [tasks.find-file-bench]
-description = "Opt-in, never part of ci: measure what a key costs in find-file-in-workspace's prompt over a repository of 100,000 files, and the time from a key to its updated list (lean/ConfigTest/Editor/Workspace/Bench.lean). It asserts nothing"
+description = "Opt-in, never part of ci: measure what a key costs in find-file-in-workspace's prompt over a repository of 100,000 files, and the time from a key to its updated list (packages/workspace/WorkspaceTest/Linked/Workspace/Bench.lean). It asserts nothing"
 depends = ["lean"]
 dir = "lean"
+env = { LEAN_CC = "/usr/bin/cc" }
 run = '''
 if [ -n "${WORKSPACE_BENCH_REPO:-}" ]; then
   repo=$WORKSPACE_BENCH_REPO
 else
   dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && repo=$dir/repo && sh ../tools/workspace-bench-repo.sh "$repo" || exit 1
 fi
-env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-workspace-files "$(lean --print-prefix)" .lake/build/lib/lean "$repo" 120
+lake -d ../packages/workspace build --wfail +WorkspaceTest.Linked:editorLinked || exit 1
+bench=$(lake -d ../packages query :editorPackages | awk -F '\t' '$1 == "workspace" { print $4 }')
+env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB "$bench" bench-workspace-files "$(lean --print-prefix)" "$(cd .lake/build/lib/lean && pwd)" "$repo" 120
 '''
 
 # Opt-in: do not add it to `ci` or to hk.pkl. It opens a window on this

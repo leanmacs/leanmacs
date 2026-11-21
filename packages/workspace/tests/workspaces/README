@@ -1,0 +1,15 @@
+The fixtures of the workspace package's linked checks of the finder
+(workspaceChecks in WorkspaceTest/Linked/Workspace/Finder.lean and
+workspaceFailures in WorkspaceTest/Linked/Workspace/Contract.lean), which
+the linked test reads under the package's directory, where it runs. They
+were the core's tests/workspaces, handed to contract-test, until the
+workspaces moved out of the core. It must stay executable (mode 100755).
+
+- git: stands for git. It answers exactly the two command lines the
+  workspace finder runs (Workspace/Finder.lean): `rev-parse
+  --path-format=absolute --show-toplevel --git-common-dir --abbrev-ref
+  HEAD` prints the three lines of the file `fixture-git` in the nearest
+  directory, the one it runs in or an ancestor, that holds one, and exits
+  128 when none does; `remote get-url origin` prints the line of
+  `fixture-origin` there, and exits 2 when there is none. Any other command
+  line exits 2 with a message. Shell builtins only.

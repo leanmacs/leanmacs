@@ -9,6 +9,10 @@ name = "buffers"
 path = "@REPO@/packages/buffers"
 
 [[require]]
+name = "workspace"
+path = "@REPO@/packages/workspace"
+
+[[require]]
 name = "completion"
 path = "@REPO@/packages/completion"
 

@@ -2394,35 +2394,6 @@ after its package, and the test scheme's keymap of its bindings. Nothing
 here starts a host or a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
-        "the executable's hosts start with find-file-in-workspace registered by the workspace package, the source workspace-files registered by it in the category workspace-file, which it alone is in, filtered and answered later by its job workspace-files, registered by it"
-      run := do
-        let registry := shippedRegistry
-        return (registry.find? "find-file-in-workspace").any (·.owner == owned "workspace") &&
-            registry.sources.any
-              (fun entry =>
-                entry.source.name == "workspace-files" && entry.owner == owned "workspace" &&
-                  entry.source.filtered &&
-                  entry.source.later.map (·.job) == some "workspace-files") &&
-            registry.sourcesIn "workspace-file" == #["workspace-files"] &&
-            registry.jobs.any
-              (fun entry =>
-                entry.registration.name == "workspace-files" && entry.owner == owned "workspace") },
-    { name :=
-        "the executable's hosts start with find-file-in-project registered by the workspace package, the source project-workspaces registered by it in the category project-workspace, which it alone is in, answered later by its job project-workspaces, and that job, project-workspace-choose and project-workspace-find registered by it"
-      run := do
-        let registry := shippedRegistry
-        let jobs := ["project-workspaces", "project-workspace-choose", "project-workspace-find"]
-        return (registry.find? "find-file-in-project").any (·.owner == owned "workspace") &&
-            registry.sources.any
-              (fun entry =>
-                entry.source.name == "project-workspaces" && entry.owner == owned "workspace" &&
-                  entry.source.later.map (·.job) == some "project-workspaces") &&
-            registry.sourcesIn "project-workspace" == #["project-workspaces"] &&
-            jobs.all fun name =>
-              registry.jobs.any
-                (fun entry =>
-                  entry.registration.name == name && entry.owner == owned "workspace") },
-    { name :=
         "the executable's hosts start with project-search, project-search-found, project-search-symbol and project-search-visit registered by the project-search package, the mode project-search, and the jobs project-search and project-search-load, registered by it"
       run := do
         let registry := shippedRegistry
@@ -2470,23 +2441,6 @@ def shippedChecks (_ : Unit) : List Check :=
               fun name =>
               registry.jobs.any fun entry =>
                 entry.registration.name == name && entry.owner == owner },
-    { name :=
-        "the executable's hosts start with find-file-in-another-workspace registered by the workspace package and one binding of it, the package's, C-x C-d in the prompt category workspace-file, described Find in another workspace; the global keymap does not bind C-x"
-      run := do
-        let registry := shippedRegistry
-        let escapes :=
-          registry.bindings.filter (·.binding.command == "find-file-in-another-workspace")
-        let global : Keymap Invocation := registry.keymap TestScheme.scheme
-        return (registry.find? "find-file-in-another-workspace").any
-              (·.owner == owned "workspace") &&
-            escapes.map (fun entry => (entry.owner, entry.binding)) ==
-              #[(owned "workspace",
-                  { keys := (keysOf "C-x C-d").map .key
-                    command := "find-file-in-another-workspace"
-                    category := some "workspace-file"
-                    desc := some "Find in another workspace" })] &&
-            global.find? (keysOf "C-x") == none &&
-            !global.continues (keysOf "C-x") },
     { name :=
         "the executable's hosts start with nothing of the at-point package: no command at-point-complete, at-point-next, at-point-previous, at-point-tab, at-point-backtab, at-point-return, at-point-quit, at-point-triggered or at-point-paused, no source words and none in the category word, no job words, no at-point source, and a modeless buffer's at-point chain is empty, registered by a package of the core's Lake package"
       run := do
@@ -2574,6 +2528,25 @@ def shippedChecks (_ : Unit) : List Check :=
             registry.sourcesIn "file" == #[] &&
             !(registry.extensions.any (·.owner == owned "files")) },
     { name :=
+        "the executable's hosts start with nothing of the workspace package: no command workspace-current, find-file-in-workspace, find-file-in-project or find-file-in-another-workspace, no job find-workspace, find-mode-markers, compile-list, workspace-files, project-workspaces, project-workspace-choose or project-workspace-find, no source workspace-files or project-workspaces, no source in the category workspace-file or project-workspace, no binding of find-file-in-another-workspace and none of C-x in the global keymap, and no value of an interface, project-api's Workspaces or files-api's Opened among them, registered by a package of the core's Lake package"
+      run := do
+        let registry := shippedRegistry
+        let global : Keymap Invocation := registry.keymap TestScheme.scheme
+        return ["workspace-current", "find-file-in-workspace", "find-file-in-project",
+                  "find-file-in-another-workspace"].all
+              (fun name => (registry.find? name).isNone) &&
+            ["find-workspace", "find-mode-markers", Compile.listJob, "workspace-files",
+                  "project-workspaces", "project-workspace-choose", "project-workspace-find"].all
+              (fun name => (registry.findJob? name).isNone) &&
+            (registry.source? "workspace-files").isNone &&
+            (registry.source? "project-workspaces").isNone &&
+            registry.sourcesIn "workspace-file" == #[] &&
+            registry.sourcesIn "project-workspace" == #[] &&
+            !registry.bindings.any (·.binding.command == "find-file-in-another-workspace") &&
+            global.find? (keysOf "C-x") == none &&
+            !global.continues (keysOf "C-x") &&
+            !(registry.extensions.any (·.owner == owned "workspace")) },
+    { name :=
         "the executable's hosts start with nothing of the buffers package: no command switch-buffer, list-buffers or close-buffer, no source buffers, no source in the category buffer, and no value of buffers-api's Buffers, registered by a package of the core's Lake package"
       run := do
         let registry := shippedRegistry
@@ -2637,14 +2610,6 @@ def shippedChecks (_ : Unit) : List Check :=
               (fun name => (registry.find? name).isNone) &&
             (registry.mode? "minibuffer").isNone &&
             (registry.mode? Prompt.mode).isNone },
-    { name :=
-        "the executable's hosts start with the jobs find-mode-markers and compile-list registered by the workspace package, beside find-workspace, and compile-list by no other package: the listing is the core's, whichever package gives the contributions it lists"
-      run := do
-        let registry := shippedRegistry
-        return (registry.findJob? "find-mode-markers").any (·.owner == owned "workspace") &&
-            (registry.findJob? "find-workspace").any (·.owner == owned "workspace") &&
-            (registry.jobs.filter (·.registration.name == Compile.listJob)).map (·.owner) ==
-              #[owned "workspace"] },
     { name :=
         "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered by the themes package, and no other theme: the packages of the core's Lake package ship no palette"
       run := do

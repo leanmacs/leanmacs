@@ -4,6 +4,7 @@ import Editor.Clipboard.Contract
 import Editor.Completion.AtPointContract
 import Editor.Completion.DisplayContract
 import Editor.Completion.Fake
+import Editor.Completion.Filtering
 import Editor.Completion.StyleContract
 import Editor.Config.Elaborator.Contract
 import Editor.Config.Elaborator.Model
@@ -28,6 +29,7 @@ import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Shipped
 import Editor.Test.Linked.Trees
+import Editor.Test.Listing
 import Editor.Test.Modes
 import Editor.Test.Prompts
 import Editor.Test.Sources
@@ -38,8 +40,6 @@ import Editor.VersionControl.Git.Model
 import Editor.Watch.Contract
 import Editor.WindowCommands.Compiled
 import Editor.WorkingSet.Compiled
-import Editor.Workspace.Contract
-import Editor.Workspace.Kit
 
 /-!
 # The core
@@ -67,8 +67,9 @@ imports check (`tools/host-imports-check.sh`) does not meet it.
 ## What it imports
 
 The core modules no other core module imports: the modules that define
-the packages still in the core (`….Compiled`), the contracts, fakes, cases
-and theorems, the elaborator port's model
+the packages still in the core (`….Compiled`), the source a command
+filters (`Editor.Completion.Filtering`, which the workspace package's finder
+is built on), the contracts, fakes, cases and theorems, the elaborator port's model
 (`Editor.Config.Elaborator.Model`), the git implementation's half of the
 repository model (`Editor.VersionControl.Git.Model`, whose port and pure
 model are the interface library `vc-api`'s, `VcApi` and `VcApiTest`,
@@ -82,10 +83,10 @@ hand-written minibuffer (`Editor.Test.Minibuffer`), and
 at-point (`Editor.Test.AtPoint`), which no other kit module imports) and the
 linked tests' (`Editor.Test.Linked.…`, `Editor/Test/Linked/`: its rig, its
 services, its trees and its hosts over the real elaborator, which bring
-their listings); and the feature kits still in the core (the files feature's,
-`FilesTest.Kit`, is the files package's since phase 6): the workspace's (`Editor.Workspace.Kit`, its world,
-finder jobs and driver), which brings `Editor.Test.Listing`; and the
-shell's (`Editor.Shell.Kit`). Everything else comes with them: the kit is the support the
+their listings); and the feature kits still in the core (the files
+feature's, `FilesTest.Kit`, is the files package's since phase 6, and the
+workspace's, `WorkspaceTest.Kit`, with the finder's model and contract, the
+workspace package's): the shell's (`Editor.Shell.Kit`). Everything else comes with them: the kit is the support the
 core's own tests are written on, so it imports the driver of the loop that
 tests run it with (`Editor.Loop.Driver`) and the modules that define the
 packages its fixtures register, and those are not named here again. The theorem modules are also the config base's imports

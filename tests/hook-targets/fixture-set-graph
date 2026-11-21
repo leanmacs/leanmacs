@@ -4,6 +4,7 @@ greeting-loud	implementation	greeting greeting-api
 echo	implementation	-
 files	implementation	-
 buffers	implementation	-
+workspace	implementation	-
 completion-api	interface	-
 completion	implementation	completion-api
 mode-line	implementation	-

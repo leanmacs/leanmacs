@@ -22,7 +22,6 @@ import ConfigTest.Editor.Setup
 import ConfigTest.Editor.Themes
 import ConfigTest.Editor.Themes.Check
 import ConfigTest.Editor.VersionControl.Gutter
-import ConfigTest.Editor.Workspace.Bench
 import ConfigTest.Lsp
 
 /-!
@@ -118,12 +117,12 @@ show:
   (`EditorCore.EditorPackage.packages`), each entry for the owner named
   after its package: it binds `C-s-f` to
   `toggle-fullscreen`, `s-m` to `minimise-window` and `s-q` to `quit`, the
-  `frame-commands` package's, binds `C-x C-d` to `find-file-in-another-workspace` in the
-  prompt category `workspace-file` alone, and registers the buffer
-  commands with the ex names `b`, `ls` and `bd` bound to them, and the
-  completion sources that ship; and it holds nothing of the compile mode,
-  no command, ex name, job, mode or contribution, that mode being a
-  package outside the core's Lake package;
+  `frame-commands` package's, binds the ex names `b`, `ls` and `bd` to the
+  buffer commands' names, and registers the completion sources that ship;
+  and it holds nothing of the compile mode, no command, ex name, job, mode
+  or contribution, that mode being a package outside the core's Lake
+  package, and nothing of the default packages that were the core's (the
+  files, the buffer commands, the workspaces among them);
 - `scriptChecks`: the headless mode's script (its `indexed` and
   `workspaces` directives among them) and its driver, and the editor
   loop through the host: a commit and the scene it prints, read from the
@@ -318,9 +317,10 @@ that reads an `initialize`d constant of config's, and none runs config that
 recurses without bound.
 
 The executable also holds the benchmark (`ConfigTest.Bench`,
-`ConfigTest/Bench.lean`) and the workspace finder's
-(`ConfigTest.WorkspaceBench`, `ConfigTest/Editor/Workspace/Bench.lean`),
-which the gate builds and never runs.
+`ConfigTest/Bench.lean`), which the gate builds and never runs. The
+workspace finder's, which was here too, is the workspace package's
+(`WorkspaceTest.Linked.WorkspaceBench`, an opt-in argument of its linked
+test; `mise run find-file-bench`).
 -/
 
 namespace ConfigTest
@@ -390,10 +390,7 @@ never runs.
 `bench-jobs` is the job benchmark (`ConfigTest.Bench.jobs`;
 `mise run job-bench`), which the gate never runs either, and so is
 `bench-prompt`, the prompt benchmark (`ConfigTest.Bench.prompt`;
-`mise run prompt-bench`), and `bench-workspace-files`, the workspace
-finder's (`ConfigTest.WorkspaceBench.workspaceFiles`, the workspace's, in
-`ConfigTest/Editor/Workspace/Bench.lean`; `mise run find-file-bench`),
-handed the repository it searches, and `bench-journal`, the session
+`mise run prompt-bench`), and `bench-journal`, the session
 journal's cost on the editor thread (`ConfigTest.Bench.journal`;
 `mise run journal-bench`).
 
@@ -454,18 +451,6 @@ def main (args : List String) : IO UInt32 := do
           ConfigTest.Bench.prompt sysroot oleanDir samples
         catch error =>
           IO.eprintln s!"config-test: bench-prompt: {error}"
-          pure 1
-      IO.Process.exit status
-    | none =>
-      ConfigTest.usage
-  | ["bench-workspace-files", sysroot, oleanDir, repository, samples] =>
-    match samples.toNat? with
-    | some samples =>
-      let status ←
-        try
-          ConfigTest.WorkspaceBench.workspaceFiles sysroot oleanDir repository samples
-        catch error =>
-          IO.eprintln s!"config-test: bench-workspace-files: {error}"
           pure 1
       IO.Process.exit status
     | none =>

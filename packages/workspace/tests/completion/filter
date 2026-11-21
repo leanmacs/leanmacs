@@ -1,0 +1,47 @@
+#!/bin/sh
+# Stands in for `fzf --filter` in contract-test's filtering checks
+# (tests/completion/README). It accepts exactly
+# `[--read0] [--print0] --filter <text>`, the text one argument, and
+# prints, in input order, the records that contain the text as a literal
+# substring; it exits 1 when it prints none, as fzf does.
+read0=false
+print0=false
+while [ $# -gt 2 ]; do
+  case $1 in
+  --read0) read0=true ;;
+  --print0) print0=true ;;
+  *)
+    echo "filter: unknown argument: $1" >&2
+    exit 2
+    ;;
+  esac
+  shift
+done
+if [ $# -ne 2 ] || [ "$1" != --filter ]; then
+  echo "filter: the command line must end in --filter and one text" >&2
+  exit 2
+fi
+text=$2
+
+matching() {
+  found=1
+  while IFS= read -r record || [ -n "$record" ]; do
+    case $record in
+    *"$text"*)
+      if $print0; then
+        printf '%s\000' "$record"
+      else
+        printf '%s\n' "$record"
+      fi
+      found=0
+      ;;
+    esac
+  done
+  return $found
+}
+
+if $read0; then
+  /usr/bin/tr '\000' '\n' | matching
+else
+  matching
+fi

@@ -11,7 +11,7 @@
 #
 # It requires the core and each default package. A default package has a
 # directory here and a `require` below: the file commands (files/), the buffer commands
-# (buffers/), the
+# (buffers/), the workspaces (workspace/), the
 # completion styles and displays
 # (completion/, with its interface package completion-api/, which it
 # requires), the mode line's segments (mode-line/), the minibuffer's
@@ -50,6 +50,14 @@ path = "files"
 [[require]]
 name = "buffers"
 path = "buffers"
+
+# The workspaces: a file's workspace found and attached when it opens, its
+# modes on markers, `workspace-current`, `find-file-in-workspace` and
+# `find-file-in-project`. It implements the core's interface library
+# project-api, and registers at files-api's `Opened` hook.
+[[require]]
+name = "workspace"
+path = "workspace"
 
 # The completion styles and displays that ship, `fuzzy`, `orderless`,
 # `path` and `minibuffer`: the first default package to register a style or

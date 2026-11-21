@@ -9,7 +9,6 @@ import Editor.SyntaxTree.Contract
 import Editor.Text.Contract
 import Editor.UndoTree.Cases
 import Editor.Watch.Contract
-import Editor.Workspace.Contract
 import ModelTest.BuffersApi
 import ModelTest.Check
 import ModelTest.Editor.Api
@@ -176,15 +175,6 @@ import ModelTest.Editor.WorkingSet.Places
 import ModelTest.Editor.WorkingSet.Refind
 import ModelTest.Editor.WorkingSet.Run
 import ModelTest.Editor.Workspace
-import ModelTest.Editor.Workspace.Attach
-import ModelTest.Editor.Workspace.Compiled
-import ModelTest.Editor.Workspace.Contract
-import ModelTest.Editor.Workspace.FindFile
-import ModelTest.Editor.Workspace.FindInProject
-import ModelTest.Editor.Workspace.Lister
-import ModelTest.Editor.Workspace.Modes
-import ModelTest.Editor.Workspace.Projects
-import ModelTest.Editor.Workspace.Reach
 import ModelTest.EditorCore.EditorPackage
 import ModelTest.FilesApi
 import ModelTest.ProjectApi
@@ -576,7 +566,7 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   report a source that writes and one that is refused. The files package's
   file source is held to it by `FilesTest.pathsChecks` (in its package), the buffers package's
   buffer source by `BuffersTest.bufferCommandChecks` (in its package), and the workspace's find-file and
-  find-in-project sources by `findFileChecks` and `findInProjectChecks`;
+  find-in-project sources by `WorkspaceTest.findFileChecks` and `WorkspaceTest.findInProjectChecks` (in its package);
 - `keyHintSourceChecks`: the key hints' source
   (`Editor/Completion/Keys.lean`): a candidate of each kind of hint, its
   annotation and kind, a source of the category `key` that has filtered
@@ -841,12 +831,11 @@ The config session's decisions are tested here too, with no elaborator:
   the compile mode's six are its package's, outside the core
   (`CompileTest.compilePackageChecks`, `packages/compile/`); and the
   gutter's three jobs restarted by their owner, none of version control's;
-- `workspacePackageChecks` and `restorePackageChecks`: which jobs each
-  package leaves to its owner to start again after a restart, never
-  counted as stopped (the `files` package's are
-  `FilesTest.filesPackageChecks`', in its package): the `workspace` package `find-workspace`, `find-mode-markers` and
-  `compile-list` (`Editor/Workspace/Compiled.lean`), and the `restore`
-  package its four (`Editor/Restore/Compiled.lean`);
+- `restorePackageChecks`: which jobs the `restore` package leaves to its
+  owner to start again after a restart, never counted as stopped, its four
+  (`Editor/Restore/Compiled.lean`) (the `files` package's are
+  `FilesTest.filesPackageChecks`', and the `workspace` package's
+  `WorkspaceTest.workspacePackageChecks`', each in its package);
 - `packageSetFingerprintChecks`: a user's package set's fingerprint
   (`Editor/PackageSet/Fingerprint.lean`): each require's line, a path
   made absolute and normalised; the manifest's git pins, read from a
@@ -900,8 +889,7 @@ The config session's decisions are tested here too, with no elaborator:
   version control's, and the one theme is `default`; and the set keeps
   exactly the shell's history and version control's reviews across a
   restart, reports exactly the jobs a person waits on, and leaves exactly
-  the files' check and follow, the workspace's find, marker search and
-  listing, the restore's four and the gutter's three to their owners to
+  the restore's four and the gutter's three to their owners to
   start again.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
@@ -1456,71 +1444,23 @@ Session restore is checked in Lean alone too:
   through every `FilesApi.Opened` value once, and with no files
   implementation a file to reopen said and not restored.
 
-Listing a workspace's files is checked in Lean alone too:
+What a search covers is checked in Lean alone too:
 
 - `searchRootChecks`: what a search covers, the core's
   (`Workspace.searchRoot`, `Editor/SearchRoot.lean`), pure: a location
   given and known, with the text typed after it; given and unknown; a
   workspace that cannot list its files, given and as the buffer's; the
   buffer's workspace; and the command directory of a buffer with none,
-  other arguments ignored;
-- `workspaceListerChecks`: which command lists a workspace's files
-  (`Editor/Workspace/Lister.lean`), pure: config's lister for the root,
-  then for the project, then git's for a workspace git found, then the
-  fallback; their exact command lines, the fallback's records without
-  `./`, its exit 1 a partial listing and no other's, and a lister as plain
-  arguments;
-- `findFileChecks`: `find-file-in-workspace`
-  (`Editor/Workspace/FindFile.lean`) on the loop's driver over the
-  editor's models and the job model of the workspace driver's world, each
-  lister and filter scripted by its exact command line: the eight criteria
-  of project navigation's phase 2, the lister run in the buffer's workspace
-  alone, config's listers, the fallback, the accept through `open-file`,
-  an absolute typed answer opened as it is, a refused prompt said,
-  the label, the working directory of a buffer with no workspace, the
-  refusals, that no step runs a process, a fallback that exits 1
-  still listing what it printed, and the text after a location typed
-  into the input, the list opened matched against it;
-- `projectWorkspaceChecks`: the project's workspaces
-  (`Editor/Workspace/Projects.lean`), pure: the worktrees in the reply's
-  order, those not found labelled by `Workspace.labelOf`, then the table's
-  others, one per location, the current one last; the table's label for a
-  worktree it knows, a detached worktree by its directory, two entries of
-  one label told apart by their annotation, and what is asked through its
-  arguments' round trip, and split from what follows it;
-- `findInProjectChecks`: `find-file-in-project`
-  (`Editor/Workspace/FindInProject.lean`) on the finder checks' driver,
-  with `/r`'s repository model and a third worktree `/u`: the five
-  criteria of project navigation's phase 3, the three worktrees listed by
-  `name@branch` with no file opened in two of them, the choice reaching
-  `find-file-in-workspace` rooted there, by a choice or by a typed text,
-  a worktree first reached added with the finder's identity and branch
-  and found once, a gone worktree said, a registered workspace listed and
-  refused, two of one label told apart, no project said, a project with
-  no git, a failing worktree list said, and one that fails only when the
-  accept lists again said by the command, with no prompt and no find; and
-  the four criteria of phase 4: the escape key in the finder opening the
-  picker, the choice opening the finder with the typed text, through a
-  reach or the table, the key doing nothing new in any other prompt, under
-  the Vim scheme too, and config's key in the category stepping out;
-- `reachChecks`: reaching the workspace at a path the table has no
-  answer for (`Editor/Workspace/Reach.lean`), with a probe continuation,
-  on the workspace driver: the find job started and its answer recorded
-  and handed on, a cached answer handed on with no job, a path in no
-  repository said by the gone sentence and cached, an unregistered job
-  said under the continuation's name, the arguments a caller carries
-  through the find job handed on, and the order's round trip;
-- `workspaceModesChecks`: the workspace's modes on markers
-  (`Editor/Workspace/Modes.lean`), on the workspace driver: over the
-  listing checks' world, a file under a root holding a marker turns its
-  mode on through the marker search, whose listing runs after it once; over
-  a world of markers (they were `CompileTest.compileHookChecks`' until the
-  compile mode's tests took stand-ins for the workspace), which markers
-  turn which modes on, with which roots, nearest first, a marker above the
-  workspace's root or, with no workspace, outside the file's directory
-  turning none on, no marker job with no contribution, a cached directory's
-  second file searched with no git run, and the marker order's round
-  trip.
+  other arguments ignored.
+
+Listing a workspace's files, finding a file's workspace, reaching one and
+its modes on markers are the `workspace` package's
+(`packages/workspace/`), and its test driver runs their checks
+(`WorkspaceTest.workspaceChecks`, `workspaceListerChecks`,
+`findFileChecks`, `projectWorkspaceChecks`, `findInProjectChecks`,
+`reachChecks`, `workspaceModesChecks`, and the finder's and the mode marker
+search's contracts over their models), which were this driver's while the
+workspaces were modules of the core.
 -/
 
 namespace ModelTest
@@ -1566,7 +1506,6 @@ def checks : List Check :=
     extensionChecks ++
     exPackageChecks ++
     versionControlPackageChecks ++
-    workspacePackageChecks ++
     restorePackageChecks ++
     restartChecks ++
     restartHandoverChecks ++
@@ -1735,14 +1674,7 @@ def checks : List Check :=
     searchRootChecks ++
     workspaceGitChecks ++
     workspaceStateChecks ++
-    workspaceChecks ++
-    workspaceListerChecks ++
-    findFileChecks ++
-    projectWorkspaceChecks ++
-    findInProjectChecks ++
-    reachChecks ++
     modeMarkerChecks ++
-    workspaceModesChecks ++
     shellChecks ++
     readOnlyChecks ++
     excerptBufferChecks ++
@@ -1820,8 +1752,6 @@ def main : IO UInt32 := do
       (← ModelTest.fuzzyFailures) ++
       (← ModelTest.syntaxTreeFailures) ++
       (← ModelTest.apiCaseFailures) ++
-      (← ModelTest.workspaceFinderFailures) ++
-      (← ModelTest.modeMarkerFailures) ++
       (← ModelTest.versionControlContractFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
@@ -1830,6 +1760,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.grepProperties.length} search properties of both, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model; {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search hold of its model and of the search on the job model; {Editor.VersionControlContract.properties.length} properties of the version-control interface hold of its model"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.grepProperties.length} search properties of both, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {Editor.VersionControlContract.properties.length} properties of the version-control interface hold of its model"
   (← IO.getStdout).flush
   IO.Process.exit 0

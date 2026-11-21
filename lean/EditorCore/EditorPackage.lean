@@ -11,7 +11,6 @@ import Editor.Themes.Compiled
 import Editor.VersionControl.Compiled
 import Editor.WindowCommands.Compiled
 import Editor.WorkingSet.Compiled
-import Editor.Workspace.Compiled
 
 /-!
 # The core's entry module: the packages of the core's Lake package
@@ -69,18 +68,17 @@ keeps each kind of entry in the order the hosts registered it before there
 were packages, so the command prompt, the keymaps, the mode line and the
 language table read as they did:
 
-- `menu` comes after `frame-commands` and before `workspace`: the key
-  bindings are the frame's, then the menu's, then the workspace finder's;
+- `menu` comes after `frame-commands`: the key bindings are the frame's,
+  then the menu's;
 - `themes` defines the theme `default` and no package after it defines a
   theme, so the themes of a Lake package that requires the core (the
   palettes of `shipped-themes`, `packages/shipped-themes/`) follow
   `default`, as the theme prompt lists them;
-- `project-search` and `working-set` come after `workspace`: project
-  search reads the workspace's rule of what is searched, and their
-  commands follow the workspace's in the command prompt;
+- `working-set` comes after `project-search`, and their commands follow
+  the themes' in the command prompt;
 - `restore` comes after `working-set` and before `shell`: like project
   search and the working sets it keeps state under the state directory,
-  and what it registers follows the workspace's;
+  and what it registers follows theirs;
 - `package-set` comes right after `restore`: a user's package-set build
   restarts the editor through the restore's restart, and its ex names
   follow `restart`'s;
@@ -127,7 +125,11 @@ D5): its commands follow version control's gutter's in the command prompt,
 before the completion styles' package's. The file commands' package,
 which was first here, is the default package `files` (`packages/files/`),
 and registers right before `buffers`: its commands follow version
-control's gutter's in the command prompt.
+control's gutter's in the command prompt. The workspaces' package, which
+was eighth here, after `themes`, is the default package `workspace`
+(`packages/workspace/`), and registers right after `buffers`: its commands
+follow the buffer commands' in the command prompt, and its binding, the
+workspace finder's escape, still follows the menu's.
 -/
 
 namespace EditorCore.EditorPackage
@@ -138,8 +140,7 @@ open Editor
 them ("The order", in the module docs). -/
 def packages : Array Package :=
   #[Evil.package, Ex.package, FrameCommands.package, Menu.package, WindowCommands.package,
-    TabCommands.package, Themes.package, Workspace.package, ProjectSearch.package,
-    WorkingSet.package, Restore.package, PackageSet.package, Shell.package, VersionControl.package,
-    VersionControl.gutterPackage]
+    TabCommands.package, Themes.package, ProjectSearch.package, WorkingSet.package, Restore.package,
+    PackageSet.package, Shell.package, VersionControl.package, VersionControl.gutterPackage]
 
 end EditorCore.EditorPackage
