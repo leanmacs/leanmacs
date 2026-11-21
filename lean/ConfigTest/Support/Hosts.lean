@@ -299,7 +299,7 @@ def Stage.new {β σ : Type} (context : Context) (elaborator : Config.Elaborator
           dispose := do
             let emitted := (← output.get).size
             disposed.modify (·.push emitted)
-          clock := some clock,
+          clock := some clock, tracksIdle := true
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
             match compiled.major with

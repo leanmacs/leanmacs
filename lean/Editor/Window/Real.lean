@@ -282,7 +282,10 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
       generator, workingDirectory, replace
       home := processes.home
       launch := { options.launch with arguments := options.restartArguments }
-      packageSet, package := package.getD shipped.package }
+      packageSet, package := package.getD shipped.package
+      -- The window mode keeps no count of its activity: its steps of it
+      -- do nothing.
+      tracksIdle := false }
   display.present
   -- The host lives in its bracket, which returns only once the loop has
   -- ended. The loop's end is the closer's to say, and the halt below throws

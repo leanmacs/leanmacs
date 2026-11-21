@@ -103,10 +103,12 @@ syntax service, which after an attach, and before a question of a text's
 captures, waits, with a bound, for the text's tree to be delivered. The host
 lives in its bracket (`Headless.withHost`), which returns once its loop has
 ended; `false` if the check did not hold or the host did not settle after
-it. The directory is removed. -/
+it. The directory is removed. A check that holds the editor thread at a line
+hands `emitting`, which the host's output goes through. -/
 def withVimHost (context : Context) (files : List (String × String)) (check : Session → IO Bool)
     (fileModel : Option FileModel := none) (realFiles : Bool := false)
-    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none) : IO Bool :=
+    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
+    (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeConfig directory files
     let source := Config.Directory.source directory
@@ -128,8 +130,9 @@ def withVimHost (context : Context) (files : List (String × String)) (check : S
       | none =>
         pure staged.services
     let shipped :=
-      Headless.shippedOver EditorCore.EditorPackage.packages #[`Editor] "" [] "" staged.emit
-        services staged.published staged.held (← Config.Elaborate.ModuleFiles.temporary)
+      Headless.shippedOver EditorCore.EditorPackage.packages #[`Editor] "" [] ""
+        (emitting staged.emit) services staged.published staged.held
+        (← Config.Elaborate.ModuleFiles.temporary)
     let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
       let real ← RealSyntaxTree.new snapshots
       return fun request => do

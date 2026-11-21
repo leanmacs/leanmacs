@@ -103,7 +103,7 @@ import EditorCore.EditorPackage
 # Config tests: `Editor/Headless.lean`
 
 The tests of `Editor/Headless.lean`: `hostChecks`, `threadChecks` (with `Gate`),
-`jobChecks`, `agreementChecks`, `scriptChecks`, `hostLoopChecks`,
+`jobChecks`, `idleChecks`, `agreementChecks`, `scriptChecks`, `hostLoopChecks`,
 `exScriptChecks`, `reloadEchoChecks`, `shippedChecks`, `watchReloadChecks`,
 `environmentHostChecks`, `restoreOrderChecks` and `journalFailureChecks`. The
 root module `ConfigTest` runs them; its module doc says what each shows.
@@ -1415,6 +1415,133 @@ def jobChecks (context : Context) : List Check :=
           -- a delivered parse's.
           session.host.send (.run "edit")
           eventually (return (← published) > before + 1) }]
+
+/-- `host`'s activity count once it reads `running`, waited for on the
+count's own changes (`Job.Activity.changedSince`), never on time. The bound
+is a hang guard: past it this throws a hang. -/
+def countReaches (host : Headless.Host) (running : Nat) : IO Job.Activity.Seen := do
+  unless host.activity.tracked do
+    throw <| IO.userError "the host keeps no count of its activity"
+  repeat
+    let seen ← host.activitySeen
+    if seen.running == running then
+      return seen
+    let some () ← Job.awaitWithin patience (← host.activity.changedSince seen.epoch) |
+      throw <|
+          IO.userError
+            s!"a hang: the host's count stayed at {seen.running}, not {running}, for {patience} ms"
+  throw <| IO.userError "unreachable"
+
+/-- `collaborators`, with the editor thread held (`hold`) inside the first line
+of the host's output that `holds` accepts, and `entered` resolved as it gets
+there, before the line is printed. -/
+def enteringLine {β σ : Type} {scheme : InputScheme}
+    (collaborators : Headless.Collaborators β σ scheme) (holds : String → Bool) (hold : BaseIO Unit)
+    (entered : IO.Promise Unit) : Headless.Collaborators β σ scheme :=
+  { collaborators with
+    emit := fun line => do
+      if holds line then
+        entered.resolve ()
+        hold
+      collaborators.emit line }
+
+/-- Waits for `entered`, a promise the check's hold resolves: a hang thrown
+past `patience`. -/
+def reached (entered : IO.Promise Unit) (what : String) : IO Unit := do
+  let some _ ←
+    Job.awaitWithin patience
+        entered.result? | throw <| IO.userError s!"a hang: {what} had not been reached within {patience} ms"
+
+/-- The checks of a host's idle signal (`Editor/Headless.lean`, "The idle
+signal"; `docs/design/concurrency.md`): what holds a unit of a host's
+activity count, read through the host (`Host.activitySeen`) and waited for
+on the count's own changes (`countReaches`). The editor thread is held at a
+line (`holdingUntil`) to look while an event is queued or being handled; no
+check sleeps, and no guard lets anything go. -/
+def idleChecks (context : Context) : List Check :=
+  [{  name :=
+        "on a stage host, a job asleep on the fake clock holds no unit: after spawn count the count reaches 0 with the sleep in the clock, and a marker answered after it leaves it there"
+      run :=
+        withHost context jobsConfig fun session => do
+          session.ask [.reload]
+          session.ask [.spawn "count"]
+          let parked ← countReaches session.host 0
+          let waiting ← session.clock.waiting
+          session.ask []
+          let after ← session.host.activitySeen
+          saw (waiting == 1 && after == parked)
+              s!"parked={repr parked} waiting={waiting} after={repr after}" },
+    { name :=
+        "on a stage host, a job the clock lets go holds a unit until its result has been handled: after advance 10 the count is 1 while the editor thread is held before printing the job's line, and 0 once a marker is answered"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeConfig directory jobsConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          let entered ← IO.Promise.new
+          holdingUntil fun hold letGo =>
+              onStage
+                { stage with
+                  collaborators :=
+                    enteringLine stage.collaborators (· == "job 1 count: ok") hold entered }
+                fun host stage => do
+                try
+                  host.send .reload
+                  unless ← host.settle patience do
+                    return false
+                  host.send (.spawn "count")
+                  unless ← host.settle patience do
+                    return false
+                  discard <| countReaches host 0
+                  stage.clock.advance 10
+                  reached entered "the job's line"
+                  -- The job has ended, its own unit given back; what is
+                  -- left is its wake-up's, queued until the editor thread
+                  -- has handled it.
+                  let atLine ← countReaches host 1
+                  let printed := (← stage.output.get).contains "job 1 count: ok"
+                  letGo
+                  unless ← host.settle patience do
+                    return false
+                  let after ← host.activitySeen
+                  saw
+                      (!printed && after.running == 0 &&
+                        (← stage.output.get).contains "job 1 count: ok")
+                      s!"atLine={repr atLine} printed={printed} after={repr after}"
+                finally
+                  letGo },
+    { name :=
+        "a pause of completion at point armed on the fake clock holds no unit, and its event holds one from the clock's move until the editor thread has handled it"
+      run := do
+        let entered ← IO.Promise.new
+        holdingUntil fun hold letGo =>
+            withVimHost context [] (emitting := fun emit line => do
+              if line.startsWith "commands:" then
+                entered.resolve ()
+                hold
+              emit line) fun session => do
+              try
+                session.ask [.reload]
+                session.typed "i a b"
+                let armed ← session.host.activitySeen
+                let waiting ← session.clock.waiting
+                -- The editor thread is held inside a show, and the pause
+                -- fires behind it: its event is queued, not yet handled.
+                session.host.send .show
+                reached entered "the commands line"
+                let before ← session.host.activitySeen
+                session.clock.advance 240
+                let queued ← session.host.activitySeen
+                letGo
+                unless (← session.host.join patience) == .settled do
+                  return false
+                let after ← session.host.activitySeen
+                saw
+                    (armed.running == 0 && waiting == 1 && before.running == 0 &&
+                      queued.running == 1 &&
+                      after.running == 0)
+                    s!"armed={repr armed} waiting={waiting} before={repr before} queued={repr queued} after={repr after}"
+              finally
+                letGo }]
 
 /-- A config of one file with one command, `forget`, which releases the
 text of index 0: the text of the editor loop's scratch buffer, made with the

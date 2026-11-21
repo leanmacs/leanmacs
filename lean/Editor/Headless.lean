@@ -561,6 +561,25 @@ and takes no job id (`Running.delayHints`). `idle <milliseconds>` still waits re
 time, for the render loop. The window mode passes no clock and keeps the
 library's timers.
 
+## The idle signal
+
+A host whose collaborators track it (`Collaborators.tracksIdle`: the
+headless mode's and a test stage's) starts with an activity count of its own
+(`Job.Activity`, `start`), handed to its runner (`Job.Services.activity`), so
+it is never a stage's: a late step of an earlier host's job cannot reach a
+later host's. A unit of it is held by each job while it can run (the
+runner's, `Editor/Job/Runner.lean`, "Activity"); by the reload job from its
+start (`reduce`) until it has posted its wake-up (`reloadJob`); by a pause's
+or a hint delay's wait in flight on a clock that ends it by itself; and by
+each event the reload, a job, a pause or a hint delay posted
+(`Collaborators.postCounted`), until the loop has handled it
+(`Collaborators.counts`, `loop`). A post made while its poster holds another
+unit needs none of its own: an environment's report is posted from a job's
+thread, or from the editor thread inside a counted event. The definition of
+idle, and why the epoch, is in `docs/design/concurrency.md`, "The idle
+signal". The window mode tracks nothing, and its steps of the count do
+nothing. `ConfigTest.idleChecks` pin what holds a unit.
+
 ## The driver, and the command line
 
 A host is driven from another thread: `Host.send` posts a request,
@@ -1098,6 +1117,13 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   mode's, and a test stage's. None for a host on the real clock, the window
   mode's. -/
   clock : Option Job.FakeClock := none
+  /-- Whether the host keeps a count of its activity, its idle signal
+  (`Job.Activity`, `docs/design/concurrency.md`, "The idle signal"): each
+  host then starts with a count of its own (`start`), its jobs, its reload
+  and the events they post hold units of it, and a driver's wait answers at
+  idle (`Host.waitWhile`). The headless mode's hosts and a test stage's keep
+  one; the window mode's does not, and its steps of the count do nothing. -/
+  tracksIdle : Bool := false
   /-- How this run was launched and what a restart hands on
   (`Restart.Launch`), which `start` writes into the editor state
   (`EditorState.launch`). The executable's hosts read it from the command
@@ -1121,6 +1147,33 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   "Module files"). The executable's edges call it once, when the host has
   ended; the default removes nothing. -/
   dispose : IO Unit := pure ()
+
+/-- Posts an event under `source`, with `code` and `text`, to the editor
+queue, under a unit of the host's activity (`Job.Activity`; "The idle
+signal", in the module docs): the unit is taken before the post and given
+back by the loop once it has handled the event (`Collaborators.counts`,
+`loop`), or here at once when the queue refuses it, which it does once the
+queues are quit. Whether the queue took it. It never throws. -/
+def Collaborators.postCounted {β σ : Type} {scheme : InputScheme}
+    (collaborators : Collaborators β σ scheme) (source code : UInt64) (text : String := "") :
+    BaseIO Bool := do
+  let activity := collaborators.services.activity
+  activity.begin
+  let posted ←
+    (Ffi.postEvent .editor source code text : IO Bool).catchExceptions fun _ => pure false
+  unless posted do
+    activity.done
+  return posted
+
+/-- Whether `event` came under a unit of the host's activity
+(`postCounted`): a reload's wake-up, a job's wake-up or post, or a pause's
+or a hint delay's. The loop gives its unit back once it has handled it. -/
+def Collaborators.counts {β σ : Type} {scheme : InputScheme}
+    (collaborators : Collaborators β σ scheme) (event : Ffi.Event) : Bool :=
+  event.source.kind == .lean &&
+    (event.source.id == collaborators.wakeups || event.source.id == collaborators.jobs ||
+      event.source.id == collaborators.posts ||
+      event.source.id == collaborators.pauseEvents)
 
 /-- What the driver posts to the editor queue: a request, a marker to wait
 for, or the end of the loop. -/
@@ -1336,7 +1389,9 @@ def rekeyed (running : Running β σ scheme) (keyed : Array (String × Nat)) : R
 /-- The reload job, on a thread of its own: builds the config, hands the
 outcome over through `promise`, and wakes the editor thread with an event.
 The wake-up is posted whatever happens, so the editor thread never waits for
-a job that is gone. -/
+a job that is gone. It holds a unit of the host's activity, taken by
+`reduce` as it starts it, and gives it back last, once its wake-up has been
+posted under a unit of its own (`postCounted`). -/
 def reloadJob (collaborators : Collaborators β σ scheme) (base : Option β)
     (files : Array (Config.LoadedFile σ)) (promise : IO.Promise (Config.Outcome β σ)) : IO Unit :=
   do
@@ -1346,7 +1401,8 @@ def reloadJob (collaborators : Collaborators β σ scheme) (base : Option β)
           Config.reload scheme collaborators.elaborator collaborators.source collaborators.package
               collaborators.generator base files)
   finally
-    discard <| Ffi.postEvent .editor collaborators.wakeups 0 ""
+    discard <| collaborators.postCounted collaborators.wakeups 0
+    collaborators.services.activity.done
 
 /-- Starts `work` as a job of `owner` called `name`: its id, and the jobs with
 it. It runs on the pool; its posts wait in the mailbox, and when it has
@@ -1355,15 +1411,14 @@ How a registered job is started (`startJob`) and how the loop's own work is
 (`Loop.Spawn`, `launch`). -/
 def startWork (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
     (owner : Config.Owner) (name : String) (work : Work) : IO (Nat × Running β σ scheme) := do
+  -- Each is posted under a unit of the host's activity (`postCounted`).
   let wake (id : Nat) : BaseIO Unit :=
-    (discard <| Ffi.postEvent .editor collaborators.jobs id.toUInt64 "" : IO Unit).catchExceptions
-      fun _ => pure ()
+    discard <| collaborators.postCounted collaborators.jobs id.toUInt64
   -- A post waits in the mailbox, and the event says whose it is: the job's
   -- wake-up is posted after its last post's event.
   let posted (id : Nat) (invocation : Invocation) : BaseIO Unit := do
     running.mailbox.push id invocation
-    (discard <| Ffi.postEvent .editor collaborators.posts id.toUInt64 "" : IO Unit).catchExceptions
-        fun _ => pure ()
+    discard <| collaborators.postCounted collaborators.posts id.toUInt64
   let (id, jobs) ← running.jobs.start owner name work wake posted
   return (id, { running with jobs })
 
@@ -1413,6 +1468,9 @@ def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ
         collaborators.emit s!"job {entry.id} {entry.name}: cancelled"
     | .start base files =>
       let promise ← IO.Promise.new
+      -- The reload can run from here: it holds a unit of the host's
+      -- activity until it has posted its wake-up (`reloadJob`).
+      collaborators.services.activity.begin
       discard <| IO.asTask (prio := .dedicated) (reloadJob collaborators base files promise)
       running := { running with job := some promise }
     | .themed =>
@@ -1535,15 +1593,19 @@ def pause (collaborators : Collaborators β σ scheme) (running : Running β σ 
     let running ← running.withdrawPauses collaborators
     let services := collaborators.services
     let now ← services.timers.now
+    -- A wait on a clock that ends it by itself holds a unit of the host's
+    -- activity while it is in flight; one on the fake clock does not.
+    let counted := !services.timers.outside
     let mut held := #[]
     for ms in pauses do
       let (id, wait) ← services.completions.register
-      let fired (completion : Option Job.Completion) : BaseIO Unit :=
+      if counted then
+        services.activity.begin
+      let fired (completion : Option Job.Completion) : BaseIO Unit := do
         if completion == some .completed then
-          (discard <| Ffi.postEvent .editor collaborators.pauseEvents id "" :
-                IO Unit).catchExceptions
-            fun _ => pure ()
-        else pure ()
+          discard <| collaborators.postCounted collaborators.pauseEvents id
+        if counted then
+          services.activity.done
       discard <| BaseIO.mapTask fired wait.result? (sync := true)
       services.timers.start id (now + ms)
       held := held.push (id, view, ms)
@@ -1578,12 +1640,17 @@ def delayHints (collaborators : Collaborators β σ scheme) (running : Running �
     let running ← running.withdrawHints collaborators
     let services := collaborators.services
     let now ← services.timers.now
+    -- As a pause's: in flight on a clock that ends it by itself, it holds a
+    -- unit of the host's activity.
+    let counted := !services.timers.outside
     let (id, wait) ← services.completions.register
-    let fired (completion : Option Job.Completion) : BaseIO Unit :=
+    if counted then
+      services.activity.begin
+    let fired (completion : Option Job.Completion) : BaseIO Unit := do
       if completion == some .completed then
-        (discard <| Ffi.postEvent .editor collaborators.pauseEvents id "" : IO Unit).catchExceptions
-          fun _ => pure ()
-      else pure ()
+        discard <| collaborators.postCounted collaborators.pauseEvents id
+      if counted then
+        services.activity.done
     discard <| BaseIO.mapTask fired wait.result? (sync := true)
     services.timers.start id (now + ms)
     return { running with hintWait := some (id, generation) }
@@ -2420,6 +2487,10 @@ def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β
     if event.kind == .quit then
       break
     running ← running.handle collaborators event
+    -- An event posted under a unit of the host's activity gives it back
+    -- once it has been handled (`Collaborators.postCounted`).
+    if collaborators.counts event then
+      collaborators.services.activity.done
     if running.stopped then
       break
     progress.set
@@ -2455,6 +2526,12 @@ structure Host where private mk ::
   posted : IO.Ref Nat
   /-- How far the loop has got. -/
   progress : IO.Ref Progress
+  /-- The host's activity count, its idle signal: a count of its own when
+  its collaborators track it (`Collaborators.tracksIdle`), and otherwise
+  `Job.Activity.untracked`. -/
+  activity : Job.Activity
+  /-- The fake clock the host's jobs wait on, if they wait on one. -/
+  clock : Option Job.FakeClock
   /-- The loop. -/
   thread : Task (Except IO.Error Unit)
 
@@ -2480,9 +2557,20 @@ bracket (`withHost`), which ends the loop. -/
 private def start {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme) :
     IO Host := do
   let collaborators := collaborators.hosting
+  -- A count of the host's own, never a stage's: a late step of an earlier
+  -- host's job cannot reach a later host's idle.
+  let collaborators ←
+    if collaborators.tracksIdle then
+      pure
+          { collaborators with
+            services := { collaborators.services with activity := ← Job.Activity.counting } }
+    else
+      pure collaborators
   let progress ← IO.mkRef {}
   let thread ← IO.asTask (prio := .dedicated) (loop collaborators progress)
-  return { requests := collaborators.requests, posted := ← IO.mkRef 0, progress, thread }
+  return {
+      requests := collaborators.requests, posted := ← IO.mkRef 0, progress
+      activity := collaborators.services.activity, clock := collaborators.clock, thread }
 
 /-- What a driver's wait for the editor thread came to. -/
 inductive Wait where
@@ -2517,6 +2605,11 @@ def within (patience : Nat) (condition : IO Bool) : IO Bool := do
   return false
 
 namespace Host
+
+/-- The host's activity count and its epoch, read in one step: for a test,
+which looks at what the host's idle is made of (`Job.Activity`). -/
+def activitySeen (host : Host) : BaseIO Job.Activity.Seen :=
+  host.activity.seen
 
 /-- Posts `signal` to the editor queue. Throws if the queue refuses it, which
 it does once the queues are quit. -/
@@ -3456,7 +3549,7 @@ def shippedOver (packages : Array Package) (base : Array Lean.Name) (sysroot : S
         { sysroot, oleanDirs := oleans.map System.FilePath.mk, imports := base } files,
     source := Config.Directory.source configDir, package := packageFilesOver configDir, emit,
     services, published, held, requests := 1, wakeups := 2, jobs := 3, environment := 4, posts := 5,
-    pauseEvents := 6, packages, stateDirectory, log := IO.eprintln
+    pauseEvents := 6, packages, stateDirectory, log := IO.eprintln, tracksIdle := true
     journal := Journal.real published.reader services
     dispose := files.remove }
 

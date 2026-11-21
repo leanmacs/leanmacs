@@ -121,6 +121,12 @@ show:
   that such a script settles a real reload with a patience of its own,
   so a reload slower than the join's patience still leaves the join to
   run out as working;
+- `idleChecks`: a host's idle signal (`Editor/Headless.lean`, "The idle
+  signal"): what holds a unit of a host's activity count, read through the
+  host and waited for on the count's own changes, with the editor thread
+  held at a line to look while an event is queued: a job asleep on the
+  fake clock holds none, a job's result holds one until it is handled, and
+  a pause's event holds one from the clock's move until it is handled;
 - `shippedChecks`: what the executable's hosts start with, the registry the
   packages of the core's Lake package make
   (`EditorCore.EditorPackage.packages`), each entry for the owner named
@@ -361,6 +367,7 @@ def checks (context : Context) : List Check :=
     bracketChecks context ++
     threadChecks context ++
     jobChecks context ++
+    idleChecks context ++
     treeObjectChecks context ++
     indentChecks context ++
     watchReloadChecks context ++
