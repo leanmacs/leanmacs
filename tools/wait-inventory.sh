@@ -148,7 +148,7 @@ done < "$work/files" > "$work/lines"
 
 # The names whose doc starts with a marker: `<kind>\t<last segment>`.
 awk -F '\t' '
-  $1 != prevfile { pending = 0; prevfile = $3 }
+  $3 != prevfile { pending = 0; prevfile = $3 }
   {
     code = $5
     if ($7 > 0) { pending = $7; next }
