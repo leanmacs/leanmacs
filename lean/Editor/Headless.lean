@@ -2395,12 +2395,10 @@ def other (collaborators : Collaborators β σ scheme) (running : Running β σ 
       running.request collaborators request
     | some .marker =>
       return { running with markers := running.markers + 1 }
-    | some .probe =>
-      -- `handle` takes a probe before this: it publishes nothing.
-      return { running with markers := running.markers + 1 }
     | some .stop =>
       return { running with stopped := true }
-    | none =>
+    -- A probe is counted in `handle`, before this, and never reaches it.
+    | some .probe | none =>
       return running
 
 /-- Handles one event of the editor queue to its end. An event the loop takes
