@@ -428,33 +428,45 @@ mod tests {
     use crate::testing::{LARGE, MS, SMALL, began, presented_as};
 
     #[test]
-    fn the_window_draws_to_core_texts_weight_where_it_matches_core_text_and_linear_elsewhere() {
+    fn the_window_draws_with_core_texts_settings_where_it_matches_core_text_and_the_default_elsewhere()
+     {
         let plain = |settings: Settings| Settings {
             antialiasing: Antialiasing::Grayscale,
             ..settings
         };
-        let linear = Blending::Linear;
-        assert_eq!(settings(true, linear, false), Settings::default());
-        assert_eq!(settings(false, linear, false), plain(Settings::default()));
-        let encoded = Blending::Encoded;
-        assert_eq!(settings(true, encoded, true), Settings::core_text());
-        assert_eq!(settings(false, encoded, true), plain(Settings::core_text()));
+        // The platform's settings are editor-render-wgpu's own: what
+        // either holds is that crate's to pin.
+        assert_eq!(platform(true), Settings::core_text());
+        assert_eq!(platform(false), Settings::default());
+        // A renderer on the window that blends as it was asked gives the
+        // platform's settings back.
+        let default = Settings::default();
+        assert_eq!(settings(true, default.blending, false), default);
+        assert_eq!(settings(false, default.blending, false), plain(default));
+        let core_text = Settings::core_text();
+        assert_eq!(settings(true, core_text.blending, true), core_text);
+        assert_eq!(settings(false, core_text.blending, true), plain(core_text));
     }
 
     #[test]
     fn the_picture_is_blended_as_the_renderer_on_the_window_says_it_blends() {
-        // A surface that could not blend encoded fell back to linear
-        // light: what the window's picture is compared with does too.
-        assert_eq!(
-            settings(true, Blending::Linear, true),
-            Settings {
-                blending: Blending::Linear,
-                ..Settings::core_text()
+        // Whatever the renderer on the window says it blends in, as a
+        // surface that could not blend encoded fell back to linear light,
+        // what the window's picture is compared with blends in too, and
+        // is otherwise the platform's.
+        for blending in [Blending::Linear, Blending::Encoded] {
+            for matches_core_text in [true, false] {
+                let compared = settings(true, blending, matches_core_text);
+                assert_eq!(compared.blending, blending);
+                assert_eq!(
+                    compared,
+                    Settings {
+                        blending,
+                        ..platform(matches_core_text)
+                    }
+                );
             }
-        );
-        // The platform's own blending is what the window is made with.
-        assert_eq!(platform(true).blending, Blending::Encoded);
-        assert_eq!(platform(false), Settings::default());
+        }
     }
 
     /// A renderer that keeps what it is handed to draw its glyphs with,
