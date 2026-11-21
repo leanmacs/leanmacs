@@ -22,16 +22,15 @@ open Editor
 /-- The names of the packages of the core's Lake package, in the order they
 register. -/
 def shippedPackageNames : Array String :=
-  #["evil", "ex", "frame-commands", "menu", "window-commands", "tab-commands", "themes",
-    "project-search", "restore", "package-set", "shell", "version-control",
-    "version-control-gutter"]
+  #["evil", "ex", "frame-commands", "menu", "window-commands", "tab-commands", "themes", "restore",
+    "package-set", "shell", "version-control", "version-control-gutter"]
 
 /-- The checks of the packages of the core's Lake package
 (`EditorCore/EditorPackage.lean`): the list a host is handed is whole,
 every package of it is accepted, and what it registers is all theirs. -/
 def packageSetChecks : List Check :=
   [{  name :=
-        "the shipped set keeps exactly two stores across a restart, the shell's history and version control's reviews, reports exactly the jobs a person waits on: the search, the package-set build, the shell's run, and version control's apply, hunk apply and commit, and leaves exactly the jobs their owner starts again to it: the restore's six and the gutter's three"
+        "the shipped set keeps exactly two stores across a restart, the shell's history and version control's reviews, reports exactly the jobs a person waits on: the package-set build, the shell's run, and version control's apply, hunk apply and commit, and leaves exactly the jobs their owner starts again to it: the restore's six and the gutter's three"
       run :=
         let (state, _) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
@@ -39,24 +38,25 @@ def packageSetChecks : List Check :=
           state.registry.codecs.map (fun (owner, codec) => (owner.name, codec.name)) ==
               #[("shell", "shell-history"), ("version-control", "vc-review")] &&
             (state.registry.jobs.filter (·.registration.reported)).map (·.registration.name) ==
-              #["project-search", "package-build", "shell-run", "vc-status-apply", "vc-hunk-apply",
+              #["package-build", "shell-run", "vc-status-apply", "vc-hunk-apply",
                 "vc-commit-run"] &&
             (state.registry.jobs.filter (·.registration.restarted)).map (·.registration.name) ==
               #["restore", "restore-files", "restore-write", "restore-save", "restart-probe",
                 "restart-save", "vc-gutter-head", "vc-gutter-diff", "vc-gutter-refs"] },
     { name :=
-        "every package of the shipped set is accepted, and their names are the 13 of the package table, each once, in its order, with no package of the shipped palettes and none of the file commands, the buffer commands, the workspaces, the working sets, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
+        "every package of the shipped set is accepted, and their names are the 12 of the package table, each once, in its order, with no package of the shipped palettes and none of the file commands, the buffer commands, the workspaces, project search, the working sets, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
       run :=
         let (state, refused) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (refused == #[] &&
             EditorCore.EditorPackage.packages.map (·.name) == shippedPackageNames &&
-            shippedPackageNames.size == 13 &&
-            shippedPackageNames.toList.eraseDups.length == 13 &&
+            shippedPackageNames.size == 12 &&
+            shippedPackageNames.toList.eraseDups.length == 12 &&
             !shippedPackageNames.contains "files" &&
             !shippedPackageNames.contains "buffers" &&
             !shippedPackageNames.contains "workspace" &&
+            !shippedPackageNames.contains "project-search" &&
             !shippedPackageNames.contains "working-set" &&
             !shippedPackageNames.contains "shipped-themes" &&
             !shippedPackageNames.contains "compile" &&

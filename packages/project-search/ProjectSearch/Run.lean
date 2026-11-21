@@ -3,10 +3,11 @@ import Editor.Command.Call
 import Editor.Grep
 import Editor.Job
 import Editor.Jumps
-import Editor.ProjectSearch
 import Editor.SearchRoot
 import Editor.Text.Word
 import FilesApi
+import ProjectSearch
+import ProjectSearchApi
 
 /-!
 # `project-search`
@@ -14,7 +15,7 @@ import FilesApi
 Every match of a pattern under a workspace's root, honouring ignore files,
 shown as an excerpt buffer of the files' own buffers: an edit typed in it is
 an edit of the file's buffer, as wgrep's is. The decisions are
-`Editor/ProjectSearch.lean`'s; the search is the library's, through the job
+`ProjectSearch.lean`'s; the search is the library's, through the job
 port (`Editor/Grep.lean`).
 
 ## The command
@@ -93,16 +94,17 @@ closed, as the review's do: the limits bound how many.
 
 | Addition | Where |
 |---|---|
-| A decision about what an excerpt shows, or a sentence | `Editor/ProjectSearch.lean`, pinned by `ModelTest.projectSearchChecks` |
-| A step of the command or of a delivery | Here, pinned by `ModelTest.projectSearchRunChecks` on the loop's driver |
+| A decision about what an excerpt shows, or a sentence | `ProjectSearch.lean`, pinned by `ProjectSearchTest.projectSearchChecks` |
+| A step of the command or of a delivery | Here, pinned by `ProjectSearchTest.projectSearchRunChecks` on the loop's driver |
 | A key that runs it | The default config (`config/default/Config/Leader.lean`) |
 -/
 
 namespace Editor.ProjectSearch
 
-/-- The name the command is registered under. -/
+/-- The name the command is registered under: the interface package's
+(`ProjectSearchApi.searchName`), which a reacher names. -/
 def name : String :=
-  "project-search"
+  ProjectSearchApi.searchName
 
 /-- The name of the command a delivery is posted as. -/
 def foundName : String :=
@@ -112,9 +114,10 @@ def foundName : String :=
 def visitName : String :=
   "project-search-visit"
 
-/-- The name of the command that searches the word under the cursor. -/
+/-- The name of the command that searches the word under the cursor: the
+interface package's (`ProjectSearchApi.symbolName`), which a reacher names. -/
 def symbolName : String :=
-  "project-search-symbol"
+  ProjectSearchApi.symbolName
 
 /-- The name of the results buffer's mode. -/
 def modeName : String :=

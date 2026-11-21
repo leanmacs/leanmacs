@@ -17,8 +17,8 @@ import Editor.InputScheme.Contract
 import Editor.Main
 import Editor.Menu.Compiled
 import Editor.PackageSet.Compiled
-import Editor.ProjectSearch.Compiled
 import Editor.Restore.Compiled
+import Editor.SearchRoot
 import Editor.Shell.Kit
 import Editor.TabCommands.Compiled
 import Editor.Test.Excerpt
@@ -68,7 +68,8 @@ imports check (`tools/host-imports-check.sh`) does not meet it.
 The core modules no other core module imports: the modules that define
 the packages still in the core (`….Compiled`), the source a command
 filters (`Editor.Completion.Filtering`, which the workspace package's finder
-is built on), the contracts, fakes, cases and theorems, the elaborator port's model
+is built on), what a search covers (`Editor.SearchRoot`, which the project
+search package reads), the contracts, fakes, cases and theorems, the elaborator port's model
 (`Editor.Config.Elaborator.Model`), the git implementation's half of the
 repository model (`Editor.VersionControl.Git.Model`, whose port and pure
 model are the interface library `vc-api`'s, `VcApi` and `VcApiTest`,

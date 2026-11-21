@@ -1,15 +1,16 @@
 import Editor.Grep
-import Editor.ProjectSearch
-import ModelTest.Check
+import ProjectSearch
+import ProjectSearchTest.Check
 
 /-!
-# Model tests: `Editor/ProjectSearch.lean`
+# Model tests: `ProjectSearch.lean`
 
-The model tests of `Editor/ProjectSearch.lean`: `projectSearchChecks`. The root
-module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `ProjectSearch.lean`: `projectSearchChecks`. The test
+driver's root, `ProjectSearchTest/Model.lean`, runs them; its module doc
+says what each shows.
 -/
 
-namespace ModelTest
+namespace ProjectSearchTest
 
 open Editor
 
@@ -66,4 +67,4 @@ def projectSearchChecks : List Check :=
               "project-search: E54: Unmatched \\(" &&
             ProjectSearch.limits == { files := 200, found := 2000 } && ProjectSearch.contextRows == 2 }]
 
-end ModelTest
+end ProjectSearchTest

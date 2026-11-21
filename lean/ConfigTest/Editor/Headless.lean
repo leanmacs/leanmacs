@@ -2394,19 +2394,6 @@ after its package, and the test scheme's keymap of its bindings. Nothing
 here starts a host or a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
-        "the executable's hosts start with project-search, project-search-found, project-search-symbol and project-search-visit registered by the project-search package, the mode project-search, and the jobs project-search and project-search-load, registered by it"
-      run := do
-        let registry := shippedRegistry
-        let owner := owned "project-search"
-        return ["project-search", "project-search-found", "project-search-symbol",
-                  "project-search-visit"].all
-              (fun name => (registry.find? name).any (·.owner == owner)) &&
-            registry.modes.any
-              (fun entry => entry.mode.name == "project-search" && entry.owner == owner) &&
-            ["project-search", "project-search-load"].all fun name =>
-              registry.jobs.any fun entry =>
-                entry.registration.name == name && entry.owner == owner },
-    { name :=
         "the headless host handed a state directory starts its loop with it, as its working directory and home, and one handed none starts with none"
       run := do
         let completions ← Job.Completions.new
@@ -2513,6 +2500,17 @@ def shippedChecks (_ : Unit) : List Check :=
             (registry.source? "files").isNone &&
             registry.sourcesIn "file" == #[] &&
             !(registry.extensions.any (·.owner == owned "files")) },
+    { name :=
+        "the executable's hosts start with nothing of the project-search package: no command project-search, project-search-found, project-search-symbol or project-search-visit, no mode project-search, no job project-search or project-search-load, and no value of an interface, registered by a package of the core's Lake package"
+      run := do
+        let registry := shippedRegistry
+        return ["project-search", "project-search-found", "project-search-symbol",
+                  "project-search-visit"].all
+              (fun name => (registry.find? name).isNone) &&
+            (registry.mode? "project-search").isNone &&
+            ["project-search", "project-search-load"].all
+              (fun name => (registry.findJob? name).isNone) &&
+            !(registry.extensions.any (·.owner == owned "project-search")) },
     { name :=
         "the executable's hosts start with nothing of the working-set package: no command working-set-add, working-set-open, working-set-visit, working-set-remove, working-set-note or working-set-refresh, no mode working-set, no job working-set-files, working-set-load, working-set-write or working-set-save, and no value of an interface, files-api's Opened and Saved and buffers-api's Closing among them, registered by a package of the core's Lake package"
       run := do

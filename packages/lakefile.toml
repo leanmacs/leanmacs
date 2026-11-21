@@ -11,7 +11,9 @@
 #
 # It requires the core and each default package. A default package has a
 # directory here and a `require` below: the file commands (files/), the buffer commands
-# (buffers/), the workspaces (workspace/), the working sets (working-set/,
+# (buffers/), the workspaces (workspace/), project search (project-search/,
+# with its interface package project-search-api/, which it requires), the
+# working sets (working-set/,
 # with its interface package working-set-api/, which it requires), the
 # completion styles and displays
 # (completion/, with its interface package completion-api/, which it
@@ -59,6 +61,14 @@ path = "buffers"
 [[require]]
 name = "workspace"
 path = "workspace"
+
+# Project search: `project-search` and `project-search-symbol`, into an
+# editable excerpt buffer of the matches. It requires its interface
+# package, project-search-api, which so is in the set too and registers
+# nothing.
+[[require]]
+name = "project-search"
+path = "project-search"
 
 # The working sets: named sets of ranges of files, `working-set-add`,
 # `working-set-open` and a set's buffer. It requires its interface

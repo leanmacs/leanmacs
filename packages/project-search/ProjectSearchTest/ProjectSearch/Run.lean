@@ -7,8 +7,6 @@ import Editor.Job.Model
 import Editor.Jumps.Go
 import Editor.Loop.Driver
 import Editor.ModeLine
-import Editor.ProjectSearch.Compiled
-import Editor.ProjectSearch.Run
 import Editor.Role
 import Editor.Scene
 import Editor.State
@@ -20,31 +18,34 @@ import Editor.Test.Loop
 import Editor.Test.Models
 import FilesApi
 import FilesApiTest.Fake
-import ModelTest.Check
+import ProjectSearch.Compiled
+import ProjectSearch.Run
+import ProjectSearchTest.Check
 
 /-!
-# Model tests: `Editor/ProjectSearch/Run.lean`
+# Model tests: `ProjectSearch/Run.lean`
 
-The model tests of `Editor/ProjectSearch/Run.lean`: `projectSearchRunChecks`,
-on the loop's driver over the editor's models and the job model, under the
-test scheme (`Editor/InputScheme/Test.lean`), with no evil. What the checks
-did with Vim's keys they do with commands written here over the core's API:
+The model tests of `ProjectSearch/Run.lean`: `projectSearchRunChecks`, on
+the loop's driver over the editor's models and the job model, under the test
+scheme (`Editor/InputScheme/Test.lean`), with no evil. What the checks did
+with Vim's keys they do with commands written here over the core's API:
 bound to the key a sentence names (`C-o`, a step back through the window's
 jump list, `Jumps.move`; `C-w v`, a split; `C-w C-w`, the other window), or
-invoked (`to-offset`, which puts the cursor at an offset, where Vim's `w` and
-`3 j` put it on a match; `replace-range`, which replaces a range of the
+invoked (`to-offset`, which puts the cursor at an offset, where Vim's `w`
+and `3 j` put it on a match; `replace-range`, which replaces a range of the
 window's text, as `c w` and a typed word do); and the results mode's
 activate role on the test scheme's key for it, where Vim's is `RET`. What
-those Vim keys do is evil's, pinned by evil's tests. The root module
-`ModelTest` runs them; its module doc says what each shows.
+those Vim keys do is evil's, pinned by evil's tests. The test driver's root,
+`ProjectSearchTest/Model.lean`, runs them; its module doc says what each
+shows.
 -/
 
-namespace ModelTest
+namespace ProjectSearchTest
 
 open Editor
 open Editor.Test
 
-namespace ProjectSearchTest
+namespace RunTest
 
 /-- The files of the checks, on the job model's disk: `a.txt` holds no match
 on disk (its buffer's unsaved text holds one), `b.txt` two matches six rows
@@ -227,10 +228,10 @@ def resultsText : String :=
 def searched (driver : TestDriver) : TestDriver :=
   drained (invoked driver ProjectSearch.name [.str "needle"])
 
-end ProjectSearchTest
+end RunTest
 
-open ProjectSearchTest in
-/-- The checks of `project-search` (`Editor/ProjectSearch/Run.lean`), on the
+open ProjectSearchTest.RunTest in
+/-- The checks of `project-search` (`ProjectSearch/Run.lean`), on the
 loop's driver over the editor's models and the job model. -/
 def projectSearchRunChecks : List Check :=
   [{  name :=
@@ -453,4 +454,4 @@ def projectSearchRunChecks : List Check :=
               excerptRead done "*search: \\<foo_bar\\> in /w*" ==
                 some "foo_bar x\nfoo_barx foo_bar\n" }]
 
-end ModelTest
+end ProjectSearchTest

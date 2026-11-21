@@ -5,6 +5,8 @@ echo	implementation	-
 files	implementation	-
 buffers	implementation	-
 workspace	implementation	-
+project-search-api	interface	-
+project-search	implementation	project-search-api
 working-set-api	interface	-
 working-set	implementation	working-set-api
 completion-api	interface	-

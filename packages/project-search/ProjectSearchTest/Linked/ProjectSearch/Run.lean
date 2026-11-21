@@ -1,23 +1,26 @@
-import ContractTest.Check
 import Editor.Api
 import Editor.InputScheme.Test
 import Editor.Invocation
-import Editor.ProjectSearch.Compiled
 import Editor.Test.Hosted
 import Editor.Test.Linked.Rig
 import FilesApiTest.Fake
+import ProjectSearch.Compiled
+import ProjectSearchTest.Check
 
 /-!
-# Contract tests: `Editor/ProjectSearch/Run.lean`
+# Linked tests: `ProjectSearch/Run.lean`
 
-The tests of `Editor/ProjectSearch/Run.lean` over the real bindings:
-`projectSearchChecks`, what only the library's grep service, file service and
-text store together show. The files are `files-api`'s fake's (the kit's
-opener over the real file service, `FilesApiTest.fake`): project search names
-no files implementation.
+The tests of `ProjectSearch/Run.lean` over the real bindings:
+`projectSearchChecks`, what only the library's grep service, file service
+and text store together show. The files are `files-api`'s fake's (the kit's
+opener over the real file service, `FilesApiTest.fake`): project search
+names no files implementation. They were the contract test's
+(`ContractTest.projectSearchChecks`) while project search was modules of
+the core. The linked test's root, `ProjectSearchTest/Linked.lean`, runs
+them; its module doc says what each shows.
 -/
 
-namespace ContractTest
+namespace ProjectSearchTest.Linked
 
 open Editor
 open Editor.Test.Linked
@@ -70,7 +73,7 @@ def searchKeys : Loop.Keys TestScheme.scheme :=
         extensions := (Editor.Test.hostedRegistry #[FilesApiTest.fake]).extensionsAt } }
 
 /-- The checks of project search over the real bindings
-(`Editor/ProjectSearch/Run.lean`), in a fresh temporary directory: a
+(`ProjectSearch/Run.lean`), in a fresh temporary directory: a
 `.gitignore`d `ignored.txt`, `a.txt` open with `needle` inserted unsaved, and
 `b.txt` holding a match on disk. -/
 def projectSearchChecks (services : Job.Services) : List Check :=
@@ -101,4 +104,4 @@ def projectSearchChecks (services : Job.Services) : List Check :=
         finally
           IO.FS.removeDirAll directory }]
 
-end ContractTest
+end ProjectSearchTest.Linked

@@ -111,8 +111,6 @@ import ModelTest.Editor.Program
 import ModelTest.Editor.ProjectMode
 import ModelTest.Editor.ProjectMode.Format
 import ModelTest.Editor.ProjectMode.Listing
-import ModelTest.Editor.ProjectSearch
-import ModelTest.Editor.ProjectSearch.Run
 import ModelTest.Editor.Restart.Handover
 import ModelTest.Editor.Restart.Launch
 import ModelTest.Editor.Restore
@@ -1561,8 +1559,6 @@ def checks : List Check :=
     indentLevelChecks ++
     apiStateChecks ++
     insertExcerptChecks ++
-    projectSearchChecks ++
-    projectSearchRunChecks ++
     journalFormatChecks ++
     restoreDocumentChecks ++
     restoreOffsetChecks ++

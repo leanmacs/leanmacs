@@ -8,7 +8,7 @@ What `project-search` decides, as pure functions: the rows each excerpt of
 a file's matches shows, the header above a file's first excerpt, where a
 file's excerpts go in the results buffer, the record the results buffer
 keeps, and the sentences the echo area says. The commands and the jobs that
-use them are `Editor/ProjectSearch/Run.lean`; the search itself is the
+use them are `ProjectSearch/Run.lean`; the search itself is the
 library's, reached through the job port (`Editor/Grep.lean`).
 
 - **Context**: `contextRows` rows each side of a match's row. Excerpts whose
