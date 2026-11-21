@@ -8,7 +8,6 @@ import Editor.Ffi.Excerpts
 import Editor.Ffi.Marker
 import Editor.Ffi.Snapshot
 import Editor.Ffi.Window
-import Editor.InputScheme.Vim
 import Editor.Loop
 import Editor.Menu
 import Editor.Scene
@@ -107,7 +106,7 @@ scene with no blocks. Exits 0 after a line naming what held, or 1 after
 def excerptPictureScenario (dir font : String) (write : Bool) : IO UInt8 := do
   let fontBytes ← IO.FS.readBinFile font
   let theme := Editor.Theme.builtin
-  let cursor := Editor.Vim.cursorFace "normal"
+  let cursor : Editor.FaceName := ⟨"cursor.normal"⟩
   let scene ← excerptPicture fontBytes theme true cursor
   let path := System.FilePath.mk dir / "excerpts.png"
   if write then

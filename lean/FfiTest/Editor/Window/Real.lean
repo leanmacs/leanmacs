@@ -12,11 +12,13 @@ import Editor.Ffi.Display
 import Editor.Ffi.Render
 import Editor.Ffi.Window
 import Editor.FrameCommands.Compiled
+import Editor.InputScheme.Test
 import Editor.Menu
 import Editor.Menu.Compiled
 import Editor.Process.Environment
 import Editor.ProjectMode
 import Editor.Test.AtPoint
+import Editor.Test.Editing
 import Editor.Test.Minibuffer
 import Editor.Test.Shipped
 import Editor.Window
@@ -56,13 +58,16 @@ default editor's root hands them: the core's Lake package's, then
 the default package `files`, then the kit's stand-ins for the default packages whose data the core keeps
 (`Editor.Test.Shipped`, `Editor/Test/Shipped.lean`), then the kit's
 implementation of the default package `at-point`'s commands
-(`Editor.Test.AtPoint`, `Editor/Test/AtPoint.lean`), which insert state's
-`RET`, `TAB` and `C-g` run, and its implementation of the default package
+(`Editor.Test.AtPoint`, `Editor/Test/AtPoint.lean`), which a scheme's keys
+of completion at point run, and its implementation of the default package
 `minibuffer`'s commands and mode (`Editor.Test.Minibuffer`,
-`Editor/Test/Minibuffer.lean`), which answer a prompt. -/
+`Editor/Test/Minibuffer.lean`), which answer a prompt, and the kit's
+editing commands and keys (`Editor.Test.editingPackage`,
+`Editor/Test/Editing.lean`), with which a printable key of the test scheme
+the hosts run types. -/
 def shippedPackages : Array Editor.Package :=
   EditorCore.EditorPackage.packages ++ #[FilesApiTest.fake] ++ Editor.Test.Shipped.packages ++
-    #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package]
+    #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package, Editor.Test.editingPackage]
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
 scripted platform, on the absolute path `file`, or with no file, on the
@@ -93,7 +98,7 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     Editor.Ffi.windowRequest .scripted .minimise
     Editor.Window.shutdown
   let status ←
-    Editor.Window.host Editor.Vim.Default.scheme shippedPackages #[`Editor] .scripted options
+    Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor] .scripted options
         (.skip none) (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle
         #[] shutdown .headless
   unless status == 0 do
@@ -175,7 +180,7 @@ def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 :=
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
       oleans := [oleanDir], composition := true }
   let status ←
-    Editor.Window.host Editor.Vim.Default.scheme shippedPackages #[`Editor] .scripted options
+    Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor] .scripted options
         (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
         (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
         none)
@@ -208,8 +213,8 @@ def windowHostBaseScenario (sysroot oleanDir configDir : String) : IO UInt8 := d
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
       oleans := [oleanDir], composition := true }
   let status ←
-    Editor.Window.host Editor.Vim.Default.scheme shippedPackages #[`Editor, `ConfigFixture]
-        .scripted options (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+    Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor, `ConfigFixture] .scripted
+        options (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
         (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
         none)
   unless status == 0 do
@@ -246,7 +251,7 @@ def windowHostGenerateScenario (sysroot oleanDir configDir : String) : IO UInt8 
   let generator : Editor.Config.Generator :=
     { create := Editor.Config.Directory.create configDir, pin, set := some set }
   let status ←
-    Editor.Window.host Editor.Vim.Default.scheme shippedPackages #[`Editor] .scripted options
+    Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor] .scripted options
         (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
         (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
         none) (generator := some generator)
@@ -294,7 +299,7 @@ def windowHostDirectScenario (editorPath sysroot configDir : String) : IO UInt8 
       return 1
   let plan := options.configPlan false
   let status ←
-    Editor.Window.host Editor.Vim.Default.scheme shippedPackages #[`Editor] .scripted options plan
+    Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor] .scripted options plan
         (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
         Editor.Window.shutdown .headless (patience := none)
   unless status == 0 do
@@ -321,7 +326,7 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
     { file := some file, config := none, configGiven := false, sysroot := none, oleans := []
       composition := true }
   let status ←
-    Editor.Window.host Editor.Vim.Default.scheme shippedPackages #[`Editor] .scriptedUndrawn options
+    Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor] .scriptedUndrawn options
         (.skip none) (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle
         #[] Editor.Window.shutdown .headless
   unless status == 1 do
@@ -385,7 +390,7 @@ def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 :
       return "recorded"
     let said ← IO.mkRef (#[] : Array String)
     let status ←
-      Editor.Window.host Editor.Vim.Default.scheme shippedPackages #[`Editor] .scripted options
+      Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor] .scripted options
           (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
           (← Editor.Clipboard.InProcess.new).handle #[] shutdown .headless (patience := none)
           (afterRestore := #[.run Editor.restartName]) (replace := replace) (say := fun line =>
