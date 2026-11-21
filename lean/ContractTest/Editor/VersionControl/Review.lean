@@ -17,6 +17,7 @@ namespace ContractTest
 
 open Editor
 open Editor.Test.Linked
+open VcApiTest.Linked
 
 /-- The lines `1` to `20`, each ended by a line feed. -/
 def twentyLines : String :=

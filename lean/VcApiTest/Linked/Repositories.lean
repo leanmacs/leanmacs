@@ -1,4 +1,3 @@
-import Editor.Job.Runner
 import Editor.Process
 import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Trees
@@ -6,7 +5,7 @@ import VcApi
 import VcApiTest.Fake
 
 /-!
-# Contract tests: support: Repositories
+# vc-api's linked test support: Repositories
 
 Real git repositories as fixtures: git isolated from the user's
 configuration, the environment of the runs that write a repository out, a
@@ -16,10 +15,12 @@ check (`withRepository`). A command with its own `PATH` is the linked test
 kit's (`Editor/Test/Linked/Rig.lean`, `onChanged`). Shared by the
 version-control checks (`ContractTest/Support/Git.lean`), the workspace
 lister's and the working sets'; it names no version-control
-implementation. It holds no checks of its own.
+implementation. It holds no checks of its own. Published with the fake as
+`vc-api`'s linked test support: a package's linked tests may import it, and
+it imports no core test module.
 -/
 
-namespace ContractTest
+namespace VcApiTest.Linked
 
 open Editor
 open Editor.Test.Linked
@@ -269,4 +270,4 @@ def withRepository {α : Type} (check : System.FilePath → System.FilePath → 
     IO.FS.createDirAll (base / "repo")
     check (base / "home") (base / "repo")
 
-end ContractTest
+end VcApiTest.Linked

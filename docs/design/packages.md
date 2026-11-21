@@ -2857,7 +2857,7 @@ Computed again at the end of the features-as-packages roadmap's phase 5, which c
 - **Other features' modules that import it**: none. Working-set and workspace reach a repository through `VcApi` (`VcApi.Backend`, connected by `VcApi.connect?`).
 - **Other features it imports**: none. It reaches files through `FilesApi`, buffers through `BuffersApi` and a workspace through `ProjectApi`.
 - **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it**: none. The repositories the core's tests build are `ModelTest.Support.Repositories` and `ContractTest.Support.Repositories`, over `VcApiTest.Fake`.
+- **Test modules outside its own tests that import it**: none. The repositories its tests and the working sets' and the workspace's build are `vc-api`'s published test support, `VcApiTest.Repositories` and `VcApiTest.Linked.Repositories` (`lean/VcApiTest/`), over `VcApiTest.Fake`.
 - **The config base imports**: `VersionControl.Commit`, `VersionControl.Stage`.
 - **Reaches by name** (not exhaustive): the default order of the mode line names its segment `review` (`VcApi.reviewSegmentName`); its twelve `vc-` ex names are its own package's.
 

@@ -2,8 +2,8 @@ import Editor.Job
 import Editor.Job.Model
 import Editor.Process
 import Editor.VersionControl.Git
-import ModelTest.Support.Repositories
 import VcApi
+import VcApiTest.Repositories
 
 /-!
 # Model tests: support: Git
@@ -29,6 +29,7 @@ gives (`g` is `git -c commit.gpgsign=false`).
 namespace ModelTest
 
 open Editor
+open VcApiTest
 
 /-- On `main`, nothing changed: `echo a > a.txt; git add -A; g commit -m
 head`. -/

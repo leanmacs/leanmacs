@@ -1,4 +1,3 @@
-import ContractTest.Support.Repositories
 import Editor.Job
 import Editor.Job.Runner
 import Editor.Program
@@ -6,6 +5,7 @@ import Editor.Test.Linked.Jobs
 import Editor.VersionControl.Git
 import VcApi
 import VcApiTest.Fake
+import VcApiTest.Linked.Repositories
 
 /-!
 # Contract tests: support: Git
@@ -13,8 +13,8 @@ import VcApiTest.Fake
 Real git as the version-control checks meet it: the config whose settings
 the git implementation's command lines pin away, a repository written out
 under it, and its status read by the git implementation. Git isolated from
-the user's configuration and the writer of a repository are the shared
-`ContractTest/Support/Repositories.lean`. A command with its own `PATH` is the
+the user's configuration and the writer of a repository are `vc-api`'s
+linked test support (`VcApiTest/Linked/Repositories.lean`). A command with its own `PATH` is the
 linked test kit's (`Editor/Test/Linked/Rig.lean`, `onChanged`). Shared by
 several test modules; it holds no checks of its own.
 -/
@@ -23,6 +23,7 @@ namespace ContractTest
 
 open Editor
 open Editor.Test.Linked
+open VcApiTest.Linked
 
 /-- A user's global git config asking for what the git implementation's
 command line pins away (`Editor/VersionControl/Git.lean`, "The command

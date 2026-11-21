@@ -223,11 +223,10 @@ show:
   over a minute, one that is not a delay and one set twice;
 - `defaultConfigChecks`: the default config `mise run install` ships, read
   from the directory the fourth argument names: a reload of it through a
-  host of the Vim scheme that ships installs with no diagnostic and
-  `SPC f f` then asks for a path to open, `SPC p f` and `SPC SPC` open the
-  workspace finder and `SPC p p` the project's workspace picker; each of its bindings names a
-  registered command; and each prefix it binds under the leader has a
-  prefix name (`Registry.prefixName?`);
+  host of the Vim scheme that ships installs with no diagnostic; each of
+  its bindings names a registered command or one of the default packages'
+  commands, by name; and each prefix it binds under the leader has a prefix
+  name (`Registry.prefixName?`);
 - `extensionChecks`: extension points (`Editor/Extension.lean`) with the
   real elaborator, over the fixture `ExtensionFixture`, which declares an
   extension point and a compiled package that reads it: a config

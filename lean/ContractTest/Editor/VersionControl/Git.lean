@@ -29,6 +29,7 @@ namespace ContractTest
 
 open Editor
 open Editor.Test.Linked
+open VcApiTest.Linked
 
 /-- The checks of the git implementation over real git of what the model has
 no value for: a branch's change asked from each of two worktrees made with

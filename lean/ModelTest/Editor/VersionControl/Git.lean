@@ -27,6 +27,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open VcApiTest
 
 /-- The git implementation's staging of `paths` in `/r` on `model`. -/
 def gitStage (paths : Array String) (model : JobModel) :

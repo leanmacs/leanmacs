@@ -15,6 +15,7 @@ The model tests of `Editor/VersionControl/Porcelain.lean`:
 namespace ModelTest
 
 open Editor
+open VcApiTest
 
 /-- A detached checkout: `porcelainClean`'s commands, then `git checkout
 --detach`. -/

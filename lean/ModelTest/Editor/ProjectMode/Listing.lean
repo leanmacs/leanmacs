@@ -10,7 +10,6 @@ import Editor.Process
 import Editor.Process.Model
 import Editor.ProjectMode
 import Editor.ProjectMode.Listing
-import Editor.Shell.Kit
 import Editor.State
 import Editor.Store
 import Editor.Test.Driver
@@ -20,11 +19,10 @@ import Editor.Test.Keys
 import Editor.Test.Listing
 import Editor.Test.Loop
 import Editor.Test.Models
+import Editor.Test.Opener
 import Editor.Test.Shell
 import Editor.Test.Workspace
 import Editor.Workspace
-import Editor.Workspace.Kit
-import Editor.Workspace.Modes
 import FilesApi
 import FilesApiTest.Fake
 import ModelTest.Check
@@ -37,9 +35,13 @@ The model tests of `Editor/ProjectMode/Listing.lean`: `listingChecks` and
 says what each shows.
 
 The listing is a core module, so these checks name core modules only: their
-host is handed the workspace's, the files', the ex line's, the minibuffer's
-and the shell's commands and jobs, with the job `compile-list`, and no
-package outside the core. What the compile mode makes of a listing, the
+host is handed the kit's opener's commands and jobs, with the job
+`compile-list`, and no package outside the core. Where the workspace finds a
+file's workspace and its marker search turns modes on, they run stand-ins
+written over the core's API (`listingOpened`, `kubeOpened`: the kit's
+`attachAt` and `Workspace.turnOnModes`, as the kit's `markedPackage` does);
+that the workspace's marker search starts a listing after it is held by the
+workspace's `workspaceModesChecks`. What the compile mode makes of a listing, the
 commands `compile-command` offers and runs, is checked with the compile mode
 (`CompileTest.compileListedChecks`, `CompileTest.compileOfferChecks`).
 -/
@@ -49,26 +51,70 @@ namespace ModelTest
 open Editor
 open Editor.Test
 
-/-- The bindings of the listing checks: the shell checks', and the keys
-that open the listing checks' files (`listingFiles`). -/
-def listingBindings : List (String × Invocation) :=
-  shellBindings ++ listingFiles.map fun (key, path) => (key, opens path)
+/-- The workspace a file of the listing checks is in, standing in for the
+workspace finder's answer: the repository `/t` or `/t2` that holds it, and
+none for one in `/u`, which is in no repository. -/
+def listingFound (path : System.FilePath) : Option Workspace.Found :=
+  (#["/t2", "/t"] : Array System.FilePath).findSome? fun root =>
+    if (path.parent.map (Workspace.holds root)).getD false then
+      some
+        { root,
+          project := { identity := .commonDir (root / ".git"), name := root.fileName.getD "" } }
+    else none
 
-/-- The jobs of the listing checks: the shell checks', which are the
-workspace's and the files', and the listing job. -/
-def listingJobs (name : String) : Option (List Argument → Work) :=
-  if name == Compile.listJob then some Compile.listWork else shellJobs name
+/-- The on-modes a file of the listing checks turns on, standing in for the
+workspace's modes on markers: `t-mode` at the directory of `/t`, `/t2` or
+`/u` that holds it, each of which holds `t.toml`. -/
+def listingOn (path : System.FilePath) : Array Workspace.OnMode :=
+  match
+    (#["/t2", "/t", "/u"] : Array System.FilePath).find? fun root =>
+      (path.parent.map (Workspace.holds root)).getD false with
+  | some root => #[{ mode := "t-mode", root }]
+  | none => #[]
+
+/-- What the listing checks run once a buffer takes in a file, in place of the
+workspace's attach and its marker search: the file's workspace by
+`listingFound` (the kit's `attachAt`), then its on-modes by `listingOn`, as
+the kit's stand-in for modes on markers (`markedPackage`) turns them on
+(`Workspace.turnOnModes`, the core's). -/
+def listingOpened (id : BufferId) (path : System.FilePath) : EditorM Unit := do
+  if let some found := listingFound path then
+    attachAt found id path
+  Workspace.turnOnModes id (listingOn path)
+
+/-- What the listing checks run once a buffer takes in a file in a workspace
+whose location cannot run commands: the buffer's workspace is the reachable
+`kube` location, registered over the core's API, and then its on-modes by
+`listingOn`. -/
+def kubeOpened (id : BufferId) (path : System.FilePath) : EditorM Unit := do
+  let location := Location.reachable "kube" "pod" "/app"
+  discard <| Workspace.register location "git@github.com:o/r.git"
+  Workspace.setBufferWorkspace id location
+  Workspace.turnOnModes id (listingOn path)
+
+/-- The bindings of the listing checks: the keys that open the listing
+checks' files (`listingFiles`). -/
+def listingBindings : List (String × Invocation) :=
+  listingFiles.map fun (key, path) => (key, opens path)
+
+/-- The jobs of the listing checks: the kit's opener's, whose load runs
+`opened`, `listingOpened` by default, and the listing job. -/
+def listingJobs (opened : BufferId → System.FilePath → EditorM Unit := listingOpened)
+    (name : String) : Option (List Argument → Work) :=
+  if name == Compile.listJob then some Compile.listWork else Opener.jobsWith opened (name := name)
 
 /-- A driver of the listing checks over `registry`, by default `t-mode`
-registered in config (`listingRegistry`): the world of the listing checks
-(`listingJobModel`), with the shell checks' commands, which are core
-packages', and the loop told `registry`'s contributions; `none` if making
-the state was refused. -/
-def listingDriver (registry : Config.Registry := listingRegistry) : Option TestDriver :=
-  let keys := dispatchKeys listingBindings shellCommands
+registered in config (`listingRegistry`), whose opener runs `opened`
+(`listingOpened` by default): the files and the listings' runs of the listing
+checks (`listingRuns`), with the kit's opener's commands, and the loop told
+`registry`'s contributions; `none` if making the state was refused. -/
+def listingDriver (registry : Config.Registry := listingRegistry)
+    (opened : BufferId → System.FilePath → EditorM Unit := listingOpened) : Option TestDriver :=
+  let keys := dispatchKeys listingBindings Opener.commands
   let keys := { keys with registered := { keys.registered with compile := registry.compileHook } }
-  (Loop.Driver.over keys listingJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
-    fun driver => { driver with jobs := listingJobModel }
+  (Loop.Driver.over keys (listingJobs opened) (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption.map
+    fun driver => { driver with jobs := listingRuns }
 
 /-- `driver` in which `t-list` cannot be run in `/t2`: the program is not
 found. -/
@@ -90,11 +136,11 @@ def turningDriver (on : Array Workspace.OnMode) : Option TestDriver :=
     return none
   let keys :=
     dispatchKeys (listingBindings ++ [("C-p t", invoke "turn-on")])
-      (shellCommands ++ [("turn-on", turn)])
+      (Opener.commands ++ [("turn-on", turn)])
   let keys :=
     { keys with registered := { keys.registered with compile := listingRegistry.compileHook } }
-  (Loop.Driver.over keys listingJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
-    fun driver => { driver with jobs := listingJobModel }
+  (Loop.Driver.over keys (listingJobs) (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver => { driver with jobs := listingRuns }
 
 /-- The checks of turning a buffer's on-modes on, the core's
 (`Workspace.turnOnModes`, `Workspace.onModesOf`,
@@ -146,7 +192,7 @@ def turnOnModesChecks : List Check :=
 models, the job model and the process model, with `t-mode`. -/
 def listingChecks : List Check :=
   [{  name :=
-        "turning t-mode on runs its listing t-list in its root once, after find-mode-markers; a second file under the root starts compile-list again and runs nothing"
+        "turning t-mode on runs its listing t-list in its root once; a second file under the root starts compile-list again and runs nothing"
       run :=
         pure <|
           match listingDriver with
@@ -155,8 +201,7 @@ def listingChecks : List Check :=
             let (first, names) := settledNames driver "C-p 1"
             let (second, again) := settledNames first "C-p 2"
             shownOnModes first == some #[{ mode := "t-mode", root := "/t" }] &&
-              names.filter (fun name => name == Workspace.markerJob || name == Compile.listJob) ==
-                #[Workspace.markerJob, Compile.listJob] &&
+              names.contains Compile.listJob &&
               startedCount first (tList "/t") == 1 &&
               again.contains Compile.listJob &&
               startedCount second (tList "/t") == 1 &&
@@ -259,11 +304,10 @@ def listingChecks : List Check :=
       run :=
         let reachable := Location.reachable "kube" "pod" "/app"
         pure <|
-          match listingDriver with
+          match listingDriver (opened := kubeOpened) with
           | none => false
           | some driver =>
-            let waiting := settledBut (fedTo driver (presses "C-p 1")).1 Workspace.markerJob
-            let moved := settledOn (fedTo waiting (presses "C-e k")).1 []
+            let moved := settledAfter driver "C-p 1"
             !reachable.can.runCommands &&
               (shownWorkspace moved).map (·.1.location) == some reachable &&
               shownOnModes moved == some #[{ mode := "t-mode", root := "/t" }] &&

@@ -1,5 +1,4 @@
 import ContractTest.Check
-import ContractTest.Support.Repositories
 import Editor.Api
 import Editor.Config.Registry
 import Editor.InputScheme.Test
@@ -12,6 +11,7 @@ import Editor.WorkingSet.Compiled
 import Editor.Workspace.Kit
 import FilesApiTest.Fake
 import VcApiTest.Fake
+import VcApiTest.Linked.Repositories
 
 /-!
 # Contract tests: `Editor/WorkingSet/Run.lean`
@@ -29,6 +29,7 @@ namespace ContractTest
 
 open Editor
 open Editor.Test.Linked
+open VcApiTest.Linked
 
 /-- The commit `HEAD` is at as the checks' version-control backend answers
 it: `vc-api`'s fake (`VcApiTest.backend`) over a model repository whose

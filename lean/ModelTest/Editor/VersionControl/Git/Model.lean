@@ -17,6 +17,7 @@ parser reads what its printer prints as the model's status. The root module
 namespace ModelTest
 
 open Editor
+open VcApiTest
 
 /-- The checks of git's half of the repository model: the real parser
 (`Editor/VersionControl/Porcelain.lean`) reads what the printer prints

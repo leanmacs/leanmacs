@@ -18,6 +18,7 @@ namespace ContractTest
 
 open Editor
 open Editor.Test.Linked
+open VcApiTest.Linked
 
 /-- The name of the buffer the focused view of `loop` shows. -/
 def focusedName (loop : Loop TestScheme.scheme) : Option String :=

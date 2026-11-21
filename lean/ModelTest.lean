@@ -187,6 +187,7 @@ import ModelTest.Editor.Workspace.Contract
 import ModelTest.Editor.Workspace.FindFile
 import ModelTest.Editor.Workspace.FindInProject
 import ModelTest.Editor.Workspace.Lister
+import ModelTest.Editor.Workspace.Modes
 import ModelTest.Editor.Workspace.Projects
 import ModelTest.Editor.Workspace.Reach
 import ModelTest.EditorCore.EditorPackage
@@ -1324,8 +1325,9 @@ has its own checks and no check of the core's names the compile mode:
   severities' names, a step and an optional step, a format's defaults, the
   general format's parts, and the two tree helpers;
 - `listingChecks`: a contribution's computed commands
-  (`Editor/ProjectMode/Listing.lean`), on the loop's driver over a host
-  handed core packages' commands and jobs only: a mode that turns on runs
+  (`Editor/ProjectMode/Listing.lean`), on the loop's driver over the kit's
+  opener, with stand-ins over the core's API for a file's workspace and its
+  modes on markers: a mode that turns on runs
   its listing once in its root, a failed listing keeps why and says it
   once, what is kept where, no listing where commands cannot run, each end
   of a run's words, and an order's and an entry's round trip;
@@ -1526,7 +1528,11 @@ Listing a workspace's files is checked in Lean alone too:
   and handed on, a cached answer handed on with no job, a path in no
   repository said by the gone sentence and cached, an unregistered job
   said under the continuation's name, the arguments a caller carries
-  through the find job handed on, and the order's round trip.
+  through the find job handed on, and the order's round trip;
+- `workspaceModesChecks`: the workspace's modes on markers
+  (`Editor/Workspace/Modes.lean`), on the workspace driver over the listing
+  checks' world: a file under a root holding a marker turns its mode on
+  through the marker search, whose listing runs after it once.
 -/
 
 namespace ModelTest
@@ -1758,6 +1764,7 @@ def checks : List Check :=
     findInProjectChecks ++
     reachChecks ++
     modeMarkerChecks ++
+    workspaceModesChecks ++
     shellChecks ++
     readOnlyChecks ++
     excerptBufferChecks ++

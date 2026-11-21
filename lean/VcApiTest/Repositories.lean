@@ -1,18 +1,18 @@
-import ModelTest.Check
 import VcApi
 import VcApiTest.Fake
 
 /-!
-# Model tests: support: Repositories
+# vc-api's test support: Repositories
 
 A repository of `vc-api`'s fake, the pure model (`VcApiTest/Fake.lean`),
 with a file in every state, and the status it stands for: shared by the
 fake's tests (`ModelTest/VcApiTest/Fake.lean`) and version control's,
 whose git fixtures print it (`ModelTest/Support/Git.lean`). It holds no
-checks of its own.
+checks of its own. Published with the fake as `vc-api`'s test support, so
+a package's tests may import it, and it imports no core test module.
 -/
 
-namespace ModelTest
+namespace VcApiTest
 
 open Editor
 
@@ -56,4 +56,4 @@ def mixedRepository : VersionControl.Model.Repository :=
         ("ud.txt", "ours"), ("um.txt", "unstaged"), ("uu.txt", "x"),
         ("with space.txt", "changed")] }
 
-end ModelTest
+end VcApiTest

@@ -1,5 +1,6 @@
 import Editor.Config.Registry
 import Editor.Extension
+import Editor.File.Model
 import Editor.Job.Model
 import Editor.Loop.Driver
 import Editor.Process
@@ -83,6 +84,15 @@ one of `/u`. -/
 def listingFiles : List (String × System.FilePath) :=
   [("C-p 1", "/t/a.txt"), ("C-p 2", "/t/b.txt"), ("C-p 3", "/t2/a.txt"), ("C-p 4", "/u/a.txt"),
     ("C-p 5", "/t2/b.txt")]
+
+/-- The job model of the listing checks with no workspace world: the files
+of `listingFiles`, the listings' runs (`listingScripts`) and the streaming
+children `streams`. A check that runs the workspace's finder and marker search
+takes the workspace feature's kit's `listingJobModel`, which adds its world. -/
+def listingRuns (streams : Array Process.StreamScript := #[]) : JobModel :=
+  { files :=
+      listingFiles.foldl (fun (files : FileModel) (_, path) => files.withFile path "a".toUTF8) {}
+    processes := { scripts := listingScripts, streams } }
 
 /-- A package, standing in for the workspace's modes on markers, that
 registers at `files-api`'s hook `FilesApi.Opened` a value turning the

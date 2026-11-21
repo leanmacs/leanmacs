@@ -1,5 +1,4 @@
 import ContractTest.Check
-import ContractTest.Support.Repositories
 import Editor.Job
 import Editor.Process
 import Editor.Test.Linked.Jobs
@@ -7,6 +6,7 @@ import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
 import Editor.Workspace.FindFile
 import Editor.Workspace.Lister
+import VcApiTest.Linked.Repositories
 
 /-!
 # Contract tests: `Editor/Workspace/Lister.lean`
@@ -22,6 +22,7 @@ namespace ContractTest
 
 open Editor
 open Editor.Test.Linked
+open VcApiTest.Linked
 
 /-- Whether the records `lister` lists at `root`, filtered by the fixture
 filter under `fixtures` with the empty text, which keeps them all, as

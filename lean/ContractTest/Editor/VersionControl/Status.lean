@@ -44,6 +44,7 @@ namespace ContractTest
 
 open Editor
 open Editor.Test.Linked
+open VcApiTest.Linked
 
 /-- `loop`, over `texts`, once each job of `queue` has run, and every job
 their commands start, oldest first, as the model's driver settles

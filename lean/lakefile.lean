@@ -61,9 +61,12 @@ module of the editor). -/
 lean_lib VcApi
 
 /-- The test library of `vc-api` (`VcApiTest/`): its fake, the pure model of
-a repository (`VcApiTest.Fake`), and its contract check
-(`VcApiTest.Contract`). Staged here as `VcApi` is, it imports only the core's
-API, `VcApi` and the core's test kit. -/
+a repository (`VcApiTest.Fake`), its contract check (`VcApiTest.Contract`),
+and the repositories tests build over them, of the model
+(`VcApiTest.Repositories`) and written out with real git
+(`VcApiTest.Linked.Repositories`, for linked tests alone). Staged here as
+`VcApi` is, it imports only the core's API, `VcApi` and the core's test kit,
+the linked kit among it. -/
 lean_lib VcApiTest where globs := #[.submodules `VcApiTest]
 
 /-- The interface library `files-api` (`FilesApi.lean`): the hooks around a

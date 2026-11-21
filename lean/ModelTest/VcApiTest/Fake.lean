@@ -1,8 +1,8 @@
 import ModelTest.Check
-import ModelTest.Support.Repositories
 import VcApi
 import VcApiTest.Contract
 import VcApiTest.Fake
+import VcApiTest.Repositories
 
 /-!
 # Model tests: `VcApiTest/Fake.lean`
@@ -17,6 +17,7 @@ doc says what each shows.
 namespace ModelTest
 
 open Editor
+open VcApiTest
 
 /-- The checks of the model of a repository (`VcApiTest/Fake.lean`): its
 status of each state, how it pairs renames, and what its writes do. -/
