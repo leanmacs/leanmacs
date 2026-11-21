@@ -23,14 +23,20 @@ scene
 run load-theme
 scene
 
-# `first` is typed and accepted: the theme is switched with no reload, and
-# the scene after it is drawn in `first`.
+# `first` is typed and `<Enter>` pressed. The minibuffer's commands are a
+# default package too (packages/minibuffer/), so `<Enter>` runs
+# `minibuffer-accept`, which nothing in this editor registers: the echo
+# area says there is no such command, the prompt stays open and focused
+# with `first` typed and listed, and the theme in force stays `default`.
+# The default set's editor accepts, and draws the next scene in `first`.
 commit first
 key <Enter> Enter -
 scene
 
-# A shipped palette's name is answered: this editor holds no such theme,
-# the echo area says so, and the theme in force stays `first`.
+# `load-theme` is run again and a shipped palette's name typed: the
+# prompt that is open takes the keys, so its minibuffer holds
+# `firstsolarized-dark`, which no theme matches, and `<Enter>` again finds
+# no `minibuffer-accept`. The default set's editor loads the palette.
 run load-theme
 commit solarized-dark
 key <Enter> Enter -

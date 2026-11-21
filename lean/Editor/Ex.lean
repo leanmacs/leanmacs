@@ -37,7 +37,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   `Editor/Api.lean`), which the loop answers from the registry as it is
   when the line is asked for. So while a line is being typed the scene
   lists the lines and names it matches, a key of the minibuffer chooses
-  one, and accepting runs the chosen one (`Editor/Minibuffer.lean`).
+  one, and accepting runs the chosen one (`packages/minibuffer/Minibuffer.lean`).
   Typing `!` lists the history. The prompt asks for the sources of the
   category `ex-line` (`Editor/Completion.lean`), with two as its
   defaults, in that order: `historySource` (`ex-history`) and

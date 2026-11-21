@@ -8,6 +8,7 @@ import Editor.Test.AtPoint
 import Editor.Test.Linked.Services
 import Editor.Test.Shipped
 import EditorCore.EditorPackage
+import MinibufferApiTest.Fake
 
 /-!
 # The linked test of the package `compile`
@@ -69,11 +70,12 @@ the default package `mode-line` (`Editor.Test.Shipped.modeLine`), whose
 segments the host's status lines print, as the default editor's do, and
 its implementation of the default package `at-point`'s commands
 (`Editor.Test.AtPoint.package`), which insert state's `RET`, `TAB` and
-`C-g` run, then its own, the order the package-set build registers them
-in. -/
+`C-g` run, then the fake of the interface package `minibuffer-api`
+(`MinibufferApiTest.fake`), whose commands answer the compile prompt,
+then its own, the order the package-set build registers them in. -/
 def setPackages : Array Editor.Package :=
   EditorCore.EditorPackage.packages ++
-    #[Editor.Test.Shipped.modeLine, Editor.Test.AtPoint.package] ++
+    #[Editor.Test.Shipped.modeLine, Editor.Test.AtPoint.package, MinibufferApiTest.fake] ++
     Compile.EditorPackage.packages
 
 /-- The directory of the fixtures the checks over the real process service

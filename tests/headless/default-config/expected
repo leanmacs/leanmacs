@@ -16,8 +16,8 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 4 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
 status 4: minibuffer.prompt "Command: "
-view 2 0,0 0x0: "open-file            s-o, SPC ., SPC f f  Find file\nsave-buffer          s-s, SPC f s, SPC b s  Save file\nedit-file\nreload-buffer        SPC b r  Revert buffer\nauto-reload-mode\nminibuffer-accept\nminibuffer-cancel\nminibuffer-next\nminibuffer-previous\nminibuffer-insert", scroll 0, selections , padding 8 0
-decorations 2: minibuffer.candidate 0..51 minibuffer.annotation 21..51 minibuffer.candidate 52..105 minibuffer.annotation 73..105 minibuffer.candidate 106..115 minibuffer.candidate 116..159 minibuffer.annotation 137..159 minibuffer.candidate 160..176 minibuffer.candidate 177..194 minibuffer.candidate 195..212 minibuffer.candidate 213..228 minibuffer.candidate 229..248 minibuffer.candidate 249..266
+view 2 0,0 0x0: "open-file         s-o, SPC ., SPC f f  Find file\nsave-buffer       s-s, SPC f s, SPC b s  Save file\nedit-file\nreload-buffer     SPC b r  Revert buffer\nauto-reload-mode\nmove\nnormal\nvisual            v\nvisual-line       V\ninsert            i", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..48 minibuffer.annotation 18..48 minibuffer.candidate 49..99 minibuffer.annotation 67..99 minibuffer.candidate 100..109 minibuffer.candidate 110..150 minibuffer.annotation 128..150 minibuffer.candidate 151..167 minibuffer.candidate 168..172 minibuffer.candidate 173..179 minibuffer.candidate 180..199 minibuffer.annotation 198..199 minibuffer.candidate 200..219 minibuffer.annotation 218..219 minibuffer.candidate 220..239 minibuffer.annotation 238..239
 status 2: -
 key arrived: <Escape> Escape -
 run search-bindings: ok

@@ -46,6 +46,15 @@ testDriver = "«compile-test»"
 defaultTargets = ["Compile", "CompileTest"]
 leanOptions = { linter.all = true, warningAsError = true }
 
+# The minibuffer's interface package: its tests bind its names
+# (`MinibufferApi.cancelName`) and its linked test hands its host the
+# fake (`MinibufferApiTest.fake`, the core's test kit's minibuffer) where
+# the default set has the minibuffer, so they import no implementation of
+# the minibuffer.
+[[require]]
+name = "minibuffer-api"
+path = "../minibuffer-api"
+
 [[require]]
 name = "editor-core"
 path = "../../lean"

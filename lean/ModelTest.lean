@@ -101,7 +101,6 @@ import ModelTest.Editor.Loop.Driver
 import ModelTest.Editor.Marks
 import ModelTest.Editor.Marks.Follow
 import ModelTest.Editor.Menu
-import ModelTest.Editor.Minibuffer
 import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
 import ModelTest.Editor.ModuleLookup
@@ -516,12 +515,6 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   again; and rollback and the interrupt around an open prompt.
   `echoPromptChecks`: a command that says something and then asks leaves
   no echo, and what a job's command says while the prompt is open is kept;
-- `promptModeChecks`: the minibuffer that ships, its commands and its mode
-  (`Editor/Minibuffer/Compiled.lean`) in a registry whose active keymaps
-  the loop is handed: the phase's acceptance criteria, with the accept key
-  and the cancel key read from the test scheme's role table, and the
-  shipped commands' own rules (`<Backspace>` on an empty minibuffer cancels
-  the prompt);
 - `candidateChecks`: a prompt's candidates on that driver, with commands
   written here: first, that a prompt matched by a style and drawn by a
   display written here, neither shipped, registered in a registry the loop
@@ -1579,7 +1572,6 @@ def checks : List Check :=
     restoreChecks ++
     driverChecks ++
     promptChecks ++
-    promptModeChecks ++
     candidateChecks ++
     laterChecks ++
     completionJobChecks ++

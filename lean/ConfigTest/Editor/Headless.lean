@@ -2764,7 +2764,7 @@ def shippedChecks (_ : Unit) : List Check :=
             registry.sourcesIn "tab" == #[TabCommands.source.name] &&
             registry.sourcesIn "theme" == #[Themes.source.name] },
     { name :=
-        "the executable's hosts start with nothing of the compile mode: no command, ex name, job, mode or contribution of it is registered by a package of the core's Lake package, and compile as an ex name is not bound; the minibuffer's mode is"
+        "the executable's hosts start with nothing of the compile mode: no command, ex name, job, mode or contribution of it is registered by a package of the core's Lake package, and compile as an ex name is not bound"
       run := do
         let registry := shippedRegistry
         let names :=
@@ -2774,8 +2774,17 @@ def shippedChecks (_ : Unit) : List Check :=
             names.all (fun name => (registry.ex? name).isNone) &&
             (registry.findJob? "compile-run").isNone &&
             (registry.mode? "compilation").isNone &&
-            (registry.mode? Prompt.mode).isSome &&
             registry.contributions.isEmpty },
+    { name :=
+        "the executable's hosts start with nothing of the minibuffer package: no command minibuffer-accept, minibuffer-cancel, minibuffer-next, minibuffer-previous, minibuffer-insert, minibuffer-delete-backward, minibuffer-delete-to-start, minibuffer-ask or minibuffer-candidates, and no mode minibuffer, the one the minibuffer's buffer is made with, registered by a package of the core's Lake package"
+      run := do
+        let registry := shippedRegistry
+        return ["minibuffer-accept", "minibuffer-cancel", "minibuffer-next", "minibuffer-previous",
+                  "minibuffer-insert", "minibuffer-delete-backward", "minibuffer-delete-to-start",
+                  "minibuffer-ask", "minibuffer-candidates"].all
+              (fun name => (registry.find? name).isNone) &&
+            (registry.mode? "minibuffer").isNone &&
+            (registry.mode? Prompt.mode).isNone },
     { name :=
         "the executable's hosts start with the jobs find-mode-markers and compile-list registered by the workspace package, beside find-workspace, and compile-list by no other package: the listing is the core's, whichever package gives the contributions it lists"
       run := do

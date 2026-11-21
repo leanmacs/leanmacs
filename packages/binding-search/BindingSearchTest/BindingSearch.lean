@@ -12,15 +12,15 @@ import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Keymap
 import Editor.Loop.Driver
-import Editor.Minibuffer
 import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Keys
 import Editor.Test.Loop
-import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Test.Sources
+import MinibufferApi
+import MinibufferApiTest.Fake
 
 /-!
 # Model tests: `BindingSearch.lean`
@@ -49,13 +49,14 @@ def searchMarked : Dispatched := fun call => do
 
 /-- The commands of the binding search's checks, by name: the commands
 compiled code registers for the binding search
-(`BindingSearch.package.registered.commands`) and the core's test kit's
-minibuffer's (`Test.Minibuffer.package.registered.commands`), then `marked`
+(`BindingSearch.package.registered.commands`) and those of the fake of the
+interface package `minibuffer-api`, the core's test kit's minibuffer
+(`MinibufferApiTest.fake.registered.commands`), then `marked`
 (`searchMarked`). -/
 def searchCommands : List (String × Dispatched) :=
   let compiled : List (String × Dispatched) :=
     (BindingSearch.package.registered.commands ++
-          Test.Minibuffer.package.registered.commands).toList.filterMap
+          MinibufferApiTest.fake.registered.commands).toList.filterMap
       fun registration =>
       match registration.action with
       | .call run =>
@@ -74,7 +75,7 @@ category. No key is bound to `search-bindings`. -/
 def searchKeys : Loop.Keys TestScheme.scheme :=
   { maps := fun _ _ =>
       [Keymap.ofDescribed
-          [(keys "C-e y", invoke Editor.Minibuffer.acceptName, none),
+          [(keys "C-e y", invoke MinibufferApi.acceptName, none),
             (keys "C-c m", invoke "marked", some "Mark it")]]
     command? := fun name => (searchCommands.find? (·.1 == name)).map (·.2)
     matching :=
@@ -103,7 +104,7 @@ def keyedSearchKeys : Loop.Keys TestScheme.scheme :=
   { searchKeys with
     maps := fun _ _ =>
       [Keymap.ofDescribed
-          [(keys "C-e y", invoke Editor.Minibuffer.acceptName, none),
+          [(keys "C-e y", invoke MinibufferApi.acceptName, none),
             (keys "C-c m", invoke "marked", some "Mark it"),
             (keys "C-c s", invoke BindingSearch.name, none)]] }
 

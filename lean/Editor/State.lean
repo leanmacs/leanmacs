@@ -1988,7 +1988,10 @@ structure Prompt where
 
 /-- The name of the major mode the minibuffer's buffer is made with. A mode
 is registered under it by whoever ships the minibuffer's commands
-(`Editor/Minibuffer.lean`); with none registered it contributes nothing. -/
+(the default package `minibuffer`, `packages/minibuffer/Minibuffer.lean`);
+with none registered it contributes nothing. The interface package
+`minibuffer-api` declares its mode name from this
+(`MinibufferApi.modeName`). -/
 def Prompt.mode : String :=
   "minibuffer"
 

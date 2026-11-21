@@ -12,7 +12,6 @@ import Editor.Evil.Undo
 import Editor.Extension
 import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
-import Editor.Minibuffer
 import Editor.TabCommands
 import Editor.Themes
 import Editor.VersionControl.Commit
@@ -87,12 +86,14 @@ the core draws its own (`Completion.Display.unregistered`). Config registers one
 `defineDisplay` (`defineDisplay (Completion.Displays.minibuffer (rows :=
 15))` replaces the shipped one, which sets its rows) and chooses the
 default with `useDisplay` and a category's with `useDisplayFor`. The
-commands that accept and
-cancel a prompt, move through its candidates and put one in the input
-(`minibuffer-insert`), and the minibuffer's mode
-are here as well
-(`Editor/Minibuffer.lean`); their registrations
-(`Editor/Minibuffer/Compiled.lean`) are not, for the same reason. The
+commands that accept and cancel a prompt, move through its candidates and
+put one in the input (`minibuffer-insert`), and the minibuffer's mode, are
+not here: they are the package `packages/minibuffer/`, and config names
+them with `import Minibuffer`, a module of the set's base through the
+package's entry module (`Editor/Main.lean`, "The base"), as it names the
+command prompt's below; what they act through, the prompt operations of
+`Editor/Api.lean` (`acceptPrompt`, `cancelPrompt`, `chooseCandidate`,
+`insertCandidate`), is here. The
 fuzzy matcher is a sub-port of the editor's port, so a command of
 config's asks which candidates a pattern matches with `Fuzzy.rank`
 (`Editor/Fuzzy.lean`), as it asks a text. The ex

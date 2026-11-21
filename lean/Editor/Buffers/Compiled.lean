@@ -18,7 +18,7 @@ any config (`Editor/Config/Packages.lean`).
     (`Buffers.switchCommand`). With no string it asks with a prompt whose
     candidates are the open buffers' names, and whose continuation is
     `switch-buffer` itself. A host must be handed the minibuffer's
-    commands too (`Editor/Minibuffer/Compiled.lean`) for that prompt to be
+    commands too (`packages/minibuffer/Minibuffer/Compiled.lean`) for that prompt to be
     answered.
   - `list-buffers` shows the buffer list, a text view of the open buffers
     (`Buffers.listCommand`).

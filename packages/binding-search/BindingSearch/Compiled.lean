@@ -16,7 +16,7 @@ when config fails to load and a reload does not replace it.
   what it was called with (`commandWith`), which runs the binding its
   string names or asks for one among those the scheme reaches
   (`BindingSearch.searchBindings`). A host must be handed the minibuffer's
-  package too (the core's `lean/Editor/Minibuffer/Compiled.lean`) for that
+  package too (the default package `minibuffer`, `packages/minibuffer/`) for that
   prompt to be answered.
 - **The source**: the completion source of the key bindings
   (`BindingSearch.source`), so config can ask for it by name.

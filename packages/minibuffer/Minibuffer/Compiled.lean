@@ -1,15 +1,17 @@
-import Editor.Minibuffer
 import Editor.Package
+import Minibuffer
 
 /-!
 # The `minibuffer` package: the minibuffer's commands and its mode
 
 What a host registers so that a prompt can be answered
-(`Editor/Minibuffer.lean`): the package `minibuffer` (`Minibuffer.package`,
-`Editor/Package.lean`), whose `setup` registers the minibuffer's commands
-and its mode. A host registers it for the owner `minibuffer` when its loop
-starts, before any config (`Editor/Config/Packages.lean`), so they hold
-when config fails to load, and a reload does not replace them.
+(`Minibuffer.lean`): the package `minibuffer` (`Minibuffer.package`, the
+core's `lean/Editor/Package.lean`), whose `setup` registers the
+minibuffer's commands and its mode, under the names the interface package
+`minibuffer-api` declares. A host registers it for the owner `minibuffer`
+when its loop starts, before any config (the core's
+`lean/Editor/Config/Packages.lean`), so they hold when config fails to
+load, and a reload does not replace them.
 
 - **The commands**: `minibuffer-accept`, `minibuffer-cancel`,
   `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`,
@@ -26,14 +28,17 @@ mode then contributes nothing, and nothing accepts, cancels or chooses a
 candidate but a command that calls `acceptPrompt`, `cancelPrompt` or
 `chooseCandidate` itself.
 
-This module is apart from `Editor/Minibuffer.lean` because it is what a
-host is handed, not what config calls: `Editor.lean` imports the commands,
-so that config can call them, and not this.
+This module is apart from `Minibuffer.lean` because it is what a host is
+handed, not what config calls: config names the commands with `import
+Minibuffer`, a module of the set's base through the entry module
+(`Minibuffer/EditorPackage.lean`), which imports this one.
 
-Pinned by `ModelTest.promptModeChecks`, on the models, and through the
-editor by the headless fixtures `prompt` and `candidates`. The core's own
-tests of prompts (`ModelTest.promptChecks`, `ConfigTest.promptChecks`) run
-on the test kit's minibuffer (`Editor/Test/Minibuffer.lean`).
+Pinned by `MinibufferTest.promptModeChecks`, on the models, by
+`MinibufferTest.minibufferPackageChecks`, the contract check of
+`minibuffer-api` over `package`, and through the editor by the package's
+headless fixtures `prompt` and `candidates`. The core's own tests of
+prompts (`ModelTest.promptChecks`, `ConfigTest.promptChecks`) run on the
+core's test kit's minibuffer (`lean/Editor/Test/Minibuffer.lean`).
 -/
 
 namespace Editor.Minibuffer

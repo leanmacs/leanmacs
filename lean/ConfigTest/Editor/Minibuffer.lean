@@ -39,8 +39,10 @@ import Editor.Themes.Compiled
 
 The tests of prompts through the headless host: `promptChecks`, the core's
 prompts answered through the kit's minibuffer (`Editor/Test/Minibuffer.lean`),
-so that none depends on the minibuffer that ships, whose own tests pin it
-(`ModelTest.promptModeChecks`). The root module
+so that none depends on the minibuffer that ships, the default package
+`minibuffer` (`packages/minibuffer/`), whose own tests pin it
+(`MinibufferTest.promptModeChecks`). The module keeps the name it had while
+the minibuffer was the core's `Editor/Minibuffer.lean`. The root module
 `ConfigTest` runs them; its module doc says what each shows.
 -/
 

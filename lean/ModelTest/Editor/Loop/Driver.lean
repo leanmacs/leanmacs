@@ -772,7 +772,8 @@ def echoPromptChecks : List Check :=
 /-- The checks of prompts on the loop's driver: the loop's part and its
 host's (`promptLoopChecks`), then the echo an open prompt clears
 (`echoPromptChecks`). The checks of the minibuffer's commands and its mode
-(`promptModeChecks`) are the minibuffer's own, and the root runs them. -/
+(`MinibufferTest.promptModeChecks`) are the package `minibuffer`'s own
+(`packages/minibuffer/`). -/
 def promptChecks : List Check :=
   promptLoopChecks ++ echoPromptChecks
 

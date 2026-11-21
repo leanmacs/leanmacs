@@ -1,0 +1,60 @@
+# The interface package of the minibuffer's commands and its mode
+# (docs/design/extension-points.md, "Three layers"): the contract between
+# the default package `minibuffer`, which implements it, and whatever
+# reaches one of its commands or its mode by name: the Vim scheme's
+# minibuffer table, which binds seven of the commands, the Vim scheme's
+# motions that ask, which yield `minibuffer-ask`, a completion source's
+# job, which posts each batch as `minibuffer-candidates`, the core, which
+# makes the minibuffer's buffer with the mode `minibuffer`, and the tests
+# of the packages that answer a prompt. It declares those nine names and
+# the mode's (`MinibufferApi.names`, `MinibufferApi.modeName`), as an
+# interface package declares every name another package may reach
+# ("Reaches by name"), and registers no behaviour.
+#
+# It is an interface package: it declares the keyword `editor-interface`
+# below, so another package may import its modules, and the layer imports
+# check reads that keyword from Lake (tools/layer-imports-check.sh).
+#
+# - `MinibufferApi` is the package's library: `MinibufferApi.lean`, the
+#   names.
+# - `MinibufferApiTest` holds what it publishes for other packages' tests,
+#   as the owner of a port publishes its fake and its contract check
+#   (AGENTS.md, "Testing with hand-written mocks"):
+#   `MinibufferApiTest/Fake.lean`, the core's test kit's implementation
+#   (`Editor.Test.Minibuffer.package`), which a consumer's tests use in
+#   place of any implementation; and `MinibufferApiTest/Contract.lean`, the
+#   check every implementation runs. Its own tests are
+#   `MinibufferApiTest/MinibufferApi.lean`.
+# - `minibuffer-api-test` is its test driver (`lake test`), rooted at
+#   `MinibufferApiTest/Model.lean`. It is no default target, as the core's
+#   `model-test` is not: `mise run lean` links with the system compiler,
+#   which this executable has no flags for.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/minibuffer-api update --keep-toolchain
+# then the same for every package and set that reaches this package
+# (packages/minibuffer, packages/compile, packages/execute-command,
+# packages/binding-search, packages/, tests/packages, tests/user-link,
+# tests/layer-imports), and commit each lake-manifest.json.
+name = "minibuffer-api"
+keywords = ["editor-interface"]
+testDriver = "«minibuffer-api-test»"
+defaultTargets = ["MinibufferApi", "MinibufferApiTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "MinibufferApi"
+
+[[lean_lib]]
+name = "MinibufferApiTest"
+globs = ["MinibufferApiTest.+"]
+
+[[lean_exe]]
+name = "minibuffer-api-test"
+root = "MinibufferApiTest.Model"

@@ -3,6 +3,7 @@ import Editor.Command.Call
 import Editor.Completion.Later
 import Editor.Mode
 import Editor.Role
+import MinibufferApi
 
 /-!
 # The minibuffer's commands and its mode
@@ -10,20 +11,23 @@ import Editor.Role
 A prompt is answered and cancelled by commands, and the minibuffer takes
 keys through a mode, like any buffer (`docs/design/keymaps-and-modes.md`,
 "The minibuffer"). They are a package's: a host registers them for the owner
-`minibuffer` (`Editor/Minibuffer/Compiled.lean`), so they hold when config
-fails to load, and a reload does not replace them.
+`minibuffer` (`Minibuffer/Compiled.lean`), so they hold when config
+fails to load, and a reload does not replace them. Their names, and the
+mode's, are the interface package `minibuffer-api`'s
+(`MinibufferApi.acceptName`, …, `MinibufferApi.modeName`), which declares
+every name another package reaches.
 
 - **`minibuffer-accept`** (`acceptName`, `acceptCommand`) accepts the open
   prompt with the minibuffer's text as its answer (`acceptPrompt`,
-  `Editor/Api.lean`): the prompt is closed, and the continuation's command
+  the core's `lean/Editor/Api.lean`): the prompt is closed, and the continuation's command
   runs next, with the answer.
 - **`minibuffer-cancel`** (`cancelName`, `cancelCommand`) cancels the open
   prompt (`cancelPrompt`): it is closed, and the continuation does not run.
 - **`minibuffer-next`** and **`minibuffer-previous`** (`nextName`,
   `nextCommand`; `previousName`, `previousCommand`) move a choice through
   the candidates the prompt has listed (`chooseCandidate`,
-  `Editor/Api.lean`), which the scene shows in the minibuffer's status
-  line (`Editor/Loop.lean`).
+  the core's `lean/Editor/Api.lean`), which the scene shows in the minibuffer's status
+  line (the core's `lean/Editor/Loop.lean`).
   - From nothing chosen, next chooses the first and previous the last;
     next from the last and previous from the first choose nothing. So the
     text as typed is one stop of the round, as in Vim's wild menu.
@@ -34,7 +38,7 @@ fails to load, and a reload does not replace them.
   - With nothing listed, and in a prompt with no candidates, each changes
     nothing.
 - **`minibuffer-insert`** (`insertName`, `insertCommand`) puts a candidate
-  in the minibuffer (`insertCandidate`, `Editor/Api.lean`), as vertico's
+  in the minibuffer (`insertCandidate`, the core's `lean/Editor/Api.lean`), as vertico's
   `TAB` does: the chosen one, or the first listed when nothing is chosen,
   replaces the whole input, the bar at its end, and the prompt stays open.
   It works in every prompt, so any candidate can be edited before it is
@@ -49,7 +53,7 @@ fails to load, and a reload does not replace them.
   and does nothing else. Any can be bound in the global keymap or run by
   its name, so it can run in any view.
 - **The mode** (`mode`) is the major mode the minibuffer's buffer is made
-  with (`Prompt.mode`, `Editor/State.lean`). It fills four roles:
+  with (`Prompt.mode`, the core's `lean/Editor/State.lean`). It fills four roles:
   `activate` with the accept command, `quit` with the cancel command, and
   `next-item` and `previous-item` with the two that move through the
   candidates. So under any scheme whose role keys hold in the minibuffer
@@ -58,7 +62,7 @@ fails to load, and a reload does not replace them.
   buffer is made with the mode, which is not set through a view.
 - **Under the Vim scheme** the minibuffer's view is in a Vim state where
   typing is text, in which a mode's keys do not hold; that state binds the
-  commands by their names (`Editor/InputScheme/Vim/Default.lean`). The
+  commands by their names (the core's `lean/Editor/InputScheme/Vim/Default.lean`). The
   names here and in that table are changed together.
 
 ## Deleting backward
@@ -93,7 +97,7 @@ whichever view it was run from:
 
 Nothing here inserts typed text: the command a key that prints runs is the
 scheme's self-insert. Under the Vim scheme that is evil's
-(`Evil.selfInsert`, `Editor/Evil.lean`), the same command as in insert
+(`Evil.selfInsert`, the core's `lean/Editor/Evil.lean`), the same command as in insert
 state: the minibuffer's view is in a state where typing is text, and the
 loop runs the command with the focused window, which is the minibuffer's.
 
@@ -101,16 +105,16 @@ loop runs the command with the focused window, which is the minibuffer's.
 
 | Addition | Where |
 |---|---|
-| A command that acts on the open prompt | Here, with its name, over an operation of `Editor/Api.lean`; its registration in `Editor/Minibuffer/Compiled.lean` |
+| A command that acts on the open prompt | Here, with its name, over an operation of the core's `lean/Editor/Api.lean`; its name in the interface package `minibuffer-api` when another package reaches it; its registration in `Minibuffer/Compiled.lean` |
 | A key every scheme should have in the minibuffer | A role the mode fills |
 | A key one scheme has in the minibuffer | That scheme's own table |
-| A key one prompt category has in the minibuffer | A binding given that category (`KeyBinding.category`, `Editor/Config/Registry.lean`) |
+| A key one prompt category has in the minibuffer | A binding given that category (`KeyBinding.category`, the core's `lean/Editor/Config/Registry.lean`) |
 
 ## Taking a batch
 
 `minibuffer-candidates` (`candidatesName`, `candidatesCommandOf`) is what a
 completion source's job posts each batch of its candidates as
-(`Editor/Completion/Later.lean`). It takes the batch into the open prompt,
+(the core's `lean/Editor/Completion/Later.lean`). It takes the batch into the open prompt,
 for the source and the generation the batch names
 (`StateRequest.addCandidates`): a stale job's batch, or one for a prompt
 that closed, is dropped. Arguments that are no batch say
@@ -122,57 +126,57 @@ at-point session adds its own.
 
 `minibuffer-ask` (`askCommand`) is what an input scheme yields when a key
 needs a text typed in the minibuffer before its edit is complete, as Vim's
-`/` needs its pattern (`Editor/InputScheme/Vim.lean`, "Motions that ask").
+`/` needs its pattern (the core's `lean/Editor/InputScheme/Vim.lean`, "Motions that ask").
 It opens a prompt with the label it is handed and the reserved continuation
 `InputScheme.answerName`, so the accepted answer is handed to the scheme
-(`Editor/Loop.lean`, "Prompts") and no command runs under that name.
+(the core's `lean/Editor/Loop.lean`, "Prompts") and no command runs under that name.
 
-Pinned by `ModelTest.promptModeChecks`, on the models and the test scheme,
-and through the editor by the headless fixtures `prompt` and `candidates`.
-The core's own tests of prompts and their candidates
-(`ModelTest.candidateChecks`) run on the test kit's minibuffer
-(`Editor/Test/Minibuffer.lean`), whose commands act through the same
-operations.
+Pinned by `MinibufferTest.promptModeChecks`, on the models and the test
+scheme, and through the editor by the package's headless fixtures `prompt`
+and `candidates` (`tests/headless/`). The core's own tests of prompts and
+their candidates (`ModelTest.candidateChecks`) run on the core's test
+kit's minibuffer (`lean/Editor/Test/Minibuffer.lean`), whose
+commands act through the same operations.
 -/
 
 namespace Editor.Minibuffer
 
 /-- The name the accept command is registered under. -/
 def acceptName : String :=
-  "minibuffer-accept"
+  MinibufferApi.acceptName
 
 /-- The name the cancel command is registered under. -/
 def cancelName : String :=
-  "minibuffer-cancel"
+  MinibufferApi.cancelName
 
 /-- The name the command that moves to the next candidate is registered
 under. -/
 def nextName : String :=
-  "minibuffer-next"
+  MinibufferApi.nextName
 
 /-- The name the command that moves to the previous candidate is registered
 under. -/
 def previousName : String :=
-  "minibuffer-previous"
+  MinibufferApi.previousName
 
 /-- The name the command that puts a candidate in the minibuffer is
 registered under. -/
 def insertName : String :=
-  "minibuffer-insert"
+  MinibufferApi.insertName
 
 /-- The name the command that deletes backward is registered under. -/
 def deleteBackwardName : String :=
-  "minibuffer-delete-backward"
+  MinibufferApi.deleteBackwardName
 
 /-- The name the command that deletes to the input's start is registered
 under. -/
 def deleteToStartName : String :=
-  "minibuffer-delete-to-start"
+  MinibufferApi.deleteToStartName
 
 /-- The name the command that asks for the input scheme is registered
 under. -/
 def askName : String :=
-  "minibuffer-ask"
+  MinibufferApi.askName
 
 /-- What the command that asks for the input scheme says in the echo area
 when the prompt is refused: its name, then why. -/
@@ -268,7 +272,7 @@ def deleteToStartCommand (_ : Call) : EditorM Unit := do
 /-- The name the command that takes a batch of a source's job is registered
 under: the one such a job posts (`Completion.candidatesCommand`). -/
 def candidatesName : String :=
-  Completion.candidatesCommand
+  MinibufferApi.candidatesName
 
 /-- What the command that takes a batch says in the echo area for arguments
 that are no batch. -/
@@ -293,7 +297,7 @@ with. It fills the role `activate` with the accept command, the role `quit`
 with the cancel command, and the roles `next-item` and `previous-item` with
 the commands that move through the candidates. -/
 def mode : Mode :=
-  { name := Prompt.mode
+  { name := MinibufferApi.modeName
     roles :=
       [(Role.activate, acceptName), (Role.quit, cancelName), (Role.nextItem, nextName),
         (Role.previousItem, previousName)] }

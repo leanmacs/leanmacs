@@ -676,7 +676,7 @@ structure Asking where
   deriving DecidableEq, Repr
 
 /-- The name of the command a motion that asks yields, to open its prompt:
-the minibuffer's (`Editor/Minibuffer.lean`, "Asking for the input
+the minibuffer's (`packages/minibuffer/Minibuffer.lean`, "Asking for the input
 scheme"). -/
 def askCommand : String :=
   "minibuffer-ask"

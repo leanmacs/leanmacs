@@ -12,7 +12,9 @@
 # It requires the core and each default package. A default package has a
 # directory here and a `require` below: the completion styles and displays
 # (completion/, with its interface package completion-api/, which it
-# requires), the mode line's segments (mode-line/), the shipped themes (shipped-themes/), the command prompt
+# requires), the mode line's segments (mode-line/), the minibuffer's
+# commands and its mode (minibuffer/, with minibuffer-api/), the shipped
+# themes (shipped-themes/), the command prompt
 # (execute-command/, with its interface package execute-command-api/,
 # which it requires), the binding search (binding-search/, with
 # binding-search-api/), the compile mode (compile/), completion at point
@@ -46,19 +48,28 @@ path = "completion"
 name = "mode-line"
 path = "mode-line"
 
-# The shipped themes, Solarized and Fairy Floss: the third default package.
+# The minibuffer's commands, which answer a prompt, and its mode: the
+# third default package. It requires its interface package,
+# minibuffer-api, which so is in the set too and registers nothing; the
+# command prompt, the binding search and the compile mode require it too,
+# for their tests.
+[[require]]
+name = "minibuffer"
+path = "minibuffer"
+
+# The shipped themes, Solarized and Fairy Floss: the fourth default package.
 [[require]]
 name = "shipped-themes"
 path = "shipped-themes"
 
-# The command prompt, `execute-command`: the fourth default package. It
+# The command prompt, `execute-command`: the fifth default package. It
 # requires its interface package, execute-command-api, which so is in the
 # set too and registers nothing.
 [[require]]
 name = "execute-command"
 path = "execute-command"
 
-# The binding search, `search-bindings`: the fifth default package. It
+# The binding search, `search-bindings`: the sixth default package. It
 # requires its interface package, binding-search-api, which so is in the
 # set too and registers nothing.
 [[require]]
@@ -66,19 +77,19 @@ name = "binding-search"
 path = "binding-search"
 
 # The compile mode, `compile` into a workspace's compilation buffer, with
-# the modes that ship (cargo, lake, mise): the sixth default package.
+# the modes that ship (cargo, lake, mise): the seventh default package.
 [[require]]
 name = "compile"
 path = "compile"
 
-# Completion at point, its commands and the source `words`: the seventh
+# Completion at point, its commands and the source `words`: the eighth
 # default package. It requires its interface package, at-point-api, which
 # so is in the set too and registers nothing.
 [[require]]
 name = "at-point"
 path = "at-point"
 
-# The languages that ship and the `code` mode: the eighth default package.
+# The languages that ship and the `code` mode: the ninth default package.
 [[require]]
 name = "languages"
 path = "languages"

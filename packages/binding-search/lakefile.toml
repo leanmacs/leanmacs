@@ -44,6 +44,14 @@ leanOptions = { linter.all = true, warningAsError = true }
 name = "binding-search-api"
 path = "../binding-search-api"
 
+# The minibuffer's interface package: its tests answer the binding search
+# with its fake (`MinibufferApiTest.fake`, the core's test kit's
+# minibuffer) and bind its names (`MinibufferApi.acceptName`), so they
+# import no implementation of the minibuffer.
+[[require]]
+name = "minibuffer-api"
+path = "../minibuffer-api"
+
 [[require]]
 name = "editor-core"
 path = "../../lean"

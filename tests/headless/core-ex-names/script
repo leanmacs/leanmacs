@@ -3,24 +3,28 @@
 # packages dropped), against the config in `config/`, which registers
 # nothing. The compile mode is a default package, `compile`
 # (packages/compile/), so this editor does not hold it: it starts, loads
-# config, and a compile ex name typed in it is reported as any ex name
-# nobody bound is. What it prints must be exactly `expected`. It touches no
-# file and starts no process.
+# config, and opens its ex line. The minibuffer's commands are a default
+# package too, `minibuffer` (packages/minibuffer/), so nothing here answers
+# a prompt: `<Enter>` on the ex line runs `minibuffer-accept`, which
+# nothing registers, and the line stays open. What it prints must be
+# exactly `expected`. It touches no file and starts no process.
 
 # The editor starts and its config loads: the base config is elaborated on
 # is `Editor` alone, with no package's entry module.
 reload
 settle
 
-# `compile` is no ex name here: the echo area says so, in the words it has
-# for any name nobody bound, and the editor goes on. The default editor
-# opens the prompt `Compile command: ` for the same line.
+# `compile` is typed on the ex line and `<Enter>` pressed: the echo area
+# says there is no command `minibuffer-accept`, and the ex line stays open
+# and focused with `compile` in it, so the line is never run. The default
+# editor opens the prompt `Compile command: ` for the same line.
 key : Semicolon shift
 commit compile
 key <Enter> Enter -
 scene
 
-# `bogus` is a name no package binds, in any editor: the same words.
+# `bogus` is typed the same way: the ex line still open takes the keys, so
+# it holds `compile:bogus`, and `<Enter>` says the same.
 key : Semicolon shift
 commit bogus
 key <Enter> Enter -

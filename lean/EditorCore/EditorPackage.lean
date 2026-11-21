@@ -4,7 +4,6 @@ import Editor.Ex.Compiled
 import Editor.Files.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.Menu.Compiled
-import Editor.Minibuffer.Compiled
 import Editor.PackageSet.Compiled
 import Editor.ProjectSearch.Compiled
 import Editor.Restore.Compiled
@@ -118,7 +117,12 @@ registered in the default set, so `fuzzy` and `minibuffer` are still its
 defaults (`Config.Registry.styleEntry`, `displayEntry`). Completion at
 point's package, which was seventeenth here, after `shell`, is the default
 package `at-point` (`packages/at-point/`), and registers after the compile
-mode's: its commands follow compile's in the command prompt.
+mode's: its commands follow compile's in the command prompt. The
+minibuffer's package, which was second here, after `files`, is the
+default package `minibuffer` (`packages/minibuffer/`), and registers after
+the mode line's, before the shipped themes': its commands follow version
+control's gutter's in the command prompt, and its mode follows version
+control's modes.
 -/
 
 namespace EditorCore.EditorPackage
@@ -128,9 +132,9 @@ open Editor
 /-- The packages of the core's Lake package, in the order a host registers
 them ("The order", in the module docs). -/
 def packages : Array Package :=
-  #[Files.package, Minibuffer.package, Evil.package, Ex.package, Buffers.package,
-    FrameCommands.package, Menu.package, WindowCommands.package, TabCommands.package,
-    Themes.package, Workspace.package, ProjectSearch.package, WorkingSet.package, Restore.package,
-    PackageSet.package, Shell.package, VersionControl.package, VersionControl.gutterPackage]
+  #[Files.package, Evil.package, Ex.package, Buffers.package, FrameCommands.package, Menu.package,
+    WindowCommands.package, TabCommands.package, Themes.package, Workspace.package,
+    ProjectSearch.package, WorkingSet.package, Restore.package, PackageSet.package, Shell.package,
+    VersionControl.package, VersionControl.gutterPackage]
 
 end EditorCore.EditorPackage

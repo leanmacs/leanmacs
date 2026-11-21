@@ -17,6 +17,7 @@ import Editor.Menu.Compiled
 import Editor.Process.Environment
 import Editor.ProjectMode
 import Editor.Test.AtPoint
+import Editor.Test.Minibuffer
 import Editor.Test.Shipped
 import Editor.Window
 import Editor.Window.Real
@@ -54,10 +55,12 @@ kit's stand-ins for the default packages whose data the core keeps
 (`Editor.Test.Shipped`, `Editor/Test/Shipped.lean`), then the kit's
 implementation of the default package `at-point`'s commands
 (`Editor.Test.AtPoint`, `Editor/Test/AtPoint.lean`), which insert state's
-`RET`, `TAB` and `C-g` run. -/
+`RET`, `TAB` and `C-g` run, and its implementation of the default package
+`minibuffer`'s commands and mode (`Editor.Test.Minibuffer`,
+`Editor/Test/Minibuffer.lean`), which answer a prompt. -/
 def shippedPackages : Array Editor.Package :=
   EditorCore.EditorPackage.packages ++ Editor.Test.Shipped.packages ++
-    #[Editor.Test.AtPoint.package]
+    #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package]
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
 scripted platform, on the absolute path `file`, or with no file, on the

@@ -12,7 +12,6 @@ import Editor.Invocation
 import Editor.Job
 import Editor.Keymap
 import Editor.Loop.Driver
-import Editor.Minibuffer
 import Editor.Mode
 import Editor.Process
 import Editor.Process.Environment
@@ -34,6 +33,7 @@ import Editor.Test.Shell
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
+import MinibufferApi
 
 /-!
 # Model tests: support: Compile
@@ -92,7 +92,7 @@ def compileBindings : List (String × Invocation) :=
       ("C-k z",
         { command := Compile.outputName
           arguments := placeR.arguments ++ [.nat 1, .str "stale"] }),
-      ("C-k q", invoke Editor.Minibuffer.cancelName), ("C-o q", opens "/clone/r/src/a.lean"),
+      ("C-k q", invoke MinibufferApi.cancelName), ("C-o q", opens "/clone/r/src/a.lean"),
       ("C-k h", { command := Compile.compileName, arguments := [.str "check"] }),
       ("C-k n", invoke Compile.nextName), ("C-k p", invoke Compile.previousName),
       ("C-k e", invoke Compile.gotoName),

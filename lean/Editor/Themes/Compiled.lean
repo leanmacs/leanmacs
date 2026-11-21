@@ -17,7 +17,7 @@ load, a reload does not replace them, and config's theme of the name
 - **The command**: `load-theme`, a command that is given what it was
   called with (`commandWith`), which loads the theme it is given or asks for
   one among the registered ones (`Themes.loadThemeCommand`). A host must be
-  handed the minibuffer's package too (`Editor/Minibuffer/Compiled.lean`)
+  handed the minibuffer's package too (`packages/minibuffer/Minibuffer/Compiled.lean`)
   for that prompt to be answered.
 - **`Themes.defaultTheme`**: the theme `default`, the built-in theme
   (`Theme.builtin`, `Editor/Face.lean`), the one in force when no config

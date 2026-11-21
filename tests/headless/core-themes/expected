@@ -12,11 +12,19 @@ status 1: minibuffer.prompt "Theme: "
 view 2 0,0 0x0: "  default\n  first", scroll 0, selections , padding 8 0
 status 2: -
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 8, theme "first"
+scene 0x0, focused 1, echo "minibuffer-accept: no such command", echo padding 8, preedit -, published 6, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: -
+view 1 0,0 0x0: "first", scroll 0, selections 5..5, padding 8 0
+status 1: minibuffer.prompt "Theme: "
+view 2 0,0 0x0: "  first", scroll 0, selections , padding 8 0
+status 2: -
 run load-theme: ok
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "load-theme: no theme is registered as `solarized-dark`", echo padding 8, preedit -, published 13, theme "first"
+scene 0x0, focused 1, echo "minibuffer-accept: no such command", echo padding 8, preedit -, published 10, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: -
+view 1 0,0 0x0: "firstsolarized-dark", scroll 0, selections 19..19, padding 8 0
+status 1: minibuffer.prompt "Theme: "
+view 2 0,0 0x0: "", scroll 0, selections , padding 8 0
+status 2: -

@@ -19,7 +19,7 @@ shipped ex name runs in its place until a reload drops it.
   (`commandWith`).
   - `ex` opens the ex line, and runs the line it is answered
     (`Ex.exCommand`). A host must be handed the minibuffer's commands too
-    (`Editor/Minibuffer/Compiled.lean`) for that prompt to be answered, and
+    (`packages/minibuffer/Minibuffer/Compiled.lean`) for that prompt to be answered, and
     the shell's package (`Editor/Shell/Compiled.lean`) for a `:!`
     line or a filter to run.
   - `quit` asks the editor to quit, and says a refusal in the echo area

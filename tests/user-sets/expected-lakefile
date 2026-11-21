@@ -9,6 +9,10 @@ name = "mode-line"
 path = "@REPO@/packages/mode-line"
 
 [[require]]
+name = "minibuffer"
+path = "@REPO@/packages/minibuffer"
+
+[[require]]
 name = "shipped-themes"
 path = "@REPO@/packages/shipped-themes"
 

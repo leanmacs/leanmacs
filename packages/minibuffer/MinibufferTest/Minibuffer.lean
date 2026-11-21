@@ -2,16 +2,12 @@ import Editor.Command
 import Editor.Command.Model
 import Editor.Completion.Later
 import Editor.Config.Packages
-import Editor.Config.Registry
 import Editor.Display.Model
 import Editor.Event
 import Editor.InputScheme.Test
 import Editor.InputScheme.Vim
 import Editor.Invocation
-import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.Program
 import Editor.Role
@@ -20,21 +16,29 @@ import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
-import ModelTest.Check
+import Minibuffer.Compiled
+import MinibufferTest.Check
 
 /-!
-# Model tests: `Editor/Minibuffer.lean`
+# Model tests: `Minibuffer.lean`
 
-The model tests of `Editor/Minibuffer.lean`: `promptModeChecks`. The root module
-`ModelTest` runs them; its module doc says what each shows.
+The model tests of `Minibuffer.lean` and `Minibuffer/Compiled.lean`:
+`promptModeChecks`. The test driver's root, `MinibufferTest/Model.lean`,
+runs them; its module doc says what each shows. They were the core's
+(`ModelTest.promptModeChecks`) while the minibuffer was modules of the
+core, and moved here with their sentences as they were. They run on the
+core's test kit (`Editor.Test.…`: the prompt driver, the keys, the states)
+and the models, which a package's tests may import (`docs/design/packages.md`,
+"What a package may import").
 -/
 
-namespace ModelTest
+namespace MinibufferTest
 
 open Editor
 open Editor.Test
@@ -58,7 +62,7 @@ def promptScene (driver : TestDriver) :
       window.status)
 
 /-- A driver of the minibuffer checks (`minibufferDriver`,
-`Editor/Test/Prompts.lean`) over the state `start` makes, with the
+the core's `lean/Editor/Test/Prompts.lean`) over the state `start` makes, with the
 minibuffer that ships (`Editor.Minibuffer.package`) where the kit's
 drivers have the kit's: these checks are of that package's own commands. -/
 def shippedMinibufferDriver (start : TextM EditorState := EditorState.initial ⟨640, 480⟩) :
@@ -66,13 +70,13 @@ def shippedMinibufferDriver (start : TextM EditorState := EditorState.initial �
   minibufferDriver start (package := Editor.Minibuffer.package)
 
 /-- The checks of the minibuffer's commands and its mode
-(`Editor/Minibuffer.lean`, `Editor/Minibuffer/Compiled.lean`), on the
+(`Minibuffer.lean`, `Minibuffer/Compiled.lean`), on the
 loop's driver over the editor's models and the test scheme, with the
 registry's active keymaps (`shippedMinibufferDriver`): the phase's acceptance
 criteria on the models, the rules of the shipped commands the kit's
 minibuffer does not share (`<Backspace>` on an empty minibuffer, a malformed
 batch), and that the shipped package registers what the kit's does
-(`Editor/Test/Minibuffer.lean`). The accept key and the cancel key are the test scheme's keys for the roles
+(the core's `lean/Editor/Test/Minibuffer.lean`). The accept key and the cancel key are the test scheme's keys for the roles
 the mode fills (`InputScheme.roleKey`), so no check names a key of
 either. -/
 def promptModeChecks : List Check :=
@@ -303,4 +307,4 @@ def promptModeChecks : List Check :=
             Editor.Minibuffer.package.registered.modes.all fun mode =>
               mode.check TestScheme.scheme == []) }]
 
-end ModelTest
+end MinibufferTest

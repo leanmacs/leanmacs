@@ -1,5 +1,6 @@
 import Editor.Package
 import Editor.Test.AtPoint
+import Editor.Test.Minibuffer
 import Editor.Test.Shipped
 import EditorCore.EditorPackage
 
@@ -14,7 +15,9 @@ of them registers what the default editor's does of that data, then the
 kit's at-point package (`Editor.Test.AtPoint`, `Editor/Test/AtPoint.lean`),
 so that insert state's `RET`, `TAB` and `C-g`, which the Vim scheme binds
 to completion at point's commands, type and quit as the default editor's
-do. A test
+do, then the kit's minibuffer (`Editor.Test.Minibuffer`,
+`Editor/Test/Minibuffer.lean`), so that a prompt is answered, and its
+candidates that answer later taken, as the default editor's are. A test
 whose subject is the core's list itself hosts that list alone. Shared by
 several test modules; it holds no checks of its own.
 -/
@@ -26,9 +29,11 @@ open Editor
 /-- The packages of the core's Lake package, then the stand-ins for the
 default packages `mode-line` and `languages`, which register the shipped
 segments, and the `code` mode and the shipped languages, then the kit's
-implementation of the default package `at-point`'s commands. -/
+implementations of the default packages `at-point`'s and `minibuffer`'s
+commands. -/
 def shippedPackages : Array Package :=
-  EditorCore.EditorPackage.packages ++ Test.Shipped.packages ++ #[Test.AtPoint.package]
+  EditorCore.EditorPackage.packages ++ Test.Shipped.packages ++
+    #[Test.AtPoint.package, Test.Minibuffer.package]
 
 /-- `packages` completing at point through the core's test kit: a package
 named as the kit's at-point package is left out, and the kit's

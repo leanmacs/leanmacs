@@ -18,7 +18,7 @@ changed in its row and in its registration together. Nothing here says what
 a name does. The motions' entries are `Evil.motions`
 (`Editor/Evil/Motions.lean`), and the commands that are built are
 registered in `Editor/Evil/Compiled.lean`,
-`Editor/Minibuffer/Compiled.lean`, for `ex`, which `:` names and
+`packages/minibuffer/Minibuffer/Compiled.lean`, for `ex`, which `:` names and
 which opens the ex command line, `Editor/Ex/Compiled.lean`, and, for
 `keyboard-quit`, which `C-g` names and which cancels a running `:!`,
 `Editor/Shell/Compiled.lean`; a name with
@@ -98,7 +98,7 @@ puts a view in it when it is told the view is the minibuffer's
   key of normal state.
 - **Why the accept and cancel keys are in the state's table**, though the
   minibuffer's mode fills the roles `activate` and `quit`
-  (`Editor/Minibuffer.lean`). The state inserts text, so a mode's role
+  (`packages/minibuffer/Minibuffer.lean`). The state inserts text, so a mode's role
   keys do not hold there, and the key for `quit` is `q`, which must be
   text. A binding meant for one state belongs in that state's keymaps.
 - **The keys that move through a prompt's candidates are in the table
@@ -109,7 +109,7 @@ puts a view in it when it is told the view is the minibuffer's
   in the input (`minibuffer-insert`), so a candidate can be edited before
   it is accepted and a directory gone into. `S-TAB` is not bound there.
 - **`<Backspace>` is bound there**, to the minibuffer's command that
-  deletes backward (`Editor/Minibuffer.lean`), because a key that prints
+  deletes backward (`packages/minibuffer/Minibuffer.lean`), because a key that prints
   nothing does nothing in a state where typing is text unless it is bound.
   On an empty minibuffer it cancels the prompt, as `<BS>` does on Vim's
   empty command line; Emacs's minibuffer does nothing there.
@@ -118,7 +118,7 @@ puts a view in it when it is told the view is the minibuffer's
   exclusive bar, so they stop at the input's start and its end. They set no
   boundary in its history, which is thrown away with the prompt.
 - **`C-u` deletes from the bar to the input's start** and keeps what is
-  after the bar, Vim's `c_CTRL-U` (`Editor/Minibuffer.lean`, "Deleting to
+  after the bar, Vim's `c_CTRL-U` (`packages/minibuffer/Minibuffer.lean`, "Deleting to
   the start"). It never cancels the prompt.
 - **The ex line has these keys too**: it is a prompt, so its view is the
   minibuffer's, in this state. The one key of Vim's command line that
