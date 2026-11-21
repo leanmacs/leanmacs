@@ -2,8 +2,6 @@ import Editor.Api
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Model
-import Editor.Config.Registry
-import Editor.Config.Stores
 import Editor.Display
 import Editor.Display.Model
 import Editor.Evil
@@ -13,7 +11,6 @@ import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Menu
 import Editor.Program
@@ -28,7 +25,6 @@ import Editor.Vocabulary
 import Editor.Watch
 import Editor.Watch.Model
 import ModelTest.Check
-import ModelTest.Support.Display
 import ModelTest.Support.Evil
 import ModelTest.Support.OperatorRows
 
@@ -303,9 +299,14 @@ out unwrapped, so that a check of what is kept restates no number of the
 display's. `none` if the display refused. -/
 def keptFrom (fixture : String) (head : Nat) : Option Window.Wanted :=
   let (contents, start) := barred fixture
-  match movedBy [contents] Evil.unwrapped start 0 none editorModel.display.cells with
-  | .inr moved => some { column := .goal moved.goal, head }
-  | .inl _ => none
+  let display : DisplayModel := { cells := editorModel.display.cells, texts := #[(⟨0⟩, contents)] }
+  match
+    ((Display.linesFrom
+            { snapshot := ⟨0⟩, width := Evil.unwrapped, position := start, lines := 0
+              goal := none }).runModel
+        display).1 with
+  | .ok moved => some { column := .goal moved.goal, head }
+  | .error _ => none
 
 /-- The rows of the oracle table for `%` as a move, each run through Vim
 9.1.1752 headless: the keys, the text before with the cursor as a bar, and

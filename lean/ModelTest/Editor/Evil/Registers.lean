@@ -1,6 +1,5 @@
 import Editor.Clipboard.Model
 import Editor.Command.Model
-import Editor.Config.Registry
 import Editor.Evil.Motions
 import Editor.Evil.Operators
 import Editor.Evil.Registers
@@ -10,7 +9,6 @@ import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
 import Editor.Keymap
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Program
 import Editor.Scene

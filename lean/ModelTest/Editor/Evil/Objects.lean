@@ -1,11 +1,9 @@
-import Editor.Config.Registry
 import Editor.Evil.Objects
 import Editor.InputScheme
 import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.ModeLine
 import Editor.Scene

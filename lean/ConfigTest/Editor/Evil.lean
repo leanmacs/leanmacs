@@ -1,16 +1,12 @@
 import ConfigTest.Check
 import Editor.Completion
 import Editor.Config.Packages
-import Editor.Config.Registry
 import Editor.Event
-import Editor.Event.Queue
 import Editor.Evil.Compiled
 import Editor.Ex.Line
 import Editor.Face
-import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.Language
-import Editor.Loop
 import Editor.Mode
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Lines

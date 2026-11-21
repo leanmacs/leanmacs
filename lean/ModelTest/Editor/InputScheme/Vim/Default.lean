@@ -1,6 +1,5 @@
 import Editor.Completion.AtPoint
 import Editor.Config.Packages
-import Editor.Config.Registry
 import Editor.Event
 import Editor.Evil.Compiled
 import Editor.Face
@@ -12,14 +11,12 @@ import Editor.Keymap
 import Editor.Role
 import Editor.Scene
 import Editor.TabCommands
-import Editor.TabCommands.Compiled
 import Editor.Test.AtPoint
 import Editor.Test.Keys
 import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.Theme.Check
 import Editor.WindowCommands
-import Editor.WindowCommands.Compiled
 import ModelTest.Check
 import ModelTest.Support.Vim
 import ShellApi
@@ -576,7 +573,7 @@ def vimDefaultChecks : List Check :=
         "every row of the tab commands' table binds its keys in normal state to the command it names, and every command it names is a tab command that is registered"
       run :=
         pure <|
-          let registered := TabCommands.package.registered.commands.map (·.name)
+          let registered := TabCommands.names
           Vim.Default.tabKeys.length == 14 &&
             (Vim.Default.keymap Vim.Default.tabCommands).bindings.length ==
               Vim.Default.tabKeys.length &&
@@ -596,7 +593,7 @@ def vimDefaultChecks : List Check :=
         "every row of the window commands' table binds its keys in normal state to the command it names, and every command it names is a window command that is registered"
       run :=
         pure <|
-          let registered := WindowCommands.package.registered.commands.map (·.name)
+          let registered := WindowCommands.names
           !Vim.Default.windowKeys.isEmpty &&
             (Vim.Default.keymap Vim.Default.windowCommands).bindings.length ==
               Vim.Default.windowKeys.length &&

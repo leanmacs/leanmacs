@@ -317,4 +317,17 @@ with the next when there is no count. -/
 def exchange (count : Nat) : Arrange :=
   .exchange (if count == 0 then none else some count)
 
+/-- The names of the commands the `window-commands` package registers
+(`Editor/WindowCommands/Compiled.lean`), in the order it registers them.
+It is here, in the module a package may import, so that whoever binds keys
+to the window commands, as the Vim scheme's `C-w` table does, can hold its
+table to the commands that exist without importing the package's module.
+`ModelTest.windowCommandChecks` holds the package to it. -/
+def names : List String :=
+  [splitName, splitVerticallyName, newName, closeName, quitName, onlyName, leftName, downName,
+    upName, rightName, nextName, previousName, topName, bottomName, lastName, exchangeName,
+    rotateName, rotateBackName, balanceName, tallerName, shorterName, widerName, narrowerName,
+    zoomName, promoteName, demoteName, mainMoreName, mainFewerName, edgeLeftName, edgeBottomName,
+    edgeTopName, edgeRightName, floatName]
+
 end Editor.WindowCommands

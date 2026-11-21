@@ -735,6 +735,13 @@ def exChecks : List Check :=
               let (ran, answered) := exRan driver line
               answered == some #[] && promptEcho ran == ShellApi.noCommand
             ["!", "!   ", "%!", ".,$! "].all fun line => refused shell line && refused bare line
-          | _, _ => false }]
+          | _, _ => false },
+    { name :=
+        "the ex package binds none of Vim's ex names for marks: marks, delmarks, mark, k, lockmarks and keepmarks are not ex names, as evil's recorded departures say of the ex line"
+      run :=
+        let names := exNamesOf Ex.package.registered.ex
+        pure
+          (!names.isEmpty &&
+            ["marks", "delmarks", "mark", "k", "lockmarks", "keepmarks"].all (!names.contains ·)) }]
 
 end ModelTest

@@ -1,7 +1,6 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
 import ConfigTest.Support.Shipped
-import ConfigTest.Support.Syntax
 import Editor.Config.Directory
 import Editor.Config.Packages
 import Editor.Config.Registry

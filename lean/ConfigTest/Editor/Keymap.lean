@@ -1,5 +1,4 @@
 import ConfigTest.Check
-import ConfigTest.Support.Syntax
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Vim

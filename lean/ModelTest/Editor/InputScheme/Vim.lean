@@ -1,5 +1,4 @@
 import Editor.Command
-import Editor.Config.Registry
 import Editor.Event
 import Editor.InputScheme
 import Editor.InputScheme.Vim
@@ -9,6 +8,7 @@ import Editor.Mode
 import Editor.Program
 import Editor.Role
 import Editor.Scene
+import Editor.Test.Config
 import Editor.Test.Keys
 import Editor.Text
 import ModelTest.Check

@@ -1,5 +1,4 @@
 import ConfigTest.Check
-import ConfigTest.Support.Syntax
 import Editor.Completion.Keys
 import Editor.ModeLine
 import Editor.Test.Linked.Host

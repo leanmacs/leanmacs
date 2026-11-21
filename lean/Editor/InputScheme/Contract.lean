@@ -370,4 +370,12 @@ scheme keeps the contract. -/
 def failures (subject : Subject) : List String :=
   (properties.filter (!·.holds subject)).map (·.name)
 
+/-- Whether exactly the properties `expected` of the contract do not hold of
+`subject`: what a scheme's tests ask of a variant of it written to break
+one property, so that the property is seen to report it and no other
+does. -/
+def failsOnly (subject : Subject) (expected : List Property) : Bool :=
+  failures subject == expected.map (·.name) &&
+    properties.all fun property => property.holds subject != expected.any (·.name == property.name)
+
 end Editor.SchemeContract

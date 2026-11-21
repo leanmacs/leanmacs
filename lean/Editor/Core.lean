@@ -21,6 +21,7 @@ import Editor.Restore.Compiled
 import Editor.SearchRoot
 import Editor.TabCommands.Compiled
 import Editor.Test.Editing
+import Editor.Test.Ex
 import Editor.Test.Excerpt
 import Editor.Test.Hosted
 import Editor.Test.Linked.Bench

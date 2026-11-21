@@ -2,24 +2,21 @@ import Editor.Api
 import Editor.Command
 import Editor.Command.Call
 import Editor.Config.Packages
-import Editor.Config.Registry
-import Editor.Config.Stores
 import Editor.Event
 import Editor.Evil
 import Editor.Ex
-import Editor.Ex.Compiled
 import Editor.File
 import Editor.InputScheme
 import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Program
 import Editor.Scene
 import Editor.State
 import Editor.Test.Config
+import Editor.Test.Ex
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Models
@@ -355,7 +352,7 @@ def evilPrompts : List (Option EvilDriver × String × (String → String)) :=
   let ex :=
     (evilDriver "a|bc"
           (evilHanded
-            (Ex.package.registered.commands ++ Test.Minibuffer.package.registered.commands))).map
+            (exLinePackage.registered.commands ++ Test.Minibuffer.package.registered.commands))).map
       (evilFed · ":")
   [(asked, "greet", fun answer => s!"hello {answer}"), (ex, Ex.name, Ex.unknown)]
 

@@ -83,6 +83,11 @@ def shippedFaces (grammar : String) (captures : List (String × Option FaceName)
   let faces := Highlight.faces captures (← query.captureNames)
   return s!"highlight {", ".intercalate (faces.map fun face => (face.map (·.name)).getD "-").toList}"
 
+/-- A Rust text for the syntax checks: a method in an `impl`, after a unit
+struct. -/
+def rustObjectsText : String :=
+  "struct S;\n\nimpl S {\n    fn one(&self) -> u8 {\n        let x = 1;\n        x\n    }\n}\n"
+
 /-- Runs `check` against a host of the input scheme `scheme`, made over the
 collaborators the executable's hosts are made of (`Headless.shippedOver`),
 handed the package `listings`, so its listings are matched and shown by the

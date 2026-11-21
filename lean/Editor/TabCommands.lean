@@ -221,4 +221,16 @@ def moveBy (forward : Bool) (call : Call) : EditorM Unit := do
   let to := if forward then index + steps else index - steps
   WindowCommands.orGiveUp (← changeTab (.move index to))
 
+/-- The names of the commands the `tab-commands` package registers
+(`Editor/TabCommands/Compiled.lean`), in the order it registers them,
+`tab-select-1` to `tab-select-9` among them. It is here, in the module a
+package may import, so that whoever binds keys to the tab commands, as the
+Vim scheme's tab table does, can hold its table to the commands that exist
+without importing the package's module. `ModelTest.tabCommandChecks` holds
+the package to it. -/
+def names : List String :=
+  [newName, closeName, nextName, previousName, switchName, renameName, moveRightName,
+      moveLeftName] ++
+    (List.range 9).map fun index => selectName (index + 1)
+
 end Editor.TabCommands

@@ -1,11 +1,9 @@
-import Editor.Config.Registry
 import Editor.Event
 import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
 import Editor.Language
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Scene
 import Editor.State

@@ -156,4 +156,14 @@ def finishNamed (driver : TestDriver) (name : String) : TestDriver :=
   | some id => (driver.finish id).1
   | none => driver
 
+/-- The path of the file of the jump checks. -/
+def jumpsPath : System.FilePath :=
+  inFiles "jumps.txt"
+
+/-- The files of the jump checks: those of the file command checks, and
+`jumps.txt`, of five lines: its row 1 is indented by two blanks, and its
+row 2 starts with a two-byte character. -/
+def jumpFiles : FileModel :=
+  commandFiles.withFile jumpsPath "zero\n  one\néx two\nthree\nfour\n".toUTF8
+
 end Editor.Test

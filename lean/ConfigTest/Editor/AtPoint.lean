@@ -1,6 +1,5 @@
 import ConfigTest.Check
 import ConfigTest.Support.Shipped
-import ConfigTest.Support.Syntax
 import Editor.File.Model
 import Editor.Headless
 import Editor.Job.Fake

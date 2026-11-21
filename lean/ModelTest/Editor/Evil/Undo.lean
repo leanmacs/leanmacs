@@ -1,12 +1,10 @@
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
-import Editor.Config.Registry
 import Editor.Evil.Undo
 import Editor.InputScheme
 import Editor.InputScheme.Vim.Default
 import Editor.Invocation
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Program
 import Editor.Scene

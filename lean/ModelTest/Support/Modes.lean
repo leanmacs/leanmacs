@@ -100,9 +100,4 @@ def enterKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
         (·.2)
     registered := registry.registered }
 
-/-- The indents source of the model's test mode: an object and an array
-indent what they hold, and their closing brackets lead out. -/
-def jsonIndents : String :=
-  "(object) @indent.begin\n(array) @indent.begin\n\"}\" @indent.branch\n\"]\" @indent.branch"
-
 end ModelTest

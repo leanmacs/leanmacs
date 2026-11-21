@@ -1,4 +1,5 @@
 import Editor.Command.Model
+import Editor.Config.Packages
 import Editor.Display
 import Editor.Display.Model
 import Editor.Floating
@@ -18,6 +19,7 @@ import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.WindowCommands
+import Editor.WindowCommands.Compiled
 import ModelTest.Check
 import ModelTest.Support.Evil
 import ModelTest.Support.Windows
@@ -429,6 +431,13 @@ def windowCommandChecks : List Check :=
               let state := driver.loop.state
               state.prompt.isSome && (windowOrder state).1 == [0, 1] && !state.quitting &&
                 state.echo == s!"{name}: {(LayoutRefusal.ofMinibuffer ⟨0⟩).describe}"
-          table.all fun (typed, name) => refused typed name }]
+          table.all fun (typed, name) => refused typed name },
+    { name :=
+        "the window-commands package registers the commands WindowCommands.names lists, in that order, and no other"
+      run :=
+        pure
+          ((WindowCommands.package.registered.commands.map (·.name)).toList ==
+              WindowCommands.names &&
+            !WindowCommands.names.isEmpty) }]
 
 end ModelTest

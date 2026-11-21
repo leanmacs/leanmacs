@@ -5,6 +5,7 @@ import Editor.Completion
 import Editor.Completion.Candidate
 import Editor.Completion.Style
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Event
 import Editor.InputScheme
 import Editor.InputScheme.Vim
@@ -19,6 +20,7 @@ import Editor.Scene
 import Editor.State
 import Editor.TabBar
 import Editor.TabCommands
+import Editor.TabCommands.Compiled
 import Editor.Test.Completion
 import Editor.Text
 import ModelTest.Check
@@ -251,6 +253,12 @@ def tabCommandChecks : List Check :=
               back.loop.state.frame.windows == before.tabsBefore.flatMap (·.windows) &&
               made.loop.state.frame.tabIndex == 1 &&
               made.loop.state.frame.layout == .monocle &&
-              [chosen, back, made].all (·.loop.state.wellFormed) }]
+              [chosen, back, made].all (·.loop.state.wellFormed) },
+    { name :=
+        "the tab-commands package registers the commands TabCommands.names lists, in that order, and no other"
+      run :=
+        pure
+          ((TabCommands.package.registered.commands.map (·.name)).toList == TabCommands.names &&
+            TabCommands.names.contains (TabCommands.selectName 9)) }]
 
 end ModelTest

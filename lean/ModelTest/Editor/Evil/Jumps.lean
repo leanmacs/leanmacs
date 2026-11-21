@@ -1,4 +1,4 @@
-import Editor.WindowCommands.Compiled
+import Editor.WindowCommands
 import ModelTest.Check
 import ModelTest.Support.Evil
 
@@ -72,10 +72,14 @@ def evilJumpOffsets (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option (L
         | .file .. => none
   return (offsets, window.jumps.list.index)
 
-/-- What `evilHanded` hands a step, with the window commands compiled code
-registers, so that `C-w s` splits. -/
+/-- What `evilHanded` hands a step, with the core's split
+(`WindowCommands.split`) registered here under its name, as the window
+commands' package registers it, so that `C-w s` splits. -/
 def jumpWindowsHanded : Loop.Keys Vim.Default.scheme :=
-  evilHanded WindowCommands.package.registered.commands
+  evilHanded (commands :=
+    [(WindowCommands.splitName, fun call => do
+        WindowCommands.split call
+        return none)])
 
 /-- The checks of `C-o`, `C-i` and the jump motions under the Vim scheme that
 ships, on the text model. -/

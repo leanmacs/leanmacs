@@ -1,13 +1,13 @@
 import BuffersApiTest.Fake
 import Editor.Ex
-import Editor.Ex.Compiled
 import Editor.Test.Driver
+import Editor.Test.Ex
+import Editor.Test.Files
 import Editor.Test.Hosted
 import Editor.Test.Opener
 import FilesApiTest.Fake
 import ModelTest.Check
 import ModelTest.Support.Evil
-import ModelTest.Support.Jumps
 
 /-!
 # Model tests: `Editor/Evil/Marks.lean`
@@ -201,13 +201,16 @@ def markInOtherWindow (mark : String) : Option (Nat × Nat) :=
   (dispatchedFrom program start).map (·.1)
 
 /-- What a step of the mark checks that type an ex line is handed: evil's
-commands and the ex line's (`evilHanded`), told of the ex names that ship
-(`Ex.package.registered.ex`), so `:` asks for a line and the accept key runs it. -/
+commands and the ex line's (`evilHanded`), told of the ex names of the
+kit's ex line (`exLinePackage`, `Editor/Test/Ex.lean`: ex's own command,
+with the names of files and the buffers), so `:` asks for a line and the
+accept key runs it. That the `ex` package binds none of the names these
+checks type is ex's (`ModelTest.exChecks`). -/
 def markExHanded : Loop.Keys Vim.Default.scheme :=
-  { evilHanded Ex.package.registered.commands with
+  { evilHanded exLinePackage.registered.commands with
     registered :=
-      { ex := fun name => Ex.package.registered.ex.findRev? (·.name == name)
-        exNames := exNamesOf Ex.package.registered.ex } }
+      { ex := fun name => exLinePackage.registered.ex.findRev? (·.name == name)
+        exNames := exNamesOf exLinePackage.registered.ex } }
 
 /-- What the echo area says once the ex line `line` was typed after `:` in
 the one window of a state holding `ab`, and the ex line accepted, with

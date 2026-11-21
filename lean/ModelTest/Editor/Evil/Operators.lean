@@ -1,5 +1,4 @@
 import Editor.Command.Model
-import Editor.Config.Registry
 import Editor.Evil
 import Editor.Evil.Motions
 import Editor.Evil.Objects
@@ -14,7 +13,6 @@ import Editor.Invocation
 import Editor.Job
 import Editor.Language
 import Editor.Language.IndentUnit
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Mode
 import Editor.Program

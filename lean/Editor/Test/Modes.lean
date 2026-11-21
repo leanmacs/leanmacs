@@ -59,4 +59,9 @@ none; none when no text is highlighted. -/
 def highlightedFaces (model : SyntaxTreeModel) : Option (Array String) :=
   model.highlighted.back?.map fun (_, _, faces) => faceNames faces
 
+/-- The indents source of the model's test mode: an object and an array
+indent what they hold, and their closing brackets lead out. -/
+def jsonIndents : String :=
+  "(object) @indent.begin\n(array) @indent.begin\n\"}\" @indent.branch\n\"]\" @indent.branch"
+
 end Editor.Test

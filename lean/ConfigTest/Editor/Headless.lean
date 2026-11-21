@@ -1,6 +1,5 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Syntax
 import Editor.Api
 import Editor.Appearance
 import Editor.Clipboard.InProcess
@@ -67,6 +66,7 @@ import Editor.TabCommands.Compiled
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
+import Editor.Test.Linked.Shipped
 import Editor.Text
 import Editor.Text.Model
 import Editor.Text.Real

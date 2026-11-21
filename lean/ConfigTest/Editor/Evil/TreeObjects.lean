@@ -1,10 +1,10 @@
 import ConfigTest.Check
-import ConfigTest.Support.Syntax
 import Editor.File.Model
 import Editor.Headless
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
+import Editor.Test.Linked.Shipped
 import Editor.Test.Linked.Vim
 
 /-!

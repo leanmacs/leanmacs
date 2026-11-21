@@ -2,8 +2,6 @@ import Editor.Api
 import Editor.Clipboard.Model
 import Editor.Command
 import Editor.Command.Model
-import Editor.Config.Owner
-import Editor.Config.Registry
 import Editor.Display.Model
 import Editor.DisplayRules
 import Editor.Event
@@ -18,7 +16,6 @@ import Editor.Invocation
 import Editor.Job
 import Editor.Language
 import Editor.Language.IndentUnit
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Mode
 import Editor.ModeLine
@@ -30,11 +27,11 @@ import Editor.State
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Models
+import Editor.Test.Modes
 import Editor.Text
 import Editor.Text.Model
 import Editor.UndoTree
 import Editor.Workspace
-import ModelTest.Support.Modes
 import ModelTest.Support.Vim
 
 /-!

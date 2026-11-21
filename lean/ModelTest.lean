@@ -77,6 +77,7 @@ import ModelTest.Editor.Indent
 import ModelTest.Editor.InputScheme
 import ModelTest.Editor.InputScheme.Contract
 import ModelTest.Editor.InputScheme.Vim
+import ModelTest.Editor.InputScheme.Vim.Contract
 import ModelTest.Editor.InputScheme.Vim.Default
 import ModelTest.Editor.Invocation
 import ModelTest.Editor.Job.Contract
@@ -364,7 +365,9 @@ keeps the file, a mode's buffer docked at the
 left edge by a rule, and a command's buffer opened in a float centred in
 the tiled area by a float rule.
 
-The window commands (`Editor/WindowCommands.lean`) are checked by key on
+The package of each registers the commands its list names
+(`WindowCommands.names`, `TabCommands.names`), which a scheme's key tables
+are held to. The window commands (`Editor/WindowCommands.lean`) are checked by key on
 the loop's driver over the editor's models, under the Vim scheme that ships
 (`windowCommandChecks`): Vim 9.1's `C-w` behaviours under the manual split
 layout, resizes among them, the reorders, zoom and resizes under
@@ -604,7 +607,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   a range that resolves to no lines refused by ex, and `:!` with nothing
   after it said by `ShellApi.noCommand`, with a shell registered and with
   none, handing the shell nothing. Each message is read from the function
-  that makes it;
+  that makes it. The ex package binds none of Vim's ex names for marks,
+  which evil's recorded departures type on the kit's ex line;
 - `themeChecks`: the command that loads a theme (`Editor/Themes.lean`) on
   that driver, told of two registered themes: with no name it asks among
   them, with a registered name the step hands the name back, and a name

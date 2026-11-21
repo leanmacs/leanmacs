@@ -4,10 +4,7 @@ import Editor.Clipboard.Model
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Model
-import Editor.Config.Owner
 import Editor.Config.Packages
-import Editor.Config.Registry
-import Editor.Config.Stores
 import Editor.DisplayRules
 import Editor.Event
 import Editor.Evil.Clipboard
@@ -18,10 +15,7 @@ import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
-import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Menu
-import Editor.Menu.Compiled
 import Editor.Process.Environment
 import Editor.Program
 import Editor.ProjectMode
@@ -50,24 +44,29 @@ namespace ModelTest
 open Editor
 open Editor.Test
 
-/-- The registry of the clipboard command checks: the `menu` package's
-bindings, for the owner `compiled`, an owner that is not config, and
-`config` as config's bindings. -/
+/-- The chords of the Edit menu's clipboard items, each bound to the core's
+name for its item (`Editor/Clipboard.lean`), as the `menu` package binds
+them, which `ModelTest.menuChecks` holds it to. -/
+def clipChords : Array Config.KeyBinding :=
+  #[.ofKeys (keys "s-x") Clipboard.cutName, .ofKeys (keys "s-c") Clipboard.copyName,
+    .ofKeys (keys "s-v") Clipboard.pasteName, .ofKeys (keys "s-a") Clipboard.selectAllName]
+
+/-- The registry of the clipboard command checks: the chords of the Edit
+menu's clipboard items (`clipChords`), for the owner `compiled`, an owner
+that is not config, and `config` as config's bindings. -/
 def clipRegistry (config : Array Config.KeyBinding := #[]) : Config.Registry :=
-  (({} : Config.Registry).replaceBindings .compiled
-        Menu.package.registered.bindings).replaceBindings
-    .config config
+  (({} : Config.Registry).replaceBindings .compiled clipChords).replaceBindings .config config
 
 /-- What a step of the clipboard command checks is handed: evil's commands
-and the minibuffer's, then `commands`, with the active keymaps and the menu
-bar `clipRegistry config` makes, as a host's are. -/
+and the minibuffer's, then `commands`, with the active keymaps
+`clipRegistry config` makes, as a host's are. A menu item is chosen by its
+command's name (`Event.menu`), which the loop runs through the scheme
+whatever menu bar is published; the menu bar is the `menu` package's. -/
 def clipHanded (config : Array Config.KeyBinding := #[])
     (commands : List (String × Dispatched) := []) : Loop.Keys Vim.Default.scheme :=
   let registry := clipRegistry config
-  { evilHanded Test.Minibuffer.package.registered.commands
-      commands with
-    maps := registry.activeMaps Vim.Default.scheme
-    menu := some (registry.menuOf Menu.standard) }
+  { evilHanded Test.Minibuffer.package.registered.commands commands with
+    maps := registry.activeMaps Vim.Default.scheme }
 
 /-- A driver of the clipboard command checks over the text and cursor
 `fixture` says, with the unnamed register holding `evilSentinel`, on the
