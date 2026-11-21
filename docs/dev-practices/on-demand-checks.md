@@ -989,10 +989,24 @@ fullscreen false, corner 16, top 32). The second printed the line above,
 so both renderers drew with Core Text, but it exited 1. Its surface gave
 no texture (`Occluded`), so no frame was presented and no picture was
 compared. No key or pointer input arrived, because a pointer moved over
-a window on a locked screen sends none. The picture comparison with Core
-Text's glyphs is therefore still to be seen. It needs `mise run
-window-contract` on an unlocked desktop, with any key or click in the
-window.
+a window on a locked screen sends none.
+
+It was run again later on 2026-11-20, on the same machine, by the agent
+answering that run's review, and the screen was still locked
+(`CGSSessionScreenIsLocked` true since 16:41 local time). It ended the
+same way. The first program passed, with the same resizes. The second
+printed the line above, then `a draw was not presented: the window's
+surface gave no texture: Occluded` for both of its draws. It failed with
+`no frame was presented`, `the window was never seen idle: no frame was
+presented` and `no key and no pointer event came off the queue: type or
+click in the window`, and exited 1.
+
+Drawing to an offscreen target while the window is occluded would not
+make this check pass. The check reads back the picture the window's own
+surface is about to present, and an offscreen picture is not that
+picture. Input cannot arrive on a locked screen either. So the picture
+comparison with Core Text's glyphs is still to be seen. It needs `mise run window-contract` on an unlocked
+desktop, with any key or click in the window.
 
 ## The window to try, on demand
 
