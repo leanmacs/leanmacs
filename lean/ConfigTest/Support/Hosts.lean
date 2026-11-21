@@ -363,6 +363,9 @@ structure Driven where
       String → Nat → Option Nat → (String → IO Unit) → (String → IO Unit) → Bool → IO Headless.Wait
   /-- The host's activity count and its epoch, read in one step. -/
   activitySeen : BaseIO Job.Activity.Seen
+  /-- How far the host's loop has got, as it published after its last
+  event. -/
+  progress : IO Headless.Progress
   /-- How the host's loop ended, once it has: `ok` for a loop that stopped
   by itself or was stopped, or the error it threw. -/
   ended? : IO (Option (Except IO.Error Unit))
@@ -380,6 +383,7 @@ def ofHost (host : Headless.Host) : Driven where
   waitWhile guard busy still hung what answer line waitHung waitBlocked marker :=
     host.waitWhile guard busy still hung what answer line waitHung waitBlocked marker
   activitySeen := host.activitySeen
+  progress := host.progress.get
   ended? := do
     if ← IO.hasFinished host.thread then
       return some host.thread.get
@@ -393,6 +397,7 @@ def ofStepped (stepped : Headless.Stepped) : Driven where
   waitWhile guard busy still hung what answer line waitHung waitBlocked marker :=
     stepped.waitWhile guard busy still hung what answer line waitHung waitBlocked marker
   activitySeen := stepped.activitySeen
+  progress := stepped.progress
   ended? := stepped.ended?
   clock := stepped.clock
 
@@ -661,6 +666,16 @@ def hostingReal {β σ : Type} {scheme : InputScheme}
     let held ← check host
     let wait ← host.await hangGuard (waitHung := waitHung) (waitBlocked := waitBlocked)
     return held && (wait == .settled || wait == .ended)
+
+/-- Runs `body` against a host over `stage` stepped on the check's own
+thread (`Headless.withStepped`, over the stage's memory queue), driven, and
+fails it if the library's editor queue grew across it
+(`leavingLibraryQueue`): for a check that drives its host itself, in place
+of `Headless.withHost`. -/
+def onSteppedStage {α β σ : Type} (stage : Stage β σ) (body : Driven → IO α) : IO α :=
+  leavingLibraryQueue <|
+    Headless.withStepped stage.collaborators stage.memory (guard := patience) (grace :=
+      some hangGuard) fun stepped => body (Driven.ofStepped stepped)
 
 /-- Runs `check` against a host started on `stage`, stepped on the check's
 own thread (`stepping`, over the stage's memory queue). -/

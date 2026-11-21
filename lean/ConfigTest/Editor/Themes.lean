@@ -9,7 +9,6 @@ import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Display.Real
 import Editor.Event
-import Editor.Event.Queue
 import Editor.Ex.Line
 import Editor.Face
 import Editor.Ffi.Display
@@ -83,12 +82,12 @@ def themeChecks (context : Context) : List Check :=
           let mirror ←
             RealDisplay.over (← Ffi.Display.newCells 8 16) collaborators.published.reader
                 Theme.builtin
-          onRealStage { stage with collaborators } fun host _ => do
+          onStage { stage with collaborators } fun host _ => do
               let holds (parts : List (String × Bool)) : IO Unit := do
                 if let some (part, _) := parts.find? (!·.2) then
                   throw (IO.userError part)
               let settled : IO Unit := do
-                unless ← host.settle patience do
+                unless ← host.settle hangGuard do
                   throw (IO.userError "the editor thread did not settle")
               let frames (theme : Theme) : IO (String × String) := do
                 let some display ← made.get | throw (IO.userError "the host made no display")
@@ -103,15 +102,13 @@ def themeChecks (context : Context) : List Check :=
               host.send .reload
               settled
               host.resize 160 96
-              unless ← Event.post (.commit "let x = 1") do
-                return false
+              host.commit "let x = 1"
               settled
               let (plain, plainMirror) ← frames (Theme.builtin ++ configured)
               let before ← sceneLine
               host.send (.run Themes.loadName)
               settled
-              unless ← Event.post (.commit "second") do
-                return false
+              host.commit "second"
               for key in acceptKeys do
                 host.press key
               settled
@@ -136,10 +133,10 @@ def themeChecks (context : Context) : List Check :=
     { name :=
         "criterion 6: a config that names a theme nobody registered says so in the echo area, naming the theme, before the frame is made and after, and its report says so; the theme in force stays"
       run :=
-        withRealHost context [("init.lean", "def setup : SetupM Unit := do\n  useTheme \"nope\"\n")]
+        withHost context [("init.lean", "def setup : SetupM Unit := do\n  useTheme \"nope\"\n")]
           (compiled := themeCompiled) fun session => do
           session.ask [.reload]
-          session.host.resize 80 64
+          session.resize 80 64
           session.ask []
           let made ← session.echo
           session.ask [.say "cleared"]

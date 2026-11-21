@@ -8,8 +8,6 @@ import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Config.Registry
 import Editor.Display.Real
-import Editor.Event
-import Editor.Event.Queue
 import Editor.Ex.Line
 import Editor.Face
 import Editor.Ffi.Display
@@ -78,13 +76,13 @@ def faceChecks (context : Context) : List Check :=
           let mirror ←
             RealDisplay.over (← Ffi.Display.newCells 8 16) collaborators.published.reader
                 Theme.builtin
-          onRealStage { stage with collaborators } fun host _ => do
+          onStage { stage with collaborators } fun host _ => do
               -- Names the first of `parts` that does not hold.
               let holds (parts : List (String × Bool)) : IO Unit := do
                 if let some (part, _) := parts.find? (!·.2) then
                   throw (IO.userError part)
               let settled : IO Unit := do
-                unless ← host.settle patience do
+                unless ← host.settle hangGuard do
                   throw (IO.userError "the editor thread did not settle")
               -- The host's frame of the last scene it published, and the
               -- second display's frame of that scene, in `theme` when it is
@@ -102,8 +100,7 @@ def faceChecks (context : Context) : List Check :=
               -- The frame is made, with a view of some size and a text in
               -- it, in the built-in theme.
               host.resize 160 96
-              unless ← Event.post (.commit "let x = 1") do
-                return false
+              host.commit "let x = 1"
               settled
               let (plain, plainMirror) ← frames none
               holds [("the first frame is the built-in theme's", plain == plainMirror)]
@@ -171,9 +168,9 @@ def faceChecks (context : Context) : List Check :=
                   Headless.Host.Display.real (← RealDisplay.over library snapshots Theme.builtin)
                 made.set (some display)
                 return display }
-          onRealStage { stage with collaborators } fun host _ => do
+          onStage { stage with collaborators } fun host _ => do
               let settled : IO Unit := do
-                unless ← host.settle patience do
+                unless ← host.settle hangGuard do
                   throw (IO.userError "the editor thread did not settle")
               let reload : IO Unit := do
                 host.send .reload
@@ -185,8 +182,7 @@ def faceChecks (context : Context) : List Check :=
                 return (scene.views.map (·.padding), ← library.frameText)
               write 12
               host.resize 160 96
-              unless ← Event.post (.commit "let x = 1") do
-                return false
+              host.commit "let x = 1"
               reload
               let (twelve, padded) ← shown
               write 0
@@ -219,9 +215,9 @@ def faceChecks (context : Context) : List Check :=
               display := fun snapshots => do
                 Headless.Host.Display.real
                     (← RealDisplay.over (← Ffi.Display.newCells 8 16) snapshots Theme.builtin) }
-          onRealStage { stage with collaborators } fun host _ => do
+          onStage { stage with collaborators } fun host _ => do
               let settled : IO Unit := do
-                unless ← host.settle patience do
+                unless ← host.settle hangGuard do
                   throw (IO.userError "the editor thread did not settle")
               -- What `agree` says now.
               let agreement : IO String := do
@@ -231,8 +227,7 @@ def faceChecks (context : Context) : List Check :=
               -- A view of some rows, over a text of more lines than it shows.
               host.resize 160 96
               let text := "\n".intercalate ((List.range 20).map toString)
-              unless ← Event.post (.commit text) do
-                return false
+              host.commit text
               host.send (.run "top")
               settled
               let before ← agreement

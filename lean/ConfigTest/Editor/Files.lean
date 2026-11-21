@@ -115,23 +115,43 @@ name that opens that path (`opening`). Its syntax tree is the real binding
 with every request recorded in the array `check` is handed
 (`recordingSyntaxTree`). The config is loaded before `check` runs. Stops the
 host: `false` if the check did not hold or the host did not stop. -/
+def languageStage (context : Context) (directory : System.FilePath) (more : String)
+    (opens : List (String × System.FilePath)) :
+    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle × IO.Ref (Array String)) := do
+  writeConfig directory [("init.lean", languageReportText more)]
+  let asked ← IO.mkRef #[]
+  let stage ←
+    Stage.overFiles context (Config.Directory.source directory)
+        { commands :=
+            Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
+              (opens.map fun (name, path) => opening name path).toArray
+          jobs := Files.package.registered.jobs
+          modes := Minibuffer.package.registered.modes ++ Language.modes
+          languages := Language.shipped }
+  return ({ stage with
+        collaborators := { stage.collaborators with syntaxTree := recordingSyntaxTree asked } },
+      asked)
+
+/-- Runs `check` against a stepped host over `languageStage`'s stage, with
+the config loaded first. -/
 def withLanguageHost (context : Context) (more : String) (opens : List (String × System.FilePath))
+    (check : Session → IO.Ref (Array String) → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    let (stage, asked) ← languageStage context directory more opens
+    onStage stage fun drive stage => do
+        let session := Session.ofStage drive directory stage
+        session.ask [.reload]
+        check session asked
+
+/-- `withLanguageHost` with a real host (`onRealStage`): for a buffer that
+attaches to the library's syntax service, whose parses come back over the
+library's editor queue. -/
+def withRealLanguageHost (context : Context) (more : String)
+    (opens : List (String × System.FilePath))
     (check : RealSession → IO.Ref (Array String) → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    writeConfig directory [("init.lean", languageReportText more)]
-    let asked ← IO.mkRef #[]
-    let stage ←
-      Stage.overFiles context (Config.Directory.source directory)
-          { commands :=
-              Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
-                (opens.map fun (name, path) => opening name path).toArray
-            jobs := Files.package.registered.jobs
-            modes := Minibuffer.package.registered.modes ++ Language.modes
-            languages := Language.shipped }
-    onRealStage
-        { stage with
-          collaborators := { stage.collaborators with syntaxTree := recordingSyntaxTree asked } }
-        fun host stage => do
+    let (stage, asked) ← languageStage context directory more opens
+    onRealStage stage fun host stage => do
         let session := RealSession.ofStage host directory stage
         session.ask [.reload]
         check session asked
@@ -171,7 +191,7 @@ def languageChecks (context : Context) : List Check :=
         withFiles context fun files => do
           let path := files / "main.rs"
           IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
-          withLanguageHost context "" [("open-rs", path)] fun session asked => do
+          withRealLanguageHost context "" [("open-rs", path)] fun session asked => do
               let report ← reportedAfter session "open-rs"
               let requests ← asked.get
               return report == some "rust code".quote &&
@@ -186,13 +206,13 @@ def languageChecks (context : Context) : List Check :=
           IO.FS.writeFile json "{\"a\": [1, true]}\n"
           IO.FS.writeFile markdown "# Title\n\nSome *text* here.\n"
           let jsonHeld ←
-            withLanguageHost context "" [("open-json", json)] fun session asked => do
+            withRealLanguageHost context "" [("open-json", json)] fun session asked => do
                 let report ← reportedAfter session "open-json"
                 return report == some "json code".quote &&
                     (← asked.get).extract 0 7 == (← shippedHighlightRequests "json") &&
                     (← noHighlightsRefusal session)
           let markdownHeld ←
-            withLanguageHost context "" [("open-md", markdown)] fun session asked => do
+            withRealLanguageHost context "" [("open-md", markdown)] fun session asked => do
                 let report ← reportedAfter session "open-md"
                 let requests ← asked.get
                 return report == some "markdown code".quote &&
@@ -215,7 +235,7 @@ def languageChecks (context : Context) : List Check :=
                   "syntax.constant"].all
               faces.contains
           let opened (name : String) (path : System.FilePath) : IO Bool :=
-            withLanguageHost context "" [(name, path)] fun session asked => do
+            withRealLanguageHost context "" [(name, path)] fun session asked => do
               let report ← reportedAfter session name
               return report == some "toml code".quote && (← asked.get).extract 0 7 == expected &&
                   (← noHighlightsRefusal session)
@@ -236,7 +256,7 @@ def languageChecks (context : Context) : List Check :=
                   "syntax.module"].all
               faces.contains
           let opened (name : String) (path : System.FilePath) : IO Bool :=
-            withLanguageHost context "" [(name, path)] fun session asked => do
+            withRealLanguageHost context "" [(name, path)] fun session asked => do
               let report ← reportedAfter session name
               return report == some "lean code".quote && (← asked.get).extract 0 7 == expected &&
                   (← noHighlightsRefusal session)
@@ -260,7 +280,7 @@ def languageChecks (context : Context) : List Check :=
             "  defineMode { name := \"plain\" }
   command \"to-plain\" (do discard <| (← editorState).frame.focused.setMajorMode \"plain\")
 "
-          withLanguageHost context plain [("open-rs", path)] fun session asked => do
+          withRealLanguageHost context plain [("open-rs", path)] fun session asked => do
               unless (← reportedAfter session "open-rs") == some "rust code".quote do
                 return false
               let opened := (← asked.get).size
@@ -275,7 +295,7 @@ def languageChecks (context : Context) : List Check :=
         withFiles context fun files => do
           let path := files / "main.rs"
           IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
-          withLanguageHost context rustOverride [("open-rs", path)] fun session asked => do
+          withRealLanguageHost context rustOverride [("open-rs", path)] fun session asked => do
               let report ← reportedAfter session "open-rs"
               let requests ← asked.get
               return report == some "rust code".quote &&
@@ -308,17 +328,17 @@ def fileChecks (context : Context) : List Check :=
             writeConfig config [("init.lean", openText files)]
             let stage ← Stage.overFiles context (Config.Directory.source config)
             let snapshots ← Ffi.Snapshot.live
-            Headless.withHost stage.collaborators (guard := patience) fun host => do
+            onSteppedStage stage fun host => do
                 let ask (requests : List Headless.Request) : IO Unit := do
                   for request in requests do
                     host.send request
-                  unless ← host.settle patience do
+                  unless ← host.settle hangGuard do
                     throw (IO.userError "the editor thread did not settle")
                 ask [.reload]
                 ask [.spawn "open"]
-                let opened ← host.join patience
+                let opened ← host.join hangGuard
                 ask [.spawn "missing"]
-                let missed ← host.join patience
+                let missed ← host.join hangGuard
                 ask [.show]
                 -- The loop delivered the job's command, so it has a frame: the
                 -- one snapshot more is the one its scene holds of the scratch
@@ -339,7 +359,7 @@ def fileChecks (context : Context) : List Check :=
         withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
-          withRealFileHost context [("open-note", path)] fun session => do
+          withFileHost context [("open-note", path)] fun session => do
               let joined ← session.ran "open-note"
               let (echo, lines) ← session.viewsAndStatus
               return joined &&
@@ -354,14 +374,13 @@ def fileChecks (context : Context) : List Check :=
         withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
-          withRealFileHost context [("open-note", path)] fun session => do
+          withFileHost context [("open-note", path)] fun session => do
               unless ← session.ran "open-note" do
                 return false
-              unless ← Event.post (.commit "x") do
-                return false
+              session.commit "x"
               -- The commit was the buffer's first edit, which starts a check
               -- of its file: its lines are printed before the scene is asked.
-              unless (← session.host.join patience) == .settled do
+              unless (← session.join) == .settled do
                 return false
               let (_, edited) ← session.viewsAndStatus
               let saved ← session.ran Files.saveName
@@ -380,7 +399,7 @@ def fileChecks (context : Context) : List Check :=
         withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
-          withRealFileHost context [("open-note", path)] fun session => do
+          withFileHost context [("open-note", path)] fun session => do
               unless ← session.ran "open-note" do
                 return false
               let shown ← session.shown
@@ -400,8 +419,7 @@ def fileChecks (context : Context) : List Check :=
               ("open-crlf", files / "crlf.txt", "one\r\ntwo\r\n".toUTF8, 4)]
           for (_, path, bytes, _) in cases do
             IO.FS.writeBinFile path bytes
-          withRealFileHost context (cases.map fun (name, path, _, _) => (name, path)) fun session =>
-              do
+          withFileHost context (cases.map fun (name, path, _, _) => (name, path)) fun session => do
               let mut held := true
               for (name, path, bytes, job) in cases do
                 let opened ← session.ran name
@@ -418,7 +436,7 @@ def fileChecks (context : Context) : List Check :=
         withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
-          withRealFileHost context [("open-note", path)] fun session => do
+          withFileHost context [("open-note", path)] fun session => do
               unless ← session.ran "open-note" do
                 return false
               -- Another length, so the change is seen whatever the file
@@ -426,15 +444,14 @@ def fileChecks (context : Context) : List Check :=
               let other := "another program wrote this, at another length\n".toUTF8
               IO.FS.writeBinFile path other
               let found ← stampOf path
-              unless ← Event.post (.commit "x") do
-                return false
+              session.commit "x"
               -- The commit was the buffer's first edit, which starts a check:
               -- it finds the file changed, so the status line has the
               -- changed field too. Its job is joined before the save, so the
               -- echo area's last word is the save's refusal, not the check's:
               -- the two jobs reach the file service apart, and nothing else
               -- orders their ends.
-              unless (← session.host.join hangGuard) == .settled do
+              unless (← session.join) == .settled do
                 return false
               let saved ← session.ran Files.saveName
               let (echo, lines) ← session.viewsAndStatus
@@ -451,9 +468,8 @@ def fileChecks (context : Context) : List Check :=
       run :=
         withFiles context fun files => do
           let path := files / "missing.txt"
-          withRealFileHost context [("open-missing", path)] fun session => do
-              unless ← Event.post (.commit "kept") do
-                return false
+          withFileHost context [("open-missing", path)] fun session => do
+              session.commit "kept"
               let joined ← session.ran "open-missing"
               let (echo, lines) ← session.viewsAndStatus
               return joined && (← session.output.get).contains s!"job 1 {Files.loadJob}: ok" &&
@@ -465,20 +481,19 @@ def fileChecks (context : Context) : List Check :=
         withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
-          withRealFileHost context [] fun session => do
+          withFileHost context [] fun session => do
               session.ask [.run Files.openName]
               -- The prompt lists the stage's working directory, /: the
               -- listing is waited for, so its job's lines are all printed.
-              let listed := (← session.host.join patience) == .settled
+              let listed := (← session.join) == .settled
               -- The path is committed after the prompt's /: the restart
               -- after // reads it as it is. Its directory is listed in
               -- turn, and waited for.
-              unless ← Event.post (.commit path.toString) do
-                return false
-              let relisted := (← session.host.join patience) == .settled
+              session.commit path.toString
+              let relisted := (← session.join) == .settled
               let asking ← session.sceneLines
               session.pressKeys acceptKeys
-              let joined := (← session.host.join patience) == .settled
+              let joined := (← session.join) == .settled
               let (echo, lines) ← session.viewsAndStatus
               let output ← session.output.get
               let typed := "/" ++ path.toString
@@ -518,8 +533,8 @@ def reloadChecks (context : Context) : List Check :=
           let path := files / "note.txt"
           let (old, new) := ("one\ntwo\nthree\n", "one, and more\ntwo\nthree\n")
           IO.FS.writeBinFile path old.toUTF8
-          withRealFileHost context [("open-note", path)] (extra := #[placing "cursor" 6])
-              fun session => do
+          withFileHost context [("open-note", path)] (extra := #[placing "cursor" 6]) fun session =>
+              do
               unless ← session.ran "open-note" do
                 return false
               -- Row 1, column 2: the "o" of "two".
