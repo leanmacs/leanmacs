@@ -11,7 +11,9 @@ use editor_layout::frame::Frame;
 use editor_platform::{Canvas, Drawer, NativeWindow};
 use editor_render::clock::Clock;
 use editor_render::port::{DrawRequest, Drawn, Renderer, Target};
-use editor_render_wgpu::{Antialiasing, HeadlessRenderer, Image, Masks, Settings, WgpuRenderer};
+use editor_render_wgpu::{
+    Antialiasing, Blending, HeadlessRenderer, Image, Masks, Settings, WgpuRenderer,
+};
 
 use crate::judge::{Picture, uncompared};
 use crate::tally::{Happened, Record, Tally};
@@ -256,21 +258,32 @@ fn compare(picture: &Image, expected: &Image, target: Target) -> Picture {
     }
 }
 
-/// The renderer's settings for this window: the platform's weight of
-/// text, and plain masks where the adapter cannot blend by a coverage for
-/// each channel (`per_channel`).
+/// The renderer's settings for this window, as the platform draws text.
 ///
 /// Where the platform draws with Core Text (`matches_core_text`, which
-/// the caller sets on macOS), text is drawn to Core Text's weight
-/// ([`Settings::core_text`]); everywhere else it keeps the default,
-/// linear light and the outlines as they are. This is the one place the
-/// target system is asked: whatever later makes the editor's own
-/// renderer applies the same rule.
-fn settings(per_channel: bool, matches_core_text: bool) -> Settings {
-    let platform = if matches_core_text {
+/// the caller sets on macOS), text is drawn as Core Text draws it
+/// ([`Settings::core_text`]: blended in sRGB-encoded values, at the swash
+/// fallback's weight); everywhere else it keeps the default, linear light
+/// and the outlines as they are. This is the one place the target system
+/// is asked: whatever later makes the editor's own renderer applies the
+/// same rule.
+fn platform(matches_core_text: bool) -> Settings {
+    if matches_core_text {
         Settings::core_text()
     } else {
         Settings::default()
+    }
+}
+
+/// The settings of the picture the window's is compared with: the
+/// platform's ([`platform`]), blended as the renderer on the window says
+/// it blends (`blending`: a surface that cannot blend encoded blends in
+/// linear light), and in plain masks where its adapter cannot blend by a
+/// coverage for each channel (`per_channel`).
+fn settings(per_channel: bool, blending: Blending, matches_core_text: bool) -> Settings {
+    let platform = Settings {
+        blending,
+        ..platform(matches_core_text)
     };
     if per_channel {
         platform
@@ -356,22 +369,27 @@ pub fn renderer(
         clippy::disallowed_methods,
         reason = "this example is the one place a renderer is made on a window: it is the window's check, run on demand"
     )]
-    let made = unsafe { WgpuRenderer::on_window(window, settings(true, macos)) };
+    let made = unsafe { WgpuRenderer::on_window(window, platform(macos)) };
     let (mut gpu, headless) = alike(
         window_rasteriser(macos),
         made.map_err(|error| error.to_string())?,
         // An adapter that cannot blend by a coverage for each channel
-        // draws plain masks whatever it is asked: so must what it is
+        // draws plain masks whatever it is asked, and a surface that
+        // cannot blend encoded blends in linear light: so must what it is
         // compared with, at the same weight.
-        |gpu: &WgpuRenderer| HeadlessRenderer::new(settings(gpu.per_channel(), macos)),
+        |gpu: &WgpuRenderer| {
+            HeadlessRenderer::new(settings(gpu.per_channel(), gpu.blending(), macos))
+        },
     );
     // A run that reads no picture asks the renderer to keep none: a draw
     // then costs what the editor's own would, and not a read-back more.
     let copies = read && gpu.keep_picture();
     *locked(&shared.adapter) = Some(format!(
-        "{}, blending by a coverage for each channel: {}",
+        "{}, blending by a coverage for each channel: {}; it blends in {}, and the picture it is compared with in {}",
         gpu.adapter(),
-        gpu.per_channel()
+        gpu.per_channel(),
+        gpu.blending(),
+        headless.blending()
     ));
     *locked(&shared.rasterizing) = Some(format!(
         "{} on the window, and {} for the picture it is compared with",
@@ -401,11 +419,11 @@ mod tests {
     use editor_render::clock::FakeClock;
     use editor_render::fake::RecordingRenderer;
     use editor_render::port::{DrawRequest, Renderer};
-    use editor_render_wgpu::{Antialiasing, Masks, Settings, SubpixelOrder};
+    use editor_render_wgpu::{Antialiasing, Blending, Masks, Settings, SubpixelOrder};
 
     use editor_ffi::window::Rasteriser;
 
-    use super::{Entered, Handed, Ledger, alike, entering, happened, settings};
+    use super::{Entered, Handed, Ledger, alike, entering, happened, platform, settings};
     use crate::tally::Happened;
     use crate::testing::{LARGE, MS, SMALL, began, presented_as};
 
@@ -415,10 +433,28 @@ mod tests {
             antialiasing: Antialiasing::Grayscale,
             ..settings
         };
-        assert_eq!(settings(true, false), Settings::default());
-        assert_eq!(settings(false, false), plain(Settings::default()));
-        assert_eq!(settings(true, true), Settings::core_text());
-        assert_eq!(settings(false, true), plain(Settings::core_text()));
+        let linear = Blending::Linear;
+        assert_eq!(settings(true, linear, false), Settings::default());
+        assert_eq!(settings(false, linear, false), plain(Settings::default()));
+        let encoded = Blending::Encoded;
+        assert_eq!(settings(true, encoded, true), Settings::core_text());
+        assert_eq!(settings(false, encoded, true), plain(Settings::core_text()));
+    }
+
+    #[test]
+    fn the_picture_is_blended_as_the_renderer_on_the_window_says_it_blends() {
+        // A surface that could not blend encoded fell back to linear
+        // light: what the window's picture is compared with does too.
+        assert_eq!(
+            settings(true, Blending::Linear, true),
+            Settings {
+                blending: Blending::Linear,
+                ..Settings::core_text()
+            }
+        );
+        // The platform's own blending is what the window is made with.
+        assert_eq!(platform(true).blending, Blending::Encoded);
+        assert_eq!(platform(false), Settings::default());
     }
 
     /// A renderer that keeps what it is handed to draw its glyphs with,
