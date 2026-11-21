@@ -941,6 +941,18 @@ def changedAfter (activity : Job.Activity) (seen : Job.Activity.Seen) : IO Job.A
               seen.epoch) | throw <| IO.userError s!"a hang: the count had not changed from {repr seen} within {patience} ms"
   activity.seen
 
+/-- Waits, on the count's own changes, until `activity`'s epoch has reached
+`epoch`: the steps a check knows will come, counted from a fresh count, so
+it never waits for a change that already happened. The bound is a hang
+guard, never a result: past it this throws a hang. -/
+def untilEpoch (activity : Job.Activity) (epoch : Nat) : IO Unit := do
+  repeat
+    let seen ← activity.seen
+    if seen.epoch >= epoch then
+      return
+    discard <| changedAfter activity seen
+  throw <| IO.userError "unreachable"
+
 /-- The checks of the runner's activity accounting (`Editor/Job/Runner.lean`,
 "Activity"), each on a fake clock of its own and a count of its own: a job
 holds a unit while it can run, a wait only a test ends (the fake clock's)
@@ -951,27 +963,29 @@ def activityRunnerChecks : List Check :=
   [{  name :=
         "a job on the fake clock holds a unit from its spawn until its sleep is in the clock, then none; once the clock is moved past it holds one again until it has ended, and none once its finished has run"
       run := do
-        let (rig, activity) ← (← Rig.new).counted
+        let (rig, counted) ← (← Rig.new).counted
+        let log ← IO.mkRef #[]
+        let activity := recorded counted log
+        let rig := { rig with services := { rig.services with activity } }
         let spawned ←
           rig.spawn
               (reporting fun _ => do
                 sleep 10
                 return 1)
-        let atSpawn ← activity.seen
-        let parked ← changedAfter activity atSpawn
+        -- The spawn's step, then the park's: the sleep is in the clock.
+        untilEpoch activity 2
         let waiting ← rig.clock.waiting
         rig.clock.advance 10
-        let woken ← activity.seen
-        let ended ← changedAfter activity woken
+        -- The wake's step, on this thread, then the end's.
+        untilEpoch activity 4
         let finishes ← spawned.finishes.get
         let outcome ← spawned.outcome
+        let counts := (← log.get).map (·.1)
         saw
-            (atSpawn.running == 1 && parked.running == 0 && waiting == 1 && woken.running == 1 &&
-              ended.running == 0 &&
-              finishes == 1 &&
+            (counts == #[1, 0, 1, 0] && waiting == 1 && finishes == 1 &&
               outcome == some (.finished #["1"]) &&
               (← activity.refused) == 0)
-            s!"atSpawn={repr atSpawn} parked={repr parked} waiting={waiting} woken={repr woken} ended={repr ended} finishes={finishes}" },
+            s!"counts={counts} waiting={waiting} finishes={finishes}" },
     { name :=
         "a job whose sleep the clock ends is runnable from the wait's end: its unit is taken on the thread that moves the clock, before the job runs, and held while its next request is in flight, until its next sleep is in the clock"
       run := do
@@ -985,7 +999,8 @@ def activityRunnerChecks : List Check :=
                 sleep 10
                 sleep 10
                 return 2)
-        let parked ← changedAfter activity (← activity.seen)
+        untilEpoch activity 2
+        let parked ← activity.seen
         -- The second sleep's reading of the clock is held: the job is
         -- runnable, inside a request, until the check lets it go.
         let hold ← rig.clock.holdReads
@@ -1033,7 +1048,7 @@ def activityRunnerChecks : List Check :=
               (reporting fun _ => do
                 sleep 10
                 return 0)
-        discard <| changedAfter activity (← activity.seen)
+        untilEpoch activity 2
         spawned.handle.cancel
         let cancelled ← spawned.endedAs .cancelled
         let counts := (← log.get).map (·.1)
