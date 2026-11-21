@@ -492,6 +492,27 @@ whole pixels from 3. The atlas is read at whole texels with no sampler,
 so Zed's blur cannot occur. The measurements are in
 [text-and-display.md](text-and-display.md) ("The renderer, as built").
 
+How the masks are blended matters as much as the masks, read in the same
+audit (Zed 34639504, Ghostty d69f9ed8, Skia 8845aecd). Core Graphics
+composites text in an 8-bit sRGB context in the encoded values, and
+Core Text's masks are made for that. **Ghostty** names that blending
+`native`, its macOS default, and says linear blending "makes dark text
+look much thinner than normal and light text much thicker"; its
+`linear-corrected` blends in linear light with the coverage remapped so
+that the result looks like the encoded blend over a known ground.
+**Zed** draws to a `CAMetalLayer` of `BGRA8Unorm`, a format that is not
+sRGB, and multiplies the alpha in its shader, so the GPU blends the
+encoded values. **Skia** sets Core Graphics' contrast to 0, since
+"CoreGraphics dilates smoothed text to provide contrast". This editor
+takes Zed's way and Skia's (2026-11-20): on macOS the whole frame is
+blended in sRGB-encoded values, on the GPU through a target that is not
+sRGB, and the macOS weight's contrast is 0. Ghostty's remap was not
+taken: it needs the colour under the text, which a fixed-function blend
+does not give the shader, so it would be exact over one assumed ground
+only, where the target that is not sRGB is exact over any and keeps the
+GPU's picture within a rounding of the CPU's. Linux and every other
+target keep linear light.
+
 ## Choices this leaves open
 
 - **Rope**: decided 2026-11-12, and no longer open: `ropey` 2.0.0-beta.1,

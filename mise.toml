@@ -2078,10 +2078,13 @@ run = "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && swift tools/coretext/c
 # It runs the renderer's example (`crates/editor-render-wgpu/examples/
 # gpu.rs`): the wgpu adapter on this machine's adapter, held to the
 # renderer port's contract; then the fixture frame drawn on the GPU, read
-# back, and compared with the reference image (within 3 of 255 a channel);
-# then how long a first frame, an edited frame and a cursor-only frame
-# took, which nothing is asserted of. Its exit status is whether the
-# contract and the comparison held.
+# back, and compared with the reference image and with the CPU's picture
+# (within 3 of 255 a channel), in linear light and, at the macOS setting,
+# in sRGB-encoded values, with a control that must miss (the GPU encoded
+# against the CPU in linear light); then how long a first frame, an
+# edited frame and a cursor-only frame took, which nothing is asserted
+# of. Its exit status is whether the contract, the comparisons and the
+# control held.
 #
 # The gate runs the wgpu adapter on wgpu's no-op back end only, which
 # checks its calls and draws nothing. This is where its picture is

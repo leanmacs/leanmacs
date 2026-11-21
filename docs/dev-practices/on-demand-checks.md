@@ -1439,7 +1439,8 @@ check sees the shader's contrast.
 Interim run, 2026-11-20, on the same machine (macOS 27.2.1, Metal on the
 Apple M5 Max), with encoded blending in the GPU (text-rendering phase 2,
 step 4), before the window's surface, `Settings::core_text()` and the
-macOS weight changed: these are not the phase's final figures. Exit
+macOS weight changed: these are not the phase's final figures, which
+follow. Exit
 status 0; all 9 properties held; 113 pixels differed from the reference
 image and 70 from the plain masks, the worst by 1 of 255 in each; at the
 macOS setting blended encoded (asked for explicitly, contrast 0.1 and
@@ -1449,6 +1450,16 @@ as it must: 1597 pixels differed, the worst by 73. With the shader's
 luminance taken from the encoded colour (a change made for the run and
 undone), the grey comparison failed, 1224 pixels differing, the worst by
 10: so the check sees which luminance the shader's contrast uses.
+
+Final run, 2026-11-20, on the same machine, at the last code commit of
+the text-rendering roadmap's phase 2, with `Settings::core_text()`
+blending encoded at a contrast of 0 and a dilation of 0.4 px: exit
+status 0; all 9 properties held; 113 pixels differed from the reference
+image and 70 from the plain masks, the worst by 1 of 255 in each; at the
+macOS setting, 0 pixels differed in plain masks and 0 in subpixel masks;
+the grey text at a contrast of 1, encoded, 0 pixels. Each renderer
+said it blends in the space it was asked to. The control missed as it
+must: 1556 pixels differed, the worst by 73 of 255.
 
 ## The renderer on Linux, on demand
 
@@ -1522,14 +1533,16 @@ Run it on a new major version of macOS, or when the fixture font changes.
 new capture no longer matches the renderer's weight, the weight is fitted
 again.
 
-## The Core Text rasteriser, on demand
+## The Core Text rasteriser and its blending, on demand
 
 ```sh
 mise run coretext-check
 ```
 
-This runs the example `check` of `crates/editor-raster-coretext`, on
-macOS. It holds the Core Text adapter to the rasteriser port's contract
+This runs two examples, on macOS, and each must exit 0: the mask check,
+then the blending's.
+
+The first is the example `check` of `crates/editor-raster-coretext`. It holds the Core Text adapter to the rasteriser port's contract
 (`editor_raster::contract`), smoothed and not, at 14 and 28 pixels; says
 what `AppleFontSmoothing` holds and what was decided from it; and compares
 the adapter's masks with Core Text's own drawings of the weight sentence
@@ -1585,6 +1598,79 @@ and 0.071 off at the worst pixel, and the best fit of the two places,
 86/256 and 170/256 of a pixel, was no better (0.016 and 0.071). Placed on
 a grid of a quarter of a pixel instead, the scale-1 captures were 0.169
 and 0.173 off.
+
+### The composited sentence
+
+The second is the example `coretext` of `crates/editor-ffi`, the crate
+that wires the Core Text rasteriser into the renderers. For each of the
+five captures it draws the sentence through the real renderers with
+`Settings::core_text()` (blended in sRGB-encoded values) and the Core
+Text rasteriser, smoothing on, as the captures were drawn, without
+reading the machine's preference: on the CPU (`HeadlessRenderer`) and on
+this machine's GPU (`WgpuRenderer::on_this_machine`, read back; it opens
+no window). Each glyph is at Core Text's own place on the capture's
+ground. Each picture is compared with what macOS composited
+(`tests/coretext/composited/`), by `examples/coretext/measure.rs`, whose
+tests run in the gate:
+
+- the ink, the sum over pixels and channels of how far each value is
+  from the ground, and the dark pixels, those more than half of the way
+  from the ground to the text, counted where both pictures are more than
+  1/255 from half of the way, each within [0.995, 1.005];
+- no channel of any pixel more than 3 of 255 off at scale 2 (the mask
+  check's 2 and one for rounding), and 21 at scale 1 (its 0.08 of
+  coverage over a full range, and one);
+- and the GPU's picture within 3 of 255 of the CPU's in every channel of
+  every pixel, `render-gpu`'s tolerance.
+
+Two controls must miss, or the check prints `WITHIN: the comparison
+cannot see it` and fails: (a) linear light on the CPU against every
+capture, which must miss in the direction that is why macOS blends
+encoded, heavier (ink past 1.005) light on dark and lighter (ink under
+0.995) dark on light, a miss the other way failing too; (b) the old
+contrast of 0.1, encoded, against `sentence.png`. For the record, and
+not asserted, (c) swash alone at the macOS setting against each capture.
+On a miss: if the mask check misses too, the masks moved; if only the
+CPU misses, it is the blending or the frame; if only the GPU, the
+format it draws through or the shader's flag.
+
+Run it when macOS's major version changes, when the wgpu pin moves, and
+when the blend, the shader or the surface changes, as well as when the
+mask check is due, and record the figures here.
+
+On 2026-11-20, on macOS 27.2.1 (26B131), Metal on an Apple M5 Max,
+`AppleFontSmoothing` not set, at the last code commit of the
+text-rendering roadmap's phase 2 (these are the final figures): exit 0,
+the mask check's figures as above. The CPU and the GPU gave the same
+figures, and the GPU was 0 of 255 from the CPU in every capture.
+
+| Capture | Scale | Ink | Dark pixels | Worst channel |
+|---|---|---|---|---|
+| `sentence.png` | 2 | x1.0000 | x1.0000 | 0 |
+| `sentence-dark.png` | 2 | x1.0016 | x1.0000 | 1 |
+| `sentence-14.png` | 1 | x1.0001 | x1.0000 | 5 |
+| `sentence-14-dark.png` | 1 | x1.0035 | x1.0000 | 12 |
+| `sentence-grey.png` | 2 | x0.9971 | x0.9956 | 1 |
+
+| Control | Capture | Ink | Dark pixels | Worst channel | Missed |
+|---|---|---|---|---|---|
+| (a) linear light | `sentence.png` | x0.8618 | x0.8403 | 73 | lighter, as it must |
+| (a) linear light | `sentence-dark.png` | x1.0857 | x1.1165 | 34 | heavier, as it must |
+| (a) linear light | `sentence-14.png` | x0.7155 | x0.5314 | 75 | lighter, as it must |
+| (a) linear light | `sentence-14-dark.png` | x1.1453 | x1.1836 | 37 | heavier, as it must |
+| (a) linear light | `sentence-grey.png` | x0.9466 | x0.9236 | 14 | lighter, as it must |
+| (b) contrast 0.1 | `sentence.png` | x1.0123 | x1.0170 | 6 | heavier |
+| (c) swash alone, for the record | `sentence.png` | x0.9856 | x1.0058 | 173 | |
+| (c) swash alone, for the record | `sentence-dark.png` | x0.8792 | x0.8432 | 142 | |
+| (c) swash alone, for the record | `sentence-14.png` | x1.1100 | x1.1125 | 187 | |
+| (c) swash alone, for the record | `sentence-14-dark.png` | x0.9385 | x0.9101 | 130 | |
+| (c) swash alone, for the record | `sentence-grey.png` | x0.9250 | x0.9324 | 98 | |
+
+The GPU renderer is made again for each capture: the frames are built by
+hand, all of generation 0 with a font of another size under the same id,
+and a renderer kept across them took one capture's glyphs for another's
+(a first run of the example, 2026-11-20, failed three captures that
+way), which the editor's frames, laid out, never do.
 
 ## The shaper's places in Menlo, on demand
 

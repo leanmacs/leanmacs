@@ -83,9 +83,14 @@ What the gate does check of the window, with none open:
   before a draw of another size, after a texture that no longer fitted
   and when its picture begins to be kept, and at no other time; what is
   done with each answer it can give when asked for a texture; and whether
-  its picture is read back, and in what order of bytes. On wgpu's no-op
-  back end: that a window no adapter can present to gives no renderer,
-  and that a surface that offers its adapter nothing is refused.
+  its picture is read back, and in what order of bytes. The format is
+  chosen for each blending: in linear light an sRGB one, and encoded a
+  format that is not sRGB, as it is or through a view, or, where the
+  surface offers no 8-bit format with an sRGB pair, linear light's
+  choice with the surface saying it blends in linear light; the colour
+  space is `Auto` under both. On wgpu's no-op back end: that a window no
+  adapter can present to gives no renderer, and that a surface that
+  offers its adapter nothing is refused.
 - **What the window that draws makes of what it saw**, in
   `crates/editor-ffi` (`examples/window/`, whose unit tests `cargo
   test` runs, and which open no window): how its command line is read,
@@ -429,6 +434,17 @@ needs none. What it checks:
   puts each of Core Text's places on Core Text's grid
   (`crates/editor-render-wgpu/src/placement_tests.rs`), both over
   `tests/coretext/positions.txt`, compiled in.
+- **The blending**, in `crates/editor-render-wgpu` (`blend`, `cpu`,
+  `tests/rasterizer.rs`): both arithmetics, linear light and
+  sRGB-encoded values, for every kind of quad, with the contrast's
+  luminance in linear light in either; the encoded arithmetic within 1
+  of 255 of Core Graphics' own result on every case of
+  `tests/coretext/blend.txt`, compiled in, and linear light missing its
+  cases at half alpha; the compositor and the headless renderer blending
+  as their settings say, and an encoded picture nowhere lighter than a
+  linear one; `Settings::core_text()` blending encoded with a contrast
+  of 0, and the swash fallback's weight fitted encoded
+  (`weight_tests.rs`).
 - **The renderer's picture.** The headless adapter draws one frame of
   real text on the CPU, and no channel of any pixel may be further than 2
   of 255 from the reference image checked in at `tests/render/frame.png`
@@ -457,8 +473,15 @@ needs none. What it checks:
   validates every call as a real one would and draws nothing: the shader
   compiles in both its forms, the pipeline's vertex layout is the
   shader's, and a frame with every kind of quad and every kind of atlas
-  page is drawn inside an error scope with no error
-  (`crates/editor-render-wgpu/src/gpu/tests.rs`).
+  page is drawn inside an error scope with no error, under both
+  blendings, with dual-source blending and without; a device that
+  blends encoded draws on its own target in `Rgba8Unorm` and tells the
+  shader so in its globals (`crates/editor-render-wgpu/src/gpu/tests.rs`).
+- **What the composited sentence is measured by**, in `crates/editor-ffi`
+  (`examples/coretext/measure.rs`, whose unit tests `cargo test` runs, on
+  pictures made in code): the ink, the dark pixels, the worst channel and
+  the direction of a miss. The example itself draws on Core Text and the
+  GPU, and is run on demand (`mise run coretext-check`).
 
 What it cannot check, and so does not claim: what a GPU draws. wgpu has
 no software renderer of its own, so a machine with no GPU and no driver

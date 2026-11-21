@@ -3492,8 +3492,8 @@ bound submits nothing.
     control misses (light on dark at bucket 0: ink x0.89 and x0.85;
     black on white not smoothed: x0.85; grey at its linear light's
     bucket: x0.94). The thresholds and why are in
-    `docs/dev-practices/on-demand-checks.md`, "The Core Text rasteriser,
-    on demand".
+    `docs/dev-practices/on-demand-checks.md`, "The Core Text rasteriser
+    and its blending, on demand".
   - *Placement.* In the gate, the shaper's pen places of the sentence in
     the fixture font are within an eighth of a pixel of Core Text's at
     28 and 14 px (measured 0.0000 px; `editor-shape-parley`'s
@@ -3508,15 +3508,77 @@ bound submits nothing.
     filtered bilinearly and the blur of Zed issue #57777 cannot occur;
     `mise run render-gpu` compares the GPU's picture with the CPU
     compositor's, which reads texels exactly.
-  - The contrast of 0.1 of the macOS weight still applies at blend time
-    to Core Text's masks; how text is blended is the roadmap's phase 2.
-- **Text is blended over what is under it, in linear light.** For each
-  of red, green and blue, `out = text × coverage + under × (1 −
-  coverage)`: nothing is composited against an assumed background. The
-  target holds sRGB values and blending is in linear light, so half
-  coverage of white on black is 188, not 128. On a GPU a coverage for
-  each channel is dual-source blending; an adapter without it is given
-  plain masks and one coverage, and says so.
+- **Text is blended over what is under it, in sRGB-encoded values on
+  macOS, as Core Graphics does, and in linear light elsewhere.** For
+  each of red, green and blue, `out = text × coverage + under × (1 −
+  coverage)`: nothing is composited against an assumed background. In
+  which space is a setting, `Settings::blending` (`Blending`), chosen
+  per platform where the program wires the renderer:
+  `Settings::core_text()` blends `Encoded`, and the default, which
+  Linux and every other target keep, `Linear`. Decided 2026-11-20 (the
+  text-rendering roadmap's phase 2, the owner's direction: on macOS, do
+  what Core Text and native apps do).
+  - *The two spaces.* In linear light the target's sRGB values are made
+    linear, blended and encoded again, so half coverage of white on
+    black is 188 of 255. Encoded, the values / 255 are blended as they
+    are, with no conversion either way, so it is 128. Core Graphics
+    composites in an 8-bit sRGB bitmap that way, which is how a
+    layer-backed AppKit view draws its text, and Core Text's masks are
+    made for it: linear light makes dark text on a light ground thinner
+    and light text on a dark ground heavier, which is what the window
+    looked like ("heavy and strange" at 2x on the dark default theme).
+    `blend.rs` states both arithmetics once, the CPU compositor calls
+    it and the shader states the same expressions.
+  - *The whole frame.* A render pass has one attachment format, so the
+    GPU cannot blend text in one space and fills in the other within a
+    draw: the blending covers fills and colour glyphs too. Core Graphics
+    composites everything that way (`tests/coretext/blend.txt`), so an
+    opaque fill comes out the same in both spaces, and a fill with an
+    alpha (a selection colour with one) and a colour glyph come out as
+    macOS draws them.
+  - *The contrast's luminance* is the colour's linear light in either
+    space, on the CPU and in the shader: how light the text is does not
+    change with the space it is blended in.
+  - *On a GPU*, blending encoded draws through a target that is not
+    sRGB: `Rgba8Unorm` for a target of the device's own, `Bgra8Unorm`
+    on a Metal surface, as Zed's layer is. The shader takes the colour
+    as given in place of making it linear (the globals' `encoded`), and
+    the fixed-function blend then does exactly the encoded arithmetic.
+    It was chosen over Ghostty's `linear-corrected`, which remaps the
+    coverage so that linear blending gives the encoded result, because
+    that remap needs the colour under the text, which a fixed-function
+    blend does not give the shader, and the text may lie over a
+    selection, a cursor or any fill: it would be exact over one assumed
+    ground only. The target that is not sRGB is exact over any ground,
+    and keeps the GPU and the CPU byte-close: both compute in unit
+    values and round once. A coverage for each channel is dual-source
+    blending; an adapter without it is given plain masks and one
+    coverage, and says so. A renderer says which space it blends in
+    (`blending()`), and a window's surface that offers no 8-bit format
+    with an sRGB pair blends in linear light and says so (below).
+  - *Measured.* In the gate, the encoded arithmetic is within 1 of 255
+    of Core Graphics' own result for uniform fills on every one of the
+    50 cases of `tests/coretext/blend.txt` (four text colours over three
+    grounds at five alphas), and linear light misses it by up to 73
+    (black at 192 over white: 136, Core Graphics 63). On demand, on
+    2026-11-20, on an Apple M5 Max (Metal), macOS 27.2.1, final figures
+    at the phase's last code commit: `mise run render-gpu` drew the
+    fixture at the macOS setting with 0 pixels differing from the CPU in
+    plain and in subpixel masks, grey text encoded at a contrast of 1
+    with 0, and its control, the GPU encoded against the CPU in linear
+    light, missed by 73 (1556 pixels). `mise run coretext-check` drew
+    the sentence through the real renderers with Core Text's glyphs
+    against what macOS composited (`tests/coretext/composited/`): the
+    CPU and the GPU alike, ink and dark pixels x1.0000 / x1.0000,
+    worst channel 0 of 255, black on white at 28 px; x1.0016 / x1.0000
+    / 1 light on dark; x0.9971 / x0.9956 / 1 grey; x1.0001 / x1.0000 /
+    5 and x1.0035 / x1.0000 / 12 at 14 px; the GPU 0 of 255 from the CPU
+    in every capture. Linear light missed every capture in the direction
+    the reason gives: lighter on light grounds (ink x0.8618 black at 28
+    px, x0.7155 at 14 px, x0.9466 grey) and heavier on the dark ground
+    (x1.0857 at 28 px, x1.1453 at 14 px); the old contrast of 0.1 missed
+    `sentence.png` (ink x1.0123, worst 6 of 255). The figures and the
+    thresholds are in `docs/dev-practices/on-demand-checks.md`.
 - **The weight of text matches the platform's: on macOS, Core Text's.**
   The owner's decision (2026-11-14, rdm task
   `editor-render-text-lighter-than-core-text`): match the platform's
@@ -3532,11 +3594,17 @@ bound submits nothing.
   thicker than its outline (swash's `embolden`, in the rasteriser, so
   the GPU reads the same atlas). The default, `Weight::LINEAR`, is 0
   and 0, and draws every byte as before. The macOS setting is
-  `Settings::core_text()`: `Weight::CORE_TEXT`, a contrast of 0.1 and a
-  dilation of 0.8 px, with hinting off, as the fit chose. Since
-  2026-11-20 Core Text draws the glyphs on macOS (above), and
-  `Weight::CORE_TEXT`'s dilation is the swash fallback's, for the glyphs
-  Core Text declines; its fit below stands as that fallback's. The program
+  `Settings::core_text()`: blended encoded, with `Weight::CORE_TEXT`, a
+  contrast of 0 and a dilation of 0.4 px, and hinting off, as the fit
+  chose. Since 2026-11-20 Core Text draws the glyphs on macOS (above),
+  and `Weight::CORE_TEXT` is the swash fallback's, for the glyphs Core
+  Text declines (variable faces off their defaults, synthetic bold and
+  slant, colour fonts), fitted blended encoded as macOS draws them. It
+  has no contrast: the contrast of 0.1 it had until then was fitted to
+  make up for linear light thinning dark text, and Skia sets Core
+  Graphics' contrast to 0 for the same reason. The contrast machinery
+  stays, at 0 in both shipped weights (rdm task
+  `editor-render-drop-text-contrast`). The program
   picks it where it wires the renderer: `editor-ffi`'s example `window`
   asks `cfg!(target_os = "macos")` and nothing in the renderer or the
   core names a system. Whatever later makes the editor's own renderer
@@ -3563,20 +3631,23 @@ bound submits nothing.
   |---|---|---|---|---|
   | Core Text, smoothed: the target | 1891 | 503470 | 1.000 | 1.000 |
   | Core Text, not smoothed (for comparison) | 1638 | 429519 | 0.866 | 0.853 |
-  | The default, `Weight::LINEAR`, hinted | 1321 | 362857 | 0.699 | 0.721 |
-  | macOS, `Settings::core_text()` | 1910 | 499078 | 1.010 | 0.991 |
+  | The default, `Weight::LINEAR`, linear light, hinted | 1320 | 361410 | 0.698 | 0.718 |
+  | Swash encoded, the outline as it is, unhinted | 1638 | 431498 | 0.866 | 0.857 |
+  | macOS, `Settings::core_text()`: encoded, 0.4 px, unhinted | 1904 | 496219 | 1.007 | 0.986 |
 
-  The fit swept the contrast from 0 to 1 and the dilation from 0 to
-  0.8 px in steps of 0.1, with hinting on and off, and took the point
-  whose larger miss of the two counts was least: 0.010. Many points
-  come within a few hundredths, trading contrast for dilation (a
-  contrast of 1 with 0.5 px, hinted, misses by 0.012), so the
-  constant is one good point of a shallow valley, not a unique one. The
-  earlier candidates' directions still hold and are pinned: dilating
-  the outline, raising the coverage, blending on sRGB values and
-  drawing black on white each add ink. Even without smoothing Core Text
-  draws about a fifth more ink than the default; smoothing adds about
-  as much again.
+  The fit (2026-11-20, refitted for encoded blending) swept the
+  dilation from 0 to 1 px in steps of 0.1, at a contrast of 0, with
+  hinting on and off, blended encoded, and took the point whose larger
+  miss of the two counts was least: 0.014, at 0.4 px unhinted; 0.4 px
+  hinted misses by 0.030 and 0.3 px unhinted by 0.047. Undilated,
+  encoded swash draws what Core Text draws with smoothing off, to within
+  half a percent of its ink: what linear light lost was the blending,
+  and smoothing's dilation is what is left. The first fit, of
+  2026-11-14, in linear light, swept the contrast as well and took a
+  contrast of 0.1 and 0.8 px (1.010 and 0.991). The earlier
+  candidates' directions still hold and are pinned: dilating the
+  outline, raising the coverage, blending on sRGB values and drawing
+  black on white each add ink.
 
   The caveats. The font is Noto Sans Mono, a stand-in for Menlo, whose
   licence keeps it out of the repository. It is fitted at one size,
@@ -3602,7 +3673,7 @@ bound submits nothing.
 
   Pinned in `crates/editor-render-wgpu/src/weight_tests.rs`: the macOS
   setting within a tenth of both counts, and no worse than its
-  neighbours on the grid and the default; the counts are printed by
+  neighbours on the grid and the outline as it is; the counts are printed by
   `cargo test --locked -p editor-render-wgpu --lib weight_tests --
   --nocapture`, and two runs print the same. That the GPU draws what
   the CPU draws at the macOS weight is checked on demand, by `mise run
@@ -3870,10 +3941,23 @@ window is still run with nothing drawing in it. The threads are in
   display, and tells the drawer when the answer is another than the
   last. The session turns thousandths of a hertz into the loop's
   interval; a display that does not say leaves the loop's default.
-- **The surface.** Its format is the first sRGB one it offers, wherever
-  that is in the offer, since the blend is in linear light and Metal
-  offers a format that is not sRGB first; with none, the first, drawn on
-  through its sRGB form. Its present mode and frame latency are the
+- **The surface.** Its format follows the blending (`surface::
+  choose_format`). In linear light it is the first sRGB one it offers,
+  wherever that is in the offer, since Metal offers a format that is not
+  sRGB first; with none, the first, drawn on through its sRGB form.
+  Encoded, as on macOS, it is the first format offered that is not sRGB
+  and has an sRGB form, drawn on as it is (`Bgra8Unorm` on Metal), or an
+  sRGB one drawn on through a view of its other form; a surface that
+  offers no 8-bit format with an sRGB pair (only `Rgba16Float`, say) is
+  chosen for as linear light is, blends in linear light and says so
+  (`blending()`), and the window example compares its picture with one
+  blended the same. The colour space is `Auto` under either blending
+  (2026-11-20): in wgpu 30.0.2 `Auto` is sRGB for an 8-bit format, and
+  wgpu's Metal surface tags the `CAMetalLayer` with `kCGColorSpaceSRGB`
+  from it, so the bytes are sRGB values whether they are drawn through
+  an sRGB view or not, and the window server colour-matches the layer
+  alike; a gate test pins `Auto`, and a later wgpu that resolves it
+  otherwise is to be configured `Srgb` explicitly. Its present mode and frame latency are the
   choice already on record, `Fifo` at 1, and never wgpu's default, which
   on llvmpipe's surface was a mode that tears. An outdated or lost
   surface is configured again and tried once; an occluded one is not

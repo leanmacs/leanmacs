@@ -21,9 +21,13 @@ text, which the renderer is held to:
   `mise run coretext-check`, run on demand on macOS).
 - `blend.txt` is Core Graphics' own result for a uniform fill over a
   ground: four text colours over three grounds at five alphas, in the
-  same kind of bitmap. The renderer's encoded blending is held to it in
-  the gate, and linear-light blending must miss it
-  (`crates/editor-render-wgpu/src/blend.rs`, compiled in).
+  same kind of bitmap. The renderer's encoded blending
+  (`Blending::Encoded`, what `Settings::core_text()` blends with) is held
+  to it within 1 of 255 in the gate, and linear-light blending must miss
+  its cases at half alpha (`crates/editor-render-wgpu/src/blend.rs`,
+  compiled in). The composited drawings are held, by the same
+  renderers drawing the sentence, to the ink and dark-pixel bounds of the
+  mask check and to 3 of 255 a channel at scale 2, 21 at scale 1.
 - `positions.txt` is where Core Text puts each glyph on the line. The
   shaper's test and the painter's test hold their places to it
   (`crates/editor-shape-parley/tests/core_text.rs`,
@@ -165,5 +169,10 @@ coverage. Then:
    fit it again as `weight_tests.rs` says, in the same commit.
 3. Run the placement tests (`cargo test --locked -p editor-shape-parley
    --test core_text`, `cargo test --locked -p editor-render-wgpu --lib
-   placement_tests`) and `mise run coretext-check`, and record the
+   placement_tests`) and `mise run coretext-check`, whose second half
+   compares the renderers' composite with `composited/`, and record the
    figures in `docs/dev-practices/on-demand-checks.md`.
+4. Run the blend tests (`cargo test --locked -p editor-render-wgpu --lib
+   blend`): if Core Graphics' blend of `blend.txt` has moved from the
+   encoded arithmetic, the renderer's encoded blending is fixed to it,
+   test-first, in `crates/editor-render-wgpu/src/blend.rs`.
