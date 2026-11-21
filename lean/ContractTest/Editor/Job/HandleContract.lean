@@ -13,10 +13,10 @@ by its in-process hold (`FileHold`), what it keeps is its count of requests
 waiting, being worked or holding a result not yet taken
 (`Ffi.filesPending`, read once after a flush), and the properties write in a
 temporary directory of the check's own, removed once the service has been
-flushed. Until the library's failures queue goes, the rig also reads it
-once (`Ffi.filesFailure`): a handle's request must say its outcome there
-too never. The root module `ContractTest` runs them over the services it
-starts.
+flushed. The rig also reads the library's failures queue once
+(`Ffi.filesFailure`, kept for the host's unobserved journal): a handle's
+request must never say its outcome there. The root module `ContractTest`
+runs them over the services it starts.
 -/
 
 namespace ContractTest

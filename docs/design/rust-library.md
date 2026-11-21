@@ -534,7 +534,12 @@ file with a watch yet: a change is found when a save is asked for.
   pending requests includes an unobserved one while it waits or is worked,
   so it falls to 0 once the queue has drained; a failure kept is not
   counted. The count is a readout; **the way to wait for unobserved
-  requests is a flush**, which no caller has to poll.
+  requests is a flush**, which no caller has to poll. Their one caller is
+  the host's session journal, a deliberate exception kept for its cost on
+  the editor thread ([concurrency.md](concurrency.md), "The session
+  journal"); everything else that needs one request's reply uses an
+  observed request with an id, through a handle
+  (`Job.Services.fileWorked`).
 - **How the tests are kept off the disk.** `editor-text`'s tests, and the
   service's unit tests, run on the fake. That is held by the gate, not by
   review: a `clippy.toml` beside each of the two crates lists `std::fs`,

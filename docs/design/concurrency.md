@@ -2111,6 +2111,20 @@ As built:
   held by the same in-process hold: a held request's handle has not ended
   until the worker is let go, then ends with its reply, and the service
   keeps nothing of it, dropped or not.
+- **Which to use, and the one exception.** Wait on a handle for one
+  request's reply; wait on a flush for everything handed out before it;
+  hand a request unobserved (no id, no reply, nothing to wait on but a
+  flush) only where a bound on the editor thread's cost demands it, and
+  say why where it is done. The one such use is the host's session journal
+  ("The session journal", below): moved onto handles it cost the editor
+  thread 34 to 66 µs a key (102 to 120 µs at 10 MiB) against 3.3 to 3.9 µs
+  unobserved (`mise run journal-bench`, side by side in one binary,
+  2026-11-21), and every wait for its work is already a flush, so keeping
+  it unobserved leaves nothing that polls. The cost is the table of waits
+  (about 25 µs a register and take, growing with the waits in flight), task
+  `job-wait-table-copy-cost`. The restore checks' copy of the journal
+  (`lean/ContractTest/Editor/Restore/Run.lean`) pays no editor-thread cost
+  and hands its orders through handles.
 - **Cancelling a job cancels the request**: the timer leaves the library's
   schedule, a file request leaves the file service, a run's child is
   killed with its process group, and a pending watch read is withdrawn.
@@ -2176,6 +2190,14 @@ process aborts (session-restore phase 1; `lean/Editor/Restore.lean`).
   `changesSince` and one `slice` per moved buffer, a small JSON encode and
   one non-blocking enqueue; a buffer that did not move costs no text
   request. A failure is kept by the service and said once per path.
+  **This is the deliberate exception to handles** (deterministic-test-concurrency
+  phase 2, owner's decision): a file request's handle
+  (`Job.Services.fileWorked`) would cost the editor thread 34 to 66 µs a
+  key against 3.3 to 3.9 µs here, for the table of waits' cost (task
+  `job-wait-table-copy-cost`), and nothing needs one order's reply: every
+  wait for the journal's work is the drain, a flush. So the unobserved
+  bindings and the failures readout stay while the host's journal uses
+  them, and no other caller should.
 - **What an abort loses**: only what is queued and not yet written. Bytes
   handed to the kernel outlive the process; they need not outlive a power
   loss, which is not a goal. An end that is not an abort writes them: a
@@ -2211,6 +2233,16 @@ and a 10,000-line `shell-history` whose codec the reconciler is handed,
 of 4.2 to 6.8 µs (`journal_order/4KiB/start` 3.3 / 6.6, `middle` 3.3 /
 6.3, `end` 3.3 / 6.2; `1MiB` 3.2 / 6.1, 3.4 / 4.3, 3.5 / 4.5; `10MiB` 3.3 /
 4.2, 3.5 / 6.5, 3.6 / 6.8), as before and under the 20 µs expected.
+
+**Measured against handles** (deterministic-test-concurrency phase 2,
+2026-11-21, Apple M5 Max, the machine under other load, the two paths run
+alternately in one binary): unobserved, a median of 3.4 to 3.9 µs a key
+and a 99th percentile of 4.8 to 15.5 µs; through `Job.Services.fileWorked`,
+34 to 66 µs and 74 to 116 µs at 4 KiB and 1 MiB, and 102 to 120 µs and 122
+to 209 µs at 10 MiB. The hand-off alone went from 0.1 to 0.3 µs to 31 to
+112 µs; an observed append with no wait registered cost 1.2 to 2.7 µs, and
+registering and taking a wait 25 to 67 µs, with up to about 1,900 waits in
+flight behind the file worker. So the journal stays unobserved (above).
 
 **A restart in flight** (session-restore phase 3;
 `lean/Editor/Restore/Restart.lean`). From the restart's probe succeeding

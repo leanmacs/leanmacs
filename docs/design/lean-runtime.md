@@ -2467,7 +2467,12 @@ follows:
   requests, unobserved, which the loop hands the file service after each
   publish (`Loop.Stepped.journal`). Nothing awaits them; they run in order
   with the jobs' file requests on the service's one thread; a failure is
-  kept by the service and said in the echo area once per path.
+  kept by the service and said in the echo area once per path. A host's
+  end waits for them with a flush, never a count. They stay unobserved, and
+  not handles (`Job.Services.fileWorked`), for the editor thread's cost:
+  3.3 to 3.9 µs a key against 34 to 66 µs (deterministic-test-concurrency
+  phase 2; [concurrency.md](concurrency.md), "The session journal"; task
+  `job-wait-table-copy-cost`).
 - **It is read lazily**, the first time a command needs it, by a job whose
   command runs the asking command again: a start waits on no disk. **Session
   restore is the amendment**: its job reads `session/` at start-up, since it
