@@ -98,11 +98,13 @@ command line is here too (`Editor/Ex.lean`, with an ex line as data in
 handed the target it was called with, and `setup` binds an ex name to a command with `exCommand`
 (`Editor/Setup.lean`). The registrations of the ex line's commands and the
 ex names that ship (`Editor/Ex/Compiled.lean`) are not imported. The ex line
-reaches the file commands through `files-api`. The buffer commands are here too (`packages/buffers/Buffers.lean`):
-`Buffers.switchCommand`, `Buffers.listCommand` and `Buffers.closeCommand`,
-which switch a window to another buffer, list the open buffers and close
-one; their registrations (`packages/buffers/Buffers/Compiled.lean`) are not
-imported. The frame's commands are here too
+reaches the file commands through `files-api` and the buffer commands
+through `buffers-api`. The file commands and the buffer commands are not
+here: they are the default packages `files` and `buffers` (`packages/files/`,
+`packages/buffers/`, features-as-packages phase 6), and config reaches them
+(`Files.open`, `Buffers.switchCommand` and the rest) through the set's base,
+their entry modules `Files.EditorPackage` and `Buffers.EditorPackage` among
+it. The frame's commands are here too
 (`Editor/FrameCommands.lean`): `toggle-fullscreen` and `minimise-window`,
 which ask the platform's window through the display; their registrations
 and default bindings (`Editor/FrameCommands/Compiled.lean`) are not
@@ -185,7 +187,7 @@ what it needs of the undo tree in `Editor/UndoTree/Theorems.lean`; they
 are imported so that the build checks the proofs.
 The
 commands' registrations (`Editor/Evil/Compiled.lean`) name the registry
-and are not imported, as the file commands' and the minibuffer's are not.
+and are not imported.
 Pinned by `ConfigTest.evilChecks`, on a config the real elaborator loads.
 
 The window layouts are here too, with the editor state that holds the
@@ -219,20 +221,18 @@ says. Opening a file records its language and puts the buffer in `code`;
 
 Projects, workspaces and locations are here too (`Editor/Workspace.lean`):
 which codebase and which checkout a buffer belongs to, as plain values,
-and the finder that answers a directory's workspace through config, git
-and marker files (`packages/workspace/Workspace/Finder.lean`, `Workspace.find`), a job
-like any other. A buffer's workspace is attached when its file opens
-(`packages/workspace/Workspace/Attach.lean`, which brings the data and the finder with
-it), at the files interface's hook `FilesApi.Opened` (`FilesApi.lean`), so
-the file commands name no workspace module, and `workspace-current` says
-it. Another feature reaches a workspace through the project interface
-(`ProjectApi.lean`, `ProjectApi.Workspaces`), which the workspace package
-answers. Their registrations (`packages/workspace/Workspace/Compiled.lean`) name the
-registry and are not imported. A buffer is given the minor modes its
-markers turn on when its file opens (`packages/workspace/Workspace/Modes.lean`, which
-comes with the attach). Its model and its contract
-(`packages/workspace/WorkspaceTest/Finder/Model.lean`, `packages/workspace/WorkspaceTest/Finder/Contract.lean`) are for
-tests, and are not imported.
+and what a search of a workspace's files covers (`Editor/SearchRoot.lean`).
+The finder that answers a directory's workspace through config, git and
+marker files, the attach at the files interface's hook `FilesApi.Opened`,
+`workspace-current`, `find-file-in-workspace` and `find-file-in-project`
+are not here: they are the default package `workspace`
+(`packages/workspace/`), and another feature reaches a workspace through
+the interface package `project-api` (`ProjectApi.Workspaces`). Project
+search and the working sets are default packages too, `project-search` and
+`working-set` (`packages/project-search/`, `packages/working-set/`). Config
+reaches the three through the set's base, their entry modules
+(`Workspace.EditorPackage`, `ProjectSearch.EditorPackage`,
+`WorkingSet.EditorPackage`) among it.
 
 `:!` is not here: the shell is a default package outside the core
 (`packages/shell/`), and the ex line reaches it through the core's staged

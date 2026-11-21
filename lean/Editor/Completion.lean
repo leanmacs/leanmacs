@@ -86,8 +86,8 @@ answers later is pinned by `ModelTest.laterChecks`, `completionJobChecks`
 and `laterLoopChecks`, and by `ConfigTest.promptChecks` over the recorder;
 one asked again by its directory part, with hidden candidates and a job's
 failure, by `ModelTest.directoryChecks`; the file source by
-`ModelTest.pathsChecks`, `fileNameChecks` and
-`ConfigTest.filePromptChecks`.
+`FilesTest.pathsChecks`, `fileNameChecks` and
+`FilesTest.Linked.filePromptChecks`.
 -/
 
 namespace Editor.Completion

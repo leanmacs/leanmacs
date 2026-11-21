@@ -759,7 +759,7 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   and keeps the stamp for the next save to expect, or reports the refusal
   and marks nothing. It is built and played by hand as cases on the models
   and on the library (`lean/Editor/File/Cases.lean`), and built as the
-  save command (`Files.save`, `lean/Editor/Files.lean`; the command loop's
+  save command (`Files.save`, `packages/files/Files.lean`; the command loop's
   phase 9), as follows.
   - *The command* takes the snapshot and keeps the tree's state, starts
     the job `save-file` with them as plain arguments, expecting the stamp
@@ -1263,7 +1263,7 @@ What it added to excerpt buffers is generic.
 ### As built: the search results buffer
 
 Navigation-and-windows phase 4 built `project-search`
-(`lean/Editor/ProjectSearch.lean`, `lean/Editor/ProjectSearch/Run.lean`),
+(`packages/project-search/ProjectSearch.lean`, `packages/project-search/ProjectSearch/Run.lean`),
 the second user of excerpt buffers: every match of a pattern under a
 workspace's root, as code, editable in place as wgrep's results are.
 It changed nothing of the excerpt text.
@@ -1305,15 +1305,15 @@ It changed nothing of the excerpt text.
 - **Not built**: closing the buffers a search took in when the results
   close; a command that saves every modified buffer, wgrep's finish step.
 
-Pinned by `ModelTest.projectSearchChecks` (the pure decisions),
-`ModelTest.projectSearchRunChecks` (the commands on the loop's driver over
-the models) and `ContractTest.projectSearchChecks` (over the real
+Pinned by `ProjectSearchTest.projectSearchChecks` (the pure decisions),
+`ProjectSearchTest.projectSearchRunChecks` (the commands on the loop's driver over
+the models) and `ProjectSearchTest.Linked.projectSearchChecks` (over the real
 bindings).
 
 ### As built: the working set buffer
 
 Navigation-and-windows phase 5 built working sets
-(`lean/Editor/WorkingSet.lean` and `lean/Editor/WorkingSet/`), the third
+(`packages/working-set/WorkingSet.lean` and `lean/Editor/WorkingSet/`), the third
 user of excerpt buffers: a named list of ranges of a workspace's files,
 each with a note, shown as code and kept across a restart. It changed
 nothing of the excerpt text.
@@ -1367,11 +1367,11 @@ nothing of the excerpt text.
   for another instance's writes (the last writer wins, the save being
   atomic); a set across workspaces; closing the buffers an open loaded.
 
-Pinned by `ModelTest.workingSetChecks` (the stored form, pure),
-`ModelTest.workingSetRefindChecks` (the ladder),
-`ModelTest.workingSetPlaceChecks`, `ModelTest.workingSetRunChecks` and
-`ModelTest.workingSetDiskChecks` (on the loop's driver over the models), and
-`ContractTest.workingSetChecks` (over the real bindings and real git,
+Pinned by `WorkingSetTest.workingSetChecks` (the stored form, pure),
+`WorkingSetTest.workingSetRefindChecks` (the ladder),
+`WorkingSetTest.workingSetPlaceChecks`, `WorkingSetTest.workingSetRunChecks` and
+`WorkingSetTest.workingSetDiskChecks` (on the loop's driver over the models), and
+`WorkingSetTest.Linked.workingSetChecks` (over the real bindings and real git,
 through a restart).
 
 ## Decorations

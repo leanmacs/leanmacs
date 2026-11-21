@@ -7,16 +7,19 @@ shared by everything is what this design exists to prevent. The shell and
 compile features are the first that need it; every later feature that
 scopes state by codebase or by checkout reads the same values.
 
-Built in `lean/Editor/Workspace.lean` (the data and the table),
-`lean/Editor/Workspace/Finder.lean` (the finder),
-`lean/Editor/Workspace/Model.lean` and `lean/Editor/Workspace/Contract.lean`
-(its model and its contract), `lean/Editor/Workspace/Attach.lean` (a
+The workspaces are the default package `workspace` (`packages/workspace/`)
+since the features-as-packages roadmap's phase 6, and the data and the
+table stay the core's. Built in `lean/Editor/Workspace.lean` (the data and
+the table), `lean/Editor/SearchRoot.lean` (what a search covers, the
+core's), `packages/workspace/Workspace/Finder.lean` (the finder),
+`packages/workspace/WorkspaceTest/Finder/Model.lean` and `packages/workspace/WorkspaceTest/Finder/Contract.lean`
+(its model and its contract), `packages/workspace/Workspace/Attach.lean` (a
 buffer's workspace and `workspace-current`),
-`lean/Editor/Workspace/Lister.lean` (which command lists a workspace's
-files), `lean/Editor/Workspace/FindFile.lean` (`find-file-in-workspace`),
-`lean/Editor/Workspace/Projects.lean` (the project's workspaces),
-`lean/Editor/Workspace/FindInProject.lean` (`find-file-in-project`) and
-`lean/Editor/Workspace/Compiled.lean` (their registrations).
+`packages/workspace/Workspace/Lister.lean` (which command lists a workspace's
+files), `packages/workspace/Workspace/FindFile.lean` (`find-file-in-workspace`),
+`packages/workspace/Workspace/Projects.lean` (the project's workspaces),
+`packages/workspace/Workspace/FindInProject.lean` (`find-file-in-project`) and
+`packages/workspace/Workspace/Compiled.lean` (their registrations).
 
 ## Three layers
 
@@ -282,7 +285,8 @@ finder into this picker with the typed text is phase 4's (below).
 table may not know yet and then act on its workspace. The shared part is
 the workspace layer's (`Editor/Workspace/Reach.lean`), and since the
 features-as-packages roadmap's phase 5 a caller in another feature reaches
-it through the interface library `project-api` (`lean/ProjectApi.lean`):
+it through the interface package `project-api` (`packages/project-api/ProjectApi.lean`,
+staged in the core in phase 5 and a package of its own since phase 6):
 the order and the continuation are the interface's types, and the
 workspace package registers its `reach` and `work` as the
 `ProjectApi.Workspaces` value, which `vc-worktrees-visit` reaches through
@@ -312,7 +316,7 @@ From inside the workspace finder, a key steps out to the project's
 workspaces without losing what was typed: `ws/fin`, the key, choose the
 other worktree, and the finder there opens with `ws/fin` typed and its
 list matched against it. Built by project navigation's phase 4
-(`lean/Editor/Workspace/FindInProject.lean`).
+(`packages/workspace/Workspace/FindInProject.lean`).
 
 - **The key** is `C-x C-d`, bound by compiled code to
   `find-file-in-another-workspace` in the keymap of the prompt category
@@ -368,7 +372,7 @@ list matched against it. Built by project navigation's phase 4
 - **A buffer with no file** takes the workspace of the buffer it was made
   from (`BufferId.inheritWorkspace`), or none. A workspace's shell output
   buffer, `*shell output: <label>*`, is made with the workspace of the
-  buffer `:!` ran in (`lean/Editor/Shell.lean`), so a `:!` typed in it
+  buffer `:!` ran in (`packages/shell/Shell.lean`), so a `:!` typed in it
   runs in that workspace again; outside any workspace it is `*shell
   output*`, with none. A workspace's compilation buffer,
   `*compilation: <label>*` (`packages/compile/Compile.lean`, the compile

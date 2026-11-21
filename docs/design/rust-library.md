@@ -315,7 +315,7 @@ the job interface's file requests, which a job awaits
 snapshot). Lean's own interface for small reads and writes is not built;
 watching is ("Watching, as built", below). The editor's commands over
 loading and saving are built
-(`lean/Editor/Files.lean`, the command loop's phase 9;
+(`packages/files/Files.lean`, the command loop's phase 9;
 [concurrency.md](concurrency.md), "Getting results back"): the open command
 loads under a limit of 1 GiB, which is the editor's policy and a round
 number with no measurement behind it, and the save command expects the
@@ -1749,7 +1749,7 @@ never crosses; the bindings are `lean/Editor/Ffi/Grep.lean`.
 
 **Limits and the deliveries** are the caller's: `project-search` asks for
 200 files with a match or 2,000 matches, whichever comes first, and 200
-matches a delivery (`lean/Editor/ProjectSearch.lean`). The walk is
+matches a delivery (`packages/project-search/ProjectSearch.lean`). The walk is
 single-threaded and sorted, so the results come in a stable order; it is
 slower than `rg` on a large tree, and the parallel walker is a later
 optimisation, made only on a measurement. A row of a file that is not

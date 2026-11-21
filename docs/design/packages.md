@@ -22,13 +22,30 @@ and displays (`completion`), completion at point (`at-point`) and the
 minibuffer's commands and mode (`minibuffer`), each with an interface
 package of its own (`completion-api`, `at-point-api`, `minibuffer-api`),
 and gave the core a style and a display of its own for a set that
-registers none. What a package is and how a host registers one are in
-[lean-runtime.md](lean-runtime.md), "Packages".
+registers none. Its phase 6 moved the files cluster out, seven features,
+each into a default package of its own: the file commands (`files`), the
+buffer commands (`buffers`), the workspaces (`workspace`), project search
+(`project-search`), the working sets (`working-set`), the shell (`shell`)
+and version control (`version-control`, two packages), with two
+names-only interface packages, `project-search-api` and `working-set-api`,
+and two interface libraries the core had staged, `project-api` and
+`vc-api`, as interface packages of their own. What a package is and how a
+host registers one are in [lean-runtime.md](lean-runtime.md), "Packages".
 
-Every feature but those nine is still in the core's Lake package
-(`lean/lakefile.lean`, the package `editor-core`). The default package set
-(`packages/lakefile.toml`) requires the core and nine default packages, in
-this order: `completion` (`packages/completion/`, which requires
+Every feature but those sixteen is still in the core's Lake package
+(`lean/lakefile.lean`, the package `editor-core`), whose own list of
+packages (`EditorCore.EditorPackage`) holds nine: `evil`, `ex`,
+`frame-commands`, `menu`, `window-commands`, `tab-commands`, `themes`,
+`restore` and `package-set`. The default package set
+(`packages/lakefile.toml`) requires the core and sixteen default packages,
+in this order: `files` (`packages/files/`), `buffers` (`packages/buffers/`),
+`workspace` (`packages/workspace/`, which requires `packages/project-api/`
+and `packages/vc-api/`), `project-search` (`packages/project-search/`,
+which requires `packages/project-search-api/`), `working-set`
+(`packages/working-set/`, which requires `packages/working-set-api/` and
+`packages/vc-api/`), `shell` (`packages/shell/`), `version-control`
+(`packages/version-control/`, which requires `packages/project-api/` and
+`packages/vc-api/`), `completion` (`packages/completion/`, which requires
 `packages/completion-api/`), `mode-line` (`packages/mode-line/`),
 `minibuffer` (`packages/minibuffer/`, which requires
 `packages/minibuffer-api/`), `shipped-themes`
@@ -134,16 +151,19 @@ built from one:
 - **The default set is `packages/lakefile.toml`** (the Lake package
   `default-set`). It requires the core (`editor-core`, from `../lean`) and
   the default packages, each of which has a directory under `packages/`
-  and a `require` there. There are nine, required in this order:
-  `completion` ("The default packages of the features-as-packages
-  roadmap's phase 4", below), `mode-line` ("The default packages of the
-  features-as-packages roadmap's phase 3", below), `minibuffer` (phase
-  4's), `shipped-themes` ("The first default package", below),
-  `execute-command` and `binding-search` (phase 3's), `compile` ("The
-  default package `compile`", below), `at-point` (phase 4's) and
-  `languages` (phase 3's). Five of them each require an interface package
-  of their own, which is in the set through that `require`. It is the
-  lakefile a user's set starts from.
+  and a `require` there. There are sixteen, required in this order:
+  `files`, `buffers`, `workspace`, `project-search`, `working-set`,
+  `shell` and `version-control` ("The default packages of the
+  features-as-packages roadmap's phase 6", below), then `completion` ("The
+  default packages of the features-as-packages roadmap's phase 4", below),
+  `mode-line` ("The default packages of the features-as-packages roadmap's
+  phase 3", below), `minibuffer` (phase 4's), `shipped-themes` ("The first
+  default package", below), `execute-command` and `binding-search` (phase
+  3's), `compile` ("The default package `compile`", below), `at-point`
+  (phase 4's) and `languages` (phase 3's). Nine of them require an
+  interface package of their own or another's (`project-api` and `vc-api`
+  are each required by more than one), which is in the set through that
+  `require`. It is the lakefile a user's set starts from.
 - **The core defines the build**, as Lake facets in `lean/lakefile.lean`.
   Run in `lean/`, `lake -d ../packages build :editor` writes a root module
   from the set's packages, builds it and links
@@ -210,7 +230,8 @@ end Greeting.EditorPackage
 - **The module declares `packages : Array Editor.Package`** in the
   namespace of its own name. A Lake package may hold several `Package`
   values, which register in the order the array lists them; the core's
-  holds 17, and each default package's one. An interface package has no
+  holds 9, `version-control`'s two (`version-control` and
+  `version-control-gutter`), and each other default package's one. An interface package has no
   entry module and contributes no `Package`.
 - **A Lake package with no such module contributes nothing.** The build
   asks Lake whether a library of the package holds a module of that name
@@ -247,6 +268,16 @@ The set's packages are visited from the set, **each after the packages it
   requires the core;
 - packages that do not depend on each other register in the order the
   set's lakefile names them.
+
+So the default set registers the core's nine packages, then the seven
+features phase 6 moved out (`files`, `buffers`, `workspace`,
+`project-search`, `working-set`, `shell`, `version-control` and
+`version-control-gutter`, in the order the core's list held them), then
+the default packages that moved before them. Phase 6 put its seven first
+(its D5) because before it they registered before every default package:
+first, their order among themselves and against the default packages is
+unchanged, and only the core's nine packages now register before them
+("Registration order is visible", below).
 
 Lake's own list of a workspace's packages is not in that order: it holds a
 package reached only through another after the package that requires it,
@@ -286,6 +317,13 @@ and only when its text would change. For the default set it is:
 import Editor
 import Editor.Main
 import EditorCore.EditorPackage
+import Files.EditorPackage
+import Buffers.EditorPackage
+import Workspace.EditorPackage
+import ProjectSearch.EditorPackage
+import WorkingSet.EditorPackage
+import Shell.EditorPackage
+import VersionControl.EditorPackage
 import Completion.EditorPackage
 import ModeLine.EditorPackage
 import Minibuffer.EditorPackage
@@ -297,7 +335,7 @@ import AtPoint.EditorPackage
 import Languages.EditorPackage
 
 def main (args : List String) : IO UInt32 :=
-  Editor.Main.run (EditorCore.EditorPackage.packages ++ Completion.EditorPackage.packages ++ ModeLine.EditorPackage.packages ++ Minibuffer.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages ++ ExecuteCommand.EditorPackage.packages ++ BindingSearch.EditorPackage.packages ++ Compile.EditorPackage.packages ++ AtPoint.EditorPackage.packages ++ Languages.EditorPackage.packages) #[`Editor, `Completion.EditorPackage, `ModeLine.EditorPackage, `Minibuffer.EditorPackage, `ShippedThemes.EditorPackage, `ExecuteCommand.EditorPackage, `BindingSearch.EditorPackage, `Compile.EditorPackage, `AtPoint.EditorPackage, `Languages.EditorPackage] { setName := "default-set", pin := "leanprover/lean4:v4.35.0\n" } args
+  Editor.Main.run (EditorCore.EditorPackage.packages ++ Files.EditorPackage.packages ++ Buffers.EditorPackage.packages ++ Workspace.EditorPackage.packages ++ ProjectSearch.EditorPackage.packages ++ WorkingSet.EditorPackage.packages ++ Shell.EditorPackage.packages ++ VersionControl.EditorPackage.packages ++ Completion.EditorPackage.packages ++ ModeLine.EditorPackage.packages ++ Minibuffer.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages ++ ExecuteCommand.EditorPackage.packages ++ BindingSearch.EditorPackage.packages ++ Compile.EditorPackage.packages ++ AtPoint.EditorPackage.packages ++ Languages.EditorPackage.packages) #[`Editor, `Files.EditorPackage, `Buffers.EditorPackage, `Workspace.EditorPackage, `ProjectSearch.EditorPackage, `WorkingSet.EditorPackage, `Shell.EditorPackage, `VersionControl.EditorPackage, `Completion.EditorPackage, `ModeLine.EditorPackage, `Minibuffer.EditorPackage, `ShippedThemes.EditorPackage, `ExecuteCommand.EditorPackage, `BindingSearch.EditorPackage, `Compile.EditorPackage, `AtPoint.EditorPackage, `Languages.EditorPackage] { setName := "default-set", pin := "leanprover/lean4:v4.35.0\n" } args
 ```
 
 with a module doc and a doc string, since it is built with the core's Lean
@@ -308,8 +346,8 @@ the base `Editor` alone. The last value before the arguments is what the
 build says of the editor for the files it generates in a config directory
 ("A config directory requires the core and the set", below): the set's Lake name and the
 text of the core's `lean-toolchain`. The gate requires the default set's root to
-import exactly these twelve modules (`lake -d ../packages query
-:editorRootImports`, in `ffi-test`), and its base to be the ten named
+import exactly these nineteen modules (`lake -d ../packages query
+:editorRootImports`, in `ffi-test`), and its base to be the seventeen named
 (`:editorBase`). The interface packages have no entry module, so neither
 names them; their modules come with their implementations' libraries.
 
@@ -492,14 +530,16 @@ globs = ["Config.+"]
   alone was used. The gate starts the window mode's wiring for both sets'
   editors with that default and requires config to load (`ffi-test
   window-host-direct`), and checks each record: the default set's names
-  fifteen directories, the core's, then those of its nine default
-  packages and five interface packages in the order they register
-  (`completion-api`'s, `completion`'s, `mode-line`'s, `minibuffer-api`'s,
+  twenty-six directories, the core's, then those of its sixteen default
+  packages and nine interface packages in the order they register
+  (`files`', `buffers`', `project-api`'s, `vc-api`'s, `workspace`'s,
+  `project-search-api`'s, `project-search`'s, `working-set-api`'s,
+  `working-set`'s, `shell`'s, `version-control`'s, `completion-api`'s, `completion`'s, `mode-line`'s, `minibuffer-api`'s,
   `minibuffer`'s, `shipped-themes`', `execute-command-api`'s,
   `execute-command`'s, `binding-search-api`'s, `binding-search`'s,
   `compile`'s, `at-point-api`'s, `at-point`'s and `languages`'), and the
-  fixture set's twenty, the core's, `greeting-api`'s, `greeting`'s,
-  `greeting-loud`'s, `echo`'s, the default set's fourteen in that order,
+  fixture set's thirty-one, the core's, `greeting-api`'s, `greeting`'s,
+  `greeting-loud`'s, `echo`'s, the default set's twenty-five in that order,
   and `word-count`'s, each holding its package's modules.
 - **A directory given on the command line is a search path**, one
   directory or several joined with `:`, and outside a bundle the recorded
@@ -580,8 +620,8 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
 - **The gate gives the steps the fixture set**, which requires the default
   set. So the default packages are tested, built, formatted and run through
   it, and `lean-test` requires the line the `test` step prints as it
-  reaches each of them, the nine default packages and the five interface
-  packages. The default set's own
+  reaches each of them, the sixteen default packages and the nine
+  interface packages. The default set's own
   `editor` is built beside it, for the standing fixtures under
   `tests/headless/`, and **`run` is also given the default set**, so the
   default packages' linked tests and fixtures hold of the editor that is
@@ -1245,6 +1285,137 @@ commands.
     13..13, padding 8 0`, `status 1: minibuffer.prompt ":"`, `view 2 0,0
     0x0: "", scroll 0, selections , padding 8 0` and `status 2: -`.
 
+### The default packages of the features-as-packages roadmap's phase 6
+
+Phase 6 moved the files cluster out of the core: seven features, each into
+a default package of its own, with the two names-only interface packages
+their names need and the two interface libraries phase 5 staged in the core,
+which no core module imports once the seven are out. Every module keeps its
+declarations' names (`Editor.Files.…`, `Editor.Workspace.…` and the like);
+the modules drop `Editor.` from their names.
+
+| Lake package | Library (from `lean/Editor/`) | Entry module's `packages` | Test driver / linked root | Requires |
+|---|---|---|---|---|
+| `files` (`packages/files/`) | `Files`, `Files.Compiled`, `Files.Paths` (`Files.lean`, `Files/Compiled.lean`, `Completion/Paths.lean`) | `#[Editor.Files.package]` | `files-test` / `FilesTest.Linked` | the core (`files-api` is the core's) |
+| `buffers` (`packages/buffers/`) | `Buffers`, `Buffers.Compiled` | `#[Editor.Buffers.package]` | `buffers-test` / none | the core (`buffers-api` is staged in the core) |
+| `workspace` (`packages/workspace/`) | `Workspace.Attach`, `.Compiled`, `.Finder`, `.FindFile`, `.FindInProject`, `.Lister`, `.Modes`, `.Projects`, `.Reach` (globs `Workspace.+`) | `#[Editor.Workspace.package]` | `workspace-test` / `WorkspaceTest.Linked` | `project-api`, `vc-api` |
+| `project-search-api` (`packages/project-search-api/`) | `ProjectSearchApi` (new) | none (interface) | `project-search-api-test` | the core |
+| `project-search` (`packages/project-search/`) | `ProjectSearch`, `.Run`, `.Compiled` | `#[Editor.ProjectSearch.package]` | `project-search-test` / `ProjectSearchTest.Linked` | `project-search-api` |
+| `working-set-api` (`packages/working-set-api/`) | `WorkingSetApi` (new) | none (interface) | `working-set-api-test` | the core |
+| `working-set` (`packages/working-set/`) | `WorkingSet`, `.Disk`, `.Places`, `.Refind`, `.Run`, `.Compiled` | `#[Editor.WorkingSet.package]` | `working-set-test` / `WorkingSetTest.Linked` | `working-set-api`, `vc-api` |
+| `shell` (`packages/shell/`) | `Shell`, `Shell.Compiled` | `#[Editor.Shell.package]` | `shell-test` / `ShellTest.Linked` | the core (`shell-api` is staged in the core) |
+| `version-control` (`packages/version-control/`) | the 17 under `VersionControl.` (globs `VersionControl.+`); git's half of the repository model is the test double `VersionControlTest.Git.Model` | `#[Editor.VersionControl.package, Editor.VersionControl.gutterPackage]` | `version-control-test` / `VersionControlTest.Linked` | `project-api`, `vc-api` |
+| `project-api` (`packages/project-api/`) | `ProjectApi` (`lean/ProjectApi.lean`) | none (interface) | `project-api-test` | the core |
+| `vc-api` (`packages/vc-api/`) | `VcApi` (`lean/VcApi.lean`) | none (interface) | `vc-api-test` | the core |
+
+- **The set requires the seven first** (D5), in the order the core's list
+  held them, so their registrations keep their order among themselves and
+  against the default packages ("The order packages register in", above);
+  the interface packages come in through their implementations' requires.
+- **What each library imports of the core** (`lake -d ../packages query
+  :editorPackageImports`), API alone: `files`'s `Editor.Completion.Later`,
+  `Editor.Extension`, `Editor.FileJobs`, `Editor.Jumps`, `Editor.Language`,
+  `Editor.Package`, `Editor.TypedPath`, `FilesApi`; `buffers`'s
+  `BuffersApi`, `Editor.Api`, `Editor.Command.Call`, `Editor.Extension`,
+  `Editor.Jumps`, `Editor.Package`; `workspace`'s `Editor.Api`,
+  `Editor.Command.Call`, `Editor.Completion.Filtering`, `Editor.Extension`,
+  `Editor.Invocation`, `Editor.Job`, `Editor.Package`, `Editor.Process`,
+  `Editor.Process.Environment`, `Editor.ProjectMode.Listing`,
+  `Editor.SearchRoot`, `Editor.Workspace`, `FilesApi`; `project-search`'s
+  `Editor.Api`, `Editor.Command.Call`, `Editor.Grep`, `Editor.Job`,
+  `Editor.Jumps`, `Editor.Package`, `Editor.SearchRoot`, `Editor.Text.Word`,
+  `Editor.Value`, `FilesApi`; `working-set`'s `BuffersApi`, `Editor.Api`,
+  `Editor.Command.Call`, `Editor.Extension`, `Editor.File`, `Editor.Fuzzy`,
+  `Editor.Job`, `Editor.Json`, `Editor.Jumps`, `Editor.Marks`,
+  `Editor.Package`, `FilesApi`; `shell`'s `Editor.Api`,
+  `Editor.Command.Call`, `Editor.File`, `Editor.Job`, `Editor.Package`,
+  `ShellApi`; `version-control`'s `BuffersApi`, `Editor.Api`,
+  `Editor.Command.Call`, `Editor.Diff.Script`, `Editor.Extension`,
+  `Editor.File`, `Editor.Gutter.Track`, `Editor.Jumps`, `Editor.Language`,
+  `Editor.Mode`, `Editor.ModeLine`, `Editor.Package`, `Editor.State`,
+  `Editor.Store`, `Editor.Text`, `Editor.Value`, `Editor.Workspace`,
+  `FilesApi`; `project-api`'s `Editor.Extension`, `Editor.Job`,
+  `Editor.ProjectMode.Listing`; `vc-api`'s `Editor.Diff.Script`,
+  `Editor.Gutter.Track`, `Editor.Job`, `Editor.Program`. The interface
+  packages' libraries import their own interface beside these, which the
+  layer imports check allows; `project-search-api` and `working-set-api`
+  import nothing. None of the seven imports another implementation (the
+  phase's acceptance criterion 2), and no module of `project-search`,
+  library or tests, reaches a module of evil, directly or transitively
+  (criterion 3).
+- **Their tests moved under their kept names.** Each model test module
+  `ModelTest/Editor/<F>/<X>.lean` is `<P>Test/<P>/<X>.lean`, namespace
+  `<P>Test`, each list's name kept: `FilesTest.languageOpenChecks` and the
+  files' five others, `pathsChecks`, `filesPackageChecks`;
+  `BuffersTest.bufferCommandChecks`, `buffersPackageChecks`;
+  `WorkspaceTest.workspaceChecks`, `workspacePackageChecks`,
+  `findFileChecks`, `findInProjectChecks`, `workspaceListerChecks`,
+  `projectWorkspaceChecks`, `reachChecks`, `workspaceModesChecks` and the
+  finder's two failure lists; `ProjectSearchTest.projectSearchChecks`,
+  `projectSearchRunChecks`; the working sets' five; `ShellTest.shellChecks`;
+  version control's 27; `ProjectApiTest.projectApiChecks`;
+  `VcApiTest.vcApiChecks`, `versionControlModelChecks` and the contract's
+  failure list. Each linked test module (`ConfigTest/Editor/<F>/…`,
+  `ContractTest/Editor/<F>/…`) is `<P>Test/Linked/<P>/<X>.lean`, namespace
+  `<P>Test.Linked`, run by the package's linked root, which prints
+  `<p> linked test: N checks passed`. A feature's kit (`Editor.<F>.Kit`)
+  is `<P>Test.Kit`. Their fixtures moved with them: `tests/workspaces/` is
+  `packages/workspace/tests/workspaces/`, `tests/shell/` is
+  `packages/shell/tests/shell/`, and the workspace's lister checks run on a
+  byte-for-byte copy of the core's `tests/completion/filter` in
+  `packages/workspace/tests/completion/`, so `contract-test` takes three
+  arguments, not five. The workspace finder's benchmark is an opt-in
+  argument of the workspace's linked root (`mise run find-file-bench`).
+- **The core's checks of what its hosts register** (`ConfigTest.shippedChecks`)
+  each gained "the executable's hosts start with nothing of the <p>
+  package", and their checks of what a moved package registers moved to
+  that package's `<P>PackageChecks`, over the registry it makes alone
+  (`Config.State.ofPackages #[<package>]`). `ModelTest.packageSetChecks`
+  pins the nine.
+- **No headless fixture moved** (D10): the fixtures that open, save, find
+  and search files cross several of the seven, and run on the default set's
+  editor.
+
+#### The interface packages `project-search-api` and `working-set-api`
+
+| Package | Declares | Publishes for tests | Implemented by |
+|---|---|---|---|
+| `project-search-api` (`packages/project-search-api/`) | `ProjectSearchApi.searchName` = `"project-search"`, `.symbolName` = `"project-search-symbol"`, `names` | `ProjectSearchApiTest.fake`, `ProjectSearchApiTest.contractChecks` | `project-search`: `ProjectSearch.name := ProjectSearchApi.searchName`, `symbolName := ProjectSearchApi.symbolName` |
+| `working-set-api` (`packages/working-set-api/`) | `WorkingSetApi.addName` = `"working-set-add"`, `.openName` = `"working-set-open"`, `names` | `WorkingSetApiTest.fake`, `WorkingSetApiTest.contractChecks` | `working-set`: `WorkingSet.addName := WorkingSetApi.addName`, `openName := WorkingSetApi.openName` |
+
+They are shaped as `execute-command-api` ("The default packages of the
+features-as-packages roadmap's phase 3", above): the names the default
+config binds (`SPC /`, `SPC s p`, `SPC *`; `SPC k a`, `SPC k o`,
+`SPC RET`), a fake, a contract check each implementation's
+`<P>PackageChecks` runs, and a driver of four checks. The default config,
+still in the core, names the names as text.
+
+#### Dropping the package leaves…
+
+What each of the seven registered is gone from a set without it (D6):
+
+- **without `files`**, nothing opens a file named on the command line, and
+  `save-buffer` is unregistered: `files-api`'s `Files` value is absent, so
+  session restore reports each file it would reopen and leaves it out, and
+  the menu's `s-o` and `s-s` name commands no package registers;
+- **without `buffers`**, ex's `b`, `ls` and `bd` name commands no package
+  registers;
+- **without `workspace`**, no buffer has a workspace, `compile-list` has no
+  work, and a reach through `project-api` says there is no implementation;
+- **without `project-search`** or **`working-set`**, the default config's
+  keys name commands no package registers;
+- **without `shell`**, ex says no `:!` line can run, and `C-g` in normal
+  state names nothing (`keyboard-quit`);
+- **without `version-control`**, no `vc-` command or ex name is registered,
+  no gutter marks a line, and the working sets write their sets with no
+  commit.
+
+The empty set (`tests/empty-set`, the core alone) shows what remains in its
+two fixtures, `core-themes` and `core-ex-names`. Neither changed in C9 to
+C15: `core-ex-names` shows the ex line's status and no candidate, since the
+empty set has no minibuffer to list them, and `core-themes` lists the one
+theme. So no line of the empty set's fixtures is recorded here.
+
 ### The fixture set
 
 Four packages and a set under `tests/packages/`, used by tests alone. They
@@ -1260,7 +1431,7 @@ guide quotes.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the nine default packages and the five interface packages, then `word-count` |
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the sixteen default packages and the nine interface packages, then `word-count` |
 | `tests/packages/greeting-api/` | The interface package `greeting-api` (`keywords = ["editor-interface"]`): the name `greeting-reply` (`GreetingApi.replyName`) and every name it declares (`GreetingApi.names`); in its test library, the fake `GreetingApiTest.fake` and the contract check `GreetingApiTest.contractChecks`, and its test driver, which holds the fake to the contract and shows the contract refuse a package that lacks or misspells the name. It has no entry module and registers nothing |
 | `tests/packages/greeting/` | The Lake package `greeting`, an implementation of `greeting-api`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), the second under `GreetingApi.replyName`, its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean` and greeting-api's contract check), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting`, to register after it, and `greeting-api`, and registers `greeting-reply` again with another text, by the name `greeting-api` declares. It imports nothing of `greeting`; its tests use greeting-api's fake. Its test driver and the fixture `tests/headless/reply` |
@@ -1296,11 +1467,14 @@ guide quotes.
 ### Manifests: a set's build fetches nothing
 
 **Every Lake root has its `lake-manifest.json` committed**: the core, the
-default set, each default package (`completion`, `mode-line`,
-`minibuffer`, `shipped-themes`, `execute-command`, `binding-search`,
-`compile`, `at-point`, `languages`) and each of the five interface
-packages of the default set (`completion-api`, `minibuffer-api`,
-`execute-command-api`, `binding-search-api`, `at-point-api`), the fixture
+default set, each default package (`files`, `buffers`, `workspace`,
+`project-search`, `working-set`, `shell`, `version-control`, `completion`,
+`mode-line`, `minibuffer`, `shipped-themes`, `execute-command`,
+`binding-search`, `compile`, `at-point`, `languages`) and each of the nine
+interface packages of the default set (`project-api`, `vc-api`,
+`project-search-api`, `working-set-api`, `completion-api`,
+`minibuffer-api`, `execute-command-api`, `binding-search-api`,
+`at-point-api`), the fixture
 set, each fixture package (`echo` among them), the writing guide's
 example package (`docs/packages/word-count/`), the empty set, the
 user-side link's set and its package, the Rust bans check's set
@@ -1332,8 +1506,8 @@ user-side link's set and its package, the Rust bans check's set
 
 `lean/lean-toolchain` is the one pin every task reads: every Lake command
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
-`lean/` holds a copy of it** (the default set and its fourteen packages, the
-nine default packages and the five interface packages, the fixture set and its three packages, the
+`lean/` holds a copy of it** (the default set and its twenty-five packages,
+the sixteen default packages and the nine interface packages, the fixture set and its three packages, the
 writing guide's example package `word-count`, the empty set, the user-side link's set and its package, the Rust bans check's
 set and its two packages, and the formatter's host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file when Lake is run in that
@@ -1681,13 +1855,16 @@ an implementation package; a package may import interface packages. A
 package is an interface package when its lakefile declares
 `keywords = ["editor-interface"]`, and an implementation package
 otherwise. The rule holds for every module of a package, its tests
-included. The nine default packages are implementation packages: each
-imports the core and, but for `mode-line`, `shipped-themes` and
-`languages`, its own interface package (`completion-api`,
-`minibuffer-api`, `execute-command-api`, `binding-search-api`,
-`at-point-api`), and `execute-command`, `binding-search` and `compile`
-also `minibuffer-api`, whose names and fake their tests use. The five
-interface packages import the core alone.
+included. The sixteen default packages are implementation packages: each
+imports the core and, but for `mode-line`, `shipped-themes`, `languages`,
+`files`, `buffers` and `shell`, an interface package of its own or
+another's (`completion-api`, `minibuffer-api`, `execute-command-api`,
+`binding-search-api`, `at-point-api`; `project-api` and `vc-api` for
+`workspace` and `version-control`, `project-search-api` for
+`project-search`, `working-set-api` and `vc-api` for `working-set`), and
+`execute-command`, `binding-search` and `compile` also `minibuffer-api`,
+whose names and fake their tests use. The nine interface packages import
+the core alone.
 
 - **A package may import any core module that is not internal.** The rule
   is about `import` lines. Lean's imports are transitive, so a module an
@@ -1696,13 +1873,15 @@ interface packages import the core alone.
   on by name, which is what a later rename or move can break.
 - **The core's interface libraries are part of the API**, though the
   core's Lake package holds them outside `Editor`: `FilesApi`,
-  `BuffersApi`, `ShellApi`, `ProjectApi` and `VcApi`, each importable by
-  every module of a package, library or test. `FilesApi` is a core
-  interface for good: session restore, a core module, adopts files and
-  reads the load limit through it. `BuffersApi` and `ShellApi` are staged
-  until ex, which reaches them, moves out (phase 8), and `ProjectApi` and
-  `VcApi` until no core module imports them, when they move into interface
-  packages of their own (phase 6) and leave the list. The list is named,
+  `BuffersApi` and `ShellApi`, each importable by every module of a
+  package, library or test. `FilesApi` is a core interface for good:
+  session restore, a core module, adopts files and reads the load limit
+  through it. `BuffersApi` and `ShellApi` are staged until ex, which
+  reaches them, moves out (phase 8). `ProjectApi` and `VcApi` were on the
+  list until no core module imported them, and left it when they moved
+  into interface packages of their own (features-as-packages phase 6,
+  `packages/project-api/`, `packages/vc-api/`), whose modules the layer
+  imports check allows as any interface package's. The list is named,
   never derived: a library staged in the core is added to it by hand.
   Their test libraries are test doubles and the linked support under them
   is of the linked test kit (below).
@@ -1881,12 +2060,12 @@ fixture themes made with `Palette.theme` from palettes written in
 `lean/ConfigTest/Support/Themes.lean`, and the appearance checks define
 theirs. No copy of a palette's values is kept in the core, so no licence
 notice is either. `ConfigTest.shippedChecks` and
-`ModelTest.packageSetChecks` state the core's list alone: 17 packages
-since the features-as-packages roadmap's phase 4 (20 after its phase 3,
-24 when the palettes moved), the one theme `default`, and nothing of the
+`ModelTest.packageSetChecks` state the core's list alone: 9 packages
+since the features-as-packages roadmap's phase 6 (17 after its phase 4,
+20 after its phase 3, 24 when the palettes moved), the one theme `default`, and nothing of the
 compile mode, the mode line, the command prompt, the binding search, the
-languages, the completion styles and displays, completion at point or the
-minibuffer.
+languages, the completion styles and displays, completion at point, the
+minibuffer, or the seven features of phase 6.
 
 ## What moving the shipped themes added to the core's API
 
@@ -1959,7 +2138,7 @@ those import them, and a kit that left them behind would not build.
 | `Editor.Test.Workspace` | The workspace a check sees settled, a store for the stores' checks, and since the features-as-packages roadmap's phase 6 the stand-in for the workspace's attach (`attachAt`, `attachPackage found`, and by a directory's answer `attachBy`, `attachByPackage`), and the half of the workspace driver that names no workspace module (`openBindings`, `openCommandsWith`, `openJobs`, `openDriver`, with the stand-in for the finder's answer `openFound`), which the shell's and version control's checks are built on; the workspace's world, finder jobs, commands, keys and driver are the workspace feature's kit (`Editor.Workspace.Kit`) |
 | `Editor.Test.Shell` | A shell command's child and its replies on the process model, compiled commands as a driver dispatches them, and what a check reads of a driver; since phase 6 the shell checks' jobs, bindings and commands are the shell feature's kit (`Editor.Shell.Kit`) |
 | `Editor.Test.Prompts` | Prompts and the minibuffer: their bindings, registry and driver, over a minibuffer package a check hands in, the kit's own (`Editor.Test.Minibuffer`) when it hands none |
-| `Editor.Test.Listing` | A contribution with a listing, its listings' runs and files, which names core modules only, and since phase 6 the stand-in for modes on markers (`markedPackage`); the world it is found in (`listingWorld`, `listingJobModel`) is the workspace feature's kit's |
+| `Editor.Test.Listing` | A contribution with a listing, its listings' runs and files, which names core modules only, and since phase 6 the stand-in for modes on markers (`markedPackage`), and the listing checks' stand-ins for the finder's answer and the marker search over the core's rules (`listingFound`, `listingOn`, `listingOpened`, `kubeOpened`, `markersBy`, `markersByPackage`), which the compile package's tests run on; the world it is found in (`listingWorld`, `listingJobModel`) is the workspace package's kit's (`WorkspaceTest.Kit`) |
 | `Editor.Test.Sources` | Added in the features-as-packages roadmap's phase 3: the completion sources' contract runner over the editor's models (`sourceRunner`), and the contract's properties over one source as sentences (`sourceHolds`) |
 | `Editor.Test.Shipped` | Added in the same phase: stand-ins for the default packages whose data the core keeps, `modeLine` and `languages` |
 | `Editor.Test.Minibuffer` | Added in the features-as-packages roadmap's phase 4: a minibuffer written over the core's prompt API, the package `minibuffer` with its nine commands and the mode `Prompt.mode`, and `names`, the nine in registration order; `minibuffer-api`'s fake |
@@ -1975,7 +2154,8 @@ The linked kit:
 |---|---|
 | `Editor.Test.Linked.Jobs` | Jobs on the real runner: how long a check waits, a job's outcome as a check compares it |
 | `Editor.Test.Linked.Trees` | Temporary directories of a check's own, and files written into them |
-| `Editor.Test.Linked.Host` | Hosts over the real elaborator, as the config tests start them: the context a harness is handed (`HostContext`), config text, a stage and what compiled code hands it, a session and what it printed, polling with a bound. Its hosts take their packages as an argument: it imports neither the config base nor `EditorCore.EditorPackage` |
+| `Editor.Test.Linked.Host` | Hosts over the real elaborator, as the config tests start them: the context a harness is handed (`HostContext`), config text, a stage and what compiled code hands it, a session and what it printed, polling with a bound, the elaborator shared by a process's hosts (`sharing`), and since features-as-packages phase 6 the context a package's linked root runs its checks in (`HostContext.run`) and the table of waits its hosts and rig share (`HostContext.fileWaits`). Its hosts take their packages as an argument: it imports neither the config base nor `EditorCore.EditorPackage` |
+| `Editor.Test.Linked.Bench` | Added in features-as-packages phase 6: what a benchmark of a feature's command over the real services needs and may not import itself: the rows its latencies are reported in (`Row`, with the bounds the job system and the prompts were accepted against), the job pool warmed as the editor warms it (`warmPool`), and a headless host of the test scheme over the real services (`benchHost`). The config benchmarks and the workspace finder's (`WorkspaceTest.Linked.WorkspaceBench`) are written on it |
 | `Editor.Test.Linked.Listings` | The styles and the display every stage of `Editor.Test.Linked.Host` hands its host (`listingsPackage`), written for the tests |
 | `Editor.Test.Linked.Keys` | Keys typed into a host's session (`Session.type`, `.typed`, `.pressKeys`), a binding of them, and the test scheme's role keys |
 | `Editor.Test.Linked.Lines` | What a host's printed scene lines say: a view's line and its status line, a prompt's, a list view's, and the library matcher's order |
@@ -2086,6 +2266,46 @@ second rule requires (`Editor.Test.AtPoint` imported by it,
   package imports. (Phase 6 moved the second into the linked kit, as
   `Editor.Test.Linked.Listings`, with the hosts that hand it.)
 
+## What moving the files cluster added to the core's API
+
+The features-as-packages roadmap's phase 6 moved into the core what the
+seven used only of the core, so that no moved library imports another and
+no core module imports a moved one:
+
+| Addition | What it is | Who uses it |
+|---|---|---|
+| `Editor.Text.Word` (`lean/Editor/Text/Word.lean`) | The word under the cursor over the text port: a line's cells (`Word.cells`), blanks and word characters (`isBlank`, `isWord`), the word under the cursor (`underCursor`), its whole-word pattern (`wholePattern`) and Vim's E348 (`noneUnderCursor`); evil's six names are defined from these | evil's `*` and `#`; project search's `project-search-symbol` |
+| `Workspace.SearchRoot`, `Workspace.searchRoot` (`lean/Editor/SearchRoot.lean`) | What a search covers: the root, its label, the text typed after a location and the workspace, from the buffer, the call's arguments and the command's name | project search; the workspace's `FindFile.searched`, which adds its lister |
+| `Workspace.typedOf`, `noSuchWorkspace`, `cannotList` (`lean/Editor/Workspace.lean`) | The text typed after a location, and the two refusals a search says | the same |
+| `Workspace.onModesOf`, `Workspace.turnOnModes` (`lean/Editor/ProjectMode/Listing.lean`) | A buffer's on-modes on markers, and turning them on: the value `modesLocal`, the minor modes farthest first, the listings refreshed | the workspace's mode marker search; the kit's stand-in for it (`Editor.Test.markedPackage`) |
+| `Jumps.Go` (`lean/Editor/Jumps/Go.lean`), a core module now | Going to a place: a file's case visits it through `FilesApi.files?` with `record := false`, and says `FilesApi.noImplementation "jump"` with none | evil's jumps and marks; project search's visit |
+| `FilesApi.Files.visit`'s `record` flag, and `FilesApi.notOpened` | Whether a visit records a jump, and the text files says of a load it refused | every visit but `Jumps.go` passes `true`; the compile mode's tests |
+| `ShellApi` (`lean/ShellApi.lean`, staged) | The shell's names (`commandName`, `filterName`, `interruptName`, `names`, `noCommand`) and its history (`Editor.Shell.historyStore`, `remember`, `Scope`, `history`, `record`), with a fake and a contract | ex hands a `:!` line to the shell by name and its prompt offers the history; the compile mode copies a scope's history |
+
+And to the core's test kit, each imported by `Editor.Core`:
+
+- **`Editor.Test.Excerpt`**: what a check reads of an excerpt buffer, and the
+  stand-in for a project search's results (`excerptFiles`), so the working
+  sets' tests name no project search;
+- **`Editor.Evil.Kit`**: evil's driver under the Vim scheme, which the working
+  sets' and the workspace's tests use until evil moves;
+- **`Editor.Test.Linked.Host`**: the config harness's hosts, published for a
+  package's linked root (`HostContext.run`), and **`Editor.Test.Linked.Bench`**,
+  the benchmarks' rows and host;
+- **the halves left of `Editor.Test.Workspace`, `.Shell` and `.Listing`**:
+  the stand-ins for the workspace's attach (`attachAt`, `attachPackage`,
+  `attachByPackage`, `openFound`, `checkoutFound`) and the open driver
+  (`openBindings`, `openCommandsWith`, `openJobs`, `openDriver`), the
+  shell's child and replies, and the stand-ins for modes on markers and
+  the marker search (`markedPackage`, `markersBy`, `markersByPackage`); the
+  halves that named a feature are its package's kit
+  (`WorkspaceTest.Kit`, `ShellTest.Kit`, `FilesTest.Kit`);
+- **the opener's point, record and language**: the kit's opener
+  (`Editor.Test.Opener`) loads a file at the point a visit asks for,
+  records a jump only when asked, and opens it in the language the core's
+  `languageOf` chooses, as files does, so `files-api`'s contract holds of
+  the fake and of `files`.
+
 ## The interfaces the core owns for the two features that moved
 
 Seven import edges led from a core module to a module of one of the two
@@ -2177,10 +2397,10 @@ features move.
 
 | Library | Declares | Publishes for tests | Its own tests | Implemented by | Used by | Moves |
 |---|---|---|---|---|---|---|
-| `FilesApi` (`lean/FilesApi.lean`) | The hooks `FilesApi.Opened` and `.Saved`, run when a file opens into a buffer and when one is saved; the choice `FilesApi.Files` (`adopt`, `visit`, `save`) under the name `files`, answered by `files?`; `loadLimit` and `diffLineLimit`; the commands' and jobs' names (`names`, `jobs`) | `FilesApiTest.fake`, the kit's opener with the hooks as its runners; `FilesApiTest.contractChecks` | `ModelTest.filesApiChecks` | `files` (`Editor.Files.Compiled`), whose `filesPackageChecks` run the contract | buffers, working-set, workspace, version-control; the kit (`Editor.Test.Workspace`) | Stays a core interface: the core's file-opening is the files feature's, and every feature that opens a file reaches it |
-| `BuffersApi` (`lean/BuffersApi.lean`) | The hook `BuffersApi.Closing`, run before a buffer closes; the choice `BuffersApi.Buffers` under the name `buffers`, answered by `buffers?`; the commands' names | `BuffersApiTest.fake`, a close over the core's API; `BuffersApiTest.contractChecks` | `ModelTest.buffersApiChecks` | `buffers` (`Editor.Buffers.Compiled`), whose `buffersPackageChecks` run the contract | working-set (its ranges' detaching), version-control (`vc-commit`) | Until phase 8 |
-| `ProjectApi` (`lean/ProjectApi.lean`) | The order and the continuation of a reach (`Reach.Order`, `Reach.Continuation`) and the roots a command names (`rootArguments`, `rootsOf?`); the choice `ProjectApi.Workspaces` (`reach`, `work`) under the name `workspace`, answered by `workspaces?`, and a job over it (`workOver`); its names | `ProjectApiTest.fake`, a `Workspaces` value that hands every continuation a given workspace; `ProjectApiTest.contractChecks` | `ModelTest.projectApiChecks` | `workspace` (`Editor.Workspace.Compiled`), whose `workspacePackageChecks` run the contract | version-control (`vc-worktrees-visit`); the kit | Phase 6 |
-| `VcApi` (`lean/VcApi.lean`, once `lean/Editor/VersionControl.lean`) | The interface a version-control system answers and its hunks; the backend point `VcApi.Backend`, a choice by the name `git`, connected by `connect?`, which takes the latest backend of that name; the backend `git`, the gutter's jobs and the mode line's segment `review` by name | `VcApiTest.Fake`, the model (once `Editor.VersionControl.Model`) and a backend over it; `VcApiTest.Contract`, the contract (once `Editor.VersionControl.Contract`), and `registrationChecks` | `ModelTest.vcApiChecks`, `ModelTest.VcApiTest.Fake`'s and `.Contract`'s checks | `version-control` (`Editor.VersionControl.Compiled`), whose `versionControlPackageChecks` run the registration check; git's half of the model is `Editor.VersionControl.Git.Model` | working-set, workspace | Phase 6 |
+| `FilesApi` (`lean/FilesApi.lean`) | The hooks `FilesApi.Opened` and `.Saved`, run when a file opens into a buffer and when one is saved; the choice `FilesApi.Files` (`adopt`, `visit`, `save`) under the name `files`, answered by `files?`; `loadLimit` and `diffLineLimit`; the commands' and jobs' names (`names`, `jobs`) | `FilesApiTest.fake`, the kit's opener with the hooks as its runners; `FilesApiTest.contractChecks` | `ModelTest.filesApiChecks` | `files` (`Files.Compiled`, `packages/files/`), whose `filesPackageChecks` run the contract | buffers, working-set, workspace, version-control; the kit (`Editor.Test.Workspace`) | Stays a core interface: the core's file-opening is the files feature's, and every feature that opens a file reaches it |
+| `BuffersApi` (`lean/BuffersApi.lean`) | The hook `BuffersApi.Closing`, run before a buffer closes; the choice `BuffersApi.Buffers` under the name `buffers`, answered by `buffers?`; the commands' names | `BuffersApiTest.fake`, a close over the core's API; `BuffersApiTest.contractChecks` | `ModelTest.buffersApiChecks` | `buffers` (`Buffers.Compiled`, `packages/buffers/`), whose `buffersPackageChecks` run the contract | working-set (its ranges' detaching), version-control (`vc-commit`) | Until phase 8 |
+| `ProjectApi` (`packages/project-api/ProjectApi.lean`, once `lean/ProjectApi.lean`) | The order and the continuation of a reach (`Reach.Order`, `Reach.Continuation`) and the roots a command names (`rootArguments`, `rootsOf?`); the choice `ProjectApi.Workspaces` (`reach`, `work`) under the name `workspace`, answered by `workspaces?`, and a job over it (`workOver`); its names | `ProjectApiTest.fake`, a `Workspaces` value that hands every continuation a given workspace; `ProjectApiTest.contractChecks` | `ProjectApiTest.projectApiChecks` (once `ModelTest.projectApiChecks`) | `workspace` (`Workspace.Compiled`), whose `workspacePackageChecks` run the contract | version-control (`vc-worktrees-visit`); the kit | Moved in phase 6: the interface package `project-api` |
+| `VcApi` (`packages/vc-api/VcApi.lean`, once `lean/VcApi.lean` and before that `lean/Editor/VersionControl.lean`) | The interface a version-control system answers and its hunks; the backend point `VcApi.Backend`, a choice by the name `git`, connected by `connect?`, which takes the latest backend of that name; the backend `git`, the gutter's jobs and the mode line's segment `review` by name | `VcApiTest.Fake`, the model (once `Editor.VersionControl.Model`) and a backend over it; `VcApiTest.Contract`, the contract (once `Editor.VersionControl.Contract`), and `registrationChecks` | `VcApiTest.vcApiChecks`, `.versionControlModelChecks` and `.versionControlContractFailures` (once `ModelTest`'s) | `version-control` (`VersionControl.Compiled`), whose `versionControlPackageChecks` run the registration check; git's half of the model is its test double `VersionControlTest.Git.Model` | working-set, workspace | Moved in phase 6: the interface package `vc-api` |
 
 Each implementing feature's package checks run the contract over its
 package, each sentence one check, and show it bite: over a package of the
@@ -2205,26 +2425,45 @@ for the cut:
   file commands are the files feature's kit, `Editor.Files.Kit`, a test
   double, which moves into its test library when it moves out.
 
-### Left for phase 6
+### Interface libraries left in the core after phase 6
 
-What phase 6 still has to cut, from the module graph ("What each feature
-would have to cross", below): the five import none of each other, and no
-module of the core proper imports `files` or `version-control`; the core's
-root, the list of the core's packages and the config base name features by
-design. What still imports the five is features phase 6 moves too, their
-tests, the kit and the compile package:
+Each row is an interface library the core still holds and a core module
+that imports it, by Lake's module graph, leaving out the core's test roots
+and the interfaces' own test libraries; the phase's acceptance criterion 4
+diffs this table against that graph. `project-api` and `vc-api` are
+interface packages since phase 6 (`packages/project-api/`,
+`packages/vc-api/`, "The default packages of the features-as-packages
+roadmap's phase 6", above), and no core module imports them.
 
-| Importer | Imports | Why it is left |
-|---|---|---|
-| `Editor.Evil` | `Jumps.Go` | evil moves in phase 6 |
-| `Editor.Ex`, `Editor.Ex.Compiled` | `Files`; `Buffers` | ex moves in phase 6 and binds the files' and the buffers' ex names |
-| `Editor.Menu.Compiled` | `Files` | the menu moves in phase 6 |
-| `Editor.ProjectSearch.Run` | `Files`, `Jumps.Go`, `Workspace.FindFile` | project search moves in phase 6 |
-| `Editor.Restore.Run` | `Files`, `Workspace.Attach` | session restore's run adopts a restored file with `Files.adopt` and attaches its workspace itself; phase 6 has it reach them through `FilesApi` |
-| `Editor.Shell` | `Files` | the shell moves in phase 6 |
-| Their tests: `ModelTest.Editor.Ex`, `.Evil.Marks`, `.Menu`, `.Restore.Run`; `ConfigTest.Editor.Ex`; `ContractTest.Editor.ProjectSearch.Run`, `.Restore.Run` | `Files`, `Files.Kit`, `Files.Compiled`, `Workspace.Compiled` | the tests of the features above. `ModelTest.Editor.Restore.Run` registers the files feature's and the workspace's jobs (`runJobs`), which the run starts; the restore support it shares with the core's checks of the journal (`ModelTest.Support.Restore`) runs on `files-api`'s fake and the kit's attach |
-| The kit: `Editor.Test.Workspace`, `.Listing`, `.Linked.Rig` | `Workspace.Attach`, `.Model`, `.Modes`, `.Reach`; `Workspace.Compiled` | the workspace's part of the kit, which moves or is split with it |
-| `compile` (`packages/compile/`) and its tests | `Workspace.Modes`; `Files`, `Files.Kit`, `Workspace.Attach`, `.Model`, `.Modes` | a package outside the core, which names the workspace's modes and the files' kit until both move |
+| Library | Kept by | Why | Until |
+|---|---|---|---|
+| `FilesApi` | `Editor.Restore.Run` | session restore, which stays in the core, adopts a reopened file and reads the load limit through it, and runs `FilesApi.Opened` for a journaled buffer that holds a file | for good |
+| `FilesApi` | `Editor.Jumps.Go` | going to a place visits a file through it; evil's jumps and marks reach it | phase 7 (evil) |
+| `FilesApi` | `Editor.Ex` | `:wq` saves the buffer through `FilesApi.files?`'s `save`, and says there is no implementation when none is registered | phase 8 (ex) |
+| `FilesApi` | `Editor.Ex.Compiled` | ex binds `w`, `w!`, `e` and their kin to the names files-api declares | phase 8 (ex) |
+| `FilesApi` | `Editor.Menu.Compiled` | the menu binds `s-o` and `s-s` to the names files-api declares | phase 8 (the menu) |
+| `FilesApi` | `Editor.Test.Listing` | the kit's stand-in: its on-modes stand-in registers at `FilesApi.Opened` | the kit's stand-in, while the core's tests use it |
+| `FilesApi` | `Editor.Test.Workspace` | the kit's stand-in: its attach registers at `FilesApi.Opened` in place of the workspace's | the kit's stand-in, while the core's tests use it |
+| `BuffersApi` | `Editor.Ex.Compiled` | ex binds `b`, `ls` and `bd` to the names buffers-api declares | phase 8 (ex) |
+| `ShellApi` | `Editor.Ex` | ex hands a `:!` line to `shell-command` by shell-api's name and its prompt offers the shell's history | phase 8 (ex) |
+
+### Left for phase 7 and 8
+
+What the seven's moves leave for the next phases:
+
+- **The seven's tests that import evil's modules.** The working sets' model
+  tests and the workspace's `FindInProject` tests drive keys under the Vim
+  scheme through evil's kit (`Editor.Evil.Kit`) and import
+  `InputScheme.Vim` and `InputScheme.Vim.Default`, modules of evil, which
+  is still in the core. They change when evil moves (phase 7). Project
+  search's tests do not (criterion 3).
+- **Ex's and the menu's reach through the staged interfaces.** `ex` and
+  `menu` stay in the core's list until phase 8, and with them the staged
+  `buffers-api` and `shell-api` and three of `files-api`'s keepers (the
+  table above); `buffers-api` and `shell-api` move to `packages/` when ex
+  does.
+- **The default config** (`config/default`) names the seven's commands as
+  text, since the core cannot import a package.
 
 ## Rust in a package
 
@@ -2454,11 +2693,12 @@ of `echo` outside the repository is refused with its reason
 
 ## The module map
 
-Every module under `lean/Editor/`, 312 of them
-(`find lean/Editor -name '*.lean' | wc -l`, in the features-as-packages
-roadmap's phase 6, which added the core's `Editor.Text.Word` and
-`Editor.SearchRoot` and the feature kits `Editor.Workspace.Kit` and
-`Editor.Shell.Kit`; 308 at the end of its phase 5; 254 at `6ba99de5`, phase 4
+Every module under `lean/Editor/`, 274 of them
+(`find lean/Editor -name '*.lean' | wc -l`, at the end of the
+features-as-packages roadmap's phase 6, which moved the seven features of
+the files cluster out, 48 modules with their kits and doubles, and added
+the core's `Editor.Text.Word` and `Editor.SearchRoot` and ten modules of
+the test kit; 308 at the end of its phase 5; 254 at `6ba99de5`, phase 4
 added `Editor.Main`, phase 5 added `Editor.Themes.Picture` and moved
 the three modules of the shipped palettes out, phase 6 moved the five
 of the compile mode out and added the 18 of the test kit, phase 7 added
@@ -2475,16 +2715,18 @@ model, the job names of the loop's two reconcilers (`Editor.FileJobs`,
 `Editor.Gutter.Track`), the kit's two (`Editor.Test.Hosted`, `.Opener`)
 and the files feature's kit (`Editor.Files.Kit`)), is
 **core** or part of a **feature that could become a package**. The counts
-below add up to 301: 222 core and 79 in 15 features. The rows were not
-counted again in full for phase 3 or 4: at phase 3's start they added up
+below add up to 263: 231 core and 32 in 8 features. The rows were not
+counted again in full for phase 3, 4 or 6: at phase 3's start they added up
 to 304 against 315 modules, so 11 modules are in no row (the task
 `module-map-count-drift`); phase 4 took its eight moved modules' rows out
-and added the kit's two to the kit's row, phase 5 counted its own
-additions and removals into their rows, and the 11 are still in no row.
-The four interface libraries of phase 5 (`FilesApi`, `BuffersApi`,
-`ProjectApi`, `VcApi`, each with its test library) are outside
-`lean/Editor/` and are in no row: "The interface libraries of the
-features-as-packages roadmap's phase 5", above, describes them.
+and added the kit's two to the kit's row, phases 5 and 6 counted their own
+additions and removals into their rows (phase 6 took the seven's 19 rows
+out and counted the kit's two rows again, 23 and 10 modules), and the 11
+are still in no row. The interface libraries the core still stages
+(`FilesApi`, `BuffersApi`, `ShellApi`, each with its test library) are
+outside `lean/Editor/` and are in no row, and `ProjectApi` and `VcApi` are
+interface packages: "The interface libraries of the features-as-packages
+roadmap's phase 5", above, describes them.
 
 - **Core** is what a host with no packages needs to start and run: the
   ports with their models and bindings, the state, the scene and display
@@ -2492,21 +2734,25 @@ features-as-packages roadmap's phase 5", above, describes them.
   any module a core module imports for a type it carries (`Editor.Ex.Line`,
   `Editor.Menu`, `Editor.ModeLine`, `Editor.Language`, `Editor.Workspace`,
   the three `Editor.ProjectMode` modules).
-- **A feature** is code reached through a package's registrations: the 17
-  packages of the core's list, as 16 features (the two version-control packages are
-  one), with the Vim scheme counted with evil. The table names 15 of them:
-  `package-set` has no row (the task `module-map-count-drift`).
+- **A feature** is code reached through a package's registrations: the 9
+  packages of the core's list, as 9 features, with the Vim scheme counted
+  with evil. The table names 8 of them: `package-set` has no row (the task
+  `module-map-count-drift`).
 - **Every feature here is in the core's Lake package**,
   and is a core module in the sense of the section above and of the gate's
   check. The map guides later moves; it does not commit to them. The
   shipped palettes, the compile mode, the mode line's segments, the command
   prompt, the binding search, the languages, the completion styles and
-  displays, completion at point and the minibuffer are no longer in the
-  map: they are the Lake packages `shipped-themes`, `compile`,
-  `mode-line`, `execute-command`, `binding-search`, `languages`,
-  `completion`, `at-point` and `minibuffer` ("The first default package",
-  "The default package `compile`" and "The default packages of the
-  features-as-packages roadmap's phase 3" and "… phase 4", above).
+  displays, completion at point, the minibuffer, and the files cluster's
+  seven (the files, the buffers, the workspaces, project search, the
+  working sets, the shell and version control) are no longer in the map:
+  they are the Lake packages `shipped-themes`, `compile`, `mode-line`,
+  `execute-command`, `binding-search`, `languages`, `completion`,
+  `at-point`, `minibuffer`, `files`, `buffers`, `workspace`,
+  `project-search`, `working-set`, `shell` and `version-control` ("The
+  first default package", "The default package `compile`" and "The default
+  packages of the features-as-packages roadmap's phase 3", "… phase 4" and
+  "… phase 6", above).
 
 One row covers modules that share a class and a side of the import rule.
 "A package may import it" is `yes`, `in tests` (a test double) or `no`
@@ -2526,8 +2772,8 @@ One row covers modules that share a class and a side of the import rule.
 | The models: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Config.Elaborator.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Grep.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `.Model.Json`, `.Model.Query`, `Editor.Text.Model`, `Editor.Watch.Model` | 16 | core | in tests |
 | The contracts and cases: `Editor.Clipboard.Contract`, `Editor.Completion.Contract`, `.AtPointContract`, `.DisplayContract`, `.StyleContract`, `Editor.Config.Elaborator.Contract`, `Editor.Display.Contract`, `Editor.Fuzzy.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.SyntaxTree.Contract`, `Editor.Text.Contract`, `Editor.Watch.Contract`, `Editor.Api.Cases`, `Editor.File.Cases`, `Editor.UndoTree.Cases` | 16 | core | in tests |
 | The fakes, the test scheme and the loop's driver: `Editor.Completion.Fake`, `Editor.Job.Fake`, `Editor.InputScheme.Test`, `Editor.Loop.Driver` | 4 | core | in tests |
-| The model test kit: `Editor.Test.AtPoint`, `.Completion`, `.Config`, `.Driver`, `.Files`, `.Geometry`, `.Hosted`, `.Jobs`, `.Keys`, `.Listing`, `.Loop`, `.Minibuffer`, `.Models`, `.Opener`, `.Prompts`, `.Shell`, `.Shipped`, `.Sources`, `.States`, `.Workspace` | 20 | core | in tests |
-| The linked test kit: `Editor.Test.Linked.Jobs`, `.Rig`, `.Services`, `.Trees` | 4 | core | in tests |
+| The model test kit: `Editor.Test.AtPoint`, `.Completion`, `.Config`, `.Driver`, `.Ex`, `.Excerpt`, `.Files`, `.Geometry`, `.Hosted`, `.Jobs`, `.Keys`, `.Listing`, `.Loop`, `.Minibuffer`, `.Models`, `.Modes`, `.Opener`, `.Prompts`, `.Shell`, `.Shipped`, `.Sources`, `.States`, `.Workspace` | 23 | core | in tests |
+| The linked test kit: `Editor.Test.Linked.Bench`, `.Host`, `.Jobs`, `.Keys`, `.Lines`, `.Listings`, `.Rig`, `.Services`, `.Shipped`, `.Trees` | 10 | core | in tests |
 | The editor API and what is proved of it: `Editor.Api`, `.Api.Theorems`, `Editor.UndoTree`, `.UndoTree.Theorems` | 4 | core | yes |
 | The composite port and a command: `Editor.Command`, `.Call`, `.Control`, `.Registry`, `.Append`, `Editor.Program` | 6 | core | yes |
 | The ports: `Editor.Clipboard`, `Editor.Diff`, `.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Process`, `.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 14 | core | yes |
@@ -2542,42 +2788,23 @@ One row covers modules that share a class and a side of the import rule.
 | Languages and indentation: `Editor.Language`, `.Language.IndentUnit`, `Editor.Indent` | 3 | core | yes |
 | What a minor mode contributes: `Editor.ProjectMode`, `.ProjectMode.Format`, `.ProjectMode.Listing` | 3 | core | yes |
 | What the ex line and a typed path are as data: `Editor.Ex.Line`, `Editor.TypedPath` | 2 | core | yes |
-| `Editor.Buffers` | 1 | feature: buffers | yes |
-| `Editor.Buffers.Compiled` | 1 | feature: buffers | no |
 | `Editor.Evil.Compiled` | 1 | feature: evil | no |
 | `Editor.Evil` and 12 of the modules under it (all but `.Compiled` and `.Kit`); `Editor.InputScheme.Vim`, `.Vim.Default` | 15 | feature: evil | yes |
 | `Editor.Evil.Kit`, the driver of evil's checks under the Vim scheme | 1 | feature: evil | in tests |
 | `Editor.Ex` | 1 | feature: ex | yes |
 | `Editor.Ex.Compiled` | 1 | feature: ex | no |
-| `Editor.Files`, `Editor.Completion.Paths` | 2 | feature: files | yes |
-| `Editor.Files.Compiled` | 1 | feature: files | no |
-| `Editor.Files.Kit`, the drivers of the real file commands | 1 | feature: files | in tests |
-| `Editor.Shell.Kit`, the shell checks' jobs, bindings and commands, over the core kit's open driver and ex line | 1 | feature: shell | in tests |
 | `Editor.FrameCommands` | 1 | feature: frame-commands | yes |
 | `Editor.FrameCommands.Compiled` | 1 | feature: frame-commands | no |
 | `Editor.Menu.Compiled` | 1 | feature: menu | no |
-| `Editor.ProjectSearch`, `.ProjectSearch.Run` | 2 | feature: project-search | yes |
-| `Editor.ProjectSearch.Compiled` | 1 | feature: project-search | no |
-| `Editor.Shell` | 1 | feature: shell | yes |
-| `Editor.Shell.Compiled` | 1 | feature: shell | no |
 | `Editor.TabCommands` | 1 | feature: tab-commands | yes |
 | `Editor.TabCommands.Compiled` | 1 | feature: tab-commands | no |
 | `Editor.Themes`, `Editor.Themes.Check` | 2 | feature: themes | yes |
 | `Editor.Themes.Compiled` | 1 | feature: themes | no |
 | `Editor.Themes.Picture`, the theme picture check | 1 | feature: themes | in tests |
-| `Editor.VersionControl.Compiled` | 1 | feature: version-control | no |
-| `Editor.VersionControl.Git.Model`, git's half of the model | 1 | feature: version-control | in tests |
-| 16 of the modules under `Editor.VersionControl` (all but `.Compiled` and `.Git.Model`) | 16 | feature: version-control | yes |
 | `Editor.WindowCommands` | 1 | feature: window-commands | yes |
 | `Editor.WindowCommands.Compiled` | 1 | feature: window-commands | no |
-| `Editor.WorkingSet`, `.WorkingSet.Disk`, `.WorkingSet.Places`, `.WorkingSet.Refind`, `.WorkingSet.Run` | 5 | feature: working-set | yes |
-| `Editor.WorkingSet.Compiled` | 1 | feature: working-set | no |
 | `Editor.Restore.Run` | 1 | feature: restore | yes |
 | `Editor.Restore.Compiled` | 1 | feature: restore | no |
-| `Editor.Workspace.Compiled` | 1 | feature: workspace | no |
-| `Editor.Workspace.Model`, `.Contract` | 2 | feature: workspace | in tests |
-| `Editor.Workspace.Kit`, the workspace's world, jobs, commands, keys and driver, the listing checks' world, and the rig's workspace package | 1 | feature: workspace | in tests |
-| `Editor.Workspace.Attach`, `.Finder`, `.FindFile`, `.FindInProject`, `.Lister`, `.Modes`, `.Projects`, `.Reach` | 8 | feature: workspace | yes |
 
 ### What each feature would have to cross
 
@@ -2642,18 +2869,11 @@ cross. No core module and no test of a core module imports it. It imports the co
 
 #### `buffers`
 
-Computed again at the end of the features-as-packages roadmap's phase 5, which cut its imports of the other four of files, buffers, working-set, workspace and version-control: it reaches them through the interface libraries ("The interface libraries of the features-as-packages roadmap's phase 5", above).
-
-- **Modules** (2): `Buffers`, `Buffers.Compiled`.
-- **Core modules that import it**: none; `Editor.Core` imports `Buffers.Compiled`, as it imports every feature's.
-- **The test kit's modules that import it**: none. The kit's buffers are `BuffersApiTest.fake`'s.
-- **Other features' modules that import it**: none. Ex's `Ex.Compiled` binds `b`, `ls` and `bd` to `BuffersApi`'s names since phase 6. Version-control's `vc-commit` and working-set's close hook reach it through `BuffersApi` (`BuffersApi.buffers?`, `BuffersApi.Closing`).
-- **Other features it imports**: none. It runs `BuffersApi.Closing` where it imported `WorkingSet.Places`.
-- **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (5): `ModelTest`: `Completion.Contract`, `DisplayRules`, `Evil.Marks`; `ConfigTest`: `Headless`, `Minibuffer`.
-- **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the `ex` package binds `b`, `ls` and `bd` to its commands; the default config binds `switch-buffer`, `list-buffers` and `close-buffer`, whose names `BuffersApi.names` declares.
-
+Moved out of the core by the features-as-packages roadmap's phase 6: the
+Lake package `buffers` (`packages/buffers/`; "The default packages of the
+features-as-packages roadmap's phase 6", above). It has nothing left to
+cross. No core module and no test of a core module imports it: its library imports the core's API alone, and it implements the core's staged interface library `buffers-api`, through which ex binds `b`, `ls` and `bd`, version control's `vc-commit` closes the message buffer and the working sets detach a closing buffer's ranges (`BuffersApi.Closing`).
+Its tests moved with it, its kit and doubles among them.
 #### `compile`
 
 Moved out of the core by phase 6: the Lake package `compile`
@@ -2720,18 +2940,11 @@ cross. No core module and no test of a core module imports it. It imports the co
 
 #### `files`
 
-Computed again at the end of the features-as-packages roadmap's phase 5, which cut its imports of the other four of files, buffers, working-set, workspace and version-control: it reaches them through the interface libraries ("The interface libraries of the features-as-packages roadmap's phase 5", above).
-
-- **Modules** (4): `Completion.Paths`, `Files`, `Files.Compiled`, `Files.Kit`. `Jumps.Go` is the core's since phase 6, over `FilesApi`. `Files.Kit`, the drivers of the real file commands, is a test double, which moves into its test library when it moves out.
-- **Core modules that import it**: none; `Editor.Core` imports `Files.Kit` and `Files.Compiled`. The loop's reconcilers run the jobs the core names (`Editor/FileJobs.lean`), where the loop imported `Files`.
-- **The test kit's modules that import it**: none. The kit opens files with its own opener (`Test.Opener`), and runs the hosted packages through `Test.Hosted`.
-- **Other features' modules that import it**: project-search: `ProjectSearch.Run` (`Files`); shell: `Shell` (`Files`). Buffers, working-set, workspace, version-control, and since phase 6 ex (`Ex`, `Ex.Compiled`), the menu (`Menu.Compiled`) and session restore (`Restore.Run`), reach it through `FilesApi` (`FilesApi.files?`, its hooks `Opened` and `Saved`, and its names).
-- **Other features it imports**: ex (`Ex`, `Ex.Compiled`), by `Files.Kit` alone. It runs `FilesApi.Opened` where it imported `Workspace.Attach` and `WorkingSet.Places`.
-- **Modules of packages outside the core that import it**: compile: `CompileTest.Compile` (`Files`), `CompileTest.Support.Compile` (`Files.Kit`), `CompileTest.Linked.Compile.Shipped` (`Files.Kit`).
-- **Test modules outside its own tests that import it** (7): `ModelTest`: `Ex`, `Evil.Marks`, `Menu`, `Restore.Run`; `ConfigTest`: `Ex`; `ContractTest`: `ProjectSearch.Run`, `Restore.Run`.
-- **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the `ex` package binds `w`, `w!`, `e`, `e!`, `autoread` and `noautoread` to its commands; the `menu` package's Open and Save; the workspace finder accepts through `open-file`, by `FilesApi.openFileName`; the default config binds `open-file`, `save-buffer` and `reload-buffer`.
-
+Moved out of the core by the features-as-packages roadmap's phase 6: the
+Lake package `files` (`packages/files/`; "The default packages of the
+features-as-packages roadmap's phase 6", above). It has nothing left to
+cross. No core module and no test of a core module imports it: its library imports the core's API alone, and it implements the core's interface library `files-api`, a core interface for good, through which session restore adopts files, the jumps visit them, ex and the menu save and open them, and the workspaces and the working sets hear a file open (`FilesApi.Opened`) and save (`FilesApi.Saved`).
+Its tests moved with it, its kit and doubles among them.
 #### `frame-commands`
 
 - **Modules** (2): `FrameCommands`, `FrameCommands.Compiled`.
@@ -2805,28 +3018,18 @@ cross. No core module and no test of a core module imports it. It imports the co
 
 #### `project-search`
 
-- **Modules** (3): `ProjectSearch`, `ProjectSearch.Compiled`, `ProjectSearch.Run`.
-- **Core modules that import it**: none.
-- **The test kit's modules that import it**: none.
-- **Other features' modules that import it**: none.
-- **Other features it imports**: evil (`Evil.Motions`); files (`Files`, `Jumps.Go`); workspace (`Workspace.FindFile`).
-- **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (5): `ModelTest`: `WorkingSet.Run`, `Support.WorkingSet`; `ConfigTest`: `DefaultConfig`, `Headless`; `ContractTest`: `WorkingSet.Run`.
-- **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the default config binds `project-search` and `project-search-symbol`; `working-set-add` pins a row of its results buffer as its file's range, found as `project-search-visit` finds it (`WorkingSet/Run.lean`).
-
+Moved out of the core by the features-as-packages roadmap's phase 6: the
+Lake package `project-search` (`packages/project-search/`; "The default packages of the
+features-as-packages roadmap's phase 6", above). It has nothing left to
+cross. No core module and no test of a core module imports it: its library imports the core's API alone, with what a search covers (`Editor.SearchRoot`) and the word under the cursor (`Editor.Text.Word`), and its interface package `project-search-api`, which declares the names the default config reaches it by; no module of it, library or tests, reaches evil.
+Its tests moved with it, its kit and doubles among them.
 #### `shell`
 
-- **Modules** (2): `Shell`, `Shell.Compiled`.
-- **Core modules that import it**: none.
-- **The test kit's modules that import it**: `Test.Shell` (`Shell`, `Shell.Compiled`).
-- **Other features' modules that import it**: ex: `Ex` (`Shell`).
-- **Other features it imports**: files (`Files`).
-- **Modules of packages outside the core that import it**: compile: `Compile` (`Shell`).
-- **Test modules outside its own tests that import it** (1): `ModelTest`: `InputScheme.Vim.Default`.
-- **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): none known beyond its imports: the ex line's `:!` calls it, and so does the compile mode, from its package.
-
+Moved out of the core by the features-as-packages roadmap's phase 6: the
+Lake package `shell` (`packages/shell/`; "The default packages of the
+features-as-packages roadmap's phase 6", above). It has nothing left to
+cross. No core module and no test of a core module imports it: its library imports the core's API alone, and it implements the core's staged interface library `shell-api`, through which ex hands it a `:!` line and reads its history.
+Its tests moved with it, its kit and doubles among them.
 #### `shipped-themes`
 
 Moved out of the core by phase 5: the Lake package `shipped-themes`
@@ -2863,18 +3066,11 @@ the user asks `load-theme` for one.
 
 #### `version-control`
 
-Computed again at the end of the features-as-packages roadmap's phase 5, which cut its imports of the other four of files, buffers, working-set, workspace and version-control: it reaches them through the interface libraries ("The interface libraries of the features-as-packages roadmap's phase 5", above).
-
-- **Modules** (18): `VersionControl.Blame`, `VersionControl.Commit`, `VersionControl.Compiled`, `VersionControl.Git`, `VersionControl.Git.Model`, `VersionControl.Gutter`, `VersionControl.HistoryRead`, `VersionControl.Hunk`, `VersionControl.Log`, `VersionControl.Plumbing`, `VersionControl.Porcelain`, `VersionControl.Review`, `VersionControl.ReviewHunks`, `VersionControl.Show`, `VersionControl.Stage`, `VersionControl.Status`, `VersionControl.Views`, `VersionControl.Worktrees`. The interface, `Editor.VersionControl` with its model and contract, is the library `VcApi` (`lean/VcApi.lean`, `lean/VcApiTest/`), outside the map.
-- **Core modules that import it**: none; `Editor.Core` imports `VersionControl.Compiled` and git's half of the model, `VersionControl.Git.Model`. The loop's gutter reconciler runs the jobs the core names (`Editor/Gutter/Track.lean`), where the loop imported `VersionControl.Gutter`.
-- **The test kit's modules that import it**: none.
-- **Other features' modules that import it**: none. Working-set and workspace reach a repository through `VcApi` (`VcApi.Backend`, connected by `VcApi.connect?`).
-- **Other features it imports**: none. It reaches files through `FilesApi`, buffers through `BuffersApi` and a workspace through `ProjectApi`.
-- **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it**: none. The repositories its tests and the working sets' and the workspace's build are `vc-api`'s published test support, `VcApiTest.Repositories` and `VcApiTest.Linked.Repositories` (`lean/VcApiTest/`), over `VcApiTest.Fake`.
-- **The config base imports**: `VersionControl.Commit`, `VersionControl.Stage`.
-- **Reaches by name** (not exhaustive): the default order of the mode line names its segment `review` (`VcApi.reviewSegmentName`); its twelve `vc-` ex names are its own package's.
-
+Moved out of the core by the features-as-packages roadmap's phase 6: the
+Lake package `version-control` (`packages/version-control/`; "The default packages of the
+features-as-packages roadmap's phase 6", above). It has nothing left to
+cross. No core module and no test of a core module imports it: its library imports the core's API alone and the interface packages `vc-api`, which it implements (the backend `git`, the gutter's jobs, the segment `review`), and `project-api`, through which the worktree list's visit reaches a workspace; git's half of the repository model is its test double. Its two packages, `version-control` and `version-control-gutter`, are listed by its entry module.
+Its tests moved with it, its kit and doubles among them.
 #### `window-commands`
 
 - **Modules** (2): `WindowCommands`, `WindowCommands.Compiled`.
@@ -2889,18 +3085,11 @@ Computed again at the end of the features-as-packages roadmap's phase 5, which c
 
 #### `working-set`
 
-Computed again at the end of the features-as-packages roadmap's phase 5, which cut its imports of the other four of files, buffers, working-set, workspace and version-control: it reaches them through the interface libraries ("The interface libraries of the features-as-packages roadmap's phase 5", above).
-
-- **Modules** (6): `WorkingSet`, `WorkingSet.Compiled`, `WorkingSet.Disk`, `WorkingSet.Places`, `WorkingSet.Refind`, `WorkingSet.Run`.
-- **Core modules that import it**: none; `Editor.Core` imports `WorkingSet.Compiled`.
-- **The test kit's modules that import it**: none.
-- **Other features' modules that import it**: none. Its package registers its ranges' holding at `FilesApi.Opened` and their detaching at `BuffersApi.Closing`, where files and buffers imported `WorkingSet.Places`.
-- **Other features it imports**: none. It opens a file through `FilesApi.files?`, whose `Opened` hook attaches the buffer's workspace, and reads a repository through `VcApi`.
-- **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (3): `ModelTest`: `Support.Restore`; `ConfigTest`: `DefaultConfig`, `Headless`.
-- **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the default config binds `working-set-add` and `working-set-open`.
-
+Moved out of the core by the features-as-packages roadmap's phase 6: the
+Lake package `working-set` (`packages/working-set/`; "The default packages of the
+features-as-packages roadmap's phase 6", above). It has nothing left to
+cross. No core module and no test of a core module imports it: its library imports the core's API alone, `files-api` and `buffers-api`, and the interface packages `working-set-api`, which declares the names the default config reaches it by, and `vc-api`, whose backend gives the commit a set is written with.
+Its tests moved with it, its kit and doubles among them.
 #### `restore`
 
 - **Modules** (2): `Restore.Compiled`, `Restore.Run`. The journal's reconciler, `Restore`, with `Restore.Kept`, `Restore.Journal`, `Restore.Document` and phase 2's `Restore.Records`, `Restore.Indexed`, `Restore.Frame`, `Restore.Workspaces` and `Restore.Value`, is core: the loop runs it after each publish and the state holds what it keeps.
@@ -2915,17 +3104,11 @@ Computed again at the end of the features-as-packages roadmap's phase 5, which c
 
 #### `workspace`
 
-Computed again at the end of the features-as-packages roadmap's phase 5, which cut its imports of the other four of files, buffers, working-set, workspace and version-control: it reaches them through the interface libraries ("The interface libraries of the features-as-packages roadmap's phase 5", above).
-
-- **Modules** (11): `Workspace.Attach`, `Workspace.Compiled`, `Workspace.Contract`, `Workspace.FindFile`, `Workspace.FindInProject`, `Workspace.Finder`, `Workspace.Lister`, `Workspace.Model`, `Workspace.Modes`, `Workspace.Projects`, `Workspace.Reach`.
-- **Core modules that import it**: none; `Editor.Core` imports `Workspace.Compiled` and `Workspace.Contract`.
-- **The test kit's modules that import it**: `Test.Linked.Rig` (`Workspace.Compiled`); `Test.Listing` (`Workspace.Model`, `Workspace.Modes`); `Test.Workspace` (`Workspace.Attach`, `Workspace.Model`, `Workspace.Modes`, `Workspace.Reach`).
-- **Other features' modules that import it**: project-search: `ProjectSearch.Run` (`Workspace.FindFile`); restore: `Restore.Run` (`Workspace.Attach`). Files reaches it through `FilesApi.Opened`, where its package registers the attach, and version-control through `ProjectApi.Workspaces`, which its package answers.
-- **Other features it imports**: none. It opens through `FilesApi` and reads a repository through `VcApi`.
-- **Modules of packages outside the core that import it**: compile: `Compile` (`Workspace.Modes`), `CompileTest.Compile` (`Workspace.Attach`, `Workspace.Model`, `Workspace.Modes`), `CompileTest.Compile.Shipped` (`Workspace.Model`, `Workspace.Modes`), `CompileTest.Linked.Compile.Shipped` (`Workspace.Modes`).
-- **Test modules outside its own tests that import it** (7): `ModelTest`: `Completion.Contract`, `ProjectMode.Listing`, `Restore.Run`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`; `ContractTest`: `Workspace`.
-- **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the default config binds `find-file-in-workspace` and `find-file-in-project`; its package registers the job `compile-list`, which the compile mode, in its package, starts by name.
+Moved out of the core by the features-as-packages roadmap's phase 6: the
+Lake package `workspace` (`packages/workspace/`; "The default packages of the
+features-as-packages roadmap's phase 6", above). It has nothing left to
+cross. No core module and no test of a core module imports it: its library imports the core's API alone, `files-api`, at whose `Opened` hook it attaches a file's workspace, and the interface packages `project-api`, which it implements, and `vc-api`; the workspace data (`Editor.Workspace`) and what a search covers (`Editor.SearchRoot`) are the core's.
+Its tests moved with it, its kit and doubles among them.
 
 ## Input schemes
 
@@ -3166,6 +3349,101 @@ and none for the completion styles and displays:
   removes, not for order**: "Dropping `completion` …" and "Dropping
   `minibuffer` …", under "The default packages of the features-as-packages
   roadmap's phase 4", above.
+
+**The `commands:` lines and two lines of `SPC :`'s listing changed when the
+files cluster moved** (the features-as-packages roadmap's phase 6), each by
+its D5 alone, and nothing else. The seven features registered before every
+default package, all of them packages of the core's list; the set now
+requires them first, in the core's order, so their order among themselves
+and against the default packages is kept, and the one change is against
+the nine packages still in the core's list (`evil` … `package-set`), which
+register before every Lake package. After each move the moved feature's
+commands come, in D5's order, directly after those of the last package
+still in the core's list (`version-control-gutter`'s `vc-gutter-moved`
+until version control moved, `package-set`'s `package-build-output` after),
+and before `completion`'s (the minibuffer's `minibuffer-accept`, since
+`completion` registers no command). The empty set's fixtures and
+`tests/headless/ex/expected` did not change (version control's ex names
+still follow ex's and come before compile's), and only the workspace binds
+a key, in its prompt category alone, so `completion`'s style and display
+are still the first registered.
+
+- `tests/headless/expected`, lines 4 and 9 (the same line), and
+  `tests/headless/bundle/expected`, line 3 (whose last name is config's
+  `greet` where the others' is `squares`): the moved commands, in each
+  commit, `switch-buffer list-buffers close-buffer` (C9), `open-file
+  save-buffer edit-file reload-buffer auto-reload-mode` (C10),
+  `workspace-current find-file-in-workspace find-file-in-project
+  find-file-in-another-workspace` (C11), the working sets' six (C12),
+  project search's four (C13), `shell-command shell-filter keyboard-quit`
+  (C14) and version control's, `vc-status` … `vc-gutter-moved` (C15). Each
+  state of the lines, verbatim, before C9 and after each move:
+
+  before C9, as C1 pinned them:
+
+  ```text
+  commands: open-file save-buffer edit-file reload-buffer auto-reload-mode move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused greet
+  commands: open-file save-buffer edit-file reload-buffer auto-reload-mode move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused squares
+  ```
+
+  after C9 (`buffers`):
+
+  ```text
+  commands: open-file save-buffer edit-file reload-buffer auto-reload-mode move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved switch-buffer list-buffers close-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused greet
+  commands: open-file save-buffer edit-file reload-buffer auto-reload-mode move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved switch-buffer list-buffers close-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused squares
+  ```
+
+  after C10 (`files`):
+
+  ```text
+  commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused squares
+  commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused greet
+  ```
+
+  after C11 (`workspace`):
+
+  ```text
+  commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused squares
+  commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused greet
+  ```
+
+  after C12 (`working-set`):
+
+  ```text
+  commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme project-search project-search-found project-search-symbol project-search-visit restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused squares
+  commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme project-search project-search-found project-search-symbol project-search-visit restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused greet
+  ```
+
+  after C13 (`project-search`):
+
+  ```text
+  commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused squares
+  commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused greet
+  ```
+
+  after C14 (`shell`):
+
+  ```text
+  commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh shell-command shell-filter keyboard-quit minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused squares
+  commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh shell-command shell-filter keyboard-quit minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused greet
+  ```
+
+  after C15 (`version-control`):
+
+  ```text
+  commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused squares
+  commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused greet
+  ```
+- `tests/headless/default-config/expected`, lines 19 and 20: the first ten
+  rows of `SPC :`'s listing and their decorations, when the files' commands,
+  which were the first ten's first five, moved (C10). Old, then new:
+
+  ```text
+  view 2 0,0 0x0: "open-file         s-o, SPC ., SPC f f  Find file\nsave-buffer       s-s, SPC f s, SPC b s  Save file\nedit-file\nreload-buffer     SPC b r  Revert buffer\nauto-reload-mode\nmove\nnormal\nvisual            v\nvisual-line       V\ninsert            i", scroll 0, selections , padding 8 0
+  decorations 2: minibuffer.candidate 0..48 minibuffer.annotation 18..48 minibuffer.candidate 49..99 minibuffer.annotation 67..99 minibuffer.candidate 100..109 minibuffer.candidate 110..150 minibuffer.annotation 128..150 minibuffer.candidate 151..167 minibuffer.candidate 168..172 minibuffer.candidate 173..179 minibuffer.candidate 180..199 minibuffer.annotation 198..199 minibuffer.candidate 200..219 minibuffer.annotation 218..219 minibuffer.candidate 220..239 minibuffer.annotation 238..239
+  view 2 0,0 0x0: "move\nnormal\nvisual             v\nvisual-line        V\ninsert             i\nappend             a\ninsert-line-start  I\nappend-line-end    A\nself-insert\noperate", scroll 0, selections , padding 8 0
+  decorations 2: minibuffer.candidate 0..4 minibuffer.candidate 5..11 minibuffer.candidate 12..32 minibuffer.annotation 31..32 minibuffer.candidate 33..53 minibuffer.annotation 52..53 minibuffer.candidate 54..74 minibuffer.annotation 73..74 minibuffer.candidate 75..95 minibuffer.annotation 94..95 minibuffer.candidate 96..116 minibuffer.annotation 115..116 minibuffer.candidate 117..137 minibuffer.annotation 136..137 minibuffer.candidate 138..149 minibuffer.candidate 150..157
+  ```
 
 ## Build times
 

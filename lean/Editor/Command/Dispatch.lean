@@ -362,7 +362,7 @@ state request), `ModelTest.dispatchStateChecks`, for the questions to the
 registry and where the registry's and the control's arms stand towards the
 guard, `ModelTest.dispatchRegistryChecks`,
 `ModelTest.modeEnterChecks`, for the first edit after a change on disk,
-`ModelTest.stalenessChecks`, for read-only buffers,
+`FilesTest.stalenessChecks`, for read-only buffers,
 `ModelTest.readOnlyChecks`, and for excerpt sources,
 `ModelTest.excerptBufferChecks`.
 -/

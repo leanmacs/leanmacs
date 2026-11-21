@@ -234,7 +234,7 @@ origin; hotspots and churn are not built.
   that alphabetical is bad. Start with plan-step order and measure. As
   built, the order is tests first, then by file dependency, among files
   that are ready the one that changes more lines first
-  (`orderFiles`, `lean/Editor/VersionControl/ReviewHunks.lean`), until
+  (`orderFiles`, `packages/version-control/VersionControl/ReviewHunks.lean`), until
   rdm:roadmap/acp-agents can order by plan step. The path guess for tests
   is to be replaced by commit order and an optional `review.isTest` in
   the config, not a classifier per language

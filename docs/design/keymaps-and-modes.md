@@ -34,7 +34,7 @@ registers, undo and dot repeat, on the editor API:
 | Modes by owner, a mode's lineage, the active keymaps of a view, setting a major mode through a view and its on-enter action | `lean/Editor/Config/Registry.lean` |
 | Defining a mode from `setup`, and its refusals | `lean/Editor/Setup.lean` (`defineMode`), `lean/Editor/Config/Registry.lean` (`Registrations.problem?`) |
 | A buffer's major and minor modes, and the state operations that set them | `lean/Editor/State.lean` |
-| The language entry, the shipped table, the rule that chooses a path's language, and the `code` mode | `lean/Editor/Language.lean`; a buffer's language in `lean/Editor/State.lean`, chosen when a file opens in `lean/Editor/Files.lean` |
+| The language entry, the shipped table, the rule that chooses a path's language, and the `code` mode | `lean/Editor/Language.lean`; a buffer's language in `lean/Editor/State.lean`, chosen when a file opens in `packages/files/Files.lean` |
 | The notice a scheme is told when the minibuffer's view opens, and the contract's property that a key that prints is text there | `lean/Editor/InputScheme.lean` (`openMinibuffer`), `lean/Editor/InputScheme/Contract.lean` (`minibufferTakesText`), `lean/Editor/Loop.lean` (`Loop.toldViews`) |
 | The minibuffer's mode and its six commands (accept, cancel, the next and the previous candidate, delete backward, and delete to the input's start), and their registrations | The default package `minibuffer` (features-as-packages phase 4): `packages/minibuffer/Minibuffer.lean`, `packages/minibuffer/Minibuffer/Compiled.lean`; their names in its interface package, `packages/minibuffer-api/MinibufferApi.lean` |
 | The frame's commands (`toggle-fullscreen`, `minimise-window`) and their compiled bindings `C-s-f` and `s-m` | `lean/Editor/FrameCommands.lean`, `lean/Editor/FrameCommands/Compiled.lean` |
@@ -57,7 +57,7 @@ registers, undo and dot repeat, on the editor API:
 | An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |
 | Ex bindings by owner, and binding one from `setup` | `lean/Editor/Config/Registry.lean` (`replaceEx`, `ex?`), `lean/Editor/Setup.lean` (`exCommand`) |
 | The ex command, and the commands `quit`, `save-and-quit` and `reload-config` | `lean/Editor/Ex.lean` |
-| The ex line's commands and the files', the ex line's own and the buffers' ex names, as the `ex` package registers them; the compile mode's and version control's ex names are bound by their own packages | `lean/Editor/Ex/Compiled.lean`, `packages/compile/Compile/Compiled.lean`, `lean/Editor/VersionControl/Compiled.lean` |
+| The ex line's commands and the files', the ex line's own and the buffers' ex names, as the `ex` package registers them; the compile mode's and version control's ex names are bound by their own packages | `lean/Editor/Ex/Compiled.lean`, `packages/compile/Compile/Compiled.lean`, `packages/version-control/VersionControl/Compiled.lean` |
 
 The command loop steps every key press through its one scheme and runs the
 invocation it yields, as a command looked up by name in the registry. The
@@ -3233,8 +3233,8 @@ Which names have something behind them:
 | `execute-command`, which no table names | Built and registered (the `execute-command` package; "Running a command by name"). The scheme binds no key to it (the owner, 2026-11-17); the default config binds `SPC :` |
 | `search-bindings`, which no table names | Built and registered (the `binding-search` package; "Searching the bindings"). The scheme binds no key to it, as for `execute-command`; the default config binds `SPC ?` |
 | `find-file-in-workspace` and `find-file-in-project`, which no table names | Built and registered (the `workspace` package). The scheme binds no key to them, as for `execute-command`; the default config binds `SPC p f` and `SPC SPC` to `find-file-in-workspace` and `SPC p p` to `find-file-in-project` |
-| `project-search`, `project-search-symbol` and `project-search-visit`, which no table names | Built and registered (the `project-search` package, `lean/Editor/ProjectSearch/Run.lean`). The scheme binds no key to the first two; the default config binds `SPC s p` and `SPC /` to `project-search` and `SPC *` to `project-search-symbol`. The results buffer's mode, `project-search`, binds its activate role (`RET` in normal state) to `project-search-visit` |
-| `working-set-add`, `working-set-open`, `working-set-visit`, `working-set-remove`, `working-set-note` and `working-set-refresh`, which no table names | Built and registered (the `working-set` package, `lean/Editor/WorkingSet/Run.lean`). The scheme binds no key to them; the default config binds `SPC k a` to `working-set-add` and `SPC k o` and `SPC RET` to `working-set-open`. A set's buffer's mode, `working-set`, binds its activate role (`RET` in normal state) to `working-set-visit`, its refresh role to `working-set-refresh`, and its locals `d` and `n` (after the localleader, `SPC m`) to `working-set-remove` and `working-set-note` |
+| `project-search`, `project-search-symbol` and `project-search-visit`, which no table names | Built and registered (the `project-search` package, `packages/project-search/ProjectSearch/Run.lean`). The scheme binds no key to the first two; the default config binds `SPC s p` and `SPC /` to `project-search` and `SPC *` to `project-search-symbol`. The results buffer's mode, `project-search`, binds its activate role (`RET` in normal state) to `project-search-visit` |
+| `working-set-add`, `working-set-open`, `working-set-visit`, `working-set-remove`, `working-set-note` and `working-set-refresh`, which no table names | Built and registered (the `working-set` package, `packages/working-set/WorkingSet/Run.lean`). The scheme binds no key to them; the default config binds `SPC k a` to `working-set-add` and `SPC k o` and `SPC RET` to `working-set-open`. A set's buffer's mode, `working-set`, binds its activate role (`RET` in normal state) to `working-set-visit`, its refresh role to `working-set-refresh`, and its locals `d` and `n` (after the localleader, `SPC m`) to `working-set-remove` and `working-set-note` |
 | `find-file-in-another-workspace`, which no table names | Built and registered (the `workspace` package). Compiled code binds `C-x C-d` to it in the prompt category `workspace-file` (the `workspace` package), not in a state's table, so it holds in the `minibuffer` state while the workspace finder is open and nowhere else ("The minibuffer", under Modes) |
 | `keyboard-quit` | Built and registered (the `shell` package): `C-g` in normal state cancels the `:!` or filter running in the focused buffer's workspace, and says `<line>: interrupted`, or `Quit` with nothing running ("The ex command line"). `C-g` is also the interrupt key, which lowers the flag before the key is stepped ([concurrency.md](concurrency.md), "Interrupt") |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (the `evil` package; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
@@ -3693,9 +3693,9 @@ otherwise be a cycle).
   and Lean, whose buffers' `=` says there is none.
 
 Pinned by `ModelTest.languageMatchChecks` (the rule and the table, pure),
-`ModelTest.modeRecordChecks` (`code`'s tree), `ModelTest.languageOpenChecks`
+`ModelTest.modeRecordChecks` (`code`'s tree), `FilesTest.languageOpenChecks`
 (opening on the models, over the model's one grammar, `json`), and
-`ConfigTest.languageChecks` (Rust, JSON, Markdown, TOML and Lean, a
+`FilesTest.Linked.languageChecks` (Rust, JSON, Markdown, TOML and Lean, a
 `.toml` file and `Cargo.lock`, a `.lean` file and `lakefile.lean`, and
 config's override of Rust's query, through the host and the real syntax
 binding), and `ContractTest`'s checks that a TOML text is drawn by the real
@@ -4530,7 +4530,7 @@ under the Vim scheme), `styleChecks` and `styleContractChecks` (the path
 style), `completionDisplayChecks` (ranges on a label that ends the text),
 `registryChecks` (a category's compiled default), `fileModelChecks` and
 the job contract's listing property (`File.list` on the model, the fake and
-real files), `ConfigTest.filePromptChecks` (criteria 1, 2, 4, 5 and 6 over
+real files), `FilesTest.Linked.filePromptChecks` (criteria 1, 2, 4, 5 and 6 over
 the recorder under the Vim scheme), `ConfigTest.shippedChecks` (the
 shipped file source, its job and style) and the fixture
 `tests/headless/open-file` (the prompt on real files).
@@ -4666,7 +4666,7 @@ core into the default package `compile` by the packages roadmap's phase 6
 `packages/compile/Compile/Contribution.lean`,
 `packages/compile/Compile/Shipped.lean` and
 `packages/compile/Compile/Compiled.lean`, over the core's
-`lean/Editor/Json.lean` and `lean/Editor/Workspace/Modes.lean`; the module
+`lean/Editor/Json.lean` and `packages/workspace/Workspace/Modes.lean`; the module
 docs have the detail. Its declarations are still in the namespace
 `Editor.Compile`, so config names them as it did (`Compile.cargoMode`). What
 a minor mode contributes is the core's vocabulary, in three core modules
@@ -4917,7 +4917,7 @@ their registrations and the files', the ex line's and the buffers' names;
 the module docs have the detail). A feature with ex names of its own binds
 them in its own package: the compile mode's
 (`packages/compile/Compile/Compiled.lean`, a package outside the core) and version control's
-(`lean/Editor/VersionControl/Compiled.lean`). How quitting and reloading reach the host is in
+(`packages/version-control/VersionControl/Compiled.lean`). How quitting and reloading reach the host is in
 [concurrency.md](concurrency.md), "Quit" and "Reload".
 
 The ex line is a prompt whose answer is run as a named ex command. The
@@ -4926,7 +4926,7 @@ that name, so the key opens the line.
 
 **A line is a range, then its first word and the rest, or `!` and a shell
 command** (`:!` built by the shell-and-compile roadmap's phase 2,
-`lean/Editor/Shell.lean`).
+`packages/shell/Shell.lean`).
 
 - **Parsing** (`Ex.parse`). Leading and trailing ASCII white space is
   dropped. **A range may come first**: `%`, the whole buffer; or one
@@ -4962,7 +4962,7 @@ command** (`:!` built by the shell-and-compile roadmap's phase 2,
   typed on the ex line is the unknown name `:w`.
 
 **`:!cmd` runs a shell command in the focused buffer's workspace**
-(`lean/Editor/Shell.lean`; [projects.md](projects.md)).
+(`packages/shell/Shell.lean`; [projects.md](projects.md)).
 
 - **What runs**: `/bin/sh -c cmd`, as a job (`shell-run`), so the editor
   stays responsive; not `$SHELL`, so a user's interactive set-up cannot
@@ -5192,7 +5192,7 @@ Where they differ from Vim:
 
 Pinned by `ModelTest.exLineChecks` (the parser, ranges and the binding),
 `shellChecks` (`:!` on the models, in the workspaces of a main checkout,
-a linked worktree and a directory in none), `ContractTest.shellChecks`
+a linked worktree and a directory in none), `ShellTest.Linked.shellChecks`
 (over the real process service), `compileChecks` (`:compile` and the
 compile mode on the models) and `ConfigTest.shippedChecks` (the names
 bound),
@@ -5711,7 +5711,7 @@ names a scheme's key:
 | `modeEnterChecks` | On the editor's models: the on-enter action runs once, with the view, when the mode becomes the major mode; a derived mode's lineage root first; a refusal runs nothing |
 | `highlightFaceChecks`, `highlightEnterChecks` | The capture-to-face rule, pure; and, on the editor's models through the loop, a mode with a syntax tree attaching and highlighting its text in the faces the rule gives, its own query, a refusal in the echo area with the mode set and the text detached, a mode before drawn no more, a parent's syntax tree, and the text detached when a mode with none replaces it; then its injections and a language for the model's grammar, its text objects and indents queries kept, and a refusal of one of those steps said and stopping it alone |
 | `languageMatchChecks`, `languageOpenChecks` | The language rule, pure: by extension, an exact base name over an extension, config's entry over a shipped one and the earlier over the later, no match, `Language.over` and the registry's table, and the shipped table; and, on the loop's driver over the editor's models, a `.json` and a `.rs` file opened into `code` with their language and highlighted, a file of no language opened as before, one already open asking nothing more, a config mode with its own tree winning, and config's entry of a language's name used |
-| `ConfigTest.languageChecks` | Through the headless host, the real elaborator and the real syntax binding: a `.rs`, a `.json` and a `.md` file opened into `code` and highlighted with their grammar's shipped query, a file of no language asking the syntax tree port nothing, and config's `rust` with its own highlights query used in place of the shipped one |
+| `FilesTest.Linked.languageChecks` | Through the headless host, the real elaborator and the real syntax binding: a `.rs`, a `.json` and a `.md` file opened into `code` and highlighted with their grammar's shipped query, a file of no language asking the syntax tree port nothing, and config's `rust` with its own highlights query used in place of the shipped one |
 | `treeObjectRuleChecks` | The syntax tree's text-object rule (`Evil.TreeObjects.choose`), pure, over hand-built rows: the smallest node first, a count, a node no bigger than a wider selection passed over, the inside as the longest inner row within, no inside, and no node round the cursor |
 | `indentRuleChecks`, `indentLevelChecks` | The indent rule (`Indent.rule`), pure, over hand-built rows; and the indent primitive (`TextId.indentLevels`) on the editor's models, under a test mode of the model's JSON grammar with an indents query of its own, refused for a text with no syntax tree or no indents query |
 | `indentOpeningChecks`, `indentEditChecks` | The opening rule (`Indent.openingCounts`, `Indent.levelOf`) and the widening (`Indent.widenedStart`), pure, over hand-built nodes; and levels as edits, pure: a level's whitespace in spaces or tabs, the re-indent's edits (a row already right left, a blank row emptied, a kept row untouched), what a new line gets for each answer, and `RET`'s edit (`Indent.breakAt`) |

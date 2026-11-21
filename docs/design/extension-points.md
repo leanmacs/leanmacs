@@ -437,6 +437,9 @@ and it is not routed through an extension point.**
   check its implementation runs (`packages/execute-command-api/`,
   `packages/binding-search-api/`; [packages.md](packages.md), "The
   interface packages `execute-command-api` and `binding-search-api`").
+  Phase 6 did the same for project search and the working sets
+  (`project-search-api`, `working-set-api`), and moved `project-api` and
+  `vc-api`, which phase 5 staged in the core, out to `packages/`.
   The default config is in the core until phase 8, so it and its test name
   the two as text. Phase 4 built three more with the moves of completion,
   completion at point and the minibuffer, which the core reaches by name
@@ -479,8 +482,20 @@ and it is not routed through an extension point.**
   (`VcApi.gutterJobs`, the core's gutter job names, and
   `reviewSegmentName`). Each publishes a fake and a contract check that
   holds the implementation to the names and to what its extension points
-  do. Working-set's two reached names (`working-set-add`,
-  `working-set-open`) get their interface when working-set moves.
+  do. Phase 6 moved the seven features of the files cluster out, and with
+  them `project-api` and `vc-api`, whose last users left the core, into
+  interface packages of their own (`packages/project-api/`,
+  `packages/vc-api/`); `files-api` stays a core interface for good, and
+  `buffers-api` and the third staged library phase 6 added, `shell-api`
+  (`ShellApi.commandName`, `filterName`, `interruptName`, the names ex binds
+  `:!` and the scheme's `C-g` to, and the shell's history), stay staged
+  until ex moves (phase 8). It also built two names-only interface packages
+  for the names the default config reaches: `working-set-api`
+  (`WorkingSetApi.addName`, `openName`: `SPC k a`, `SPC k o`, `SPC RET`)
+  and `project-search-api` (`ProjectSearchApi.searchName`, `symbolName`:
+  `SPC /`, `SPC s p`, `SPC *`), each with a fake and a contract check its
+  implementation runs ([packages.md](packages.md), "The interface packages
+  `project-search-api` and `working-set-api`").
 
 ## Open questions
 

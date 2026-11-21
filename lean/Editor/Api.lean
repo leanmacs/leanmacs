@@ -782,7 +782,7 @@ here:
   state and the line ending.
 
 The three state requests ask the library nothing, and are pinned once, on
-the models (`ModelTest.stateRequestChecks`, `ModelTest.fileCommandChecks`).
+the models (`ModelTest.stateRequestChecks`, `FilesTest.fileCommandChecks`).
 
 ## Workspaces
 

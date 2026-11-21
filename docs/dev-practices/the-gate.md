@@ -372,19 +372,21 @@ decoding of a reply. On the Lean side the job port's search properties
 (`JobContract.grepProperties`) run against the pure model of project
 search and the runner over its fake in `model-test`, and against the
 library's grep service on real files in `contract-test`, beside its
-`grepChecks`; `project-search` itself is pinned on the loop's driver over
-the models (`ModelTest.projectSearchRunChecks`) and over the real bindings
-in a temporary directory (`ContractTest.projectSearchChecks`).
+`grepChecks`; `project-search` itself is pinned, in its package
+(`packages/project-search/`), on the loop's driver over the models
+(`ProjectSearchTest.projectSearchRunChecks`) and over the real bindings in
+a temporary directory (`ProjectSearchTest.Linked.projectSearchChecks`).
 
-Working sets are pinned the same way. Their decisions are Lean's and run
-in `model-test`: the stored form and its JSON (`ModelTest.workingSetChecks`),
-the re-find ladder against the fuzzy model
-(`ModelTest.workingSetRefindChecks`), and, on the loop's driver over the
+Working sets are pinned the same way, in their package
+(`packages/working-set/`). Their decisions are Lean's and run in its test
+driver, `working-set-test`: the stored form and its JSON
+(`WorkingSetTest.workingSetChecks`), the re-find ladder against the fuzzy
+model (`WorkingSetTest.workingSetRefindChecks`), and, on the loop's driver over the
 models, where ranges are held (`workingSetPlaceChecks`), the commands
 (`workingSetRunChecks`, the phase's first acceptance criterion) and the
 store under a state directory of the file model's, through a restart
-(`workingSetDiskChecks`, the second). `contract-test` runs both criteria
-once over the real bindings (`ContractTest.workingSetChecks`): the library's
+(`workingSetDiskChecks`, the second). Its linked test runs both criteria
+once over the real bindings (`WorkingSetTest.Linked.workingSetChecks`): the library's
 file service, text store and fuzzy matcher and real git, in a repository and
 a state directory of its own, both temporary, with the file rewritten by
 `IO.FS.writeFile` between two hosts. No check reads `$HOME` or
@@ -509,8 +511,8 @@ model (`lean/Editor/Loop/Driver.lean`): the job is handed its argument,
 its result comes back as a command, and events fed meanwhile are handled
 first; a job saves a snapshot its command took, and a job's command is
 handed what its job loaded and no other job's. The file commands
-(`lean/Editor/Files.lean`) are checked on that driver, over the model of
-files, with no file touched (`ModelTest.fileCommandChecks`): opening a file
+(`packages/files/Files.lean`) are checked on that driver, over the model of
+files, with no file touched (`FilesTest.fileCommandChecks`): opening a file
 makes a buffer of its text, named by its base name, with its file's stamp
 and dominant line ending; what is typed while a load is in flight is
 handled first; a path that is open is shown and not loaded again; a save
@@ -776,21 +778,22 @@ whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` first runs the host imports check ("The host imports
 check", below) and the core imports check ("The core imports check"), then `lean/.lake/build/bin/ffi-test`, the test executable
-linked against the real library, then `contract-test`, handed five
+linked against the real library, then `contract-test`, handed three
 directories: `tests/process-environment` (the fixtures that stand in for
-mise in the checks of a child's environment), `tests/workspaces` (the
-fixture that stands in for git in the workspace finder's checks, which run
-the finder's contract over the real process and file services; the mode
-marker search's contract runs there too, over the real file service, with
-no fixture),
-`tests/shell` (the fixture `:!` runs over the real process service, and the
-editor's working directory in those checks), `tests/syntax`
-(the syntax fixtures, whose Rust fixtures the indent and text-object checks
-read) and `tests/completion` (the fixture that stands in for fzf in the
-checks of a source a command filters, and in the checks of git's lister and
-the fallback that list a workspace's files, which run real git, isolated
-from the user's config, and real `find` in temporary directories, so they
-pass where fzf is not installed); each fixture must stay executable. The
+mise in the checks of a child's environment), `tests/syntax` (the syntax
+fixtures, whose Rust fixtures the indent and text-object checks read) and
+`tests/completion` (the fixture that stands in for fzf in the checks of a
+source a command filters, so they pass where fzf is not installed); each
+fixture must stay executable. The workspace finder's and the mode marker
+search's contracts over the real services, git's lister and the fallback,
+`:!` over the real process service, project search, the working sets and
+version control over real git were `contract-test`'s until the seven
+features of the files cluster moved out of the core (features-as-packages
+phase 6), and are their packages' linked tests' now, on their own
+fixtures: `packages/workspace/tests/workspaces` (git's stand-in) and
+`packages/workspace/tests/completion` (a byte-for-byte copy of fzf's),
+and `packages/shell/tests/shell` (the fixture `:!` runs, and the editor's
+working directory in those checks). The
 checks of a compile over the real process service, which `contract-test`
 ran on `tests/compile` until the compile mode moved out of the core, are
 its package's linked test's now, on `packages/compile/tests/compile` (the
@@ -1799,7 +1802,7 @@ package's modules.
   `lake -d ../packages query :editorLayerImports` whose importer's layer
   is `core`, and requires more than none.
 - **The sets it is run over**, each required to pass: the default set,
-  `packages/`, so its nine default packages and five interface packages
+  `packages/`, so its sixteen default packages and nine interface packages
   import only the core, and the implementations besides only interface
   packages: `completion`, `minibuffer`, `execute-command`,
   `binding-search` and `at-point` each its own, and `execute-command`,
@@ -1971,8 +1974,9 @@ package's tests are by convention are in
   prompts that nothing answers"; the task `empty-set-prompts`). The
   default set's editor prints other lines for each script. The gate also requires that set's config base to be
   `Editor` alone (`lake -d ../tests/empty-set query :editorBase`), and the
-  default set's `Editor` and the entry modules of its nine default
-  packages, in the order they register (`Completion.EditorPackage` …
+  default set's `Editor` and the entry modules of its sixteen default
+  packages, in the order they register (`Files.EditorPackage` …
+  `VersionControl.EditorPackage`, then `Completion.EditorPackage` …
   `Languages.EditorPackage`).
 - **`run` refuses a directory that is not a whole fixture.** A directory
   under a package's `tests/headless/` with no `config/`, no `script` or no

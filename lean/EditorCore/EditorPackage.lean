@@ -111,35 +111,19 @@ minibuffer's package, which was second here, after `files`, is the
 default package `minibuffer` (`packages/minibuffer/`), and registers after
 the mode line's, before the shipped themes': its commands follow version
 control's gutter's in the command prompt, and its mode follows version
-control's modes. The buffer commands' package, which was fourth here,
-after `ex`, is the default package `buffers` (`packages/buffers/`), the
-first of the default packages to register (features-as-packages phase 6,
-D5): its commands follow version control's gutter's in the command prompt,
-before the completion styles' package's. The file commands' package,
-which was first here, is the default package `files` (`packages/files/`),
-and registers right before `buffers`: its commands follow version
-control's gutter's in the command prompt. The workspaces' package, which
-was eighth here, after `themes`, is the default package `workspace`
-(`packages/workspace/`), and registers right after `buffers`: its commands
-follow the buffer commands' in the command prompt, and its binding, the
-workspace finder's escape, still follows the menu's. The working sets'
-package, which was ninth here, after `project-search`, is the default
-package `working-set` (`packages/working-set/`), and registers right after
-`workspace`: its commands follow the workspaces' in the command prompt.
-Project search's package, which was eighth here, after `themes`, is the
-default package `project-search` (`packages/project-search/`), and
-registers between `workspace` and `working-set`: its commands follow the
-workspaces' in the command prompt, and the working sets' follow its. The
-shell's package, which was twelfth here, after `package-set`, is the
-default package `shell` (`packages/shell/`), and registers right after
-`working-set`: its commands follow the working sets' in the command prompt.
-Version control's two packages, which were last here, are the default
-package `version-control` (`packages/version-control/`, whose entry module
-lists both, `version-control` and `version-control-gutter`), and register
-right after `shell`: their commands follow the shell's in the command
-prompt, and their ex names still follow ex's and come before the compile
-mode's. With them gone, the last package here is `package-set`, so every
-moved feature's commands follow `package-set`'s.
+control's modes. The seven features the features-as-packages roadmap's
+phase 6 moved out are default packages now (`packages/<p>/`), which the
+default set requires first, in the order they held here (its D5):
+`files`, which was first here, `buffers`, after `ex`, `workspace`,
+`project-search` and `working-set`, after `themes`, `shell`, after
+`package-set`, and version control's two, `version-control` and
+`version-control-gutter`, which were last and are both listed by that
+package's entry module. So they register after every
+package here and before every other default package: their commands
+follow `package-set`'s in the command prompt, in their old order, and
+before the minibuffer's; the workspace finder's escape, its one binding,
+still follows the menu's; and version control's ex names still follow
+ex's and come before the compile mode's.
 -/
 
 namespace EditorCore.EditorPackage

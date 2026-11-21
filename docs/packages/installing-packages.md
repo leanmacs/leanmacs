@@ -44,6 +44,27 @@ by hand").
 
 The default set requires the core, `editor-core`, and the default packages:
 
+- [`files`](../../packages/files/README.md): the file commands,
+  `open-file`, `save-buffer`, `edit-file`, `reload-buffer` and
+  `auto-reload-mode`. Without it no file opens and none is saved.
+- [`buffers`](../../packages/buffers/README.md): `switch-buffer`,
+  `list-buffers` and `close-buffer` (`:b`, `:ls`, `:bd`).
+- [`workspace`](../../packages/workspace/README.md): a file's workspace,
+  `find-file-in-workspace` and `find-file-in-project`. It requires the
+  interface packages `project-api` and `vc-api`. Without it no buffer has a
+  workspace.
+- [`project-search`](../../packages/project-search/README.md):
+  `project-search` and `project-search-symbol` (`SPC /`, `SPC *`). It
+  requires its interface package, `project-search-api`.
+- [`working-set`](../../packages/working-set/README.md): the working sets,
+  `working-set-add` and `working-set-open` (`SPC k a`, `SPC k o`). It
+  requires its interface package, `working-set-api`, and `vc-api`.
+- [`shell`](../../packages/shell/README.md): `:!` and `:<range>!`, and
+  `keyboard-quit`.
+- [`version-control`](../../packages/version-control/README.md): git's
+  status, commit, review, log and blame buffers and the gutter, two
+  packages, `version-control` and `version-control-gutter`. It requires
+  `project-api` and `vc-api`.
 - [`completion`](../../packages/completion/README.md): the completion
   styles `fuzzy`, the default, `orderless` and `path`, and the candidate
   list's display `minibuffer`. It requires its interface package,
@@ -150,6 +171,34 @@ which the lakefile already requires:
 
 ```toml
 name = "config"
+
+[[require]]
+name = "files"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/files"
+
+[[require]]
+name = "buffers"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/buffers"
+
+[[require]]
+name = "workspace"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/workspace"
+
+[[require]]
+name = "project-search"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/project-search"
+
+[[require]]
+name = "working-set"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/working-set"
+
+[[require]]
+name = "shell"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/shell"
+
+[[require]]
+name = "version-control"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/version-control"
 
 [[require]]
 name = "completion"

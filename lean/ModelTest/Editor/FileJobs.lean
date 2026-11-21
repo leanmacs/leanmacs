@@ -8,7 +8,7 @@ import ModelTest.Check
 feature's jobs with, pure. The root module `ModelTest` runs them; its
 module doc says what each shows. When the loop starts a check or a follow
 is pinned by `ModelTest.loopFileJobChecks`, and what the jobs' commands do
-by the files feature's `ModelTest.fileCommandChecks`.
+by the files feature's `FilesTest.fileCommandChecks`.
 -/
 
 namespace ModelTest

@@ -47,7 +47,7 @@ the snapshots the diffs are asked with:
   gutter taken away.
 
 Pinned by `ModelTest.gutterTrackChecks`, on states built in the test; what
-the jobs' commands do by version control's `ModelTest.gutterChecks`.
+the jobs' commands do by version control's `VersionControlTest.gutterChecks`.
 -/
 
 namespace Editor.Gutter

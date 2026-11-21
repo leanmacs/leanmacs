@@ -53,7 +53,7 @@ for the command `make-notes` (`BufferId.display`), and `show-list`
 (`C-b l`) displays a buffer called `list` with no file, made by its first
 run and kept by later ones, where the display rules say, for the opener
 `show-list`: the stand-in for a list a command shows, as the buffer list
-`ls` shows is (whose own display is `ModelTest.bufferCommandChecks`'). -/
+`ls` shows is (whose own display is `BuffersTest.bufferCommandChecks`'). -/
 def displayKeys : Loop.Keys TestScheme.scheme :=
   let written : List (String × Dispatched) :=
     [("focus-main", fun _ => do

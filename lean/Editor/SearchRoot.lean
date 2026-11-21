@@ -42,7 +42,7 @@ cycle.
 Each refusal names the command it is handed, the one that searched.
 
 Pinned by `ModelTest.searchRootChecks`, and through the finder by
-`ModelTest.findFileChecks`.
+`WorkspaceTest.findFileChecks`.
 -/
 
 namespace Editor.Workspace

@@ -31,7 +31,7 @@ these, so its callers are unchanged.
 
 Pinned by `ModelTest.fileJobChecks`; when the loop starts a check or a
 follow by `ModelTest.loopChecks`, and what the jobs' commands do by
-`ModelTest.fileCommandChecks`.
+`FilesTest.fileCommandChecks`.
 -/
 
 namespace Editor.FileJobs

@@ -65,7 +65,7 @@ them are in `packages/files/Files/Compiled.lean`.
   its major mode alone (`ModelTest.stateChecks`' mode checks), so a file
   under a marker ends with its language, `code` and the marker's minor
   modes: the language and `code` are `languageOpenChecks`', the minor modes
-  the workspace's (`ModelTest.workspaceModesChecks`).
+  the workspace's (`WorkspaceTest.workspaceModesChecks`).
 - **The path is matched twice**: when the command runs, and again when the
   result is delivered. Two opens of one path can be in flight, and the
   first delivery makes the buffer: the second then shows that buffer and

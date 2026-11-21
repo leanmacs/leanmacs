@@ -233,7 +233,7 @@ the daily-driver floor's phase 5):
   to find").
 - **`:e!` takes theirs**: the file's text comes in as one edit, of origin
   `disk`, made from a line diff of the buffer and the file
-  (`lean/Editor/Files.lean`, "Reload"), so `u` brings the buffer's own text
+  (`packages/files/Files.lean`, "Reload"), so `u` brings the buffer's own text
   back. Taking theirs loses nothing.
 - **`:w!` writes mine over theirs**: the forced save, which expects
   whatever is on disk.
@@ -255,7 +255,7 @@ use). With auto-reload on (`autoread`, or `autoReload` in `setup`), a
 follow job watches each file buffer's file and a change reloads a buffer
 with no unsaved edits, as Emacs's auto-revert does; a buffer with unsaved
 edits is only marked, and a file that is gone is marked and never reloaded
-(`lean/Editor/Loop.lean`, "Auto-reload"). `ModelTest.autoReloadChecks`
+(`lean/Editor/Loop.lean`, "Auto-reload"). `FilesTest.autoReloadChecks`
 pins that with the mode off no watch is open; the phase is
 `phase/daily-driver-floor/phase-5-follow-files-on-disk`.
 

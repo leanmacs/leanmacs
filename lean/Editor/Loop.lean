@@ -1095,7 +1095,7 @@ files feature registers and works it (`Files.checkWork`,
   modification; the editor thread never blocks on I/O.
 
 Pinned by `ModelTest.loopFileJobChecks` on stand-in works, and with the
-files feature by its `ModelTest.stalenessChecks`.
+files feature by its `FilesTest.stalenessChecks`.
 
 ## Auto-reload
 
@@ -1145,8 +1145,8 @@ auto-reload is on.** A config's own jobs may still watch, as a plugin would.
   parked jobs' watches and resumes those with a delivery, and
   `Loop.Driver.openWatches` is how many watches they hold.
 
-Pinned by `ModelTest.autoReloadChecks` on the models, and by
-`ConfigTest.autoReloadChecks` on real files with the library's watch
+Pinned by `FilesTest.autoReloadChecks` on the models, and by
+`FilesTest.Linked.autoReloadChecks` on real files with the library's watch
 service.
 
 ## Decorations

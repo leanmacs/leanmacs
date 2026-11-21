@@ -14,7 +14,7 @@ names registered and no version-control job: which buffers it tracks, the
 jobs it starts and cancels, and the watch it keeps for each repository's
 root. The root module `ModelTest` runs them; its module doc says what each
 shows. What the jobs' commands do is version control's
-(`ModelTest.gutterChecks`).
+(`VersionControlTest.gutterChecks`).
 -/
 
 namespace ModelTest

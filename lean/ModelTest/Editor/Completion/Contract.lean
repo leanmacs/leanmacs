@@ -32,9 +32,9 @@ hints' source (`Completion.Keys.source`), and it reports a source that makes
 a text and one that is refused. The sources of the command prompt and the
 binding search are held to it by their own checks, on the same runner
 (`Editor.Test.sourceHolds`, `Editor/Test/Sources.lean`), and so are the
-files feature's file source (`ModelTest.pathsChecks`), the buffers
-feature's buffer source (`ModelTest.bufferCommandChecks`) and the
-workspace's two (`ModelTest.findFileChecks`, `ModelTest.findInProjectChecks`). -/
+files feature's file source (`FilesTest.pathsChecks`), the buffers
+feature's buffer source (`BuffersTest.bufferCommandChecks`) and the
+workspace's two (`WorkspaceTest.findFileChecks`, `WorkspaceTest.findInProjectChecks`). -/
 def sourceContractChecks : List Check :=
   let subjects : List Completion.Source :=
     [.fixed "fixed" "test" (offered #["wq", "w"]), Completion.Fake.echo "echo" "test",

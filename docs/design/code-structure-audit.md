@@ -226,8 +226,8 @@ The helpers several modules share are in seven support modules under
 `lean/ContractTest/Check.lean`. Everything stays in `namespace
 ContractTest`, so every `ContractTest.<name>Checks` citation resolves
 unchanged. The one citation that named a list contract-test does not have
-(a `revisionBufferChecks`, in `lean/Editor/VersionControl/Show.lean`) now
-names `ContractTest.statusBufferChecks`, which holds the vc-show checks.
+(a `revisionBufferChecks`, in `packages/version-control/VersionControl/Show.lean`) now
+names `VersionControlTest.Linked.statusBufferChecks`, which holds the vc-show checks.
 contract-test's summary line is the same before and after. The largest new
 module is `lean/ContractTest/Editor/SyntaxTree/Real.lean` (713 lines).
 

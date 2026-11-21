@@ -311,7 +311,7 @@ time, in order, on the editor thread.
     phase 8; before it the driver's run and a job's command were run bare.
   - **A job is cancelled by a command, not by the flag.** No job reads
     the flag. Under the Vim scheme `C-g` is bound in normal state to
-    `keyboard-quit` (`lean/Editor/Shell.lean`), which the key runs once it
+    `keyboard-quit` (`packages/shell/Shell.lean`), which the key runs once it
     has lowered the flag: it cancels the `:!` or filter running in the
     focused buffer's workspace by that workspace's job key (`cancelJob`,
     "Getting results back"), which kills its child, and says
@@ -889,7 +889,7 @@ and changes on disk:
   the bytes it puts in, refused if the text has moved past the revision the
   script was made for. `Diff.hunks` asks the same service for the hunks of
   whole lines instead, which the version-control gutter turns into marks
-  (`lean/Editor/VersionControl/Gutter.lean`).
+  (`packages/version-control/VersionControl/Gutter.lean`).
 - **A project search is a request a job awaits** (`lean/Editor/Grep.lean`):
   `Grep.start` names a root, a pattern, open buffers' snapshots as overlays
   (named as a save names its source), limits and a bound, and replies with
@@ -900,7 +900,7 @@ and changes on disk:
   takes nothing, so memory is bounded. A `next` of a search the job does
   not hold is `noSuchSearch`, answered at once, and a search does not
   outlive its job. `project-search` posts each delivery to the editor as a
-  command of its own (`lean/Editor/ProjectSearch/Run.lean`).
+  command of its own (`packages/project-search/ProjectSearch/Run.lean`).
 - **No request carries a promise.** A request is plain data; how a wait is
   completed is the runner's business. A snapshot of editor state arrives as
   a further request of this port, each with a reply type, a
@@ -1042,7 +1042,7 @@ transaction through. Where those come from is open.
   what the job loaded and nothing else, and what a job held is released
   once its command has run, or when the job fails.
 - **Opening a file is a command, a job and the job's command**
-  (`lean/Editor/Files.lean`, built by the command loop's phase 9), the
+  (`packages/files/Files.lean`, built by the command loop's phase 9), the
   first use of this route by compiled code:
   - the command (`Files.open`) shows the buffer that holds the path, if
     one does, and starts nothing. Otherwise it starts the job `load-file`
@@ -1131,7 +1131,7 @@ sources a command filters by project navigation's phase 1.
 | The answer handed back with the step; an invocation no key yielded | `lean/Editor/Loop.lean` ("Prompts": `Loop.Stepped.answered`, `Loop.invoke`) |
 | The hosts that run the answer's command before the next event | `lean/Editor/Loop/Driver.lean` (`Loop.Driver.took`), `lean/Editor/Headless.lean` (`Running.took`) |
 | `minibuffer-accept`, `minibuffer-cancel` and the minibuffer's mode | `packages/minibuffer/Minibuffer.lean`, `packages/minibuffer/Minibuffer/Compiled.lean` |
-| `open-file` asking for its path | `lean/Editor/Files.lean` (`openCommand`) |
+| `open-file` asking for its path | `packages/files/Files.lean` (`openCommand`) |
 | An invocation a command asks to be run after it, with no prompt | `lean/Editor/State/Request.lean` (`StateRequest.invoke`), `lean/Editor/Api.lean` (`invoke`) |
 | `ex` asking for its line, and running the answer's command | `lean/Editor/Ex.lean` (`exCommand`, `run`) |
 | A prompt's candidates, records, their listing and the choice; setting them and choosing | `lean/Editor/State.lean` ("Prompts": `Candidates`), `lean/Editor/State/Request.lean` |
@@ -1418,7 +1418,7 @@ prompt.** Built by the command loop's phase 12.
   (`EditorState.askedFrom`, the one definition of that rule;
   `Files.shownIn`). The prompt stays open with the focus. Before this the
   show was refused, and a loaded file was left in a buffer no window
-  showed. Pinned by `ModelTest.fileCommandChecks`.
+  showed. Pinned by `FilesTest.fileCommandChecks`.
 - **A reload leaves the prompt open.** It is compiled state. Its
   continuation is a name, looked up when the answer arrives.
 
