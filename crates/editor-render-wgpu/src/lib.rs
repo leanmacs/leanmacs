@@ -46,6 +46,8 @@ mod raster;
 mod surface;
 
 #[cfg(test)]
+mod placement_tests;
+#[cfg(test)]
 mod rasterizer_tests;
 #[cfg(test)]
 mod settings_tests;
