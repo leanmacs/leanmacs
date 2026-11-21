@@ -1718,6 +1718,83 @@ and a renderer kept across them took one capture's glyphs for another's
 (a first run of the example, 2026-11-20, failed three captures that
 way), which the editor's frames, laid out, never do.
 
+## The window's settings and its Metal layer, on demand
+
+```sh
+mise run window-layer
+```
+
+macOS only. It opens the window, so it needs a desktop session, but it
+presents nothing it judges and waits on no frame, so it passes with the
+screen locked. It is two examples, each of which exits 0 on a pass, 1 on a
+miss and 2 off macOS or when no window could be opened:
+
+1. `editor-platform-winit`'s `settings`: the themed window, read back from
+   AppKit as it opened (a control, which must miss the paper or the check
+   prints `WITHIN` and fails), then asked for the paper `#2e3440`
+   (`Request::Background`) and the dark appearance and read again: its
+   background in sRGB, which must be the paper within 1/255 a component;
+   its appearance, which must be `NSAppearanceNameDarkAqua`; whether it
+   is opaque, which it must be; the border of the content view's layer
+   and of winit's view's layer, which must be 0; and, printed and not
+   judged, its shadow, its style mask's titled, resizable and full-size
+   content bits, whether its title bar is transparent, and the layers'
+   corner radii. The rules are `examples/settings/reading.rs`, whose tests
+   run in the gate.
+2. `editor-ffi`'s `layer`: a `WgpuRenderer` on the window with
+   `Settings::core_text()`, one frame drawn at the size the window opened
+   at (whether it was presented is printed and not judged: an occluded
+   window's surface is configured all the same), and its Metal layer read
+   (`WgpuRenderer::layer`) and held to `editor-render-wgpu`'s
+   `layer::misses`: the drawable is the target, `contentsScale` is its
+   scale, `bounds × contentsScale` is exactly the drawable, opaque, a
+   colour space present, and the configured pixel format. The control:
+   the same reading held to the target at the other of the scales 1 and 2
+   must miss. Then the view layer's `contentsScale` is set to the other
+   scale and back (`WgpuRenderer::follow_scale`), and the Metal layer must
+   follow it both ways; then the layer is read again and must miss
+   nothing.
+
+Run it when the wgpu or winit pin moves, when macOS's major version
+changes, and when the surface, the window's background or the layer's
+reading changes. Do not loosen the 1/255 to make it pass.
+
+On 2026-11-20 at 21:44, on macOS 27.2.1 (26B131), Metal on an Apple M5
+Max, one display, the screen locked: exit 0 from both.
+
+- `settings`: as it opened, the background was white (1, 1, 1), with no
+  appearance of the window's own; the control missed the paper, as it
+  must. Asked, the background read 0.180392, 0.203922, 0.250980 (46, 52,
+  64 of 255), the appearance `NSAppearanceNameDarkAqua`; opaque, a
+  shadow, titled, resizable, full-size content, a transparent title bar;
+  the content view's layer and winit's view's layer border 0 and corner
+  radius 0.
+- `layer`: the window opened at 1600 by 1200 pixels at scale 2. The draw
+  was refused, as occluded (hidden), and the surface was configured all
+  the same. The layer: bounds 800 by 600 points, `contentsScale` 2, a
+  drawable of 1600 by 1200, opaque, a colour space present, pixel format
+  80 (`BGRA8Unorm`) as configured, gravity `resize`: no miss. The control,
+  held to scale 1, missed ("contentsScale is 2, not the target's scale
+  1"). The view layer's scale set from 2 to 1: the Metal layer read 1;
+  set back, 2. Read again: no miss. The reading is at the scale the window
+  opened at, 2; the backing scale itself did not change.
+
+**Outstanding run** (2026-11-20): `mise run window-layer` on a machine
+with two displays of different scales, with the window moved to the
+other display before the layer is read, is the run that confirms
+`contentsScale` follows a change of the backing scale. It is not taken in
+text-rendering's phase 3, because this machine has one display and the
+window port cannot move a window. Until it is, that criterion rests on
+reading the source of raw-window-metal 1.1.0 (`src/observer.rs`), on the
+gate's tests (the surface's configuration at the new scale's size, the
+presenter's last frame at the new scale, `layer::misses` on a layer left
+at the old scale) and on the observation `layer` makes of a change of the
+view layer's scale, which is not a change of the backing scale. If
+`window-layer` gains a way to read after a move (a `--read-after-move`
+that waits for the window to say a new scale, then reads again and holds
+the reading to the new target with `misses`), it is the same check with
+one more reading, not a new one.
+
 ## The shaper's places in Menlo, on demand
 
 ```sh

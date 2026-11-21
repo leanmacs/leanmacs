@@ -3708,6 +3708,91 @@ bound submits nothing.
   rendering", as built, "The scale"), so a frame reaches the renderer
   already at its target's scale, and the renderer multiplies nothing in
   it: nothing is scaled twice.
+- **The target is cleared to the frame's ground, on every platform**
+  (text-rendering phase 3, 2026-11-20). A frame carries the default
+  face's background, the theme's paper (`Frame::ground`, which layout
+  fills as it fills every view's background, `BASE_BACKGROUND` while
+  nothing defines one), and both devices clear to it at full opacity
+  before they draw: the CPU's `cpu::cleared`, and the GPU's `LoadOp::Clear`
+  with the ground's bytes over 255 on a target that holds encoded values,
+  or each made linear on one drawn through an sRGB view, which the GPU
+  encodes as it stores. So a pixel no view or divider covers, and the part
+  of a target larger than the frame drawn on it, is the paper and never
+  black: the transient of a resize, in which the loop draws the frame of
+  the old size on the new target until Lean's frame for it arrives, shows
+  paper where that frame does not reach. A frame made by hand with
+  `Frame::default()` has the ground `Color(0)`, cleared to opaque black as
+  before. Linux gets the same: the clear is not part of text blending. No
+  reference picture moved: every one covers its whole target. `mise run
+  render-gpu` holds the GPU's clear to the ground within 1 of 255 in
+  either space, with a control on black that must miss (0 pixels off, the
+  control 64 off, 2026-11-20).
+- **The Metal layer, read** (text-rendering phase 3, 2026-11-20).
+  wgpu-hal 30.0.2 makes the `CAMetalLayer` through raw-window-metal 1.1.0,
+  as a sublayer of the view's layer that copies the view layer's bounds
+  and `contentsScale` by key-value observation; its contents gravity is
+  the default, `kCAGravityResize`. `configure` sets its `drawableSize` to
+  the target's size, `opaque` from the alpha mode, the pixel format, and
+  its colour space from the configuration's, which wgpu-core resolves to
+  sRGB for an 8-bit format: so the pin already has what wgpu PR #10286
+  added, and the layer is not left with a nil colour space.
+  `WgpuRenderer::layer` reads the layer as plain data (`layer.rs`), through
+  wgpu's re-export of wgpu-hal and method calls whose types are never
+  named, and `layer::misses` holds it to the surface: the drawable is the
+  target, `contentsScale` is its scale, `bounds × contentsScale` is exactly
+  the drawable (else the system scales the contents and blurs every
+  glyph), opaque, a colour space present, and the configured pixel format.
+  The reading says a colour space is present; that it is
+  `kCGColorSpaceSRGB` rests on the source, since naming it would need Core
+  Graphics in `editor-render-wgpu`, which `deny.toml` forbids. `mise run
+  window-layer` read the real window's layer on 2026-11-20, with the
+  screen locked: 800 by 600 points at `contentsScale` 2, a drawable of
+  1600 by 1200, opaque, a colour space present, `BGRA8Unorm` (80) as
+  configured, gravity `resize`; no miss
+  ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "The
+  window's settings and its Metal layer, on demand").
+- **The layer's scale after a change of scale** (text-rendering phase 3,
+  2026-11-20). The phase asked that `contentsScale` equal the backing
+  scale after a scale change. **That criterion is confirmed by reading
+  the source only, not by observing a change of the backing scale**: no
+  run of the phase changed it, which takes a second display of another
+  scale (and phase 5's work). The source: raw-window-metal 1.1.0
+  (`src/observer.rs`) observes the view layer's `contentsScale` with
+  `Initial | New` and copies each new value (`setContentsScale`), and
+  AppKit sets the view layer's `contentsScale` to the window's backing
+  scale when it changes. What was observed, on one display: the value
+  read at opening came through the same observation (`Initial`), and the
+  layer check set the view layer's `contentsScale` from 2 to 1 and back
+  (`WgpuRenderer::follow_scale`): the Metal layer read 1, then 2. So a
+  change of the view layer's scale reaches the Metal layer; that AppKit
+  makes that change when the window moves between displays is the
+  source's word. The gate holds the rest without a display: the surface
+  is configured at the new scale's size for the window's own sequence of
+  a change of scale (`surface.rs`), the presenter's last frame is laid out
+  at it (`display.rs`), and `layer::misses` sees a layer left at the old
+  scale. `window-layer` on two displays, with the window moved before the
+  reading, is the run to take then.
+- **What phase 3's final-state tests found** (2026-11-20). The owner saw
+  a thin black line around the window after a resize, and text at scale 1
+  that looked worse. Of the phase's three hypotheses, the first two were
+  driven test-first to the state once the system is idle, at every level
+  that could leave a stale frame or size, and **every one of those tests
+  passed on the code as it was**: the render loop, over bursts of sizes
+  and frames one size behind, a failed and a hidden draw, a change of
+  scale alone, and a size and back, ends on the last frame on the last
+  size (`render_loop.rs`); Lean's loop ends a burst of resizes on a scene
+  of the last size that tiles it (`ModelTest/Editor/Loop.lean`); the
+  presenter's last frame is laid out at the size and scale the window last
+  said (`display.rs`); and the surface is configured at the size of the
+  last draw whatever it answered between (`surface.rs`). So no stale
+  frame or size is left in our code. The black can only have been the
+  clear where the old frame did not reach, or the window's own background
+  outside the layer, for the moment before Lean's frame arrived: both are
+  the paper now. A steady stretch of the text by the system is ruled out
+  on this machine at the opened size (the layer reads pixel for pixel);
+  the stretch during a resize, while the drawable trails the layer's
+  bounds, is the contents gravity, and is rdm task
+  `render-layer-contents-anchored`.
 - **A ligature across a change of paint** is drawn whole in the paint of
   its first byte: a glyph has one cluster, and the painter paints a
   glyph by the run that holds it.
@@ -3850,19 +3935,23 @@ window is still run with nothing drawing in it. The threads are in
   drawn while it is, and it is drawn once when it is shown if anything
   was asked meanwhile. All of that is read, in this tree and in winit,
   and each step is pinned on fakes; **nobody has seen a window of ours
-  enter fullscreen, move between displays or change Space.** Two things
-  cannot be promised by a resize alone. Between a change of size and the
+  enter fullscreen, move between displays or change Space.** One thing
+  cannot be promised by a resize alone: between a change of size and the
   next picture presented at it, the system stretches the last picture to
   the layer's new bounds (the default contents gravity of the Metal
-  layer wgpu makes: read). And the loop's first draw on a new size is of
-  the frame laid out for the old one, with the target cleared to black
-  where that frame has no view, until the frame for the new size
-  arrives. Each lasts a draw or two; whether either shows during the
-  system's animation has not been seen
-  ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "The
-  window's scale, as seen"). Changing the first is a call on the layer,
-  and the second is who lays out on a resize
-  ([concurrency.md](concurrency.md)); neither is built.
+  layer wgpu makes, `kCAGravityResize`: read, and read again on the real
+  layer by `mise run window-layer`, 2026-11-20). Anchoring the contents
+  instead is rdm task `render-layer-contents-anchored`: which constant
+  anchors to the top left depends on the flipped geometry of winit's view
+  and its sublayer, and only a picture of the composited window can show
+  it. What used to be a second thing is not one any more (text-rendering
+  phase 3): the loop's first draw on a new size is still of the frame laid
+  out for the old one, until the frame for the new size arrives, but the
+  target is cleared to the frame's ground, so where that frame has no
+  view it is the paper and not black; and what shows outside the layer,
+  where its frame trails the view's bounds, is the window's background,
+  which is the paper too (below). Who lays out on a resize is unchanged
+  ([concurrency.md](concurrency.md)).
 - **A resize says the window's corner clearance** (theming phase 6): how
   far in from the left and right edges its rounded bottom corners reach,
   in whole logical points (`Resize::corner_clearance`), as data beside
@@ -3923,6 +4012,40 @@ window is still run with nothing drawing in it. The threads are in
   when the pointer reaches the top, over the first row while it shows;
   that is the system's. Following the system's own appearance is not
   built: the roadmap leaves it out.
+- **The window's background is the paper** (text-rendering phase 3,
+  2026-11-20). The window port asks for one (`Request::Background(Rgb)`,
+  sRGB bytes), beside `Request::Appearance`. The presenter
+  (`editor-ffi`'s `render::Presenter`) sends the ground of each frame it
+  presents, only when it is not the one last sent, as it does a title; a
+  window that opens is sent the title, the menu bar, then the background.
+  It does not come from Lean: Lean's scene, its wire and its requests are
+  unchanged, and the scripted window's record crosses back to Lean's
+  tests with it (`WindowAsked.background`). On macOS the winit adapter
+  sets `NSWindow.backgroundColor` to it with
+  `colorWithSRGBRed:green:blue:alpha:` at alpha 1, only when it is not the
+  colour last asked (`background.rs`); off macOS winit has no setter, and
+  it does nothing. This is what Zed does with black behind its layer. It
+  covers what shows outside the Metal layer during a live resize and
+  before the first frame: winit sets no background for an opaque window,
+  so it was `windowBackgroundColor`, which read white (1, 1, 1) on this
+  machine's window as it opened, asked no appearance (2026-11-20), and
+  is a dark grey under the dark appearance (read, not seen). The Metal
+  layer's own background is not set: under the default gravity its
+  contents always fill it.
+- **A rim at the window's edge is the system's** (hypothesis 3 of
+  text-rendering phase 3; read 2026-11-20, not judged). `mise run
+  window-layer`'s first half read the themed window back from AppKit
+  after asking it for the paper `#2e3440` and the dark appearance: its
+  background 46, 52, 64 of 255; `NSAppearanceNameDarkAqua`; opaque; a
+  shadow; titled, resizable and full-size content; a transparent title
+  bar; and the content view's layer and winit's view's layer (one view)
+  border 0, corner radius 0. With the paper inside the layer (the clear)
+  and behind it (the window's background), no strip of ours can be black
+  or the window's grey. A line still seen at the window's edge is the
+  system's, its shadow's edge or the rim macOS draws on a titled window
+  in dark mode, which cannot be read in code, and nothing here changes it.
+  Comparing it with a native window in the same appearance needs a
+  picture of the screen, which a locked screen gives none of.
 - **Fullscreen and minimise are commands too.** `toggle-fullscreen` and
   `minimise-window` (`lean/Editor/FrameCommands.lean`), bound by default
   to `C-s-f` (Ctrl-Cmd-F) and `s-m` (Cmd-M), ask the window through the
@@ -3962,7 +4085,14 @@ window is still run with nothing drawing in it. The threads are in
   on llvmpipe's surface was a mode that tears. An outdated or lost
   surface is configured again and tried once; an occluded one is not
   presented to, and the draw says its target is hidden, so that the loop
-  waits to be told more and not for a refresh. The picture is copied out of the surface only when a
+  waits to be told more and not for a refresh. A window's surface is
+  configured `Opaque` where it offers that, and `Auto` where it does not
+  (text-rendering phase 3, 2026-11-20): the window is opaque and so is
+  everything drawn on it, and wgpu-core refuses a mode a surface does not
+  offer. On Metal that is what `Auto` resolved to already (Metal offers
+  `Opaque` and `PostMultiplied`, and `Auto` takes `Opaque` first), so
+  nothing changed there; it is now a decision pinned in `surface.rs`.
+  The picture is copied out of the surface only when a
   check asks for it. All of this is decided in one place that makes no
   call of wgpu's (`surface::State`), which reaches the surface through a
   port of two calls, configure and ask for the next texture: the device

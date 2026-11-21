@@ -513,6 +513,25 @@ only, where the target that is not sRGB is exact over any and keeps the
 GPU's picture within a rounding of the CPU's. Linux and every other
 target keep linear light.
 
+The layer under the glyphs, read for the text-rendering roadmap's phase
+3 (2026-11-20). The `CAMetalLayer` wgpu makes keeps Core Animation's
+default contents gravity, `kCAGravityResize` (raw-window-metal 1.1.0), so
+during a resize, while the drawable trails the layer's bounds, the system
+stretches the last picture to fit. What shows around it is whatever is
+behind: the target's clear inside the layer, the window's own background
+outside it. The roadmap records **Zed** as setting a background of its
+own colour, black, behind its layer, and **Ghostty** as drawing on a
+renderer thread of its own, as this editor does, which is the case where
+the drawable can trail a live resize at all (an app that draws on the
+main thread can present in step with the resize instead). This phase took
+Zed's way, with the theme's paper for black: the target is cleared to the
+frame's ground and the window's background is set to it, so no strip can
+be black. It left the gravity as it is, filed as rdm task
+`render-layer-contents-anchored`: anchoring the contents to a corner stops
+the stretch, but which constant does so depends on the flipped geometry
+of winit's view, and only a picture of the composited window can show it
+([text-and-display.md](text-and-display.md), "The window, as built").
+
 ## Choices this leaves open
 
 - **Rope**: decided 2026-11-12, and no longer open: `ropey` 2.0.0-beta.1,

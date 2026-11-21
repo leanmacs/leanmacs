@@ -116,6 +116,53 @@ What the gate does check of the window, with none open:
   a window going into fullscreen tells them, are one draw on the last.
   In `crates/editor-render-wgpu`: that a renderer says which masks its
   last draw used.
+- **A resize's final state, the paper around a frame, and the Metal
+  layer's rules** (text-rendering phase 3), each asserted once the system
+  is idle and never as a count that depends on timing:
+  - `crates/editor-render` (`render_loop`): once at rest after six
+    scripts of a resize (sizes within a refresh, frames one size behind,
+    a failed and a hidden draw among them, a change of scale alone, a
+    size and back), the last request is on the last size asked with the
+    frame laid out for it, nothing more is drawn over a further 100
+    refreshes, and every draw is on the size last asked before it;
+  - Lean (`ModelTest/Editor/Loop.lean`): a burst of resizes, a key among
+    them, publishes a scene for each event and ends in one of the last
+    size that tiles it;
+  - `crates/editor-ffi` (`display.rs`): a bound display, told resizes as
+    the window session tells them, draws its last frame at the size and
+    scale the window last said, the window's own sequence for a change of
+    scale among them;
+  - `crates/editor-render-wgpu` (`surface`): a window's surface is
+    configured `Opaque` where it offers that and `Auto` otherwise, at the
+    size of the last draw whatever it answered between, not again for a
+    draw at the size of one whose texture was not presented, and at the
+    new size, not the scale, for a change of scale;
+  - `crates/editor-layout` (`frame`): a frame's ground is the default
+    face's background, `BASE_BACKGROUND` while nothing defines one, frames
+    that differ only in it differ, and one made by hand has `Color(0)`;
+  - `crates/editor-render-wgpu`: the CPU's clear is the ground at full
+    opacity (`cpu`), the GPU's in the space the device blends in
+    (`gpu/tests.rs`, `clear_color`), every kind of quad is drawn on the
+    no-op back end on a ground that is not black, and, through the public
+    API, a half-covered frame is its view's background and its ground and
+    nowhere black (`tests/ground.rs`);
+  - the window port's `Request::Background`: the scripted platform
+    records and shows it, the request contract holds a carrier to it (a
+    fresh window has none, the last wins, it and every other thing shown
+    leave each other alone), the winit adapter sets one only when it is
+    not the one asked last and turns it into AppKit's components
+    (`asked.rs`, `background.rs`), the presenter sends a frame's ground
+    only when it changes and after the title and the menu bar
+    (`render.rs`), its words cross to Lean (`asked_words`, tag 8) and Lean
+    reads them (`askedOf`, `FfiTest/Editor/Ffi/Window.lean`), and the
+    window-host check finds the built-in theme's paper the last background
+    asked;
+  - `crates/editor-render-wgpu` (`layer`): `misses` on readings built in
+    code, each rule alone, a layer read across a change of scale, and
+    `Followed::holds`; a renderer with no window has no layer to read;
+  - `crates/editor-platform-winit` (`examples/settings/reading.rs`, run by
+    `cargo test` since the example is declared `test = true`): the window
+    settings' rules, a background 2/255 off missing.
 - **How the clipboard library's answers become the port's**, in
   `crates/editor-platform-arboard`, on values built in the tests.
 
