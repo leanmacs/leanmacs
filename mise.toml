@@ -1020,6 +1020,16 @@ run = [
   # rewrite, so the directory is made from a template under `/tmp`, not
   # under `$TMPDIR`: its path is always 23 bytes, on every machine.
   "dir=$(mktemp -d /tmp/open-file.XXXXXXXX) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/open-file/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/open-file/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/open-file/expected -",
+  # A working set's range held again when its file is reopened, as a
+  # process, with no config (tests/headless/working-set-reopen): `:e` opens a
+  # file of a tree whose marker `.project` makes it a workspace,
+  # `working-set-add` adds the cursor's line to a new set `todo`,
+  # `close-buffer` closes the file's buffer and `:e` opens it again, and
+  # `working-set-open` shows the set with the line as an excerpt and nothing
+  # drifted. It pins what the open and the close hand the working set. It is
+  # made as `open-file`'s entry is, from a template under `/tmp`; the
+  # headless mode has no state directory, so no file is written.
+  "dir=$(mktemp -d /tmp/working-set.XXXXXXXX) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/working-set-reopen/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/working-set-reopen/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/working-set-reopen/expected -",
   # A view that follows its cursor, as a process, with no config
   # (tests/headless/view): the script sizes the frame, opens a file of 120
   # lines with `:e`, and moves the cursor 100 lines down, with a scene
