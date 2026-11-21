@@ -26,8 +26,8 @@ def projectSearchRegistry : Config.Registry :=
 /-- The checks of the `project-search` package
 (`ProjectSearch/Compiled.lean`): the contract of the interface package
 `project-search-api` (`ProjectSearchApiTest.contractChecks`), with a check
-that it bites, and what it registers, in the registry it makes alone
-(`projectSearchRegistry`). -/
+that it bites, what it registers, in the registry it makes alone
+(`projectSearchRegistry`), and which of its jobs a restart reports. -/
 def projectSearchPackageChecks : List Check :=
   -- The contract of `project-search-api`, which project-search implements,
   -- over its package, each of its sentences one check.
@@ -50,6 +50,14 @@ def projectSearchPackageChecks : List Check :=
                 (fun entry => entry.mode.name == "project-search" && entry.owner == owner) &&
               ["project-search", "project-search-load"].all fun name =>
                 registry.jobs.any fun entry =>
-                  entry.registration.name == name && entry.owner == owner }]
+                  entry.registration.name == name && entry.owner == owner },
+      { name :=
+          "the package project-search registers its search, the job project-search, as reported, so one running when the process ends is said stopped by the next start's restore, and the load project-search-load not; a restart leaves neither to it to start again"
+        run :=
+          let jobs := ProjectSearch.package.registered.jobs
+          pure
+            ((jobs.filter (·.reported)).map (·.name) == #[ProjectSearch.job] &&
+              (jobs.filter (·.restarted)).isEmpty &&
+              jobs.any fun job => job.name == ProjectSearch.loadJob && !job.reported) }]
 
 end ProjectSearchTest

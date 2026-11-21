@@ -24,9 +24,11 @@ as they were, in the order the core ran them.
 - `projectSearchPackageChecks`: the `Package` value
   (`ProjectSearch/Compiled.lean`) held to the contract of
   `project-search-api` (`ProjectSearchApiTest.contractChecks`), with a check
-  that it bites; and what it registers alone, its four commands, its mode
-  and its two jobs (that check was `ConfigTest.shippedChecks`' over the
-  core's hosts while the package was among the core's);
+  that it bites; what it registers alone, its four commands, its mode and
+  its two jobs (that check was `ConfigTest.shippedChecks`' over the core's
+  hosts while the package was among the core's); and that its search job is
+  the one it registers reported, and none restarted (which
+  `ModelTest.packageSetChecks` held over the core's list);
 - `projectSearchChecks`: project search's pure core (`ProjectSearch.lean`):
   the rows an excerpt shows, merged and clipped; where a file's excerpts go
   when they arrive out of order; the record's round trip; and each
