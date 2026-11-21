@@ -135,6 +135,13 @@ dir = "lean"
 run = [
   "sh ../tools/toolchain-check.sh",
   "status=0; out=$(sh ../tools/toolchain-check.sh lake-manifest.json 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF tools/lean-fmt/lean-toolchain; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # The stand-in for CI's elan that `user-sets-test` and `user-sets-check`
+  # run under (tools/home-bound-toolchain.sh; docs/dev-practices/the-gate.md,
+  # "The user sets test") cannot pass silently: its `lake` run with another
+  # HOME must exit 1 with its message, and run with the HOME it was made
+  # under must exit 0. Its output is shown only when it does not.
+  "status=0; out=$(sh ../tools/home-bound-toolchain.sh sh -c 'HOME=/nonexistent lake --version' 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qF 'home-bound-toolchain: lake run with HOME=/nonexistent'; } || { printf '%s\\n' \"$out\"; echo \"lean-test: home-bound-toolchain exited $status on a moved HOME\"; exit 1; }",
+  "out=$(sh ../tools/home-bound-toolchain.sh lake --version 2>&1) || { printf '%s\\n' \"$out\"; echo 'lean-test: home-bound-toolchain failed under its own HOME'; exit 1; }",
   # The decision both pre-commit hooks share (tools/graph-targets.sh;
   # docs/dev-practices/the-gate.md, "The pre-commit hook"): which nodes of
   # a graph the staged paths reach, over a graph written by hand
@@ -1326,13 +1333,16 @@ run = "sh ../tools/bundle-test.sh"
 # set's packages build in place. Its Lake builds read what `lean` built
 # and write nothing it shares: it ends by requiring the default set's
 # editor to read as up to date. It has a task and a time limit of its own,
-# as the builds take longer than `ffi-test`'s commands.
+# as the builds take longer than `ffi-test`'s commands. It runs under
+# tools/home-bound-toolchain.sh, whose `lean` and `lake` fail once HOME
+# moves, as elan's do on CI, so a bare `lake` run after it moves HOME
+# fails here too, not only on CI.
 [tasks.user-sets-test]
 description = "A user's package set end to end through the launcher: install a package and restart into the per-user build with the session restored, a failing link that keeps the editor running, a default package dropped, a set that fails to elaborate, and git missing (tools/user-sets-test.sh, tests/user-sets)"
 depends = ["lean", "launcher"]
 dir = "lean"
 timeout = "600s"
-run = "sh ../tools/user-sets-test.sh"
+run = "sh ../tools/home-bound-toolchain.sh sh ../tools/user-sets-test.sh"
 
 # Opt-in, never part of `ci`: the user package sets checks that need git,
 # Cargo or more builds than the gate's (tools/user-sets-check.sh;
@@ -1341,12 +1351,13 @@ run = "sh ../tools/user-sets-test.sh"
 # git repository, a set holding a Rust crate built with Cargo, and a probe
 # failure. Everything it writes is in a temporary directory, but the
 # fixture packages' own .lake/ and, for the Rust set, the checkout's
-# target/.
+# target/. It runs under tools/home-bound-toolchain.sh, as `user-sets-test`
+# does, so a bare `lake` run after it moves HOME fails here too.
 [tasks.user-sets-check]
 description = "Opt-in, never part of ci: a user's package set after an editor update, updated from git, holding a Rust crate, and failing its probe (tools/user-sets-check.sh)"
 depends = ["lean", "launcher"]
 dir = "lean"
-run = "sh ../tools/user-sets-check.sh"
+run = "sh ../tools/home-bound-toolchain.sh sh ../tools/user-sets-check.sh"
 
 # The build ID (crates/editor-release, `build_id`): LEANMACS_BUILD_ID when
 # it is set, else HEAD's committer time in UTC, the time landing sets. CI's

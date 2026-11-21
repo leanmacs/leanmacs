@@ -2232,6 +2232,22 @@ core's repository, tagged `nightly-20000101000000`, holding none of the
 core's sources (`tools/core-repo.sh`), with the copy's manifest written by
 `lake update` against it.
 
+The `lean` and `lake` it runs are those of the toolchain `lean
+--print-prefix` named before it moved `HOME` (wrappers around
+`$sysroot/bin/lean` and `lake`, first on the `PATH`), and
+`user-sets-check` does the same. A toolchain manager that resolves its
+toolchains under `HOME`, as elan does on CI, would otherwise install and
+run another copy of the toolchain, and the default set's editor's link
+trace names the toolchain's directory (`-L <toolchain>/lib`), so that copy
+reads the editor as out of date though nothing rebuilt it (found
+2026-11-20, CI run 44825190133 on macOS). Both tasks run under
+`tools/home-bound-toolchain.sh`, whose `lean` and `lake`, like elan's
+proxies, exit 1 when run under any `HOME` but the one they were made
+under, so a bare `lake` after `HOME` moves fails on a developer's machine
+too, where mise's `lean` does not depend on `HOME`. `lean-test` probes the
+stand-in: its `lake` under `HOME=/nonexistent` must exit 1 with its
+message, and under its own `HOME` exit 0.
+
 - **A, install, a failing link, a dropped default package**
   (`tests/user-sets/install-script`), three processes started by
   `leanmacs --data … --default packages/.lake/build/bin/editor -- headless
