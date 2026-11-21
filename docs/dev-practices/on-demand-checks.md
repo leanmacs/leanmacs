@@ -1092,6 +1092,13 @@ failing run with the `FAILED:` lines of the Lean checks or the failing
 Rust tests' names, and exits 1 on any failure. A trap kills the hogs on
 exit or interrupt, so nothing is left running.
 
+The open-file fixture was the named case: it pinned the count of scenes
+published, which the syntax worker's deliveries vary under load (21 of 30
+loaded runs failed at 042e3b40). With the count out of the scene line
+(`published`, [headless-mode.md](headless-mode.md)), `mise run stress -- 50
+open-file` at 5142a367 on an 18-core Mac under 36 hogs printed
+`open-file: 50/50`.
+
 A failure is a bug, in a check or in the code. It is fixed and the loop is
 run again from round 1, never retried away. A bound that a loaded run
 reaches on an event that does come is a hang guard set too short: it is
