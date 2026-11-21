@@ -119,6 +119,7 @@ fn fixture_frame() -> Frame {
     });
     let row = FrameRow::text_row(0.0, 4.0, bytes.clone(), line, vec![(bytes, paint)], 1);
     Frame {
+        ground: WHITE,
         views: vec![ViewFrame {
             id: ViewId(1),
             rect: Rect {

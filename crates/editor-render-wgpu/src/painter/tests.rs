@@ -164,6 +164,7 @@ fn view(rows: Vec<FrameRow>) -> ViewFrame {
 /// The frame of `views`, of generation 0, whose font 0 is 16 pixels.
 fn frame(views: Vec<ViewFrame>) -> Frame {
     Frame {
+        ground: WHITE,
         views,
         generation: 0,
         fonts: Arc::from(vec![font(16.0)]),

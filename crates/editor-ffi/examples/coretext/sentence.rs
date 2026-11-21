@@ -181,6 +181,7 @@ pub fn frame(capture: &Capture, size: (u32, u32)) -> Result<(Frame, Target), Str
         skew: None,
     };
     let frame = Frame {
+        ground: color(capture.colours.ground),
         views: vec![ViewFrame {
             id: ViewId(1),
             rect: Rect {

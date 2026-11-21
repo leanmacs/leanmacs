@@ -98,6 +98,7 @@ fn frame(places: &[(u32, f64)], scale: u32) -> Frame {
     });
     let row = FrameRow::text_row(0.0, 0.0, bytes.clone(), line, vec![(bytes, paint)], 1);
     Frame {
+        ground: Color::rgb(0xff, 0xff, 0xff),
         views: vec![ViewFrame {
             id: ViewId(1),
             rect: Rect {

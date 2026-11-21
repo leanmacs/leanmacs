@@ -196,6 +196,7 @@ pub(crate) fn sentence() -> (Frame, Target) {
         selection: WHITE,
     };
     let frame = Frame {
+        ground: WHITE,
         views: vec![view],
         generation: 0,
         fonts: Arc::from(vec![font()]),
