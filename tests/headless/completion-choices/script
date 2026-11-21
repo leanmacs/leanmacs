@@ -1,0 +1,22 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which names the shipped completion style
+# orderless and the shipped minibuffer display. What it prints must be
+# exactly `expected`. It touches no file.
+
+reload
+settle
+
+# `pick` asks `Pick: ` over `alpha beta`, `beta gamma`, `gamma alpha` and
+# `delta gamma`. `a g` is two components, `a` and `g`: orderless keeps the
+# candidates that hold both, in any order, in their own order, each
+# component's first occurrence in the match face. `alpha beta` holds no `g`.
+# Three are kept, and the display, defined again with two rows, shows the
+# first two: `delta gamma` is not shown.
+run pick
+commit a g
+scene
+
+# `<Enter>` accepts the typed text, nothing being chosen, and config's
+# `picked` says it.
+key <Enter> Enter -
+scene

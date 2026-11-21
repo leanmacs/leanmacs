@@ -860,6 +860,21 @@ run = [
   # whose session lists the words that match; `C-n` previews the first and
   # `RET` accepts it (`at-point/expected`). It touches no file.
   "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/at-point/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/at-point/expected -",
+  # Config's tuning of completion at point (tests/headless/at-point-tuned):
+  # a config that defines the shipped `words` source again with a pause of
+  # 100 ms, so it elaborates only on a base that holds the module that
+  # declares it; the script is at-point's with `advance 100`, and the
+  # session opens at the tuned pause (`at-point-tuned/expected`). It
+  # touches no file.
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/at-point-tuned/config ../tests/headless/at-point-tuned/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/at-point-tuned/expected -",
+  # Config's completion choices (tests/headless/completion-choices): a
+  # config that defines the shipped minibuffer display again with two rows
+  # and chooses the shipped style orderless for its prompt's category, so it
+  # elaborates only on a base that holds the modules that declare them;
+  # `a g` lists the first two of the three candidates that hold both
+  # components, in their order, and `<Enter>` accepts the typed text
+  # (`completion-choices/expected`). It touches no file.
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/completion-choices/config ../tests/headless/completion-choices/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/completion-choices/expected -",
   # Display rules (tests/headless/display-rules): a config whose one rule
   # names the right edge the default layout lacks is installed with the
   # rule left out, and says so in its report's `rule:` line and in the
