@@ -1092,6 +1092,31 @@ def activityRunnerChecks : List Check :=
               s!"held={repr held} inFlight={inFlight} ended={repr ended} finished={finished}"
         finally
           spawned.handle.cancel
-          files.letGo }]
+          files.letGo },
+    { name :=
+        "a job in a next of a fake watch holds no unit: it holds one from its spawn until its next is parked, none while parked, and once the test's change answers it one again until it has ended, then none, with no done refused"
+      run := do
+        let (rig, _, watches) ← Rig.withWatches {} rootWatches
+        let (rig, counted) ← rig.counted
+        let log ← IO.mkRef #[]
+        let activity := recorded counted log
+        let rig := { rig with services := { rig.services with activity } }
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                let .ok watch ← FileWatch.start (.file (watchRoot / "f")) atOnce | return false
+                let .ok _ ← FileWatch.next watch | return false
+                return true)
+        -- The spawn's step, then the park in the next: the start was answered
+        -- inside its own request, the job keeping its unit.
+        untilEpoch activity 2
+        let parked ← activity.seen
+        watches.change (watchRoot / "f") #[.written]
+        -- The change's step, on this thread, then the end's.
+        untilEpoch activity 4
+        let ended ← spawned.endedAs (.finished #["true"])
+        let counts := (← log.get).map (·.1)
+        saw (parked.running == 0 && counts == #[1, 0, 1, 0] && ended && (← activity.refused) == 0)
+            s!"parked={repr parked} counts={counts} ended={ended}" }]
 
 end ModelTest
