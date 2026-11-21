@@ -1103,7 +1103,10 @@ measurement goes in its doc.
 there, with `2 x nproc` hogs of the container's CPUs; its logs are in
 `.linux-ci/work/stress-logs/`. It is evidence for the Linux code paths
 (pidfd, inotify, glibc), on the machine's own architecture, not for the
-ubuntu runner.
+ubuntu runner. `.github/workflows/stress.yml` runs the loop on
+`ubuntu-24.04`, on dispatch only: five shards of ten rounds, and a summary
+job that adds them up and must print each suite's `50/50`
+([ci.md](ci.md#the-stress-loop-on-dispatch-only)).
 
 ## The gate on Linux, on demand
 

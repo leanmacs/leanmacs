@@ -8,12 +8,13 @@
 # neither knows what this repository needs of it. This checks that, with yq
 # (pinned in mise.toml), and fails on each rule broken
 # (docs/dev-practices/ci.md). The rules it runs are picked by the file's
-# base name: the common rules on every file, then ci.yml's, build.yml's or
-# release.yml's.
+# base name: the common rules on every file, then ci.yml's, build.yml's,
+# release.yml's or stress.yml's.
 #
 # Every file:
 #
-#   workflows          the file is ci.yml, build.yml or release.yml: a
+#   workflows          the file is ci.yml, build.yml, release.yml or
+#                      stress.yml: a
 #                      workflow file with no rules here fails, so none
 #                      goes unchecked
 #   continue-on-error  no job or step continues on error: a red leg fails
@@ -119,6 +120,19 @@
 #                      actions/deploy-pages with id deployment
 #   pages-concurrency  `pages`' concurrency is exactly the group pages,
 #                      never cancelled in progress
+#
+# stress.yml:
+#
+#   stress-trigger     `workflow_dispatch` alone, so a push never runs it,
+#                      with the one input `rounds`
+#   stress-runner      every job runs on ubuntu-24.04, the gate's Linux leg
+#   stress-matrix      the `stress` job's matrix is exactly shard: [1, 2, 3,
+#                      4, 5], with fail-fast off
+#   stress-steps       the `stress` job runs `mise run ci` in exactly one
+#                      step, with no if:, and after it exactly one step
+#                      that runs tools/stress.sh over config, contract,
+#                      rust and open-file
+#   stress-summary     a `summary` job that needs exactly `stress`
 #
 # The other files, ci.yml for build.yml's and release.yml's rules among
 # them, are read from
@@ -725,12 +739,59 @@ release_rules() {
   fi
 }
 
+# ==== stress.yml's rules.
+stress_rules() {
+  # ---- stress-trigger
+  if [ "$(q '.on | keys')" != '["workflow_dispatch"]' ]; then
+    fail stress-trigger 'on: must be workflow_dispatch alone'
+  elif [ "$(q '.on.workflow_dispatch.inputs // {} | keys')" != '["rounds"]' ]; then
+    fail stress-trigger 'workflow_dispatch must have exactly the input rounds'
+  fi
+
+  # ---- stress-runner
+  bad=$(q '[.jobs | to_entries[] | select(.value["runs-on"] != "ubuntu-24.04") | .key] | join(" ")')
+  if [ -n "$bad" ]; then
+    fail stress-runner "jobs not on ubuntu-24.04: $bad"
+  fi
+
+  # ---- stress-matrix
+  if [ "$(q '.jobs.stress.strategy.matrix')" != '{"shard":[1,2,3,4,5]}' ]; then
+    fail stress-matrix 'jobs.stress.strategy.matrix must be exactly shard: [1, 2, 3, 4, 5]'
+  fi
+  if [ "$(q '.jobs.stress.strategy["fail-fast"]')" != false ]; then
+    fail stress-matrix 'jobs.stress.strategy["fail-fast"] must be false'
+  fi
+
+  # ---- stress-steps
+  gate_at=$(q '[.jobs.stress.steps | to_entries[] | select(.value.run == "mise run ci") | .key] | join(" ")')
+  loop_at=$(q '[.jobs.stress.steps | to_entries[] | select(.value.run // "" | test("sh tools/stress.sh .* config contract rust open-file")) | .key] | join(" ")')
+  case "$gate_at $loop_at" in
+  ' '* | *' ' | *' '*' '*)
+    fail stress-steps 'jobs.stress must have exactly one `mise run ci` step and exactly one tools/stress.sh step over config contract rust open-file'
+    ;;
+  *)
+    if [ "$loop_at" -le "$gate_at" ]; then
+      fail stress-steps 'the tools/stress.sh step must come after `mise run ci`'
+    fi
+    if [ "$(q '[.jobs.stress.steps[]? | select(.run == "mise run ci" and has("if"))] | length')" != 0 ]; then
+      fail stress-steps 'the `mise run ci` step must have no if:'
+    fi
+    ;;
+  esac
+
+  # ---- stress-summary
+  if [ "$(q '[.jobs.summary.needs] | flatten')" != '["stress"]' ]; then
+    fail stress-summary 'jobs.summary.needs must be exactly stress'
+  fi
+}
+
 # ---- workflows
 # Every workflow file has its rules here, so a new one cannot go unchecked.
 case $name in
 ci.yml) ci_rules ;;
 build.yml) build_rules ;;
 release.yml) release_rules ;;
+stress.yml) stress_rules ;;
 *) fail workflows "no rules for $name: add them to tools/workflow-check.sh" ;;
 esac
 

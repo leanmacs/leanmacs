@@ -1,0 +1,118 @@
+name: Stress
+
+# The stress loop (tools/stress.sh; docs/dev-practices/on-demand-checks.md,
+# "The stress loop, on demand") on the ubuntu leg of the gate: config-test,
+# contract-test, the Rust tests and the open-file fixture, `rounds` rounds
+# (50 by default) under 2 x nproc CPU hogs, in five shards of a fifth each. On dispatch only: a push never runs it. A failure is a
+# bug, fixed and then dispatched again from round 1, never re-run shard by
+# shard to collect passes.
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: "Rounds in all, a multiple of 5 (each of the 5 shards runs a fifth)"
+        required: false
+        default: "50"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # Five shards of the loop, each its own runner, so one job stays well
+  # inside GitHub's six hours. Each builds and gates with `mise run ci`,
+  # exactly as ci.yml's ubuntu leg, then runs its rounds.
+  stress:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      MISE_AUTO_INSTALL: "false"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      ROUNDS: ${{ inputs.rounds }}
+      SHARD: ${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The same tools as ci.yml's `ci` job.
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          version: 2026.11.2
+          install: true
+          install_args: rust aqua:EmbarkStudios/cargo-deny pipx:clang-format aqua:rhysd/actionlint aqua:zizmorcore/zizmor aqua:mikefarah/yq
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
+      - id: elan
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.elan
+          key: elan-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'tools/ci/install-elan.sh') }}
+      - run: sh tools/ci/install-elan.sh
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - id: lake
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: lean/.lake
+          key: lake-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}-${{ github.sha }}
+          restore-keys: |
+            lake-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}-
+      # Builds everything the loop runs, and gates it.
+      - name: Gate
+        run: mise run ci
+        shell: bash
+      - name: Stress
+        shell: bash
+        run: |
+          set -o pipefail
+          case "$ROUNDS" in '' | *[!0-9]*) echo "stress: rounds must be a number: $ROUNDS"; exit 2 ;; esac
+          [ $((ROUNDS % 5)) -eq 0 ] && [ "$ROUNDS" -gt 0 ] || { echo "stress: rounds must be a positive multiple of 5: $ROUNDS"; exit 2; }
+          mkdir -p stress-out
+          STRESS_OUT="$PWD/stress-out/logs" sh tools/stress.sh $((ROUNDS / 5)) config contract rust open-file | tee stress-out/summary.txt
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stress-${{ matrix.shard }}
+          path: stress-out
+          if-no-files-found: error
+
+  # The shards' counts added up. It must print the pass line, each suite's
+  # 50/50 for the default 50 rounds, and exits 1 on any other count, a
+  # shard with no summary among them.
+  summary:
+    needs: stress
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    env:
+      MISE_AUTO_INSTALL: "false"
+      ROUNDS: ${{ inputs.rounds }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: stress-*
+          path: shards
+      - name: Summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "stress: ubuntu-24.04, 5 shards x $((ROUNDS / 5)) rounds, 2 x nproc hogs"
+          status=0
+          for suite in config contract rust open-file; do
+            passed=0
+            total=0
+            for f in shards/stress-*/summary.txt; do
+              line=$(grep "^$suite: [0-9]*/[0-9]*$" "$f" || true)
+              [ -n "$line" ] || continue
+              p=${line#*: }
+              passed=$((passed + ${p%/*}))
+              total=$((total + ${p#*/}))
+            done
+            echo "$suite: $passed/$ROUNDS"
+            [ "$passed" -eq "$ROUNDS" ] && [ "$total" -eq "$ROUNDS" ] || status=1
+          done
+          grep -h '^failed: \|^  ' shards/stress-*/summary.txt || true
+          exit "$status"

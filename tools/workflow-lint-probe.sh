@@ -8,17 +8,18 @@
 #    tests/workflow-lint/tag-pinned.yml, whose one action is pinned by a tag,
 #    with an `unpinned-uses` finding.
 # 2. In a temporary directory it copies the check with the workflows and
-#    the files it reads (.github/workflows/ci.yml, build.yml and
-#    release.yml, tools/ci/install-elan.sh, tools/linux/Dockerfile,
+#    the files it reads (.github/workflows/ci.yml, build.yml, release.yml
+#    and stress.yml, tools/ci/install-elan.sh, tools/linux/Dockerfile,
 #    infra/github/actions.tf, mise.toml), a tree per case, and breaks the
 #    check's rules one at a time: every rule at least once, with yq on the
-#    tree's ci.yml, build.yml or release.yml or sed on another file, plus
+#    tree's ci.yml, build.yml, release.yml or stress.yml or sed on another
+#    file, plus
 #    the sha-pin case of a SHA with no `# v…` comment and the common rules
 #    on build.yml and release.yml. The check runs on the tree's own copy of
 #    the workflow, so the file's base name picks the rules, as in the
 #    checkout; a copy of ci.yml saved as nightly.yml, a file the check has
 #    no rules for, fails the rule `workflows`. The check must exit 1 on
-#    each case, naming that rule and no other. Then it must pass the three
+#    each case, naming that rule and no other. Then it must pass the four
 #    workflows of a tree rewritten by the same yq, so a mutation's failure
 #    is the mutation's and not the rewrite's.
 #
@@ -54,7 +55,7 @@ fi
 
 # The check, the workflows and the files it reads, copied: it finds them
 # from its own place, so a copy of this tree is a checkout it can be run in.
-fixture_files='tools/workflow-check.sh .github/workflows/ci.yml .github/workflows/build.yml .github/workflows/release.yml tools/ci/install-elan.sh tools/linux/Dockerfile infra/github/actions.tf mise.toml'
+fixture_files='tools/workflow-check.sh .github/workflows/ci.yml .github/workflows/build.yml .github/workflows/release.yml .github/workflows/stress.yml tools/ci/install-elan.sh tools/linux/Dockerfile infra/github/actions.tf mise.toml'
 
 # copy_tree <dir>: the check and its files, unbroken, under <dir>.
 copy_tree() {
@@ -249,10 +250,21 @@ mutate_release pages-job 'the deploy without its id' "del(($deploy).id)"
 mutate_release pages-concurrency 'the deploy cancelled in progress' '.jobs.pages.concurrency["cancel-in-progress"] = true'
 mutate_release pages-concurrency 'the pages group renamed' '.jobs.pages.concurrency.group = "deploy"'
 
+# stress.yml: on dispatch only, on the gate's Linux leg, five shards, the
+# gate before the loop, and the summary after the shards.
+mutate_in stress.yml stress-trigger 'stress.yml also run on push' '.on.push = {}'
+mutate_in stress.yml stress-trigger 'no rounds input' 'del(.on.workflow_dispatch.inputs)'
+mutate_in stress.yml stress-runner 'the summary on macos-26' '.jobs.summary["runs-on"] = "macos-26"'
+mutate_in stress.yml stress-matrix 'four shards' '.jobs.stress.strategy.matrix.shard = [1, 2, 3, 4]'
+mutate_in stress.yml stress-steps 'the loop before the gate' '(.jobs.stress.steps[] | select(.name == "Gate")) as $g | del(.jobs.stress.steps[] | select(.name == "Gate")) | .jobs.stress.steps += [$g]'
+mutate_in stress.yml stress-steps 'the loop without open-file' '(.jobs.stress.steps[] | select(.name == "Stress") | .run) |= sub(" open-file"; "")'
+mutate_in stress.yml stress-summary 'a summary that does not wait for the shards' 'del(.jobs.summary.needs)'
+mutate_in stress.yml sha-pin 'upload-artifact pinned by a tag' '(.jobs.stress.steps[] | select(.uses // "" | test("^actions/upload-artifact@")) | .uses) = "actions/upload-artifact@v7.0.2"'
+
 # The unbroken copies, rewritten by the same yq as the mutations.
 n=$((n + 1))
 copy_tree "$work/$n"
-for f in ci.yml build.yml release.yml; do
+for f in ci.yml build.yml release.yml stress.yml; do
   wf="$work/$n/.github/workflows/$f"
   yq -i '.' "$wf"
   if sh "$work/$n/tools/workflow-check.sh" "$wf" >"$work/unbroken.out" 2>&1; then

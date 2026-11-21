@@ -312,6 +312,22 @@ itself; on another branch or a pull request's merge ref, `main` is made
 the commit checked out. Its history is `main`'s plus the commits being
 pushed, which are public once pushed, so they are scanned too.
 
+### The stress loop, on dispatch only
+
+`.github/workflows/stress.yml` runs [the stress loop](on-demand-checks.md#the-stress-loop-on-demand)
+on `ubuntu-24.04`, the gate's Linux leg. It has no push or pull-request
+trigger: it runs only when someone dispatches it, with the input `rounds`
+(50 by default, a multiple of 5). Five shards each check out, install the
+tools as the `ci` job does, run `mise run ci` once to build and gate, then
+`tools/stress.sh <rounds / 5> config contract rust open-file` under
+`2 x nproc` hogs at `nice -n 19`, and upload their logs and summary. The
+`summary` job adds the shards' counts and prints
+`stress: ubuntu-24.04, 5 shards x 10 rounds, 2 x nproc hogs` and each
+suite's `<passed>/<rounds>`, and fails on any count short of all of them.
+It saves no cache. A failure is a bug: it is fixed and the workflow is
+dispatched again from round 1, never re-run shard by shard to collect
+passes. `tools/workflow-check.sh` holds it to its rules (below).
+
 ## Concurrency
 
 Runs are grouped per workflow and ref
@@ -579,6 +595,12 @@ it runs the same in `linux-ci`'s copy of the checkout. It runs, in order:
      `build-steps` (app-check, dmg, dmg-check in that order and
      unconditional, then the upload, which fails with no `.dmg`) and
      `build-cache` (no save, and `ci.yml`'s Lake and elan keys).
+   - On `stress.yml`: `stress-trigger` (`workflow_dispatch` alone, with
+     the one input `rounds`), `stress-runner` (every job on
+     `ubuntu-24.04`), `stress-matrix` (exactly five shards, `fail-fast`
+     off), `stress-steps` (one unconditional `mise run ci`, then one
+     `tools/stress.sh` step over config, contract, rust and open-file) and
+     `stress-summary` (a `summary` job that needs exactly `stress`).
    - On `release.yml`: `release-trigger` (`workflow_call` alone, its three
      inputs required strings), `release-job` (exactly the jobs `publish`
      and `pages`; `publish` on `macos-26`, top-level permissions `{}` and
