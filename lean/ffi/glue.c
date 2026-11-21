@@ -1171,6 +1171,8 @@ bool editor_ffi_events_post(uint8_t queue, uint64_t source_id, uint64_t code,
 bool editor_ffi_events_next(uint8_t queue, editor_ffi_raw_event *out);
 void editor_ffi_events_quit(void);
 uint64_t editor_ffi_events_waiting(uint8_t queue);
+bool editor_ffi_events_await_waiting(uint8_t queue, uint64_t pulls,
+                                     uint64_t bound_ms);
 uint64_t editor_ffi_events_queued(uint8_t queue);
 bool editor_ffi_events_script_feed(uint8_t queue, uint64_t source_id,
                                    uint64_t count);
@@ -1218,6 +1220,13 @@ lean_obj_res editor_glue_events_quit(void) {
 lean_obj_res editor_glue_events_waiting(uint8_t queue) {
   return lean_io_result_mk_ok(
       lean_box_uint64(editor_ffi_events_waiting(queue)));
+}
+
+// `Editor.Ffi.awaitWaiting : Queue → UInt64 → UInt64 → IO Bool`
+lean_obj_res editor_glue_events_await_waiting(uint8_t queue, uint64_t pulls,
+                                              uint64_t bound_ms) {
+  return lean_io_result_mk_ok(lean_box(
+      editor_ffi_events_await_waiting(queue, pulls, bound_ms) ? 1 : 0));
 }
 
 // `Editor.Ffi.queued : Queue → IO UInt64`

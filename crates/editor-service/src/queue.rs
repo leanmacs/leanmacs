@@ -40,6 +40,7 @@ use std::io;
 use std::ops::Deref;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 /// What an [`Event`] says happened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -246,6 +247,18 @@ pub struct Queue {
     state: Mutex<State>,
     /// Signalled when an event joins the queue or the queue is quit.
     changed: Condvar,
+    /// Signalled when a pull parks: what [`await_waiting`](Self::await_waiting)
+    /// waits on. A Condvar of its own, so a push's `notify_one` on `changed`
+    /// always reaches a parked pull and never a test's wait.
+    parked: Condvar,
+    /// Called on a pull's thread, with the state unlocked, each time a pull
+    /// is about to park. Set once, by a test.
+    #[cfg(test)]
+    before_park: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// Called each time [`await_waiting`](Self::await_waiting) reads the
+    /// count, with the count, under the lock. Set once, by a test.
+    #[cfg(test)]
+    awaited: std::sync::OnceLock<Box<dyn Fn(usize) + Send + Sync>>,
 }
 
 /// What [`Queue::state`] guards.
@@ -268,6 +281,11 @@ impl Queue {
                 waiting: 0,
             }),
             changed: Condvar::new(),
+            parked: Condvar::new(),
+            #[cfg(test)]
+            before_park: std::sync::OnceLock::new(),
+            #[cfg(test)]
+            awaited: std::sync::OnceLock::new(),
         }
     }
 
@@ -299,7 +317,21 @@ impl Queue {
             if state.quit {
                 return Event::quit();
             }
+            #[cfg(test)]
+            if let Some(hook) = self.before_park.get() {
+                drop(state);
+                hook();
+                state = self.state();
+                // What was pushed or quit while unlocked is seen first.
+                if let Some(event) = state.events.pop_front() {
+                    return event;
+                }
+                if state.quit {
+                    return Event::quit();
+                }
+            }
             state.waiting += 1;
+            self.parked.notify_all();
             state = self
                 .changed
                 .wait(state)
@@ -319,6 +351,38 @@ impl Queue {
     /// How many pulls are parked on the queue.
     pub fn waiting(&self) -> usize {
         self.state().waiting
+    }
+
+    /// Waits until at least `pulls` pulls are parked on the queue, and says
+    /// whether they were: false only once `bound` has passed first. A
+    /// readout for tests, which use it to know a pull is parked before they
+    /// push, on an event and never a poll: a pull notifies it as it parks,
+    /// under the lock its wait then releases, so once this has seen the
+    /// count the pull is in its wait and a push reaches it. It waits on a
+    /// Condvar of its own, so it never takes a push's wake-up from a pull.
+    ///
+    /// `bound` is a hang guard: only a pull that never parks reaches it.
+    pub fn await_waiting(&self, pulls: usize, bound: Duration) -> bool {
+        let until = Instant::now() + bound;
+        let mut state = self.state();
+        loop {
+            #[cfg(test)]
+            if let Some(hook) = self.awaited.get() {
+                hook(state.waiting);
+            }
+            if state.waiting >= pulls {
+                return true;
+            }
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            state = self
+                .parked
+                .wait_timeout(state, left)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
     }
 
     /// How many events the queue holds that have not been pulled.
@@ -585,6 +649,100 @@ mod tests {
 
         assert_eq!(finish(&pulled, "the parked pull"), message(1, 0));
         assert_eq!(queue.waiting(), 0);
+    }
+
+    /// Has `queue` call `held` each time a pull is about to park, on the
+    /// pull's thread.
+    fn before_park(queue: &Queue, held: impl Fn() + Send + Sync + 'static) {
+        assert!(queue.before_park.set(Box::new(held)).is_ok(), "set once");
+    }
+
+    /// Where each count [`Queue::await_waiting`] reads on `queue` arrives.
+    fn counts_awaited(queue: &Queue) -> Receiver<usize> {
+        let (read, counts) = mpsc::channel();
+        let read = Mutex::new(read);
+        let hook = move |count| {
+            let _ = read
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(count);
+        };
+        assert!(queue.awaited.set(Box::new(hook)).is_ok(), "set once");
+        counts
+    }
+
+    #[test]
+    fn await_waiting_returns_only_once_a_pull_held_before_its_park_has_parked() {
+        let queue = Arc::new(Queue::new());
+        // The pull is held on its way to the park until the test lets it go.
+        let (holding, held) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let hold = Mutex::new((holding, released));
+        before_park(&queue, move || {
+            let hold = hold.lock().unwrap_or_else(PoisonError::into_inner);
+            let _ = hold.0.send(());
+            let _ = hold.1.recv();
+        });
+        let counts = counts_awaited(&queue);
+
+        let pulled = start_pull(&queue);
+        held.recv_timeout(DEADLINE)
+            .expect("the pull reaches its park");
+        let awaited = {
+            let queue = Arc::clone(&queue);
+            start(move || queue.await_waiting(1, DEADLINE))
+        };
+        assert_eq!(
+            counts.recv_timeout(DEADLINE),
+            Ok(0),
+            "the wait reads no parked pull while the pull is held"
+        );
+        release.send(()).expect("the pull is held");
+
+        // A wait that returned at the first reading never reads the park.
+        assert_eq!(
+            counts.recv_timeout(DEADLINE),
+            Ok(1),
+            "the wait reads the count again once the pull has parked"
+        );
+        assert!(finish(&awaited, "the wait for the park"));
+        queue.push(message(1, 0));
+        assert_eq!(finish(&pulled, "the parked pull"), message(1, 0));
+    }
+
+    #[test]
+    fn a_push_reaches_the_parked_pull_while_a_wait_for_more_pulls_is_parked() {
+        let queue = Arc::new(Queue::new());
+        let counts = counts_awaited(&queue);
+        let first = start_pull(&queue);
+        assert!(queue.await_waiting(1, DEADLINE));
+        // What that wait read, drained: the last reading was the park.
+        assert_eq!(counts.try_iter().last(), Some(1));
+        let awaited = {
+            let queue = Arc::clone(&queue);
+            start(move || queue.await_waiting(2, DEADLINE))
+        };
+        // The wait for two has read one and is parked, under the lock it
+        // read the count with.
+        assert_eq!(counts.recv_timeout(DEADLINE), Ok(1));
+
+        queue.push(message(1, 0));
+
+        // On one Condvar the push's one wake-up could go to the wait.
+        assert_eq!(finish(&first, "the parked pull"), message(1, 0));
+        let second = start_pull(&queue);
+        let third = start_pull(&queue);
+        assert!(finish(&awaited, "the wait for two pulls"));
+        queue.quit();
+        assert_eq!(finish(&second, "a parked pull"), Event::quit());
+        assert_eq!(finish(&third, "a parked pull"), Event::quit());
+    }
+
+    #[test]
+    fn await_waiting_says_no_once_its_bound_has_passed_with_no_pull_parked() {
+        let queue = Queue::new();
+        assert!(!queue.await_waiting(1, Duration::ZERO));
+        assert!(queue.await_waiting(0, Duration::ZERO));
     }
 
     #[test]

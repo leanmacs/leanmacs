@@ -12,7 +12,7 @@ use std::mem::MaybeUninit;
 use std::slice;
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use editor_ffi::counter::{
     editor_ffi_counter_free, editor_ffi_counter_increment, editor_ffi_counter_live,
@@ -23,15 +23,18 @@ use editor_ffi::document::{
     editor_ffi_document_new, editor_ffi_document_read, editor_ffi_document_replace,
 };
 use editor_ffi::events::{
-    Event, EventKind, QueueId, RawEvent, Source, SourceKind, editor_ffi_events_next,
-    editor_ffi_events_post, editor_ffi_events_quit, editor_ffi_events_script_feed,
-    editor_ffi_events_waiting,
+    Event, EventKind, QueueId, RawEvent, Source, SourceKind, editor_ffi_events_await_waiting,
+    editor_ffi_events_next, editor_ffi_events_post, editor_ffi_events_quit,
+    editor_ffi_events_script_feed, editor_ffi_events_waiting,
 };
 use editor_ffi::text::{ByteRange, editor_ffi_text_find, editor_ffi_text_free};
 
 /// How long a test waits for something that should happen at once. Only
 /// broken code takes this long, and the test then fails instead of hanging.
 const DEADLINE: Duration = Duration::from_secs(5);
+
+/// [`DEADLINE`] in milliseconds, as the C functions take it.
+const DEADLINE_MS: u64 = 5000;
 
 /// The tag of the editor queue.
 const EDITOR: u8 = QueueId::Editor.tag();
@@ -112,17 +115,14 @@ fn next(queue: u8) -> Option<Event> {
     within_deadline("a pull", move || next_blocking(queue))
 }
 
-/// Waits until `pulls` pulls are parked on the queue `queue`; panics if they
-/// are not by the deadline.
+/// Waits until `pulls` pulls are parked on the queue `queue`, on the park
+/// itself (`editor_ffi_events_await_waiting`); panics if they are not by the
+/// deadline, a hang guard.
 fn wait_for_parked(queue: u8, pulls: u64) {
-    let deadline = Instant::now() + DEADLINE;
-    while editor_ffi_events_waiting(queue) != pulls {
-        assert!(
-            Instant::now() < deadline,
-            "{pulls} pulls were not parked on queue {queue} after {DEADLINE:?}"
-        );
-        thread::sleep(Duration::from_millis(1));
-    }
+    assert!(
+        editor_ffi_events_await_waiting(queue, pulls, DEADLINE_MS),
+        "{pulls} pulls were not parked on queue {queue} after {DEADLINE:?}"
+    );
 }
 
 /// `editor_ffi_text_find` over string slices; `None` when it returns false.
@@ -408,6 +408,7 @@ fn the_process_wide_queues_carry_events_until_they_are_quit() {
     assert_eq!(next(NO_QUEUE), None);
     assert!(!editor_ffi_events_script_feed(NO_QUEUE, 1, 1));
     assert_eq!(editor_ffi_events_waiting(NO_QUEUE), 0);
+    assert!(!editor_ffi_events_await_waiting(NO_QUEUE, 0, DEADLINE_MS));
 
     // Quit reaches both queues, after what was already queued.
     assert!(post(EDITOR, 7, 1, "before quit"));

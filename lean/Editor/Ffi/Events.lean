@@ -198,6 +198,14 @@ know a pull is parked before they post. -/
 @[extern "editor_glue_events_waiting"]
 opaque waiting (queue : Queue) : IO UInt64
 
+/-- Waits until at least `pulls` pulls are parked on `queue`, and says
+whether they were: false once `boundMs` milliseconds have passed first. A
+readout for tests, which use it to know a pull is parked before they post:
+it returns on the park itself, never by a poll of `waiting`. `boundMs` is a
+hang guard: only a pull that never parks reaches it. -/
+@[extern "editor_glue_events_await_waiting"]
+opaque awaitWaiting (queue : Queue) (pulls : UInt64) (boundMs : UInt64) : IO Bool
+
 /-- How many events `queue` holds that have not been pulled. A readout for
 tests, which drain the `parsed` events a highlighted document's parses
 leave on the editor queue without parking a pull on an empty queue. -/

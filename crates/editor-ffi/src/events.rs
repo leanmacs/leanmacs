@@ -50,6 +50,8 @@ pub use editor_service::queue::{
     Event, EventKind, Queue, QueueId, ScriptedSource, Source, SourceKind,
 };
 
+use std::time::Duration;
+
 use editor_service::queue::{COMPLETION, EDITOR};
 
 use crate::render::{PRESENTER, Presenter};
@@ -202,6 +204,23 @@ pub extern "C" fn editor_ffi_events_quit() {
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_events_waiting(queue: u8) -> u64 {
     self::queue(queue).map_or(0, |queue| queue.waiting() as u64)
+}
+
+/// Waits until at least `pulls` pulls are parked on the queue `queue`
+/// ([`Queue::await_waiting`]), and says whether they were: false once
+/// `bound_ms` milliseconds have passed first, and at once if `queue` names
+/// no queue. A readout for tests, which use it to know a pull is parked
+/// before they post: it returns on the park, never by a poll.
+///
+/// `bound_ms` is a hang guard: only a pull that never parks reaches it.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_events_await_waiting(queue: u8, pulls: u64, bound_ms: u64) -> bool {
+    self::queue(queue).is_some_and(|queue| {
+        queue.await_waiting(
+            usize::try_from(pulls).unwrap_or(usize::MAX),
+            Duration::from_millis(bound_ms),
+        )
+    })
 }
 
 /// How many events the queue `queue` holds that have not been pulled; 0 if

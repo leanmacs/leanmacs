@@ -2585,6 +2585,13 @@ same editor queue.
   (`post`, below), batched by the job itself, at most one a pause between
   reads.
 
+- **A test waits for a parked pull on the park itself.** `Queue::await_waiting`
+  (`editor_ffi_events_await_waiting`, `Ffi.awaitWaiting`) returns once a
+  number of pulls are parked on a queue, notified by the pull as it parks,
+  under the lock its wait then releases, on a Condvar of its own so a push's
+  `notify_one` always reaches a pull. A readout for tests, beside the
+  queue's `waiting` count; its bound is a hang guard.
+
 Subscriptions are registered by name and owner, and replaced by owner on
 reload. See [lean-runtime.md](lean-runtime.md).
 
