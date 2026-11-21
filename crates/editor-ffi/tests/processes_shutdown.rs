@@ -8,7 +8,10 @@
 //! grandchild's into a temporary directory the test makes and removes; the
 //! test reads them with `std::fs`, which the crate's `clippy.toml` refuses
 //! everywhere else, hence the one `expect` below, and asks the system
-//! directly, with `kill(pid, 0)`, whether each is alive.
+//! directly, with `kill(pid, 0)`, whether each is alive. The grandchild's
+//! end, which its new parent reaps, is waited for on the system's exit
+//! event with `editor-launch-std`'s `StdPids::wait_exit`: this crate is the
+//! one allowed to link the launcher's adapters.
 
 #[path = "common/processes.rs"]
 mod common;
@@ -21,6 +24,8 @@ use std::time::{Duration, Instant};
 
 use common::{DEADLINE, ROOMY, completion_of, next_completion, run, take};
 use editor_ffi::processes::{editor_ffi_processes_pending, editor_ffi_processes_shutdown};
+use editor_launch::ports::{Pid as LaunchPid, Pids, Waited};
+use editor_launch_std::StdPids;
 use open::{comes_to_be_held, open};
 use rustix::process::{Pid, test_kill_process};
 
@@ -94,11 +99,16 @@ fn after_shutdown_the_child_is_reaped_its_grandchild_ends_and_a_later_run_is_ref
         !alive(streaming),
         "the held streaming child is reaped by then too"
     );
-    let end = Instant::now() + DEADLINE;
-    while alive(grandchild) && Instant::now() < end {
-        thread::sleep(Duration::from_millis(2));
-    }
-    assert!(!alive(grandchild), "the grandchild ends");
+    // Its new parent reaps it, so its end is waited for on the system's
+    // exit event, the launcher's own wait for a process's end.
+    // hang guard: the grandchild's exit; only a hang reaches the bound, and
+    // the check then fails as a hang.
+    let guard = u64::try_from(DEADLINE.as_millis()).unwrap_or(u64::MAX);
+    assert_eq!(
+        StdPids.wait_exit(LaunchPid(grandchild), guard),
+        Waited::Exited,
+        "the grandchild ends"
+    );
     assert_eq!(editor_ffi_processes_pending(), 0);
 
     assert!(run(2, "exit 0", dir, ROOMY));

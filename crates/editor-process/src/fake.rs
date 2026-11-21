@@ -293,6 +293,10 @@ pub struct Record {
     /// and no longer once it returns (one that wakes to a pipe still empty
     /// and open waits on). A read parked on the hold is not one.
     pub reads_waiting: usize,
+    /// How many of the ground's waits for a process's end
+    /// ([`Ground::ends`]) are blocked now: counted under the fake's lock
+    /// just before such a wait first waits, and no longer once it returns.
+    pub ends_waiting: usize,
     /// How many waits are parked on the hold of reaps now: their child has
     /// ended and is not yet reaped.
     pub reaps_parked: usize,
@@ -474,6 +478,33 @@ struct State {
 }
 
 impl State {
+    /// Whether the process `id` is alive, as [`FakeProcesses::alive`] says.
+    fn alive(&self, id: u32) -> bool {
+        if let Some(group) = self.groups.get(&id) {
+            return !group.reaped;
+        }
+        if let Some(leader) = self.escaped_from.get(&id) {
+            return self.groups.get(leader).is_some_and(|group| {
+                group
+                    .escaped
+                    .iter()
+                    .any(|&(escaped, alive)| escaped == id && alive)
+            });
+        }
+        self.member_of
+            .get(&id)
+            .and_then(|leader| self.groups.get(leader))
+            .is_some_and(|group| group.members_alive)
+    }
+
+    /// Whether the process `id` has ended: a child once it has exited,
+    /// reaped or not, and any other process once it is not alive.
+    fn ended(&self, id: u32) -> bool {
+        self.groups
+            .get(&id)
+            .map_or_else(|| !self.alive(id), |group| group.ended.is_some())
+    }
+
     /// Takes every child as far as it can go now.
     fn advance(&mut self) {
         let Self {
@@ -669,23 +700,7 @@ impl FakeProcesses {
     /// member until its group is ended, a process started outside the group
     /// until the ground ends it. An id the fake never gave is not.
     pub fn alive(&self, id: u32) -> bool {
-        let state = self.shared.state();
-        if let Some(group) = state.groups.get(&id) {
-            return !group.reaped;
-        }
-        if let Some(leader) = state.escaped_from.get(&id) {
-            return state.groups.get(leader).is_some_and(|group| {
-                group
-                    .escaped
-                    .iter()
-                    .any(|&(escaped, alive)| escaped == id && alive)
-            });
-        }
-        state
-            .member_of
-            .get(&id)
-            .and_then(|leader| state.groups.get(leader))
-            .is_some_and(|group| group.members_alive)
+        self.shared.state().alive(id)
     }
 
     /// Ends the process `id`, one a child started outside its group, which
@@ -1189,6 +1204,38 @@ impl Ground for FakeGround {
         self.fake.alive(id)
     }
 
+    fn ends(&self, id: u32) -> bool {
+        let shared = &self.fake.shared;
+        // hang guard: the change to the fake's state that ends the process;
+        // only a hang reaches the bound, and the check then fails as a hang.
+        let end = Instant::now() + FAKE_DEADLINE;
+        let mut state = shared.state();
+        let mut waiting = false;
+        let ended = loop {
+            if state.ended(id) {
+                break true;
+            }
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break false;
+            }
+            if !waiting {
+                state.record.ends_waiting += 1;
+                waiting = true;
+                shared.changed.notify_all();
+            }
+            // hang guard: the same change, told on the Condvar.
+            let waited = shared.changed.wait_timeout(state, left);
+            state = waited.unwrap_or_else(PoisonError::into_inner).0;
+        };
+        if waiting {
+            state.record.ends_waiting -= 1;
+        }
+        drop(state);
+        shared.changed.notify_all();
+        ended
+    }
+
     fn end(&self, id: u32) {
         self.fake.end(id);
     }
@@ -1425,6 +1472,36 @@ mod tests {
 
         assert!(!fake.alive(child.id()));
         assert_eq!(fake.record().reaps_parked, 0);
+    }
+
+    #[test]
+    fn the_grounds_wait_for_an_end_blocks_while_the_process_lives_and_returns_at_its_end() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .hold(Hold::UntilKilled)
+                .members(1)),
+        )]);
+        let child = fake.spawn(&command("x"), Input::Closed).expect("spawned");
+        let member = child.id() + 1;
+        let ground = fake.ground();
+        assert!(fake.alive(member));
+
+        let (blocked, ended) = thread::scope(|scope| {
+            let ending = scope.spawn(|| ground.ends(member));
+            let blocked = fake.until(DEADLINE, |record| record.ends_waiting == 1);
+            child.kill();
+            (blocked, ending.join().expect("the wait returns"))
+        });
+
+        assert!(blocked, "the wait blocks while the member lives");
+        assert!(ended, "and says it ended once it has");
+        assert_eq!(fake.record().ends_waiting, 0);
+        assert!(fake.alive(child.id()), "the child is not reaped");
+        assert!(ground.ends(child.id()), "a zombie has ended");
+        assert!(ground.ends(1), "an id no process has has ended");
+        assert_eq!(fake.record().ends_waiting, 0, "none of those waited");
+        child.wait();
     }
 
     #[test]

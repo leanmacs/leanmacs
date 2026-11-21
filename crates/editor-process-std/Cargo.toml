@@ -54,3 +54,13 @@ libc = "=0.2.191"
 # `editor-fs-std`, whose manifest says why this library and no other;
 # `deny.toml` lists the crates that may depend on it.
 tempfile = { version = "=3.27.0", default-features = false }
+# The contract's ground waits for a process's end on the system's own exit
+# event (`tests/contract.rs`, `Ground::ends`): kqueue's `NOTE_EXIT` on
+# macOS, `pidfd_open` and `poll` on Linux, which need rustix's `event`
+# feature. The same rustix as above, pinned exactly; only the test build
+# has the feature, so the adapter's library build is unchanged. The ground
+# reads the system itself rather than through `editor-launch-std`'s
+# `StdPids::wait_exit`, its twin over the same calls: `deny.toml` lets only
+# `editor-ffi` link the launcher's adapters, and a contract's ground must
+# not rest on a second adapter's correctness.
+rustix = { version = "=1.1.6", default-features = false, features = ["std", "process", "event"] }

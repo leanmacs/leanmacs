@@ -9,8 +9,10 @@
 //! are not touched.
 //!
 //! The ground reads the truth with the system directly, never through the
-//! adapter: a file a child wrote with `std::fs`, and whether a process is
-//! alive with `kill(pid, 0)`.
+//! adapter: a file a child wrote with `std::fs`, whether a process is
+//! alive with `kill(pid, 0)`, and its end on the system's exit event
+//! (kqueue's `NOTE_EXIT` on macOS, a pidfd on Linux), never by asking
+//! again.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -21,12 +23,84 @@ use std::time::{Duration, Instant};
 use editor_process::contract::{self, Ground};
 use editor_process::{Command, Input, Processes, RefusalKind};
 use editor_process_std::StdProcesses;
+use rustix::io::Errno;
 use rustix::process::{Pid, Signal, kill_process, test_kill_process};
 use tempfile::TempDir;
 
-/// How long the ground waits for something that should happen at once: a
-/// file a child writes, a grandchild that its new parent reaps.
+/// hang guard: each event the ground and the check wait for with it, a
+/// file a child writes, a process's exit, a completion, which must come;
+/// only a hang reaches the bound, and the check then fails as a hang.
 const DEADLINE: Duration = Duration::from_secs(10);
+
+/// Whether the process `pid` exits within `bound`, told by kqueue's
+/// `NOTE_EXIT`: a registration refused with `ESRCH` means it has already
+/// ended. Any other failure is the error, with no polling in its place.
+/// The twin of `editor-launch-std`'s `StdPids::wait_exit`.
+#[cfg(target_os = "macos")]
+fn exits_within(pid: Pid, bound: Duration) -> rustix::io::Result<bool> {
+    use rustix::buffer::spare_capacity;
+    use rustix::event::kqueue::{Event, EventFilter, EventFlags, ProcessEvents, kevent, kqueue};
+    let queue = kqueue()?;
+    let change = Event::new(
+        EventFilter::Proc {
+            pid,
+            flags: ProcessEvents::EXIT,
+        },
+        EventFlags::ADD | EventFlags::ONESHOT,
+        std::ptr::null_mut(),
+    );
+    let mut out = Vec::with_capacity(1);
+    // SAFETY: the event names a process, not a file descriptor, so no
+    // descriptor it refers to can be closed while the queue lives.
+    let waited = unsafe { kevent(&queue, &[change], spare_capacity(&mut out), Some(bound)) };
+    match waited {
+        Ok(0) => Ok(false),
+        // A registration that fails with room for events comes back as an
+        // event flagged as an error, its errno in `data`.
+        Ok(_) => match out.first() {
+            Some(event) if event.flags().contains(EventFlags::ERROR) => {
+                let errno =
+                    i32::try_from(event.data()).map_or(Errno::INVAL, Errno::from_raw_os_error);
+                if errno == Errno::SRCH {
+                    Ok(true)
+                } else {
+                    Err(errno)
+                }
+            }
+            _ => Ok(true),
+        },
+        Err(Errno::SRCH) => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether the process `pid` exits within `bound`, told by its pidfd's
+/// becoming readable: `ESRCH` from `pidfd_open` means it has already
+/// ended. Any other failure is the error, with no polling in its place.
+/// The twin of `editor-launch-std`'s `StdPids::wait_exit`.
+#[cfg(target_os = "linux")]
+fn exits_within(pid: Pid, bound: Duration) -> rustix::io::Result<bool> {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    use rustix::process::{PidfdFlags, pidfd_open};
+    let fd = match pidfd_open(pid, PidfdFlags::empty()) {
+        Ok(fd) => fd,
+        Err(Errno::SRCH) => return Ok(true),
+        Err(error) => return Err(error),
+    };
+    let timeout = Timespec {
+        tv_sec: i64::try_from(bound.as_secs()).unwrap_or(i64::MAX),
+        tv_nsec: bound.subsec_nanos().try_into().unwrap_or(0),
+    };
+    let mut fds = [PollFd::new(&fd, PollFlags::IN)];
+    Ok(poll(&mut fds, Some(&timeout))? > 0)
+}
+
+/// No exit event this ground knows of: the check fails with the error
+/// rather than polling.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn exits_within(_pid: Pid, _bound: Duration) -> rustix::io::Result<bool> {
+    Err(Errno::NOSYS)
+}
 
 /// The ground for the adapter: a temporary directory, and the system asked
 /// directly.
@@ -84,8 +158,16 @@ impl Ground for System {
         match test_kill_process(pid) {
             Ok(()) => true,
             // A process of another user's is there all the same.
-            Err(error) => error == rustix::io::Errno::PERM,
+            Err(error) => error == Errno::PERM,
         }
+    }
+
+    fn ends(&self, id: u32) -> bool {
+        let Some(pid) = i32::try_from(id).ok().and_then(Pid::from_raw) else {
+            return true;
+        };
+        exits_within(pid, DEADLINE)
+            .unwrap_or_else(|error| panic!("no wait for the exit of process {id}: {error}"))
     }
 
     fn end(&self, id: u32) {
@@ -112,6 +194,36 @@ impl Ground for System {
     fn deadline(&self) -> Duration {
         DEADLINE
     }
+}
+
+/// The ground's exit wait on a process of the test's own, in each state it
+/// can find one in: running for the whole of a bound of zero, a zombie
+/// once killed and not yet reaped, and gone once reaped.
+#[test]
+fn the_grounds_exit_wait_says_running_for_a_live_process_and_ended_for_a_zombie_and_a_reaped_one() {
+    let mut child = std::process::Command::new("/bin/sleep")
+        .arg("600")
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .expect("sleep starts");
+    let pid = i32::try_from(child.id())
+        .ok()
+        .and_then(Pid::from_raw)
+        .expect("a pid");
+
+    // Alive until it is killed, so a wait of no time finds it running.
+    let running = exits_within(pid, Duration::ZERO);
+    kill_process(pid, Signal::KILL).expect("the child can be killed");
+    // A zombie until it is reaped: it has exited.
+    let zombie = exits_within(pid, DEADLINE);
+    let alive_as_zombie = System::new().alive(child.id());
+    child.wait().expect("the child is reaped");
+    let reaped = exits_within(pid, DEADLINE);
+
+    assert_eq!(running, Ok(false));
+    assert_eq!(zombie, Ok(true), "a zombie has ended");
+    assert!(alive_as_zombie, "though `alive` counts it");
+    assert_eq!(reaped, Ok(true), "no such process has ended");
 }
 
 #[test]

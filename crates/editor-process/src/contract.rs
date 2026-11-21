@@ -31,10 +31,14 @@
 //! a cancelled run reaped among it, waits on a flush ([`Service::flush`]),
 //! never on the pending count.
 //!
-//! The streaming properties wait on what the child shows, never for a
-//! fixed time: a marker file it makes (`: > written`), read with
-//! [`Ground::exists`], and [`Service::held`]. [`STREAM_COALESCED`]'s bound
-//! is exactly what its child writes, so its readers are held once every
+//! Every wait of the check returns on its event, a completion, a child's
+//! wait, a stream's end, a reader's park ([`Service::wait_held`]) or a
+//! process's end ([`Ground::ends`]), and is bounded only by
+//! [`Ground::deadline`], a hang guard: no property is decided by a time
+//! running out, and none asks again until a time is up. A marker file a
+//! child makes (`: > finished`) is read once with [`Ground::exists`], where
+//! what it shows is already settled. [`STREAM_COALESCED`]'s bound is
+//! exactly what its child writes, so its readers are held once every
 //! chunk has been read while its one read was pending. Seen to bite once
 //! by hand, on 2026-11-15, on the fake: with the reader's room check taken
 //! out, [`STREAM_HELD`] fails (and [`STREAM_ORDER`], [`STREAM_COALESCED`],
@@ -58,9 +62,9 @@
 //! A process that has ended and is not reaped, a zombie, is alive to the
 //! ground. So "not alive" of a child the check started means ended and
 //! reaped. A grandchild is reaped by whatever adopts it (launchd, init, or
-//! the container's init), so its end is waited for, up to
-//! [`Ground::deadline`]; the check accepts the small risk that its id is
-//! given to another process inside that time.
+//! the container's init), so its end, its exit, is waited for with
+//! [`Ground::ends`], up to [`Ground::deadline`]; the check accepts the
+//! small risk that its id is given to another process inside that time.
 //!
 //! # Where an addition goes
 //!
@@ -72,7 +76,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::fake::{Hold, Script, Step, Writer};
 use crate::frame::{Frames, Framing};
@@ -95,13 +99,23 @@ pub trait Ground {
     fn written(&self, path: &Path) -> Option<u32>;
 
     /// Whether a file is at `path` now, empty or not: a marker a child
-    /// made (`: > name`). It does not wait; the check asks again until a
-    /// deadline when it waits for one.
+    /// made (`: > name`). It does not wait, and the check reads it only
+    /// where what it shows is already settled.
     fn exists(&self, path: &Path) -> bool;
 
     /// Whether a process with the id `id` exists, a zombie counted as
     /// alive.
     fn alive(&self, id: u32) -> bool;
+
+    /// Waits until the process `id` has ended, up to [`Ground::deadline`];
+    /// true if it did. It returns on the end itself, an event of the
+    /// system's (or of the fake's state), never by asking again: its end
+    /// is its exit, so a zombie has ended though [`Ground::alive`] still
+    /// counts it, and an id no process has has ended. Its twin is
+    /// `editor-launch-std`'s `StdPids::wait_exit`, the launcher's real
+    /// exit wait, over the same system calls; a fix to one is looked for
+    /// in the other.
+    fn ends(&self, id: u32) -> bool;
 
     /// Ends the process with the id `id`, which a child of the check's
     /// started outside its group: nothing the port does ends it, and the
@@ -113,8 +127,11 @@ pub trait Ground {
     /// [`ESCAPED`] is not checked, and the ground says so where it answers.
     fn escapes(&self) -> bool;
 
-    /// How long the check waits for what should happen at once. Only an
-    /// implementation that breaks a rule takes this long.
+    /// hang guard: each event the check waits for with it, a completion, a
+    /// child's wait, a stream's end, a reader's park or a process's end,
+    /// which must come; only a hang reaches the bound, and the property
+    /// then fails as a hang. Only an implementation that breaks a rule
+    /// takes this long.
     fn deadline(&self) -> Duration;
 }
 
@@ -763,21 +780,6 @@ impl<G: Ground> Check<'_, G> {
         self.dir.join(name)
     }
 
-    /// Whether `ready` holds within the deadline, asked again until it
-    /// does.
-    fn soon(&self, ready: impl Fn() -> bool) -> bool {
-        let end = Instant::now() + self.ground.deadline();
-        loop {
-            if ready() {
-                return true;
-            }
-            if Instant::now() >= end {
-                return false;
-            }
-            thread::sleep(Duration::from_millis(2));
-        }
-    }
-
     /// Starts `command`, its input closed, and a reader for each of its
     /// streams.
     fn start<P: Processes>(processes: &P, command: &Command) -> Result<Started<P::Child>, Refusal> {
@@ -926,7 +928,7 @@ impl<G: Ground> Check<'_, G> {
         before
             && exit == Some(Exit::Signal(9))
             && !self.ground.alive(child.id())
-            && self.soon(|| !self.ground.alive(grandchild))
+            && self.ground.ends(grandchild)
     }
 
     /// [`STRAGGLERS`].
@@ -946,7 +948,7 @@ impl<G: Ground> Check<'_, G> {
         let streams = self.streams(&started);
         exit == Some(Exit::Code(0))
             && !self.ground.alive(child.id())
-            && self.soon(|| !self.ground.alive(grandchild))
+            && self.ground.ends(grandchild)
             && streams == Some((Vec::new(), Vec::new()))
     }
 
@@ -1028,7 +1030,7 @@ impl<G: Ground> Check<'_, G> {
         cancelled
             && reaped
             && !self.ground.alive(child)
-            && self.soon(|| !self.ground.alive(grandchild))
+            && self.ground.ends(grandchild)
             && completions.ids() == [FLUSHED]
     }
 
@@ -1056,7 +1058,7 @@ impl<G: Ground> Check<'_, G> {
             && families.iter().all(|&(child, _)| !self.ground.alive(child))
             && families
                 .iter()
-                .all(|&(_, grandchild)| self.soon(|| !self.ground.alive(grandchild)))
+                .all(|&(_, grandchild)| self.ground.ends(grandchild))
             && service.pending() == 0
             && completions.ids().is_empty()
     }
@@ -1117,7 +1119,7 @@ impl<G: Ground> Check<'_, G> {
                     limit: 4,
                 })
             && !self.ground.alive(child)
-            && self.soon(|| !self.ground.alive(grandchild))
+            && self.ground.ends(grandchild)
     }
 
     /// Starts the escaping run `name` as `id` on `service`: the ids of its
@@ -1241,7 +1243,7 @@ impl<G: Ground> Check<'_, G> {
                     stderr: Vec::new(),
                 })
             && !self.ground.alive(child)
-            && self.soon(|| !self.ground.alive(grandchild))
+            && self.ground.ends(grandchild)
     }
 
     /// Writes every byte of `bytes` to `input`.
@@ -1536,9 +1538,9 @@ impl<G: Ground> Check<'_, G> {
         );
         let (streams, completions) = &service;
         let read = opened && streams.read(1, 2);
-        let all_read = read
-            && self.soon(|| self.ground.exists(&self.at("written")))
-            && self.soon(|| streams.held(1) == Some(true));
+        // The bound is exactly what the child writes, so its readers are
+        // held only once all of it is written and read.
+        let all_read = read && streams.wait_held(1, self.ground.deadline());
         let once = all_read && completions.ids() == [1, 2];
         let whole = once
             && matches!(
@@ -1563,7 +1565,7 @@ impl<G: Ground> Check<'_, G> {
             lines(Input::Closed, bound),
         );
         let held = opened
-            && self.soon(|| service.0.held(1) == Some(true))
+            && service.0.wait_held(1, self.ground.deadline())
             && !self.ground.exists(&finished);
         let mut wait = 1;
         let went_on =
@@ -1599,9 +1601,9 @@ impl<G: Ground> Check<'_, G> {
                 stream: Stream::Out,
                 bound: 1024,
             })
-            && self.soon(|| !self.ground.alive(child))
-            && self.soon(|| !self.ground.alive(grandchild))
-            && self.flushed(&service.0, &service.1);
+            && self.flushed(&service.0, &service.1)
+            && !self.ground.alive(child)
+            && self.ground.ends(grandchild);
         self.done(&service, held)
     }
 
@@ -1653,13 +1655,13 @@ impl<G: Ground> Check<'_, G> {
             streams.cancel(1);
             return self.done(&service, false);
         };
-        let held = self.soon(|| streams.held(1) == Some(true));
+        let held = streams.wait_held(1, self.ground.deadline());
         let cancelled = streams.cancel(1);
         let ended = held
             && cancelled
             && self.flushed(streams, completions)
             && !self.ground.alive(child)
-            && self.soon(|| !self.ground.alive(grandchild))
+            && self.ground.ends(grandchild)
             && completions.ids() == [1, FLUSHED];
         self.done(&service, ended)
     }
@@ -1726,7 +1728,7 @@ impl<G: Ground> Check<'_, G> {
             self.ground.written(&self.at("h-child")),
             self.ground.written(&self.at("w-child")),
         );
-        let held = held_open && waiting_open && self.soon(|| service.0.held(1) == Some(true));
+        let held = held_open && waiting_open && service.0.wait_held(1, self.ground.deadline());
         let shut = self.shut(&service.0);
         let (Some(held_child), Some(waiting_child)) = ids else {
             return false;
