@@ -3039,16 +3039,29 @@ def hostLoopChecks (context : Context) : List Check :=
                                   sleep 10)
                                 fun _ => pure () }] }] })
           fun collaborators running stage => do
+          -- A post's invocation is in the mailbox before its event is pushed
+          -- onto the stage's memory queue: each push is waited on, and the
+          -- mailbox read after the next push is armed, so no push is missed,
+          -- a cancelled job's wake-up among them.
+          let mailbox := running.mailbox
+          let posted : IO Bool := do
+            repeat
+              let next ← stage.memory.arrived
+              if (← mailbox.size) == 1 then
+                return true
+              if (← Job.awaitWithin hangGuard next).isNone then
+                return false
+            return false
           let (first, running) ← running.startJob collaborators "poster"
           let some first := first | return false
-          unless ← eventually (return (← running.mailbox.size) == 1) do
+          unless ← posted do
             return false
           let running := { running with jobs := ← running.jobs.cancel first }
           let running ← running.posted collaborators first
           let dropped := (← stage.output.get).isEmpty && (← running.mailbox.size) == 0
           let (second, running) ← running.startJob collaborators "poster"
           let some second := second | return false
-          unless ← eventually (return (← running.mailbox.size) == 1) do
+          unless ← posted do
             return false
           let running ← running.posted collaborators second
           let live := running.jobs.has second
@@ -3057,6 +3070,47 @@ def hostLoopChecks (context : Context) : List Check :=
           running.jobs.cancelAll
           return dropped && live && output[0]? == some s!"job {second} poster: ok" &&
               output.contains "text 0: \"p\"" },
+    { name :=
+        "a job's post made after its check's withRunning has returned lands on the stage's memory queue, never the library's editor queue, where the next host would take it"
+      run := do
+        -- Seen to bite once by hand: with withRunning's collaborators on the
+        -- library's queue, the post held past the bracket lands there, the
+        -- memory queue stays empty, and the next stepped check sees the
+        -- library's queue grow.
+        let kept : IO.Ref (Option (Job.FakeClock × IO.Promise Unit × Job.Jobs × TestStage)) ←
+          IO.mkRef none
+        let started ←
+          withRunning context
+              (fun collaborators =>
+                { collaborators with
+                  packages :=
+                    #[Compiled.package
+                        {
+                          jobs :=
+                            #[{ name := "late"
+                                work := fun _ =>
+                                  Work.of
+                                    (fun _ => do
+                                      discard now
+                                      post { command := "mark", arguments := [.str "p"] }
+                                      sleep 10)
+                                    fun _ => pure () }] }] })
+              fun collaborators running stage => do
+              -- The job's first read of the clock is held until the bracket
+              -- has returned: its post comes after.
+              let held ← stage.clock.holdReads
+              let (id, running) ← running.startJob collaborators "late"
+              kept.set (some (stage.clock, held, running.jobs, stage))
+              return id.isSome
+        let some (clock, held, jobs, stage) ← kept.get | return false
+        held.resolve ()
+        -- The job starts its sleep only once its post is pushed.
+        let sleeping ← clock.arrivedAt (.started 1)
+        let posted := (← Job.awaitWithin hangGuard sleeping.result?).isSome
+        let queued ← stage.memory.size
+        jobs.cancelAll
+        saw (started && posted && queued == 1)
+            s!"started={started} posted={posted} queued on the stage's memory queue={queued}" },
     { name :=
         "a key's command starts a job with an argument: the host says it started, keys sent while the job sleeps are handled before its result, and once the clock lets it go its command runs after them, with the value the job computed in the text and in the scene's echo"
       run :=

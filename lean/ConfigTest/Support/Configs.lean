@@ -123,14 +123,18 @@ abbrev TestRunning :=
 with the collaborators `adjust` makes of those of a stage of its own over an
 empty config directory, and the stage. The library is told the interrupt
 key, as the host's loop tells it, but no loop runs: the check calls the
-host's handlers itself, on its own thread. Afterwards the library has no
-interrupt key and the flag is down, whatever the check did. The directory
-is removed. -/
+host's handlers itself, on its own thread. What the host posts goes onto
+the stage's memory queue (`Stage.memory`), never the library's, so a check
+waits for a post on the push itself (`Headless.Queue.Memory.arrived`) and
+leaves nothing on the library's queue for the next host. Afterwards the
+library has no interrupt key and the flag is down, whatever the check did.
+The directory is removed. -/
 def withRunning (context : Context) (adjust : TestCollaborators → TestCollaborators)
     (check : TestCollaborators → TestRunning → TestStage → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-    let collaborators := adjust stage.collaborators
+    let collaborators :=
+      adjust { stage.collaborators with queue := stage.memory.queue Headless.Posted.toFfi }
     unless ← Event.setInterruptKey (some collaborators.interruptKey) do
       return false
     try
