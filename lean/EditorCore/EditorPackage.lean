@@ -1,6 +1,5 @@
 import Editor.Evil.Compiled
 import Editor.Ex.Compiled
-import Editor.Files.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.Menu.Compiled
 import Editor.PackageSet.Compiled
@@ -125,7 +124,10 @@ control's modes. The buffer commands' package, which was fourth here,
 after `ex`, is the default package `buffers` (`packages/buffers/`), the
 first of the default packages to register (features-as-packages phase 6,
 D5): its commands follow version control's gutter's in the command prompt,
-before the completion styles' package's.
+before the completion styles' package's. The file commands' package,
+which was first here, is the default package `files` (`packages/files/`),
+and registers right before `buffers`: its commands follow version
+control's gutter's in the command prompt.
 -/
 
 namespace EditorCore.EditorPackage
@@ -135,9 +137,9 @@ open Editor
 /-- The packages of the core's Lake package, in the order a host registers
 them ("The order", in the module docs). -/
 def packages : Array Package :=
-  #[Files.package, Evil.package, Ex.package, FrameCommands.package, Menu.package,
-    WindowCommands.package, TabCommands.package, Themes.package, Workspace.package,
-    ProjectSearch.package, WorkingSet.package, Restore.package, PackageSet.package, Shell.package,
-    VersionControl.package, VersionControl.gutterPackage]
+  #[Evil.package, Ex.package, FrameCommands.package, Menu.package, WindowCommands.package,
+    TabCommands.package, Themes.package, Workspace.package, ProjectSearch.package,
+    WorkingSet.package, Restore.package, PackageSet.package, Shell.package, VersionControl.package,
+    VersionControl.gutterPackage]
 
 end EditorCore.EditorPackage

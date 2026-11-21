@@ -22,7 +22,7 @@ open Editor
 /-- The names of the packages of the core's Lake package, in the order they
 register. -/
 def shippedPackageNames : Array String :=
-  #["files", "evil", "ex", "frame-commands", "menu", "window-commands", "tab-commands", "themes",
+  #["evil", "ex", "frame-commands", "menu", "window-commands", "tab-commands", "themes",
     "workspace", "project-search", "working-set", "restore", "package-set", "shell",
     "version-control", "version-control-gutter"]
 
@@ -31,7 +31,7 @@ def shippedPackageNames : Array String :=
 every package of it is accepted, and what it registers is all theirs. -/
 def packageSetChecks : List Check :=
   [{  name :=
-        "the shipped set keeps exactly two stores across a restart, the shell's history and version control's reviews, reports exactly the jobs a person waits on: the search, the package-set build, the shell's run, and version control's apply, hunk apply and commit, and leaves exactly the jobs their owner starts again to it: the files' check and follow, the workspace's find, marker search and listing, the restore's six and the gutter's three"
+        "the shipped set keeps exactly two stores across a restart, the shell's history and version control's reviews, reports exactly the jobs a person waits on: the search, the package-set build, the shell's run, and version control's apply, hunk apply and commit, and leaves exactly the jobs their owner starts again to it: the workspace's find, marker search and listing, the restore's six and the gutter's three"
       run :=
         let (state, _) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
@@ -42,19 +42,20 @@ def packageSetChecks : List Check :=
               #["project-search", "package-build", "shell-run", "vc-status-apply", "vc-hunk-apply",
                 "vc-commit-run"] &&
             (state.registry.jobs.filter (·.registration.restarted)).map (·.registration.name) ==
-              #["check-files", "follow-file", "find-workspace", "find-mode-markers", "compile-list",
-                "restore", "restore-files", "restore-write", "restore-save", "restart-probe",
-                "restart-save", "vc-gutter-head", "vc-gutter-diff", "vc-gutter-refs"] },
+              #["find-workspace", "find-mode-markers", "compile-list", "restore", "restore-files",
+                "restore-write", "restore-save", "restart-probe", "restart-save", "vc-gutter-head",
+                "vc-gutter-diff", "vc-gutter-refs"] },
     { name :=
-        "every package of the shipped set is accepted, and their names are the 16 of the package table, each once, in its order, with no package of the shipped palettes and none of the buffer commands, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
+        "every package of the shipped set is accepted, and their names are the 15 of the package table, each once, in its order, with no package of the shipped palettes and none of the file commands, the buffer commands, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
       run :=
         let (state, refused) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (refused == #[] &&
             EditorCore.EditorPackage.packages.map (·.name) == shippedPackageNames &&
-            shippedPackageNames.size == 16 &&
-            shippedPackageNames.toList.eraseDups.length == 16 &&
+            shippedPackageNames.size == 15 &&
+            shippedPackageNames.toList.eraseDups.length == 15 &&
+            !shippedPackageNames.contains "files" &&
             !shippedPackageNames.contains "buffers" &&
             !shippedPackageNames.contains "shipped-themes" &&
             !shippedPackageNames.contains "compile" &&

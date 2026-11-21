@@ -11,7 +11,6 @@ import Editor.Display.Contract
 import Editor.Evil.Kit
 import Editor.Evil.Theorems
 import Editor.Ex.Compiled
-import Editor.Files.Kit
 import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Contract
 import Editor.Main
@@ -83,11 +82,8 @@ hand-written minibuffer (`Editor.Test.Minibuffer`), and
 at-point (`Editor.Test.AtPoint`), which no other kit module imports) and the
 linked tests' (`Editor.Test.Linked.…`, `Editor/Test/Linked/`: its rig, its
 services, its trees and its hosts over the real elaborator, which bring
-their listings); and the feature kits: the files feature's
-(`Editor.Files.Kit`, the drivers of the real file commands), which the
-files feature's tests and the tests left to cut in phase 6 import, and
-which brings the kit's own file opener (`Editor.Test.Opener`) through
-`Editor.Test.Workspace`; the workspace's (`Editor.Workspace.Kit`, its world,
+their listings); and the feature kits still in the core (the files feature's,
+`FilesTest.Kit`, is the files package's since phase 6): the workspace's (`Editor.Workspace.Kit`, its world,
 finder jobs and driver), which brings `Editor.Test.Listing`; and the
 shell's (`Editor.Shell.Kit`). Everything else comes with them: the kit is the support the
 core's own tests are written on, so it imports the driver of the loop that

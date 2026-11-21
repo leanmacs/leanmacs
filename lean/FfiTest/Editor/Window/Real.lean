@@ -23,6 +23,7 @@ import Editor.Window
 import Editor.Window.Real
 import Editor.Workspace
 import EditorCore.EditorPackage
+import FilesApiTest.Fake
 
 /-!
 # FFI tests: `Editor/Window/Real.lean`
@@ -50,8 +51,9 @@ set's packages.
 namespace FfiTest
 
 /-- The packages the window host is handed in these scenarios, as the
-default editor's root hands them: the core's Lake package's, then the
-kit's stand-ins for the default packages whose data the core keeps
+default editor's root hands them: the core's Lake package's, then
+`files-api`'s fake (`FilesApiTest.fake`), which opens the file in place of
+the default package `files`, then the kit's stand-ins for the default packages whose data the core keeps
 (`Editor.Test.Shipped`, `Editor/Test/Shipped.lean`), then the kit's
 implementation of the default package `at-point`'s commands
 (`Editor.Test.AtPoint`, `Editor/Test/AtPoint.lean`), which insert state's
@@ -59,7 +61,7 @@ implementation of the default package `at-point`'s commands
 `minibuffer`'s commands and mode (`Editor.Test.Minibuffer`,
 `Editor/Test/Minibuffer.lean`), which answer a prompt. -/
 def shippedPackages : Array Editor.Package :=
-  EditorCore.EditorPackage.packages ++ Editor.Test.Shipped.packages ++
+  EditorCore.EditorPackage.packages ++ #[FilesApiTest.fake] ++ Editor.Test.Shipped.packages ++
     #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package]
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's

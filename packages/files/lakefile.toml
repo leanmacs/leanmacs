@@ -1,0 +1,65 @@
+# The file commands, `open-file`, `save-buffer`, `edit-file`,
+# `reload-buffer` and `auto-reload-mode`, their jobs, the file source and
+# the path style's use for the category `file`: a default package, a Lake
+# package outside the core that the default package set requires
+# (../lakefile.toml; docs/design/packages.md, "The package set and its
+# build"). It was three modules of the core, `Editor.Files`,
+# `Editor.Files.Compiled` and `Editor.Completion.Paths`, until the
+# features-as-packages roadmap's phase 6. The gate's package steps build,
+# test, lint and format-check it through the fixture set, which requires the
+# default set (tools/package-set.sh), and the package imports check holds
+# what it imports of the core (tools/package-imports-check.sh).
+#
+# - `Files` is the package's library: `Files.lean`, the commands and their
+#   jobs, `Files/Paths.lean`, the file source, `Files/Compiled.lean`, the
+#   `Package` value, and its entry module `Files/EditorPackage.lean`, which
+#   the package-set build reads. Its `globs` hold every module under
+#   `Files`, so the package imports check sees each one's imports. It
+#   implements the core's interface library `files-api` (`FilesApi`, a core
+#   interface for good: session restore adopts files through it), so it
+#   requires no package but the core.
+# - `files-test` is its test driver (`lake test`): the tests that need no
+#   Rust library, rooted at `FilesTest/Model.lean`. It is no default target,
+#   as the core's `model-test` is not: `mise run lean` links with the system
+#   compiler, which this executable has no flags for.
+# - `FilesTest` holds the test modules and the files' test kit
+#   (`FilesTest/Kit.lean`, the drivers of the real file commands),
+#   `FilesTest/Linked.lean` among them: the root of the executable the
+#   core's `editorLinked` facet links as the editor is linked, with the Rust
+#   library. It runs the files' checks through the headless host over the
+#   real elaborator, the library's file service and its watch service.
+#
+# It has no headless fixture of its own: the core's fixtures
+# tests/headless/open-file and tests/headless/files, which run on the
+# default set's editor, open and save files through it.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its modules,
+# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/files update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages,
+# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+name = "files"
+testDriver = "«files-test»"
+defaultTargets = ["Files", "FilesTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "Files"
+globs = ["Files.*"]
+
+[[lean_lib]]
+name = "FilesTest"
+globs = ["FilesTest.+"]
+
+[[lean_exe]]
+name = "files-test"
+root = "FilesTest.Model"

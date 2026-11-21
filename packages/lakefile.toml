@@ -10,7 +10,8 @@
 # from it (`mise run app`).
 #
 # It requires the core and each default package. A default package has a
-# directory here and a `require` below: the buffer commands (buffers/), the
+# directory here and a `require` below: the file commands (files/), the buffer commands
+# (buffers/), the
 # completion styles and displays
 # (completion/, with its interface package completion-api/, which it
 # requires), the mode line's segments (mode-line/), the minibuffer's
@@ -35,10 +36,17 @@ name = "default-set"
 name = "editor-core"
 path = "../lean"
 
+# The file commands, `open-file`, `save-buffer`, `edit-file`,
+# `reload-buffer` and `auto-reload-mode`: the first default package
+# (features-as-packages phase 6, D5: the features that left the core's list
+# register first, in the core's order). It implements the core's interface
+# library files-api.
+[[require]]
+name = "files"
+path = "files"
+
 # The buffer commands, `switch-buffer`, `list-buffers` and
-# `close-buffer`: the first default package (features-as-packages phase 6,
-# D5: the features that left the core's list register first, in the core's
-# order). It implements the core's interface library buffers-api.
+# `close-buffer`. It implements the core's interface library buffers-api.
 [[require]]
 name = "buffers"
 path = "buffers"

@@ -12,7 +12,6 @@ import ConfigTest.Editor.Evil.TreeObjects
 import ConfigTest.Editor.Ex
 import ConfigTest.Editor.Extension
 import ConfigTest.Editor.Face
-import ConfigTest.Editor.Files
 import ConfigTest.Editor.Headless
 import ConfigTest.Editor.Indent
 import ConfigTest.Editor.Keymap
@@ -191,8 +190,8 @@ show:
   the minibuffer and accepted with the test scheme's key for the role the
   minibuffer's mode fills;
 - `exScriptChecks`: scripts that a command ends, with `Headless.run` on
-  scripts built here, over the library's file service, so they run after
-  `fileChecks` and share their table of waits and pump: `e` on a file in a
+  scripts built here, over the library's file service, so they share the
+  table of waits and pump of the hosts over a real service: `e` on a file in a
   temporary directory, a commit, `w`, a join and `q`, and the same with
   `wq` and a join after it, each leave the file holding the buffer's text
   and end the script with no failure and the `show` line after the quit
@@ -260,8 +259,8 @@ show:
   restart comes back before any reload, and migrated by the package at a
   new version; a config's store comes back by the start-up reload, stays
   parked and written while a config's `setup` throws, and is claimed by a
-  later good reload. They run after `fileChecks`, whose table of waits the
-  first and the last share;
+  later good reload. The first and the last share the table of waits of
+  the hosts over a real service;
 - `journalFailureChecks`: the journal's failures in the host, over a
   journal whose failures the check puts there: they are taken after each
   step, and said once for each path, in the echo area and to the log;
@@ -283,27 +282,10 @@ show:
   binding: `load-theme` switches the frame to the chosen theme with config's
   face over it, with no reload, and the scene line names the theme; and a
   config naming a theme nobody registered says so in the echo area;
-- `fileChecks`: files through the host, over the library's file service.
-  They are the checks whose hosts are over a real service, so they share
-  one table of waits and the one completion pump, which the first of them
-  starts, and they run last. Each has temporary directories of its own and
-  writes its files' bytes itself.
-  - A job from config loads a file, and its handler makes a text of it:
-    the file's path is written into the config it loads.
-  - The file commands and their jobs as compiled code registers them
-    (`Files.package.registered.commands`, `Files.package.registered.jobs`): opening a file shows a buffer of its
-    text, named by its base name; saving a modified buffer writes the
-    buffer's text and clears the status line's modified field; opening a
-    path that is open starts no load; open then save with no edit leaves
-    the bytes of an LF file and of a CRLF file as they were, with the save
-    seen to have written; a save of a file changed on disk leaves it and
-    says so; and opening a path with no file says so and leaves the
-    window. The driver's `run` hands a command no argument, so each host
-    is handed a command, written here, that runs the compiled open command
-    with a path (`opening`). The last runs the open command by its name,
-    with no path: it asks for one, the path is committed into the
-    minibuffer, and the accept key opens it. Each host is handed the
-    minibuffer's commands and its mode for that.
+- the files' host checks (`languageChecks`, `fileChecks`, `reloadChecks`,
+  `filePromptChecks`, `autoReloadChecks`) are the files package's linked
+  test's since features-as-packages phase 6 (`FilesTest.Linked`,
+  `packages/files/FilesTest/Linked/Files.lean`).
 
 The compile mode as a real config sees it is not checked here: the compile
 mode is a package outside the core (`packages/compile/`), and the base this
@@ -322,7 +304,7 @@ executable. Each line a host emits is recorded with the thread that emitted
 it, which is how a check sees that a handler ran on the editor thread.
 
 All the checks share one base, made once in `run` and grown when a check's
-config first imports a module it does not hold (`ConfigTest.sharing`): a
+config first imports a module it does not hold (`Editor.Test.Linked.sharing`): a
 second import of a module in one process about doubles its memory. The
 checks whose config imports `Lean` run last, since every environment made
 from a base that holds `Lean` costs a few times more. The module data of
@@ -363,7 +345,6 @@ def checks (context : Context) : List Check :=
     hostLoopChecks context ++
     modeChecks context ++
     promptChecks context ++
-    filePromptChecks context ++
     atPointChecks context ++
     exChecks context ++
     evilChecks context ++
@@ -372,12 +353,8 @@ def checks (context : Context) : List Check :=
     cursorResolutionChecks () ++
     themeChecks context ++
     environmentHostChecks context ++
-    fileChecks context ++
     restoreOrderChecks context ++
     journalFailureChecks context ++
-    languageChecks context ++
-    reloadChecks context ++
-    autoReloadChecks context ++
     gutterChecks context ++
     exScriptChecks context ++
     leaderChecks context ++

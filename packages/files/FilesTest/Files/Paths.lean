@@ -2,7 +2,6 @@ import Editor.Command
 import Editor.Completion
 import Editor.Completion.Candidate
 import Editor.Completion.Later
-import Editor.Completion.Paths
 import Editor.File.Model
 import Editor.FileWatch
 import Editor.FileWatch.Model
@@ -17,17 +16,19 @@ import Editor.Scene
 import Editor.Test.Sources
 import Editor.Text
 import Editor.Text.Model
-import ModelTest.Check
+import Files.Paths
+import FilesTest.Check
 
 /-!
-# Model tests: `Editor/Completion/Paths.lean`
+# Model tests: `Files/Paths.lean`
 
-The model tests of `Editor/Completion/Paths.lean`: `pathsChecks`, the
-last of which are the completion sources' contract over the file source. The root
-module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `Files/Paths.lean`: `pathsChecks`, the
+last of which are the completion sources' contract over the file source. The test
+driver's root, `FilesTest/Model.lean`, runs them; its module doc says
+what each shows.
 -/
 
-namespace ModelTest
+namespace FilesTest
 
 open Editor
 
@@ -73,7 +74,7 @@ def pathsRefusal (text : String) (files : FileModel := pathsFiles)
   | .finished message => some message
   | _ => none
 
-/-- The checks of the file source (`Editor/Completion/Paths.lean`) on the job
+/-- The checks of the file source (`Files/Paths.lean`) on the job
 model. -/
 def pathsChecks : List Check :=
   [{    name :=
@@ -140,4 +141,4 @@ def pathsChecks : List Check :=
     (Editor.Test.sourceContract Completion.Paths.source).map fun (name, held) =>
       { name, run := pure held }
 
-end ModelTest
+end FilesTest

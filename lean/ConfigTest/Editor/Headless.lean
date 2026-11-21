@@ -77,6 +77,7 @@ import Editor.Window
 import Editor.WindowCommands.Compiled
 import Editor.Workspace
 import EditorCore.EditorPackage
+import FilesApiTest.Fake
 
 /-!
 # Config tests: `Editor/Headless.lean`
@@ -2562,6 +2563,17 @@ def shippedChecks (_ : Unit) : List Check :=
                 (Themes.package.name, Themes.source.name)].all
             fun (package, name) => ownedBy package name && (registry.source? name).isSome },
     { name :=
+        "the executable's hosts start with nothing of the files package: no command open-file, save-buffer, edit-file, reload-buffer or auto-reload-mode, no job load-file, save-file, reload-file, check-files or follow-file, no source files, no source in the category file, and no value of files-api's Files, registered by a package of the core's Lake package"
+      run := do
+        let registry := shippedRegistry
+        return ["open-file", "save-buffer", "edit-file", "reload-buffer", "auto-reload-mode"].all
+              (fun name => (registry.find? name).isNone) &&
+            ["load-file", "save-file", "reload-file", "check-files", "follow-file"].all
+              (fun name => (registry.findJob? name).isNone) &&
+            (registry.source? "files").isNone &&
+            registry.sourcesIn "file" == #[] &&
+            !(registry.extensions.any (·.owner == owned "files")) },
+    { name :=
         "the executable's hosts start with nothing of the buffers package: no command switch-buffer, list-buffers or close-buffer, no source buffers, no source in the category buffer, and no value of buffers-api's Buffers, registered by a package of the core's Lake package"
       run := do
         let registry := shippedRegistry
@@ -2643,7 +2655,7 @@ def shippedChecks (_ : Unit) : List Check :=
             registry.themes.map (fun entry => (entry.named.name, entry.owner.name)) ==
               #[("default", "themes")] },
     { name :=
-        "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a to open-file, save-buffer, undo, redo, clipboard-cut, clipboard-copy, clipboard-paste and select-all for the menu package, the commands the files package's and the evil package's"
+        "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a to open-file, save-buffer, undo, redo, clipboard-cut, clipboard-copy, clipboard-paste and select-all for the menu package, the edit commands the evil package's"
       run := do
         let registry := shippedRegistry
         let bound (text : String) : Option Invocation :=
@@ -2665,7 +2677,6 @@ def shippedChecks (_ : Unit) : List Check :=
             bound "s-c" == some { command := "clipboard-copy" } &&
             bound "s-v" == some { command := "clipboard-paste" } &&
             bound "s-a" == some { command := "select-all" } &&
-            ["open-file", "save-buffer"].all (ownedBy (shippedPackage "files")) &&
             ["undo", "redo", "clipboard-cut", "clipboard-copy", "clipboard-paste", "select-all"].all
               (ownedBy Evil.package) }]
 
@@ -2840,7 +2851,7 @@ def withRestoreHost (context : Context) (files : List (String × String))
     writeConfig directory files
     let stage ←
       Stage.new context context.elaborator (Config.Directory.source directory)
-          { packages := #[shippedPackage "files", Restore.package] }
+          { packages := #[FilesApiTest.fake, Restore.package] }
     let fake ← Job.FakeFiles.new stage.collaborators.services.completions journalledModel
     let stage :=
       { stage with
@@ -2866,7 +2877,7 @@ def withRestoreFiles (context : Context) (files : List (String × String))
       IO.FS.writeBinFile (Restore.logPath state 1 0 1) journalledLog
       let stage ←
         Stage.overFiles context (Config.Directory.source directory)
-            { packages := #[shippedPackage "files", restore] }
+            { packages := #[FilesApiTest.fake, restore] }
       let stage :=
         { stage with
           collaborators :=
@@ -2927,7 +2938,7 @@ def withStateHost (context : Context) (state : System.FilePath) (files : List (S
     writeConfig directory files
     let stage ←
       Stage.overFiles context (Config.Directory.source directory)
-          { packages := #[shippedPackage "files", Restore.package] ++ packages }
+          { packages := #[FilesApiTest.fake, Restore.package] ++ packages }
     let stage :=
       { stage with
         collaborators :=
@@ -2985,7 +2996,7 @@ def withFailingJournal (context : Context) (files : List (String × String))
       writeConfig directory files
       let stage ←
         Stage.overFiles context (Config.Directory.source directory)
-            { packages := #[shippedPackage "files", Restore.package] }
+            { packages := #[FilesApiTest.fake, Restore.package] }
       let running : System.FilePath := "/A.app/Contents/MacOS/editor"
       let processes ←
         Job.FakeProcesses.new stage.collaborators.services.completions

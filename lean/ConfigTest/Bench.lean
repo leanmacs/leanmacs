@@ -48,6 +48,7 @@ import Editor.Text
 import Editor.Text.Model
 import Editor.Text.Real
 import Editor.Watch
+import FilesApiTest.Fake
 import ShellApi
 
 /-!
@@ -824,8 +825,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             wakeups := requests + 1, jobs := requests + 2, environment := requests + 3,
             posts := requests + 4, pauseEvents := requests + 5,
             packages :=
-              #[listingsPackage, Test.Shipped.modeLine, shippedPackage "files",
-                Test.Minibuffer.package,
+              #[listingsPackage, Test.Shipped.modeLine, FilesApiTest.fake, Test.Minibuffer.package,
                 Compiled.package { commands := #[{ name := "noop", action := .plain (pure ()) }] }]
             workingDirectory := "/big" }
     try

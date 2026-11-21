@@ -1,11 +1,11 @@
 import Editor.Extension
-import Editor.Files
 import Editor.Package
+import Files
 
 /-!
 # The `files` package: the file commands and their jobs
 
-What a host registers so that it has the file commands (`Editor/Files.lean`):
+What a host registers so that it has the file commands (`Files.lean`):
 the package `files` (`Files.package`, `Editor/Package.lean`), whose `setup`
 registers the commands, the jobs they start, the file source and the file
 category's style. A host registers it for the owner `files` when its loop
@@ -71,9 +71,9 @@ This module is apart from `Editor/Files.lean` because it is what a host is
 handed, not what config calls: `Editor.lean` imports the commands, so that
 config calls them, and not this.
 
-Pinned by `ModelTest.fileCommandChecks`, on the models, by
-`ModelTest.filesPackageChecks` (the jobs restarted), and by
-`ConfigTest.fileChecks`, through the headless host on real files.
+Pinned by `FilesTest.fileCommandChecks`, on the models, by
+`FilesTest.filesPackageChecks` (the jobs restarted), and by
+`FilesTest.Linked.fileChecks`, through the headless host on real files.
 -/
 
 namespace Editor.Files

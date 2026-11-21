@@ -3,6 +3,7 @@ import Editor.Test.AtPoint
 import Editor.Test.Minibuffer
 import Editor.Test.Shipped
 import EditorCore.EditorPackage
+import FilesApiTest.Fake
 
 /-!
 # Config tests: support: Shipped
@@ -26,13 +27,15 @@ namespace ConfigTest
 
 open Editor
 
-/-- The packages of the core's Lake package, then the stand-ins for the
-default packages `mode-line` and `languages`, which register the shipped
+/-- The packages of the core's Lake package, then `files-api`'s fake
+(`FilesApiTest.fake`), which opens and saves files in place of the default
+package `files`, then the stand-ins for the default packages `mode-line`
+and `languages`, which register the shipped
 segments, and the `code` mode and the shipped languages, then the kit's
 implementations of the default packages `at-point`'s and `minibuffer`'s
 commands. -/
 def shippedPackages : Array Package :=
-  EditorCore.EditorPackage.packages ++ Test.Shipped.packages ++
+  EditorCore.EditorPackage.packages ++ #[FilesApiTest.fake] ++ Test.Shipped.packages ++
     #[Test.AtPoint.package, Test.Minibuffer.package]
 
 /-- `packages` completing at point through the core's test kit: a package

@@ -86,21 +86,6 @@ several joined with `:`, as the editor reads its own
 def oleanDirs (argument : String) : List System.FilePath :=
   (ModuleLookup.searchPath argument).map System.FilePath.mk
 
-/-- `real` with one base shared by every caller, kept in `latest`: whatever
-base a caller hands in, `base` grows the one in `latest` to hold the
-modules asked for, keeps it and returns it. A module of the toolchain is
-then read once in the process, whichever check first imports it: a second
-read of a module file about doubles its memory. A base holds at least what
-was asked for, which is all the port says of it. -/
-def sharing (latest : IO.Ref (Option Config.Elaborate.Base))
-    (real : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle) :
-    Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle :=
-  { real with
-    base := fun _ modules => do
-      let base ← real.base (← latest.get) modules
-      latest.set (some base)
-      return base }
-
 /-- Makes the base once and runs every check: names on stderr the ones that
 failed, and returns the exit status, 0 when all hold and 1 otherwise.
 
@@ -116,7 +101,7 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
   IO.FS.withTempDir fun scratch => do
       let files ← Config.Elaborate.ModuleFiles.over (pure scratch)
       let elaborator :=
-        sharing (← IO.mkRef none)
+        Editor.Test.Linked.sharing (← IO.mkRef none)
           (Config.Elaborate.elaborator
             { sysroot, oleanDirs := oleanDirs oleanDir,
               imports := #[`Editor, `ConfigFixture, `ExtensionFixture] }

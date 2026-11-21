@@ -1,20 +1,21 @@
 import Editor.Config.Packages
-import Editor.Files.Compiled
+import Files.Compiled
 import FilesApiTest.Contract
-import ModelTest.Check
+import FilesTest.Check
 
 /-!
-# Model tests: `Editor/Files/Compiled.lean`
+# Model tests: `Files/Compiled.lean`
 
-The model tests of `Editor/Files/Compiled.lean`: `filesPackageChecks`. The
-root module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `Files/Compiled.lean`: `filesPackageChecks`. The test
+driver's root, `FilesTest/Model.lean`, runs them; its module doc says
+what each shows.
 -/
 
-namespace ModelTest
+namespace FilesTest
 
 open Editor
 
-/-- The checks of the `files` package (`Editor/Files/Compiled.lean`): which
+/-- The checks of the `files` package (`Files/Compiled.lean`): which
 of its jobs a restart reports and which it leaves to the package to start
 again; and the contract of the interface library `files-api`
 (`FilesApiTest.contractChecks`), with a check that it bites. -/
@@ -38,4 +39,4 @@ def filesPackageChecks : List Check :=
               [Files.saveJob, Files.loadJob, Files.reloadJob].all fun name =>
                 jobs.any (·.name == name)) }]
 
-end ModelTest
+end FilesTest

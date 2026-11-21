@@ -48,9 +48,9 @@ minibuffer or the loop. `open-file` and `edit-file` ask with it
 
 | Addition | Where | Pinned by |
 |---|---|---|
-| Another field of a candidate | `candidate` | `ModelTest.pathsChecks` |
-| Another order | `ordered` | `ModelTest.pathsChecks` |
-| Another rule for what is hidden | `candidate`'s `hiddenUntil` | `ModelTest.pathsChecks` |
+| Another field of a candidate | `candidate` | `FilesTest.pathsChecks` |
+| Another order | `ordered` | `FilesTest.pathsChecks` |
+| Another rule for what is hidden | `candidate`'s `hiddenUntil` | `FilesTest.pathsChecks` |
 -/
 
 namespace Editor.Completion

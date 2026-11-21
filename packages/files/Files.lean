@@ -1,7 +1,7 @@
-import Editor.Completion.Paths
 import Editor.FileJobs
 import Editor.Jumps
 import Editor.Language
+import Files.Paths
 import FilesApi
 
 /-!
@@ -328,11 +328,11 @@ request holds plain data. So what a file job is started with is a
 structure, an order, with its encoding as a `List Argument` (`arguments`)
 and the way back (`ofArguments?`), which undoes it.
 
-Pinned by `ModelTest.fileCommandChecks`, for a file's language
-`ModelTest.languageOpenChecks`, and, for a reload,
-`ModelTest.fileReloadChecks`, on the loop's driver over the editor's models
-and the model of files; and by `ConfigTest.reloadChecks`, and for a file's
-language `ConfigTest.languageChecks`, through the headless host on real
+Pinned by `FilesTest.fileCommandChecks`, for a file's language
+`FilesTest.languageOpenChecks`, and, for a reload,
+`FilesTest.fileReloadChecks`, on the loop's driver over the editor's models
+and the model of files; and by `FilesTest.Linked.reloadChecks`, and for a file's
+language `FilesTest.Linked.languageChecks`, through the headless host on real
 files.
 -/
 

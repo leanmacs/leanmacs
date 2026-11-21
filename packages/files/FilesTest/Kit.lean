@@ -4,12 +4,9 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Completion
 import Editor.Completion.Later
-import Editor.Completion.Paths
 import Editor.Config.Packages
 import Editor.Ex.Line
 import Editor.File.Model
-import Editor.Files
-import Editor.Files.Compiled
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
@@ -21,6 +18,9 @@ import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Models
+import Files
+import Files.Compiled
+import Files.Paths
 
 /-!
 # The files feature's test kit: the drivers of the real file commands
@@ -239,7 +239,7 @@ def noteRewritten : Option TestDriver :=
 /-- The files feature's package, as a host registers it: what a test that
 runs the real file commands over a host or a rig hands it, so that a
 package's test, which may not import the module that defines the package
-(`Editor/Files/Compiled.lean`), reaches it through this test double. -/
+(`Files/Compiled.lean`), reaches it through this test double. -/
 def filesPackage : Package :=
   Files.package
 

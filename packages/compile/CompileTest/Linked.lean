@@ -8,6 +8,7 @@ import Editor.Test.AtPoint
 import Editor.Test.Linked.Services
 import Editor.Test.Shipped
 import EditorCore.EditorPackage
+import FilesApiTest.Fake
 import MinibufferApiTest.Fake
 
 /-!
@@ -66,7 +67,10 @@ declaration of this package, so the host is told to elaborate it on
 -/
 
 /-- The packages a set that holds this Lake package hands its editor: the
-core's, which this package requires, the core's test kit's stand-in for
+core's, which this package requires, `files-api`'s fake
+(`FilesApiTest.fake`), whose `Files` value the visit of a location opens a
+file with, in place of the default package `files`, the core's test kit's
+stand-in for
 the default package `mode-line` (`Editor.Test.Shipped.modeLine`), whose
 segments the host's status lines print, as the default editor's do, and
 its implementation of the default package `at-point`'s commands
@@ -76,7 +80,8 @@ its implementation of the default package `at-point`'s commands
 then its own, the order the package-set build registers them in. -/
 def setPackages : Array Editor.Package :=
   EditorCore.EditorPackage.packages ++
-    #[Editor.Test.Shipped.modeLine, Editor.Test.AtPoint.package, MinibufferApiTest.fake] ++
+    #[FilesApiTest.fake, Editor.Test.Shipped.modeLine, Editor.Test.AtPoint.package,
+      MinibufferApiTest.fake] ++
     Compile.EditorPackage.packages
 
 /-- The directory of the fixtures the checks over the real process service

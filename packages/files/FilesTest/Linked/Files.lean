@@ -1,17 +1,13 @@
-import ConfigTest.Check
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
 import Editor.Completion
-import Editor.Completion.Paths
 import Editor.Config.Packages
 import Editor.Event
 import Editor.Ex.Line
 import Editor.Face
 import Editor.File
 import Editor.File.Model
-import Editor.Files
-import Editor.Files.Compiled
 import Editor.InputScheme.Test
 import Editor.Language
 import Editor.Mode
@@ -24,19 +20,26 @@ import Editor.Test.Linked.Shipped
 import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.Text.Model
+import Files
+import Files.Compiled
+import Files.Paths
+import FilesTest.Check
 
 /-!
-# Config tests: `Editor/Files.lean`
+# Linked tests: `Files.lean`
 
-The tests of `Editor/Files.lean`: `languageChecks`, `fileChecks`, `reloadChecks`,
+The tests of `Files.lean`: `languageChecks`, `fileChecks`, `reloadChecks`,
 `filePromptChecks` and `autoReloadChecks`, through the headless host on real
 files, the last with the library's watch service: what the files feature's
 follow job does through the loop, which starts it under the core's name
-(`Editor/FileJobs.lean`). The root module
-`ConfigTest` runs them; its module doc says what each shows.
+(the core's `lean/Editor/FileJobs.lean`). They were the config test's
+(`ConfigTest.<name>`, `lean/ConfigTest/Editor/Files.lean`) while the file
+commands were modules of the core, and moved here with their sentences as
+they were. The linked test's root, `FilesTest/Linked.lean`, runs them; its
+module doc says what each shows.
 -/
 
-namespace ConfigTest
+namespace FilesTest.Linked
 
 open Editor
 open Editor.Test.Linked
@@ -337,7 +340,7 @@ other check of the gated run starts a pump, so none takes these checks'
 completions.
 
 The first is a job from config. The others are the file commands and their
-jobs as compiled code registers them (`Editor/Files/Compiled.lean`), on real
+jobs as compiled code registers them (`Files/Compiled.lean`), on real
 files: each check writes its files' bytes itself, in a temporary directory
 it makes, and hands its host the paths (`withFileHost`). -/
 def fileChecks (context : HostContext) : List Check :=
@@ -873,4 +876,4 @@ def autoReloadChecks (context : HostContext) : List Check :=
                 throw (IO.userError s!"the edited buffer was not marked within a second: {last}")
               return (← IO.FS.readBinFile path) == again.toUTF8 }]
 
-end ConfigTest
+end FilesTest.Linked

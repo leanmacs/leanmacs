@@ -4,7 +4,6 @@ import Editor.Command.Call
 import Editor.Command.Model
 import Editor.Completion.Candidate
 import Editor.Completion.Later
-import Editor.Completion.Paths
 import Editor.Completion.Style
 import Editor.Config.Packages
 import Editor.DisplayRules
@@ -14,9 +13,6 @@ import Editor.File.Cases
 import Editor.File.Model
 import Editor.FileWatch
 import Editor.FileWatch.Model
-import Editor.Files
-import Editor.Files.Compiled
-import Editor.Files.Kit
 import Editor.Fuzzy.Model
 import Editor.InputScheme.Test
 import Editor.Invocation
@@ -52,12 +48,16 @@ import Editor.UndoTree
 import Editor.Value
 import Editor.Watch.Model
 import Editor.Workspace
-import ModelTest.Check
+import Files
+import Files.Compiled
+import Files.Paths
+import FilesTest.Check
+import FilesTest.Kit
 
 /-!
-# Model tests: `Editor/Files.lean`
+# Model tests: `Files.lean`
 
-The model tests of `Editor/Files.lean`: `languageOpenChecks`,
+The model tests of `Files.lean`: `languageOpenChecks`,
 `fileCommandChecks`, `fileReloadChecks`, `fileNameChecks`,
 `stalenessChecks` and `autoReloadChecks`. The last two are the files
 feature's check and follow jobs (`Files.checkWork`, `Files.followWork`)
@@ -67,11 +67,12 @@ core's `loopFileJobChecks`.
 `languageOpenChecks` check the language a file is opened in
 (`Editor/Language.lean`) through the file commands, and `fileNameChecks`
 `open-file`'s prompt over file names, with the file source
-(`Editor/Completion/Paths.lean`) and the path style.
-The root module `ModelTest` runs them; its module doc says what each shows.
+(`Files/Paths.lean`) and the path style.
+The test driver's root, `FilesTest/Model.lean`, runs them; its module doc
+says what each shows.
 -/
 
-namespace ModelTest
+namespace FilesTest
 
 open Editor
 open Editor.Test
@@ -164,7 +165,7 @@ def adoptDriver : Option TestDriver :=
 (`Editor/Files.lean`, "Open"; `Editor/Language.lean`), on the loop's driver
 over the editor's models and the model of files. The syntax tree model
 knows one grammar, `json`, so every language here is parsed with it; Rust
-and Markdown are `ConfigTest.languageChecks`'s, over the real binding. -/
+and Markdown are `FilesTest.Linked.languageChecks`'s, over the real binding. -/
 def languageOpenChecks : List Check :=
   [{  name :=
         "opening a .json file gives its buffer the language json and the major mode code, and its text is attached with json and highlighted in the faces of the grammar's shipped query"
@@ -276,7 +277,7 @@ def finishedLoad (driver : TestDriver) : TestDriver × Option (Loop.Stepped Test
   | some job => driver.finish job.id
   | none => (driver, none)
 
-/-- The checks of the file commands (`Editor/Files.lean`), on the loop's
+/-- The checks of the file commands (`Files.lean`), on the loop's
 driver over the editor's models and the model of files: opening a file into
 a buffer, and saving a buffer to its file. No file is touched. -/
 def fileCommandChecks : List Check :=
@@ -2045,4 +2046,4 @@ def autoReloadChecks : List Check :=
             let (off, _) := fedTo armed (exLine "noautoread")
             armed.openWatches == 1 && off.openWatches == 0 }]
 
-end ModelTest
+end FilesTest

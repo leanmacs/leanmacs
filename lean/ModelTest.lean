@@ -29,7 +29,6 @@ import ModelTest.Editor.Completion.DisplayContract
 import ModelTest.Editor.Completion.Filtering
 import ModelTest.Editor.Completion.Keys
 import ModelTest.Editor.Completion.Later
-import ModelTest.Editor.Completion.Paths
 import ModelTest.Editor.Completion.Style
 import ModelTest.Editor.Completion.StyleContract
 import ModelTest.Editor.Config.Elaborator.Model
@@ -66,8 +65,6 @@ import ModelTest.Editor.File.Cases
 import ModelTest.Editor.File.Model
 import ModelTest.Editor.FileJobs
 import ModelTest.Editor.FileWatch.Model
-import ModelTest.Editor.Files
-import ModelTest.Editor.Files.Compiled
 import ModelTest.Editor.Floating
 import ModelTest.Editor.FrameCommands
 import ModelTest.Editor.Fuzzy.Contract
@@ -576,8 +573,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   their own lists hold to it, and the key hints' source, run on the kit's
   runner over `twoBuffers` and the editor's models
   (`Editor.Test.sourceRunner`, `Editor/Test/Sources.lean`), and seen to
-  report a source that writes and one that is refused. The files feature's
-  file source is held to it by `pathsChecks`, the buffers package's
+  report a source that writes and one that is refused. The files package's
+  file source is held to it by `FilesTest.pathsChecks` (in its package), the buffers package's
   buffer source by `BuffersTest.bufferCommandChecks` (in its package), and the workspace's find-file and
   find-in-project sources by `findFileChecks` and `findInProjectChecks`;
 - `keyHintSourceChecks`: the key hints' source
@@ -585,19 +582,6 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   annotation and kind, a source of the category `key` that has filtered
   and answers the same for any text, and the delay's notation and its
   longest;
-- `fileCommandChecks`: the file commands (`Editor/Files.lean`) on that
-  driver, over the model of files (`Editor/File/Model.lean`), with keys
-  bound to the commands and jobs registered as the test says: opening a
-  file into a buffer, a path that is open, a file that is not there, what
-  is typed while a load is in flight, and a file that would be shown in
-  the minibuffer's view; several paths opened one after another, with a
-  refused start, an asking view closed while a load runs and an interrupted
-  delivery among them; saving a buffer, a file that
-  changed on disk, a save that reports late, a forced save, and what each
-  command says when it starts nothing; the commands and jobs as
-  compiled code registers them (`Editor/Files/Compiled.lean`); and an
-  open-files input of two paths with one load in flight at a time. They
-  touch no file;
 - `jumpChecks`: a window's jump list held by markers (`Editor/Jumps.lean`)
   on that driver, over the model of files, with the kit's opener and
   stand-ins for switching and closing (`ModelTest/Support/Jumps.lean`): a
@@ -857,11 +841,10 @@ The config session's decisions are tested here too, with no elaborator:
   the compile mode's six are its package's, outside the core
   (`CompileTest.compilePackageChecks`, `packages/compile/`); and the
   gutter's three jobs restarted by their owner, none of version control's;
-- `filesPackageChecks`, `workspacePackageChecks` and
-  `restorePackageChecks`: which jobs each package leaves to its owner to
-  start again after a restart, never counted as stopped: the `files`
-  package `check-files` and `follow-file` (`Editor/Files/Compiled.lean`),
-  the `workspace` package `find-workspace`, `find-mode-markers` and
+- `workspacePackageChecks` and `restorePackageChecks`: which jobs each
+  package leaves to its owner to start again after a restart, never
+  counted as stopped (the `files` package's are
+  `FilesTest.filesPackageChecks`', in its package): the `workspace` package `find-workspace`, `find-mode-markers` and
   `compile-list` (`Editor/Workspace/Compiled.lean`), and the `restore`
   package its four (`Editor/Restore/Compiled.lean`);
 - `packageSetFingerprintChecks`: a user's package set's fingerprint
@@ -1583,7 +1566,6 @@ def checks : List Check :=
     extensionChecks ++
     exPackageChecks ++
     versionControlPackageChecks ++
-    filesPackageChecks ++
     workspacePackageChecks ++
     restorePackageChecks ++
     restartChecks ++
@@ -1701,8 +1683,6 @@ def checks : List Check :=
     completionJobChecks ++
     directoryChecks ++
     insertCandidateChecks ++
-    pathsChecks ++
-    fileNameChecks ++
     laterLoopChecks ++
     filteringChecks ++
     sourceContractChecks ++
@@ -1714,19 +1694,14 @@ def checks : List Check :=
     atPointLoopChecks ++
     atPointAskChecks ++
     atPointByItselfChecks ++
-    fileCommandChecks ++
     jumpChecks ++
     jumpGoChecks ++
     loopFileJobChecks ++
     fileJobChecks ++
     openFilesChecks ++
-    languageOpenChecks ++
     dispatchQuitChecks ++
     systemQuitChecks ++
     exChecks ++
-    fileReloadChecks ++
-    stalenessChecks ++
-    autoReloadChecks ++
     themeChecks ++
     appearanceChecks ++
     faceVocabularyChecks ++

@@ -20,6 +20,7 @@ import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
 import Editor.Mode
+import Editor.ModuleLookup
 import Editor.Package
 import Editor.Process
 import Editor.Program
@@ -84,6 +85,40 @@ structure HostContext where
   host made as the executable's are (`withVimHost`) is handed when a check
   names no others. -/
   packages : Array Package
+
+/-- `real` with one base shared by every caller, kept in `latest`: whatever
+base a caller hands in, `base` grows the one in `latest` to hold the
+modules asked for, keeps it and returns it. A module of the toolchain is
+then read once in the process, whichever check first imports it: a second
+read of a module file about doubles its memory. A base holds at least what
+was asked for, which is all the port says of it. -/
+def sharing (latest : IO.Ref (Option Config.Elaborate.Base))
+    (real : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle) :
+    Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle :=
+  { real with
+    base := fun _ modules => do
+      let base ← real.base (← latest.get) modules
+      latest.set (some base)
+      return base }
+
+/-- Runs `run` with the context of a harness of hosts over the real
+elaborator, as a package's linked test makes it: the elaborator over the
+toolchain in `sysroot` and the `.olean` directories `oleanDir` names (one,
+or several joined with `:`, as the editor reads its own), on the base
+`imports`, `Editor` by default, imported once before `run` and shared by
+every host (`sharing`); the module data of the config files the hosts
+elaborate in a temporary directory removed when it ends; source ids from
+100; and `packages` as the set's. -/
+def HostContext.run {α : Type} (sysroot oleanDir : String) (packages : Array Package)
+    (run : HostContext → IO α) (imports : Array Lean.Name := #[`Editor]) : IO α :=
+  IO.FS.withTempDir fun scratch => do
+    let files ← Config.Elaborate.ModuleFiles.over (pure scratch)
+    let oleanDirs := (ModuleLookup.searchPath oleanDir).map System.FilePath.mk
+    let elaborator :=
+      sharing (← IO.mkRef none) (Config.Elaborate.elaborator { sysroot, oleanDirs, imports } files)
+    discard <| elaborator.base none #[]
+    run { elaborator, ids := ← IO.mkRef 100, waits := ← IO.mkRef none, sysroot, oleanDirs
+          packages }
 
 /-- The table of waits every host over the library's file service is staged
 over, with the process's one completion pump running over it. It is made,

@@ -9,7 +9,6 @@ import Editor.Evil.Scroll
 import Editor.Evil.Theorems
 import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
-import Editor.Files
 import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
 import Editor.Shell
@@ -47,12 +46,11 @@ process requests (`Editor/Process.lean`): a job of config's runs a program
 with `Process.run`. Faces come
 with `Editor/Setup.lean` too (`Editor/Face.lean`): config sets one with
 `face`. The file
-commands are here too (`Editor/Files.lean`): a command of config's opens a
-file into a buffer with `Files.open`, which starts the job that loads it,
-and saves a buffer to its file with `Files.save`, which starts the job that
-writes it. Their registrations as compiled commands and jobs
-(`Editor/Files/Compiled.lean`) name the registry, which is the config
-session's, and are not imported. A command of config's asks for a string
+commands are the default package `files`' since the features-as-packages
+roadmap's phase 6 (`packages/files/Files.lean`): this base does not import
+them, and a config of a set that holds the package reaches `Files.open` and
+`Files.save` through the set's base, the package's entry module
+(`Files.EditorPackage`). A command of config's asks for a string
 with `prompt` (`Editor/Api.lean`), with candidates the answer may be
 chosen from when it gives completion sources that answer them
 (`prompt … (sources := [.given source, .named "name"])`,
@@ -102,10 +100,8 @@ command line is here too (`Editor/Ex.lean`, with an ex line as data in
 `Editor/Ex/Line.lean`): a command of config's runs a line with `Ex.run`,
 handed the target it was called with, and `setup` binds an ex name to a command with `exCommand`
 (`Editor/Setup.lean`). The registrations of the ex line's commands and the
-ex names that ship (`Editor/Ex/Compiled.lean`) are not imported. The file
-commands are imported here (`Editor/Files.lean`): the ex line reaches them
-through `files-api` since the features-as-packages roadmap's phase 6, so
-they no longer come with it. The buffer commands are here too (`Editor/Buffers.lean`):
+ex names that ship (`Editor/Ex/Compiled.lean`) are not imported. The ex line
+reaches the file commands through `files-api`. The buffer commands are here too (`Editor/Buffers.lean`):
 `Buffers.switchCommand`, `Buffers.listCommand` and `Buffers.closeCommand`,
 which switch a window to another buffer, list the open buffers and close
 one; their registrations (`Editor/Buffers/Compiled.lean`) are not
