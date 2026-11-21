@@ -1,10 +1,10 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.Completion.Filtering
-import Editor.Files
 import Editor.Job
 import Editor.Workspace
 import Editor.Workspace.Lister
+import FilesApi
 
 /-!
 # `find-file-in-workspace`
@@ -235,8 +235,8 @@ def command (call : Call) : EditorM Unit := do
     let answered : System.FilePath := answer
     -- One separator between the root and the answer, the root `/` too.
     let path := if answered.isAbsolute then answered else Process.inDirectory root answer
-    unless ← runCommand Files.openName { call with arguments := [.str path.toString] } do
-      message s!"{Files.openName}: no such command"
+    unless ← runCommand FilesApi.openFileName { call with arguments := [.str path.toString] } do
+      message s!"{FilesApi.openFileName}: no such command"
   | _ =>
     let (settings, _) ← RegistryRequest.ask .workspaceSettings
     let state ← editorState

@@ -2,7 +2,6 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Completion.Filtering
 import Editor.Completion.Later
-import Editor.Files.Kit
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
@@ -14,15 +13,18 @@ import Editor.Process.Model
 import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Files
+import Editor.Test.Hosted
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Prompts
 import Editor.Test.Workspace
 import Editor.Workspace
+import Editor.Workspace.Compiled
 import Editor.Workspace.FindFile
 import Editor.Workspace.Lister
 import Editor.Workspace.Model
+import FilesApiTest.Fake
 import ModelTest.Support.Candidates
 
 /-!
@@ -104,7 +106,7 @@ def remote : Location :=
 source's job, `workspace-files`. -/
 def jobs (name : String) : Option (List Argument → Work) :=
   if name == Workspace.FindFile.job then some (Completion.answering Workspace.FindFile.answer)
-  else fileWorkspaceJobs name
+  else workspaceJobsWith FilesApiTest.jobs name
 
 /-- The commands of the checks: the workspace driver's, the finder, the
 minibuffer's next, the candidate checks' accept and self-insert, `register`,
@@ -112,7 +114,7 @@ which registers `remote` as a workspace of the project on `main`, and
 `strand`, which registers it and gives it to the window's buffer. -/
 def commands : List (String × Dispatched) :=
   let registers : EditorM Unit := discard <| Workspace.register remote workspaceOrigin (some "main")
-  fileWorkspaceCommands ++
+  workspaceCommandsWith FilesApiTest.openSaveCommands ++
     [(Workspace.FindFile.name, fun call => do
         Workspace.FindFile.command call
         return none),
@@ -154,7 +156,8 @@ def driver (listers : Array Workspace.DeclaredLister := #[])
     (registered : String → Option (List Argument → Work) := jobs)
     (commands : List (String × Dispatched) := commands)
     (bindings : List (String × Invocation) := bindings) : Option TestDriver :=
-  let keys := dispatchKeys bindings commands
+  let keys :=
+    withExtensionsOf (dispatchKeys bindings commands) #[Workspace.package, FilesApiTest.fake]
   (workspaceDriver registered
         { keys with registered := { keys.registered with workspaceListers := listers } } (world :=
         world)).map

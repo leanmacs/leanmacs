@@ -20,6 +20,7 @@ import Editor.ProjectSearch.Compiled
 import Editor.Restore.Compiled
 import Editor.TabCommands.Compiled
 import Editor.Test.AtPoint
+import Editor.Test.Hosted
 import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees

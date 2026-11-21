@@ -2,8 +2,7 @@ import Editor.Completion.Paths
 import Editor.FileJobs
 import Editor.Jumps
 import Editor.Language
-import Editor.WorkingSet.Places
-import Editor.Workspace.Attach
+import FilesApi
 
 /-!
 # Files: opening a file into a buffer, saving a buffer, and reloading one
@@ -43,11 +42,14 @@ them are in `Editor/Files/Compiled.lean`.
   break), and shows the buffer (`ViewId.show`), with one cursor at its
   start. The buffer's history is a new tree, saved at its root, so the
   buffer is not modified.
-- **Workspace.** Once the buffer holds the file, `opened` hands it to
-  `Workspace.attach` (`Editor/Workspace/Attach.lean`): the cached
-  workspace of the file's directory is the buffer's at once, and otherwise
-  the job `find-workspace` is started to find it, a start that is refused
-  being silent. A path a buffer already holds is shown and asks nothing.
+- **The hook.** Once the buffer holds the file, `adopt` runs the
+  interface library `files-api`'s hook `FilesApi.Opened`
+  (`FilesApi.runOpened`), every value in registration order: the
+  workspace's attaches the buffer to its workspace (`Workspace.attach`,
+  `Editor/Workspace/Attach.lean`: the cached workspace of the file's
+  directory at once, otherwise the job `find-workspace`), and the working
+  sets' places their ranges (`WorkingSet.attach`). Files names neither. A
+  path a buffer already holds is shown and runs no hook.
 - **Language.** Once the buffer is shown, `opened` asks which language the
   registry's table chooses for the path (`languageOf`, `Language.forPath`,
   `Editor/Language.lean`). For one, the buffer records its name and its
@@ -116,10 +118,8 @@ them are in `Editor/Files/Compiled.lean`.
   path and otherwise when the load is delivered. A visit made by a jump
   command records none (`LoadOrder.record`, `visit`'s `record`). Once a
   loaded file's buffer holds it, the places a closed buffer of that file
-  left are held in it again (`Jumps.attach`), and so are the working sets'
-  ranges of the file, found again in its text, or drifted
-  (`WorkingSet.attach`, `Editor/WorkingSet/Places.lean`), once its
-  workspace is attached.
+  left are held in it again (`Jumps.attach`), before the hook runs ("The
+  hook").
 - **A visit** (`Files.visit view path point focus`) is an open that, once
   the buffer is shown, puts one cursor of the view at a point and, with
   `focus`, focuses the view: at once when a buffer holds the path, and
@@ -338,7 +338,7 @@ namespace Editor.Files
 
 /-- The longest file the open command loads, in bytes: 1 GiB. -/
 def limit : Nat :=
-  1 <<< 30
+  FilesApi.loadLimit
 
 /-- The name the open command is registered under: the core's
 (`FileJobs.openFileCommand`), which the loop runs for the files a window
@@ -351,17 +351,9 @@ def loadJob : String :=
   "load-file"
 
 /-- A point of a text a visit puts the cursor at ("Open", in the module
-docs). -/
-structure At where
-  /-- The row, from 0. -/
-  row : Nat
-  /-- The column, in characters (Unicode scalar values) from the row's
-  start. -/
-  column : Nat
-  /-- Whether the cursor goes to the row's first non-blank in place of the
-  column, as a mark's line does (`'`). -/
-  firstNonBlank : Bool := false
-  deriving DecidableEq, Repr
+docs): the interface's (`FilesApi.At`). -/
+abbrev At :=
+  FilesApi.At
 
 /-- What the load job is started with: the file to load, and the view to
 show it in. -/
@@ -545,8 +537,8 @@ def adopt (path : System.FilePath) (loaded : File.Loaded) (view : Option ViewId 
   let .ok () ← buffer.attachFile path loaded.stamp (loaded.endings.dominant.getD .lf) | return none
   -- The places of the file a closed buffer left are held in it again.
   Jumps.attach buffer path
-  Workspace.attach buffer path
-  WorkingSet.attach buffer path
+  -- The hook: the workspace's attach, the working sets' ranges.
+  FilesApi.runOpened buffer path
   if let some view := view then
     let .ok () ← view.show buffer | return none
   -- The language is recorded before the mode is set, so the mode's entry
@@ -680,7 +672,7 @@ def openCommand (call : Call) : EditorM Unit := do
 
 /-- The name the save command is registered under. -/
 def saveName : String :=
-  "save-buffer"
+  FilesApi.saveName
 
 /-- The name the job that saves a file is registered under. -/
 def saveJob : String :=
@@ -798,8 +790,8 @@ def saved (order : SaveOrder) (reply : Except FileError File.Stamp) : EditorM Un
   match reply with
   | .ok _ =>
     message (wrote order.path)
-    -- The working sets that hold ranges of the file are written too.
-    WorkingSet.fileSaved order.buffer
+    -- The hook: the working sets that hold ranges of the file are written.
+    FilesApi.runSaved order.buffer
     if let some start := order.after then
       if let .error refusal← startJob start.name start.arguments start.key then
         message s!"{start.name}: {refusal.describe}"
@@ -861,15 +853,15 @@ asked about: 100 000. Over it the middle is one hunk, replaced whole, so a
 diff of any file costs the diff service linear time ("Reload", in the module
 docs). Like `limit`, a round number with no measurement behind it. -/
 def diffLineLimit : Nat :=
-  100000
+  FilesApi.diffLineLimit
 
 /-- The name the reload command is registered under. -/
 def reloadName : String :=
-  "reload-buffer"
+  FilesApi.reloadName
 
 /-- The name the command the ex names `e` and `e!` run is registered under. -/
 def editName : String :=
-  "edit-file"
+  FilesApi.editName
 
 /-- The name the job that reloads a file is registered under. -/
 def reloadJob : String :=
@@ -1154,7 +1146,7 @@ def checkWork (arguments : List Argument) : Work := fun _ => do
 
 /-- The name the auto-reload command is registered under. -/
 def autoReloadName : String :=
-  "auto-reload-mode"
+  FilesApi.autoReloadName
 
 /-- The name the job that follows a file for auto-reload is registered
 under: the core's (`FileJobs.followJob`), which the loop's reconciler

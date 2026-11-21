@@ -1,9 +1,9 @@
 import Editor.Api
 import Editor.Command.Call
-import Editor.Files
 import Editor.Gutter.Track
 import Editor.VersionControl.Git
 import Editor.VersionControl.Show
+import FilesApi
 
 /-!
 # The version-control gutter
@@ -49,7 +49,7 @@ names from those, registers the jobs under them, and works them.
   epoch reads it: a snapshot id is never used again, so that diff reads
   the text it was given or is refused, and it is ignored either way.
 - **`vc-gutter-diff`** (`diffWork`) asks for the hunks of the head snapshot
-  against the buffer's (`Diff.hunks`, under `Files.diffLineLimit`). What it
+  against the buffer's (`Diff.hunks`, under `FilesApi.diffLineLimit`). What it
   comes to (`diffed`): for the latest head, the buffer's gutter becomes the
   hunks' marks, and its revision is recorded as diffed (for an older epoch
   neither is) at the revision the buffer's snapshot was taken at
@@ -174,7 +174,7 @@ def diffWork (arguments : List Argument) : Work := fun _ => do
     Gutter.DiffOrder.ofArguments?
       arguments | throw s!"{diffJob}: its arguments are not a diff order"
   return diffed order
-      (← Diff.hunks (.snapshot order.head) (.snapshot order.taken) Files.diffLineLimit)
+      (← Diff.hunks (.snapshot order.head) (.snapshot order.taken) FilesApi.diffLineLimit)
 
 /-- The command a watch job finishes with when what to watch, or the watch,
 was refused: it is recorded, and not tried again while the repository has a

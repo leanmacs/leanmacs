@@ -1,7 +1,9 @@
 import Editor.Ex.Compiled
+import Editor.Files.Compiled
 import Editor.Restore.Compiled
 import Editor.TabCommands.Compiled
 import Editor.WindowCommands.Compiled
+import Editor.Workspace.Compiled
 import ModelTest.Support.WorkingSet
 
 /-!
@@ -11,7 +13,12 @@ The session restore checks' world and driver: the working set checks' world
 (evil's keys over the editor's models, the files of the checks under `/r`,
 the file, buffer and workspace commands and jobs), with the `restore`
 package's commands, mode and jobs, the ex commands, the window commands and
-the tab commands, and the state directory `/state`. Shared by the test modules of
+the tab commands, and the state directory `/state`. Session restore is a
+feature still in the core, left for phase 6 to cut: it adopts a restored
+file with the files feature (`Files.adopt`) and attaches its workspace
+(`Workspace.attach`), and its jump goes to a file through files' visit, so
+its driver has the files feature's jobs and the workspace's, before the
+working set checks' fake's. Shared by the test modules of
 `Editor/Restore.lean` and `Editor/Restore/Run.lean`; it holds no checks of
 its own.
 -/
@@ -39,7 +46,9 @@ def restoreDriver (files : Option FileModel := none)
         (Restore.package.registered.commands ++ Ex.package.registered.commands ++
           WindowCommands.package.registered.commands ++
           TabCommands.package.registered.commands)
-        (Restore.package.registered.modes ++ modes) Restore.package.registered.jobs).map
+        (Restore.package.registered.modes ++ modes)
+        (Restore.package.registered.jobs ++ Files.package.registered.jobs ++
+          Workspace.package.registered.jobs)).map
     fun driver =>
     { driver with
       keys :=

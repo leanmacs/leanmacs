@@ -1,7 +1,6 @@
 import Editor.Command.Model
 import Editor.Event
 import Editor.File
-import Editor.Files
 import Editor.InputScheme.Test
 import Editor.Job.Model
 import Editor.Loop
@@ -12,6 +11,7 @@ import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Keys
+import Editor.Test.Opener
 import Editor.Test.Shell
 import Editor.Test.Workspace
 import Editor.Text.Model
@@ -81,11 +81,11 @@ def stageHunkChecks : List Check :=
             let edited := settledAfter (settledAfter driver "C-o a") "C-v z"
             let written := "0\n" ++ VersionControlContract.twoChanged
             let (asked, _) := fedTo edited (presses "C-r 9 C-v g")
-            let saved := finishNamed asked Files.saveJob
+            let saved := finishNamed asked Opener.saveJob
             let staged := settledOn saved []
             let hunk :=
               (VersionControlContract.lineHunks .stage VersionControlContract.tenLines written)[2]?
-            asked.pending.map (·.name) == #[Files.saveJob] &&
+            asked.pending.map (·.name) == #[Opener.saveJob] &&
               saved.pending.map (·.name) == #[VersionControl.hunkFetchJob] &&
               bytesOf staged "/r/src/a.lean" == some written.toUTF8 &&
               hunk.map
@@ -104,7 +104,7 @@ def stageHunkChecks : List Check :=
             let refused := settledAfter changed "C-r 9 C-v g"
             echoOf refused ==
                 some
-                  (Files.notSaved "/r/src/a.lean" (.changed (stampOf changed "/r/src/a.lean"))) &&
+                  (Opener.notSaved "/r/src/a.lean" (.changed (stampOf changed "/r/src/a.lean"))) &&
               !(gitStarted refused).contains fetchRun &&
               refused.jobs.processes.fed.isEmpty },
     { name :=
@@ -213,7 +213,7 @@ def stageHunkChecks : List Check :=
               echoOf nothing == some "vc-unstage-hunk: nothing staged on this line" &&
               nothing.jobs.processes.fed.isEmpty &&
               fed == some edited.jobs.processes.fed &&
-              !(edited.pending.any (·.name == Files.saveJob)) &&
+              !(edited.pending.any (·.name == Opener.saveJob)) &&
               liveSnapshots unstaged == liveSnapshots opened },
     { name :=
         "an apply git refuses says git's refusal, does not read the status again, and holds no snapshot"
@@ -251,9 +251,9 @@ def stageHunkChecks : List Check :=
             let (asked, _) := fedTo edited (presses "C-r 9 C-v g")
             let (again, _) := fedTo asked (presses "C-v g")
             let staged := settledOn again []
-            asked.pending.map (·.name) == #[Files.saveJob] &&
+            asked.pending.map (·.name) == #[Opener.saveJob] &&
               echoOf again == some "vc-stage-hunk: src/a.lean is being saved; try again" &&
-              again.pending.map (·.name) == #[Files.saveJob] &&
+              again.pending.map (·.name) == #[Opener.saveJob] &&
               ((gitStarted staged).filter (· == fetchRun)).size == 1 &&
               staged.jobs.processes.fed.size == 1 &&
               echoOf staged == some "staged a hunk of src/a.lean" },

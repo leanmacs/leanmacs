@@ -13,13 +13,16 @@ a job may, so finding a workspace is three programs, as opening a file is
 (`Editor/Files.lean`): a command that starts a job, the job, which runs the
 finder, and the job's command, which records what it found.
 
-`Editor/Files.lean` imports this module: its open calls `attach`. So this
-module must not import `Editor.Files`. The command and the job as compiled
-code registers them are in `Editor/Workspace/Compiled.lean`.
+The files feature does not import this module: the workspace package
+registers `attach` at the interface library `files-api`'s hook
+`FilesApi.Opened`, which a file's open runs. The command, the job and the
+hook's value as compiled code registers them are in
+`Editor/Workspace/Compiled.lean`.
 
 ## Attach
 
-- **When a file opens** (`attach`, called by `Files.takeIn` once the buffer
+- **When a file opens** (`attach`, run at the hook `FilesApi.Opened`, which the files
+  feature's `adopt` runs once the buffer
   holds the file), the workspace settings are asked of the loop
   (`RegistryRequest.workspaceSettings`): config's roots and the config
   generation. A cached answer for the file's directory under that

@@ -37,10 +37,11 @@ file commands (`Editor/Files.lean`) and the buffer commands
   given up, and a write of the workspace's sets is asked for
   (`requestWrite`). It answers the workspaces where anything was detached.
 - **A save** of a buffer holding a range of a workspace's read sets asks
-  for a write of them (`fileSaved`, called by `Files.saved` once the file
+  for a write of them (`fileSaved`, run at the hook `FilesApi.Saved`, which
+  `Files.saved` runs, once the file
   is written). The write is a job started by name, so this module does not
   import the one that does it (`Editor/WorkingSet/Disk.lean`).
-- **Attach** (`attach`, called by `Files.adopt` once a buffer holds a
+- **Attach** (`attach`, run at the hook `FilesApi.Opened`, which `Files.adopt` runs once a buffer holds a
   file): in every workspace whose sets are read, or kept in memory, each
   detached range of the file (by its path relative to the workspace's root)
   is found again in the buffer's text (`WorkingSet.refind`) and is held, or
@@ -310,7 +311,7 @@ def requestWrite (location : Location) : EditorM Unit := do
         some s!"{writeJob} {root}")
 
 /-- Asks for a write of each workspace whose read sets hold a range in the
-buffer `id`, which was saved (`Files.saved`). -/
+buffer `id`, which was saved (run at `FilesApi.Saved`). -/
 def fileSaved (id : BufferId) : EditorM Unit := do
   for (location, _, kept) in stores (← editorState) do
     if kept.disk == .read && kept.sets.any (·.ranges.any (heldIn id)) then

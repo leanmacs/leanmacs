@@ -81,6 +81,7 @@ picker's. -/
 def package : Package :=
   { name := "workspace"
     setup := do
+      Extension.add ({ name := "workspace", opened := attach } : FilesApi.Opened)
       commandWith currentName currentCommand
       commandWith FindFile.name FindFile.command
       commandWith FindInProject.name FindInProject.command

@@ -26,6 +26,7 @@ import Editor.Setup
 import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Files
+import Editor.Test.Hosted
 import Editor.Test.Keys
 import Editor.Test.Listing
 import Editor.Test.Loop
@@ -154,7 +155,10 @@ def compileKeysOf (bindings : List (String × Invocation)) : Loop.Keys TestSchem
       { keys.registered with
         entering := fun name => (Compile.package.registered.modes.find? (·.name == name)).map ([·])
         ex := fun name => compileExBindings.find? (·.name == name)
-        exNames := compileExBindings.map (·.name) } }
+        exNames := compileExBindings.map (·.name)
+        -- The files feature runs `files-api`'s hook `FilesApi.Opened` once a
+        -- buffer holds a file: the workspace's attach is registered there.
+        extensions := (hostedRegistry #[workspaceAttachPackage]).extensionsAt } }
 
 /-- `driver` once every post is delivered and every pending job finished,
 oldest first, a post before a job's end; bounded. -/

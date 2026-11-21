@@ -2,17 +2,17 @@ import Editor.Api
 import Editor.Buffers.Compiled
 import Editor.Config.Registry
 import Editor.File.Model
-import Editor.Files.Compiled
 import Editor.InputScheme.Vim.Default
 import Editor.Job.Model
 import Editor.Loop
 import Editor.Loop.Driver
 import Editor.ProjectSearch.Compiled
 import Editor.State
+import Editor.Test.Hosted
 import Editor.Test.Workspace
+import Editor.WorkingSet.Compiled
 import Editor.WorkingSet.Places
-import Editor.Workspace.Compiled
-import Editor.Workspace.Model
+import FilesApiTest.Fake
 import ModelTest.Support.Evil
 import VcApiTest.Fake
 
@@ -22,8 +22,10 @@ import VcApiTest.Fake
 The working set checks' world, commands, keys and driver: evil's keys over
 the editor's models, the job model with the workspace finder's git at `/r`
 (`workspaceWorld`), the files of the checks under `/r`, and the commands and
-jobs of the file commands, the workspace, the buffer commands, project
-search and whatever working set commands a check hands in. Shared by the
+jobs of `files-api`'s fake, the buffer commands, project search and whatever
+working set commands a check hands in; a file's open attaches its workspace
+through the kit's stand-in at the hook `FilesApi.Opened` (`attachPackage`),
+and the working sets' own hooks are registered. Shared by the
 test modules of `Editor/WorkingSet/`; it holds no checks of its own.
 -/
 
@@ -77,17 +79,24 @@ def holdCommand (call : Call) : EditorM Unit := do
   let (kept, _) ← WorkingSet.addRange kept name buffer relative start stop
   WorkingSet.setKept workspace.location kept
 
-/-- The commands every driver of the checks has: the file commands', the
-workspace's, the buffer commands', project search's, and `ws-hold`
-(`holdCommand`). -/
+/-- The commands every driver of the checks has: `files-api`'s fake's (the
+kit's opener, `FilesApiTest.fake`), the buffer commands', project search's,
+and `ws-hold` (`holdCommand`). -/
 def baseCommands : Array Config.Registration :=
-  Files.package.registered.commands ++ Workspace.package.registered.commands ++
-    Buffers.package.registered.commands ++
+  FilesApiTest.fake.registered.commands ++ Buffers.package.registered.commands ++
     ProjectSearch.package.registered.commands ++
     #[{ name := "ws-hold", action := .call holdCommand }]
 
+/-- What the checks' extension points hold: the workspace's stand-in at
+`FilesApi.Opened` (`attachPackage`, the finder's model of `workspaceWorld`),
+the fake's `FilesApi.Files` value, and the working sets' own hooks, in that
+order, as a host registers the workspace before the working sets. -/
+def hooks : Array Package :=
+  #[attachPackage, FilesApiTest.fake, WorkingSet.package]
+
 /-- Evil's keys with `commands` after the base ones, and `modes`, project
-search's among them, as a host's registry holds them. -/
+search's among them, as a host's registry holds them, and the extension
+points `hooks` register. -/
 def keysWith (commands : Array Config.Registration) (modes : Array Mode) :
     Loop.Keys Vim.Default.scheme :=
   let handed := evilHanded (baseCommands ++ commands)
@@ -97,14 +106,15 @@ def keysWith (commands : Array Config.Registration) (modes : Array Mode) :
     maps := fun state view =>
       registry.activeMaps Vim.Default.scheme state view ++ handed.maps state view
     registered :=
-      { handed.registered with entering := fun name => (all.find? (·.name == name)).map ([·]) } }
+      { handed.registered with
+        entering := fun name => (all.find? (·.name == name)).map ([·])
+        extensions := (hostedRegistry hooks).extensionsAt } }
 
-/-- The jobs every driver of the checks has, then `more`. -/
+/-- `more`, then the jobs every driver of the checks has: a job of `more`
+comes before one of theirs of its name. -/
 def jobsWith (more : Array Config.JobRegistration) (name : String) :
     Option (List Argument → Work) :=
-  ((Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
-            ProjectSearch.package.registered.jobs ++
-            more).find?
+  ((more ++ FilesApiTest.fake.registered.jobs ++ ProjectSearch.package.registered.jobs).find?
         (·.name == name)).map
     (·.workWith (VcApiTest.backendValues #[]))
 
@@ -140,7 +150,7 @@ def drained (driver : EvilDriver) : EvilDriver :=
 /-- `driver` once the file `/r/<name>` is opened in the window and everything
 that starts is settled. -/
 def opened (driver : EvilDriver) (name : String) : EvilDriver :=
-  drained (invoked driver Files.openName [.str (root / name).toString])
+  drained (invoked driver FilesApi.openFileName [.str (root / name).toString])
 
 /-- `driver` once the buffer called `name` is closed and everything that
 starts is settled. -/

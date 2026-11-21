@@ -1,3 +1,4 @@
+import Editor.Extension
 import Editor.Files
 import Editor.Package
 
@@ -82,6 +83,11 @@ source and the path style as the category `file`'s default. -/
 def package : Package :=
   { name := "files"
     setup := do
+      Extension.add
+          ({  name := FilesApi.implementationName
+              adopt := fun path loaded view => adopt path loaded view
+              visit := fun view path point focus => visit view path point focus
+              save := fun id force after => save id force after } : FilesApi.Files)
       commandWith openName openCommand
       commandWith saveName saveCommand
       commandWith editName editCommand

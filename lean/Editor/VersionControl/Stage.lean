@@ -1,10 +1,10 @@
 import Editor.Api
 import Editor.Command.Call
-import Editor.Files
 import Editor.VersionControl.Git
 import Editor.VersionControl.Gutter
 import Editor.VersionControl.Hunk
 import Editor.VersionControl.Status
+import FilesApi
 
 /-!
 # Staging a hunk: `vc-stage-hunk` and `vc-unstage-hunk`
@@ -27,7 +27,7 @@ implementation.
   picked there.
 - **The hunk on the cursor's line** is picked as `Hunks.pick` says: one
   whose lines overlap it, or a removal just before it, where the gutter
-  draws its `-`. Over the diff line limit (`Files.diffLineLimit`) the
+  draws its `-`. Over the diff line limit (`FilesApi.diffLineLimit`) the
   middle of a file is one hunk, so the hunk on a line may be all of it.
 
 ## The gate
@@ -56,7 +56,8 @@ diff service is a job, and each job's command does the next step:
 1. **The command** reads the root, the git program config's workspace
    settings name, the label, the buffer, the path and the cursor's row. To
    stage, a buffer with unsaved changes is saved first, and the fetch
-   follows the save once the file is written (`Files.save`'s `after`); a
+   follows the save once the file is written (the files implementation's `save`, `FilesApi.files?`, with its
+   follow-up; with none it says `<name>: no files implementation`); a
    refused save starts nothing. Otherwise the fetch starts now. Unstaging
    saves nothing: the file's content plays no part in what is unstaged,
    and the buffer only places the cursor.
@@ -73,7 +74,7 @@ diff service is a job, and each job's command does the next step:
    started with the snapshots. A refused start releases every one.
 4. **`vc-hunk-diff`** asks for the hunks of the index against the buffer,
    and, to unstage, of `HEAD` against the index (`Diff.hunks`, under
-   `Files.diffLineLimit`).
+   `FilesApi.diffLineLimit`).
 5. **`hunksDiffed`** picks the hunk ("Which hunk"), and reads only its lines
    and their context from the snapshots (`LineHunk.locate`, over
    `snapshotLines`), releasing every snapshot on every path, a refusal of
@@ -323,11 +324,11 @@ def hunkDiffWork (arguments : List Argument) : Work := fun _ => do
   let some order :=
     HunkDiffOrder.ofArguments?
       arguments | throw s!"{hunkDiffJob}: its arguments are not a diff order"
-  let buffer ← Diff.hunks (.snapshot order.index) (.snapshot order.taken) Files.diffLineLimit
+  let buffer ← Diff.hunks (.snapshot order.index) (.snapshot order.taken) FilesApi.diffLineLimit
   let head ←
     match order.head with
     | some head =>
-      some <$> Diff.hunks (.snapshot head) (.snapshot order.index) Files.diffLineLimit
+      some <$> Diff.hunks (.snapshot head) (.snapshot order.index) FilesApi.diffLineLimit
     | none =>
       pure none
   return hunksDiffed order buffer head
@@ -430,7 +431,11 @@ def hunkCommand (unstage : Bool) (call : Call) : EditorM Unit := do
       row := (← call.target.buffer.text.pointOf cursor).row }
   let fetch : JobStart := { name := hunkFetchJob, arguments := order.arguments }
   if !unstage && (← id.hasUnsavedChanges) matches .ok true then
-    Files.save id (after := some fetch)
+    match ← FilesApi.files? with
+    | some files =>
+      files.save id false (some fetch)
+    | none =>
+      message (FilesApi.noImplementation name)
   else if let some sentence := if unstage then none else staleOnDisk? name path buffer then
     message sentence
   else if let .error refusal← startJob fetch.name fetch.arguments then

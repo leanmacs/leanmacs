@@ -64,6 +64,9 @@ def projectKeys : Loop.Keys TestScheme.scheme :=
         | _ => none
     registered :=
       { jobs := fun name => projectJobs.any (·.name == name)
+        -- The hooks the files feature runs once a buffer holds a file, as
+        -- a host installs them: the workspace's attach.
+        extensions := (rigKeys #[Test.filesPackage, rigWorkspace]).registered.extensions
         compile := { contributions := Compile.shipped } } }
 
 /-- The loop, with its working directory `base`, once each of `invocations`

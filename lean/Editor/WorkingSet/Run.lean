@@ -1,10 +1,10 @@
 import Editor.Api
 import Editor.Command.Call
-import Editor.Files
 import Editor.Job
 import Editor.Jumps
 import Editor.WorkingSet.Disk
 import Editor.WorkingSet.Places
+import FilesApi
 
 /-!
 # `working-set-add` and `working-set-open`
@@ -58,7 +58,8 @@ workspace has no set of is said (`noSuchSet`).
   or a drifted one whose file is open is found again first
   (`WorkingSet.attach` with `retry`); a range whose file is open in no
   buffer is loaded by the job `working-set-files` (`File.load` under
-  `Files.limit`, then `Files.adopt` shown nowhere, whose hook places it),
+  `FilesApi.loadLimit`, then the files implementation's `adopt` shown
+  nowhere, whose hook places it; with none the file is left unloaded),
   whose command fills the buffer again; a file that cannot be loaded leaves
   its ranges drifted.
 - **The excerpts** are each placed range's lines, grouped and merged as
@@ -438,7 +439,8 @@ def fillAndSay (results : BufferId) (location : Location) (root name key : Strin
       message s!"{openName}: {refusal.describe}"
 
 /-- The command a finished files job hands the loop: each file loaded taken
-into a buffer shown nowhere (`Files.adopt`, whose hook places its ranges);
+into a buffer shown nowhere (the `files-api` implementation's `adopt`,
+`FilesApi.files?`, whose hook places its ranges);
 the detached ranges of each file that was not loaded drifted; and the set's
 buffer filled again while it is there. -/
 def arrived (order : FilesOrder) (loads : Array (String × Except FileError File.Loaded)) :
@@ -447,7 +449,10 @@ def arrived (order : FilesOrder) (loads : Array (String × Except FileError File
   for (path, reply) in loads do
     match reply with
     | .ok loaded =>
-      discard <| Files.adopt path loaded
+      -- With no files implementation the file is left unloaded, as a
+      -- refused load is.
+      if let some files← FilesApi.files? then
+        discard <| files.adopt path loaded none
     | .error _ =>
       let kept := keptAt (← editorState) location
       let relative := relativeIn order.root path
@@ -466,14 +471,14 @@ def arrived (order : FilesOrder) (loads : Array (String × Except FileError File
   message (openedSentence order.name filled.count filled.drifted)
 
 /-- The files job: loads each file of its order, in order, unless it is
-longer than `Files.limit` bytes, and finishes with what the loads come to
+longer than `FilesApi.loadLimit` bytes, and finishes with what the loads come to
 (`arrived`). It fails only for arguments that are not an order. -/
 def filesWork (arguments : List Argument) : Work := fun _ => do
   let some order :=
     FilesOrder.ofArguments? arguments | throw s!"{filesJob}: its arguments are not an order"
   let mut loads := #[]
   for path in order.paths do
-    loads := loads.push (path, ← File.load path Files.limit)
+    loads := loads.push (path, ← File.load path FilesApi.loadLimit)
   return arrived order loads
 
 /-- Opens the set `name` of the workspace at `location`, whose root is

@@ -1,7 +1,7 @@
 import Editor.File
-import Editor.Files
 import Editor.Job
 import Editor.WorkingSet.Places
+import FilesApi
 import VcApi
 
 /-!
@@ -150,7 +150,7 @@ it comes to (`readStore`). It fails only for arguments that are not a load's. -/
 def loadWork (arguments : List Argument) : Work := fun _ => do
   let .str root :: .str path :: .str command :: rest :=
     arguments | throw s!"{loadJob}: its arguments are not a load's"
-  return readStore root path (← File.load path Files.limit) { command, arguments := rest }
+  return readStore root path (← File.load path FilesApi.loadLimit) { command, arguments := rest }
 
 /-- What a save of the store at `path` came to: the snapshot it saved
 released, and a refusal said. -/

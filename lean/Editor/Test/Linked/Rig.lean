@@ -146,8 +146,10 @@ def rigCommands (packages : Array Package) : Array Config.Registration :=
   packages.flatMap (·.registered.commands)
 
 /-- The keys a rig's checks run over `packages`: none bound; the packages'
-commands by name (`rigCommands`); their jobs registered; and no
-contribution told to the loop. -/
+commands by name (`rigCommands`); their jobs registered; the values they
+register at extension points, as a host installs them, so a hook a feature
+runs finds the values its neighbours registered; and no contribution told
+to the loop. -/
 def rigKeys (packages : Array Package) : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
       ((rigCommands packages).find? (·.name == name)).bind fun registration =>
@@ -157,7 +159,11 @@ def rigKeys (packages : Array Package) : Loop.Keys TestScheme.scheme :=
             run call
             return none
         | _ => none
-    registered := { jobs := fun name => (rigJobs packages).any (·.name == name) } }
+    registered :=
+      { jobs := fun name => (rigJobs packages).any (·.name == name)
+        extensions :=
+          let (state, _) : Config.State Unit Unit × Array String := Config.State.ofPackages packages
+          state.registry.extensionsAt } }
 
 /-- What a rig's checks run with: their services, whose file
 service reads the table of snapshots their texts publish and keeps its loads

@@ -9,7 +9,6 @@ import Editor.Evil.Scroll
 import Editor.Evil.Theorems
 import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
-import Editor.Extension
 import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
 import Editor.TabCommands

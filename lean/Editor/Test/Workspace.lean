@@ -3,6 +3,7 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Config.Stores
 import Editor.Event
+import Editor.Extension
 import Editor.File.Model
 import Editor.InputScheme.Test
 import Editor.Invocation
@@ -26,6 +27,7 @@ import Editor.Workspace
 import Editor.Workspace.Attach
 import Editor.Workspace.Model
 import Editor.Workspace.Modes
+import FilesApi
 
 /-!
 # The test kit: Workspace
@@ -149,5 +151,40 @@ def settledAfter (driver : TestDriver) (keys : String) : TestDriver :=
 project. -/
 def shownWorkspace (driver : TestDriver) : Option (Workspace × Project) := do
   driver.loop.state.workspaceOf? (← showing driver).id
+
+/-- Gives the buffer `id` the workspace `found` at once, as the workspace
+finder's answer recorded for the directory of `path` under the config
+generation now: a stand-in for the workspace feature's attach, which a
+test of another feature registers at the interface library `files-api`'s
+hook `FilesApi.Opened` in its place. It starts no job and looks for no
+mode on markers. -/
+def attachAt (found : Workspace.Found) (id : BufferId) (path : System.FilePath) : EditorM Unit := do
+  let directory := (path.parent.map Process.trimmed).getD found.root
+  let (_, generation) ← RegistryRequest.ask .workspaceSettings
+  discard <| EditorState.ask (.recordWorkspace directory generation (some found))
+  Workspace.setBufferWorkspace id (.local found.root)
+
+/-- Gives the buffer `id` of the file at `path` the workspace the finder's
+pure model of `world` answers for the file's directory (`World.find`), with
+config's roots none (`attachAt`); nothing for a directory in none. -/
+def attachIn (world : Workspace.World := workspaceWorld) (id : BufferId) (path : System.FilePath) :
+    EditorM Unit := do
+  let some directory := path.parent | return
+  if let some found := world.find {} directory then
+    attachAt found id path
+
+/-- A package, standing in for the workspace's, that registers `attachIn
+world` at `FilesApi.Opened` under the workspace's name. -/
+def attachPackage (world : Workspace.World := workspaceWorld) : Package :=
+  { name := "test-workspace"
+    setup := Extension.add ({ name := "workspace", opened := attachIn world } : FilesApi.Opened) }
+
+/-- A package that registers the workspace feature's own attach
+(`Workspace.attach`) at `FilesApi.Opened`, as the workspace package does: for
+a driver of handed commands and jobs whose files feature runs that hook, so
+a file's open finds its workspace with the find job, as in a host. -/
+def workspaceAttachPackage : Package :=
+  { name := "test-workspace-attach"
+    setup := Extension.add ({ name := "workspace", opened := Workspace.attach } : FilesApi.Opened) }
 
 end Editor.Test

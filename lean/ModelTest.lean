@@ -186,6 +186,7 @@ import ModelTest.Editor.Workspace.Lister
 import ModelTest.Editor.Workspace.Projects
 import ModelTest.Editor.Workspace.Reach
 import ModelTest.EditorCore.EditorPackage
+import ModelTest.FilesApi
 import ModelTest.VcApi
 import ModelTest.VcApiTest.Contract
 import ModelTest.VcApiTest.Fake
@@ -1193,6 +1194,12 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   from the model; and its registration check holds of a package that
   registers the backend `git`, the gutter jobs and the segment, and fails
   one that leaves any of them out;
+- `filesApiChecks`: the interface library `files-api` (`FilesApi.lean`):
+  its names; its fake (`FilesApiTest.fake`, the kit's opener with the
+  hooks as its runners) keeps its contract; the contract fails a package
+  that lacks a command, one that registers none, and one whose open and
+  save run no hook; and a set's own `Files` value of the name `files`,
+  registered after the feature's, is the one `files?` answers;
 - `versionControlContractFailures`: the version-control contract
   (`VcApiTest/Contract.lean`) against the model;
 - `versionControlGitChecks`, `versionControlWorktreeGitChecks`,
@@ -1704,6 +1711,7 @@ def checks : List Check :=
     versionControlModelChecks ++
     gitModelChecks ++
     vcApiChecks ++
+    filesApiChecks ++
     versionControlGitChecks ++
     versionControlWorktreeGitChecks ++
     versionControlHistoryGitChecks ++

@@ -13,7 +13,6 @@ import Editor.Event
 import Editor.File.Model
 import Editor.FileWatch
 import Editor.FileWatch.Model
-import Editor.Files.Kit
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
@@ -27,6 +26,7 @@ import Editor.Scene
 import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Files
+import Editor.Test.Hosted
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Shell
@@ -39,6 +39,7 @@ import Editor.VersionControl.Git.Model
 import Editor.VersionControl.Gutter
 import Editor.Workspace
 import Editor.Workspace.Model
+import FilesApiTest.Fake
 import ModelTest.Check
 import ModelTest.Support.Git
 import ModelTest.Support.VersionControl
@@ -75,7 +76,8 @@ def gutterKeys : Loop.Keys TestScheme.scheme :=
     (workspaceBindings ++
       [("C-g x", invoke "gutter-edit"), ("C-g z", invoke "gutter-top"),
         ("C-g k", invoke Buffers.closeName), ("C-g h", invoke "gutter-stale-head")])
-    (fileWorkspaceCommands ++ dispatchedOf VersionControl.gutterPackage.registered.commands ++
+    (workspaceCommandsWith FilesApiTest.openSaveCommands ++
+      dispatchedOf VersionControl.gutterPackage.registered.commands ++
       dispatchedOf Buffers.package.registered.commands ++
       [("gutter-edit", fun call => do
           let text := call.target.buffer.text
@@ -105,8 +107,9 @@ def gutterDriverOf (repository : VersionControl.Model.Repository) (git : String 
   (workspaceDriver gutterJobs gutterKeys git world).map fun driver =>
     let scripts :=
       (repository.jobModel git "/r" (missing := #[("HEAD", "src/b.lean")])).processes.scripts
+    let keys := withExtensionsOf driver.keys #[attachPackage world, FilesApiTest.fake]
     { driver with
-      keys := { driver.keys with registered := { driver.keys.registered with git } }
+      keys := { keys with registered := { keys.registered with git } }
       jobs :=
         { driver.jobs with
           files :=

@@ -2,6 +2,7 @@ import Editor.Api
 import Editor.Files
 import Editor.Job
 import Editor.Restore
+import Editor.Workspace.Attach
 
 /-!
 # Restoring a session, and writing its index

@@ -1,6 +1,5 @@
 import Editor.Api
 import Editor.Command.Call
-import Editor.Files
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Store
@@ -10,6 +9,7 @@ import Editor.VersionControl.ReviewHunks
 import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
 import Editor.VersionControl.Views
+import FilesApi
 
 /-!
 # The review buffer: `vc-review`
@@ -60,14 +60,15 @@ diff service is a job, and each job's command does the next step:
    worktree says `vc-review: the main worktree is detached; name a branch
    to review against`. Then `changes "HEAD" <branch>`, and the load of
    each file with a new side under the root (`File.load`, under
-   `Files.limit`). It finishes with `reviewRead`. A review since a commit
+   `FilesApi.loadLimit`). It finishes with `reviewRead`. A review since a commit
    and a commit's read otherwise (their sections). Its implementation is a
    parameter (`connect`, git's by default), so the model checks run the
    read over the interface's model (`Model.readHandler`).
 2. **`reviewRead`**: a failure says `vc-review: <Error.describe>`, and a
    change with no file `vc-review: no change against <branch>`. Otherwise
    each loaded file is taken into its buffer, the one that holds it or a
-   new one, shown nowhere (`Files.adopt`); a file whose load was refused is
+   new one, shown nowhere (the files implementation's `adopt`,
+   `FilesApi.files?`; with none nothing is taken in); a file whose load was refused is
    left out, and named once the buffer is made. Each file with an old side
    gets an old buffer: `<path>@<the base's first 8 characters>`, or the
    first free name of that, holding the base's content, read-only, with no
@@ -79,7 +80,7 @@ diff service is a job, and each job's command does the next step:
    and starts `vc-review-diff` with them. A refused start releases every
    snapshot and removes the old buffers that no window shows.
 3. **`vc-review-diff`** asks the hunks of each file's old side against its
-   new side (`Diff.hunks`, under `Files.diffLineLimit`), and finishes with
+   new side (`Diff.hunks`, under `FilesApi.diffLineLimit`), and finishes with
    `reviewDiffed`.
 4. **`reviewDiffed`** groups each file's hunks (`ReviewSpan.group`, over
    the snapshots), reads each side's whole text for the order, and then
@@ -823,7 +824,8 @@ def reviewDiffWork (arguments : List Argument) : Work := fun _ => do
       arguments | throw s!"{reviewDiffJob}: its arguments are not a review diff order"
   let mut diffs := #[]
   for file in order.files do
-    diffs := diffs.push (← Diff.hunks (.snapshot file.old) (.snapshot file.new) Files.diffLineLimit)
+    diffs :=
+      diffs.push (← Diff.hunks (.snapshot file.old) (.snapshot file.new) FilesApi.diffLineLimit)
   return reviewDiffed order diffs
 
 /-- The command a finished read hands the loop ("The pipeline", in the module
@@ -855,7 +857,11 @@ def reviewRead (order : ReviewOrder) (reply : Except String (String × Changes))
           ((loads.find? (·.1 == change.path)).map (·.2) :
             Option (Except FileError File.Loaded)) with
         | some (.ok loaded) =>
-          Files.adopt (order.root / change.path) loaded
+          match ← FilesApi.files? with
+          | some implementation =>
+            implementation.adopt (order.root / change.path) loaded none
+          | none =>
+            pure none
         | _ =>
           pure none
     if change.new.isSome && working.isNone then
@@ -930,7 +936,7 @@ def reviewReadWork (connect : String → System.FilePath → Handler := Git.hand
     let mut loads := #[]
     for file in changes.files do
       if file.new.isSome then
-        loads := loads.push (file.path, ← File.load (order.root / file.path) Files.limit)
+        loads := loads.push (file.path, ← File.load (order.root / file.path) FilesApi.loadLimit)
     return loads
   if let .commit id := order.scope then
     let parent ←

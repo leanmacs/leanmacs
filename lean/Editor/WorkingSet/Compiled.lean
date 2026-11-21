@@ -27,6 +27,11 @@ set and a set opened as an excerpt buffer of its ranges
   (`Editor/WorkingSet/Disk.lean`); `working-set-write` is registered over
   the version-control backend point (`VcApi.Backend`), which it asks for
   the commit `HEAD` is at.
+- **The hooks** of the interface library `files-api`: at `FilesApi.Opened`
+  the working sets place a file's ranges once a buffer holds it
+  (`WorkingSet.attach`), and at `FilesApi.Saved` they write the sets that
+  hold ranges of a file written (`WorkingSet.fileSaved`), so neither the
+  files feature nor this one names the other.
 
 Pinned by `ModelTest.workingSetRunChecks`, on the models, and by
 `ConfigTest.shippedChecks` over the hosts' registry.
@@ -49,6 +54,9 @@ def package : Package :=
       defineMode mode
       workJob filesJob filesWork
       workJob loadJob loadWork
+      Extension.add
+          ({ name := "working-set", opened := fun id path => attach id path } : FilesApi.Opened)
+      Extension.add ({ name := "working-set", saved := fileSaved } : FilesApi.Saved)
       Extension.workJob VcApi.Backend writeJob fun backends => writeWork (VcApi.connect? backends)
       workJob saveJob saveWork }
 

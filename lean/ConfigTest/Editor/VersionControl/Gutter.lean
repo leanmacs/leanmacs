@@ -107,15 +107,9 @@ def gutterChecks (context : Context) : List Check :=
           IO.FS.writeFile file "a\nB\nc\n"
           let stage ←
             Stage.overFiles context (Config.Directory.source configDir)
-                { commands :=
-                    Files.package.registered.commands ++
-                      Test.Minibuffer.package.registered.commands ++
-                      Workspace.package.registered.commands ++
-                      VersionControl.gutterPackage.registered.commands ++
-                      #[opening "open-a" file]
-                  jobs :=
-                    Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
-                      VersionControl.gutterPackage.registered.jobs
+                { packages := #[Files.package, Workspace.package, VersionControl.gutterPackage]
+                  commands :=
+                    Test.Minibuffer.package.registered.commands ++ #[opening "open-a" file]
                   modes := Test.Minibuffer.package.registered.modes }
           let collaborators := stage.collaborators
           let services := collaborators.services

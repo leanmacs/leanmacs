@@ -1,9 +1,10 @@
 import Editor.Api
 import Editor.Command.Call
-import Editor.Files
+import Editor.Jumps
 import Editor.Mode
 import Editor.VersionControl.Git
 import Editor.VersionControl.Views
+import FilesApi
 
 /-!
 # The status buffer: `vc-status`
@@ -88,7 +89,9 @@ files last shown, which the commands read the cursor's file from.
   any other buffer it says `vc-status-refresh: <buffer> is not a status
   buffer`, as each command below does.
 - **`vc-status-visit`** (`visitName`, the mode's `activate`): opens the
-  cursor's file at `<root>/<path>` in the window (`Files.visit`). A
+  cursor's file at `<root>/<path>` in the window (the files
+  implementation's `visit`, `FilesApi.files?`; with none it says
+  `vc-status-visit: no files implementation`). A
   deleted file (`StatusView.deleted`) says `vc-status-visit: <path> is
   deleted` and opens nothing, and a row with no file `vc-status: no file
   on this line`.
@@ -624,7 +627,11 @@ def visitCommand (call : Call) : EditorM Unit := do
   if StatusView.deleted record.files file then
     message s!"{visitName}: {file.path} is deleted"
   else
-    Files.visit call.target.window.id (order.root / file.path) { row := 0, column := 0 } true
+    match ← FilesApi.files? with
+    | some files =>
+      files.visit call.target.window.id (order.root / file.path) { row := 0, column := 0 } true
+    | none =>
+      message (FilesApi.noImplementation visitName)
 
 /-- Starts the write `request` for the status buffer of `order`. -/
 def startWrite (order : ReadOrder) (request : Request) : EditorM Unit := do

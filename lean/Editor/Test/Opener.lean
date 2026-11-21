@@ -125,15 +125,18 @@ def «open» (view : ViewId) (path : System.FilePath) : EditorM Unit := do
   else if let .error refusal← startJob loadJob [.str path.toString, .nat view.index] then
     message s!"{FileJobs.openFileCommand}: {refusal.describe}"
 
-/-- Visits `path` in `view` at the row `row`, column `column`: opens it, and
-once a buffer holds it puts the cursor there; the opener visits only a path
-a buffer holds, and opens any other. -/
-def visit (view : ViewId) (path : System.FilePath) (row column : Nat) : EditorM Unit := do
+/-- Visits `path` in `view` at the row `row`, column `column`, focusing the
+view with `focus`: a path a buffer holds is shown with the cursor there;
+the opener opens any other, with no cursor placed. -/
+def visit (view : ViewId) (path : System.FilePath) (row column : Nat) (focus : Bool := false) :
+    EditorM Unit := do
   let some buffer := (← editorState).findFile path | «open» view path
   Jumps.record view
   let .ok () ← view.show buffer | return
   let some shown := (← editorState).buffer? buffer | return
   Jumps.placeCursor view (← Marks.offsetAt shown.text row column)
+  if focus then
+    discard <| view.focus
 
 /-- The open command as it is called: each string argument a path, opened in
 the window it was called with. -/
@@ -147,34 +150,64 @@ def openCommand (call : Call) : EditorM Unit := do
   for path in paths do
     «open» call.target.window.id path
 
+/-- A save's follow-up job as arguments: `false` for none, otherwise `true`,
+its name, the count of its arguments and they, and its key or `false`. -/
+def afterArguments : Option JobStart → List Argument
+  | none => [.bool false]
+  | some start =>
+    [.bool true, .str start.name, .nat start.arguments.length] ++ start.arguments ++
+      [match start.key with
+        | some key => .str key
+        | none => .bool false]
+
+/-- The follow-up job `arguments` begin with (`afterArguments`), and what
+follows it; `none` for arguments that are not one. -/
+def afterOf? : List Argument → Option (Option JobStart × List Argument)
+  | .bool false :: rest => some (none, rest)
+  | .bool true :: .str name :: .nat count :: rest =>
+    match rest.drop count with
+    | .str key :: after =>
+      some (some { name, arguments := rest.take count, key := some key }, after)
+    | .bool false :: after => some (some { name, arguments := rest.take count }, after)
+    | _ => none
+  | _ => none
+
 /-- What a save's reply comes to: the save ended, `wrote <path>` or the
-refusal said, and `saved` run for a file written. -/
+refusal said, and for a file written `saved` run and the follow-up job
+`after` started. -/
 def savedReply (saved : BufferId → EditorM Unit) (buffer : BufferId) (snapshot : SnapshotId)
-    (path : System.FilePath) (reply : Except FileError File.Stamp) : EditorM Unit := do
+    (path : System.FilePath) (after : Option JobStart) (reply : Except FileError File.Stamp) :
+    EditorM Unit := do
   discard <| buffer.endSave snapshot reply.toOption
   match reply with
   | .ok _ =>
     message s!"wrote {path}"
     saved buffer
+    if let some start := after then
+      if let .error refusal← startJob start.name start.arguments start.key then
+        message s!"{start.name}: {refusal.describe}"
   | .error error =>
     message (notSaved path error)
 
 /-- The save job: writes the snapshot its arguments name over the path,
-expecting the stamp they carry, or whatever is there. -/
+expecting the stamp they carry, or whatever is there, and finishes with
+what the reply comes to (`savedReply`). -/
 def saveWork (saved : BufferId → EditorM Unit) (arguments : List Argument) : Work := fun _ => do
   let .nat buffer :: .nat snapshot :: .str path :: rest :=
     arguments | throw s!"{saveJob}: its arguments are not a save's"
+  let some (after, rest) := afterOf? rest | throw s!"{saveJob}: its arguments are not a save's"
   let expect : File.Expect :=
     match rest with
     | [.int seconds, .nat nanoseconds, .nat size] => .unchanged { seconds, nanoseconds, size }
     | _ => .whatever
   let reply ← File.save (.snapshot ⟨snapshot⟩) path expect
-  return savedReply saved ⟨buffer⟩ ⟨snapshot⟩ path reply
+  return savedReply saved ⟨buffer⟩ ⟨snapshot⟩ path after reply
 
 /-- Saves the buffer `id` to its file, expecting the stamp it recorded, or,
-with `force`, whatever is there. Nothing for a buffer with no file or with
-a save in flight. -/
-def save (id : BufferId) (force : Bool := false) : EditorM Unit := do
+with `force`, whatever is there, and once the file is written starts
+`after`. Nothing for a buffer with no file or with a save in flight. -/
+def save (id : BufferId) (force : Bool := false) (after : Option JobStart := none) : EditorM Unit :=
+  do
   let some buffer := (← editorState).buffer? id | return
   let some file := buffer.file | message s!"{saveName}: {buffer.name} has no file"
   if file.saving.isSome then
@@ -184,10 +217,9 @@ def save (id : BufferId) (force : Bool := false) : EditorM Unit := do
   let expect : List Argument :=
     if force then []
     else [.int file.stamp.seconds, .nat file.stamp.nanoseconds, .nat file.stamp.size]
-  match
-    ←
-      startJob saveJob
-          ([.nat id.index, .nat snapshot.index, .str file.path.toString] ++ expect) with
+  let arguments :=
+    [.nat id.index, .nat snapshot.index, .str file.path.toString] ++ afterArguments after ++ expect
+  match ← startJob saveJob arguments with
   | .error refusal =>
     snapshot.release
     message s!"{saveName}: {refusal.describe}"

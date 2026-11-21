@@ -79,7 +79,7 @@ def workingSetExtras : Array Config.Registration :=
                     ranges := #[⟨start, stop⟩], primary := 0 } }]
 
 /-- The keys of the checks: none bound; the commands by name; the jobs
-registered. -/
+registered; the hooks of `files-api` as the packages register them. -/
 def workingSetKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
       ((Files.package.registered.commands ++ Workspace.package.registered.commands ++
@@ -94,7 +94,13 @@ def workingSetKeys : Loop.Keys TestScheme.scheme :=
             run call
             return none
         | _ => none
-    registered := { jobs := fun name => workingSetJobs.any (·.name == name) } }
+    registered :=
+      { jobs := fun name => workingSetJobs.any (·.name == name)
+        -- The hooks the files feature runs, as a host's registry holds them:
+        -- the workspace's attach, and the working sets' own.
+        extensions :=
+          (rigKeys
+              #[Files.package, Workspace.package, WorkingSet.package]).registered.extensions } }
 
 /-- `a.txt` of the checks: r1, a 40-byte line, on its second row; r2, a
 block of three rows from its third; r3, a row that will be deleted, on its

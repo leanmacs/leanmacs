@@ -10,7 +10,6 @@ import Editor.DisplayRules
 import Editor.File
 import Editor.File.Model
 import Editor.Files
-import Editor.Files.Kit
 import Editor.InputScheme
 import Editor.InputScheme.Test
 import Editor.Invocation
@@ -30,6 +29,7 @@ import Editor.Scene
 import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Files
+import Editor.Test.Hosted
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Shell
@@ -45,6 +45,7 @@ import Editor.VersionControl.Show
 import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
 import Editor.Workspace
+import FilesApiTest.Fake
 import VcApi
 import VcApiTest.Fake
 
@@ -71,7 +72,7 @@ def statusJobs (name : String) : Option (List Argument → Work) :=
     if name == VersionControl.applyJob then some VersionControl.applyWork
     else
       if name == VersionControl.showJob then some VersionControl.showWork
-      else fileWorkspaceJobs name
+      else workspaceJobsWith FilesApiTest.jobs name
 
 /-- The bindings of the status buffer checks: the workspace driver checks',
 and `C-v s` (`vc-status`), `C-v t` (`vc-status-toggle`), `C-v v`
@@ -95,7 +96,8 @@ def statusBindings : List (String × Invocation) :=
 
 /-- The commands of the status buffer checks (`statusBindings`). -/
 def statusCommands : List (String × Dispatched) :=
-  fileWorkspaceCommands ++ dispatchedOf VersionControl.package.registered.commands ++
+  workspaceCommandsWith FilesApiTest.openSaveCommands ++
+    dispatchedOf VersionControl.package.registered.commands ++
     [("to-row", fun call => do
         if let .nat row :: _ := call.arguments then
           let offset ← call.target.buffer.text.offsetOf ⟨row, 0⟩
@@ -135,6 +137,9 @@ def statusDriverOf (repository : VersionControl.Model.Repository)
   (workspaceDriver registered keys).map fun driver =>
     let scripts := (repository.jobModel "git" "/r" writes missing).processes.scripts
     { driver with
+      -- A file's open attaches its workspace through the kit's stand-in at
+      -- `FilesApi.Opened`, and `files-api`'s fake is the files feature.
+      keys := withExtensionsOf driver.keys #[attachPackage, FilesApiTest.fake]
       jobs :=
         { driver.jobs with
           files :=
@@ -161,7 +166,7 @@ version-control registrations (`VersionControl.package.registered.jobs`), and th
 driver checks', the file commands' among them. -/
 def stagingJobs (name : String) : Option (List Argument → Work) :=
   ((VersionControl.package.registered.jobs.find? (·.name == name)).map (·.work)) <|>
-    fileWorkspaceJobs name
+    workspaceJobsWith FilesApiTest.jobs name
 
 /-- The bindings of the hunk and message buffer checks: the workspace driver
 checks', and `C-v s` (`vc-status`), `C-v g` (`vc-stage-hunk`), `C-v G`

@@ -2,8 +2,6 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Completion.Filtering
 import Editor.Completion.Later
-import Editor.Files
-import Editor.Files.Kit
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
@@ -17,12 +15,15 @@ import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Opener
 import Editor.Test.Prompts
 import Editor.Test.Workspace
 import Editor.Workspace
 import Editor.Workspace.FindFile
 import Editor.Workspace.Lister
 import Editor.Workspace.Model
+import FilesApi
+import FilesApiTest.Fake
 import ModelTest.Check
 import ModelTest.Support.FindFile
 
@@ -44,7 +45,7 @@ namespace FindFileTest
 show no step runs the lister or the filter. -/
 def idle (name : String) : Option (List Argument → Work) :=
   if name == Workspace.FindFile.job then some fun _ => Work.of (fun _ => pure ()) fun _ => pure ()
-  else fileWorkspaceJobs name
+  else workspaceJobsWith FilesApiTest.jobs name
 
 /-- The lister the prompt open in `driver` was asked with: its context. -/
 def listerOf (driver : TestDriver) : Option Workspace.Lister :=
@@ -173,7 +174,7 @@ def findFileChecks : List Check :=
             (asked.loop.state.prompt.map (·.continuation)) ==
                 some { command := Workspace.FindFile.name, arguments := [.bool true, .str "/w"] } &&
               accepted.loop.state.prompt.isNone &&
-              accepted.pending.any (·.name == Files.loadJob) &&
+              accepted.pending.any (·.name == Opener.loadJob) &&
               (heldFile settled).map (·.path) == some "/w/src/w.lean" },
     { name :=
         "criterion 4 on the models: the accepted file is opened through the name open-file, so a command registered in its place, as config's would be, is handed the path under the root"
@@ -182,7 +183,7 @@ def findFileChecks : List Check :=
           let standIn : Dispatched := fun call => do
             message s!"stand-in {call.arguments.map argumentText}"
             return none
-          match driver (commands := (Files.openName, standIn) :: commands) with
+          match driver (commands := (FilesApi.openFileName, standIn) :: commands) with
           | none => false
           | some driver =>
             -- The stand-in opens nothing, so the window's buffer has no
@@ -200,9 +201,9 @@ def findFileChecks : List Check :=
           -- still gives the window's buffer the workspace /w.
           let standIn : Dispatched := fun call => do
             message s!"stand-in {call.arguments.map argumentText}"
-            Files.openCommand call
+            Opener.openCommand call
             return none
-          match driver (commands := (Files.openName, standIn) :: commands) with
+          match driver (commands := (FilesApi.openFileName, standIn) :: commands) with
           | none => false
           | some driver =>
             let accepted (asked : TestDriver) : TestDriver :=
