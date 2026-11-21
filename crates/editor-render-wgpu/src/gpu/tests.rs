@@ -694,6 +694,18 @@ fn a_renderer_rasterises_at_its_settings_dilation() {
 }
 
 #[test]
+fn a_gpu_renderer_says_what_draws_its_glyphs() {
+    let renderer =
+        WgpuRenderer::over(&noop(), Settings::default(), true).expect("the no-op adapter");
+    assert_eq!(renderer.rasterizing().to_string(), "swash");
+    let handed = renderer.rasterizing_with(FakeRasterizer::new());
+    assert_eq!(
+        handed.rasterizing().to_string(),
+        "the fake rasteriser, and swash for what it declines"
+    );
+}
+
+#[test]
 fn a_renderer_handed_a_rasteriser_draws_with_no_validation_error() {
     let mut renderer = WgpuRenderer::over(&noop(), Settings::default(), true)
         .expect("the no-op adapter")

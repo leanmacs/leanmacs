@@ -338,6 +338,12 @@ impl Rasterize for CoreTextRasterizer {
     fn by_luminance(&self) -> bool {
         self.smoothing
     }
+
+    /// Seen in the window's check (`mise run window-contract`), which
+    /// prints what each renderer draws with.
+    fn name(&self) -> &'static str {
+        "Core Text"
+    }
 }
 
 /// The system's font defaults: the user's preferences, read through

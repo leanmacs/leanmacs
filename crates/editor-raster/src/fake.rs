@@ -141,6 +141,10 @@ impl Rasterize for FakeRasterizer {
     fn by_luminance(&self) -> bool {
         self.tinted
     }
+
+    fn name(&self) -> &'static str {
+        "the fake rasteriser"
+    }
 }
 
 /// A resolved font of `size` pixels with no bytes, as layout's fake

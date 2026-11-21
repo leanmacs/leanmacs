@@ -124,6 +124,42 @@ impl Rasterize for Declines {
     fn rasterize(&mut self, _: &GlyphRequest<'_>) -> Option<GlyphImage> {
         None
     }
+
+    fn name(&self) -> &'static str {
+        DECLINES
+    }
+}
+
+/// What [`Declines`] is called.
+const DECLINES: &str = "no rasteriser";
+
+/// What draws a renderer's glyph images, for a person
+/// ([`HeadlessRenderer::rasterizing`], [`WgpuRenderer::rasterizing`]):
+/// `swash`, or the rasteriser it was handed and swash for what that one
+/// declines. Whatever prints it prints this, as it does [`Masks`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rasterizing {
+    /// The name of the rasteriser asked first ([`Rasterize::name`]).
+    first: &'static str,
+}
+
+impl Rasterizing {
+    /// What draws the glyphs of `rasterizers`.
+    fn of(rasterizers: &Rasterizers) -> Self {
+        Self {
+            first: rasterizers.first().name(),
+        }
+    }
+}
+
+impl fmt::Display for Rasterizing {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.first == DECLINES {
+            formatter.write_str("swash")
+        } else {
+            write!(formatter, "{}, and swash for what it declines", self.first)
+        }
+    }
 }
 
 /// `first`, falling back to swash at `dilation` ([`Weight::dilation`]).
@@ -179,6 +215,11 @@ impl HeadlessRenderer {
     /// before a first draw ([`Masks`]).
     pub fn masks(&self) -> Option<Masks> {
         self.painter.masks()
+    }
+
+    /// What draws its glyph images.
+    pub fn rasterizing(&self) -> Rasterizing {
+        Rasterizing::of(self.painter.rasterizer())
     }
 }
 
@@ -379,6 +420,11 @@ impl WgpuRenderer {
     /// or not it was presented; none before a first draw ([`Masks`]).
     pub fn masks(&self) -> Option<Masks> {
         self.painter.masks()
+    }
+
+    /// What draws its glyph images.
+    pub fn rasterizing(&self) -> Rasterizing {
+        Rasterizing::of(self.painter.rasterizer())
     }
 
     /// Why the last draw was not presented, when it was not: what wgpu

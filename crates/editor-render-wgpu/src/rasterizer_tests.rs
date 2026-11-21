@@ -27,3 +27,14 @@ fn a_headless_renderer_falls_back_to_swash_at_its_settings_dilation() {
         assert_eq!(handed.painter.rasterizer().fallback().dilation(), dilation);
     }
 }
+
+#[test]
+fn a_headless_renderer_says_what_draws_its_glyphs() {
+    let renderer = HeadlessRenderer::new(Settings::default());
+    assert_eq!(renderer.rasterizing().to_string(), "swash");
+    let handed = renderer.rasterizing_with(FakeRasterizer::new());
+    assert_eq!(
+        handed.rasterizing().to_string(),
+        "the fake rasteriser, and swash for what it declines"
+    );
+}

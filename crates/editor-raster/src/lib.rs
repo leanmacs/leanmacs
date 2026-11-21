@@ -131,6 +131,13 @@ pub trait Rasterize {
     fn by_luminance(&self) -> bool {
         false
     }
+
+    /// What it is called, for a person reading what draws the glyphs (the
+    /// window's check prints it). A fact the adapter states; nothing
+    /// decides from it.
+    fn name(&self) -> &'static str {
+        "an unnamed rasteriser"
+    }
 }
 
 impl<R: Rasterize + ?Sized> Rasterize for Box<R> {
@@ -140,6 +147,10 @@ impl<R: Rasterize + ?Sized> Rasterize for Box<R> {
 
     fn by_luminance(&self) -> bool {
         (**self).by_luminance()
+    }
+
+    fn name(&self) -> &'static str {
+        (**self).name()
     }
 }
 
@@ -210,6 +221,11 @@ impl<A: Rasterize, B: Rasterize> Rasterize for Fallback<A, B> {
 
     fn by_luminance(&self) -> bool {
         self.first.by_luminance()
+    }
+
+    /// Its first's: the second only draws what the first declines.
+    fn name(&self) -> &'static str {
+        self.first.name()
     }
 }
 

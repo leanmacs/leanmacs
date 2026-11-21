@@ -178,3 +178,24 @@ fn a_glyph_both_decline_has_no_image() {
     };
     assert_eq!(both.rasterize(&request), None);
 }
+
+/// A rasteriser that states nothing of itself.
+struct Anonymous;
+
+impl Rasterize for Anonymous {
+    fn rasterize(&mut self, _: &GlyphRequest<'_>) -> Option<crate::GlyphImage> {
+        None
+    }
+}
+
+#[test]
+fn a_rasteriser_names_itself_through_a_box_and_a_fallback_by_its_first() {
+    assert_eq!(Anonymous.name(), "an unnamed rasteriser");
+    assert_eq!(FakeRasterizer::new().name(), "the fake rasteriser");
+    let boxed: Box<dyn Rasterize> = Box::new(FakeRasterizer::new());
+    assert_eq!(boxed.name(), "the fake rasteriser");
+    assert_eq!(
+        Fallback::new(Anonymous, FakeRasterizer::new()).name(),
+        "an unnamed rasteriser"
+    );
+}
