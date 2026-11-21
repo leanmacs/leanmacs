@@ -2396,6 +2396,7 @@ bool editor_ffi_render_headless_stop(void);
 void editor_ffi_render_journal(uint64_t after, editor_ffi_raw_words *out);
 void editor_ffi_render_counters(editor_ffi_raw_words *out);
 uint8_t editor_ffi_render_resting(void);
+uint8_t editor_ffi_render_await_rest(uint64_t bound_ms);
 
 // `Editor.Ffi.Display.newSystem : IO Display`
 lean_obj_res editor_glue_display_new_system(void) {
@@ -2449,6 +2450,11 @@ lean_obj_res editor_glue_render_counters(void) {
   editor_ffi_raw_words raw;
   editor_ffi_render_counters(&raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.renderAwaitRestRaw : UInt64 → IO UInt8`
+lean_obj_res editor_glue_render_await_rest(uint64_t bound_ms) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_render_await_rest(bound_ms)));
 }
 
 // `Editor.Ffi.renderRestingRaw : IO UInt8`

@@ -49,7 +49,9 @@
 //! been told nothing since, is at rest ([`RenderHandle::resting`]): it
 //! draws nothing until it is told more, however far its clock moves. That
 //! is how a reader outside the loop knows that what was asked of it has
-//! been drawn, and that what it then sees drawn was asked for later.
+//! been drawn, and that what it then sees drawn was asked for later. A
+//! test waits for the rest with [`RenderHandle::wait_resting`], which the
+//! step that records rest wakes.
 //!
 //! A mark, a new size and a deadline each ask for the frame shown to be
 //! drawn again. Made before a first frame is shown they ask for nothing:
@@ -291,6 +293,21 @@ struct Shared {
     /// that step found nothing asked and nothing to wait for;
     /// [`NOT_AT_REST`] otherwise.
     rested_at: AtomicU64,
+    /// What a step that records rest takes to signal [`Shared::rested`],
+    /// and what [`RenderHandle::wait_resting`] reads the rest under.
+    rest_lock: Mutex<()>,
+    /// Signalled, under [`Shared::rest_lock`], each time a step records
+    /// rest: what [`RenderHandle::wait_resting`] waits on.
+    rested: Condvar,
+    /// Called on the render thread each time a step is about to record
+    /// rest, before it does. Set once, by a test.
+    #[cfg(test)]
+    before_rest: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// Called each time [`RenderHandle::wait_resting`] reads whether the
+    /// loop is at rest, with what it read, under [`Shared::rest_lock`].
+    /// Set once, by a test.
+    #[cfg(test)]
+    rest_read: std::sync::OnceLock<Box<dyn Fn(bool) + Send + Sync>>,
 }
 
 /// What [`Shared::rested_at`] holds while the loop is not at rest.
@@ -340,6 +357,33 @@ impl RenderHandle {
         let shared = &self.shared;
         let rested_at = shared.rested_at.load(Ordering::SeqCst);
         rested_at != NOT_AT_REST && rested_at == shared.words.load(Ordering::SeqCst)
+    }
+
+    /// Waits until the loop is at rest ([`RenderHandle::resting`]), and
+    /// says whether it was: false only once `bound` has passed first. A
+    /// readout for tests, which use it to know that what they asked of the
+    /// loop has been drawn, on an event and never a poll: a step that
+    /// records rest signals it, under the lock this reads the rest under,
+    /// so no rest recorded after a reading is missed.
+    ///
+    /// `bound` is a hang guard: only a loop that never comes to rest
+    /// reaches it.
+    pub fn wait_resting(&self, bound: Duration) -> bool {
+        let shared = &self.shared;
+        // The bound is the condition variable's: the crate reads no real
+        // clock.
+        let (_rest, waited) = shared
+            .rested
+            .wait_timeout_while(locked(&shared.rest_lock), bound, |_| {
+                let resting = self.resting();
+                #[cfg(test)]
+                if let Some(hook) = shared.rest_read.get() {
+                    hook(resting);
+                }
+                !resting
+            })
+            .unwrap_or_else(PoisonError::into_inner);
+        !waited.timed_out()
     }
 
     /// Whether `other` is a handle of the same loop as this one.
@@ -486,6 +530,12 @@ impl<R: Renderer> RenderLoop<R> {
             record: Mutex::new(Record::default()),
             words: AtomicU64::new(0),
             rested_at: AtomicU64::new(NOT_AT_REST),
+            rest_lock: Mutex::new(()),
+            rested: Condvar::new(),
+            #[cfg(test)]
+            before_rest: std::sync::OnceLock::new(),
+            #[cfg(test)]
+            rest_read: std::sync::OnceLock::new(),
         });
         let handle = RenderHandle {
             shared: Arc::clone(&shared),
@@ -524,7 +574,19 @@ impl<R: Renderer> RenderLoop<R> {
         } else {
             NOT_AT_REST
         };
+        #[cfg(test)]
+        if rested_at != NOT_AT_REST
+            && let Some(hook) = self.shared.before_rest.get()
+        {
+            hook();
+        }
         self.shared.rested_at.store(rested_at, Ordering::SeqCst);
+        if rested_at != NOT_AT_REST {
+            // Under the lock a wait reads the rest under, so a wait that
+            // read no rest is in its wait before this reaches it.
+            let _rest = locked(&self.shared.rest_lock);
+            self.shared.rested.notify_all();
+        }
         step
     }
 
@@ -672,8 +734,8 @@ impl<R: Renderer> RenderLoop<R> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::sync::mpsc::{Receiver, channel};
+    use std::sync::{Arc, Mutex, PoisonError};
     use std::time::Duration;
 
     use editor_layout::Layout;
@@ -694,6 +756,10 @@ mod tests {
 
     /// A long while on the loop's clock: an hour.
     const LONG: u64 = 3_600_000_000_000;
+
+    /// hang guard: the word from another thread that each wait ends on;
+    /// only a hang reaches the bound, and the test then fails as a hang.
+    const BOUND: Duration = Duration::from_secs(10);
 
     /// The target the loops begin on.
     const TARGET: Target = Target {
@@ -1592,6 +1658,81 @@ mod tests {
             word(&rig.handle);
             assert!(!rig.handle.resting(), "word {index}: at rest after it");
         }
+    }
+
+    /// Has the loop behind `handle` call `held` on its thread each time a
+    /// step is about to record rest.
+    fn before_rest(handle: &RenderHandle, held: impl Fn() + Send + Sync + 'static) {
+        let set = handle.shared.before_rest.set(Box::new(held));
+        assert!(set.is_ok(), "set once");
+    }
+
+    /// Where each reading [`RenderHandle::wait_resting`] makes on the loop
+    /// behind `handle` arrives.
+    fn rest_readings(handle: &RenderHandle) -> Receiver<bool> {
+        let (read, readings) = channel();
+        let read = Mutex::new(read);
+        let hook = move |resting| {
+            let _ = read
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(resting);
+        };
+        assert!(
+            handle.shared.rest_read.set(Box::new(hook)).is_ok(),
+            "set once"
+        );
+        readings
+    }
+
+    #[test]
+    fn wait_resting_answers_only_once_a_step_held_before_it_records_rest_has_recorded_it() {
+        let rig = rig();
+        let handle = rig.handle.clone();
+        // The step is held on its way to recording rest until the test
+        // lets it go.
+        let (holding, held) = channel();
+        let (release, released) = channel::<()>();
+        let hold = Mutex::new((holding, released));
+        before_rest(&handle, move || {
+            let hold = hold.lock().unwrap_or_else(PoisonError::into_inner);
+            let _ = hold.0.send(());
+            let _ = hold.1.recv();
+        });
+        let readings = rest_readings(&handle);
+
+        let stepped = std::thread::spawn(move || {
+            let mut rig = rig;
+            rig.render.step()
+        });
+        held.recv_timeout(BOUND).expect("the step reaches its rest");
+        let waited = {
+            let handle = handle.clone();
+            std::thread::spawn(move || handle.wait_resting(BOUND))
+        };
+        assert_eq!(
+            readings.recv_timeout(BOUND),
+            Ok(false),
+            "the wait reads no rest while the step is held"
+        );
+        release.send(()).expect("the step is held");
+
+        // A wait that answered at its first reading never reads the rest.
+        assert_eq!(
+            readings.recv_timeout(BOUND),
+            Ok(true),
+            "the wait reads the rest again once the step has recorded it"
+        );
+        assert!(waited.join().expect("the wait's thread"));
+        assert_eq!(stepped.join().expect("the step's thread"), Step::Wait(None));
+    }
+
+    #[test]
+    fn wait_resting_says_no_once_its_bound_has_passed_with_the_loop_not_at_rest() {
+        let mut rig = rig();
+        assert!(!rig.handle.wait_resting(Duration::ZERO));
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        assert!(rig.handle.wait_resting(Duration::ZERO));
     }
 
     #[test]

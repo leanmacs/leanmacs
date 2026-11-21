@@ -8,16 +8,18 @@
 //! `editor-render`'s fake clock, so nothing here reaches a process-wide
 //! value and the tests may run on parallel threads.
 //!
-//! Wiring only, in `tests/render_session.rs`'s form: nothing sleeps, each
-//! word from the render thread is read with a bound, and no rule of the
-//! scheduler is stated. That an equal frame draws nothing, and that a loop
-//! at rest draws nothing, are `editor-render`'s, pinned there.
+//! Wiring only, in `tests/render_session.rs`'s form: nothing sleeps or
+//! polls, each word from the render thread, and its rest
+//! (`RenderHandle::wait_resting`), is waited for on its own signal with a
+//! bound that is a hang guard, and no rule of the scheduler is stated.
+//! That an equal frame draws nothing, and that a loop at rest draws
+//! nothing, are `editor-render`'s, pinned there.
 
 use std::io;
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use editor_ffi::display::{Display, WireScene, WireView};
 use editor_ffi::document::Document;
@@ -26,10 +28,9 @@ use editor_ffi::snapshot::Snapshot;
 use editor_render::clock::FakeClock;
 use editor_render::fake::RecordingRenderer;
 use editor_render::port::{DrawRequest, Drawn, Renderer, Target};
-use editor_render::render_loop::RenderHandle;
 
-/// How long a word from another thread is waited for before the test
-/// fails.
+/// hang guard: a word from the render thread, or its rest; only a hang
+/// reaches the bound, and the test then fails as a hang.
 const BOUND: Duration = Duration::from_secs(10);
 
 /// The recording renderer, which also says on a channel the target of each
@@ -64,20 +65,6 @@ fn publish(display: &Display, snapshot: &Snapshot, width: u64, height: u64) {
     };
     let (words, strings) = wire.encode();
     assert!(display.publish(&words, &strings, &[snapshot]));
-}
-
-/// Whether the loop behind `handle` comes to rest by the bound. It is read
-/// again and again without sleeping: the render thread's step that finds
-/// nothing to do is what is waited for.
-fn comes_to_rest(handle: &RenderHandle) -> bool {
-    let deadline = Instant::now() + BOUND;
-    while Instant::now() < deadline {
-        if handle.resting() {
-            return true;
-        }
-        thread::yield_now();
-    }
-    false
 }
 
 #[test]
@@ -117,7 +104,7 @@ fn a_bound_displays_frame_is_drawn_at_the_scenes_size_with_its_stamp_and_the_loo
             scale: 1.0,
         }
     );
-    assert!(comes_to_rest(&handle));
+    assert!(handle.wait_resting(BOUND), "the loop comes to rest");
     let journal = handle.journal();
     assert_eq!(journal.len(), 1);
     assert_eq!(journal[0].input_ns, 1234);

@@ -1169,6 +1169,15 @@ reload's wake-up, a counted event.
 window), the syntax worker, which `Ffi.syntaxSettle` covers, and the
 journal's unobserved writes, which `journalled` waits for by a flush.
 
+**The readouts a test waits on outside idle** (deterministic-test-concurrency
+phase 6). Each is a test readout, not a path the editor takes: a wait on an
+event its owner signals as the thing happens, bounded only by a hang guard,
+never a poll.
+
+- **A render loop's rest** (`RenderHandle::wait_resting`, for C
+  `editor_ffi_render_await_rest`): the step that records rest signals it,
+  under the lock the wait reads the rest under.
+
 **Per host, never per stage.** A host whose collaborators track it
 (`Collaborators.tracksIdle`: a test stage's and the headless mode's) starts
 with a count of its own (`Headless.start`), so a late step of an earlier

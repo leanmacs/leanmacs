@@ -141,4 +141,21 @@ def renderResting : IO (Option Bool) := do
     | 2 => some true
     | _ => some false
 
+/-- `renderAwaitRest` as it crosses: 0 for no session, 1 when the bound
+passed first, 2 at rest. -/
+@[extern "editor_glue_render_await_rest"]
+private opaque renderAwaitRestRaw (boundMs : UInt64) : IO UInt8
+
+/-- Waits until the latest render session's loop is at rest, and says
+whether it came to rest: `some true` once it is, `some false` when
+`boundMs` milliseconds passed first, `none` at once when no session has
+started. A readout for tests: it returns on the step that records rest,
+never by a poll of `renderResting`. `boundMs` is a hang guard: only a loop
+that never comes to rest reaches it. -/
+def renderAwaitRest (boundMs : UInt64) : IO (Option Bool) := do
+  return match ← renderAwaitRestRaw boundMs with
+    | 0 => none
+    | 2 => some true
+    | _ => some false
+
 end Editor.Ffi

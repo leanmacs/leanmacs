@@ -94,7 +94,8 @@
 //! gate draws what Lean publishes. The journal, the counters and whether
 //! the loop is at rest are read through the presenter's last session's
 //! handle, which outlives the session ([`editor_ffi_render_journal`],
-//! [`editor_ffi_render_counters`], [`editor_ffi_render_resting`]).
+//! [`editor_ffi_render_counters`], [`editor_ffi_render_resting`], and
+//! the wait for that rest, [`editor_ffi_render_await_rest`]).
 //! Dropping a session ends it as [`Headless::stop`] does, once: it leaves
 //! its presenter's target, stops its loop and joins its render thread, so
 //! a session a failing test drops leaves no loop running.
@@ -131,6 +132,7 @@ use std::io;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use editor_layout::frame::Frame;
 use editor_platform::{Canvas, Drawer, Menu, NativeWindow, Request, Resize};
@@ -736,6 +738,30 @@ pub extern "C" fn editor_ffi_render_resting() -> u8 {
     }
 }
 
+/// Waits until the process's latest render session's loop is at rest
+/// (`RenderHandle::wait_resting`), and says how it ended, in
+/// [`editor_ffi_render_resting`]'s words: 2 once it is at rest, 1 when
+/// `bound_ms` milliseconds passed first, and 0 at once when no session has
+/// started. A readout for tests, which use it to know that what they asked
+/// of the loop has been drawn: it returns on the step that records rest,
+/// never by a poll.
+///
+/// `bound_ms` is a hang guard: only a loop that never comes to rest
+/// reaches it.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_render_await_rest(bound_ms: u64) -> u8 {
+    await_rest(last_session(), Duration::from_millis(bound_ms))
+}
+
+/// What [`editor_ffi_render_await_rest`] answers for the session `last`.
+fn await_rest(last: Option<RenderHandle>, bound: Duration) -> u8 {
+    match last {
+        None => 0,
+        Some(handle) if handle.wait_resting(bound) => 2,
+        Some(_) => 1,
+    }
+}
+
 /// What makes a renderer for a window: handed the native window, when the
 /// platform has one, and the target the window opened at. It answers the
 /// renderer, or why there is none.
@@ -944,6 +970,7 @@ impl<R: Renderer + Send + 'static> Session<R> {
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
 
     use editor_layout::Layout;
     use editor_layout::frame::Frame;
@@ -957,7 +984,9 @@ mod tests {
 
     use editor_platform::Request;
 
-    use super::{Answering, Asker, Follows, Presenter, Session, leave_word, refresh_ns, target};
+    use super::{
+        Answering, Asker, Follows, Presenter, Session, await_rest, leave_word, refresh_ns, target,
+    };
     use crate::window::{CountingClock, InputClock, Monotonic};
 
     /// The size the loops begin at, and the target it is.
@@ -1088,6 +1117,22 @@ mod tests {
     /// What the loop does when no word is left.
     fn untold() -> Did {
         after(|_| {})
+    }
+
+    /// The codes of `editor_ffi_render_await_rest`: 0 with no session, 2
+    /// for a loop at rest, 1 for one the bound passed on first.
+    #[test]
+    fn a_wait_for_rest_says_whether_there_is_a_session_and_whether_it_rested() {
+        assert_eq!(await_rest(None, Duration::ZERO), 0);
+        let (mut render, handle) = RenderLoop::new(
+            RecordingRenderer::new(),
+            Arc::new(FakeClock::new()),
+            Arc::new(RecordingPark::new()),
+            target(SIZE),
+        );
+        assert_eq!(await_rest(Some(handle.clone()), Duration::ZERO), 1);
+        assert_eq!(render.step(), Step::Wait(None));
+        assert_eq!(await_rest(Some(handle), Duration::ZERO), 2);
     }
 
     #[test]
