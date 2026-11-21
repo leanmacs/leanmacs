@@ -30,7 +30,8 @@
 # Comments and string literals are dropped before matching, so prose and
 # messages never match. A site is a line whose code holds a wait:
 #
-#   Lean  `IO.sleep`, `eventually`, `within`, `monoMsNow`, or a name that
+#   Lean  `IO.sleep`, `eventually`, a bare `within` or `Headless.within`,
+#         `Pool.within`, `Session.within`, `monoMsNow`, or a name that
 #         holds `patience`/`Patience` or ends in `Guard`
 #   Rust  a `sleep(`/`sleep_ms(` call (but one on a receiver named
 #         `fake…`, which moves a fake clock and waits for nothing),
@@ -180,7 +181,7 @@ awk -F '\t' -v list="$list" '
         t = code; gsub(/[^A-Za-z0-9_.'\''!?]+/, " ", t); nt = split(t, tok, " ")
         for (k = 1; k <= nt; k++) {
           ns = split(tok[k], seg, "."); last = seg[ns]
-          if (tok[k] == "IO.sleep" || last == "eventually" || last == "within" || last == "monoMsNow" || last ~ /[Pp]atience/ || last ~ /Guard$/) site = 1
+          if (tok[k] == "IO.sleep" || last == "eventually" || tok[k] == "within" || tok[k] ~ /(Headless|Pool|Session)\.within$/ || last == "monoMsNow" || last ~ /[Pp]atience/ || last ~ /Guard$/) site = 1
         }
       } else {
         if (code ~ /(^|[^A-Za-z0-9_])sleep(_ms)?\(/ && code !~ /fn[ \t]+sleep/ && code !~ /(^|[^A-Za-z0-9_])fake[A-Za-z0-9_]*\.sleep/) site = 1

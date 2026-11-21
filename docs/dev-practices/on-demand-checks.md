@@ -1043,8 +1043,8 @@ trees, and the headless driver's waits in `lean/Editor/Headless.lean`,
 benches, the published test support (`contract`, `fake`, `scripted`,
 `tests.rs`, `tests/`) and each other source file from its first
 `#[cfg(test)]`. It drops comments and string literals, then takes as a site
-each line whose code holds a wait: in Lean `IO.sleep`, `eventually`,
-`within`, `monoMsNow` or a name holding `patience` or ending in `Guard`; in
+each line whose code holds a wait: in Lean `IO.sleep`, `eventually`, a bare
+`within` or `Headless.within`/`Pool.within`/`Session.within`, `monoMsNow` or a name holding `patience` or ending in `Guard`; in
 Rust a `sleep(` call (but one on a receiver named `fake…`, which moves a
 fake clock), `recv_timeout`, `wait_timeout*`, `park_timeout`, `yield_now`,
 `Instant::now() +`, `.elapsed()`, or `is_finished()` or `try_wait()` in a
