@@ -1346,7 +1346,27 @@ def bracketChecks (context : Context) : List Check :=
                     text.startsWith "a hang:" && (text.splitOn "giving up").length == 2) &&
                 said.size == 1 &&
                 abandoned)
-              s!"thrown={thrown} said={said} abandoned={abandoned}" }]
+              s!"thrown={thrown} said={said} abandoned={abandoned}" },
+    { name :=
+        "a stage's real host calls its loopStarted once, on its loop's own thread, not the check's, and a check's own run of the loop's handler never calls it"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        let threads ← IO.mkRef (#[] : Array UInt64)
+        let counted :=
+          { stage.collaborators with
+            loopStarted := do
+              stage.collaborators.loopStarted
+              threads.modify (·.push (← IO.getTID)) }
+        Headless.withHost counted (guard := patience) (grace := some hangGuard) fun host => do
+            host.send .show
+            discard <| host.await hangGuard
+        let started ← threads.get
+        let mine ← IO.getTID
+        let before ← context.realLoops.get
+        let ran ← withRunning context id fun _ _ _ => return true
+        let after ← context.realLoops.get
+        saw (started.size == 1 && started.all (· != mine) && ran && after == before)
+            s!"started on {started}, the check on {mine}, real loops {before} then {after}" }]
 
 /-- The checks of jobs through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue and the real text binding. The

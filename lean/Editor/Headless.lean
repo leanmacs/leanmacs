@@ -2496,18 +2496,68 @@ def Running.new {β σ : Type} {scheme : InputScheme} (collaborators : Collabora
       jobs := { services := collaborators.services }
       mailbox := ← Job.Mailbox.new }
 
-/-- The editor thread: pulls the editor queue and handles each event to its
-end, until the driver ends the loop or the queues are quit. After each event
-it publishes in `progress` how many markers it has reached, whether a reload
-is running, how many jobs are, and the title bar the installed config
-chose.
+/-- One turn of the loop, the editor thread's and a stepped host's
+(`Editor/Headless/Stepped.lean`) alike: handles `event` to its end
+(`handle`), then gives back the unit of the host's activity it came under,
+when it came under one (`Collaborators.postCounted`,
+`Collaborators.counts`). -/
+def Running.turn {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
+    (running : Running β σ scheme) (event : Ffi.Event) : IO (Running β σ scheme) := do
+  let running ← running.handle collaborators event
+  -- An event posted under a unit of the host's activity gives it back
+  -- once it has been handled (`Collaborators.postCounted`).
+  if collaborators.counts event then
+    collaborators.services.activity.done
+  return running
 
-Before the first event it registers the packages it is handed
-(`Running.new`), and tells the library its interrupt key; when it ends it leaves the library with
-none, so that no key raises the flag while no loop takes keys off the
-queue. Its end cancels every job and waits for the reload job it started,
-if that has not ended (`Running.reloadTask`), after telling
-`Collaborators.endWaits`: no reload outlives its loop. -/
+/-- How far the loop has got, as it tells its driver after each event: how
+many markers it has reached, whether a reload is running, how many jobs
+are, and the title bar the installed config chose. -/
+def Running.progress {β σ : Type} {scheme : InputScheme} (running : Running β σ scheme) :
+    Progress :=
+  { markers := running.markers, reloading := running.config.running,
+    restoring := running.restoring.isSome, jobs := running.jobs.running
+    titleBar := running.config.titleBar
+    indexing :=
+      running.frame.any (·.state.restore.writing) ||
+        running.jobs.table.entries.any fun entry =>
+          entry.name == Restore.writeJob || entry.name == Restore.saveJob
+    background :=
+      (running.jobs.table.entries.filter fun entry =>
+          entry.name != Restore.writeJob && entry.name != Restore.saveJob &&
+            !running.spawned.contains entry.id).size
+    handOver := running.handOver }
+
+/-- The loop's end, the editor thread's and a stepped host's alike: nothing
+will deal with a result any more, so every job is cancelled, and every pause
+and the hint delay withdrawn; and the reload job is the loop's, so the end
+waits for it, after telling `Collaborators.endWaits`, when it has not
+ended. -/
+def Running.wind {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
+    (running : Running β σ scheme) : IO Unit := do
+  running.jobs.cancelAll
+  let running ← running.withdrawPauses collaborators
+  discard <| running.withdrawHints collaborators
+  -- The reload job is the loop's: the loop ends once it has, so the host's
+  -- bracket, which waits for the loop, waits for it too. Its wake-up to a
+  -- queue that has been quit is refused, and gives its unit back.
+  if let some task := running.reloadTask then
+    unless ← IO.hasFinished task do
+      collaborators.endWaits "reload"
+      discard <| IO.wait task
+
+/-- The editor thread: pulls the editor queue and takes one turn of the loop
+for each event (`Running.turn`), until the driver ends the loop or the
+queues are quit. After each event it publishes in `progress` how far it has
+got (`Running.progress`).
+
+Before the first event it calls `Collaborators.loopStarted`, registers the
+packages it is handed (`Running.new`), and tells the library its interrupt
+key; when it ends it leaves the library with none, so that no key raises
+the flag while no loop takes keys off the queue. Its end (`Running.wind`)
+cancels every job and waits for the reload job it started, if that has not
+ended, after telling `Collaborators.endWaits`: no reload outlives its
+loop. -/
 def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
     (progress : IO.Ref Progress) (reached : IO.Ref (Option (Nat × IO.Promise Unit))) : IO Unit := do
   collaborators.loopStarted
@@ -2518,25 +2568,10 @@ def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β
     if event.kind == .quit then
       break
     let markers := running.markers
-    running ← running.handle collaborators event
-    -- An event posted under a unit of the host's activity gives it back
-    -- once it has been handled (`Collaborators.postCounted`).
-    if collaborators.counts event then
-      collaborators.services.activity.done
+    running ← running.turn collaborators event
     if running.stopped then
       break
-    progress.set
-        { markers := running.markers, reloading := running.config.running,
-          restoring := running.restoring.isSome, jobs := running.jobs.running
-          titleBar := running.config.titleBar
-          indexing :=
-            running.frame.any (·.state.restore.writing) ||
-              running.jobs.table.entries.any fun entry =>
-                entry.name == Restore.writeJob || entry.name == Restore.saveJob
-          background :=
-            (running.jobs.table.entries.filter fun entry =>
-                entry.name != Restore.writeJob && entry.name != Restore.saveJob &&
-                  !running.spawned.contains entry.id).size }
+    progress.set running.progress
     -- A marker or a probe the driver waits on is answered once the progress
     -- it reads has been published: one look at the armed marker, and only
     -- after an event that moved the count of markers.
@@ -2552,18 +2587,7 @@ def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β
   -- A loop that ended for a restart tells its driver the plan.
   if let some plan := running.handOver then
     progress.modify fun progress => { progress with handOver := some plan }
-  -- Nothing will deal with a result any more: no job runs on unowned, and
-  -- no pause waits.
-  running.jobs.cancelAll
-  running ← running.withdrawPauses collaborators
-  discard <| running.withdrawHints collaborators
-  -- The reload job is the loop's: the loop ends once it has, so the host's
-  -- bracket, which waits for the loop, waits for it too. Its wake-up to a
-  -- queue that has been quit is refused, and gives its unit back.
-  if let some task := running.reloadTask then
-    unless ← IO.hasFinished task do
-      collaborators.endWaits "reload"
-      discard <| IO.wait task
+  running.wind collaborators
   -- Nor will anything take a key off the queue, so none is to raise the flag.
   discard <| Event.setInterruptKey none
 
@@ -2604,6 +2628,18 @@ def Collaborators.hosting {β σ : Type} {scheme : InputScheme}
             loop.state.hostedBy collaborators.workingDirectory collaborators.home
               collaborators.stateDirectory collaborators.launch collaborators.packageSet } }
 
+/-- The collaborators as a host's loop runs over them, a real host's and a
+stepped one's alike: hosting (`hosting`), and, when they track their idle,
+with a count of the host's own (`Job.Activity.counting`), never a stage's,
+so a late step of an earlier host's job cannot reach a later host's idle. -/
+def Collaborators.prepared {β σ : Type} {scheme : InputScheme}
+    (collaborators : Collaborators β σ scheme) : IO (Collaborators β σ scheme) := do
+  let collaborators := collaborators.hosting
+  if collaborators.tracksIdle then
+    return { collaborators with
+        services := { collaborators.services with activity := ← Job.Activity.counting } }
+  return collaborators
+
 /-- Starts a host: its loop runs on a dedicated task until it is asked to stop
 or it ends by itself. The loop it makes, when it is first needed, has the
 collaborators' working directory, home directory and state directory in its
@@ -2611,16 +2647,7 @@ state (`Collaborators.hosting`). Private: a host is had only inside its
 bracket (`withHost`), which ends the loop. -/
 private def start {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme) :
     IO Host := do
-  let collaborators := collaborators.hosting
-  -- A count of the host's own, never a stage's: a late step of an earlier
-  -- host's job cannot reach a later host's idle.
-  let collaborators ←
-    if collaborators.tracksIdle then
-      pure
-          { collaborators with
-            services := { collaborators.services with activity := ← Job.Activity.counting } }
-    else
-      pure collaborators
+  let collaborators ← collaborators.prepared
   let progress ← IO.mkRef {}
   let reached ← IO.mkRef none
   let thread ← IO.asTask (prio := .dedicated) (loop collaborators progress reached)
