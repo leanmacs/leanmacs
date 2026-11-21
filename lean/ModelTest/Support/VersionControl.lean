@@ -47,6 +47,7 @@ import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
 import Editor.Workspace
 import FilesApiTest.Fake
+import ProjectApiTest.Fake
 import VcApi
 import VcApiTest.Fake
 
@@ -140,8 +141,12 @@ def statusDriverOf (repository : VersionControl.Model.Repository)
     { driver with
       -- A file's open attaches its workspace through the kit's stand-in at
       -- `FilesApi.Opened`, `files-api`'s fake is the files feature and
-      -- `buffers-api`'s the buffer commands.
-      keys := withExtensionsOf driver.keys #[attachPackage, FilesApiTest.fake, BuffersApiTest.fake]
+      -- `buffers-api`'s the buffer commands, and `project-api`'s, over the
+      -- finder's model of the world, the workspace's reach.
+      keys :=
+        withExtensionsOf driver.keys
+          #[attachPackage, FilesApiTest.fake, BuffersApiTest.fake,
+            ProjectApiTest.fakeWith (workspaceWorld.find {} ·)]
       jobs :=
         { driver.jobs with
           files :=
@@ -164,10 +169,15 @@ def gitStarted (driver : TestDriver) : Array Process.Command :=
     command.program == "git" && command.directory == ("/r" : System.FilePath)
 
 /-- The jobs of the hunk and message buffer checks: every job of the
-version-control registrations (`VersionControl.package.registered.jobs`), and the workspace
-driver checks', the file commands' among them. -/
+version-control registrations (`VersionControl.package.registered.jobs`),
+each made as a host makes it with `project-api`'s fake over the finder's
+model of the world registered, and the workspace driver checks', the file
+commands' among them. -/
 def stagingJobs (name : String) : Option (List Argument → Work) :=
-  ((VersionControl.package.registered.jobs.find? (·.name == name)).map (·.work)) <|>
+  ((VersionControl.package.registered.jobs.find? (·.name == name)).map
+      (·.workWith
+        (ProjectApiTest.workspacesValues
+          #[ProjectApiTest.workspacesWith (workspaceWorld.find {} ·)]))) <|>
     workspaceJobsWith FilesApiTest.jobs name
 
 /-- The bindings of the hunk and message buffer checks: the workspace driver

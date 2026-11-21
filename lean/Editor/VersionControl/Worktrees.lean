@@ -3,7 +3,7 @@ import Editor.Command.Call
 import Editor.Mode
 import Editor.VersionControl.Status
 import Editor.VersionControl.Views
-import Editor.Workspace.Reach
+import ProjectApi
 
 /-!
 # The worktree list: `vc-worktrees`
@@ -65,12 +65,15 @@ worktree from.
   - a row with no worktree says `vc-worktrees: no worktree on this line`;
   - the asking workspace's own root starts the status read for it, shown
     (`startRead`);
-  - any other path is reached (`Editor/Workspace/Reach.lean`) with
-    `visitContinuation`: an answer the table caches under the current
-    generation (`Workspace.Table.cached?`) at once, otherwise through the
-    unkeyed job `vc-worktree-find` (`visitFindWork`), which runs the finder
-    (`Workspace.find`) with the workspace settings on that path and records
-    the answer (`recordWorkspace`), as a file's open would. Then the status
+  - any other path is reached through the interface library
+    `project-api` (`ProjectApi.workspaces?`'s `reach`; with none it says
+    `vc-worktrees-visit: no workspace implementation`) with
+    `visitContinuation`, which version control builds from the interface's
+    types: the workspace's reach answers from the table's cache under the
+    current generation at once, otherwise through the unkeyed job
+    `vc-worktree-find` (`visitFindWork`, registered over the point), which
+    runs the finder with the workspace settings on that path and records the
+    answer, as a file's open would. Then the status
     read of the workspace reached starts, with its label, shown from the
     asking view. Local workspaces are found,
     never registered, so the status buffer opened is the one opening a file
@@ -311,10 +314,11 @@ def visitContinuation : Workspace.Reach.Continuation :=
   { job := worktreeFindJob, name := worktreesName, gone := goneSentence
     reached := fun order location => readWorkspace location order.path order.git order.view }
 
-/-- The visit's find job: `Workspace.Reach.work` handing on to
-`visitContinuation`. -/
-def visitFindWork : List Argument → Work :=
-  Workspace.Reach.work visitContinuation
+/-- The visit's find job over `values`, the `project-api` values registered
+when it starts: their `work` handing on to `visitContinuation`
+(`ProjectApi.workOver`); with none it fails, saying so. -/
+def visitFindWork (values : Array ProjectApi.Workspaces) : List Argument → Work :=
+  ProjectApi.workOver values visitContinuation
 
 /-- `vc-worktrees-visit` ("The commands", in the module docs). -/
 def worktreesVisitCommand (call : Call) : EditorM Unit := do
@@ -325,7 +329,9 @@ def worktreesVisitCommand (call : Call) : EditorM Unit := do
   if worktree.path == order.root then
     startRead { order with shows := true }
     return
-  Workspace.Reach.reach visitContinuation worktree.path order.git order.view
+  let some workspaces ←
+    ProjectApi.workspaces? | message (ProjectApi.noImplementation worktreesVisitName)
+  workspaces.reach visitContinuation worktree.path order.git order.view []
 
 /-- The `vc-worktrees` mode ("The mode", in the module docs). -/
 def worktreesMode : Mode :=

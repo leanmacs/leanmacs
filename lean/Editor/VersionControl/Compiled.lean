@@ -161,7 +161,7 @@ def package : Package :=
       workJob hunkApplyJob hunkApplyWork (reported := true)
       workJob commitJob commitWork (reported := true)
       workJob worktreesReadJob listWork
-      workJob worktreeFindJob visitFindWork
+      Extension.workJob ProjectApi.Workspaces worktreeFindJob visitFindWork
       workJob reviewReadJob reviewReadWork
       workJob reviewDiffJob reviewDiffWork
       workJob logReadJob logReadWork

@@ -1,6 +1,7 @@
 import Editor.Api
 import Editor.Job
 import Editor.Workspace.Attach
+import ProjectApi
 
 /-!
 # Reaching the workspace at a path
@@ -52,60 +53,18 @@ by name with plain arguments, and the continuation is code, which arguments
 cannot carry. One name would need this module to know its callers, or the
 continuation to be a command run by name.
 
+The order and the continuation are the interface library `project-api`'s
+(`ProjectApi.lean`), which callers in other features build, and the
+workspace package registers `reach` and `work` as its `ProjectApi.Workspaces`
+value, which they reach it through.
+
 Pinned by `ModelTest.reachChecks`, on the loop's driver over the editor's
 models and the job model, with a probe continuation; each caller's checks
-pin its messages.
+pin its messages; and by `project-api`'s contract, which
+`ModelTest.workspacePackageChecks` runs over the workspace package.
 -/
 
 namespace Editor.Workspace.Reach
-
-/-- What a find is started with: the directory, the git program, config's
-roots, the config generation and the asking view. -/
-structure Order where
-  /-- The directory. -/
-  path : System.FilePath
-  /-- The git program. -/
-  git : String
-  /-- Config's workspace roots. -/
-  roots : Array ConfigRoot := #[]
-  /-- The config generation the answer is found under. -/
-  generation : Nat
-  /-- The view that asked. -/
-  view : ViewId
-  /-- Plain arguments the caller hands its own continuation through the find
-  job. -/
-  carried : List Argument := []
-  deriving DecidableEq, Repr
-
-/-- The order as the arguments a job is started with: the path, the git
-program, the generation, the view, the count of the carried arguments and
-they, then the roots. -/
-def Order.arguments (order : Order) : List Argument :=
-  [.str order.path.toString, .str order.git, .nat order.generation, .nat order.view.index,
-      .nat order.carried.length] ++
-    order.carried ++
-    order.roots.toList.flatMap rootArguments
-
-/-- The order `arguments` are, if they are one (`Order.arguments`). -/
-def Order.ofArguments? : List Argument → Option Order
-  | .str path :: .str git :: .nat generation :: .nat view :: .nat count :: rest =>
-    if rest.length < count then none
-    else
-      (rootsOf? (rest.drop count)).map fun roots =>
-        { path, git, roots, generation, view := ⟨view⟩, carried := rest.take count }
-  | _ => none
-
-/-- What a command does once it reaches a workspace, and how it says it could
-not ("Reaching", in the module docs). -/
-structure Continuation where
-  /-- The name the find job is registered under. -/
-  job : String
-  /-- The name a refused start is said under. -/
-  name : String
-  /-- What is said of a directory in no repository. -/
-  gone : System.FilePath → String
-  /-- What is done with the workspace at the location, for the order. -/
-  reached : Order → Location → EditorM Unit
 
 /-- Reaches the workspace at `path` for `continuation`, from `view`, with the
 git program `git`, handing the continuation `carried` on its order

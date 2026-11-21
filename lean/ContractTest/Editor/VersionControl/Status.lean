@@ -64,7 +64,9 @@ partial def settleQueued (rig : ProjectRig) (texts : RealTexts) (loop : Loop Tes
   | start :: rest =>
     if depth == 0 then
       return none
-    let some work := (jobs.find? (·.name == start.name)).map (·.work start.arguments) | return none
+    let some work :=
+      (jobs.find? (·.name == start.name)).map
+        (·.workWith keys.registered.extensions start.arguments) | return none
     let posts ← IO.mkRef (#[] : Array Invocation)
     let handle ←
       Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)

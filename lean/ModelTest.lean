@@ -189,6 +189,7 @@ import ModelTest.Editor.Workspace.Projects
 import ModelTest.Editor.Workspace.Reach
 import ModelTest.EditorCore.EditorPackage
 import ModelTest.FilesApi
+import ModelTest.ProjectApi
 import ModelTest.VcApi
 import ModelTest.VcApiTest.Contract
 import ModelTest.VcApiTest.Fake
@@ -1206,6 +1207,12 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   its names; its fake (`BuffersApiTest.fake`, a close over the core's API)
   keeps its contract; the contract fails a package lacking `close-buffer`
   and one whose close runs no hook;
+- `projectApiChecks`: the interface library `project-api` (`ProjectApi.lean`):
+  its names; its fake (`ProjectApiTest.fake`, a `Workspaces` value that
+  hands every continuation a given workspace) keeps its contract; the
+  contract fails a package lacking `find-file-in-project` and one whose
+  reach hands nothing on; and a job over the point with no value fails
+  naming its continuation's job;
 - `versionControlContractFailures`: the version-control contract
   (`VcApiTest/Contract.lean`) against the model;
 - `versionControlGitChecks`, `versionControlWorktreeGitChecks`,
@@ -1720,6 +1727,7 @@ def checks : List Check :=
     vcApiChecks ++
     filesApiChecks ++
     buffersApiChecks ++
+    projectApiChecks ++
     versionControlGitChecks ++
     versionControlWorktreeGitChecks ++
     versionControlHistoryGitChecks ++

@@ -82,6 +82,11 @@ def package : Package :=
   { name := "workspace"
     setup := do
       Extension.add ({ name := "workspace", opened := attach } : FilesApi.Opened)
+      Extension.add
+          ({  name := ProjectApi.implementationName
+              reach := fun continuation path git view carried =>
+                Reach.reach continuation path git view carried
+              work := Reach.work } : ProjectApi.Workspaces)
       commandWith currentName currentCommand
       commandWith FindFile.name FindFile.command
       commandWith FindInProject.name FindInProject.command

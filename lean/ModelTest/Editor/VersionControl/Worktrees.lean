@@ -22,10 +22,10 @@ import Editor.VersionControl.Git.Model
 import Editor.VersionControl.Status
 import Editor.VersionControl.Worktrees
 import Editor.Workspace
-import Editor.Workspace.Model
 import ModelTest.Check
 import ModelTest.Support.Git
 import ModelTest.Support.VersionControl
+import ProjectApiTest.Fake
 import VcApi
 import VcApiTest.Contract
 import VcApiTest.Fake
@@ -101,7 +101,9 @@ worktree list's read and find jobs. -/
 def worktreeJobs (name : String) : Option (List Argument → Work) :=
   if name == VersionControl.worktreesReadJob then some VersionControl.listWork
   else
-    if name == VersionControl.worktreeFindJob then some VersionControl.visitFindWork
+    if name == VersionControl.worktreeFindJob then
+      some
+        (VersionControl.visitFindWork #[ProjectApiTest.workspacesWith (workspaceWorld.find {} ·)])
     else statusJobs name
 
 /-- The keys of the worktree list checks: the status buffer checks', and
@@ -173,7 +175,7 @@ def worktreeBufferChecks : List Check :=
                   namedText shown worktreesBufferName == some worktreesText &&
                   gitStarted shown == #[listRun] },
     { name :=
-        "criterion 2: visiting a linked worktree's row runs the finder there, records its workspace, and shows *vc-status: r@feature* with that worktree's status; a second visit finds it in the table and runs no finder"
+        "criterion 2: visiting a linked worktree's row reaches its workspace through project-api, here its fake over the finder's model of the world, which records it, and shows *vc-status: r@feature* with that worktree's status; version control runs no finder of its own, on a second visit either"
       run :=
         pure <|
           match worktreeDriver with
@@ -185,7 +187,7 @@ def worktreeBufferChecks : List Check :=
             let finds (driver : TestDriver) :=
               (driver.jobs.processes.started.filter
                   (· == Workspace.Git.revParseCommand "git" "/w")).size
-            finds visited == 1 && finds again == 1 &&
+            finds visited == 0 && finds again == 0 &&
               namedText visited name ==
                 some "r@feature: on feature\nunstaged: a.txt (modified)\n" &&
               (showingFocused visited).map (·.buffer.name) == some name &&

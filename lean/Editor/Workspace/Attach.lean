@@ -2,6 +2,7 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Workspace.Finder
 import Editor.Workspace.Modes
+import ProjectApi
 
 /-!
 # A buffer's workspace, and `workspace-current`
@@ -97,22 +98,6 @@ structure FindOrder where
 /-- The settings the order's finder is handed. -/
 def FindOrder.settings (order : FindOrder) : Settings :=
   { roots := order.roots, git := order.git }
-
-/-- A config root as arguments: its path, then its project's name, or
-`false` for none. -/
-def rootArguments (root : ConfigRoot) : List Argument :=
-  .str root.root.toString ::
-    match root.project with
-    | some project => [.str project]
-    | none => [.bool false]
-
-/-- The roots `arguments` are, if they are (`rootArguments`). -/
-def rootsOf? : List Argument → Option (Array ConfigRoot)
-  | [] => some #[]
-  | .str root :: .str project :: rest =>
-    (rootsOf? rest).map (#[{ root, project := some project }] ++ ·)
-  | .str root :: .bool false :: rest => (rootsOf? rest).map (#[{ root }] ++ ·)
-  | _ => none
 
 /-- The order as the arguments a job is started with: the buffer's number,
 the directory, the git program and the generation, then each root. -/

@@ -87,6 +87,16 @@ over the core's API (`BuffersApiTest.Fake`), and its contract check
 (`BuffersApiTest.Contract`). -/
 lean_lib BuffersApiTest where globs := #[.submodules `BuffersApiTest]
 
+/-- The interface library `project-api` (`ProjectApi.lean`): reaching the
+workspace at a path, what a caller hands the reach, and the names others
+reach. Staged here as `VcApi` is. -/
+lean_lib ProjectApi
+
+/-- The test library of `project-api` (`ProjectApiTest/`): its fake, a
+`Workspaces` value that hands every continuation a given workspace
+(`ProjectApiTest.Fake`), and its contract check (`ProjectApiTest.Contract`). -/
+lean_lib ProjectApiTest where globs := #[.submodules `ProjectApiTest]
+
 /-- Code that `ffi-test overflow` has Lean's interpreter run
 (`InterpretedFixture.lean`; `mise run ffi-overflow`). It is a library of its
 own that no executable imports, so it is compiled to an `.olean` and never
@@ -1159,7 +1169,8 @@ test library (`lean_lib VcApi`, above): the config base imports them through
 the features still in the core, so the bundle ships them as it ships
 `Editor`. One moves out of this list when it moves to `packages/`. -/
 def stagedInterfaceLibraries : List Lean.Name :=
-  [`VcApi, `VcApiTest, `FilesApi, `FilesApiTest, `BuffersApi, `BuffersApiTest]
+  [`VcApi, `VcApiTest, `FilesApi, `FilesApiTest, `BuffersApi, `BuffersApiTest, `ProjectApi,
+    `ProjectApiTest]
 
 /-- Whether a library of `pkg` ships its modules built in the bundle
 (`editorShipped`): of the core, `Editor` and `EditorCore`, the libraries

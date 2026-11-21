@@ -231,7 +231,9 @@ partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
     loop := settled
     texts := after
   for start in stepped.starts do
-    let some work := (jobs.find? (·.name == start.name)).map (·.work start.arguments) | return none
+    let some work :=
+      (jobs.find? (·.name == start.name)).map
+        (·.workWith keys.registered.extensions start.arguments) | return none
     let posts ← IO.mkRef (#[] : Array Invocation)
     let handle ←
       Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)
