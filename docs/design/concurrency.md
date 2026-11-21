@@ -1209,8 +1209,28 @@ counted events; a job's start, park, wake and end each pay one such step;
 a marker one look at the armed marker and one resolve. The window mode's
 steps are closure calls that do nothing. Measured on an 18-core Mac, the
 medians and 99th percentiles of `mise run job-bench` and `mise run
-journal-bench`, two runs each, before and after the count, are below
-("Measured cost").
+journal-bench`, two runs each, before and after the count, are below.
+
+**Measured cost** (2026-11-21, an 18-core Mac, idle; before: 7996fa6f, after:
+the count in the runner and the host; `bench-jobs`' hosts keep the count,
+`tracksIdle`). Median / 99th percentile, µs, of each run:
+
+| `job-bench` row | Before, run 1 | Before, run 2 | After, run 1 | After, run 2 |
+|---|---|---|---|---|
+| idle | 21.6 / 64.7 | 21.1 / 45.6 | 20.5 / 31.2 | 18.5 / 34.9 |
+| 64 jobs each sleeping 1 ms | 31.6 / 105.2 | 24.8 / 89.0 | 24.0 / 85.0 | 24.0 / 90.6 |
+| 18 interpreted jobs computing | 23.9 / 397.3 | 21.3 / 35.0 | 21.6 / 473.4 | 21.9 / 645.5 |
+| 36 interpreted jobs computing | 26.5 / 82.6 | 21.8 / 42.0 | 24.8 / 720.8 | 22.0 / 36.7 |
+| idle again | 22.4 / 68.7 | 21.1 / 36.9 | 21.5 / 35.2 | 21.1 / 28.4 |
+
+`journal-bench`'s nine rows (µs per insert) had medians of 3.4 to 3.9 and
+3.3 to 3.7 before, and 3.4 to 4.7 and 3.3 to 3.7 after, with 99th
+percentiles of 4.3 to 14.2 before and 4.1 to 20.3 after. It runs the
+reconciler and the journal's hand-off with no host, so the count is not on
+its path, and its spread is the machine's. Every median after is within the
+spread of the two runs before; the 99th percentiles of the computing rows
+move by hundreds of microseconds between runs of either, which is the pool
+under load, not the count.
 
 **Pinned by** `ModelTest.activityChecks` (the count alone),
 `ModelTest.activityRunnerChecks` (the runner's accounting, forced at a
