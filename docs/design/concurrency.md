@@ -21,8 +21,8 @@ process, its runtime is the only one that schedules editor code.
 | **Lean pool** | Lean | Background jobs that compute or await | Mutate editor state; block |
 | **Dedicated job threads** | Lean | Work that blocks in a system call: the reload job today | Mutate editor state |
 | **Completion pump** | Lean, a dedicated task | Pulling the completion queue and ending the wait each completion names | Run a job; mutate editor state |
-| **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries (the design; what is built, and the decision it awaits, are under "Sharing state"). As built it owns the renderer alone (the device, the surface, the glyph atlas, the quads kept per row), takes frames from a mailbox, and never lays out. `editor-ffi` starts it when a window opens and ends it when the window closes; idle, it is blocked with no deadline | Run Lean code; call layout or a shaper; hold a lock while it draws; touch the window's loop |
-| **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches. Each takes a flush, a wait completed behind the work handed to it before (`rust-library.md`) | Hold editor state; call Lean |
+| **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries (the design; what is built, and the decision it awaits, are under "Sharing state"). As built it owns the renderer alone (the device, the surface, the glyph atlas, the quads kept per row), takes frames from a mailbox, and never lays out. `editor-ffi` starts it when a window opens and ends it when the window closes; idle, it is blocked with no deadline. A headless render session's thread is joined by the session's `stop`, or by its drop | Run Lean code; call layout or a shaper; hold a lock while it draws; touch the window's loop |
+| **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches. Each takes a flush, a wait completed behind the work handed to it before (`rust-library.md`). The process's services are statics that live for the process, and their threads end with it. A service a test starts is owned by an `editor_service::Worker`, whose drop stops and joins its thread; the watch service joins its timer thread when its last handle is dropped | Hold editor state; call Lean |
 | **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching over long lists. The syntax worker is built: one thread named `syntax`, started by `editor-ffi` at the first attach, parked while it has nothing to parse, with no deadline when no refresh is scheduled and until the next refresh's deadline on the job clock otherwise, which reparses each attached document from snapshots and the edit log's patches, and parses its injected layers, each whole in its ranges, and holds no editor state. A result is tagged with the revision it parsed and handed out only if no newer revision has been told by then; a stale one is never delivered, and is only the base of the next reparse (`rust-library.md`, "Syntax, as built"). A round takes the session's state lock briefly at its start, to read the injections, and never the other way round, so an edit's touch and a change of injections never wait for a parse; when only the injections changed and they find new layers, the round delivers again at the same revision (`rust-library.md`, "Injections, indentation and text objects, as built"). Once a text has gone the idle interval unchanged after an edit, the worker parses it whole and delivers again at the same revision only when that tree differs from the one delivered; an edit's touch sets the deadline under the worker's queue lock, which no parse holds (`rust-library.md`, "Syntax, as built"). Highlight queries do not run on the worker: they run at frame time, on the thread that lays the frame out (the editor thread, in Lean's publish), over the rows shown only, from the tree delivered last, carried through the edits since; no lock is nested on that path, and none of it waits for a parse (`rust-library.md`, "Highlights, as built"). The diff is built: the diff service, `editor-diff-imara`'s line diff of two snapshots on a thread of its own (`editor-diffs`), answering a job's `diff` request through the completion queue, with an edit script or with hunks of whole lines, so a long diff holds up neither a load nor the editor thread, which only applies the script it answers or draws the hunks as gutter marks. Fuzzy matching over long lists is built, not as a Rust worker but as a job of the loop's own on Lean's task pool: a prompt with more than `Loop.inlineMatches` (250) candidates to match is matched by a match job that runs the prompt's style there, its fuzzy requests answered by the same stateless call as a request of the job port (`JobRequest.fuzzy`); nucleo's own worker was considered and rejected ("Prompts", below; `rust-library.md`, "Fuzzy matching, as built"). The matcher answers in the call, on the thread that asked: the editor thread for a short list, a pool thread for a long one | Hold editor state |
 
 Rust never calls Lean. The main thread and the services push events onto a
@@ -703,7 +703,9 @@ has not ended the loop. A script that posts more after `wq`, or reaches
 its end, before the save's result is delivered has those lines handled
 while the save runs, and the end of a script stops the loop, which cancels
 the save. So a script waits for the job after `wq`
-([headless-mode.md](../dev-practices/headless-mode.md)).
+([headless-mode.md](../dev-practices/headless-mode.md)). The run then
+returns only once the loop has ended (`Headless.withHost`, "Structured
+lifetimes"): a driver never has a live loop beside it after its run.
 
 Pinned by `ModelTest.stateChecks`, `stateRequestChecks` and
 `apiStateChecks` (the state's rules and the API's `quit`, which also has a
@@ -1884,6 +1886,52 @@ As built (`lean/Editor/Job/Table.lean`, `lean/Editor/Job/Jobs.lean`):
   a wake-up that was already queued finds nothing, and no handler runs. All
   of it happens on the editor thread, so there is no race to close.
 - **A runtime that ends cancels every job.**
+
+**In tests, a host, its loop and its queued work end inside a bracket**
+(deterministic-test-concurrency phase 3), so that nothing a test creates
+outlives it (AGENTS.md, "Deterministic concurrency in tests"):
+
+- **`Headless.withHost` is the only way to have a host**
+  (`lean/Editor/Headless.lean`; `Host`'s constructor and `start` are
+  private). It runs its body against the host and returns once the loop's
+  task has ended, whether the body returned or threw: a loop still running
+  is asked to stop and waited for with no deadline. Its guard only says a
+  hang, once, and never ends the wait. Tests, the bench and the window mode
+  (`withHostEnding`, which hands the loop's error back for the exit status)
+  all use it, and `run` and `runAndDispose` run on it. The headless CLI
+  alone bounds the wait: after the hang is said it waits `hangGrace`
+  (5 s) more, then gives up as `Failure.hung` with status 1, so CI and
+  fixtures never hang. Pinned by `ConfigTest.bracketChecks` and the run
+  checks of `ConfigTest.scriptChecks`, which hold the loop inside an event
+  and let it go only from the bracket's own report of the hang.
+- **`Editor.Test.Linked.withFiles` removes a test's directory only once
+  the services' flushes are completed** (`lean/Editor/Test/Linked/Services.lean`):
+  a flush of each service the check handed paths under the directory, the
+  file service unless it names others, waited for with no deadline,
+  whether the body returned or threw; a guard says a hang, and a refused
+  flush is said too. A check that runs a host over the directory nests the
+  host's bracket inside it. ConfigTest reaches it through
+  `ConfigTest.withFiles`; FfiTest's `inOwnDirectory` keeps the same rule
+  with a flush of its own, pulled through the one parked pull of the
+  completion queue (`FfiTest.pullTask`). Pinned by
+  `ContractTest.linkedServicesChecks` over the real file service, its
+  worker held in process.
+- **A Rust owner's drop stops and joins the thread it started**:
+  `editor_service::Worker` (a service's test loops in `editor-ffi`), the
+  watch service's timer thread (joined when its last handle is dropped),
+  and the headless render session (`render::Headless`, whose drop does
+  what its `stop` does). Each is pinned by a test whose thread is held by a
+  hook the drop calls before it joins, so a drop that did not join is seen
+  every time.
+- **Not yet in a scope** (tasks filed, `tech-debt`): the reload job, a
+  dedicated task the loop abandons when it ends
+  (`reload-job-outlives-host-loop`); pool jobs, which `cancelAll` cancels
+  and does not wait for (`pool-jobs-outlive-host-loop`); the grep service,
+  which has no flush, so a cancelled search may still walk a directory
+  being removed (`grep-search-outlives-directory`); the Rust service
+  threads that are waited for by a count and not joined
+  (`rust-service-threads-joined-by-count`); and the test threads left
+  behind on a panic path (`rust-test-threads-left-on-panic`).
 
 ## What the Lean runtime requires of us
 
