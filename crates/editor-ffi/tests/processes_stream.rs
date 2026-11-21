@@ -13,9 +13,9 @@
 //! It is a test binary of its own, with one test function, because the
 //! service and the completion queue are process-wide. Every child runs in a
 //! temporary directory the test makes and removes, and writes nothing
-//! there. The check that no further completion arrives pulls the queue on
-//! a detached thread bounded by a short deadline; that thread may wait on
-//! past the test, so it comes last.
+//! there. That no further completion arrives is shown by a flush, which is
+//! queued behind every completion before it and must be the next one; no
+//! pull is left waiting past the test.
 
 #[path = "common/processes.rs"]
 mod common;
@@ -23,16 +23,12 @@ mod common;
 mod open;
 
 use std::mem::MaybeUninit;
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
 
-use common::{DEADLINE, completion_of, flushed, next_completion};
-use editor_ffi::events::{QueueId, RawEvent, editor_ffi_events_next};
+use common::{completion_of, flushed, next_completion};
 use editor_ffi::processes::{
     RawStreamReply, editor_ffi_processes_cancel, editor_ffi_processes_close_input,
-    editor_ffi_processes_flush, editor_ffi_processes_pending, editor_ffi_processes_read,
-    editor_ffi_processes_take_stream, editor_ffi_processes_write,
+    editor_ffi_processes_pending, editor_ffi_processes_read, editor_ffi_processes_take_stream,
+    editor_ffi_processes_write,
 };
 use editor_ffi::text::editor_ffi_text_free;
 use open::{comes_to_be_held, open};
@@ -196,28 +192,6 @@ fn a_streaming_child_is_read_written_closed_and_cancelled_through_c_one_completi
     assert!(editor_ffi_processes_read(30, 31));
     assert!(comes_to_be_held(30));
     assert_eq!(next_completion(), completion_of(31));
-    // The pull is left waiting: the next completion it takes is the
-    // flush's, below.
-    let (sender, pulled) = mpsc::channel();
-    thread::spawn(move || {
-        let mut raw = MaybeUninit::<RawEvent>::uninit();
-        // SAFETY: `raw` is writable for one record.
-        let got = unsafe { editor_ffi_events_next(QueueId::Completion.tag(), raw.as_mut_ptr()) };
-        let code = got.then(|| {
-            // SAFETY: the call returned true, so it filled the record, whose
-            // buffer came from the library and is handed back once.
-            unsafe {
-                let raw = raw.assume_init();
-                editor_ffi_text_free(raw.text, raw.text_len);
-                raw.code
-            }
-        });
-        sender.send(code).ok();
-    });
-    assert!(
-        pulled.recv_timeout(Duration::from_millis(200)).is_err(),
-        "no further completion"
-    );
     let reply = take(31).expect("the delivery");
     assert_eq!(reply.out_lines().len(), 10_000);
     let mut whole = Vec::new();
@@ -227,7 +201,11 @@ fn a_streaming_child_is_read_written_closed_and_cancelled_through_c_one_completi
     }
     assert_eq!(whole, lines);
     assert!(editor_ffi_processes_cancel(30));
-    assert!(editor_ffi_processes_flush(32));
-    assert_eq!(pulled.recv_timeout(DEADLINE), Ok(Some(32)));
+    // The flush is queued behind every completion the child's threads
+    // queued before its reap, so a second completion of the read would be
+    // pulled before it: the flush is the next completion. A second flush,
+    // next again, shows nothing was queued after the first.
+    flushed(32);
+    flushed(33);
     assert_eq!(editor_ffi_processes_pending(), before);
 }

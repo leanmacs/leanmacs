@@ -19,8 +19,9 @@ use editor_ffi::processes::{
 };
 use editor_ffi::text::editor_ffi_text_free;
 
-/// How long a test waits for something that should happen at once. Only
-/// broken code takes this long, and the test then fails instead of hanging.
+/// hang guard: each event a test waits for with it, a completion on the
+/// queue or a child's end, which must come; only a hang reaches the bound,
+/// and the check then fails as a hang.
 pub const DEADLINE: Duration = Duration::from_secs(10);
 
 /// A limit no output of the tests is over.

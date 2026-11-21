@@ -1224,11 +1224,10 @@ impl<P: Processes + 'static> Service<P> {
             if left.is_zero() {
                 return false;
             }
-            streamed = stream
-                .held
-                .wait_timeout(streamed, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
+            // hang guard: a reader's park on the bound; only a hang reaches
+            // the bound, and the caller's check then fails as a hang.
+            let waited = stream.held.wait_timeout(streamed, left);
+            streamed = waited.unwrap_or_else(PoisonError::into_inner).0;
         }
     }
 
@@ -1874,9 +1873,10 @@ mod tests {
     use super::*;
     use crate::fake::{FakeProcesses, Hold, Script};
 
-    /// How long a test waits for something that should happen at once.
-    /// Only a broken service takes this long, and the test then fails
-    /// instead of hanging.
+    /// hang guard: each event a test waits for with it, a completion, a
+    /// thread's entering a held call or the fake reaching a state, which
+    /// must come; only a hang reaches the bound, and the check then fails
+    /// as a hang.
     const DEADLINE: Duration = Duration::from_secs(5);
 
     /// A limit no test's output is over.
@@ -2156,8 +2156,10 @@ mod tests {
             panic!("a refusal");
         };
         assert_eq!(refusal.kind, RefusalKind::NotFound);
-        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
-        assert_eq!(service.pending(), 0);
+        // The flush is the next completion once the run's thread has ended:
+        // a second completion of the run would come before it.
+        assert!(flushed(&service, &completed));
+        assert!(completed.try_recv().is_err());
     }
 
     #[test]
@@ -2303,7 +2305,7 @@ mod tests {
         assert!(flushed(&service, &completed));
         assert!(!fake.alive(child) && !fake.alive(child + 1));
         assert_eq!(fake.record().killed, [child]);
-        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
+        assert!(completed.try_recv().is_err());
         assert_eq!(service.take(6), None);
     }
 
@@ -2359,19 +2361,41 @@ mod tests {
         assert!(service.start(1, command("x"), ROOMY));
         assert!(service.start(2, command("x"), ROOMY));
         assert!(fake.until(DEADLINE, |record| record.waiting.len() == 2));
+        let (events, told) = mpsc::channel();
+        let waiting = events.clone();
+        service.when_shutdown_waits(move || {
+            waiting.send("waiting").ok();
+        });
 
-        let (sender, returned) = mpsc::channel();
         let shutting = service.clone();
         let shutdown = thread::spawn(move || {
             shutting.shutdown();
-            sender.send(()).ok();
+            events.send("returned").ok();
         });
-        assert!(fake.until(DEADLINE, |record| record.reaps_parked == 2));
-        assert!(returned.recv_timeout(Duration::from_millis(100)).is_err());
-        assert_eq!(fake.record().reaped, []);
+        // Read while the reaps are held, and checked once they are let go:
+        // a check that fails while they are held would leave shutdown
+        // waiting for them.
+        let parked = fake.until(DEADLINE, |record| record.reaps_parked == 2);
+        let first = told.recv_timeout(DEADLINE);
+        let early: Vec<_> = told.try_iter().collect();
+        let reaped = fake.record().reaped;
         fake.release_reaps();
 
-        assert_eq!(returned.recv_timeout(DEADLINE), Ok(()));
+        assert!(parked, "both waits are held in their reaps");
+        assert_eq!(first, Ok("waiting"), "shutdown waits for the runs' threads");
+        assert!(
+            !early.contains(&"returned"),
+            "shutdown has not returned while the reaps are held"
+        );
+        assert_eq!(reaped, []);
+        let returned = loop {
+            match told.recv_timeout(DEADLINE) {
+                Ok("returned") => break true,
+                Ok(_) => {}
+                Err(_) => break false,
+            }
+        };
+        assert!(returned, "shutdown returns once the reaps are let go");
         shutdown.join().expect("shutdown returns");
         let record = fake.record();
         assert!(
@@ -2443,7 +2467,7 @@ mod tests {
         );
         assert!(service.cancel(1));
         assert!(flushed(&service, &completed));
-        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
+        assert!(completed.try_recv().is_err());
         fake.end(child + 1);
         fake.end(fake.record().spawned[1].0 + 1);
     }
@@ -2547,8 +2571,10 @@ mod tests {
         let child = fake.record().spawned[0].0;
         assert_eq!(fake.record().killed, [child]);
         assert!(!fake.alive(child) && !fake.alive(child + 1));
-        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
-        assert_eq!(service.pending(), 0);
+        // The flush is the next completion once the run's thread has ended:
+        // a second completion of the run would come before it.
+        assert!(flushed(&service, &completed));
+        assert!(completed.try_recv().is_err());
     }
 
     #[test]
@@ -2664,7 +2690,7 @@ mod tests {
 
         assert!(flushed(&service, &completed));
         assert!(!fake.alive(child) && !fake.alive(child + 1));
-        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
+        assert!(completed.try_recv().is_err());
         assert_eq!(service.take(6), None);
     }
 }
@@ -2679,7 +2705,10 @@ mod streaming {
     use crate::frame::{Frames, Framing};
     use crate::{APP_IDENTITY, Environment};
 
-    /// How long a test waits for something that should happen at once.
+    /// hang guard: each event a test waits for with it, a completion, a
+    /// reader's park, a reading or the fake reaching a state, which must
+    /// come; only a hang reaches the bound, and the check then fails as a
+    /// hang.
     const DEADLINE: Duration = Duration::from_secs(5);
 
     /// A bound no test's output reaches.
@@ -3720,7 +3749,13 @@ mod streaming {
             "no read after it"
         );
         assert_eq!(service.held(1), None);
-        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
+        // Its readers, which the flush does not wait for, have let go of
+        // both streams: nothing of the child is left to complete anything.
+        assert!(
+            fake.until(DEADLINE, |record| record.children[&child].outputs_dropped
+                == [true, true])
+        );
+        assert!(completed.try_recv().is_err());
     }
 
     #[test]
@@ -3901,8 +3936,13 @@ mod streaming {
         assert!(service.cancel(1));
 
         assert!(flushed(&service, &completed));
-        assert!(fake.until(DEADLINE, |record| record.writes_blocked == 0));
-        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
+        // The writer, which the flush does not wait for, drops the input
+        // only once it has kept or dropped the write's reply: then nothing
+        // of the write is left to complete.
+        let child = fake.record().spawned[0].0;
+        assert!(fake.until(DEADLINE, |record| record.writes_blocked == 0
+            && record.children[&child].input_closed));
+        assert!(completed.try_recv().is_err());
     }
 
     #[test]
@@ -3945,16 +3985,28 @@ mod streaming {
 
         let (sender, returned) = mpsc::channel();
         let shutting = service.clone();
-        thread::spawn(move || {
+        let shutdown = thread::spawn(move || {
             shutting.shutdown();
             sender.send(()).ok();
         });
 
         assert_eq!(returned.recv_timeout(DEADLINE), Ok(()));
+        shutdown.join().expect("shutdown returns");
         let record = fake.record();
         assert_eq!(record.reaped.len(), 2);
         assert!(record.spawned.iter().all(|&(id, _)| !fake.alive(id)));
         assert_eq!(service.pending(), 0);
-        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
+        // The readers and the writer, which shutdown does not wait for, have
+        // let go of every stream and of the input, each after its last
+        // chance to complete anything.
+        let deaf = record.spawned[1].0;
+        assert!(fake.until(DEADLINE, |record| {
+            record
+                .children
+                .values()
+                .all(|io| io.outputs_dropped == [true, true])
+                && record.children[&deaf].input_closed
+        }));
+        assert!(completed.try_recv().is_err());
     }
 }

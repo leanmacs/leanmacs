@@ -584,8 +584,13 @@ impl FakeProcesses {
     }
 
     /// Blocks until `ready` holds of what the fake has seen, or until
-    /// `deadline` has passed, and says whether it held.
+    /// `deadline` has passed, and says whether it held. Every change to
+    /// the record is told on the fake's Condvar, so it returns on the
+    /// change that makes `ready` hold: `deadline` is a hang guard, for a
+    /// state that must come, and never decides a negative.
     pub fn until(&self, deadline: Duration, ready: impl Fn(&Record) -> bool) -> bool {
+        // hang guard: the change to the record that makes `ready` hold;
+        // only a hang reaches the bound, and the check then fails as a hang.
         let end = Instant::now() + deadline;
         let mut state = self.shared.state();
         loop {
@@ -596,12 +601,9 @@ impl FakeProcesses {
             if left.is_zero() {
                 return false;
             }
-            state = self
-                .shared
-                .changed
-                .wait_timeout(state, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
+            // hang guard: the same change, told on the Condvar.
+            let waited = self.shared.changed.wait_timeout(state, left);
+            state = waited.unwrap_or_else(PoisonError::into_inner).0;
         }
     }
 
@@ -1146,9 +1148,10 @@ pub struct FakeGround {
     fake: FakeProcesses,
 }
 
-/// How long the fake's ground waits for something that should happen at
-/// once. The fake is synchronous, so only a fake that breaks a rule waits
-/// this long.
+/// hang guard: the change to the fake's state that the ground waits for (a
+/// file written); only a hang reaches the bound, and the check then fails
+/// as a hang. The fake is synchronous, so only a fake that breaks a rule
+/// waits this long.
 const FAKE_DEADLINE: Duration = Duration::from_secs(2);
 
 impl Ground for FakeGround {
@@ -1168,13 +1171,10 @@ impl Ground for FakeGround {
             if left.is_zero() {
                 return None;
             }
-            state = self
-                .fake
-                .shared
-                .changed
-                .wait_timeout(state, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
+            // hang guard: the write of the file, told on the Condvar; only
+            // a hang reaches the bound, and the check then fails as a hang.
+            let waited = self.fake.shared.changed.wait_timeout(state, left);
+            state = waited.unwrap_or_else(PoisonError::into_inner).0;
         }
     }
 
@@ -1208,6 +1208,9 @@ mod tests {
 
     use super::*;
 
+    /// hang guard: each state of the fake a test waits for, which must
+    /// come; only a hang reaches the bound, and the check then fails as a
+    /// hang.
     const DEADLINE: Duration = Duration::from_secs(5);
 
     fn command(script: &str) -> Command {
@@ -1393,7 +1396,10 @@ mod tests {
 
         assert!(!fake.alive(child.id()) && !fake.alive(child.id() + 1));
         assert!(fake.alive(escaped), "the group kill does not reach it");
-        assert!(!reading.is_finished(), "it holds the stream open");
+        assert!(
+            fake.until(DEADLINE, |record| record.reads_waiting == 1),
+            "it holds the stream open: the read is blocked on it"
+        );
         ground.end(escaped);
         assert!(!fake.alive(escaped));
         assert_eq!(reading.join().expect("the read ends"), b"a");
@@ -1691,8 +1697,10 @@ mod tests {
         fake.let_go(child.id());
         let exit = thread::scope(|scope| {
             let waiting = scope.spawn(|| child.wait());
+            // The wait is blocked now, and nothing but the close can end
+            // it: the child's one step waits for that.
             assert!(fake.until(DEADLINE, |record| record.waiting.len() == 1));
-            assert!(!waiting.is_finished(), "held by its step");
+            assert!(fake.alive(child.id()), "held by its step");
             drop(input);
             waiting.join().expect("the wait returns")
         });
