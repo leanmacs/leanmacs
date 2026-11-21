@@ -971,6 +971,112 @@ def activityRunnerChecks : List Check :=
               finishes == 1 &&
               outcome == some (.finished #["1"]) &&
               (← activity.refused) == 0)
-            s!"atSpawn={repr atSpawn} parked={repr parked} waiting={waiting} woken={repr woken} ended={repr ended} finishes={finishes}" }]
+            s!"atSpawn={repr atSpawn} parked={repr parked} waiting={waiting} woken={repr woken} ended={repr ended} finishes={finishes}" },
+    { name :=
+        "a job whose sleep the clock ends is runnable from the wait's end: its unit is taken on the thread that moves the clock, before the job runs, and held while its next request is in flight, until its next sleep is in the clock"
+      run := do
+        let (rig, counted) ← (← Rig.new).counted
+        let log ← IO.mkRef #[]
+        let activity := recorded counted log
+        let rig := { rig with services := { rig.services with activity } }
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 10
+                sleep 10
+                return 2)
+        let parked ← changedAfter activity (← activity.seen)
+        -- The second sleep's reading of the clock is held: the job is
+        -- runnable, inside a request, until the check lets it go.
+        let hold ← rig.clock.holdReads
+        log.set #[]
+        rig.clock.advance 10
+        let woken ← log.get
+        let held ← activity.seen
+        hold.resolve ()
+        let again ← changedAfter activity held
+        let waiting ← rig.clock.waiting
+        rig.clock.advance 10
+        let ended ← spawned.endedAs (.finished #["2"])
+        let here ← IO.getTID
+        saw
+            (parked.running == 0 && woken == #[(1, here)] && held.running == 1 &&
+              again.running == 0 &&
+              waiting == 1 &&
+              ended &&
+              (← activity.refused) == 0)
+            s!"parked={repr parked} woken={woken} here={here} held={repr held} again={repr again} waiting={waiting} ended={ended}" },
+    { name :=
+        "a sleep already due is ended inside its start: the count goes from 1 to 2 and back to 1 as the job enters it, and never reads 0 before the job has ended"
+      run := do
+        let (rig, counted) ← (← Rig.new).counted
+        let log ← IO.mkRef #[]
+        let activity := recorded counted log
+        let rig := { rig with services := { rig.services with activity } }
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 0
+                return 0)
+        let ended ← spawned.endedAs (.finished #["0"])
+        let counts := (← log.get).map (·.1)
+        saw (ended && counts == #[1, 2, 1, 0] && (← activity.refused) == 0) s!"counts={counts}" },
+    { name :=
+        "cancelling a job parked on the fake clock gives back exactly one unit: the count is 0 once it has concluded, and no done ever arrived with nothing held"
+      run := do
+        let (rig, counted) ← (← Rig.new).counted
+        let log ← IO.mkRef #[]
+        let activity := recorded counted log
+        let rig := { rig with services := { rig.services with activity } }
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 10
+                return 0)
+        discard <| changedAfter activity (← activity.seen)
+        spawned.handle.cancel
+        let cancelled ← spawned.endedAs .cancelled
+        let counts := (← log.get).map (·.1)
+        saw
+            (cancelled && counts == #[1, 0, 1, 0] && (← activity.seen).running == 0 &&
+              (← activity.refused) == 0)
+            s!"cancelled={cancelled} counts={counts} refused={← activity.refused}" },
+    { name :=
+        "a job's load on a file service that ends it by itself holds the job's unit while the service holds it, and none once it has been let go and the job has ended"
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        let (rig, activity) ← rig.counted
+        let started ← IO.Promise.new
+        let rig :=
+          { rig with
+            services :=
+              { rig.services with
+                files :=
+                  { files.files with
+                    start := fun id request => do
+                      files.start id request
+                      started.resolve () } } }
+        files.holdCompletions
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                let loaded ← File.load (fileRoot / "a.txt") 100
+                return loaded.isOk)
+        try
+          let some _ ←
+            Job.awaitWithin patience
+                started.result? | throw <| IO.userError s!"a hang: the load had not started within {patience} ms"
+          let held ← activity.seen
+          let inFlight ← files.waiting
+          files.letGo
+          let ended ← changedAfter activity held
+          let finished ← spawned.endedAs (.finished #["true"])
+          saw
+              (held.running == 1 && inFlight == 1 && ended.running == 0 && finished &&
+                (← activity.refused) == 0)
+              s!"held={repr held} inFlight={inFlight} ended={repr ended} finished={finished}"
+        finally
+          spawned.handle.cancel
+          files.letGo }]
 
 end ModelTest
