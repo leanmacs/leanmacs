@@ -1086,7 +1086,8 @@ and each implementation requires its interface package.
   rows and faces, now reads a style or display written in the test
   (`lean/ModelTest/Support/Listings.lean`, and the package `listings` of
   `lean/ConfigTest/Support/Listings.lean`, handed first to every config
-  test's host), and the shipped value's own rule is held by the package's
+  test's host; the linked kit's `lean/Editor/Test/Linked/Listings.lean`
+  since phase 6), and the shipped value's own rule is held by the package's
   tests. `ModelTest.packageSetChecks` and `ConfigTest.shippedChecks`
   host the core's list alone, and state that it holds nothing of the
   three.
@@ -1968,6 +1969,8 @@ The linked kit:
 |---|---|
 | `Editor.Test.Linked.Jobs` | Jobs on the real runner: how long a check waits, a job's outcome as a check compares it |
 | `Editor.Test.Linked.Trees` | Temporary directories of a check's own, and files written into them |
+| `Editor.Test.Linked.Host` | Hosts over the real elaborator, as the config tests start them: the context a harness is handed (`HostContext`), config text, a stage and what compiled code hands it, a session and what it printed, polling with a bound. Its hosts take their packages as an argument: it imports neither the config base nor `EditorCore.EditorPackage` |
+| `Editor.Test.Linked.Listings` | The styles and the display every stage of `Editor.Test.Linked.Host` hands its host (`listingsPackage`), written for the tests |
 | `Editor.Test.Linked.Rig` | The loop over the real services, as a check drives it: its jobs, commands and keys, runs settled until every job has run, and a child's `PATH` |
 | `Editor.Test.Linked.Services` | New: the library's real job services over one table of waits, that table with the completion pump started, the shutdown, and how many children are not yet reaped. `contract-test`'s `main` held the first three inline, and the compile checks read the last from the raw binding |
 
@@ -2025,7 +2028,7 @@ the model test kit (16 modules where there were 14), each imported by
 | Addition | What it is | Who imports it | Why the move needed it |
 |---|---|---|---|
 | `Editor.Test.Sources` | `sourceRunner`, moved unchanged from the core's `ModelTest/Editor/Completion/Contract.lean`, with `sourceContract`, `answersSomething` and `sourceHolds` over it | `ModelTest.sourceContractChecks`; the command prompt's and the binding search's tests | Their sources were held to the completion sources' contract by the core's test, which could not keep naming them once they moved; their own lists run the contract on the same runner, under the same sentences |
-| `Editor.Test.Shipped` | Two `Package` values named `mode-line` and `languages` that register the core's own data (`ModeLine.shipped`; `Language.modes`, then `Language.shipped`), and both as `packages` | The core's tests that host the core's list as the default editor (`ConfigTest.shippedPackages`, `FfiTest.shippedPackages`, `ConfigTest.Support.Hosts`, `ConfigTest.Bench`) and the compile mode's linked test | Those tests show what the default editor draws, its segments and its languages, and the core cannot import the packages that register them. They are no fake of another package's behaviour: the data and its names are the core's, and the packages register exactly that, which their own tests pin |
+| `Editor.Test.Shipped` | Two `Package` values named `mode-line` and `languages` that register the core's own data (`ModeLine.shipped`; `Language.modes`, then `Language.shipped`), and both as `packages` | The core's tests that host the core's list as the default editor (`ConfigTest.shippedPackages`, `FfiTest.shippedPackages`, `Editor.Test.Linked.Host`, `ConfigTest.Bench`) and the compile mode's linked test | Those tests show what the default editor draws, its segments and its languages, and the core cannot import the packages that register them. They are no fake of another package's behaviour: the data and its names are the core's, and the packages register exactly that, which their own tests pin |
 
 ## What moving the completion, at-point and minibuffer features added to the core's API
 
@@ -2071,7 +2074,8 @@ second rule requires (`Editor.Test.AtPoint` imported by it,
 - **The core's tests' own doubles are not the kit's**: the styles and
   displays written for them (`lean/ModelTest/Support/Listings.lean`,
   `lean/ConfigTest/Support/Listings.lean`) are core test modules, which no
-  package imports.
+  package imports. (Phase 6 moved the second into the linked kit, as
+  `Editor.Test.Linked.Listings`, with the hosts that hand it.)
 
 ## The interfaces the core owns for the two features that moved
 

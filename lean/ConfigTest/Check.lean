@@ -2,8 +2,8 @@ import ConfigFixture
 import Editor
 import Editor.Config.Elaborate
 import Editor.Config.Session
-import Editor.Job.Real
 import Editor.Job.Runner
+import Editor.Test.Linked.Host
 import ExtensionFixture
 
 /-!
@@ -37,26 +37,12 @@ structure Check where
   /-- Observes the behaviour; `true` when it holds. -/
   run : IO Bool
 
-/-- What every check is given. -/
-structure Context where
-  /-- The real elaborator, whose `base` hands back, and grows, the one base
-  the checks share (`sharing`): `Editor`, `ConfigFixture` and
-  `ExtensionFixture` to start with. -/
-  elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle
+/-- What every check is given: what a host harness is handed
+(`Editor.Test.Linked.HostContext`), and the config tests' own. -/
+structure Context extends Editor.Test.Linked.HostContext where
   /-- What `ConfigFixture.bump` returned to compiled code before the base was
   imported. -/
   bumped : Nat
-  /-- The next source id no host of this process has posted under. -/
-  ids : IO.Ref UInt64
-  /-- The table of waits the hosts over the library's file service share,
-  once the first of them has asked for it (`Context.fileWaits`); none until
-  then. -/
-  waits : IO.Ref (Option Job.Completions)
-  /-- The Lean toolchain's directory, as the executable was handed it. -/
-  sysroot : String
-  /-- The directories of the `.olean` files the base was imported from, as
-  the executable was handed them (`oleanDirs`). -/
-  oleanDirs : List System.FilePath
   /-- The directory of the syntax fixtures (`tests/syntax`), whose Rust
   fixtures the indent checks read. -/
   syntaxFixtures : System.FilePath
@@ -64,19 +50,9 @@ structure Context where
   (`config/default`), which `defaultConfigChecks` read. -/
   defaultConfig : System.FilePath
 
-/-- The table of waits every host over the library's file service is staged
-over, with the process's one completion pump running over it. It is made,
-and the pump started on a dedicated task, the first time it is asked for,
-and handed back as it is afterwards: a second pump would take the first
-one's completions, so the checks of files share one table and one pump.
-The executable exits explicitly, which a pump parked in its pull needs. -/
-def Context.fileWaits (context : Context) : IO Job.Completions := do
-  if let some completions← context.waits.get then
-    return completions
-  let completions ← Job.Completions.new
-  discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
-  context.waits.set (some completions)
-  return completions
+/-- A check's context as a host harness takes it. -/
+instance : Coe Context Editor.Test.Linked.HostContext :=
+  ⟨Context.toHostContext⟩
 
 /-- How a check ends that says what it saw when it fails: `true` when `holds`,
 and otherwise it throws `observed`, which `failures` reports after the

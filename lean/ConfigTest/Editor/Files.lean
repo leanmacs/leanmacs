@@ -1,6 +1,5 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
 import ConfigTest.Support.Syntax
@@ -30,6 +29,7 @@ import Editor.Loop
 import Editor.Mode
 import Editor.Program
 import Editor.Scene
+import Editor.Test.Linked.Host
 import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.Text.Model
@@ -49,6 +49,7 @@ follow job does through the loop, which starts it under the core's name
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- A compiled command called `name`, written for the file checks, that runs
 the compiled open command with `path` as its argument: the driver's `run`
@@ -340,7 +341,7 @@ def languageChecks (context : Context) : List Check :=
 with the real elaborator, the real queue, the real text binding and the
 library's file service: the checks of this executable whose hosts are over a
 real service. They share one table of waits and one completion pump over it
-(`Context.fileWaits`, `Stage.overFiles`), started by the first of them. No
+(`HostContext.fileWaits`, `Stage.overFiles`), started by the first of them. No
 other check of the gated run starts a pump, so none takes these checks'
 completions.
 

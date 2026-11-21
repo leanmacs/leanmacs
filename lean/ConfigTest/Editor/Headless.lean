@@ -1,6 +1,5 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
 import ConfigTest.Support.Syntax
@@ -67,6 +66,7 @@ import Editor.SyntaxTree
 import Editor.TabBar
 import Editor.TabCommands
 import Editor.TabCommands.Compiled
+import Editor.Test.Linked.Host
 import Editor.Text
 import Editor.Text.Model
 import Editor.Text.Real
@@ -91,6 +91,7 @@ root module `ConfigTest` runs them; its module doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- Runs `check` against a host started over `elaborator` and `source`, with
 its output in a buffer `check` is handed, and stops the host. `false` if the
@@ -943,7 +944,8 @@ def withRecordedSyntaxTree (context : Context)
 
 /-- The thread that emitted the first line of the host's output that is
 `line`, if there is one. -/
-def Session.threadOf (session : Session) (line : String) : IO (Option UInt64) := do
+def _root_.Editor.Test.Linked.Session.threadOf (session : Session) (line : String) :
+    IO (Option UInt64) := do
   let lines ← session.output.get
   let threads ← session.threads.get
   return (lines.idxOf? line).bind fun index => threads[index]?

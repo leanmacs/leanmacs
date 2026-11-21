@@ -1,7 +1,7 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Syntax
+import Editor.Test.Linked.Host
 
 /-!
 # Config tests: `Editor/Keymap.lean`
@@ -15,6 +15,7 @@ them; its module doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- A config whose `setup` registers `leader-find`, which says `leader find`
 in the echo area, binds `<leader> f f` to it described as `Find file`, and,
@@ -31,7 +32,7 @@ def hintText (named : Bool) : String :=
 
 /-- Asks the host for the scene, and returns its key hint lines: the lines
 that start with `hint `. -/
-def Session.hints (session : Session) : IO (Array String) := do
+def _root_.Editor.Test.Linked.Session.hints (session : Session) : IO (Array String) := do
   return (← session.sceneLines).filter (·.startsWith "hint ")
 
 /-- The checks of the key hints through a host of the Vim scheme that ships

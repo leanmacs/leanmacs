@@ -1,6 +1,5 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
 import ConfigTest.Support.Shipped
@@ -11,6 +10,7 @@ import Editor.Config.Registry
 import Editor.Config.Reload
 import Editor.Headless
 import Editor.InputScheme.Vim.Default
+import Editor.Test.Linked.Host
 
 /-!
 # Config tests: the default config
@@ -26,6 +26,7 @@ each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- The registrations of the default config (`config/default`, the
 directory `context.defaultConfig` names), built as a reload builds them

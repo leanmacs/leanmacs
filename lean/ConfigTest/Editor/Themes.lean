@@ -1,5 +1,4 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Themes
 import Editor.Completion
@@ -21,6 +20,7 @@ import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
 import Editor.Scene
+import Editor.Test.Linked.Host
 import Editor.Test.Minibuffer
 import Editor.Text.Real
 import Editor.Themes
@@ -36,6 +36,7 @@ root module `ConfigTest` runs them; its module doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- What compiled code hands the hosts of the theme checks: the command that
 loads a theme and the theme `default` (`Editor/Themes/Compiled.lean`), the

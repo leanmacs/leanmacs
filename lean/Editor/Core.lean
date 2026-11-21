@@ -23,12 +23,12 @@ import Editor.Shell.Kit
 import Editor.TabCommands.Compiled
 import Editor.Test.AtPoint
 import Editor.Test.Hosted
+import Editor.Test.Linked.Host
 import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
 import Editor.Test.Modes
 import Editor.Test.Prompts
-import Editor.Test.Shipped
 import Editor.Test.Sources
 import Editor.Themes.Compiled
 import Editor.Themes.Picture
@@ -79,7 +79,8 @@ hand-written minibuffer (`Editor.Test.Minibuffer`), and
 `Editor.Test.Shipped`, `Editor.Test.Sources` and the kit's hand-written
 at-point (`Editor.Test.AtPoint`), which no other kit module imports) and the
 linked tests' (`Editor.Test.Linked.…`, `Editor/Test/Linked/`: its rig, its
-services and its trees); and the files feature's test kit
+services, its trees and its hosts over the real elaborator, which bring
+their listings); and the files feature's test kit
 (`Editor.Files.Kit`, the drivers of the real file commands), which the
 files feature's tests and the tests left to cut in phase 6 import, and
 which brings the kit's own file opener (`Editor.Test.Opener`) through

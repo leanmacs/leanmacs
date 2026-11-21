@@ -1,10 +1,10 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Hosts
 import Editor.Config.Directory
 import Editor.Config.Elaborator.Model
 import Editor.Config.Session
 import Editor.InputScheme.Test
+import Editor.Test.Linked.Host
 
 /-!
 # Config tests: `Editor/Config/Directory.lean`
@@ -16,6 +16,7 @@ The tests of `Editor/Config/Directory.lean`: `directoryChecks`. The root module
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- The checks of the directory as a source of config files and as a Lake
 package (`Editor/Config/Directory.lean`), each in a fresh temporary

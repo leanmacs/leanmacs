@@ -1,6 +1,4 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
-import ConfigTest.Support.Listings
 import ConfigTest.Support.Shipped
 import Editor.Completion
 import Editor.Config.Directory
@@ -25,6 +23,8 @@ import Editor.Mode
 import Editor.Scene
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
+import Editor.Test.Linked.Host
+import Editor.Test.Linked.Listings
 import Editor.Text
 import Editor.Text.Real
 
@@ -40,6 +40,7 @@ holds no checks of its own.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- A syntax tree request as `withRecordedSyntaxTree` records it: its
 constructor, with the grammar or language and the kind it names, and a
@@ -98,7 +99,7 @@ def rustObjectsText : String :=
 collaborators the executable's hosts are made of (`Headless.shippedOver`),
 handed the package `listings`, so its listings are matched and shown by the
 style and the display written for these tests whatever else registers one
-(`ConfigTest/Support/Listings.lean`), then `packages`: by default the
+(`Editor/Test/Linked/Listings.lean`), then `packages`: by default the
 packages of the core's Lake package and the kit's stand-ins
 (`shippedPackages`, `ConfigTest/Support/Shipped.lean`),
 with the real elaborator, a config directory of `files` and the services of

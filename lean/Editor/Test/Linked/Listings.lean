@@ -5,16 +5,18 @@ import Editor.Setup
 import Editor.TypedPath
 
 /-!
-# Config tests: support: Listings
+# The linked test kit: Listings
 
 The package the config tests' hosts are handed for prompts' listings
 (`listingsPackage`): styles and a display written for these tests, none of
 them the ones that ship, since the core's hosts are handed no package of
 the completion feature (`packages/completion/`). Its rules are stated here and are no shipped one's.
-Shared by several test modules; it holds no checks of its own.
+Shared by several test modules; it holds no checks of its own. Published
+with the linked kit's hosts (`Editor/Test/Linked/Host.lean`), which every
+stage hands it, in the namespace `Editor.Test.Linked`.
 -/
 
-namespace ConfigTest
+namespace Editor.Test.Linked
 
 open Editor
 
@@ -106,4 +108,4 @@ def listingsPackage : Package :=
       defineStyle lastsStyle
       defineDisplay rowsDisplay }
 
-end ConfigTest
+end Editor.Test.Linked

@@ -1,6 +1,5 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
 import Editor.Event
@@ -8,6 +7,7 @@ import Editor.Event.Queue
 import Editor.Ex
 import Editor.Fuzzy.Real
 import Editor.Headless
+import Editor.Test.Linked.Host
 import Editor.Test.Opener
 import Editor.Text
 import FilesApi
@@ -25,6 +25,7 @@ module `ConfigTest` runs them; its module doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- What compiled code hands every host of the ex checks: the ex line's
 commands and the `ex` package's ex names (`Ex.package.registered.commands`, `Ex.package.registered.ex`,
@@ -46,7 +47,7 @@ def exCompiled : Compiled :=
 asks, `line` is committed into the minibuffer, and the accept key is
 pressed. Waits until the editor thread has handled them and no reload is
 running. `false` if the commit was refused. -/
-def Session.exLine (session : Session) (line : String) : IO Bool := do
+def _root_.Editor.Test.Linked.Session.exLine (session : Session) (line : String) : IO Bool := do
   session.ask [.run Ex.name]
   unless ← Event.post (.commit line) do
     return false

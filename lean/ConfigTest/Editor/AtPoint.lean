@@ -1,8 +1,6 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
-import ConfigTest.Support.Listings
 import ConfigTest.Support.Shipped
 import ConfigTest.Support.Syntax
 import Editor.File.Model
@@ -10,6 +8,8 @@ import Editor.Headless
 import Editor.Job.Fake
 import Editor.Job.Runner
 import Editor.Scene
+import Editor.Test.Linked.Host
+import Editor.Test.Linked.Listings
 
 /-!
 # Config tests: completion at point
@@ -31,6 +31,7 @@ commands by its `AtPointTest.atPointChecks` and its headless fixture
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- What the source `listed` of `listedText` answers, whatever it is
 asked. -/

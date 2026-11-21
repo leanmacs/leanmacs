@@ -1,5 +1,4 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Lines
 import Editor.Completion
 import Editor.Config.Packages
@@ -14,6 +13,7 @@ import Editor.Headless
 import Editor.Language
 import Editor.Loop
 import Editor.Mode
+import Editor.Test.Linked.Host
 
 /-!
 # Config tests: `Editor/Evil.lean`
@@ -25,6 +25,7 @@ root module `ConfigTest` runs them; its module doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- A config with a motion of its own, `to-second`, which answers the offset
 1 from anywhere, and a `setup` that registers two commands that are given

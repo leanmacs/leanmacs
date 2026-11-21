@@ -1,8 +1,8 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
 import ConfigTest.Support.Syntax
+import Editor.Test.Linked.Host
 
 /-!
 # Config tests: `Editor/Setup.lean`
@@ -16,6 +16,7 @@ doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- A config whose `setup` registers `leader-find`, which says `leader find`
 in the echo area, and `other`, which says `other`, binds `<leader> f f` to

@@ -1,5 +1,5 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
+import Editor.Test.Linked.Host
 import ExtensionFixture
 
 /-!
@@ -17,6 +17,7 @@ and comes back typed, with its interpreted program run by compiled code.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- A config that imports the fixture and registers at its extension point
 a greeter called `from-config`, which says `config greets`. -/

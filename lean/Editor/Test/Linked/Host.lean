@@ -1,5 +1,3 @@
-import ConfigTest.Check
-import ConfigTest.Support.Listings
 import Editor.Clipboard
 import Editor.Clipboard.InProcess
 import Editor.Completion
@@ -30,25 +28,71 @@ import Editor.Setup
 import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
+import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Listings
 import Editor.Test.Shipped
 import Editor.Text
 import Editor.Text.Real
 import Editor.Watch
 
 /-!
-# Config tests: support: Hosts
+# The linked test kit: Host
 
-Hosts over the real elaborator: a config file's header, a config held in
-memory and built once, files written into a directory, a stage and what compiled code hands it, a session of a host
-and what it printed (`Session`, with `Session.scene` and `Session.shown`), a
-host started over a stage or over files, and polling with a bound (`patience`,
-`eventually`, `Session.within`). Shared by several test modules; it holds no
-checks of its own.
+Hosts over the real elaborator: the context a harness of hosts is handed
+(`HostContext`: the elaborator, the source ids, the shared table of waits,
+the toolchain's directory and the `.olean` directories), a config file's
+header, a config held in memory and built once, files written into a
+directory, a stage and what compiled code hands it, a session of a host and
+what it printed (`Session`, with `Session.scene` and `Session.shown`), a
+host started over a stage or over files, and polling with a bound
+(`Session.within`; `patience` and `eventually` are the linked kit's,
+`Editor/Test/Linked/Jobs.lean`). It holds no checks of its own.
+
+Published for a package's linked tests: it is a module of the core's linked
+test kit, a test double in the namespace `Editor.Test.Linked`, which a
+package's linked test modules may import and its library may not
+(`docs/design/packages.md`, "What a package may import"). It imports neither
+the config base `Editor` nor `EditorCore.EditorPackage`: a host is handed
+its packages (`Compiled.packages`), and the harness that runs it imports the
+base for the link. The core's config tests (`ConfigTest`) are written on it.
 -/
 
-namespace ConfigTest
+namespace Editor.Test.Linked
 
 open Editor
+
+/-- What a harness of hosts over the real elaborator is handed, and hands
+every check: the config tests' `ConfigTest.Context` holds it, and a
+package's linked root is handed it too. -/
+structure HostContext where
+  /-- The real elaborator, whose `base` hands back, and grows, the one base
+  the checks share. -/
+  elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle
+  /-- The next source id no host of this process has posted under. -/
+  ids : IO.Ref UInt64
+  /-- The table of waits the hosts over the library's file service share,
+  once the first of them has asked for it (`HostContext.fileWaits`); none
+  until then. -/
+  waits : IO.Ref (Option Job.Completions)
+  /-- The Lean toolchain's directory, as the executable was handed it. -/
+  sysroot : String
+  /-- The directories of the `.olean` files the base was imported from, as
+  the executable was handed them. -/
+  oleanDirs : List System.FilePath
+
+/-- The table of waits every host over the library's file service is staged
+over, with the process's one completion pump running over it. It is made,
+and the pump started on a dedicated task, the first time it is asked for,
+and handed back as it is afterwards: a second pump would take the first
+one's completions, so the checks of files share one table and one pump.
+The executable exits explicitly, which a pump parked in its pull needs. -/
+def HostContext.fileWaits (context : HostContext) : IO Job.Completions := do
+  if let some completions← context.waits.get then
+    return completions
+  let completions ← Job.Completions.new
+  discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
+  context.waits.set (some completions)
+  return completions
 
 /-- What a config file starts with: the import of the editor's base, and
 the `open` that lets it name the base's declarations with no prefix. -/
@@ -125,7 +169,7 @@ def memorySource (files : List (String × String)) : Config.Source :=
 /-- One reload of the config `files` hold in memory (`memorySource`), on
 the real elaborator and the base the checks share, with nothing loaded and
 no package port. -/
-def buildConfig (context : Context) (files : List (String × String)) :
+def buildConfig (context : HostContext) (files : List (String × String)) :
     IO (Config.Outcome Config.Elaborate.Base Config.Elaborate.Handle) :=
   Config.build TestScheme.scheme context.elaborator (memorySource files) Config.PackageFiles.none
     none none #[]
@@ -143,12 +187,6 @@ def writeFiles (directory : System.FilePath) (files : List (String × String)) :
 config file: with its header (`headed`). -/
 def writeConfig (directory : System.FilePath) (files : List (String × String)) : IO Unit :=
   writeFiles directory (files.map fun (path, text) => (path, headed text))
-
-/-- How long a check waits, in milliseconds, for something that should happen
-at once. Only broken code takes this long, and the check then fails instead
-of hanging. -/
-def patience : Nat :=
-  5000
 
 /-- What a check hands a host of its own: the collaborators, and what the
 check keeps of them. The host's output goes to a buffer, with the thread
@@ -252,7 +290,7 @@ def Compiled.package (compiled : Compiled) : Package :=
 
 /-- A stage for a host over `elaborator` and `source`, with what `compiled`
 hands it: the package `listings`, so every stage's host has a style and a
-display written for these tests (`ConfigTest/Support/Listings.lean`), and
+display written for these tests (`Editor/Test/Linked/Listings.lean`), and
 the package `mode-line`, so it has the shipped segments, then
 `compiled.packages`,
 then the package `test` of its arrays (`Compiled.package`). A `compiled`
@@ -263,7 +301,7 @@ in a table of waits of its own, unless it is handed one (`waits`), as a
 stage over a real service is. Its jobs ask the library's matcher
 (`Fuzzy.real`), as the executable's do, unless it is handed another
 (`fuzzy`). -/
-def Stage.new {β σ : Type} (context : Context) (elaborator : Config.Elaborator β σ)
+def Stage.new {β σ : Type} (context : HostContext) (elaborator : Config.Elaborator β σ)
     (source : Config.Source) (compiled : Compiled := {}) (waits : Option Job.Completions := none)
     (fuzzy : FuzzyHandler := Fuzzy.real) : IO (Stage β σ) := do
   if let .error reason := compiled.package.collected then
@@ -376,7 +414,7 @@ def onStage {β σ : Type} (stage : Stage β σ) (check : Headless.Host → Stag
 /-- Runs `check` against a host started on a stage of its own over
 `elaborator` and `source`, with what `compiled` hands it, and stops the
 host. `false` if the check did not hold or the host did not stop. -/
-def staged {β σ : Type} (context : Context) (elaborator : Config.Elaborator β σ)
+def staged {β σ : Type} (context : HostContext) (elaborator : Config.Elaborator β σ)
     (source : Config.Source) (check : Headless.Host → Stage β σ → IO Bool)
     (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real) : IO Bool := do
   onStage (← Stage.new context elaborator source compiled (fuzzy := fuzzy)) check
@@ -385,7 +423,7 @@ def staged {β σ : Type} (context : Context) (elaborator : Config.Elaborator β
 holding `files`, and stops the host. The host's elaborator is `around` the
 real one and its source `through` the directory's: a check that controls
 elaboration or counts reads passes a decorator. The directory is removed. -/
-def withHostOver (context : Context) (files : List (String × String))
+def withHostOver (context : HostContext) (files : List (String × String))
     (around :
       Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle →
         Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle)
@@ -404,14 +442,9 @@ def withHostOver (context : Context) (files : List (String × String))
 holding `files`, with the real elaborator, and stops the host. `false` if the
 check did not hold or the host did not stop. The directory is removed. Its
 jobs ask `fuzzy` for the matcher, the library's unless a check holds it. -/
-def withHost (context : Context) (files : List (String × String)) (check : Session → IO Bool)
+def withHost (context : HostContext) (files : List (String × String)) (check : Session → IO Bool)
     (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real) : IO Bool :=
   withHostOver context files id id check compiled fuzzy
-
-/-- Polls `condition` until it holds; `false` if it still does not after
-`patience` milliseconds. -/
-def eventually (condition : IO Bool) : IO Bool :=
-  Headless.within patience condition
 
 /-- Asks the host for the scene, and returns every line it printed for it:
 the scene's line, then each view's line followed by its status line. -/
@@ -424,9 +457,9 @@ def Session.sceneLines (session : Session) : IO (Array String) := do
 elaborator and `source`, with what `compiled` hands it, whose services have
 the library's file service, its diff service and its watch service, as the
 executable wires them, over the table of waits the file checks share
-(`Context.fileWaits`), which the one completion pump runs over. Its clock is
+(`HostContext.fileWaits`), which the one completion pump runs over. Its clock is
 still a fake one: the watch service coalesces on the library's own. -/
-def Stage.overFiles (context : Context) (source : Config.Source) (compiled : Compiled := {}) :
+def Stage.overFiles (context : HostContext) (source : Config.Source) (compiled : Compiled := {}) :
     IO (Stage Config.Elaborate.Base Config.Elaborate.Handle) := do
   let completions ← context.fileWaits
   let stage ← Stage.new context context.elaborator source compiled (some completions)
@@ -512,4 +545,4 @@ def Session.within (session : Session) (bound : Nat) (done : Array String → Bo
     IO.sleep 10
   return (none, lines)
 
-end ConfigTest
+end Editor.Test.Linked

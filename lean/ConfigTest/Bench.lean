@@ -1,8 +1,6 @@
 import ConfigTest.Support.Candidates
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
-import ConfigTest.Support.Listings
 import ConfigTest.Support.Shipped
 import Editor.Api
 import Editor.Clipboard
@@ -41,6 +39,8 @@ import Editor.Setup
 import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
+import Editor.Test.Linked.Host
+import Editor.Test.Linked.Listings
 import Editor.Test.Minibuffer
 import Editor.Test.Shipped
 import Editor.Text
@@ -63,6 +63,7 @@ say what each command measures.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-! ## The benchmark
 

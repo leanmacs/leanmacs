@@ -1,11 +1,11 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
-import ConfigTest.Support.Listings
 import ConfigTest.Support.Syntax
 import Editor.Completion.Keys
 import Editor.ModeLine
+import Editor.Test.Linked.Host
+import Editor.Test.Linked.Listings
 
 /-!
 # Config tests: `Editor/Completion/Keys.lean`
@@ -19,6 +19,7 @@ them; its module doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- A config whose `setup` registers `leader-find`, which says `leader find`
 in the echo area, binds `<leader> f f` to it described as `Find file` and

@@ -1,10 +1,8 @@
 import ConfigTest.Check
 import ConfigTest.Support.Candidates
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
-import ConfigTest.Support.Listings
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
@@ -28,6 +26,8 @@ import Editor.Loop
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Linked.Host
+import Editor.Test.Linked.Listings
 import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.Themes.Compiled
@@ -47,6 +47,7 @@ the minibuffer was the core's `Editor/Minibuffer.lean`. The root module
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- What compiled code hands the hosts of the prompt checks that load no
 config: the minibuffer's commands and its mode, and commands written here.

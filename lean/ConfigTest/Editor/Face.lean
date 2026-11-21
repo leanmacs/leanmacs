@@ -1,5 +1,4 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
@@ -23,6 +22,7 @@ import Editor.Loop
 import Editor.Mode
 import Editor.Program
 import Editor.Scene
+import Editor.Test.Linked.Host
 import Editor.Text
 import Editor.Text.Real
 
@@ -36,6 +36,7 @@ root module `ConfigTest` runs them; its module doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- A config of one file whose `setup` is `body`, a line of Lean. -/
 def faceText (body : String) : String :=

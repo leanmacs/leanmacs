@@ -1,5 +1,4 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
 import ConfigTest.Support.Syntax
@@ -8,6 +7,7 @@ import Editor.File.Model
 import Editor.Headless
 import Editor.InputScheme.Vim
 import Editor.SyntaxTree
+import Editor.Test.Linked.Host
 
 /-!
 # Config tests: `Editor/Indent.lean`
@@ -19,6 +19,7 @@ root module `ConfigTest` runs them; its module doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- The rows of the Rust indent fixture (`tests/syntax/rust/indent.rs`) inside
 its multi-line string and block comment, which the indent rule keeps: found
@@ -108,7 +109,8 @@ def showsText (line text : String) (anchor head : Nat) : Bool :=
     (line.splitOn s!"selections {anchor}..{head},").length == 2
 
 /-- The view line after `load-<name>` and then the keys `keys`. -/
-def Session.loadedAndTyped (session : Session) (name keys : String) : IO String := do
+def _root_.Editor.Test.Linked.Session.loadedAndTyped (session : Session) (name keys : String) :
+    IO String := do
   session.ask [.run ("load-" ++ name)]
   session.typed keys
   return lastViewLine (← session.sceneLines)

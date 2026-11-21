@@ -1,22 +1,15 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
 import Editor.Completion
-import Editor.Config.Directory
-import Editor.Config.Elaborate
 import Editor.Config.Packages
-import Editor.Config.Registry
 import Editor.Ex.Line
 import Editor.Face
-import Editor.Headless
 import Editor.InputScheme.Test
-import Editor.Job.Real
-import Editor.Job.Runner
 import Editor.Language
-import Editor.Loop
 import Editor.Process
+import Editor.Test.Linked.Host
 import Editor.Test.Minibuffer
+import Editor.Test.Workspace
 import Editor.VersionControl.Compiled
-import Editor.Workspace.Kit
 import FilesApiTest.Fake
 
 /-!
@@ -30,6 +23,7 @@ doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- The variables every git a gutter check runs is given: git kept from the
 system's config and from the user's, whose home is `home`, and a fixed
@@ -115,7 +109,12 @@ def gutterChecks (context : Context) : List Check :=
           let stage ←
             Stage.overFiles context (Config.Directory.source configDir)
                 { packages :=
-                    #[FilesApiTest.fake, Test.workspaceFinderPackage, VersionControl.gutterPackage]
+                    #[FilesApiTest.fake,
+                      Test.attachPackage
+                        (Workspace.Found.ofGit
+                          { toplevel := repo, commonDir := repo / ".git", branch := .named "main" }
+                          none),
+                      VersionControl.gutterPackage]
                   commands := Test.Minibuffer.package.registered.commands ++ #[openA]
                   modes := Test.Minibuffer.package.registered.modes }
           let collaborators := stage.collaborators

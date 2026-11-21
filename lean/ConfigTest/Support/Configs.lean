@@ -1,5 +1,4 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import Editor.Api
 import Editor.Command
@@ -26,6 +25,7 @@ import Editor.Mode
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Linked.Host
 import Editor.Test.Minibuffer
 import Editor.Text
 import EditorCore.EditorPackage
@@ -43,6 +43,7 @@ several test modules; it holds no checks of its own.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- The package named `name` of the core's Lake package, as the executable's
 hosts are handed it (`EditorCore.EditorPackage.packages`), so that a check

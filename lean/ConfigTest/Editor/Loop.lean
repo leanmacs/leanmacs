@@ -1,6 +1,5 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
 import Editor.Command
@@ -23,6 +22,7 @@ import Editor.Mode
 import Editor.Program
 import Editor.Role
 import Editor.Scene
+import Editor.Test.Linked.Host
 import Editor.Text
 import Editor.Watch
 
@@ -37,6 +37,7 @@ them; its module doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- A compiled command called `name` that makes a text holding `text`. -/
 def making (name text : String) : Config.Registration :=

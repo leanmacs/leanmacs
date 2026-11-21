@@ -1,10 +1,10 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
 import ConfigTest.Support.Syntax
 import Editor.File.Model
 import Editor.Headless
+import Editor.Test.Linked.Host
 
 /-!
 # Config tests: `Editor/Evil/TreeObjects.lean`
