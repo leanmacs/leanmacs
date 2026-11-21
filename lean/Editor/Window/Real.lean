@@ -110,16 +110,21 @@ def TitleBar.library : TitleBar → Ffi.TitleBar
   | .themed => .themed
   | .standard => .standard
 
+/-- What the window mode's wait for its start-up config says when it reaches
+its patience: nothing. Its patience, and `drawPatience`, are bounds of the
+window's, not hangs: the window opens without the config, and a cold reload
+past them is an ordinary launch. -/
+def configWaitHung : String → IO Unit := fun _ => pure ()
+
 /-- Waits for the start-up reload `host` was sent to finish, installed or
 refused, for at most `patience` milliseconds, or with no bound for none;
-whether it finished. A loop that has ended has nothing more to finish. -/
+whether it finished. A loop that has ended has nothing more to finish.
+Neither bound says a hang (`configWaitHung`). -/
 def awaitConfig (host : Headless.Host) : Option Nat → IO Bool
-  | some patience => return (← host.await patience) == .settled
+  | some patience => return (← host.await patience (waitHung := configWaitHung)) == .settled
   | none => do
     repeat
-      -- `drawPatience` is a normal bound here, not a hang: the window opens
-      -- without the config, and the wait goes on. So nothing is said.
-      match ← host.await drawPatience (waitHung := fun _ => pure ()) with
+      match ← host.await drawPatience (waitHung := configWaitHung) with
       | .settled =>
         return true
       | .ended =>

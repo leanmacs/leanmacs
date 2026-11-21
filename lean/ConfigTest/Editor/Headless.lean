@@ -89,6 +89,7 @@ import Editor.Themes
 import Editor.Themes.Compiled
 import Editor.Watch
 import Editor.Window
+import Editor.Window.Real
 import Editor.WindowCommands.Compiled
 import Editor.WorkingSet.Compiled
 import Editor.Workspace
@@ -2295,6 +2296,27 @@ wait 2" with
                   s!"failure={repr failure} said={said}"
             finally
               gate.open },
+    { name :=
+        "the window mode's wait for its start-up config, past its patience with the reload still running, says nothing on stderr: its patience is a bound of the window's, not a hang"
+      run := do
+        -- The reload is held at the gate for good, so the window's wait
+        -- reaches its patience; what it says is caught on this thread's
+        -- stderr, which `waitHung` would write to.
+        let gate ← Gate.new
+        let caught ← IO.mkRef ({} : IO.FS.Stream.Buffer)
+        let settled ←
+          withHostOver context slowConfig gate.around id fun session => do
+              try
+                session.host.send .reload
+                let before ← IO.setStderr (IO.FS.Stream.ofBuffer caught)
+                try
+                  Window.awaitConfig session.host (some 200)
+                finally
+                  discard <| IO.setStderr before
+              finally
+                gate.open
+        let said := String.fromUTF8! (← caught.get).data
+        saw (!settled && said.isEmpty) s!"settled={settled} said={said.quote}" },
     { name :=
         "a wait that runs out says why: a reload is still running, or the editor thread has not answered"
       run := do
