@@ -19,13 +19,14 @@ import Editor.Menu.Compiled
 import Editor.PackageSet.Compiled
 import Editor.ProjectSearch.Compiled
 import Editor.Restore.Compiled
+import Editor.Shell.Kit
 import Editor.TabCommands.Compiled
 import Editor.Test.AtPoint
-import Editor.Test.Ex
 import Editor.Test.Hosted
 import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
+import Editor.Test.Modes
 import Editor.Test.Prompts
 import Editor.Test.Shipped
 import Editor.Test.Sources

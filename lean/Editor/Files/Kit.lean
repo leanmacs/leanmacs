@@ -2,14 +2,10 @@ import BuffersApiTest.Fake
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
-import Editor.Command.Dispatch
 import Editor.Completion
 import Editor.Completion.Later
 import Editor.Completion.Paths
 import Editor.Config.Packages
-import Editor.Config.Registry
-import Editor.Ex
-import Editor.Ex.Compiled
 import Editor.Ex.Line
 import Editor.File.Model
 import Editor.Files
@@ -17,25 +13,24 @@ import Editor.Files.Compiled
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
-import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Shell.Kit
 import Editor.Test.Driver
+import Editor.Test.Ex
 import Editor.Test.Files
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Models
-import Editor.Workspace.Kit
 
 /-!
 # The files feature's test kit: the drivers of the real file commands
 
 The keys, jobs and drivers that run the files feature's own commands and
 jobs (`Editor/Files.lean`, `Editor/Files/Compiled.lean`) on the loop's
-driver over the models: what the files feature's tests, and the tests of
-ex, evil, the menu and the compile mode, which still reach the real file
-commands, are written on. It is a module of the files feature, not of the
+driver over the models: what the files feature's tests, and the compile
+mode's, which still reach the real file commands, are written on. It names
+no other feature and no ex package: the ex lines its reload driver types
+run on the kit's ex line (`Editor.Test.exLinePackage`, `Editor/Test/Ex.lean`). It is a module of the files feature, not of the
 core's kit (`Editor/Test/`), so that no core test and no module of the core's
 kit imports the files feature: the core's tests open and save files with the
 kit's own opener (`Editor/Test/Opener.lean`). Its namespace is the kit's,
@@ -183,12 +178,13 @@ finished. The load is job 1. -/
 def noteOpen (files : FileModel := commandFiles) : Option TestDriver :=
   (filesDriver (files := files)).map fun driver => ((fedTo driver (presses "C-o n")).1.finish 1).1
 
-/-- The commands compiled code registers for files and the ex line, and the
-kit's minibuffer's (`Editor/Test/Minibuffer.lean`), each under its name, and `undo` and `redo`, which move one step of the
+/-- The commands compiled code registers for files, the kit's ex line's
+(`Editor.Test.exLinePackage`, `Editor/Test/Ex.lean`), `buffers-api`'s fake's
+and the kit's minibuffer's (`Editor/Test/Minibuffer.lean`), each under its name, and `undo` and `redo`, which move one step of the
 history of the buffer of the window they are called with. -/
 def reloadCommands : List (String × Dispatched) :=
   let compiled : List (String × Dispatched) :=
-    (Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
+    (exLinePackage.registered.commands ++ Minibuffer.package.registered.commands ++
           Files.package.registered.commands ++
           BuffersApiTest.fake.registered.commands).toList.filterMap
       fun (registration : Config.Registration) =>
@@ -211,7 +207,7 @@ def reloadCommands : List (String × Dispatched) :=
         return none)]
 
 /-- A driver of the reload checks: the commands of `reloadCommands`, every job
-compiled code registers for files (`Files.package.registered.jobs`), the `ex` package's ex names, and
+compiled code registers for files (`Files.package.registered.jobs`), the kit's ex line's ex names, and
 the files of the file command checks. `C-o n` opens `note.txt`, `C-o r` runs
 the reload command, `C-o R` the forced reload, `C-o u` undoes and `C-o U`
 redoes; `C-e e` opens the ex line and `C-e y` accepts it. -/
@@ -226,8 +222,8 @@ def reloadDriver : Option TestDriver :=
           ("C-e y", invoke Minibuffer.acceptName)]
         reloadCommands with
       registered :=
-        { ex := fun name => Ex.package.registered.ex.findRev? (·.name == name)
-          exNames := exNamesOf Ex.package.registered.ex } }
+        { ex := fun name => exLinePackage.registered.ex.findRev? (·.name == name)
+          exNames := exNamesOf exLinePackage.registered.ex } }
   (Loop.Driver.over keys
         (fun name => (Files.package.registered.jobs.find? (·.name == name)).map (·.work))
         (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
@@ -239,34 +235,6 @@ def noteRewritten : Option TestDriver :=
   reloadDriver.map fun driver =>
     rewritten (finishNamed (fedTo driver (presses "C-o n")).1 Files.loadJob) (inFiles "note.txt")
       reloadedBytes
-
-/-- The open command of the files feature, under its name, as a driver
-dispatches it. -/
-def fileCommands : List (String × Dispatched) :=
-  [(Files.openName, fun call => do
-      Files.openCommand call
-      return none)]
-
-/-- The jobs of the workspace driver checks with the files feature's in
-place of the kit's opener's: the find job, the mode marker job and
-`fileJobs`. -/
-def fileWorkspaceJobs (name : String) : Option (List Argument → Work) :=
-  workspaceJobsWith (fileJobs Files.limit) name
-
-/-- The commands of the workspace driver checks with the files feature's
-open command in place of the kit's opener's. -/
-def fileWorkspaceCommands : List (String × Dispatched) :=
-  workspaceCommandsWith fileCommands
-
-/-- The jobs of the shell checks with the files feature's in place of the
-kit's opener's (`fileWorkspaceJobs`). -/
-def fileShellJobs (name : String) : Option (List Argument → Work) :=
-  shellJobsWith fileWorkspaceJobs name
-
-/-- The commands of the shell checks with the files feature's open command
-in place of the kit's opener's (`fileWorkspaceCommands`). -/
-def fileShellCommands : List (String × Dispatched) :=
-  shellCommandsWith fileWorkspaceCommands
 
 /-- The files feature's package, as a host registers it: what a test that
 runs the real file commands over a host or a rig hands it, so that a

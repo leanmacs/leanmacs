@@ -54,6 +54,40 @@ namespace CompileTest
 open Editor
 open Editor.Test
 
+-- The files feature's open command, and the workspace's and the shell's
+-- driver wiring with it in place of the kit's opener's: moved here from the
+-- files feature's kit (`Editor/Files/Kit.lean`), whose own tests name neither
+-- the workspace nor the shell. The compile mode's tests leave them for the
+-- fakes and stand-ins in a later commit.
+
+/-- The open command of the files feature, under its name, as a driver
+dispatches it. -/
+def fileCommands : List (String × Dispatched) :=
+  [(Files.openName, fun call => do
+      Files.openCommand call
+      return none)]
+
+/-- The jobs of the workspace driver checks with the files feature's in
+place of the kit's opener's: the find job, the mode marker job and
+`fileJobs`. -/
+def fileWorkspaceJobs (name : String) : Option (List Argument → Work) :=
+  workspaceJobsWith (fileJobs Files.limit) name
+
+/-- The commands of the workspace driver checks with the files feature's
+open command in place of the kit's opener's. -/
+def fileWorkspaceCommands : List (String × Dispatched) :=
+  workspaceCommandsWith fileCommands
+
+/-- The jobs of the shell checks with the files feature's in place of the
+kit's opener's (`fileWorkspaceJobs`). -/
+def fileShellJobs (name : String) : Option (List Argument → Work) :=
+  shellJobsWith fileWorkspaceJobs name
+
+/-- The commands of the shell checks with the files feature's open command
+in place of the kit's opener's (`fileWorkspaceCommands`). -/
+def fileShellCommands : List (String × Dispatched) :=
+  shellCommandsWith fileWorkspaceCommands
+
 /-- The jobs of the compile checks: the shell checks', the compile's run job
 and its listing job. -/
 def compileJobs (name : String) : Option (List Argument → Work) :=

@@ -1960,6 +1960,7 @@ those import them, and a kit that left them behind would not build.
 | `Editor.Test.Minibuffer` | Added in the features-as-packages roadmap's phase 4: a minibuffer written over the core's prompt API, the package `minibuffer` with its nine commands and the mode `Prompt.mode`, and `names`, the nine in registration order; `minibuffer-api`'s fake |
 | `Editor.Test.AtPoint` | Added in the same phase: an at-point written over the API's completion at point, the package `at-point` with its nine commands and no source, and `names`; `at-point-api`'s fake |
 | `Editor.Test.Ex` | Added in the features-as-packages roadmap's phase 6: the kit's ex line (`exLinePackage`), a stand-in for the `ex` package that registers ex's command from the core's `Editor.Ex` and the ex names files' and the buffers' tests type (`w`, `e`, `autoread`, `b`, `ls`, `bd` and their bang forms) bound to `files-api`'s and `buffers-api`'s names, so those tests drive ex lines with no import of `Editor.Ex.Compiled` |
+| `Editor.Test.Modes` | Added in the same phase: the on-enter checks' command `enter` and its invocation (`entersMode`), what it says of a refusal, and the faces the syntax tree model last highlighted (`highlightedFaces`), moved from `ModelTest.Support.Modes` so the files feature's language checks need no core test support |
 
 The linked kit:
 

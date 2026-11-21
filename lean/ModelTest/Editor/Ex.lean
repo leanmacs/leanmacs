@@ -6,7 +6,6 @@ import Editor.Command.Model
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
-import Editor.Completion.Paths
 import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
@@ -21,9 +20,6 @@ import Editor.File.Cases
 import Editor.File.Model
 import Editor.FileWatch
 import Editor.FileWatch.Model
-import Editor.Files
-import Editor.Files.Compiled
-import Editor.Files.Kit
 import Editor.Fuzzy.Model
 import Editor.InputScheme.Test
 import Editor.Invocation
@@ -48,11 +44,13 @@ import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Models
+import Editor.Test.Opener
 import Editor.Test.Prompts
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
 import FilesApi
+import FilesApiTest.Fake
 import ModelTest.Check
 import ModelTest.Support.Listings
 
@@ -93,8 +91,8 @@ def exListed (pattern : String) (chosen : Option Nat := none)
     chosen }
 
 /-- What a step of the ex checks is handed. The commands are the ones
-compiled code registers for the ex line and files
-(`Ex.package.registered.commands`, `Files.package.registered.commands`) and
+compiled code registers for the ex line (`Ex.package.registered.commands`),
+`files-api`'s fake's (`FilesApiTest.fake.registered.commands`) and
 the kit's minibuffer's (`Test.Minibuffer.package.registered.commands`,
 `Editor/Test/Minibuffer.lean`), each under the
 name it is registered under, and then the commands of the prompt checks:
@@ -110,14 +108,14 @@ to, a count and a register, `C-e l` runs it with the line `say hello there`
 as its first argument, `C-e y` and `C-e n` run the minibuffer's accept and
 cancel commands, `C-e t` runs its command that moves to the next
 candidate, and `C-e o` runs `other`. The extension points are answered as
-the files feature registers them, so `save-and-quit` saves through its
+`files-api`'s fake registers them, so `save-and-quit` saves through its
 `FilesApi.Files` value. Prompts are matched and shown by the
 style and the display written for the core's tests (`marking`,
 `windowed`). -/
 def exKeys (bindings : Array Ex.Binding := exTestBindings) : Loop.Keys TestScheme.scheme :=
   let compiled : List (String × Dispatched) :=
     (Ex.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
-          Files.package.registered.commands).toList.filterMap
+          FilesApiTest.fake.registered.commands).toList.filterMap
       fun registration =>
       match registration.action with
       | .call run =>
@@ -137,14 +135,18 @@ def exKeys (bindings : Array Ex.Binding := exTestBindings) : Loop.Keys TestSchem
     displaying := windowedDisplaying
     registered :=
       { ex := fun name => bindings.findRev? (·.name == name), exNames := exNamesOf bindings
-        extensions := (hostedRegistry #[Files.package]).extensionsAt } }
+        extensions := (hostedRegistry #[FilesApiTest.fake]).extensionsAt } }
 
 /-- A driver of the ex checks over the initial state, told of the ex
-bindings `bindings`, with the file commands' jobs and the files of the file
-command checks; `none` if making the state was refused. -/
+bindings `bindings`, with the jobs of `files-api`'s fake's opener, its load
+and its save, with `files-api`'s hooks as their runners
+(`Opener.jobsWith FilesApi.runOpened FilesApi.runSaved`; the fake's
+`check-files` and `follow-file` are left out, as the file command checks'
+jobs leave the files feature's out), and the files of the file command
+checks; `none` if making the state was refused. -/
 def exDriver (bindings : Array Ex.Binding := exTestBindings) : Option TestDriver :=
-  (Loop.Driver.over (exKeys bindings) fileJobs (EditorState.initial ⟨640, 480⟩)
-        editorModel).toOption.map
+  (Loop.Driver.over (exKeys bindings) (Opener.jobsWith FilesApi.runOpened FilesApi.runSaved)
+        (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => { driver with jobs := { files := commandFiles } }
 
 /-- The echo area of each scene `after` recorded that `before` had not. -/
@@ -328,18 +330,14 @@ def exChecks : List Check :=
               (heldFile opened).map (·.path) == some path &&
               closed opened },
     { name :=
-        "the ex name e with no argument asks for a path, with the open command's prompt, and starts no load"
+        "the ex name e with no argument runs files-api's edit command with no path: on files-api's fake, which asks for no path, the echo area says the fake's no-path text, and no load is started"
       run :=
         pure <|
           match exDriver Ex.package.registered.ex with
           | none => false
           | some driver =>
             let (asking, _) := fedTo driver (exLine "e")
-            asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
-                some
-                  (Files.openPrompt,
-                    { command := FilesApi.openFileName, arguments := Files.typedMark }) &&
-              asking.pending.all (·.name == Completion.Paths.job) },
+            echoOf asking == some Opener.noPath && asking.pending.isEmpty },
     { name :=
         "the ex name w after an edit starts a save, which is in flight until its job is finished: the file then holds the buffer's text, the buffer is not modified, and the echo area says the file was written"
       run :=
@@ -356,7 +354,7 @@ def exChecks : List Check :=
               (showing saved).bind (·.text) == some text &&
               bytesOf saved path == some (FileModel.encode text) &&
               (showing saved).map (·.buffer.isModified) == some false &&
-              echoOf saved == some (Files.wrote path) },
+              echoOf saved == some s!"wrote {path}" },
     { name :=
         "the ex name w with an argument says it takes none, by the ex line's message, and starts no save: the file is as it was and the buffer is still modified"
       run :=
@@ -371,14 +369,15 @@ def exChecks : List Check :=
               bytesOf refused path == some FileCases.noteBytes &&
               statusOf refused == some (namedModified "note.txt") },
     { name :=
-        "the ex name w in the scratch buffer says the buffer has no file, by the save command's message, and starts nothing"
+        "the ex name w in the scratch buffer says the buffer has no file, by files-api's fake's save command's message, and starts nothing"
       run :=
         pure <|
           match exDriver Ex.package.registered.ex with
           | none => false
           | some driver =>
             let (refused, _) := fedTo driver (exLine "w")
-            promptEcho refused == Files.noFile "scratch" && refused.pending.isEmpty &&
+            promptEcho refused == s!"{Opener.saveName}: scratch has no file" &&
+              refused.pending.isEmpty &&
               closed refused },
     { name :=
         "the ex name q in an editor with nothing modified stops the driver; and so does q after text was typed in the scratch buffer alone, which holds no file"
@@ -458,7 +457,7 @@ def exChecks : List Check :=
               bytesOf left path == some FileCases.noteBytes &&
               stampOf left path != stampOf opened path },
     { name :=
-        "the ex name w and then wq with the save not yet finished: the save command says the file is being saved and starts no second save, the quit is asked and waits for the one save, and the driver stops once it is finished, with the buffer's text in the file"
+        "the ex name w and then wq with the save not yet finished: the save command starts no second save, the quit is asked and waits for the one save, and the driver stops once it is finished, with the buffer's text in the file"
       run :=
         pure <|
           match exNoteOpen with
@@ -469,7 +468,6 @@ def exChecks : List Check :=
             let (asked, _) := fedTo opened ([.commit "x"] ++ exLine "w" ++ exLine "wq")
             let (left, _) := asked.finish 2
             asked.pending.size == 1 && !asked.stopped && asked.loop.state.quitting &&
-              promptEcho asked == Files.beingSaved path &&
               left.stopped &&
               bytesOf left path == some (FileModel.encode text) &&
               (showing left).map (·.buffer.isModified) == some false },
@@ -491,14 +489,15 @@ def exChecks : List Check :=
               bytesOf saved path == some (FileModel.encode ("x" ++ FileCases.noteText)) &&
               (showing saved).map (·.buffer.isModified) == some true },
     { name :=
-        "the ex name wq in the scratch buffer says the buffer has no file, by the save command's message, starts nothing and does not ask to quit"
+        "the ex name wq in the scratch buffer says the buffer has no file, by files-api's fake's save command's message, starts nothing and does not ask to quit"
       run :=
         pure <|
           match exDriver Ex.package.registered.ex with
           | none => false
           | some driver =>
             let (refused, _) := fedTo driver ([.commit "typed"] ++ exLine "wq")
-            promptEcho refused == Files.noFile "scratch" && refused.pending.isEmpty &&
+            promptEcho refused == s!"{Opener.saveName}: scratch has no file" &&
+              refused.pending.isEmpty &&
               !refused.stopped &&
               !refused.loop.state.quitting },
     { name :=
@@ -527,7 +526,7 @@ def exChecks : List Check :=
             let (refused, _) := asked.finish 2
             let (later, _) := fedTo refused (exLine "q")
             asked.loop.state.quitting && !refused.stopped && !refused.loop.state.quitting &&
-              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) &&
+              echoOf refused == some (Opener.notSaved path (.changed (stampOf changed path))) &&
               bytesOf refused path == some JobContract.otherFile &&
               promptEcho later == Ex.notQuitting (.unsaved "note.txt") &&
               !later.stopped },
@@ -547,7 +546,7 @@ def exChecks : List Check :=
                 (showing asked).map (·.buffer.isModified) == some false &&
                 !refused.stopped &&
                 !refused.loop.state.quitting &&
-                echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) &&
+                echoOf refused == some (Opener.notSaved path (.changed (stampOf changed path))) &&
                 bytesOf refused path == some JobContract.otherFile },
     { name :=
         "the ex name wq while another file's buffer has unsaved changes starts this buffer's save and is refused the quit, with the other buffer's name: the file is written and the driver has not stopped"
@@ -567,7 +566,7 @@ def exChecks : List Check :=
               !asked.loop.state.quitting &&
               !saved.stopped &&
               (bytesOf saved path).map (·.size) == some (mostlyCrlf.size + 1) &&
-              echoOf saved == some (Files.wrote path) &&
+              echoOf saved == some s!"wrote {path}" &&
               bytesOf saved (inFiles "note.txt") == some FileCases.noteBytes },
     { name :=
         "the ex name reload asks for the config to be reloaded: the driver counts one reload, and two once the line is typed twice; with an argument it says it takes none and asks for none"
@@ -638,7 +637,7 @@ def exChecks : List Check :=
               promptEcho ran == greeted hello &&
               closed ran },
     { name :=
-        "with the ex package's ex names, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread and reload, the order they are bound in, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, asks the file source"
+        "with the ex package's ex names, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread and reload, the order they are bound in, and no other; the name chosen and accepted runs, so the prompt closes"
       run :=
         pure <|
           match exDriver Ex.package.registered.ex with
@@ -649,7 +648,7 @@ def exChecks : List Check :=
             candidatesOf typed == some (exListed "e" none Ex.package.registered.ex) &&
               (candidatesOf typed).map (·.listed.map (·.text)) ==
                 some #["e", "e!", "autoread", "noautoread", "reload"] &&
-              opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
-              (candidatesOf opening).map (·.asking.map (·.source)) == some #["files"] }]
+              opening.loop.state.prompt == none &&
+              echoOf opening == some Opener.noPath }]
 
 end ModelTest

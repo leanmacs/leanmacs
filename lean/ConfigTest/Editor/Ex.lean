@@ -6,12 +6,12 @@ import ConfigTest.Support.Lines
 import Editor.Event
 import Editor.Event.Queue
 import Editor.Ex
-import Editor.Files
-import Editor.Files.Compiled
 import Editor.Fuzzy.Real
 import Editor.Headless
+import Editor.Test.Opener
 import Editor.Text
 import FilesApi
+import FilesApiTest.Fake
 
 /-!
 # Config tests: `Editor/Ex.lean`
@@ -29,13 +29,14 @@ open Editor
 /-- What compiled code hands every host of the ex checks: the ex line's
 commands and the `ex` package's ex names (`Ex.package.registered.commands`, `Ex.package.registered.ex`,
 `Editor/Ex/Compiled.lean`), the kit's minibuffer's commands and its mode
-(`Editor/Test/Minibuffer.lean`), the file commands, which two of the shipped names run, and `other`, written
+(`Editor/Test/Minibuffer.lean`), `files-api`'s fake's commands
+(`FilesApiTest.fake`), which two of the shipped names run, and `other`, written
 here, which says `other`, on `C-c o`. It is handed no job: no check here
 opens or saves a file. -/
 def exCompiled : Compiled :=
   { commands :=
       Ex.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
-        Files.package.registered.commands ++
+        FilesApiTest.fake.registered.commands ++
         #[{ name := "other", action := .plain (message "other") }]
     modes := Test.Minibuffer.package.registered.modes
     ex := Ex.package.registered.ex
@@ -152,8 +153,8 @@ def exChecks (context : Context) : List Check :=
             unless ← session.exLine "w" do
               return false
             let again ← session.echo
-            return compiled == (Files.noFile "scratch").quote && own == "mine".quote &&
-                again == (Files.noFile "scratch").quote)
+            let noFile := s!"{Test.Opener.saveName}: scratch has no file"
+            return compiled == noFile.quote && own == "mine".quote && again == noFile.quote)
           exCompiled },
     { name :=
         "criterion 5: a name nobody bound, run on the ex line, is said in the echo area of the scene, by the ex line's message, with the prompt closed, and the editor goes on: a key's command run after it runs"
@@ -187,9 +188,9 @@ def scriptOf (directives : List Headless.Directive) : Array Headless.Line :=
 /-- Runs `directives` as a script (`Headless.run`) against a host of its own
 over the library's file service (`Stage.overFiles`), with an empty config
 directory, that is handed what the executable is handed for the ex line,
-the ex line's commands and the `ex` package's ex names, the files package
-(its commands, its jobs and its `FilesApi.Files` value, which `wq` saves
-through), and the kit's minibuffer's commands and its mode
+the ex line's commands and the `ex` package's ex names, `files-api`'s fake
+(`FilesApiTest.fake`: its commands, its jobs and its `FilesApi.Files` value,
+which `wq` saves through), and the kit's minibuffer's commands and its mode
 (`Editor/Test/Minibuffer.lean`) where the executable has the shipped ones. What `run`
 answered, and every line the host printed. -/
 def ranScript (context : Context) (directives : List Headless.Directive) :
@@ -197,7 +198,7 @@ def ranScript (context : Context) (directives : List Headless.Directive) :
   IO.FS.withTempDir fun directory => do
     let stage ←
       Stage.overFiles context (Config.Directory.source directory)
-          { packages := #[Files.package]
+          { packages := #[FilesApiTest.fake]
             commands :=
               Ex.package.registered.commands ++ Test.Minibuffer.package.registered.commands
             modes := Test.Minibuffer.package.registered.modes
@@ -234,7 +235,7 @@ def exScriptChecks (context : Context) : List Check :=
                   exLineDirectives "q" ++
                   [.request .show])
           return failure == none && (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
-              endedOk output Files.saveJob &&
+              endedOk output Test.Opener.saveJob &&
               !listed output },
     { name :=
         "criterion 2 through the host: the same script with wq in place of w, the join and q, and a join after it: the script has no failure, the file holds the buffer's text, and the show line was not run"
@@ -247,7 +248,7 @@ def exScriptChecks (context : Context) : List Check :=
                 (exLineDirectives s!"e {path}" ++ [.join, .commit "x"] ++ exLineDirectives "wq" ++
                   [.join, .request .show])
           return failure == none && (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
-              endedOk output Files.saveJob &&
+              endedOk output Test.Opener.saveJob &&
               !listed output },
     { name :=
         "a script whose q is refused, for a file's buffer that was edited, runs its later lines: the show line prints the commands, the script has no failure, and the file is as it was"
@@ -277,8 +278,8 @@ def exScriptChecks (context : Context) : List Check :=
           let compiled : Compiled :=
             { exCompiled with
               commands := exCompiled.commands ++ #[handing Ex.quitName, handing "other"]
-              jobs := Files.package.registered.jobs }
-          let started := s!"job 1 {Files.loadJob}: started"
+              jobs := FilesApiTest.fake.registered.jobs }
+          let started := s!"job 1 {Test.Opener.loadJob}: started"
           let ran (name : String) : IO (Option (Headless.Wait × Array String)) := do
             let stage ← Stage.new context context.elaborator (memorySource []) compiled
             let host ← Headless.start stage.collaborators

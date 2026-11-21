@@ -6,10 +6,7 @@ import Editor.Completion.Candidate
 import Editor.Completion.Later
 import Editor.Completion.Paths
 import Editor.Completion.Style
-import Editor.Config.Owner
 import Editor.Config.Packages
-import Editor.Config.Registry
-import Editor.Config.Stores
 import Editor.DisplayRules
 import Editor.Event
 import Editor.File
@@ -27,7 +24,6 @@ import Editor.Job
 import Editor.Job.Contract
 import Editor.Job.Model
 import Editor.Language
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Mode
 import Editor.Process
@@ -48,6 +44,7 @@ import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Models
+import Editor.Test.Modes
 import Editor.Test.Prompts
 import Editor.Text
 import Editor.Text.Model
@@ -56,7 +53,6 @@ import Editor.Value
 import Editor.Watch.Model
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Modes
 
 /-!
 # Model tests: `Editor/Files.lean`

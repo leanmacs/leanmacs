@@ -21,12 +21,11 @@ import Editor.Role
 import Editor.Scene
 import Editor.State
 import Editor.State.Request
-import Editor.SyntaxTree
-import Editor.SyntaxTree.Model
 import Editor.TabBar
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Models
+import Editor.Test.Modes
 import Editor.Test.States
 import Editor.Text
 import Editor.Workspace
@@ -82,26 +81,6 @@ def enterRegistry : Config.Registry :=
     #[entering "listing", entering "other", entering "root", entering "base" (some "root"),
       entering "child" (some "base")]
 
-/-- What the command `enter` of the on-enter checks says of a refusal, in the
-echo area. -/
-def modeRefusalText : ModeRefusal → String
-  | .noSuchWindow id => s!"no window {id.index}"
-  | .noSuchMode name => s!"no mode {name}"
-  | .noSuchBuffer id => s!"no buffer {id.index}"
-
-/-- The command `enter` of the on-enter checks: it asks for the mode named
-by its second argument to be the major mode of the buffer the view of its
-first argument shows, by the request (`ViewId.setMajorMode`), and says a
-refusal in the echo area. With `fail` it is then refused with
-`badRange`. -/
-def enter (fail : Bool := false) : Dispatched := fun call => do
-  let [.nat view, .str name] := call.arguments | throw .badPosition
-  if let .error refusal← (⟨view⟩ : ViewId).setMajorMode name then
-    EditorState.ask (.message (modeRefusalText refusal))
-  if fail then
-    call.target.buffer.text.delete 9 99
-  return none
-
 /-- The command `enter-buffer` of the on-enter checks: it asks for the mode
 named by its second argument to be the major mode of the buffer its first
 argument numbers, by the request (`BufferId.setMajorMode`), and says a
@@ -120,19 +99,6 @@ def enterKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
             (·.1 == name)).map
         (·.2)
     registered := registry.registered }
-
-/-- The invocation of `command` that sets the mode `name` through `view`. -/
-def entersMode (view : ViewId) (name : String) (command : String := "enter") : Invocation :=
-  { command, arguments := [.nat view.index, .str name] }
-
-/-- Each face, by name, `-` for none. -/
-def faceNames (faces : Array (Option FaceName)) : Array String :=
-  faces.map fun face => (face.map (·.name)).getD "-"
-
-/-- The faces of the syntax tree model's highlighter, by name, `-` for
-none; none when no text is highlighted. -/
-def highlightedFaces (model : SyntaxTreeModel) : Option (Array String) :=
-  model.highlighted.back?.map fun (_, _, faces) => faceNames faces
 
 /-- The indents source of the model's test mode: an object and an array
 indent what they hold, and their closing brackets lead out. -/
