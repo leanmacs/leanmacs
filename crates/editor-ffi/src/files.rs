@@ -1602,8 +1602,10 @@ pub extern "C" fn editor_ffi_files_pending() -> u64 {
 mod tests {
     use std::path::Path;
     use std::sync::mpsc::{self, Receiver, Sender};
-    use std::thread::{JoinHandle, ThreadId};
-    use std::time::{Duration, Instant};
+    use std::thread::ThreadId;
+    use std::time::Duration;
+
+    use editor_service::Worker;
 
     use editor_text::Text;
     use editor_text::fs::{Entry, FakeFs, Kind};
@@ -1674,8 +1676,9 @@ mod tests {
         files: Arc<Files<FakeFs>>,
         /// The ids the service completed, in order.
         completed: Receiver<u64>,
-        /// The thread the loop runs on.
-        service: JoinHandle<()>,
+        /// The thread the loop runs on, stopped and joined when the rig is
+        /// dropped, a panicking test's rig included.
+        service: Worker,
     }
 
     /// The service's thread, held inside a call to the file system until
@@ -1708,14 +1711,22 @@ mod tests {
         fn over(fs: FakeFs) -> Self {
             let files = Arc::new(Files::new(fs));
             let (done, completed) = mpsc::channel();
-            let service = thread::spawn({
-                let files = Arc::clone(&files);
-                move || {
-                    files.run(|id| {
-                        let _ = done.send(id);
-                    });
-                }
-            });
+            let service = Worker::spawn(
+                "editor-files-test",
+                {
+                    let files = Arc::clone(&files);
+                    move || files.stop()
+                },
+                {
+                    let files = Arc::clone(&files);
+                    move || {
+                        files.run(|id| {
+                            let _ = done.send(id);
+                        });
+                    }
+                },
+            )
+            .expect("the service's thread starts");
             Self {
                 files,
                 completed,
@@ -1761,18 +1772,11 @@ mod tests {
             assert!(self.files.take(marker).is_some());
         }
 
-        /// Stops the service and waits for its loop to return; panics if it
-        /// has not by the deadline.
+        /// Stops the service and joins its loop's thread; panics if the
+        /// loop panicked. A rig that is dropped does the same, and ignores
+        /// a panic.
         fn stop(self) {
-            self.files.stop();
-            let deadline = Instant::now() + DEADLINE;
-            while !self.service.is_finished() {
-                assert!(
-                    Instant::now() < deadline,
-                    "the service loop was still running {DEADLINE:?} after stop"
-                );
-                thread::sleep(Duration::from_millis(1));
-            }
+            self.service.join().expect("the service loop returns");
         }
     }
 
@@ -2962,5 +2966,24 @@ mod tests {
         // The request that waited was never worked.
         assert_eq!(files.fs().bytes(FILE).as_deref(), Some(BYTES));
         assert!(files.take(2).is_none());
+    }
+
+    #[test]
+    fn a_rig_left_by_a_panicking_test_stops_and_joins_its_loop() {
+        let mut kept = None;
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let rig = Rig::over(fake());
+            kept = Some(Arc::downgrade(&rig.files));
+            panic!("a test failed with its rig running");
+        }));
+        assert!(unwound.is_err());
+
+        // The loop's thread held the other owner of the service: it has
+        // returned once the rig is dropped.
+        let kept = kept.expect("the rig was built");
+        assert!(
+            kept.upgrade().is_none(),
+            "the rig's loop was still running after the test unwound"
+        );
     }
 }

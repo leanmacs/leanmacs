@@ -534,6 +534,7 @@ mod tests {
     use std::time::Duration;
 
     use editor_diff::fake::Lcs;
+    use editor_service::Worker;
     use editor_text::Text;
 
     use super::*;
@@ -547,17 +548,33 @@ mod tests {
         Text::from(text).snapshot()
     }
 
+    /// Runs the loop of `diffs` on a thread a worker owns, calling
+    /// `complete` with each id it completes: the loop is stopped and its
+    /// thread joined when the worker is dropped, a panicking test's
+    /// included.
+    fn serve(diffs: &Arc<Diffs<Lcs>>, complete: impl Fn(u64) + Send + 'static) -> Worker {
+        Worker::spawn(
+            "editor-diffs-test",
+            {
+                let diffs = Arc::clone(diffs);
+                move || diffs.stop()
+            },
+            {
+                let diffs = Arc::clone(diffs);
+                move || diffs.run(complete)
+            },
+        )
+        .expect("the service's thread starts")
+    }
+
     #[test]
     fn requests_are_worked_in_order_and_each_script_is_taken_once() {
         let diffs = Arc::new(Diffs::<Lcs>::new());
         assert!(diffs.start(1, snapshot("a\nb\n"), snapshot("a\nc\n"), 100));
         assert!(diffs.start(2, snapshot("x"), snapshot("x"), 100));
         let (sent, completed) = mpsc::channel();
-        let service = Arc::clone(&diffs);
-        let thread = thread::spawn(move || {
-            service.run(move |id| {
-                sent.send(id).unwrap();
-            });
+        let service = serve(&diffs, move |id| {
+            sent.send(id).unwrap();
         });
         assert_eq!(completed.recv().unwrap(), 1);
         assert_eq!(completed.recv().unwrap(), 2);
@@ -568,8 +585,7 @@ mod tests {
         assert_eq!(diffs.take(1), None);
         assert_eq!(diffs.take(2), Some(vec![Step::Retain(1)]));
         assert_eq!(diffs.pending(), 0);
-        diffs.stop();
-        thread.join().unwrap();
+        service.join().unwrap();
     }
 
     /// The service's thread is held inside the completion of diff 1 while
@@ -580,14 +596,13 @@ mod tests {
         let diffs = Arc::new(Diffs::<Lcs>::new());
         let (sent, completed) = mpsc::channel();
         let (release, released) = mpsc::channel::<()>();
-        let service = Arc::clone(&diffs);
-        let thread = thread::spawn(move || {
-            service.run(move |id| {
-                sent.send(id).unwrap();
-                if id == 1 {
-                    released.recv().unwrap();
-                }
-            });
+        // A guard against a hang: a test that fails while the loop is held
+        // here drops its worker first, which joins the loop.
+        let service = serve(&diffs, move |id| {
+            sent.send(id).unwrap();
+            if id == 1 {
+                let _ = released.recv_timeout(DEADLINE);
+            }
         });
         assert!(diffs.start(1, snapshot("a\n"), snapshot("b\n"), 10));
         assert_eq!(completed.recv_timeout(DEADLINE).unwrap(), 1);
@@ -613,8 +628,7 @@ mod tests {
         assert!(diffs.take(1).is_some());
         assert!(diffs.take(2).is_some());
         assert_eq!(diffs.pending(), 0);
-        diffs.stop();
-        thread.join().unwrap();
+        service.join().unwrap();
     }
 
     #[test]
@@ -668,13 +682,11 @@ mod tests {
         let diffs = Arc::new(Diffs::<Lcs>::new());
         diffs.start(3, snapshot("a"), snapshot("b"), 10);
         let (sent, completed) = mpsc::channel();
-        let service = Arc::clone(&diffs);
-        let thread = thread::spawn(move || service.run(move |id| sent.send(id).unwrap()));
+        let service = serve(&diffs, move |id| sent.send(id).unwrap());
         assert_eq!(completed.recv().unwrap(), 3);
         assert!(diffs.cancel(3));
         assert_eq!(diffs.take(3), None);
-        diffs.stop();
-        thread.join().unwrap();
+        service.join().unwrap();
     }
 
     #[test]
@@ -682,8 +694,7 @@ mod tests {
         let diffs = Arc::new(Diffs::<Lcs>::new());
         assert!(diffs.start_hunks(4, snapshot("a\nb\nc\n"), snapshot("a\nB\nc\nd\n"), 100));
         let (sent, completed) = mpsc::channel();
-        let service = Arc::clone(&diffs);
-        let thread = thread::spawn(move || service.run(move |id| sent.send(id).unwrap()));
+        let service = serve(&diffs, move |id| sent.send(id).unwrap());
         assert_eq!(completed.recv().unwrap(), 4);
         let found = diffs.take_hunks(4).unwrap();
         assert_eq!(
@@ -692,8 +703,7 @@ mod tests {
         );
         assert_eq!(diffs.take_hunks(4), None);
         assert_eq!(words_of(&hunk_words(&found)), [2, 2, 4, 2, 4, 6, 6, 6, 8]);
-        diffs.stop();
-        thread.join().unwrap();
+        service.join().unwrap();
     }
 
     #[test]
@@ -702,8 +712,7 @@ mod tests {
         diffs.start_hunks(1, snapshot("a\n"), snapshot("b\n"), 10);
         diffs.start(2, snapshot("a\n"), snapshot("b\n"), 10);
         let (sent, completed) = mpsc::channel();
-        let service = Arc::clone(&diffs);
-        let thread = thread::spawn(move || service.run(move |id| sent.send(id).unwrap()));
+        let service = serve(&diffs, move |id| sent.send(id).unwrap());
         assert_eq!(completed.recv().unwrap(), 1);
         assert_eq!(completed.recv().unwrap(), 2);
         assert_eq!(diffs.take(1), None);
@@ -711,8 +720,7 @@ mod tests {
         assert_eq!(diffs.pending(), 2);
         assert!(diffs.take_hunks(1).is_some());
         assert!(diffs.take(2).is_some());
-        diffs.stop();
-        thread.join().unwrap();
+        service.join().unwrap();
     }
 
     #[test]

@@ -433,7 +433,8 @@ pub extern "C" fn editor_ffi_timers_pending() -> u64 {
 mod tests {
     use super::*;
     use std::sync::mpsc::{self, Receiver};
-    use std::thread::{self, JoinHandle};
+
+    use editor_service::Worker;
 
     /// How long a test waits for something that should happen at once. Only
     /// a broken service takes this long, and the test then fails instead of
@@ -447,8 +448,9 @@ mod tests {
         timers: Arc<Timers<C>>,
         /// The ids the service completed, in order.
         completed: Receiver<u64>,
-        /// The thread the loop runs on.
-        service: JoinHandle<()>,
+        /// The thread the loop runs on, stopped and joined when the rig is
+        /// dropped, a panicking test's rig included.
+        service: Worker,
     }
 
     impl<C: Clock + 'static> Rig<C> {
@@ -456,14 +458,22 @@ mod tests {
         fn over(clock: C) -> Self {
             let timers = Arc::new(Timers::new(clock));
             let (done, completed) = mpsc::channel();
-            let service = thread::spawn({
-                let timers = Arc::clone(&timers);
-                move || {
-                    timers.run(|id| {
-                        let _ = done.send(id);
-                    });
-                }
-            });
+            let service = Worker::spawn(
+                "editor-timers-test",
+                {
+                    let timers = Arc::clone(&timers);
+                    move || timers.stop()
+                },
+                {
+                    let timers = Arc::clone(&timers);
+                    move || {
+                        timers.run(|id| {
+                            let _ = done.send(id);
+                        });
+                    }
+                },
+            )
+            .expect("the service's thread starts");
             Self {
                 timers,
                 completed,
@@ -494,18 +504,11 @@ mod tests {
             assert_eq!(self.timers.pending(), waiting);
         }
 
-        /// Stops the service and waits for its loop to return; panics if it
-        /// has not by the deadline.
+        /// Stops the service and joins its loop's thread; panics if the
+        /// loop panicked. A rig that is dropped does the same, and ignores
+        /// a panic.
         fn stop(self) {
-            self.timers.stop();
-            let deadline = Instant::now() + DEADLINE;
-            while !self.service.is_finished() {
-                assert!(
-                    Instant::now() < deadline,
-                    "the service loop was still running {DEADLINE:?} after stop"
-                );
-                thread::sleep(Duration::from_millis(1));
-            }
+            self.service.join().expect("the service loop returns");
         }
     }
 
@@ -516,6 +519,25 @@ mod tests {
             let clock = Arc::new(FakeClock::new());
             (Arc::clone(&clock), Self::over(clock))
         }
+    }
+
+    #[test]
+    fn a_rig_left_by_a_panicking_test_stops_and_joins_its_loop() {
+        let mut kept = None;
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (_clock, rig) = Rig::fake();
+            kept = Some(Arc::downgrade(&rig.timers));
+            panic!("a test failed with its rig running");
+        }));
+        assert!(unwound.is_err());
+
+        // The loop's thread held the other owner of the service: it has
+        // returned once the rig is dropped.
+        let kept = kept.expect("the rig was built");
+        assert!(
+            kept.upgrade().is_none(),
+            "the rig's loop was still running after the test unwound"
+        );
     }
 
     #[test]
@@ -707,17 +729,25 @@ mod tests {
         let timers = Arc::new(Timers::new(Arc::clone(&clock)));
         let (done, completed) = mpsc::channel();
         let (release, released) = mpsc::channel::<()>();
-        let service = thread::spawn({
-            let timers = Arc::clone(&timers);
-            move || {
-                timers.run(|id| {
-                    let _ = done.send(id);
-                    if id == 1 {
-                        let _ = released.recv_timeout(DEADLINE);
-                    }
-                });
-            }
-        });
+        let service = Worker::spawn(
+            "editor-timers-test",
+            {
+                let timers = Arc::clone(&timers);
+                move || timers.stop()
+            },
+            {
+                let timers = Arc::clone(&timers);
+                move || {
+                    timers.run(|id| {
+                        let _ = done.send(id);
+                        if id == 1 {
+                            let _ = released.recv_timeout(DEADLINE);
+                        }
+                    });
+                }
+            },
+        )
+        .expect("the service's thread starts");
         let next = || {
             completed
                 .recv_timeout(DEADLINE)
@@ -739,8 +769,7 @@ mod tests {
         assert!(timers.start(4, 0));
         assert_eq!(next(), 4);
         assert_eq!(timers.pending(), 1);
-        timers.stop();
-        let _ = service.join();
+        service.join().expect("the service loop returns");
     }
 
     #[test]

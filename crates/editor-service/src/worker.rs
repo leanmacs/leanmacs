@@ -11,7 +11,7 @@
 //! threads live for the process and end with it; they are no workers.
 
 use std::io;
-use std::thread::{self, JoinHandle};
+use std::thread::{self, JoinHandle, Thread};
 
 #[cfg(test)]
 use std::sync::OnceLock;
@@ -26,6 +26,7 @@ use std::sync::OnceLock;
 pub struct Worker {
     stop: Option<Box<dyn FnOnce() + Send>>,
     thread: Option<JoinHandle<()>>,
+    started: Thread,
     #[cfg(test)]
     join_waits: OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
@@ -46,10 +47,17 @@ impl Worker {
         let thread = thread::Builder::new().name(name.to_owned()).spawn(body)?;
         Ok(Worker {
             stop: Some(Box::new(stop)),
+            started: thread.thread().clone(),
             thread: Some(thread),
             #[cfg(test)]
             join_waits: OnceLock::new(),
         })
+    }
+
+    /// The thread the body runs on.
+    #[must_use]
+    pub fn thread(&self) -> &Thread {
+        &self.started
     }
 
     /// Stops and joins now.
@@ -192,6 +200,23 @@ mod tests {
             }
             assert_eq!(stops.load(Ordering::SeqCst), 1, "joined: {join}");
         }
+    }
+
+    #[test]
+    fn a_workers_thread_is_the_one_its_body_runs_on() {
+        let (ran, told_ran) = mpsc::channel();
+        let worker = Worker::spawn(
+            "worker-test",
+            || {},
+            move || {
+                let _ = ran.send(std::thread::current().id());
+            },
+        )
+        .expect("the thread starts");
+        let ran_on = told_ran.recv().expect("the body ran");
+        assert_eq!(worker.thread().id(), ran_on);
+        assert_eq!(worker.thread().name(), Some("worker-test"));
+        assert_ne!(ran_on, std::thread::current().id());
     }
 
     #[test]
