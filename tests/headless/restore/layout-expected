@@ -25,7 +25,7 @@ key arrived: p KeyP -
 key arrived: i KeyI -
 key arrived: x KeyX -
 key arrived: <Escape> Escape -
-scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 46, theme "default"
+scene 640x480, focused 4, echo "", echo padding 8, preedit -, theme "default"
 view 3 160,0 262x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8
 status 3 in mode-line.inactive: mode-line.inactive "note.txt" +4, mode-line.inactive "●" +4, mode-line.inactive "@DIR@" +4 | mode-line.inactive "1:2" +4, mode-line.inactive "Top" +4
 view 0 424,0 216x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8

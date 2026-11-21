@@ -19,9 +19,9 @@ scrub() {
 # Writes the lines of the output on stdin that are stable from run to run:
 # job lines go, and so does every line of the build buffer's views, which
 # hold Lake's own output and the build's time; those are checked apart. A
-# scene's count of publishes is written @N@: each delivery of Lake's output
-# is a post, and how Lake's lines fall into deliveries varies.
+# scene line carries no count of publishes (`published` prints it on its
+# own), so how Lake's lines fall into deliveries, each a post and a scene,
+# changes nothing here.
 stable() {
-  { grep -v '^job ' | grep -v 'Package build of' | grep -v '\*package-build\*' || true; } |
-    sed 's/, published [0-9]*,/, published @N@,/'
+  grep -v '^job ' | grep -v 'Package build of' | grep -v '\*package-build\*' || true
 }

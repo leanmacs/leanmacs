@@ -7,7 +7,7 @@ diagnostic: init.lean:6:0: error: module `HelloInit` is not linked into this edi
 restart: the session is handed over
 reload 1: installed, 1 files, 0 commands
 run hello-init: ok
-scene 640x480, focused 0, echo "hello-init: initialize ran", echo padding 8, preedit -, published @N@, theme "default"
+scene 640x480, focused 0, echo "hello-init: initialize ran", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 320,0 320x464: "", scroll 0, selections 0..0, padding 8 8
@@ -20,7 +20,7 @@ restart: the session is handed over
 reload 1: installed, 1 files, 0 commands
 run compile: no such command
 run hello-init: ok
-scene 640x480, focused 0, echo "hello-init: initialize ran", echo padding 8, preedit -, published @N@, theme "default"
+scene 640x480, focused 0, echo "hello-init: initialize ran", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 320,0 320x230: "", scroll 0, selections 0..0, padding 8 8

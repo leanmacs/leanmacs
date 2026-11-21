@@ -10,9 +10,12 @@
 # Vim scheme's normal state binds to `ex` and hands a count and a register.
 # A committed text goes into the minibuffer, and `<Enter>` accepts. `bogus`
 # is a name nobody bound: the echo area says so, and the editor goes on.
+# `published` counts the scenes so far: one for each event since the frame
+# was made, and nothing from outside idle.
 key : Semicolon shift
 commit bogus
 key <Enter> Enter -
+published
 scene
 
 # `w` is bound to `save-buffer`. The scratch buffer shows no file, which
@@ -21,6 +24,7 @@ scene
 run ex
 commit w
 key <Enter> Enter -
+published
 scene
 
 # The ex line's candidates are the ex names that are bound. With `e` in the

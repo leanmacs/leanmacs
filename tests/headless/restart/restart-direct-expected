@@ -13,7 +13,7 @@ key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
 restart: the session is handed over (no launcher, so no fallback)
 reload 1: installed, 2 files, 1 commands
-scene 640x480, focused 0, echo "restore: restarted, so the window was closed and reopened; 1 buffers, 1 with unsaved text", echo padding 8, preedit -, published 14, theme "default"
+scene 640x480, focused 0, echo "restore: restarted, so the window was closed and reopened; 1 buffers, 1 with unsaved text", echo padding 8, preedit -, theme "default"
 view 1 0,0 318x448: "xfirst line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
 status 1 in mode-line.inactive: mode-line.inactive "note.txt" +4, mode-line.inactive "●" +4, mode-line.inactive "@DIR@" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "Top" +4
 view 0 320,0 320x448: "xfirst line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
@@ -28,7 +28,7 @@ text 4: "restore: restarted, so the window was closed and reopened; 1 buffers, 1
 text 5: " 1 note.txt   2 note.txt "
 key arrived: w KeyW control
 key arrived: n KeyN -
-scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 18, theme "default"
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, theme "default"
 view 2 0,0 640x448: "xfirst line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
 status 2 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "note.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
 view 3 0,448 640x16: " 1 note.txt   2 note.txt ", scroll 0, selections , padding 8 0

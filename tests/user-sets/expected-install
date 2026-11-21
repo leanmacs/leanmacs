@@ -13,7 +13,7 @@ reload 2: rejected
 diagnostic: init.lean:6:0: error: module `HelloInit` is not linked into this editor: it is a module of the package `hello-init`, which the config's lakefile requires, so the editor's package set needs a rebuild with that package in it
 restart: the session is handed over
 reload 1: installed, 1 files, 0 commands
-scene 640x480, focused 0, echo "restore: restarted, so the window was closed and reopened; 1 buffers, 1 with unsaved text; see *restore*", echo padding 8, preedit -, published @N@, theme "default"
+scene 640x480, focused 0, echo "restore: restarted, so the window was closed and reopened; 1 buffers, 1 with unsaved text; see *restore*", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x448: "xfirst line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "note.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
 view 3 320,0 320x448: "", scroll 0, selections 0..0, padding 8 8
@@ -23,7 +23,7 @@ decorations 4: tab-bar 0..12 tab-bar.selected 13..25
 status 4: -
 divider 318,0 2x448 in window-divider
 run hello-init: ok
-scene 640x480, focused 0, echo "hello-init: initialize ran", echo padding 8, preedit -, published @N@, theme "default"
+scene 640x480, focused 0, echo "hello-init: initialize ran", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x448: "xfirst line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "note.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
 view 3 320,0 320x448: "", scroll 0, selections 0..0, padding 8 8
@@ -35,7 +35,7 @@ divider 318,0 2x448 in window-divider
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
 reload 2: installed, 1 files, 0 commands
-scene 640x480, focused 0, echo "packages: lake build exited with status 1; this editor keeps running", echo padding 8, preedit -, published @N@, theme "default"
+scene 640x480, focused 0, echo "packages: lake build exited with status 1; this editor keeps running", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x448: "xfirst line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "note.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
 view 3 320,0 320x222: "", scroll 0, selections 0..0, padding 8 8
@@ -49,7 +49,7 @@ run hello-init: ok
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
 reload 3: installed, 1 files, 0 commands
-scene 640x480, focused 0, echo "package-remove: removed broken-link; reloading", echo padding 8, preedit -, published @N@, theme "default"
+scene 640x480, focused 0, echo "package-remove: removed broken-link; reloading", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x448: "xfirst line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "note.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
 view 3 320,0 320x222: "", scroll 0, selections 0..0, padding 8 8
@@ -66,7 +66,7 @@ restart: the session is handed over
 reload 1: installed, 1 files, 0 commands
 run compile: no such command
 run hello-init: ok
-scene 640x480, focused 0, echo "hello-init: initialize ran", echo padding 8, preedit -, published @N@, theme "default"
+scene 640x480, focused 0, echo "hello-init: initialize ran", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x448: "xfirst line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "note.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
 view 3 320,0 320x222: "", scroll 0, selections 0..0, padding 8 8

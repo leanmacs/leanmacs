@@ -1,7 +1,7 @@
 reload 1: installed, 1 files, 1 commands
 key arrived: c KeyC control
 key arrived: n KeyN -
-scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, theme "default"
 view 0 160,0 480x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 1 0,0 158x464: "a note", scroll 0, selections 0..0, padding 8 8
@@ -9,7 +9,7 @@ status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
 divider 158,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: l KeyL -
-scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, theme "default"
 view 0 160,0 480x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 158x464: "a note", scroll 0, selections 0..0, padding 8 8
@@ -17,7 +17,7 @@ status 1 in mode-line.inactive: mode-line.inactive "notes" +4 | mode-line.inacti
 divider 158,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: h KeyH -
-scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 9, theme "default"
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, theme "default"
 view 0 160,0 480x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 1 0,0 158x464: "a note", scroll 0, selections 0..0, padding 8 8
@@ -25,7 +25,7 @@ status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
 divider 158,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: H KeyH shift
-scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 12, theme "default"
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 1 320,0 320x464: "a note", scroll 0, selections 0..0, padding 8 8
@@ -33,7 +33,7 @@ status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
 divider 318,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: H KeyH shift
-scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 15, theme "default"
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, theme "default"
 view 0 160,0 480x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 1 0,0 158x464: "a note", scroll 0, selections 0..0, padding 8 8
@@ -41,7 +41,7 @@ status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
 divider 158,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: m KeyM -
-scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 18, theme "default"
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, theme "default"
 view 1 0,0 318x464: "a note", scroll 0, selections 0..0, padding 8 8
 status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 0 320,0 320x464: "", scroll 0, selections 0..0, padding 8 8
@@ -51,11 +51,11 @@ key arrived: w KeyW control
 key arrived: H KeyH shift
 key arrived: w KeyW control
 key arrived: c KeyC control
-scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 23, theme "default"
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: w KeyW control
 key arrived: H KeyH shift
-scene 640x480, focused 0, echo "window-edge-left: the last tiled window cannot leave the tiles", echo padding 8, preedit -, published 26, theme "default"
+scene 640x480, focused 0, echo "window-edge-left: the last tiled window cannot leave the tiles", echo padding 8, preedit -, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4

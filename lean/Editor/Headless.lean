@@ -242,7 +242,11 @@ as before, so reload and job completion work as they did.
   published its own: a reload's install, a `show` and a marker are each
   followed by one, so the count of scenes says how many events there were.
   A theme switch a command asked for is followed by one more, after the
-  step's own. The driver's `stop` publishes nothing.
+  step's own. The driver's `stop` publishes nothing. The count is printed
+  only by `published`, never in a scene line: a library parse, a Rust
+  poster, a real-time watch or the render loop each post from outside idle,
+  in one delivery or two depending on the run, so a script asks for it only
+  where no scene before it came from such a source.
 - **A refusal is never dropped.** The loop puts a refusal in the echo area
   of the scene, a handler's and one met while publishing alike
   (`Editor/Loop.lean`, "When publishing is refused"), so `scene` prints it.
@@ -467,13 +471,14 @@ key arrived: <logical> <physical> <modifiers>
 commands: <names>
 text <index>: <quoted text>
 store <name> v<version>: <value>
-scene <w>x<h>, focused <id or ->, echo <quoted>, echo padding <n>, preedit <quoted or ->, published <n>, theme <quoted name>
+scene <w>x<h>, focused <id or ->, echo <quoted>, echo padding <n>, preedit <quoted or ->, theme <quoted name>
 view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …, padding <across> <down>
 status <view id>: <face> <quoted text>, …   (or "-" for no field)
 hint <key>: binding <quoted description or ->
 hint <key>: prefix <quoted name or -> <count>
                           (a key that can follow the pending keymap prefix)
 scene: none               (no scene has been published)
+published <n>             (how many scenes have been published)
 loop: refused: <error>    (a program of the editor loop was refused)
 agree view <id>: <n> rows asked from <anchor>, <m> in the frame: agrees
                           (or "…: disagrees: asked <rows>, frame <rows>",
@@ -501,7 +506,7 @@ and `journal` the entries since the last `journal` line, with their
 it is for measuring, never for a fixture.
 
 The `scene`, `view` and `status` lines answer `scene`: the last scene
-published, with how many scenes have been and the name of the theme it was
+published, with the name of the theme it was
 drawn in (`Host.Display.drawnIn`), then each view in drawing order,
 its snapshot's text read from the library, the offsets of its scroll
 anchor and of each range of its selection, as the markers are when it is
@@ -833,6 +838,12 @@ inductive Request where
   /-- Print the workspace table: each workspace, each project and the
   unscoped store, with their values. -/
   | workspaces
+  /-- Print how many scenes have been published (`published <n>`). A scene
+  line carries no count: how many scenes a source outside idle (a library
+  parse, a Rust poster, a real-time watch, the render loop) makes changes
+  from run to run, while what was published last does not. A script asks
+  for the count only where the publish rule fixes it. -/
+  | published
   deriving DecidableEq, Repr
 
 /-- The render loop a host's frames are drawn by, as its driver reads it:
@@ -1230,6 +1241,7 @@ def Signal.encode : Signal → UInt64 × String
   | .request (.restore named) => (10, ((named.map (·.toString)).getD ""))
   | .request .workspaces => (11, "")
   | .probe => (12, "")
+  | .request .published => (13, "")
 
 /-- The signal an event's code and text stand for, if they stand for one. -/
 def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
@@ -1247,6 +1259,7 @@ def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
   | 10 => some (.request (.restore (if text.isEmpty then none else some text)))
   | 11 => some (.request .workspaces)
   | 12 => some .probe
+  | 13 => some (.request .published)
   | _ => none
 
 mutual
@@ -2173,9 +2186,10 @@ any, its decorations, each its face and its range (`decorations <view>:
 <face> <start>..<stop> ...`), and its gutter marks, each its text, its face
 and its range (`marks <view>: <text> <face> <start>..<stop> ...`), and its
 status line (`statusLine`), then each divider, then each key hint
-(`hintLine`). `published` is how many scenes have been published, and
-`theme` the name of the theme the scene was drawn in. -/
-def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array String) := do
+(`hintLine`). `theme` is the name of the theme the scene was drawn in. How
+many scenes have been published is no part of it: `published` prints that
+on its own (`Request.published`). -/
+def sceneLines (scene : Scene) (theme : String) : TextM (Array String) := do
   let focused :=
     match scene.focused with
     | some id => toString id.index
@@ -2185,7 +2199,7 @@ def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array
     | some text => text.quote
     | none => "-"
   let mut lines :=
-    #[s!"scene {scene.size.width}x{scene.size.height}, focused {focused}, echo {scene.echo.quote}, echo padding {scene.echoPadding}, preedit {preedit}, published {published}, theme {theme.quote}"]
+    #[s!"scene {scene.size.width}x{scene.size.height}, focused {focused}, echo {scene.echo.quote}, echo padding {scene.echoPadding}, preedit {preedit}, theme {theme.quote}"]
   for view in scene.views do
     let .anchor scroll ← view.scroll.text.marker view.scroll | throw .noSuchMarker
     let selections ←
@@ -2226,8 +2240,7 @@ def scene (collaborators : Collaborators β σ scheme) (running : Running β σ 
   let some scene ← running.display.last? |
     collaborators.emit "scene: none"
     return running
-  let (result, texts) ←
-    (sceneLines scene (← running.display.published) (← running.display.drawn)).runReal running.texts
+  let (result, texts) ← (sceneLines scene (← running.display.drawn)).runReal running.texts
   match result with
   | .ok lines =>
     for line in lines do
@@ -2348,6 +2361,9 @@ def request (collaborators : Collaborators β σ scheme) (running : Running β �
     return running
   | .workspaces => do
     running.workspaces collaborators
+    return running
+  | .published => do
+    collaborators.emit s!"published {← running.display.published}"
     return running
   | .scene => running.scene collaborators
   | .agree => running.agree collaborators
@@ -3270,60 +3286,63 @@ def directive? (line : String) : Except String (Option Directive) :=
                 else
                   if line == "scene" then .ok (some (.request .scene))
                   else
-                    if line == "commit" || line.startsWith "commit " then
-                      match named line 6 with
-                      | none => .error s!"`{line}` commits no text"
-                      | some text => .ok (some (.commit text))
+                    if line == "published" then .ok (some (.request .published))
                     else
-                      if line == "resize" || line.startsWith "resize " then
-                        some <$> resizeDirective? line
+                      if line == "commit" || line.startsWith "commit " then
+                        match named line 6 with
+                        | none => .error s!"`{line}` commits no text"
+                        | some text => .ok (some (.commit text))
                       else
-                        if line == "agree" then .ok (some (.request .agree))
+                        if line == "resize" || line.startsWith "resize " then
+                          some <$> resizeDirective? line
                         else
-                          if line == "journal" then .ok (some .journal)
+                          if line == "agree" then .ok (some (.request .agree))
                           else
-                            if line == "journalled" then .ok (some .journalled)
+                            if line == "journal" then .ok (some .journal)
                             else
-                              if line == "indexed" || line.startsWith "indexed " then
-                                match named line 7 with
-                                | none => .ok (some (.indexed none))
-                                | some text =>
-                                  match text.toNat? with
-                                  | some seconds => .ok (some (.indexed (some seconds)))
-                                  | none =>
-                                    .error
-                                      s!"`{line}` is not an indexed: expected indexed [<seconds>], one number"
+                              if line == "journalled" then .ok (some .journalled)
                               else
-                                if line == "workspaces" then .ok (some (.request .workspaces))
+                                if line == "indexed" || line.startsWith "indexed " then
+                                  match named line 7 with
+                                  | none => .ok (some (.indexed none))
+                                  | some text =>
+                                    match text.toNat? with
+                                    | some seconds => .ok (some (.indexed (some seconds)))
+                                    | none =>
+                                      .error
+                                        s!"`{line}` is not an indexed: expected indexed [<seconds>], one number"
                                 else
-                                  if line == "abort" then .ok (some .abort)
+                                  if line == "workspaces" then .ok (some (.request .workspaces))
                                   else
-                                    if line == "restarted" || line.startsWith "restarted " then
-                                      match named line 9 with
-                                      | none => .ok (some (.restarted none))
-                                      | some text =>
-                                        match text.toNat? with
-                                        | some seconds => .ok (some (.restarted (some seconds)))
-                                        | none =>
-                                          .error
-                                            s!"`{line}` is not a restarted: expected restarted [<seconds>], one number"
+                                    if line == "abort" then .ok (some .abort)
                                     else
-                                      if line == "idle" || line.startsWith "idle " then
-                                        match (named line 4).bind String.toNat? with
-                                        | some milliseconds => .ok (some (.idle milliseconds))
-                                        | none =>
-                                          .error
-                                            s!"`{line}` is not an idle: expected idle <milliseconds>, one number"
-                                      else
-                                        if line == "advance" || line.startsWith "advance " then
-                                          match (named line 7).bind String.toNat? with
-                                          | some milliseconds => .ok (some (.advance milliseconds))
+                                      if line == "restarted" || line.startsWith "restarted " then
+                                        match named line 9 with
+                                        | none => .ok (some (.restarted none))
+                                        | some text =>
+                                          match text.toNat? with
+                                          | some seconds => .ok (some (.restarted (some seconds)))
                                           | none =>
                                             .error
-                                              s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
+                                              s!"`{line}` is not a restarted: expected restarted [<seconds>], one number"
+                                      else
+                                        if line == "idle" || line.startsWith "idle " then
+                                          match (named line 4).bind String.toNat? with
+                                          | some milliseconds => .ok (some (.idle milliseconds))
+                                          | none =>
+                                            .error
+                                              s!"`{line}` is not an idle: expected idle <milliseconds>, one number"
                                         else
-                                          .error
-                                            s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, workspaces, scene, agree, settle, settle <milliseconds>, join [<seconds>], idle <milliseconds>, advance <milliseconds>, journal, journalled, indexed [<seconds>], abort, restarted [<seconds>], key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
+                                          if line == "advance" || line.startsWith "advance " then
+                                            match (named line 7).bind String.toNat? with
+                                            | some milliseconds =>
+                                              .ok (some (.advance milliseconds))
+                                            | none =>
+                                              .error
+                                                s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
+                                          else
+                                            .error
+                                              s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, workspaces, scene, published, agree, settle, settle <milliseconds>, join [<seconds>], idle <milliseconds>, advance <milliseconds>, journal, journalled, indexed [<seconds>], abort, restarted [<seconds>], key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where

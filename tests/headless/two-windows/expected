@@ -16,7 +16,7 @@ key arrived: g KeyG -
 key arrived: g KeyG -
 key arrived: c KeyC control
 key arrived: s KeyS -
-scene 640x120, focused 0, echo "", echo padding 8, preedit -, published 30, theme "default"
+scene 640x120, focused 0, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x104: "hello\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
 view 1 320,0 320x104: "hello\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 0, selections 0..0, padding 8 8
@@ -29,7 +29,7 @@ key arrived: c KeyC control
 key arrived: o KeyO -
 key arrived: A KeyA shift
 key arrived: <Escape> Escape -
-scene 640x120, focused 0, echo "", echo padding 8, preedit -, published 39, theme "default"
+scene 640x120, focused 0, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x104: "hello,world\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 0, selections 10..10, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:11" +4, mode-line.secondary "Top" +4
 view 1 320,0 320x104: "hello,world\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 33, selections 42..42, padding 8 8

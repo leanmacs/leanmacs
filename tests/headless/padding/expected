@@ -1,9 +1,9 @@
 reload 1: installed, 1 files, 0 commands
-scene 640x480, focused 0, echo "", echo padding 12, preedit -, published 1, theme "default"
+scene 640x480, focused 0, echo "", echo padding 12, preedit -, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 12 12
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: : Semicolon shift
-scene 640x480, focused 1, echo "", echo padding 12, preedit -, published 3, theme "default"
+scene 640x480, focused 1, echo "", echo padding 12, preedit -, theme "default"
 view 0 0,0 640x288: "", scroll 0, selections 0..0, padding 12 12
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,448 640x32: "", scroll 0, selections 0..0, padding 12 0

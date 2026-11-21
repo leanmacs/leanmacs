@@ -2163,8 +2163,8 @@ core's sources (`tools/core-repo.sh`), with the copy's manifest written by
   the editor keeps running, and it does. `:package-remove broken-link`
   matches version 1 and builds nothing. `:package-remove compile` expands
   the default set and restarts into version 2, where `run compile` has no
-  such command. Its output, with the paths, the core's identity and the
-  publish counts written `@DIR@`, `@REPO@`, `@CORE@` and `@N@`, and job
+  such command. Its output, with the paths and the core's identity
+  written `@DIR@`, `@REPO@` and `@CORE@`, and job
   lines and the build buffer's views left out, must equal
   `expected-install`; the build buffer's views must hold `Package build
   failed: lake build exited with status 1` and the linker's

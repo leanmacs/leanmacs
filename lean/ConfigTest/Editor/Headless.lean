@@ -1596,12 +1596,12 @@ def reached (entered : IO.Promise Unit) (what : String) : IO Unit := do
     Job.awaitWithin patience
         entered.result? | throw <| IO.userError s!"a hang: {what} had not been reached within {patience} ms"
 
-/-- The scene count the last `scene` line of `lines` says it was published
-after (`published <n>`), if one says it. -/
+/-- The scene count the last `published <n>` line of `lines` says
+(`Headless.Request.published`), if one says it. -/
 def publishedIn (lines : Array String) : Option Nat :=
-  (lines.filter (·.startsWith "scene ")).back?.bind fun line =>
-    match line.splitOn ", published " with
-    | [_, rest] => (rest.takeWhile Char.isDigit).toString.toNat?
+  (lines.filter (·.startsWith "published ")).back?.bind fun line =>
+    match line.splitOn "published " with
+    | ["", rest] => rest.toNat?
     | _ => none
 
 /-- A job that sleeps 10 ms on the clock, reads the clock, and ends: `once`
@@ -1709,7 +1709,7 @@ def idleChecks (context : Context) : List Check :=
         "a wait's later rounds publish nothing: the scene count after a join that took two rounds, its job's sleep held until the join blocked on it, is the count after the same join that took one"
       run := do
         -- One host's run: a command makes the frame, a spawn of `count`, a
-        -- join, then the scene's count. The frame is made by a request on the
+        -- join, then the scene count (`published`). The frame is made by a request on the
         -- editor queue, in order with the waits' markers, and the host has no
         -- syntax tree, so no publish comes from the library at a time of its
         -- own: the count is the waits'. With `held`, the job's start of its
@@ -1745,7 +1745,7 @@ def idleChecks (context : Context) : List Check :=
                         if what == "running work" then
                           blocks.modify (· + 1)
                           hold.resolve ())
-                  host.send .scene
+                  host.send .published
                   unless ← host.settle hangGuard do
                     return false
                   return wait == .working
@@ -2387,17 +2387,18 @@ wait 2" with
             finally
               block.resolve () },
     { name :=
-        "a scene directive asks for the last scene, and a commit directive commits the rest of its line"
+        "a scene directive asks for the last scene, a published directive for how many scenes have been published, and a commit directive commits the rest of its line"
       run :=
         pure
-          ((Headless.script "scene\ncommit hello\n  commit  two words  \ncommit é\n").toOption ==
+          ((Headless.script
+                "scene\ncommit hello\n  commit  two words  \ncommit é\n published \n").toOption ==
             some
               #[⟨1, .request .scene⟩, ⟨2, .commit "hello"⟩, ⟨3, .commit "two words"⟩,
-                ⟨4, .commit "é"⟩]) },
+                ⟨4, .commit "é"⟩, ⟨5, .request .published⟩]) },
     { name := "a commit directive with no text is refused, with the number of its line"
       run :=
         pure
-          (["commit", "commit   ", "scene now"].all fun line =>
+          (["commit", "commit   ", "scene now", "published 3"].all fun line =>
             match Headless.script ("reload\n" ++ line) with
             | .error message => message.startsWith "line 2: "
             | .ok _ => false) },
@@ -2429,9 +2430,9 @@ wait 2" with
                 hangGuard (grace := some hangGuard)
           return failure == none &&
               (← stage.output.get) ==
-                #["scene 640x480, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+                #["scene 640x480, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
                   "view 0 0,0 640x464: \"\", scroll 0, selections 0..0, padding 8 8", statusOf,
-                  "scene 320x200, focused 0, echo \"\", echo padding 8, preedit -, published 3, theme \"default\"",
+                  "scene 320x200, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
                   "view 0 0,0 320x184: \"\", scroll 0, selections 0..0, padding 8 8", statusOf] },
     { name :=
         "a script that commits text and asks for the scene prints the scene: its frame, and a view whose snapshot holds the text, read from the library, with the cursor after it"
@@ -2447,10 +2448,10 @@ wait 2" with
           return failure == none &&
               (← stage.output.get) ==
                 #["scene: none",
-                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
                   "view 0 0,0 0x0: \"héllo\", scroll 0, selections 6..6, padding 8 8",
                   statusOf (modified := true) (cursor := ⟨0, 5⟩),
-                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 3, theme \"default\"",
+                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
                   "view 0 0,0 0x0: \"héllo world\", scroll 0, selections 12..12, padding 8 8",
                   statusOf (modified := true) (cursor := ⟨0, 11⟩)] },
     { name :=
@@ -2484,9 +2485,9 @@ wait 2" with
           return failure == none && statusOf != statusOf (modified := true) &&
               (← stage.output.get) ==
                 #["key arrived: <F5> - -",
-                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
                   "view 0 0,0 0x0: \"\", scroll 0, selections 0..0, padding 8 8", statusOf,
-                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 3, theme \"default\"",
+                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
                   "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1, padding 8 8",
                   statusOf (modified := true) (cursor := ⟨0, 1⟩)] },
     { name :=
@@ -2495,7 +2496,7 @@ wait 2" with
         withHost context jobsConfig fun session => do
           session.ask [.reload]
           session.commit "kept"
-          session.ask [.scene]
+          session.ask [.published, .scene]
           session.ask [.spawn "count"]
           unless (← session.idle) == .working && (← session.clock.waiting) == 1 do
             return false
@@ -2503,19 +2504,22 @@ wait 2" with
           unless (← session.join) == .settled do
             return false
           session.ask [.reload]
-          session.ask [.scene]
-          -- Between the two scene requests the editor thread handles nine
-          -- events, each followed by a scene: the first scene request, the
-          -- spawn, the job's wake-up, the reload, the reload's wake-up, and
-          -- the four markers the waits posted. Had the job's command or the
-          -- reload's install published nothing, the count would be short.
+          session.ask [.published, .scene]
+          -- Between the first published request and the second the editor
+          -- thread handles ten events, each followed by a scene: the first
+          -- published and scene requests, the spawn, the job's wake-up, the
+          -- reload, the reload's wake-up, and the four markers the waits
+          -- posted. Had the
+          -- job's command or the reload's install published nothing, the
+          -- count would be short. Nothing outside idle publishes here: the
+          -- host has no syntax tree and no poster of its own.
           return (← session.lines) ==
-              #["reload 1: installed, 2 files, 1 commands",
-                "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+              #["reload 1: installed, 2 files, 1 commands", "published 1",
+                "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
                 "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4, padding 8 8",
                 statusOf (modified := true) (cursor := ⟨0, 4⟩), "spawn count: job 1",
-                "job 1 count: ok", "reload 2: installed, 2 files, 1 commands",
-                "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 10, theme \"default\"",
+                "job 1 count: ok", "reload 2: installed, 2 files, 1 commands", "published 11",
+                "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
                 "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4, padding 8 8",
                 statusOf (modified := true) (cursor := ⟨0, 4⟩)] },
     { name :=
@@ -2524,19 +2528,20 @@ wait 2" with
         withHost context forgetConfig fun session => do
           session.ask [.reload]
           session.commit "a"
-          session.ask [.scene, .run "forget"]
+          session.ask [.published, .scene, .run "forget"]
           session.commit "b"
-          session.ask [.scene]
-          -- Between the two scene requests the editor thread handles four
-          -- events, each followed by a scene: the first scene request, the
-          -- run, the marker of the wait and the commit. Had the scenes
-          -- after the release been refused, the count would be short.
+          session.ask [.published, .scene]
+          -- Between the two published requests the editor thread handles
+          -- five events, each followed by a scene: the first published and
+          -- scene requests, the run, the marker of the wait and the commit.
+          -- Had the scenes after the release been refused, the count would
+          -- be short. Nothing outside idle publishes here.
           return (← session.lines) ==
-              #["reload 1: installed, 1 files, 1 commands",
-                "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+              #["reload 1: installed, 1 files, 1 commands", "published 1",
+                "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
                 "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1, padding 8 8",
-                statusOf (modified := true) (cursor := ⟨0, 1⟩), "run forget: ok",
-                "scene 0x0, focused 0, echo \"refused: no such text\", echo padding 8, preedit -, published 5, theme \"default\""] },
+                statusOf (modified := true) (cursor := ⟨0, 1⟩), "run forget: ok", "published 6",
+                "scene 0x0, focused 0, echo \"refused: no such text\", echo padding 8, preedit -, theme \"default\""] },
     { name :=
         "a program of the editor loop that is refused is printed as refused and hands back nothing, and what it made before the refusal is kept; one that is not refused prints nothing and hands back its result"
       run := do

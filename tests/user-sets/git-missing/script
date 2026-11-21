@@ -5,9 +5,10 @@
 # to get it, and builds nothing. The editor keeps running: a command run
 # after it still answers.
 #
-# The resize makes the frame before anything else, so every wait's marker
-# publishes a scene whether the package-set build's result has arrived or
-# not: the scene count does not hang on which comes first.
+# The resize makes the frame before anything else, so every scene printed
+# has one to show whether the package-set build's result has arrived or
+# not. A scene line carries no count of publishes, so how many the build's
+# deliveries made changes nothing printed.
 
 resize 0 0
 reload

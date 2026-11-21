@@ -1,13 +1,13 @@
 reload 1: installed, 1 files, 1 commands
 rule: display rule 1 is left out: the layout has no right edge
-scene 640x480, focused 0, echo "reload: display rule 1 is left out: the layout has no right edge", echo padding 8, preedit -, published 1, theme "default"
+scene 640x480, focused 0, echo "reload: display rule 1 is left out: the layout has no right edge", echo padding 8, preedit -, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: i KeyI -
 key arrived: <Escape> Escape -
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
-scene 640x480, focused 3, echo "", echo padding 8, preedit -, published 10, theme "default"
+scene 640x480, focused 3, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x464: "draft", scroll 0, selections 4..4, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
 view 3 320,0 320x464: "  scratch\n", scroll 0, selections 0..0, padding 8 8
@@ -17,7 +17,7 @@ key arrived: w KeyW control
 key arrived: h KeyH -
 key arrived: c KeyC control
 key arrived: n KeyN -
-scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 15, theme "default"
+scene 640x480, focused 4, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x464: "draft", scroll 0, selections 4..4, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
 view 3 320,0 320x230: "  scratch\n", scroll 0, selections 0..0, padding 8 8
@@ -28,7 +28,7 @@ divider 318,0 2x464 in window-divider
 divider 320,230 320x2 in window-divider
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
-scene 640x480, focused 3, echo "", echo padding 8, preedit -, published 21, theme "default"
+scene 640x480, focused 3, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x464: "draft", scroll 0, selections 4..4, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
 view 3 320,0 320x230: "  notes\n  scratch\n", scroll 0, selections 18..18, padding 8 8

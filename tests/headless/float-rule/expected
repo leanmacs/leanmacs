@@ -1,26 +1,26 @@
 reload 1: installed, 1 files, 2 commands
 key arrived: c KeyC control
 key arrived: n KeyN -
-scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 1 128,116 384x232: "a note", scroll 0, selections 0..0, padding 8 8
 status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: w KeyW control
 key arrived: p KeyP control
-scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: c KeyC control
 key arrived: m KeyM -
-scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 9, theme "default"
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 2 128,116 384x232: "a memo", scroll 0, selections 0..0, padding 8 8
 status 2 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "memo" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: w KeyW control
 key arrived: p KeyP control
-scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 12, theme "default"
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 2 128,116 384x232: "a memo", scroll 0, selections 0..0, padding 8 8
@@ -29,7 +29,7 @@ key arrived: w KeyW control
 key arrived: w KeyW control
 key arrived: w KeyW control
 key arrived: F KeyF shift
-scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 17, theme "default"
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 318x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 2 320,0 320x464: "a memo", scroll 0, selections 0..0, padding 8 8

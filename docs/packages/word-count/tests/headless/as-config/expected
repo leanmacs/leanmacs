@@ -2,6 +2,6 @@ reload 1: installed, 2 files, 1 commands
 key arrived: i KeyI -
 key arrived: <Escape> Escape -
 run word-count: ok
-scene 0x0, focused 0, echo "3 words", echo padding 8, preedit -, published 4, theme "default"
+scene 0x0, focused 0, echo "3 words", echo padding 8, preedit -, theme "default"
 view 0 0,0 0x0: "one two  three", scroll 0, selections 13..13, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:14" +4, mode-line.secondary "All" +4

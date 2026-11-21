@@ -8,17 +8,22 @@
 # normal state the commit would be dropped.
 key i KeyI -
 commit hello
+published
 scene
 
 # Once the frame exists, every event is followed by a scene, a reload that
 # installs and a job's command among them: the count of scenes published
-# says so. Between the two scene requests there are seven events: the first
-# scene request, the reload and its wake-up, the spawn and the job's
-# wake-up, and the markers of the settle and the join. `count` sleeps on the
-# headless mode's clock, which the script advances: `advance` sends no event.
+# says so. Between the two `published` requests there are eight events: the
+# first `published` and `scene` requests, the reload and its wake-up, the
+# spawn and the job's wake-up, and the markers of the settle and the join.
+# `count` sleeps on the headless mode's clock, which the script advances:
+# `advance` sends no event. Nothing here publishes from outside idle (no
+# file has a syntax tree, and no Rust poster or watch posts), so the count
+# is fixed by the script; a scene line carries none.
 reload
 settle
 spawn count
 advance 1
 join
+published
 scene

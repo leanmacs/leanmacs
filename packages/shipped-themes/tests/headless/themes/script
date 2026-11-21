@@ -10,15 +10,18 @@ settle
 # A key makes the frame, and its scene is drawn in `first`, the theme the
 # config names: the scene line ends with the theme's name.
 key <Escape> Escape -
+published
 scene
 
 # `load-theme` asks for a theme's name, with the registered themes as its
 # candidates. `second` is typed and accepted: the theme is switched with no
 # reload, and the scene after it is drawn in `second`. The switch publishes
-# a scene of its own, after the accept's.
+# a scene of its own, after the accept's, which `published` shows: the count
+# goes up by one more than the events.
 run load-theme
 commit second
 key <Enter> Enter -
+published
 scene
 
 # A shipped theme is loaded the same way: `solarized-dark`, which this

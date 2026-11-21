@@ -9,7 +9,7 @@ job 2 files: ok
 job 3 files: started
 job 3 files: ok
 job 3 files: ok
-scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 12, theme "default"
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "@DIR@/tree/", scroll 0, selections 29..29, padding 8 0
@@ -17,7 +17,7 @@ status 1: minibuffer.prompt "Open file: "
 view 2 0,0 0x0: "notes/     directory\nalpha.txt\nbeta.txt", scroll 0, selections , padding 8 0
 decorations 2: minibuffer.candidate 0..20 minibuffer.annotation 11..20 minibuffer.candidate 21..30 minibuffer.candidate 31..39
 status 2: -
-scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 14, theme "default"
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "@DIR@/tree/.", scroll 0, selections 30..30, padding 8 0
@@ -26,7 +26,7 @@ view 2 0,0 0x0: ".hidden\nalpha.txt\nbeta.txt", scroll 0, selections , padding 8
 decorations 2: minibuffer.candidate 0..7 minibuffer.match 0..1 minibuffer.candidate 8..17 minibuffer.match 13..14 minibuffer.candidate 18..26 minibuffer.match 22..23
 status 2: -
 key arrived: <Backspace> Backspace -
-scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 17, theme "default"
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "@DIR@/tree/no", scroll 0, selections 31..31, padding 8 0
@@ -38,7 +38,7 @@ key arrived: <Tab> Tab -
 job 4 files: started
 job 4 files: ok
 job 4 files: ok
-scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 22, theme "default"
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "@DIR@/tree/notes/", scroll 0, selections 35..35, padding 8 0
@@ -54,7 +54,7 @@ job 6 find-workspace: started
 job 6 find-workspace: ok
 job 7 find-mode-markers: started
 job 7 find-mode-markers: ok
-scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 31, theme "default"
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 0x0: "todo: list the files\n", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "todo.md" +4, mode-line.secondary "@DIR@/tree/notes" +4 | mode-line.secondary "code" +4, mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run open-file: ok
@@ -67,7 +67,7 @@ job 9 files: ok
 job 9 files: ok
 job 10 files: started
 job 10 files: ok
-scene 0x0, focused 3, echo "files: cannot list @DIR@/tree/missing/: nothing is at the path", echo padding 8, preedit -, published 43, theme "default"
+scene 0x0, focused 3, echo "files: cannot list @DIR@/tree/missing/: nothing is at the path", echo padding 8, preedit -, theme "default"
 view 0 0,0 0x0: "todo: list the files\n", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "todo.md" +4, mode-line.secondary "@DIR@/tree/notes" +4 | mode-line.secondary "code" +4, mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 3 0,0 0x0: "@DIR@/tree/missing/", scroll 0, selections 37..37, padding 8 0

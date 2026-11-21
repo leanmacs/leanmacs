@@ -1,4 +1,4 @@
-scene 640x480, focused 0, echo "restore: 1 buffers, 1 with unsaved text", echo padding 8, preedit -, published 10, theme "default"
+scene 640x480, focused 0, echo "restore: 1 buffers, 1 with unsaved text", echo padding 8, preedit -, theme "default"
 view 1 160,0 262x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8
 status 1 in mode-line.inactive: mode-line.inactive "note.txt" +4, mode-line.inactive "●" +4, mode-line.inactive "@DIR@" +4 | mode-line.inactive "1:2" +4, mode-line.inactive "Top" +4
 view 2 424,0 216x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8
@@ -13,7 +13,7 @@ status 6: -
 divider 422,0 2x448 in window-divider
 divider 158,0 2x448 in window-divider
 reload 1: installed, 1 files, 0 commands
-scene 640x480, focused 0, echo "restore: 1 buffers, 1 with unsaved text", echo padding 8, preedit -, published 14, theme "default"
+scene 640x480, focused 0, echo "restore: 1 buffers, 1 with unsaved text", echo padding 8, preedit -, theme "default"
 view 1 160,0 262x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8
 status 1 in mode-line.inactive: mode-line.inactive "note.txt" +4, mode-line.inactive "●" +4, mode-line.inactive "@DIR@" +4 | mode-line.inactive "1:2" +4, mode-line.inactive "Top" +4
 view 2 424,0 216x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8
@@ -29,7 +29,7 @@ divider 422,0 2x448 in window-divider
 divider 158,0 2x448 in window-divider
 key arrived: w KeyW control
 key arrived: n KeyN -
-scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 17, theme "default"
+scene 640x480, focused 4, echo "", echo padding 8, preedit -, theme "default"
 view 4 0,0 640x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8
 status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "note.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:2" +4, mode-line.secondary "Top" +4
 view 6 0,448 640x16: " 1 note.txt   2 notes ", scroll 0, selections , padding 8 0
@@ -38,7 +38,7 @@ status 6: -
 key arrived: w KeyW control
 key arrived: p KeyP -
 key arrived: o KeyO control
-scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 21, theme "default"
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, theme "default"
 view 1 160,0 262x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8
 status 1 in mode-line.inactive: mode-line.inactive "note.txt" +4, mode-line.inactive "●" +4, mode-line.inactive "@DIR@" +4 | mode-line.inactive "1:2" +4, mode-line.inactive "Top" +4
 view 2 424,0 216x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8
@@ -53,7 +53,7 @@ status 6: -
 divider 422,0 2x448 in window-divider
 divider 158,0 2x448 in window-divider
 key arrived: u KeyU -
-scene 640x480, focused 0, echo "nothing to undo: no history before the restore", echo padding 8, preedit -, published 23, theme "default"
+scene 640x480, focused 0, echo "nothing to undo: no history before the restore", echo padding 8, preedit -, theme "default"
 view 1 160,0 262x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8
 status 1 in mode-line.inactive: mode-line.inactive "note.txt" +4, mode-line.inactive "●" +4, mode-line.inactive "@DIR@" +4 | mode-line.inactive "1:2" +4, mode-line.inactive "Top" +4
 view 2 424,0 216x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8

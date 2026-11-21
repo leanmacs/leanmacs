@@ -1,10 +1,10 @@
 reload 1: installed, 1 files, 0 commands
 key arrived: i KeyI -
 key arrived: w KeyW control
-scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 4, theme "default"
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 640x464: "hello ", scroll 0, selections 6..6, padding 8 8
 status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:7" +4, mode-line.secondary "All" +4
 key arrived: l KeyL -
-scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, theme "default"
 view 0 0,0 640x464: "hello l", scroll 0, selections 7..7, padding 8 8
 status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:8" +4, mode-line.secondary "All" +4

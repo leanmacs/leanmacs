@@ -1,10 +1,10 @@
 reload 1: installed, 1 files, 0 commands
 key arrived: <Escape> Escape -
-scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "solarized-light"
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, theme "solarized-light"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run load-theme: ok
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 7, theme "fairy-floss"
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, theme "fairy-floss"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
