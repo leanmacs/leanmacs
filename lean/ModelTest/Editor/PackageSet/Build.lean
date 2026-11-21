@@ -22,7 +22,6 @@ open Editor
 open Editor.PackageSet
 open PackageSetTest
 open RestoreTest
-open WorkingSetTest
 
 namespace BuildTest
 

@@ -15,7 +15,6 @@ namespace ModelTest
 
 open Editor
 open Editor.Restore
-open WorkingSetTest
 open RestoreTest
 open JournalReconcileTest
 

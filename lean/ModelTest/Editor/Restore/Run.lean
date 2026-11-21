@@ -1,6 +1,4 @@
-import Editor.Files.Compiled
 import Editor.Test.Hosted
-import Editor.Workspace.Compiled
 import FilesApi
 import ModelTest.Check
 import ModelTest.Editor.Restore
@@ -17,25 +15,18 @@ indexes a first loop wrote, or that a check wrote by hand. The root module
 Session restore's run adopts a restored file through `files-api`
 (`FilesApi.files?`) and runs its `Opened` hook for a journaled buffer that
 holds a file, so its drivers answer both from the restore support's
-extension points (`files-api`'s fake and the workspace's stand-in). The
-files feature's jobs and the workspace's (`runJobs`) are still handed in
-beside them, until the core's tests stop naming the features.
+extension points (`files-api`'s fake and the kit's stand-in for the
+workspace's attach), and name no module of a feature.
 -/
 
 namespace ModelTest
 
 open Editor
 open Editor.Restore
-open WorkingSetTest
 open RestoreTest
 open JournalReconcileTest
 
 namespace RestoreRunTest
-
-/-- The jobs session restore's run starts of other features: the files
-feature's and the workspace's, registered after the restore package's. -/
-def runJobs : Array Config.JobRegistration :=
-  Files.package.registered.jobs ++ Workspace.package.registered.jobs
 
 /-- A mode only config registers, in the checks. -/
 def configMode : Mode :=
@@ -91,13 +82,13 @@ def withCommands (driver : EvilDriver) : EvilDriver :=
 /-- The first loop: restored over `files`, with `modes`, and the checks'
 commands. -/
 def first (files : Option FileModel := none) (modes : Array Mode := #[]) : Option EvilDriver :=
-  (restoredDriver files (jobs := runJobs) (modes := modes)).map withCommands
+  (restoredDriver files (modes := modes)).map withCommands
 
 /-- A second loop over the world `driver` left, `change` made to its files
 first, restored, with the checks' commands. -/
 def second (driver : EvilDriver) (change : FileModel → FileModel := id) (modes : Array Mode := #[])
     (generation : Nat := 0) : Option EvilDriver :=
-  (restarted driver modes generation change (jobs := runJobs)).map withCommands
+  (restarted driver modes generation change).map withCommands
 
 /-- `files` with the journal `<run>-<buffer>-<generation>` written by hand:
 its base holding `base`, and its log `header`'s line, if any, `records`'
@@ -119,7 +110,7 @@ def withIndex (files : FileModel) (name text : String) : FileModel :=
 
 /-- The checks' world, with `change` made to it. -/
 def world (change : FileModel → FileModel := id) : Option FileModel :=
-  (restoreDriver (jobs := runJobs)).map fun driver => change driver.jobs.files
+  (restoreDriver).map fun driver => change driver.jobs.files
 
 /-- The journal files of the run `run`'s buffer `index`, generation
 `generation`. -/
@@ -186,7 +177,7 @@ def framed : Option EvilDriver :=
 driver before its restore runs, and the checks' commands. -/
 def secondWith (driver : EvilDriver) (change : EvilDriver → EvilDriver)
     (files : FileModel → FileModel := id) : Option EvilDriver :=
-  (restoreDriver (jobs := runJobs) (some (files driver.jobs.files))).map fun fresh =>
+  (restoreDriver (some (files driver.jobs.files))).map fun fresh =>
     begun (withCommands (change fresh))
 
 /-- A store of a count at version 2, which migrates a version-1 count by
@@ -287,8 +278,8 @@ restore naming `named`, restored. -/
 def restartedOver (named : Option System.FilePath) (launch : Restart.Launch := {})
     (change : FileModel → FileModel := id) : Option EvilDriver := do
   let before ← first
-  let opened := drained (WorkingSetTest.opened before "a.txt")
-  let driver ← restoreDriver (jobs := runJobs) (some (change opened.jobs.files))
+  let opened := drained (RestoreTest.opened before "a.txt")
+  let driver ← restoreDriver (some (change opened.jobs.files))
   let launched :=
     { driver with loop := { driver.loop with state := { driver.loop.state with launch } } }
   let arguments := [Argument.str stateDirectory.toString] ++ (named.map (.str ·.toString)).toList
@@ -531,7 +522,7 @@ def restoreChecks : List Check :=
                       Document).render
               | none => files
             let prompted :=
-              (restoreDriver (jobs := runJobs) (some before.jobs.files)).bind fun fresh =>
+              (restoreDriver (some before.jobs.files)).bind fun fresh =>
                 let started :=
                   (withCommands fresh).started
                     #[{ name := restoreJob, arguments := [.str stateDirectory.toString] }]
@@ -688,7 +679,7 @@ def restoreChecks : List Check :=
           | none => false
           | some files =>
             match
-              (restoreDriver (jobs := runJobs) (some files)).map fun fresh =>
+              (restoreDriver (some files)).map fun fresh =>
                 begun (withCommands (withCodecs ["counted"] fresh)) with
             | none => false
             | some again =>
@@ -746,7 +737,7 @@ def restoreChecks : List Check :=
                 focusedShown again == focusedShown edited &&
                 again.loop.state.echo == "restore: 3 buffers, 3 with unsaved text" },
     { name :=
-        "a file changed on disk since is restored with its unsaved text and marked, which the restore's line says; the loop's check of it marks it told, its next edit lands, and its save is refused as changed, the file left as it is"
+        "a file changed on disk since is restored with its unsaved text and marked, which the restore's line says, and its save is refused as changed, the file left as it is"
       run :=
         pure <|
           match first with
@@ -759,13 +750,9 @@ def restoreChecks : List Check :=
             | some again =>
               let marked := (bufferNamed again "a.txt").bind (·.file.bind (·.changed))
               let shown := opened again "a.txt"
-              let typedIn := evilFed shown "x"
-              let saved := ran typedIn Files.saveName
+              let saved := ran shown FilesApi.saveName
               (marked.bind (·.found)) ==
                   ((again.jobs.files.file? (root / "a.txt")).map (·.stamp)) &&
-                ((bufferNamed shown "a.txt").bind (·.file.bind (·.changed.map (·.told)))) ==
-                  some true &&
-                textNamed typedIn "a.txt" != textNamed edited "a.txt" &&
                 bytesAt saved (root / "a.txt") == some "rewritten\n".toUTF8 &&
                 (saved.loop.state.echo.splitOn
                       "the file on disk is not the one that was expected").length ==
@@ -803,7 +790,7 @@ def restoreChecks : List Check :=
                     #[#[{ start := 3, stop := 3, inserted := "d" }]])
                   4 2 1 (some { name := "note" }) "xyz" #[])
                 5 7 1 none "base" #[#[{ start := 0, stop := 1, inserted := "B" }]]
-          match files.bind fun files => (restoredDriver (jobs := runJobs) (some files)) with
+          match files.bind fun files => (restoredDriver (some files)) with
           | none => false
           | some again =>
             let names := again.loop.state.buffers.filterMap (·.map (·.name))
@@ -820,7 +807,7 @@ def restoreChecks : List Check :=
           | none => false
           | some begun =>
             let edited := drained (evilFed begun (typing "abc"))
-            match restoreDriver (jobs := runJobs) (some edited.jobs.files) with
+            match restoreDriver (some edited.jobs.files) with
             | none => false
             | some fresh =>
               let started :=
@@ -940,7 +927,7 @@ def restoreChecks : List Check :=
           match files with
           | none => false
           | some files =>
-            match restoredDriver (jobs := runJobs) (some files) with
+            match restoredDriver (some files) with
             | none => false
             | some again =>
               let settled := drained (evilFed again "l")
@@ -968,9 +955,8 @@ def restoreChecks : List Check :=
               drained
                 (ran (evilFed (opened begun "a.txt") "x") "test-modes"
                   [.str configMode.name, .str "spell"])
-            match second moded,
-              restoredDriver (jobs := runJobs) (modes := #[configMode]) (generation := 1),
-              restoredDriver (jobs := runJobs) (generation := 1) with
+            match second moded, restoredDriver (modes := #[configMode]) (generation := 1),
+              restoredDriver (generation := 1) with
             | some again, some withMode, some without =>
               let deferred := (bufferNamed again "a.txt").bind (·.major)
               let installed :=
@@ -1005,7 +991,7 @@ def restoreChecks : List Check :=
                       FilesApi.Opened) }
             let withProbe (driver : EvilDriver) : EvilDriver :=
               { driver with
-                keys := Test.withExtensionsOf driver.keys (WorkingSetTest.hooks.push probe) }
+                keys := Test.withExtensionsOf driver.keys (RestoreTest.hooks.push probe) }
             match secondWith edited withProbe with
             | none => false
             | some again =>
