@@ -20,7 +20,7 @@ use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Glyph, ResolvedFont, ResolvedFontId, VisualLine};
 use editor_raster::fake::FakeRasterizer;
 use editor_render::port::{DrawRequest, Drawn, Renderer, Target};
-use editor_render_wgpu::{HeadlessRenderer, Image, Settings};
+use editor_render_wgpu::{Blending, HeadlessRenderer, Image, Settings};
 
 /// Noto Sans Mono.
 const MONO: &[u8] = include_bytes!("../../../tests/fonts/NotoSansMono-Regular.subset.ttf");
@@ -182,4 +182,30 @@ fn a_glyph_the_rasteriser_declines_is_drawn_by_swash_at_the_settings_weight() {
     assert!(one.glyphs_rasterised > 0 && other.glyphs_rasterised > 0);
     assert!(inked(plain.image()) > 0);
     assert_eq!(handed.image(), plain.image());
+}
+
+#[test]
+fn a_renderer_blends_as_its_settings_say_and_encoded_is_never_lighter() {
+    let in_space = |blending| {
+        let mut renderer = HeadlessRenderer::new(Settings {
+            blending,
+            ..Settings::default()
+        });
+        assert_eq!(renderer.blending(), blending);
+        let drawn = draw(&mut renderer, fixture_frame());
+        assert!(drawn.glyphs_rasterised > 0, "{drawn:?}");
+        renderer.image().clone()
+    };
+    let (encoded, linear) = (in_space(Blending::Encoded), in_space(Blending::Linear));
+    assert_ne!(encoded, linear);
+    // The sRGB encoding is concave, so a blend of two values in linear
+    // light is never below the blend of the values themselves: linear
+    // light thins dark text on a light ground, and thickens light text on
+    // a dark one.
+    for (index, (ours, theirs)) in encoded.rgba.iter().zip(&linear.rgba).enumerate() {
+        assert!(
+            ours <= theirs,
+            "byte {index}: encoded {ours}, linear {theirs}"
+        );
+    }
 }

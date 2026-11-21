@@ -4,7 +4,7 @@
 use crate::blend;
 use crate::present::Asked;
 use crate::{
-    Antialiasing, DEFAULT_ATLAS_BUDGET, Masks, PAGE_SIZE, Settings, SubpixelOrder, Weight,
+    Antialiasing, Blending, DEFAULT_ATLAS_BUDGET, Masks, PAGE_SIZE, Settings, SubpixelOrder, Weight,
 };
 
 #[test]
@@ -21,6 +21,21 @@ fn a_kind_of_mask_says_itself_for_a_person() {
 }
 
 #[test]
+fn a_blending_says_itself_for_a_person() {
+    assert_eq!(Blending::Linear.to_string(), "linear light");
+    assert_eq!(
+        Blending::Encoded.to_string(),
+        "sRGB-encoded values, as macOS blends"
+    );
+}
+
+#[test]
+fn the_default_settings_blend_in_linear_light() {
+    assert_eq!(Settings::default().blending, Blending::Linear);
+    assert_eq!(Blending::default(), Blending::Linear);
+}
+
+#[test]
 fn the_default_settings_leave_antialiasing_to_the_display_and_hint() {
     // And ask for no presentation: the decision's.
     assert_eq!(
@@ -30,6 +45,7 @@ fn the_default_settings_leave_antialiasing_to_the_display_and_hint() {
             hinting: true,
             atlas_budget: DEFAULT_ATLAS_BUDGET,
             weight: Weight::LINEAR,
+            blending: Blending::Linear,
             presentation: Asked::NOTHING,
         }
     );

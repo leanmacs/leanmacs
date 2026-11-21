@@ -182,6 +182,8 @@ pub struct HeadlessRenderer {
     image: Image,
     /// How much the coverage of dark text is raised ([`Weight::contrast`]).
     contrast: f32,
+    /// The space it blends in ([`Settings::blending`]).
+    blending: Blending,
 }
 
 impl HeadlessRenderer {
@@ -192,6 +194,7 @@ impl HeadlessRenderer {
             painter: Painter::new(rasterizer, &settings, true, PAGE_SIZE),
             image: cpu::cleared(0, 0),
             contrast: settings.weight.contrast,
+            blending: settings.blending,
         }
     }
 
@@ -220,6 +223,12 @@ impl HeadlessRenderer {
     /// What draws its glyph images.
     pub fn rasterizing(&self) -> Rasterizing {
         Rasterizing::of(self.painter.rasterizer())
+    }
+
+    /// The space it blends in: its settings', which the CPU can always
+    /// blend in.
+    pub fn blending(&self) -> Blending {
+        self.blending
     }
 }
 
@@ -487,6 +496,7 @@ impl Renderer for HeadlessRenderer {
             self.painter.quads(),
             self.painter.atlas(),
             self.contrast,
+            self.blending,
         );
         Drawn {
             presented: true,
@@ -563,6 +573,11 @@ pub struct Settings {
     pub atlas_budget: u64,
     /// How heavy text is drawn.
     pub weight: Weight,
+    /// The space every quad is blended in: linear light, or the
+    /// sRGB-encoded values, as macOS blends ([`Blending`]). A renderer on
+    /// a window whose surface cannot blend in the space asked for says
+    /// which it blends in ([`WgpuRenderer::blending`]).
+    pub blending: Blending,
     /// The present mode and the frame latency a run asks for in place of
     /// the decision's, each on its own, to measure another
     /// ([`present::choose`]); a half not asked for, as in the default
@@ -578,6 +593,7 @@ impl Default for Settings {
             hinting: true,
             atlas_budget: DEFAULT_ATLAS_BUDGET,
             weight: Weight::LINEAR,
+            blending: Blending::Linear,
             presentation: Asked::NOTHING,
         }
     }

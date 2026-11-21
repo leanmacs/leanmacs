@@ -1465,7 +1465,13 @@ fn composited(frame: &Frame) -> crate::Image {
     let target = target(1.0);
     painter.paint(frame, target);
     let mut image = crate::cpu::cleared(target.width, target.height);
-    crate::cpu::composite(&mut image, painter.quads(), painter.atlas(), 0.0);
+    crate::cpu::composite(
+        &mut image,
+        painter.quads(),
+        painter.atlas(),
+        0.0,
+        crate::Blending::Linear,
+    );
     image
 }
 
