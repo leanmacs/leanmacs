@@ -9,14 +9,13 @@ import Editor.Completion.AtPointContract
 import Editor.Completion.Candidate
 import Editor.Completion.Display
 import Editor.Completion.Later
-import Editor.Config.Registry
 import Editor.Display.Model
 import Editor.DisplayRules
 import Editor.Event
 import Editor.Ex.Line
 import Editor.File
 import Editor.GeneratedView
-import Editor.InputScheme.Vim.Default
+import Editor.InputScheme
 import Editor.Invocation
 import Editor.Job
 import Editor.Language
@@ -27,25 +26,25 @@ import Editor.Program
 import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
+import Editor.Test.Editing
 import Editor.Test.Keys
-import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import Editor.Workspace
-import ModelTest.Support.Evil
 import ModelTest.Support.Listings
 
 /-!
 # Model tests: support: AtPoint
 
 The fixture of the checks of completion at point: the at-point sources and the
-drivers over the evil fixture they run on, the contract's runner of at-point
+drivers over the bar fixture they run on (`barState`, `Editor/Test/Editing.lean`),
+of whatever scheme a check hands them, the contract's runner of at-point
 sources, and what a scene and the state show of a session at point. Shared by
 several test modules under `ModelTest/Editor/`; it holds no checks of its own.
 
 Its drivers complete at point through the kit's at-point package
-(`Editor.Test.AtPoint.package`, which `evilHanded` registers) and the
+(`Editor.Test.AtPoint.package`, which the keys a check hands them register) and the
 sources written here, the one that answers later among them (`laterSource`,
 over the job model's `Completion.Later.batches`), so nothing of the package
 that ships is asked. That package is the default package `at-point`
@@ -61,12 +60,12 @@ open Editor.Test
 /-- The contract's runner of at-point sources on the editor's models
 (`Completion.AtPointContract.Runner`): the at-point source asked at
 `offset`, on `occasion`, from the one window of a state of one buffer over a
-text holding `text` (`evilState`), dispatched with no registry. `some` with
+text holding `text` (`barState`), dispatched with no registry. `some` with
 what it answered and whether the editor state and the texts the store holds
 were left as they were; `none` when it was refused, or the fixture could not
 be made. -/
 def atPointRunner : Completion.AtPointContract.Runner := fun text offset occasion atPoint =>
-  match (TextM.lift (evilState text offset)).runModel editorModel with
+  match (TextM.lift (barState text offset)).runModel editorModel with
   | (.error _, _) => none
   | (.ok start, model) =>
     let asking : EditorM (Guarded (Option Completion.Region) × EditorState) :=
@@ -131,15 +130,14 @@ def atPointSources : List Completion.Source :=
     .ofTexts "alphas" "alpha" #["alpha", "alpine"], .ofTexts "threes" "three" #["a1", "a2", "a3"],
     laterSource]
 
-/-- What a step of the at-point checks is handed: `evilHanded more`, told
-that a buffer's chain is `chain`, that the at-point sources are `atPoints`
-and `also`, and that the sources are `sources`, by name and by category; its
+/-- What a step of the at-point checks is handed: `handed`, told that a
+buffer's chain is `chain`, that the at-point sources are `atPoints` and
+`also`, and that the sources are `sources`, by name and by category; its
 listings matched and shown by the style and the display written for the
 core's tests (`marking`, `windowed`). -/
-def atPointHandedOver (sources : List Completion.Source) (also : List Completion.AtPoint)
-    (chain : Array String) (atPoints : List Completion.AtPoint)
-    (more : Array Config.Registration := #[]) : Loop.Keys Vim.Default.scheme :=
-  let handed := evilHanded more
+def atPointHandedOver {scheme : InputScheme} (handed : Loop.Keys scheme)
+    (sources : List Completion.Source) (also : List Completion.AtPoint) (chain : Array String)
+    (atPoints : List Completion.AtPoint) : Loop.Keys scheme :=
   { handed with
     matching := markingMatching, displaying := windowedDisplaying
     registered :=
@@ -153,51 +151,52 @@ def atPointHandedOver (sources : List Completion.Source) (also : List Completion
 /-- What a step of the at-point loop checks is handed: `atPointHandedOver`
 the sources `atPointSources`, with the at-point source `later` beside
 `atPoints`. -/
-def atPointHanded (chain : Array String) (atPoints : List Completion.AtPoint)
-    (more : Array Config.Registration := #[]) : Loop.Keys Vim.Default.scheme :=
-  atPointHandedOver atPointSources [laterAtPoint] chain atPoints more
+def atPointHanded {scheme : InputScheme} (handed : Loop.Keys scheme) (chain : Array String)
+    (atPoints : List Completion.AtPoint) : Loop.Keys scheme :=
+  atPointHandedOver handed atPointSources [laterAtPoint] chain atPoints
 
 /-- A driver of the at-point checks over the fixture `fixture`
-(`evilState`), handed `handed`, with the jobs `jobs` registered. -/
-def atPointDriverOver (handed : Loop.Keys Vim.Default.scheme)
-    (jobs : String → Option (List Argument → Work)) (fixture : String) : Option EvilDriver :=
+(`barState`), handed `handed`, with the jobs `jobs` registered. -/
+def atPointDriverOver {scheme : InputScheme} (handed : Loop.Keys scheme)
+    (jobs : String → Option (List Argument → Work)) (fixture : String) :
+    Option (Loop.Driver scheme) :=
   let (contents, head) := barred fixture
-  (Loop.Driver.over handed jobs (evilState contents head) editorModel).toOption
+  (Loop.Driver.over handed jobs (barState contents head) editorModel).toOption
 
 /-- A driver of the at-point loop checks over the fixture `fixture`
-(`evilState`), handed `atPointHanded chain atPoints`, with the job `later`
-registered. -/
-def atPointDriver (fixture : String) (chain : Array String) (atPoints : List Completion.AtPoint)
-    (more : Array Config.Registration := #[]) : Option EvilDriver :=
+(`barState`), handed `atPointHanded handed chain atPoints`, with the job
+`later` registered. -/
+def atPointDriverUnder {scheme : InputScheme} (handed : Loop.Keys scheme) (fixture : String)
+    (chain : Array String) (atPoints : List Completion.AtPoint) : Option (Loop.Driver scheme) :=
   let jobs (name : String) : Option (List Argument → Work) :=
     if name == laterJob then some (Completion.Later.batches laterBatches) else none
-  atPointDriverOver (atPointHanded chain atPoints more) jobs fixture
+  atPointDriverOver (atPointHanded handed chain atPoints) jobs fixture
 
 /-- Whether the last scene `driver` published shows the candidate list's
 view. -/
-def listShown (driver : EvilDriver) : Bool :=
+def listShown {scheme : InputScheme} (driver : Loop.Driver scheme) : Bool :=
   match driver.loop.state.candidateList, driver.model.display.scenes.back? with
   | some drawn, some scene => scene.views.any (·.id == drawn.view)
   | _, _ => false
 
 /-- The texts the candidate list's last sheet shows, of the open session. -/
-def sessionRows (driver : EvilDriver) : Array String :=
+def sessionRows {scheme : InputScheme} (driver : Loop.Driver scheme) : Array String :=
   (driver.loop.state.atPoint.map fun session => session.sheet.rows.map (·.text)).getD #[]
 
 /-- The open session's choice in `driver`. -/
-def sessionChosen (driver : EvilDriver) : Option Nat :=
+def sessionChosen {scheme : InputScheme} (driver : Loop.Driver scheme) : Option Nat :=
   driver.loop.state.atPoint.bind (·.candidates.chosen)
 
 /-- Whether the text model refuses the marker `id`: given up. -/
-def markerGone (driver : EvilDriver) (id : MarkerId) : Bool :=
+def markerGone {scheme : InputScheme} (driver : Loop.Driver scheme) (id : MarkerId) : Bool :=
   match ((id.text.marker id).runModel driver.model.texts).1 with
   | .error .noSuchMarker => true
   | _ => false
 
 /-- `driver` fed a press of each key `text` names, and the steps the feeds
 handed back, in order. -/
-def evilSteps (driver : EvilDriver) (text : String) :
-    EvilDriver × Array (Loop.Stepped Vim.Default.scheme) :=
+def atPointSteps {scheme : InputScheme} (driver : Loop.Driver scheme) (text : String) :
+    Loop.Driver scheme × Array (Loop.Stepped scheme) :=
   (keys text).foldl
     (fun (driver, steps) key =>
       let (driver, stepped) := driver.feed { event := press key, stamp := 0 }
@@ -206,7 +205,7 @@ def evilSteps (driver : EvilDriver) (text : String) :
 
 /-- `driver` once every post is delivered and every pending job finished,
 oldest first, a post before a job's end; bounded. -/
-def evilDrained (driver : EvilDriver) : EvilDriver :=
+def atPointDrained {scheme : InputScheme} (driver : Loop.Driver scheme) : Loop.Driver scheme :=
   (List.range 64).foldl
     (fun driver _ =>
       match driver.posting[0]? with
@@ -216,6 +215,23 @@ def evilDrained (driver : EvilDriver) : EvilDriver :=
         | some job => (driver.finish job.id).1
         | none => driver)
     driver
+
+/-- What the buffer 0 of `driver` holds in the text model. -/
+def atPointText {scheme : InputScheme} (driver : Loop.Driver scheme) : Option String := do
+  let buffer ← driver.loop.state.buffer? ⟨0⟩
+  (driver.model.texts.texts[buffer.text.index]?).join.map (·.contents)
+
+/-- `driver` after one undo request of the buffer 0 (`BufferId.undo`), made
+by a command the loop is handed, which says in the echo area whether there
+was a step to undo: `undone` or `nothing to undo`. -/
+def atPointUndone {scheme : InputScheme} (driver : Loop.Driver scheme) : Loop.Driver scheme :=
+  let undo : EditorM Unit := do
+    match ← (⟨0⟩ : BufferId).undo with
+    | .ok (some _) =>
+      message "undone"
+    | _ =>
+      message "nothing to undo"
+  (driver.stepped (driver.loop.deliver driver.handed "undo" undo)).1
 
 /-- The at-point source `dots` of the trigger checks: an empty region at
 the cursor, completed from the source `pick`, asked by itself when `.` is

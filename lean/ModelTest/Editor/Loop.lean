@@ -107,8 +107,9 @@ decorations under the test scheme, and `modeDispatchChecks` of modes in the
 loop. `directoryChecks` also cover the reasking of a source
 (`Editor/Completion/Candidate.lean`) and what the state lists while it is
 asked again (`Editor/State.lean`), through the loop's reconciler of a
-prompt's jobs. The checks of completion at point in the loop run on the
-evil driver (`ModelTest/Support/AtPoint.lean`), through the kit's at-point
+prompt's jobs. The checks of completion at point in the loop run under
+`switching`, a scheme written here that reports a session
+(`atPointDriver`, `ModelTest/Support/AtPoint.lean`), through the kit's at-point
 package (`Editor/Test/AtPoint.lean`) and at-point sources written for them,
 so nothing of the package that ships is asked. `loopFileJobChecks` are of
 when the loop starts the file jobs, under the core's names, on stand-in
@@ -6466,16 +6467,68 @@ def floatViewChecks : List Check :=
           spotsAsked (hinted frame 18 18 false) == some 1 &&
             spotsAsked (viewState floatLines frame 0 18) == some 0 }]
 
+/-- What a step of the at-point checks of the loop is handed, under
+`switching`, the scheme written for the loop's checks: a printable key
+types, as the test scheme's does; `C-b` begins a session the scheme reports
+(`InputScheme.Report.session`), as a scheme's insert state is, `C-e` ends
+it, and after `C-d` the view takes no text; the kit's editing keys but
+`RET`; and the keys of completion at point, each on the kit's at-point
+command a scheme's insert table binds it to (`Editor/Test/AtPoint.lean`):
+`C-SPC`, `C-n`, `C-p`, `TAB`, `S-TAB`, `RET` and `C-g`. The commands are the
+kit's at-point package's, the kit's minibuffer package's (a source that
+answers later posts its batches through `minibuffer-candidates`), the
+kit's editing commands, and stand-ins for the
+three a scheme's package registers that the kit's at-point runs by name:
+`insert-newline`, `insert-tab` and `keyboard-quit`. -/
+def atPointKeys : Loop.Keys switching :=
+  let ran (run : Call → EditorM Unit) : Dispatched := fun call => do
+    run call
+    return none
+  let commands : List (String × Dispatched) :=
+    editingDispatched ++
+      [("insert-newline", ran fun call => call.target.insertLineBreak),
+        ("insert-tab", ran fun call => call.target.insertAtSelections "\t"),
+        ("keyboard-quit", ran fun _ => pure ())]
+  { maps := fun _ _ =>
+      [Keymap.ofList
+          ((editingBindings.filter (·.1 != "RET") ++
+                [("C-b", invoke "begin"), ("C-e", invoke "end"), ("C-d", invoke "deafen"),
+                  ("C-SPC", invoke Test.AtPoint.completeName),
+                  ("C-n", invoke Test.AtPoint.nextName), ("C-p", invoke Test.AtPoint.previousName),
+                  ("TAB", invoke Test.AtPoint.tabName), ("S-TAB", invoke Test.AtPoint.backtabName),
+                  ("RET", invoke Test.AtPoint.returnName),
+                  ("C-g", invoke Test.AtPoint.quitName)]).map
+            fun (text, invocation) => (keys text, invocation))]
+    command? := fun name =>
+      match
+        (Test.Minibuffer.package.registered.commands ++
+              Test.AtPoint.package.registered.commands).findRev?
+          (·.name == name) with
+      | some { action := .call run, .. } => some (ran run)
+      | _ =>
+        match commands.find? (·.1 == name) with
+        | some (_, command) => some command
+        | none => if switchingTable.any (·.1 == name) then some fun _ => pure none else none }
+
+/-- A driver of the at-point checks of the loop over the fixture `fixture`,
+under `switching`, handed `atPointKeys` with the chain `chain` and the
+at-point sources `atPoints` (`atPointDriverUnder`,
+`ModelTest/Support/AtPoint.lean`). -/
+def atPointDriver (fixture : String) (chain : Array String) (atPoints : List Completion.AtPoint) :
+    Option (Loop.Driver switching) :=
+  atPointDriverUnder atPointKeys fixture chain atPoints
+
 /-- The checks of completion at point through the loop (`Editor/Loop.lean`,
-"Completion at point"), on the evil driver over the models. -/
+"Completion at point"), on the driver of `atPointDriver` over the models:
+under `switching`, in a session it reports (`C-b`). -/
 def atPointLoopChecks : List Check :=
   [{  name := "a session at point is asked with the place of its view, which its candidates keep"
       run :=
         pure <|
-          match atPointDriver "say h|e" #["line"] [lineAtPoint] with
+          match atPointDriver "say he|" #["line"] [lineAtPoint] with
           | none => false
           | some driver =>
-            let opened := evilFed driver "a C-n"
+            let opened := keysFed driver "C-b C-n"
             match opened.loop.state.atPoint with
             | none => false
             | some session =>
@@ -6485,35 +6538,35 @@ def atPointLoopChecks : List Check :=
         "a previewed candidate accepted with RET is what the region the source named now holds, and one undo restores the text from before the first preview"
       run :=
         pure <|
-          match atPointDriver "say h|e" #["line"] [lineAtPoint] with
+          match atPointDriver "say he|" #["line"] [lineAtPoint] with
           | none => false
           | some driver =>
-            let opened := evilFed driver "a C-n"
-            let previewed := evilFed opened "C-n"
-            let accepted := evilFed previewed "RET"
-            let undone := evilUndone (evilFed accepted "<Escape>")
-            let typedOn := evilFed driver "a C-n C-n x <Escape>"
+            let opened := keysFed driver "C-b C-n"
+            let previewed := keysFed opened "C-n"
+            let accepted := keysFed previewed "RET"
+            let undone := atPointUndone (keysFed accepted "C-e")
+            let typedOn := keysFed driver "C-b C-n C-n x C-e"
             opened.loop.state.atPoint.isSome && sessionChosen opened == none &&
-              evilText opened == some "say he" &&
+              atPointText opened == some "say he" &&
               sessionRows opened == #["say hello"] &&
-              evilText previewed == some "say hello" &&
+              atPointText previewed == some "say hello" &&
               sessionChosen previewed == some 0 &&
-              evilText accepted == some "say hello" &&
+              atPointText accepted == some "say hello" &&
               accepted.loop.state.atPoint.isNone &&
-              evilText undone == some "say he" &&
-              evilText typedOn == some "say hellox" },
+              atPointText undone == some "say he" &&
+              atPointText typedOn == some "say hellox" },
     { name :=
-        "moving the cursor out of the region closes the session and gives the windows back their rows; moving inside it keeps it; <Escape> closes it with the preview left, and so does typing on to a text nothing matches"
+        "moving the cursor out of the region closes the session and gives the windows back their rows; moving inside it keeps it; a view that stops taking text closes it with the preview left, and so does typing on to a text nothing matches"
       run :=
         pure <|
-          match atPointDriver "alpha a|l" #["last2"] [lastTwoAtPoint] with
+          match atPointDriver "alpha al|" #["last2"] [lastTwoAtPoint] with
           | none => false
           | some driver =>
-            let opened := evilFed driver "a C-n"
-            let inside := evilFed opened "<ArrowLeft> <ArrowLeft>"
-            let outside := evilFed inside "<ArrowLeft>"
-            let escaped := evilFed opened "C-n <Escape>"
-            let unmatched := evilFed opened "z"
+            let opened := keysFed driver "C-b C-n"
+            let inside := keysFed opened "<ArrowLeft> <ArrowLeft>"
+            let outside := keysFed inside "<ArrowLeft>"
+            let escaped := keysFed opened "C-n C-d"
+            let unmatched := keysFed opened "z"
             let heights := outside.loop.state.heights
             match opened.loop.state.atPoint with
             | none => false
@@ -6528,10 +6581,10 @@ def atPointLoopChecks : List Check :=
                 markerGone outside session.start &&
                 markerGone outside session.stop &&
                 escaped.loop.state.atPoint.isNone &&
-                evilText escaped == some "alpha alpha" &&
+                atPointText escaped == some "alpha alpha" &&
                 markerGone escaped session.start &&
                 unmatched.loop.state.atPoint.isNone &&
-                evilText unmatched == some "alpha alz" &&
+                atPointText unmatched == some "alpha alz" &&
                 markerGone unmatched session.stop },
     { name :=
         "with a session open, C-n/TAB and C-p/S-TAB move the choice down and up, previewing it in the region, and RET accepts only a chosen candidate"
@@ -6539,54 +6592,54 @@ def atPointLoopChecks : List Check :=
         pure <|
           let threes : Completion.AtPoint :=
             { lineAtPoint [.source "threes"] with name := "threes" }
-          match atPointDriver "|a" #["threes"] [threes] with
+          match atPointDriver "a|" #["threes"] [threes] with
           | none => false
           | some driver =>
-            let opened := evilFed driver "a C-SPC"
-            let one := evilFed opened "C-n"
-            let two := evilFed one "TAB"
-            let back := evilFed two "C-p"
-            let none' := evilFed back "S-TAB"
-            let wrapped := evilFed none' "S-TAB"
-            let accepted := evilFed wrapped "RET"
-            let broken := evilFed driver "a C-n RET"
-            sessionChosen opened == none && evilText opened == some "a" &&
-              evilText one == some "a1" &&
-              evilText two == some "a2" &&
-              evilText back == some "a1" &&
-              evilText none' == some "a" &&
+            let opened := keysFed driver "C-b C-SPC"
+            let one := keysFed opened "C-n"
+            let two := keysFed one "TAB"
+            let back := keysFed two "C-p"
+            let none' := keysFed back "S-TAB"
+            let wrapped := keysFed none' "S-TAB"
+            let accepted := keysFed wrapped "RET"
+            let broken := keysFed driver "C-b C-n RET"
+            sessionChosen opened == none && atPointText opened == some "a" &&
+              atPointText one == some "a1" &&
+              atPointText two == some "a2" &&
+              atPointText back == some "a1" &&
+              atPointText none' == some "a" &&
               sessionChosen none' == none &&
-              evilText wrapped == some "a3" &&
-              evilText accepted == some "a3" &&
+              atPointText wrapped == some "a3" &&
+              atPointText accepted == some "a3" &&
               accepted.loop.state.atPoint.isNone &&
               broken.loop.state.atPoint.isNone &&
-              evilText broken == some "a\n" },
+              atPointText broken == some "a\n" },
     { name :=
         "a previewed session closed because its text stopped matching closes its buffer's group: what is typed after it is a step of its own, and one more undo restores the text from before the preview"
       run :=
         pure <|
-          match atPointDriver "say h|e" #["line"] [lineAtPoint] with
+          match atPointDriver "say he|" #["line"] [lineAtPoint] with
           | none => false
           | some driver =>
-            let typed := evilFed driver "a C-n C-n x"
-            let after := evilFed typed "y <Escape>"
-            let once := evilUndone after
-            let twice := evilUndone once
-            typed.loop.state.atPoint.isNone && evilText after == some "say helloxy" &&
-              evilText once == some "say hellox" &&
-              evilText twice == some "say he" },
+            let typed := keysFed driver "C-b C-n C-n x"
+            let after := keysFed typed "y C-e"
+            let once := atPointUndone after
+            let twice := atPointUndone once
+            typed.loop.state.atPoint.isNone && atPointText after == some "say helloxy" &&
+              atPointText once == some "say hellox" &&
+              atPointText twice == some "say he" },
     { name :=
         "a session over more candidates than are matched inline has its listing matched by a job under completion-match <view>, and closing the session cancels it"
       run :=
         pure <|
           let threes : Completion.AtPoint :=
             { lineAtPoint [.source "threes"] with name := "threes" }
-          match atPointDriver "|a" #["threes"] [threes] with
+          match atPointDriver "a|" #["threes"] [threes] with
           | none => false
           | some driver =>
             let driver := { driver with keys := { driver.keys with inlineMatches := 1 } }
-            let (opened, steps) := evilSteps driver "a C-SPC"
-            let (_, quitSteps) := evilSteps opened "C-g"
+            let (opened, steps) := atPointSteps driver "C-b C-SPC"
+            let (_, quitSteps) := atPointSteps opened "C-g"
             let spawned : Array String := steps.flatMap (·.spawns.map (·.key))
             let cancelled : Array String := quitSteps.flatMap (·.cancels)
             spawned == #[Loop.matchKey ⟨0⟩] && cancelled.contains (Loop.matchKey ⟨0⟩) },
@@ -6594,18 +6647,18 @@ def atPointLoopChecks : List Check :=
         "C-n with a source that answers later and reads the open buffers' texts starts its job under completion 0 later, with an order whose texts are snapshots of the open buffers; its batches list the candidates that match, and closing the session cancels the key and releases the snapshots"
       run :=
         pure <|
-          match atPointDriver "alpha alpine al|p" #["later"] [] with
+          match atPointDriver "alpha alpine alp|" #["later"] [] with
           | none => false
           | some driver =>
-            let (asked, steps) := evilSteps driver "a C-n"
+            let (asked, steps) := atPointSteps driver "C-b C-n"
             let started : Array JobStart := steps.flatMap (·.starts)
             let order :=
               (started.find? (·.name == laterJob)).bind fun start =>
                 Completion.Order.ofArguments? start.arguments
-            let listed := evilDrained asked
-            let closed := evilFed listed "<Escape>"
+            let listed := atPointDrained asked
+            let closed := keysFed listed "C-d"
             let texts := (order.map (·.query.texts)).getD #[]
-            let contents (driver : EvilDriver) (id : SnapshotId) : Option String :=
+            let contents (driver : Loop.Driver switching) (id : SnapshotId) : Option String :=
               (driver.model.texts.snapshots[id.index]?).join.map (·.contents)
             (started.find? (·.name == laterJob)).bind (·.key) ==
                 some (Loop.sourceKey ⟨0⟩ "later") &&
@@ -6622,8 +6675,8 @@ def atPointLoopChecks : List Check :=
           match atPointDriver "xyz |" #["later"] [] with
           | none => false
           | some driver =>
-            let asked := evilFed driver "a q w C-n"
-            let drained := evilDrained asked
+            let asked := keysFed driver "C-b q w C-n"
+            let drained := atPointDrained asked
             asked.loop.state.atPoint.map (·.source) == some "later" &&
               drained.loop.state.atPoint.isNone &&
               drained.loop.state.echo == Completion.AtPoint.noCompletions }]
@@ -6640,17 +6693,17 @@ def atPointAskChecks : List Check :=
           match atPointDriver "|" #["dotted"] [{ laterAtPoint ['.'] with name := "dotted" }] with
           | none => false
           | some driver =>
-            let typed := evilFed driver "i a x"
-            let dotted := evilDrained (evilFed typed ".")
-            let previewed := evilFed dotted "C-n"
-            let accepted := evilFed previewed "RET"
+            let typed := keysFed driver "C-b a x"
+            let dotted := atPointDrained (keysFed typed ".")
+            let previewed := keysFed dotted "C-n"
+            let accepted := keysFed previewed "RET"
             typed.loop.state.atPoint.isNone &&
               dotted.loop.state.atPoint.map (·.source) == some "dotted" &&
               sessionChosen dotted == none &&
               sessionRows dotted == #["alpha", "beta", "alpine"] &&
-              evilText previewed == some "ax.alpha" &&
+              atPointText previewed == some "ax.alpha" &&
               sessionChosen previewed == some 0 &&
-              evilText accepted == some "ax.alpha" &&
+              atPointText accepted == some "ax.alpha" &&
               accepted.loop.state.atPoint.isNone },
     { name :=
         "a typed . with a trigger source hands back at-point-triggered with it, and a typed a none; a typed key with pause sources arms each distinct pause, and a chain with no pause keeps what is armed"
@@ -6691,7 +6744,7 @@ def atPointAskChecks : List Check :=
                 (#[], .disarm) }]
 
 /-- The checks of completion at point asked by itself, through the loop on
-the evil driver over the models: a trigger, and a pause. -/
+the driver of `atPointDriver` over the models: a trigger, and a pause. -/
 def atPointByItselfChecks : List Check :=
   [{  name :=
         "a source that declares a trigger character opens a session when that character is typed, with nothing chosen, and no other character does"
@@ -6700,25 +6753,25 @@ def atPointByItselfChecks : List Check :=
           match atPointDriver "|" #["dots"] [dotsAtPoint] with
           | none => false
           | some driver =>
-            let typed := evilFed driver "i a x"
-            let dotted := evilFed typed "."
+            let typed := keysFed driver "C-b a x"
+            let dotted := keysFed typed "."
             typed.loop.state.atPoint.isNone && !listShown typed &&
               dotted.loop.state.atPoint.map (·.source) == some "dots" &&
               sessionChosen dotted == none &&
               listShown dotted &&
               sessionRows dotted == #["wq", "w"] &&
-              evilText dotted == some "ax." },
+              atPointText dotted == some "ax." },
     { name :=
-        "typing a then b in insert state leaves the driver with one pause armed and no job; 239 ms open nothing, and one more opens a session of a source that pauses 240 ms, with nothing chosen; a move before the pause withdraws it, and nothing opens"
+        "typing a then l in a session leaves the driver with one pause armed and no job; 239 ms open nothing, and one more opens a session of a source that pauses 240 ms, with nothing chosen; a move before the pause withdraws it, and nothing opens"
       run :=
         pure <|
           match atPointDriver "alpha |" #["later"] [] with
           | none => false
           | some driver =>
-            let typed := evilFed driver "a a l"
+            let typed := keysFed driver "C-b a l"
             let early := typed.pass 239
             let due := early.pass 1
-            let moved := (evilFed typed "<ArrowLeft>").pass 240
+            let moved := (keysFed typed "<ArrowLeft>").pass 240
             typed.armed.size == 1 && typed.pending.isEmpty && typed.posting.isEmpty &&
               early.loop.state.atPoint.isNone &&
               due.loop.state.atPoint.map (·.source) == some "later" &&
@@ -6733,9 +6786,9 @@ def atPointByItselfChecks : List Check :=
           match atPointDriver "xyz |" #["later"] [] with
           | none => false
           | some driver =>
-            let typed := evilFed driver "a q w"
+            let typed := keysFed driver "C-b q w"
             let due := typed.pass 240
-            let drained := evilDrained due
+            let drained := atPointDrained due
             due.loop.state.atPoint.map (·.source) == some "later" &&
               drained.loop.state.atPoint.isNone &&
               drained.loop.state.echo != Completion.AtPoint.noCompletions &&

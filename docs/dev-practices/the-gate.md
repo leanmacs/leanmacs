@@ -553,12 +553,13 @@ the API. Completion at point is checked on the models in the same layers
 (completion's phase 5): its interface and the shipped `words` against their
 contract (`atPointContractChecks`, `wordsChecks`), a session in the state
 (`atPointStateChecks`), asking through the dispatcher and the chain
-(`atPointChecks`, `registryChecks`), and, on the evil driver over the
-models, the keys, the preview, the accept, the closing rules, one undo step,
-the repeat, a trigger and a pause moved by `Loop.Driver.pass`
-(`atPointLoopChecks`, `atPointRepeatChecks`, `atPointAskChecks`,
-`atPointByItselfChecks`). The editor state's side of a
-save in flight, the snapshot the loop releases once a save has ended and
+(`atPointChecks`, `registryChecks`), and, on the loop's driver over the
+models, under a scheme written in the test that reports a session, the
+keys, the preview, the accept, the closing rules, one undo step, a trigger
+and a pause moved by `Loop.Driver.pass` (`atPointLoopChecks`,
+`atPointAskChecks`, `atPointByItselfChecks`), and, under the Vim scheme
+among evil's tests, the repeat (`atPointRepeatChecks`). The editor state's
+side of a save in flight, the snapshot the loop releases once a save has ended and
 the saved mark a rollback takes back are checked with the state requests
 and the loop's dispatch.
 
