@@ -186,29 +186,40 @@ def opening (name : String) (path : System.FilePath) : Config.Registration :=
         | _ =>
           message "the open command is not a compiled command that is given its call" }
 
-/-- Runs `check` against a host over the library's file service
-(`Stage.overFiles`), with an empty config directory of its own, that is
-handed the file commands and their jobs as compiled code registers them
-(`Files.package.registered.commands`, `Files.package.registered.jobs`), the minibuffer's commands and its mode
-(`Minibuffer.package.registered.commands`, `Minibuffer.package.registered.modes`), as the executable is, and,
-for each name and path of `opens`, a command of that name that opens that
-path (`opening`). Stops the host: `false` if the check did not hold or the
-host did not stop. -/
+/-- The stage of the file checks' hosts: over the library's file service
+(`Stage.overFiles`), with the config directory `directory`, handed the file
+commands and their jobs as compiled code registers them
+(`Files.package.registered.commands`, `Files.package.registered.jobs`), the
+minibuffer's commands and its mode (`Minibuffer.package.registered.commands`,
+`Minibuffer.package.registered.modes`), as the executable is, and, for each
+name and path of `opens`, a command of that name that opens that path
+(`opening`), and `extra`. -/
+def fileStage (context : Context) (directory : System.FilePath)
+    (opens : List (String × System.FilePath)) (extra : Array Config.Registration) :
+    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle) :=
+  Stage.overFiles context (Config.Directory.source directory)
+    { commands :=
+        Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
+          (opens.map fun (name, path) => opening name path).toArray ++
+          extra
+      jobs := Files.package.registered.jobs
+      modes := Minibuffer.package.registered.modes }
+
+/-- Runs `check` against a stepped host over the file checks' stage
+(`fileStage`), with an empty config directory of its own. `false` if the
+check did not hold or the host did not settle. -/
 def withFileHost (context : Context) (opens : List (String × System.FilePath))
     (check : Session → IO Bool) (extra : Array Config.Registration := #[]) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    let stage ←
-      Stage.overFiles context (Config.Directory.source directory)
-          { commands :=
-              Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
-                (opens.map fun (name, path) => opening name path).toArray ++
-                extra
-            jobs := Files.package.registered.jobs
-            modes := Minibuffer.package.registered.modes }
-    onStage stage fun host stage =>
-        check
-          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
-            watches := stage.watches, log := stage.log }
+    let stage ← fileStage context directory opens extra
+    onStage stage fun drive stage => check (Session.ofStage drive directory stage)
+
+/-- `withFileHost` with a real host (`onRealStage`). -/
+def withRealFileHost (context : Context) (opens : List (String × System.FilePath))
+    (check : RealSession → IO Bool) (extra : Array Config.Registration := #[]) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    let stage ← fileStage context directory opens extra
+    onRealStage stage fun host stage => check (RealSession.ofStage host directory stage)
 
 /-- The text of the file `note.txt` of the file checks: two lines, with
 two-byte characters. -/

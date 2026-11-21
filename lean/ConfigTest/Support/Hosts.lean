@@ -15,6 +15,7 @@ import Editor.FileWatch.Model
 import Editor.Fuzzy
 import Editor.Fuzzy.Real
 import Editor.Headless
+import Editor.Headless.Stepped
 import Editor.InputScheme.Test
 import Editor.Job.Fake
 import Editor.Job.Real
@@ -40,9 +41,12 @@ import Editor.Watch
 # Config tests: support: Hosts
 
 Hosts over the real elaborator: a config file's header, a config held in
-memory and built once, files written into a directory, a stage and what compiled code hands it, a session of a host
-and what it printed (`Session`, with `Session.scene` and `Session.shown`), a
-host started over a stage or over files, the guard of a check's waits for
+memory and built once, files written into a directory, a stage and what compiled code hands it, a host as a check
+drives it, stepped or real (`Driven`), a session of a host and what it
+printed (`Session`, with `Session.scene` and `Session.shown`, and
+`RealSession` for a real host), a host started over a stage or over files,
+stepped on the check's thread (`onStage`, `staged`, `withHost`) or on a loop
+thread of its own (`onRealStage`, `stagedReal`, `withRealHost`), the guard of a check's waits for
 its host (`hangGuard`, `settled`), and polling with a bound (`patience`,
 `eventually`, `Session.within`). Shared by several test modules; it holds no
 checks of its own.
@@ -192,6 +196,11 @@ structure Stage (β σ : Type) where
   (`Headless.Collaborators.dispose`): how many lines the host had emitted
   by then. -/
   disposed : IO.Ref (Array Nat)
+  /-- The memory queue a stepped host over the stage drains
+  (`Headless.withStepped`), which a poster built before the host can post
+  to; a real host leaves it unused, its collaborators' queue being the
+  library's. -/
+  memory : Headless.Queue.Memory Ffi.Event
 
 /-- What a check hands a host to register before any config: packages, and
 registrations written as arrays, its commands, its jobs, its key
@@ -328,13 +337,120 @@ def Stage.new {β σ : Type} (context : Context) (elaborator : Config.Elaborator
               return { loop with state := (loop.state.setMajorMode ⟨0⟩ name).2 }
             | none =>
               return loop },
-      output, threads, clock, watches, log, disposed }
+      output, threads, clock, watches, log, disposed, memory := ← Headless.Queue.Memory.new }
 
-/-- A host running for one check: the headless loop on the real queue and the
-real text binding, over a config directory the check owns. -/
+/-- A host as a check drives it, whichever kind it is: a real one, whose loop
+runs on a thread of its own (`Headless.Host`, `Driven.ofHost`), or one
+stepped on the check's own thread (`Headless.Stepped`, `Driven.ofStepped`).
+Each field is a closure over the host, so a check written on it runs on
+either. Nothing but checks drives two kinds of host, so it is test support,
+not the core's. -/
+structure Driven where
+  /-- Asks the host to do a request, after everything asked before. -/
+  send : Headless.Request → IO Unit
+  /-- Sends an event as the window would report it. -/
+  input : Event → IO Unit
+  /-- The host's `waitWhile` (`Headless.Host.waitWhile`,
+  `Headless.Stepped.waitWhile`): its guard, what is busy, the idle outcome,
+  the hang outcome, what the wait is, the answer's guard, the script's line,
+  where a hang is said, what is called before a block, and whether the first
+  round's marker publishes a scene. -/
+  waitWhile :
+    Nat →
+      (Headless.Progress → IO Bool) →
+      Option Headless.Wait →
+      Headless.Wait →
+      String → Nat → Option Nat → (String → IO Unit) → (String → IO Unit) → Bool → IO Headless.Wait
+  /-- The host's activity count and its epoch, read in one step. -/
+  activitySeen : BaseIO Job.Activity.Seen
+  /-- How the host's loop ended, once it has: `ok` for a loop that stopped
+  by itself or was stopped, or the error it threw. -/
+  ended? : IO (Option (Except IO.Error Unit))
+  /-- The fake clock the host's jobs wait on, if they wait on one. -/
+  clock : Option Job.FakeClock
+
+namespace Driven
+
+/-- A real host, driven. -/
+def ofHost (host : Headless.Host) : Driven where
+  send := host.send
+  input event := do
+    unless ← Event.post event do
+      throw (IO.userError "the editor queue refused an event: it has been quit")
+  waitWhile guard busy still hung what answer line waitHung waitBlocked marker :=
+    host.waitWhile guard busy still hung what answer line waitHung waitBlocked marker
+  activitySeen := host.activitySeen
+  ended? := do
+    if ← IO.hasFinished host.thread then
+      return some host.thread.get
+    return none
+  clock := host.clock
+
+/-- A stepped host, driven. -/
+def ofStepped (stepped : Headless.Stepped) : Driven where
+  send := stepped.send
+  input := stepped.input
+  waitWhile guard busy still hung what answer line waitHung waitBlocked marker :=
+    stepped.waitWhile guard busy still hung what answer line waitHung waitBlocked marker
+  activitySeen := stepped.activitySeen
+  ended? := stepped.ended?
+  clock := stepped.clock
+
+/-- Sends a press of `key`, with no text, as the window would report it. -/
+def press (driven : Driven) (key : Key) : IO Unit :=
+  driven.input (.key key true "")
+
+/-- Sends `text` as an input method's composition would end with it. -/
+def commit (driven : Driven) (text : String) : IO Unit :=
+  driven.input (.commit text)
+
+/-- Sends a resize of the frame to `width` by `height` physical pixels, at a
+scale of 1 and out of fullscreen. -/
+def resize (driven : Driven) (width height : Nat) : IO Unit :=
+  driven.input (.resize { width, height, scale := 1.0 })
+
+/-- `Headless.Host.await` on the driven host. -/
+def await (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard)
+    (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
+  driven.waitWhile waitGuard (fun progress => pure (progress.reloading || progress.restoring)) none
+    .reloading "settle" answer line waitHung waitBlocked true
+
+/-- `Headless.Host.join` on the driven host. -/
+def join (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard) (line : Option Nat := none)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
+  driven.waitWhile waitGuard (fun progress => pure (progress.jobs > 0)) (some .working) .busy "join"
+    answer line waitHung waitBlocked true
+
+/-- `Headless.Host.settle` on the driven host. -/
+def settle (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard)
+    (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+  return (← driven.await waitGuard answer line waitHung waitBlocked) == .settled
+
+/-- An advance's wait, as the script's `advance` makes it: until the fake
+clock holds a wait due within `milliseconds`, publishing nothing.
+`settled` once one is due, and `working` at idle with none due, which is a
+stall; `busy` at its guard. -/
+def advanceWait (driven : Driven) (clock : Job.FakeClock) (milliseconds waitGuard : Nat)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
+  driven.waitWhile waitGuard (fun _ => return !(← clock.dueWithin milliseconds)) (some .working)
+    .busy "advance" waitGuard none waitHung waitBlocked false
+
+end Driven
+
+/-- A real host is driven as `Driven.ofHost` drives it, so a helper written
+on `Driven` takes either. -/
+instance : Coe Headless.Host Driven :=
+  ⟨Driven.ofHost⟩
+
+/-- A host running for one check, stepped or real (`drive`), the real text
+binding, and a config directory the check owns. -/
 structure Session where
-  /-- The host. -/
-  host : Headless.Host
+  /-- The host, as the check drives it. -/
+  drive : Driven
   /-- The config directory: a temporary directory of this check's. -/
   directory : System.FilePath
   /-- Every line the host has emitted, oldest first. -/
@@ -348,52 +464,108 @@ structure Session where
   watches : Job.FakeFileWatches
   /-- Every entry the host has logged, oldest first. -/
   log : IO.Ref (Array String)
-  /-- Where the check's waits for the host say a hang (`Headless.Host.waitWhile`):
+  /-- Where the check's waits for the host say a hang (`Driven.waitWhile`):
   stderr unless the check counts them. -/
   waitHung : String → IO Unit := IO.eprintln
   /-- What the check's waits for the host call as they are about to block
-  (`Headless.Host.waitWhile`): nothing unless the check lets a held step go
-  on it. -/
+  (`Driven.waitWhile`): nothing unless the check lets a held step go on
+  it. -/
   waitBlocked : String → IO Unit := fun _ => pure ()
 
-/-- What a check says of `host`'s loop when it ended before what was sent to
-it settled (`Headless.Wait.ended`): that it ended, and what it ended with,
-the error it threw or a quit. Not a hang: nothing was waited for in vain. -/
-def loopEnded (host : Headless.Host) : String :=
-  let how :=
-    match host.thread.get with
-    | .error error => s!"it threw: {error}"
-    | .ok () => "it ended by itself, as a quit ends it"
-  s!"the editor loop ended before the requests sent to it settled: {how}"
+/-- A session over a real host, whose loop runs on a thread of its own: the
+session, and the host itself, for a check of what only a loop thread shows
+(`docs/dev-practices/real-thread-checks.md`). -/
+structure RealSession extends Session where
+  /-- The real host. -/
+  host : Headless.Host
 
-/-- Waits until `host`'s editor thread has handled everything sent so far
-and no reload is running: for the reload's end, however long a real
-elaboration takes, with `hangGuard` as a guard against a hang only. `true`
-once it has; `false` at a guard, the hang said once through `waitHung`.
-Throws when the loop ended first (`loopEnded`), with what it ended with: a
-loop that ended is not a hang. -/
-def settled (host : Headless.Host) (waitHung : String → IO Unit := IO.eprintln)
+/-- A real host's session is a session, as its parent: a helper written on
+`Session` takes either. -/
+instance : Coe RealSession Session :=
+  ⟨RealSession.toSession⟩
+
+/-- The session of the host `drive` over `stage`, with the config directory
+`directory`. -/
+def Session.ofStage {β σ : Type} (drive : Driven) (directory : System.FilePath) (stage : Stage β σ)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : Session :=
+  { drive, directory, output := stage.output, threads := stage.threads, clock := stage.clock
+    watches := stage.watches, log := stage.log, waitHung, waitBlocked }
+
+/-- The session of the real host `host` over `stage`. -/
+def RealSession.ofStage {β σ : Type} (host : Headless.Host) (directory : System.FilePath)
+    (stage : Stage β σ) (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : RealSession :=
+  { Session.ofStage host directory stage waitHung waitBlocked with host }
+
+/-- What a check says of a driven host's loop when it ended before what was
+sent to it settled (`Headless.Wait.ended`): that it ended, and what it ended
+with, the error it threw or a quit. Not a hang: nothing was waited for in
+vain. -/
+def loopEnded (drive : Driven) : IO String := do
+  let how :=
+    match ← drive.ended? with
+    | some (.error error) => s!"it threw: {error}"
+    | _ => "it ended by itself, as a quit ends it"
+  return s!"the editor loop ended before the requests sent to it settled: {how}"
+
+/-- Waits until `drive`'s loop has handled everything sent so far and no
+reload is running: for the reload's end, however long a real elaboration
+takes, with `hangGuard` as a guard against a hang only. `true` once it has;
+`false` at a guard, the hang said once through `waitHung`. Throws when the
+loop ended first (`loopEnded`), with what it ended with: a loop that ended
+is not a hang. -/
+def settled (drive : Driven) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool := do
-  match ← host.await hangGuard (waitHung := waitHung) (waitBlocked := waitBlocked) with
+  match ← drive.await hangGuard (waitHung := waitHung) (waitBlocked := waitBlocked) with
   | .settled =>
     return true
   | .ended =>
-    throw (IO.userError (loopEnded host))
+    throw (IO.userError (← loopEnded drive))
   | _ =>
     return false
 
 namespace Session
 
-/-- Sends `requests` to the editor thread in order, and waits until it has
-handled them and no reload is running (`settled`): for the reload's end,
-with the session's `waitHung` and `waitBlocked`. Throws a hang if the wait
-reaches `hangGuard`, and says the loop ended, with what it ended with, if
-it ended first. -/
+/-- Sends `requests` to the host in order, and waits until it has handled
+them and no reload is running (`settled`): for the reload's end, with the
+session's `waitHung` and `waitBlocked`. Throws a hang if the wait reaches
+`hangGuard`, and says the loop ended, with what it ended with, if it ended
+first. -/
 def ask (session : Session) (requests : List Headless.Request) : IO Unit := do
   for request in requests do
-    session.host.send request
-  unless ← settled session.host session.waitHung session.waitBlocked do
+    session.drive.send request
+  unless ← settled session.drive session.waitHung session.waitBlocked do
     throw (IO.userError s!"a hang: the editor thread had not settled within {hangGuard} ms")
+
+/-- Asks the host to do `request`, after everything asked before, and does
+not wait. -/
+def send (session : Session) (request : Headless.Request) : IO Unit :=
+  session.drive.send request
+
+/-- Sends a press of `key`, as the window would report it. -/
+def press (session : Session) (key : Key) : IO Unit :=
+  session.drive.press key
+
+/-- Sends `text` as an input method's composition would end with it. -/
+def commit (session : Session) (text : String) : IO Unit :=
+  session.drive.commit text
+
+/-- Sends a resize of the frame to `width` by `height`. -/
+def resize (session : Session) (width height : Nat) : IO Unit :=
+  session.drive.resize width height
+
+/-- Waits until the host has handled everything sent so far and no reload
+is running, with `hangGuard` and the session's `waitHung` and
+`waitBlocked`: whether it did. -/
+def settle (session : Session) : IO Bool :=
+  session.drive.settle hangGuard (waitHung := session.waitHung) (waitBlocked := session.waitBlocked)
+
+/-- Waits until the host has handled everything sent so far and no job is
+running, with `hangGuard` and the session's `waitHung` and `waitBlocked`:
+`settled`, `working` at idle with a job still running, or a hang. -/
+def join (session : Session) : IO Headless.Wait :=
+  session.drive.join hangGuard (waitHung := session.waitHung) (waitBlocked := session.waitBlocked)
 
 /-- Replaces the text of the config file at `path` below the config
 directory, or adds it, with its header (`headed`). -/
@@ -415,36 +587,90 @@ def lines (session : Session) : IO (Array String) :=
 
 end Session
 
-/-- Runs `check` against a host started on `stage`, inside the host's bracket
-(`Headless.withHost`), which returns only once the host's loop has ended,
-whether the check returned or threw. `false` if the check did not hold or
-the host did not settle after it, for the reload's end, `hangGuard` its
-guard against a hang (`waitHung`, `waitBlocked`). -/
-def onStage {β σ : Type} (stage : Stage β σ) (check : Headless.Host → Stage β σ → IO Bool)
+/-- The number of events the library's editor queue holds, before and after
+`body`: a stepped host's check must leave none there, where the next real
+host would take them. Throws, naming them, when the queue grew. -/
+def leavingLibraryQueue {α : Type} (body : IO α) : IO α := do
+  let before ← Ffi.queued .editor
+  let result ← body
+  let after ← Ffi.queued .editor
+  if after > before then
+    throw <|
+        IO.userError
+          s!"a stepped host's check posted to the library's editor queue: it held {before} events and then {after}"
+  return result
+
+/-- Runs `check` against a host stepped on the check's own thread over
+`collaborators` and the memory queue `memory` (`Headless.withStepped`),
+which returns only once the host's loop has ended, whether the check
+returned or threw. `false` if the check did not hold or the host did not
+settle after it, `hangGuard` its guard against a hang (`waitHung`,
+`waitBlocked`). It also fails the check if the library's editor queue grew
+across it (`leavingLibraryQueue`). -/
+def stepping {β σ : Type} {scheme : InputScheme} (collaborators : Headless.Collaborators β σ scheme)
+    (memory : Headless.Queue.Memory Ffi.Event) (check : Driven → IO Bool)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+  leavingLibraryQueue <|
+    Headless.withStepped collaborators memory (guard := patience) (grace := some hangGuard)
+      fun stepped => do
+      let drive := Driven.ofStepped stepped
+      let held ← check drive
+      let wait ← drive.await hangGuard (waitHung := waitHung) (waitBlocked := waitBlocked)
+      return held && (wait == .settled || wait == .ended)
+
+/-- Runs `check` against a real host over `collaborators`, inside the host's
+bracket (`Headless.withHost`), which returns only once the host's loop has
+ended, whether the check returned or threw. `false` if the check did not
+hold or the host did not settle after it, for the reload's end, `hangGuard`
+its guard against a hang (`waitHung`, `waitBlocked`). -/
+def hostingReal {β σ : Type} {scheme : InputScheme}
+    (collaborators : Headless.Collaborators β σ scheme) (check : Headless.Host → IO Bool)
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
   -- A loop not ended `hangGuard` after its hang was said is given up on,
   -- and the check fails as a hang: the suite always finishes.
-  Headless.withHost stage.collaborators (guard := patience) (grace := some hangGuard) fun host => do
-    let held ← check host stage
+  Headless.withHost collaborators (guard := patience) (grace := some hangGuard) fun host => do
+    let held ← check host
     let wait ← host.await hangGuard (waitHung := waitHung) (waitBlocked := waitBlocked)
     return held && (wait == .settled || wait == .ended)
 
-/-- Runs `check` against a host started on a stage of its own over
-`elaborator` and `source`, with what `compiled` hands it, and stops the
-host. `false` if the check did not hold or the host did not stop. -/
-def staged {β σ : Type} (context : Context) (elaborator : Config.Elaborator β σ)
-    (source : Config.Source) (check : Headless.Host → Stage β σ → IO Bool)
-    (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
+/-- Runs `check` against a host started on `stage`, stepped on the check's
+own thread (`stepping`, over the stage's memory queue). -/
+def onStage {β σ : Type} (stage : Stage β σ) (check : Driven → Stage β σ → IO Bool)
     (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+  stepping stage.collaborators stage.memory (fun drive => check drive stage) waitHung waitBlocked
+
+/-- Runs `check` against a real host started on `stage` (`hostingReal`). -/
+def onRealStage {β σ : Type} (stage : Stage β σ) (check : Headless.Host → Stage β σ → IO Bool)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+  hostingReal stage.collaborators (fun host => check host stage) waitHung waitBlocked
+
+/-- Runs `check` against a stepped host started on a stage of its own over
+`elaborator` and `source`, with what `compiled` hands it. `false` if the
+check did not hold or the host did not settle. -/
+def staged {β σ : Type} (context : Context) (elaborator : Config.Elaborator β σ)
+    (source : Config.Source) (check : Driven → Stage β σ → IO Bool) (compiled : Compiled := {})
+    (fuzzy : FuzzyHandler := Fuzzy.real) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool := do
   onStage (← Stage.new context elaborator source compiled (fuzzy := fuzzy)) check waitHung
       waitBlocked
 
-/-- Runs `check` against a host started on a fresh temporary directory
-holding `files`, and stops the host. The host's elaborator is `around` the
-real one and its source `through` the directory's: a check that controls
-elaboration or counts reads passes a decorator. The directory is removed. -/
+/-- `staged` with a real host (`onRealStage`). -/
+def stagedReal {β σ : Type} (context : Context) (elaborator : Config.Elaborator β σ)
+    (source : Config.Source) (check : Headless.Host → Stage β σ → IO Bool)
+    (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool := do
+  onRealStage (← Stage.new context elaborator source compiled (fuzzy := fuzzy)) check waitHung
+      waitBlocked
+
+/-- Runs `check` against a stepped host started on a fresh temporary
+directory holding `files`. The host's elaborator is `around` the real one
+and its source `through` the directory's: a check that controls elaboration
+or counts reads passes a decorator. The directory is removed. -/
 def withHostOver (context : Context) (files : List (String × String))
     (around :
       Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle →
@@ -456,22 +682,40 @@ def withHostOver (context : Context) (files : List (String × String))
   IO.FS.withTempDir fun directory => do
     writeConfig directory files
     staged context (around context.elaborator) (through (Config.Directory.source directory))
-        (fun host stage =>
-          check
-            { host, directory, output := stage.output, threads := stage.threads,
-              clock := stage.clock, watches := stage.watches, log := stage.log, waitHung,
-              waitBlocked })
+        (fun drive stage => check (Session.ofStage drive directory stage waitHung waitBlocked))
         compiled fuzzy waitHung waitBlocked
 
-/-- Runs `check` against a host started on a fresh temporary directory
-holding `files`, with the real elaborator, and stops the host. `false` if the
-check did not hold or the host did not stop. The directory is removed. Its
-jobs ask `fuzzy` for the matcher, the library's unless a check holds it. -/
+/-- `withHostOver` with a real host (`stagedReal`). -/
+def withRealHostOver (context : Context) (files : List (String × String))
+    (around :
+      Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle →
+        Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle)
+    (through : Config.Source → Config.Source) (check : RealSession → IO Bool)
+    (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeConfig directory files
+    stagedReal context (around context.elaborator) (through (Config.Directory.source directory))
+        (fun host stage => check (RealSession.ofStage host directory stage waitHung waitBlocked))
+        compiled fuzzy waitHung waitBlocked
+
+/-- Runs `check` against a stepped host started on a fresh temporary
+directory holding `files`, with the real elaborator. `false` if the check
+did not hold or the host did not settle. The directory is removed. Its jobs
+ask `fuzzy` for the matcher, the library's unless a check holds it. -/
 def withHost (context : Context) (files : List (String × String)) (check : Session → IO Bool)
     (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
   withHostOver context files id id check compiled fuzzy waitHung waitBlocked
+
+/-- `withHost` with a real host (`withRealHostOver`). -/
+def withRealHost (context : Context) (files : List (String × String))
+    (check : RealSession → IO Bool) (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+  withRealHostOver context files id id check compiled fuzzy waitHung waitBlocked
 
 /-- Runs `body` in a fresh temporary directory, removed only once the
 library's services among `targets` have worked what was handed to them under
@@ -563,7 +807,7 @@ def Session.echo (session : Session) : IO String :=
 it started: whether the wait settled. -/
 def Session.ran (session : Session) (name : String) : IO Bool := do
   session.ask [.run name]
-  return (← session.host.join patience) == .settled
+  return (← session.join) == .settled
 
 /-- Asks the host for the scene, and returns the echo area's text, quoted as
 the scene line has it, and every line it printed after the scene's: each

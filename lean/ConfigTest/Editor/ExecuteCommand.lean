@@ -68,7 +68,7 @@ def commandPromptChecks (context : Context) : List Check :=
   [{  name :=
         "criteria 1, 2 and 3: the command prompt lists the commands compiled code registers and config's, config's in the order registered; a reload whose config no longer registers zz-mine drops it from the candidates; from a config that binds neither execute-command nor load-theme, calling execute-command, accepting load-theme and then fixture-dark puts that theme in force, as the scene line names it; a config command bound to SPC f f shows SPC f f as its annotation; the binding search lists SPC y y with its command and description, and accepting it runs yy-said"
       run :=
-        withHost context [("init.lean", commandText true)]
+        withRealHost context [("init.lean", commandText true)]
           (fun session => do
             let asked (typed : String) : IO (Array String) := do
               session.ask [.run ExecuteCommand.name]

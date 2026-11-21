@@ -115,12 +115,17 @@ namespace ConfigTest
 
 open Editor
 
-/-- Runs `check` against a host started over `elaborator` and `source`, with
-its output in a buffer `check` is handed, and stops the host. `false` if the
-check did not hold or the host did not stop. -/
+/-- Runs `check` against a stepped host started over `elaborator` and
+`source` (`staged`), with its output in a buffer `check` is handed. `false`
+if the check did not hold or the host did not settle. -/
 def hosted {β σ : Type} (context : Context) (elaborator : Config.Elaborator β σ)
+    (source : Config.Source) (check : Driven → IO.Ref (Array String) → IO Bool) : IO Bool :=
+  staged context elaborator source fun drive stage => check drive stage.output
+
+/-- `hosted` with a real host (`stagedReal`). -/
+def hostedReal {β σ : Type} (context : Context) (elaborator : Config.Elaborator β σ)
     (source : Config.Source) (check : Headless.Host → IO.Ref (Array String) → IO Bool) : IO Bool :=
-  staged context elaborator source fun host stage => check host stage.output
+  stagedReal context elaborator source fun host stage => check host stage.output
 
 /-- A config whose `setup` registers `greet`. -/
 def setupText : String :=
@@ -334,7 +339,7 @@ tests, asserted on the lines the host emits. -/
 def hostChecks (context : Context) : List Check :=
   [{ name := "reload replaces a command",
      run :=
-       withHost context greetConfig fun session => do
+       withRealHost context greetConfig fun session => do
          session.ask [.reload]
          session.ask [.run "greet", .show]
          session.write "Config/Greet.lean" (greetText "v2")
@@ -374,7 +379,7 @@ def hostChecks (context : Context) : List Check :=
             (← stage.log.get) == #[s!"package: {Package.namedTwice "one"}"] },
     { name := "a type error keeps the old config"
       run :=
-        withHost context greetConfig fun session => do
+        withRealHost context greetConfig fun session => do
           session.ask [.reload]
           session.write "Config/Greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
           session.ask [.reload]
@@ -385,7 +390,7 @@ def hostChecks (context : Context) : List Check :=
                 "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a throwing setup keeps the old config"
       run :=
-        withHost context greetConfig fun session => do
+        withRealHost context greetConfig fun session => do
           session.ask [.reload]
           session.write "init.lean"
               (overGreet
@@ -400,7 +405,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a setup that registers a command name twice keeps the old config, and the diagnostic names the command"
       run :=
-        withHost context greetConfig fun session => do
+        withRealHost context greetConfig fun session => do
           session.ask [.reload]
           session.write "init.lean"
               (overGreet
@@ -414,7 +419,7 @@ def hostChecks (context : Context) : List Check :=
                 "run greet: ok", "commands: greet", "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a reload does not double-register"
       run :=
-        withHost context greetConfig fun session => do
+        withRealHost context greetConfig fun session => do
           session.ask [.reload]
           session.ask [.reload]
           session.write "Config/Greet.lean" (greetText "v1" ++ "\n-- changed\n")
@@ -427,7 +432,7 @@ def hostChecks (context : Context) : List Check :=
                 "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a store value survives a reload"
       run :=
-        withHost context [("init.lean", counterText 1)] fun session => do
+        withRealHost context [("init.lean", counterText 1)] fun session => do
           session.ask [.reload]
           session.ask [.run "bump", .run "bump", .show]
           session.write "init.lean" (counterText 10)
@@ -441,7 +446,7 @@ def hostChecks (context : Context) : List Check :=
                 "store counter v1: 12"] },
     { name := "a store migrates when a reload changes its type and raises its version"
       run :=
-        withHost context [("init.lean", counterText 1)] fun session => do
+        withRealHost context [("init.lean", counterText 1)] fun session => do
           session.ask [.reload]
           session.ask [.run "bump", .run "bump"]
           session.write "init.lean" labelledCounterText
@@ -455,7 +460,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a reload that installs prints the config's warnings, then a warning for the store value it lost"
       run :=
-        withHost context [("init.lean", counterText 1)] fun session => do
+        withRealHost context [("init.lean", counterText 1)] fun session => do
           session.ask [.reload]
           session.ask [.run "bump"]
           session.write "init.lean" unmigratedCounterText
@@ -468,7 +473,7 @@ def hostChecks (context : Context) : List Check :=
                 "store counter v2: 0"] },
     { name := "a config that declares initialize keeps the old config"
       run :=
-        withHost context greetConfig fun session => do
+        withRealHost context greetConfig fun session => do
           session.ask [.reload]
           -- No command of this config reads the constant, so a host that
           -- wrongly installed it would fail this check, not abort.
@@ -483,7 +488,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a store command the library refuses is reported as refused: the store keeps its value, and the text the command made before the refusal stays"
       run :=
-        withHost context [("init.lean", refusedText)] fun session => do
+        withRealHost context [("init.lean", refusedText)] fun session => do
           session.ask [.reload]
           session.ask [.run "bump", .run "broken", .show]
           return (← session.lines) ==
@@ -493,7 +498,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "show lists no text a command released, and the texts made before and after it keep the index they were made with"
       run :=
-        withHost context [("init.lean", releasingText)] fun session => do
+        withRealHost context [("init.lean", releasingText)] fun session => do
           session.ask [.reload]
           session.ask [.run "drop", .show]
           return (← session.lines) ==
@@ -503,7 +508,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command refused for an offset that is no position, and one refused for a snapshot that does not exist, are each reported with that refusal's name"
       run :=
-        withHost context [("init.lean", releasingText)] fun session => do
+        withRealHost context [("init.lean", releasingText)] fun session => do
           session.ask [.reload]
           session.ask [.run "inside", .run "stale"]
           return (← session.lines) ==
@@ -512,7 +517,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command whose transaction's changes do not fit, and one whose transaction's selection does not, are each reported with that refusal's name"
       run :=
-        withHost context [("init.lean", transactionText)] fun session => do
+        withRealHost context [("init.lean", transactionText)] fun session => do
           session.ask [.reload]
           session.ask [.run "short", .run "astray"]
           return (← session.lines) ==
@@ -521,7 +526,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command that asks a text's log about a revision it has not reached, and one that asks about a revision it has forgotten, are each reported with that refusal's name"
       run :=
-        withHost context [("init.lean", logText)] fun session => do
+        withRealHost context [("init.lean", logText)] fun session => do
           session.ask [.reload]
           session.ask [.run "ahead", .run "behind"]
           return (← session.lines) ==
@@ -530,7 +535,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command that marks a text reads its marker back where an edit moved it, and one that asks for a marker it gave up is reported with that refusal's name"
       run :=
-        withHost context [("init.lean", markerText)] fun session => do
+        withRealHost context [("init.lean", markerText)] fun session => do
           session.ask [.reload]
           session.ask [.run "kept", .run "lost"]
           return (← session.lines) ==
@@ -539,7 +544,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command that applies the inverse of its edit reads the text as it was, and one that asks for an inverse it dropped, and one whose text is not where the edit left it, are each reported with that refusal's name"
       run :=
-        withHost context [("init.lean", inverseText)] fun session => do
+        withRealHost context [("init.lean", inverseText)] fun session => do
           session.ask [.reload]
           session.ask [.run "undone", .run "dropped", .run "elsewhere"]
           return (← session.lines) ==
@@ -550,7 +555,8 @@ def hostChecks (context : Context) : List Check :=
       run :=
         IO.FS.withTempDir fun directory => do
           let absent := directory / "absent"
-          hosted context context.elaborator (Config.Directory.source absent) fun host output => do
+          hostedReal context context.elaborator (Config.Directory.source absent) fun host output =>
+              do
               host.send .reload
               unless ← host.settle patience do
                 return false
@@ -562,7 +568,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a config file that is not UTF-8 is a rejected reload whose one diagnostic line, at the import of it, names the file, and the old config stays"
       run :=
-        withHost context greetConfig fun session => do
+        withRealHost context greetConfig fun session => do
           session.ask [.reload]
           IO.FS.writeBinFile (session.directory / "Config" / "Bad.lean") notUtf8
           session.write "init.lean" (importing ["Config.Greet", "Config.Bad"] setupText)
@@ -647,8 +653,8 @@ def moduleHostChecks (context : Context) : List Check :=
         "after a change to one config file, a reload elaborates that file and the files that import it, and no other: a file the root imports, a file another file imports, the root, and nothing changed",
       run := do
         let elaborated ← IO.mkRef #[]
-        withHostOver context (fourFileConfig "a1" "b1" "c1") (noting elaborated) id fun session =>
-            do
+        withRealHostOver context (fourFileConfig "a1" "b1" "c1") (noting elaborated) id
+            fun session => do
             let reloaded (files : List (String × String)) : IO (Array String) := do
               writeConfig session.directory files
               elaborated.set #[]
@@ -674,7 +680,7 @@ def moduleHostChecks (context : Context) : List Check :=
     { name :=
         "an import of a config file under a name that differs from the file's in the case of its letters is rejected at the import, on a file system that ignores case as on one that does not, and the old config stays"
       run :=
-        withHost context
+        withRealHost context
           [("Config/Keys.lean", greetText "v1"), ("init.lean", importing ["Config.Keys"] setupText)]
           fun session => do
           session.ask [.reload]
@@ -687,7 +693,7 @@ def moduleHostChecks (context : Context) : List Check :=
     { name :=
         "a root that imports a module that is not linked is rejected with a diagnostic at the import that names the module, and the old config stays"
       run :=
-        withHost context [("init.lean", greetText "v1" ++ setupText)] fun session => do
+        withRealHost context [("init.lean", greetText "v1" ++ setupText)] fun session => do
           session.ask [.reload]
           session.write "init.lean" (importing ["Lake"] (greetText "v2" ++ setupText))
           session.ask [.reload]
@@ -701,7 +707,7 @@ def moduleHostChecks (context : Context) : List Check :=
     { name :=
         "a reload whose root first imports Lean installs: the base grows to hold it, and a command that uses it runs"
       run :=
-        withHost context [("init.lean", greetText "v1" ++ setupText)] fun session => do
+        withRealHost context [("init.lean", greetText "v1" ++ setupText)] fun session => do
           session.ask [.reload]
           session.write "init.lean" (leanGreetText ++ setupText)
           session.ask [.reload]
@@ -721,7 +727,7 @@ def moduleHostChecks (context : Context) : List Check :=
         let gate ← Gate.new (module := "init")
         let said ← IO.mkRef (#[] : Array String)
         let held ←
-          withHostOver context [("init.lean", leanGreetText ++ setupText)] gate.around id
+          withRealHostOver context [("init.lean", leanGreetText ++ setupText)] gate.around id
               (waitHung := fun line => said.modify (·.push line)) (waitBlocked := fun what => do
               if what == "running work" then
                 gate.open)
@@ -775,7 +781,7 @@ def threadChecks (context : Context) : List Check :=
         "the editor answers events while a slow file elaborates: 100 events from a Rust thread and a command of the old config",
       run := do
         let gate ← Gate.new
-        withHostOver context greetConfig gate.around id fun session => do
+        withRealHostOver context greetConfig gate.around id fun session => do
             session.ask [.reload]
             session.write "Config/Slow.lean" slowText
             session.write "init.lean" overSlow
@@ -815,7 +821,7 @@ def threadChecks (context : Context) : List Check :=
         -- request, running or not, fails this.
         let gate ← Gate.new
         let reads ← IO.mkRef 0
-        withHostOver context (slowConfig) gate.around (counting reads) fun session => do
+        withRealHostOver context (slowConfig) gate.around (counting reads) fun session => do
             session.host.send .reload
             try
               unless ← eventually gate.holding.get do
@@ -845,7 +851,7 @@ def threadChecks (context : Context) : List Check :=
         let before ← Ffi.Counter.live
         let files ← IO.mkRef ([] : List (String × String))
         let loaded ←
-          hosted context handleElaborator (sourceOver files.get) fun host _ => do
+          hostedReal context handleElaborator (sourceOver files.get) fun host _ => do
               for round in [0:50] do
                 -- A file the root imports changes, so it and the root are
                 -- elaborated again, and the other file is kept.
@@ -922,7 +928,7 @@ host's display has had published to it, read from the display the host's
 collaborator made, with no request of the driver's. `false` if the check
 did not hold or the host did not stop. The directory is removed. -/
 def withRecordedSyntaxTree (context : Context)
-    (check : Session → IO.Ref (Array String) → IO Nat → IO Bool) : IO Bool :=
+    (check : RealSession → IO.Ref (Array String) → IO Nat → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeConfig directory [("init.lean", highlightText)]
     let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
@@ -939,15 +945,12 @@ def withRecordedSyntaxTree (context : Context)
         shown.count.get
       | none =>
         return 0
-    onStage
+    onRealStage
         { stage with
           collaborators :=
             { stage.collaborators with
               syntaxTree, display } }
-        fun host stage =>
-        check
-          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock
-            watches := stage.watches, log := stage.log } asked published
+        fun host stage => check (RealSession.ofStage host directory stage) asked published
 
 /-- The thread that emitted the first line of the host's output that is
 `line`, if there is one. -/
@@ -1220,9 +1223,7 @@ def bracketChecks (context : Context) : List Check :=
             return some (toString error)
         let ((asked, settledSaid), _) ←
           Headless.withHostEnding broken fun host => do
-              let session : Session :=
-                { host, directory := "/", output := stage.output, threads := stage.threads
-                  clock := stage.clock, watches := stage.watches, log := stage.log }
+              let session : Session := (RealSession.ofStage host "/" stage)
               let asked ← thrown (session.ask [.show])
               let settledSaid ← thrown (discard <| settled host)
               return (asked, settledSaid)
@@ -1298,6 +1299,26 @@ def bracketChecks (context : Context) : List Check :=
                 abandoned)
               s!"thrown={thrown} said={said} abandoned={abandoned}" },
     { name :=
+        "a real host refuses, at once, collaborators whose queue a stepper drains, and starts no loop"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        let stepper :=
+          { stage.collaborators with queue := stage.memory.queue Headless.Posted.toFfi }
+        let before ← context.realLoops.get
+        let refused ←
+          try
+            Headless.withHost stepper (guard := patience) (grace := some hangGuard) fun _ => pure ()
+            pure none
+          catch error =>
+            pure (some (toString error))
+        let after ← context.realLoops.get
+        saw
+            (refused ==
+                some
+                  "a real host's queue must be the library's: its collaborators' queue is pulled by a stepper" &&
+              after == before)
+            s!"refused={refused} real loops {before} then {after}" },
+    { name :=
         "a stage's real host calls its loopStarted once, on its loop's own thread, not the check's, and a check's own run of the loop's handler never calls it"
       run := do
         let stage ← Stage.new context context.elaborator (memorySource [])
@@ -1330,7 +1351,7 @@ def jobChecks (context : Context) : List Check :=
         -- Seen to bite once by hand: a host that prints a job's line where
         -- the job ended, from the runner's `finished`, prints it from a pool
         -- thread, and the thread ids differ.
-        withHost context jobsConfig fun session => do
+        withRealHost context jobsConfig fun session => do
           session.ask [.reload]
           session.ask [.run "greet", .spawn "count"]
           unless ← eventually (return (← session.clock.waiting) == 1) do
@@ -1358,7 +1379,7 @@ def jobChecks (context : Context) : List Check :=
     { name :=
         "a reload cancels the old config's jobs when it installs: the job is cancelled before the reload is reported, its wait is withdrawn, and its handler never runs"
       run :=
-        withHost context jobsConfig fun session => do
+        withRealHost context jobsConfig fun session => do
           session.ask [.reload]
           session.ask [.spawn "count"]
           unless ← eventually (return (← session.clock.waiting) == 1) do
@@ -1378,7 +1399,7 @@ def jobChecks (context : Context) : List Check :=
     { name :=
         "a rejected reload cancels nothing: the old config's job runs on, and its handler runs when it finishes"
       run :=
-        withHost context jobsConfig fun session => do
+        withRealHost context jobsConfig fun session => do
           session.ask [.reload]
           session.ask [.spawn "count"]
           unless ← eventually (return (← session.clock.waiting) == 1) do
@@ -1396,7 +1417,7 @@ def jobChecks (context : Context) : List Check :=
     { name :=
         "a job that throws is reported as failed with its message, a handler whose command the library refuses as refused, and a name that is not registered as no such job"
       run :=
-        withHost context jobsConfig fun session => do
+        withRealHost context jobsConfig fun session => do
           session.ask [.reload]
           session.ask [.spawn "boom", .spawn "bad", .spawn "nope"]
           unless ← eventually (return (← session.clock.waiting) == 2) do
@@ -1591,7 +1612,7 @@ def idleChecks (context : Context) : List Check :=
   [{  name :=
         "on a stage host, a job asleep on the fake clock holds no unit: after spawn count the count reaches 0 with the sleep in the clock, and a marker answered after it leaves it there"
       run :=
-        withHost context jobsConfig fun session => do
+        withRealHost context jobsConfig fun session => do
           session.ask [.reload]
           session.ask [.spawn "count"]
           let parked ← countReaches session.host 0
@@ -1608,7 +1629,7 @@ def idleChecks (context : Context) : List Check :=
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           let entered ← IO.Promise.new
           holdingUntil fun hold letGo =>
-              onStage
+              onRealStage
                 { stage with
                   collaborators :=
                     enteringLine stage.collaborators (· == "job 1 count: ok") hold entered }
@@ -1643,7 +1664,7 @@ def idleChecks (context : Context) : List Check :=
       run := do
         let entered ← IO.Promise.new
         holdingUntil fun hold letGo =>
-            withVimHost context [] (emitting := fun emit line => do
+            withRealVimHost context [] (emitting := fun emit line => do
               if line.startsWith "commands:" then
                 entered.resolve ()
                 hold
@@ -1693,7 +1714,7 @@ def idleChecks (context : Context) : List Check :=
                 { stage.collaborators with syntaxTree := fun _ => pure SyntaxTree.none } }
           let blocks ← IO.mkRef 0
           let joined ←
-            onStage stage fun host stage => do
+            onRealStage stage fun host stage => do
                 let hold ← stage.clock.holdStarts
                 unless held do
                   hold.resolve ()
@@ -1734,7 +1755,7 @@ def idleChecks (context : Context) : List Check :=
         let said ← IO.mkRef (#[] : Array String)
         let seen ← IO.mkRef (none : Option (Headless.Wait × Nat))
         let settled ←
-          onStage stage fun host stage => do
+          onRealStage stage fun host stage => do
               -- Held before the spawn: when the join begins the job can run,
               -- inside the start of its sleep, and the editor queue is empty.
               let hold ← stage.clock.holdStarts
@@ -1762,7 +1783,7 @@ def idleChecks (context : Context) : List Check :=
         let said ← IO.mkRef (#[] : Array String)
         let seen ← IO.mkRef (none : Option Headless.Wait)
         let settled ←
-          onStage stage fun host stage => do
+          onRealStage stage fun host stage => do
               host.send (.spawn "once")
               unless ← host.settle hangGuard do
                 return false
@@ -1865,6 +1886,20 @@ The command line itself is covered by one run of the real executable on the
 fixture under `tests/headless`, in the `ffi-test` task. -/
 def scriptChecks (context : Context) : List Check :=
   [{  name :=
+        "a host made by a stage and handed straight to Headless.run still gets its reload's wake-up: reload, settle and show end with no failure, the reload installed and its command shown"
+      run := do
+        let stage ←
+          Stage.new context context.elaborator (memorySource [("init", helloText ++ setupText)])
+        let failure ←
+          Headless.run stage.collaborators
+              #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request .show⟩] hangGuard (grace :=
+              some hangGuard)
+        let output ← stage.output.get
+        saw
+            (failure.isNone && output.any (·.startsWith "reload 1: installed") &&
+              output.contains "commands: greet")
+            s!"failure={repr failure} output={output}" },
+    { name :=
         "restarted is a directive with its line's number, refused with anything after it but a number of seconds, and the error message of a line that is no directive lists it; a run resumed past k restarteds runs the script from the line after the k-th"
       run :=
         let script :=
@@ -2275,7 +2310,7 @@ wait 2" with
         let gate ← Gate.new
         let caught ← IO.mkRef ({} : IO.FS.Stream.Buffer)
         let settled ←
-          withHostOver context slowConfig gate.around id fun session => do
+          withRealHostOver context slowConfig gate.around id fun session => do
               try
                 session.host.send .reload
                 let before ← IO.setStderr (IO.FS.Stream.ofBuffer caught)
@@ -2296,7 +2331,7 @@ wait 2" with
         let gate ← Gate.new
         let said ← IO.mkRef (#[] : Array String)
         let reloading ←
-          withHostOver context slowConfig gate.around id fun session => do
+          withRealHostOver context slowConfig gate.around id fun session => do
               session.host.send .reload
               try
                 unless ← eventually gate.holding.get do
@@ -2444,7 +2479,7 @@ wait 2" with
     { name :=
         "the scene is published again after a reload installs and after a job's command runs, once a frame exists"
       run :=
-        withHost context jobsConfig fun session => do
+        withRealHost context jobsConfig fun session => do
           session.ask [.reload]
           unless ← Event.post (.commit "kept") do
             return false
@@ -2474,7 +2509,7 @@ wait 2" with
     { name :=
         "once a command has released the focused buffer's text, a commit is still followed by a scene: its echo is the refusal, and it has no view of that buffer"
       run :=
-        withHost context forgetConfig fun session => do
+        withRealHost context forgetConfig fun session => do
           session.ask [.reload]
           unless ← Event.post (.commit "a") do
             return false
@@ -2874,7 +2909,7 @@ def hostLoopChecks (context : Context) : List Check :=
   [{  name :=
         "the driver's run of a command goes through the loop: a command that splits its window leaves two views in the scene, and a run before any window event makes the frame"
       run :=
-        withHost context []
+        withRealHost context []
           (fun session => do
             session.ask [.run "split", .run "stamp", .run "missing"]
             let (echo, views) ← session.scene
@@ -2888,7 +2923,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "the driver's run of a command that fails is rolled back and says so: the output names the refusal, the scene's echo is its error, and the view's text is that before the command"
       run :=
-        withHost context []
+        withRealHost context []
           (fun session => do
             unless ← Event.post (.commit "abcd") do
               return false
@@ -2899,7 +2934,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "the driver's run of a command of config's that gives up is rolled back and printed so: the output says it gave up, with its reason, the scene's echo is its name and the reason with no refused, and the view's text is that before the command"
       run :=
-        withHost context [("init.lean", givingUpText)] fun session => do
+        withRealHost context [("init.lean", givingUpText)] fun session => do
           session.ask [.reload]
           unless ← Event.post (.commit "abcd") do
             return false
@@ -2910,7 +2945,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "the driver's run of a command of config's that breaks off keeps what the command did and is printed so: the output says it broke off, with its reason, the scene's echo is its name and the reason with no refused, and the view's text holds what the command inserted"
       run :=
-        withHost context [("init.lean", breakingOffText)] fun session => do
+        withRealHost context [("init.lean", breakingOffText)] fun session => do
           session.ask [.reload]
           unless ← Event.post (.commit "abcd") do
             return false
@@ -2922,7 +2957,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "the host keeps a clipboard of its own: before a write a command of config's reads no text, after one command wrote a text the next reads it, and so does a finished job's command"
       run :=
-        withHost context [("init.lean", clipboardText)] fun session => do
+        withRealHost context [("init.lean", clipboardText)] fun session => do
           session.ask [.reload]
           session.ask [.run "paste"]
           let (empty, _) ← session.scene
@@ -2942,7 +2977,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "the driver's run of a command is guarded: with the interrupt key arrived the command that loops over requests is stopped, the output says it was interrupted, and the flag is down once the loop has taken the key"
       run :=
-        withHost context []
+        withRealHost context []
           (fun session => do
             -- The loop has started, so the library knows the interrupt key:
             -- the press raises the flag as it arrives, whether the loop has
@@ -3012,7 +3047,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "a key's command starts a job with an argument: the host says it started, keys sent while the job sleeps are handled before its result, and once the clock lets it go its command runs after them, with the value the job computed in the text and in the scene's echo"
       run :=
-        withHost context [("init.lean", startingText)]
+        withRealHost context [("init.lean", startingText)]
           (fun session => do
             session.ask [.reload]
             session.typed "C-c a"
@@ -3034,7 +3069,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "a finished job's command is guarded as a key's is: the interrupt key that arrives as it is delivered stops the command that loops over requests, the output says the job was interrupted, the view's text is that before the delivery, and the flag is down once the loop has taken the key"
       run :=
-        withHost context [("init.lean", startingText)] fun session => do
+        withRealHost context [("init.lean", startingText)] fun session => do
           session.ask [.reload]
           unless ← Event.post (.commit "ab") do
             return false
@@ -3065,7 +3100,7 @@ def hostLoopChecks (context : Context) : List Check :=
             setup :=
               for command in commands do
                 Editor.command command (discard <| createText s!"{name}'s {command}") }
-        withHost context greetConfig
+        withRealHost context greetConfig
           (fun session => do
             session.ask [.show, .run "shared", .show]
             let started ← session.lines
@@ -3081,7 +3116,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "a host is handed compiled jobs: a compiled command starts one before any config is loaded, a reload that installs does not cancel it, and once the clock lets it go its command runs"
       run :=
-        withHost context [("init.lean", emptyText)]
+        withRealHost context [("init.lean", emptyText)]
           (fun session => do
             session.ask [.run "rest"]
             unless ← eventually (return (← session.clock.waiting) == 1) do
@@ -3250,7 +3285,7 @@ def reloadEchoChecks (context : Context) : List Check :=
   [{  name :=
         "a rejected reload says its first error in the echo area and the old config's command still runs, what that command says replaces the error, and a reload that installs clears nothing"
       run :=
-        withHost context helloConfig fun session => do
+        withRealHost context helloConfig fun session => do
           session.ask [.reload]
           session.ask [.run "greet"]
           let said ← session.echo
@@ -3278,7 +3313,7 @@ def reloadEchoChecks (context : Context) : List Check :=
     { name :=
         "a reload rejected before the frame is made is said in the echo area once the frame is made"
       run :=
-        withHost context
+        withRealHost context
           [("Config/Greet.lean", brokenGreetText), ("init.lean", overGreet setupText)]
           fun session => do
           session.ask [.reload]
@@ -3608,7 +3643,7 @@ def watchReloadChecks (context : Context) : List Check :=
   [{  name :=
         "after a reload installs, only the watches the new config made deliver: the old config's job is cancelled before the reload is reported, its watch ends, and the new config's job is told of the change and says the new version"
       run :=
-        withHost context followConfig fun session => do
+        withRealHost context followConfig fun session => do
           session.ask [.reload]
           session.ask [.spawn "follow"]
           unless ← eventually (return (← session.watches.watching) == 1) do
@@ -3639,7 +3674,7 @@ def watchReloadChecks (context : Context) : List Check :=
     { name :=
         "a rejected reload leaves the old config's watch watching: its job is told of the change and says the old version"
       run :=
-        withHost context followConfig fun session => do
+        withRealHost context followConfig fun session => do
           session.ask [.reload]
           session.ask [.spawn "follow"]
           unless ← eventually (return (← session.watches.watching) == 1) do
@@ -3667,14 +3702,28 @@ def withEnvironments (context : Context) (files : List (String × String))
     writeConfig directory files
     let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
     let state ← IO.mkRef ({} : Process.Environments)
+    -- The report goes to the queue the stepped host drains: the stage's.
+    let environments :=
+      Headless.reportedEnvironments state stage.collaborators.environment
+        (stage.memory.queue Headless.Posted.toFfi)
+    let collaborators :=
+      { stage.collaborators with services := { stage.collaborators.services with environments } }
+    onStage { stage with collaborators } fun drive stage =>
+        check (Session.ofStage drive directory stage) state environments
+
+/-- `withEnvironments` with a real host, whose environments report to the
+library's editor queue (`onRealStage`). -/
+def withRealEnvironments (context : Context) (files : List (String × String))
+    (check : RealSession → IO.Ref Process.Environments → Job.Environments → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeConfig directory files
+    let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+    let state ← IO.mkRef ({} : Process.Environments)
     let environments := Headless.reportedEnvironments state stage.collaborators.environment
     let collaborators :=
       { stage.collaborators with services := { stage.collaborators.services with environments } }
-    onStage { stage with collaborators } fun host stage =>
-        check
-          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
-            watches := stage.watches, log := stage.log }
-          state environments
+    onRealStage { stage with collaborators } fun host stage =>
+        check (RealSession.ofStage host directory stage) state environments
 
 /-- A config whose `setup` sets the process environment to `setting`, written
 as Lean. -/
@@ -3694,7 +3743,7 @@ def environmentHostChecks (context : Context) : List Check :=
   [{  name :=
         "an installed reload whose setup sets the process environment puts that setting in the host's environments and drops every entry; a rejected reload changes neither"
       run :=
-        withEnvironments context [("init.lean", environmentText ".inherited")]
+        withRealEnvironments context [("init.lean", environmentText ".inherited")]
           fun session state _ => do
           state.set { entries := #[("/p/d", failedLookup)] }
           session.ask [.reload]
@@ -3708,14 +3757,14 @@ def environmentHostChecks (context : Context) : List Check :=
               rejected.entries == #[(("/p/d" : System.FilePath), failedLookup)] },
     { name := "a config that does not set the process environment installs auto"
       run :=
-        withEnvironments context [("init.lean", "def setup : SetupM Unit := pure ()")]
+        withRealEnvironments context [("init.lean", "def setup : SetupM Unit := pure ()")]
           fun session state _ => do
           state.set { setting := .mise none }
           session.ask [.reload]
           return (← state.get).setting == .auto },
     { name := "a failed lookup the host's environments record is the echo of the next scene"
       run :=
-        withEnvironments context [] fun session _ environments => do
+        withRealEnvironments context [] fun session _ environments => do
           session.host.resize 160 96
           session.ask []
           environments.ask (.record "/p/d" failedLookup)
@@ -3739,52 +3788,82 @@ def journalledModel : FileModel :=
   (model.withFile (Restore.basePath restoreState 1 0 1) "hello".toUTF8).withFile
     (Restore.logPath restoreState 1 0 1) journalledLog
 
-/-- Runs `check` against a host over a config directory holding `files`,
+/-- The stage of a host over a config directory `directory` holding `files`,
 with the real elaborator, the packages `files` and `restore`, the state
 directory `/state`, and a fake file service over `journalledModel`, which
-the check is handed; and stops the host. -/
+is handed back with it. -/
+def restoreStage (context : Context) (directory : System.FilePath)
+    (files : List (String × String)) :
+    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle × Job.FakeFiles) := do
+  writeConfig directory files
+  let stage ←
+    Stage.new context context.elaborator (Config.Directory.source directory)
+        { packages := #[Files.package, Restore.package] }
+  let fake ← Job.FakeFiles.new stage.collaborators.services.completions journalledModel
+  let stage :=
+    { stage with
+      collaborators :=
+        { stage.collaborators with
+          stateDirectory := some restoreState
+          services := { stage.collaborators.services with files := fake.files } } }
+  return (stage, fake)
+
+/-- Runs `check` against a stepped host over `restoreStage`'s stage, with its
+output and the fake file service. -/
 def withRestoreHost (context : Context) (files : List (String × String))
+    (check : Driven → IO.Ref (Array String) → Job.FakeFiles → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    let (stage, fake) ← restoreStage context directory files
+    onStage stage fun drive stage => check drive stage.output fake
+
+/-- `withRestoreHost` with a real host (`onRealStage`). -/
+def withRealRestoreHost (context : Context) (files : List (String × String))
     (check : Headless.Host → IO.Ref (Array String) → Job.FakeFiles → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    writeConfig directory files
-    let stage ←
-      Stage.new context context.elaborator (Config.Directory.source directory)
-          { packages := #[Files.package, Restore.package] }
-    let fake ← Job.FakeFiles.new stage.collaborators.services.completions journalledModel
-    let stage :=
-      { stage with
-        collaborators :=
-          { stage.collaborators with
-            stateDirectory := some restoreState
-            services := { stage.collaborators.services with files := fake.files } } }
-    onStage stage fun host stage => check host stage.output fake
+    let (stage, fake) ← restoreStage context directory files
+    onRealStage stage fun host stage => check host stage.output fake
 
-/-- Runs `check` against a host over a config directory holding `files`,
+/-- The stage of a host over a config directory `directory` holding `files`,
 with the real elaborator, the package `files` and the package `restore`
 (or the one the check hands in its place), the library's file service
-(`Stage.overFiles`) and journal, and a temporary state directory holding
-that journal on disk, which the check is handed; and stops the host. -/
+(`Stage.overFiles`) and journal, and the state directory `state`, written
+here to hold that journal on disk. -/
+def restoreFilesStage (context : Context) (directory state : System.FilePath)
+    (files : List (String × String)) (restore : Package) :
+    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle) := do
+  writeConfig directory files
+  IO.FS.createDirAll (Restore.journalsDirectory state)
+  IO.FS.writeBinFile (Restore.basePath state 1 0 1) "hello".toUTF8
+  IO.FS.writeBinFile (Restore.logPath state 1 0 1) journalledLog
+  let stage ←
+    Stage.overFiles context (Config.Directory.source directory)
+        { packages := #[Files.package, restore] }
+  return { stage with
+      collaborators :=
+        { stage.collaborators with
+          stateDirectory := some state
+          journal :=
+            Headless.Journal.real stage.collaborators.published.reader
+              stage.collaborators.services } }
+
+/-- Runs `check` against a stepped host over `restoreFilesStage`'s stage,
+with its output and the state directory. -/
 def withRestoreFiles (context : Context) (files : List (String × String))
+    (check : Driven → IO.Ref (Array String) → System.FilePath → IO Bool)
+    (restore : Package := Restore.package) : IO Bool :=
+  IO.FS.withTempDir fun directory =>
+    withFiles context fun state => do
+      let stage ← restoreFilesStage context directory state files restore
+      onStage stage fun drive stage => check drive stage.output state
+
+/-- `withRestoreFiles` with a real host (`onRealStage`). -/
+def withRealRestoreFiles (context : Context) (files : List (String × String))
     (check : Headless.Host → IO.Ref (Array String) → System.FilePath → IO Bool)
     (restore : Package := Restore.package) : IO Bool :=
   IO.FS.withTempDir fun directory =>
     withFiles context fun state => do
-      writeConfig directory files
-      IO.FS.createDirAll (Restore.journalsDirectory state)
-      IO.FS.writeBinFile (Restore.basePath state 1 0 1) "hello".toUTF8
-      IO.FS.writeBinFile (Restore.logPath state 1 0 1) journalledLog
-      let stage ←
-        Stage.overFiles context (Config.Directory.source directory)
-            { packages := #[Files.package, restore] }
-      let stage :=
-        { stage with
-          collaborators :=
-            { stage.collaborators with
-              stateDirectory := some state
-              journal :=
-                Headless.Journal.real stage.collaborators.published.reader
-                  stage.collaborators.services } }
-      onStage stage fun host stage => check host stage.output state
+      let stage ← restoreFilesStage context directory state files restore
+      onRealStage stage fun host stage => check host stage.output state
 
 /-- A package that declares the store `counted` of a number, at `version`,
 whose migration doubles a version-1 number, keeps it across a restart, and
@@ -3847,7 +3926,7 @@ def withStateHost (context : Context) (state : System.FilePath) (files : List (S
             journal :=
               Headless.Journal.real stage.collaborators.published.reader
                 stage.collaborators.services } }
-    onStage stage fun host stage => check host stage
+    onRealStage stage fun host stage => check host stage
 
 /-- Waits until the host has written the session index: each write's delay
 moved past on the stage's clock, until neither a write nor a save is
@@ -3928,7 +4007,7 @@ def withFailingJournal (context : Context) (files : List (String × String))
               stateDirectory := some state, journal
               launch := { running := some running, shipped := some running }
               services := { stage.collaborators.services with processes := processes.processes } } }
-      onStage stage fun host stage => check host stage.output failing
+      onRealStage stage fun host stage => check host stage.output failing
 
 /-- The checks of the restore at start-up in the host (`Editor/Headless.lean`,
 "Restoring a session"), on the real elaborator: it runs before the start-up
@@ -3939,7 +4018,7 @@ def restoreOrderChecks (context : Context) : List Check :=
   [{  name :=
         "a restore that names the index a restart handed over holds the start-up reload as an unnamed one does: its second half runs before reload 1 is installed"
       run :=
-        withRestoreFiles context greetConfig fun host output state => do
+        withRealRestoreFiles context greetConfig fun host output state => do
           host.send (.restore (some (Restore.indexPath state 1)))
           host.send .reload
           unless ← host.settle patience do
@@ -3981,7 +4060,7 @@ def restoreOrderChecks (context : Context) : List Check :=
     { name :=
         "a host with a session and a config restores first: the restore's second half has run, and the buffer it restored is there, before reload 1 is installed"
       run :=
-        withRestoreFiles context greetConfig fun host output _ => do
+        withRealRestoreFiles context greetConfig fun host output _ => do
           host.send (.restore none)
           host.send .reload
           unless ← host.settle patience do
@@ -4001,7 +4080,7 @@ def restoreOrderChecks (context : Context) : List Check :=
     { name :=
         "a reload sent while the restore is in flight is held, and await does not answer settled, until the restore has finished"
       run :=
-        withRestoreHost context greetConfig fun host output fake => do
+        withRealRestoreHost context greetConfig fun host output fake => do
           let hold ← fake.holdTakes
           host.send (.restore none)
           host.send .reload
@@ -4025,7 +4104,8 @@ def restoreOrderChecks (context : Context) : List Check :=
     { name :=
         "a restore whose job fails releases the requests it held, in order: the file given is opened, the text said, and reload 1 installed, so setup has run; and await answers settled"
       run :=
-        withRestoreFiles context helloConfig (restore := failingRestore) fun host output state => do
+        withRealRestoreFiles context helloConfig (restore := failingRestore)
+          fun host output state => do
           let notes := state / "notes.txt"
           IO.FS.writeFile notes "notes"
           host.send (.restore none)
@@ -4132,23 +4212,32 @@ takes the journal's failures. -/
 def stepCommand : Config.Registration :=
   { name := "step", action := .plain (pure ()) }
 
-/-- Runs `check` against a host with no config and the command `step`,
-whose journal is `keptFailures` over a cell the check is handed, empty;
-and stops the host. -/
+/-- The stage of a host with no config and the command `step`, whose journal
+is `keptFailures` over a cell handed back with it, empty. -/
+def journalStage (context : Context) (directory : System.FilePath) :
+    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle × IO.Ref (Array (String × String))) :=
+  do
+  let failed ← IO.mkRef #[]
+  let stage ←
+    Stage.new context context.elaborator (Config.Directory.source directory)
+        { commands := #[stepCommand] }
+  return ({ stage with
+        collaborators := { stage.collaborators with journal := keptFailures failed } },
+      failed)
+
+/-- Runs `check` against a stepped host over `journalStage`'s stage. -/
 def withJournalHost (context : Context)
     (check : Session → IO.Ref (Array (String × String)) → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    let failed ← IO.mkRef #[]
-    let stage ←
-      Stage.new context context.elaborator (Config.Directory.source directory)
-          { commands := #[stepCommand] }
-    let stage :=
-      { stage with collaborators := { stage.collaborators with journal := keptFailures failed } }
-    onStage stage fun host stage =>
-        check
-          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
-            watches := stage.watches, log := stage.log }
-          failed
+    let (stage, failed) ← journalStage context directory
+    onStage stage fun drive stage => check (Session.ofStage drive directory stage) failed
+
+/-- `withJournalHost` with a real host (`onRealStage`). -/
+def withRealJournalHost (context : Context)
+    (check : RealSession → IO.Ref (Array (String × String)) → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    let (stage, failed) ← journalStage context directory
+    onRealStage stage fun host stage => check (RealSession.ofStage host directory stage) failed
 
 /-- The checks of the journal's failures in the host (`Editor/Headless.lean`,
 "Restoring a session", `Running.journalFailed`): what the file service kept
@@ -4158,7 +4247,7 @@ def journalFailureChecks (context : Context) : List Check :=
   [{  name :=
         "the journal's failures are taken after a step and said once for each path, in the echo area and to the log; a later failure of a path already said is taken and not said"
       run :=
-        withJournalHost context fun session failed => do
+        withRealJournalHost context fun session failed => do
           failed.set #[("/state/a", "denied"), ("/state/a", "gone"), ("/state/b", "denied")]
           session.ask [.run "step"]
           let taken := (← failed.get).isEmpty

@@ -83,7 +83,7 @@ def themeChecks (context : Context) : List Check :=
           let mirror ←
             RealDisplay.over (← Ffi.Display.newCells 8 16) collaborators.published.reader
                 Theme.builtin
-          onStage { stage with collaborators } fun host _ => do
+          onRealStage { stage with collaborators } fun host _ => do
               let holds (parts : List (String × Bool)) : IO Unit := do
                 if let some (part, _) := parts.find? (!·.2) then
                   throw (IO.userError part)
@@ -136,7 +136,7 @@ def themeChecks (context : Context) : List Check :=
     { name :=
         "criterion 6: a config that names a theme nobody registered says so in the echo area, naming the theme, before the frame is made and after, and its report says so; the theme in force stays"
       run :=
-        withHost context [("init.lean", "def setup : SetupM Unit := do\n  useTheme \"nope\"\n")]
+        withRealHost context [("init.lean", "def setup : SetupM Unit := do\n  useTheme \"nope\"\n")]
           (compiled := themeCompiled) fun session => do
           session.ask [.reload]
           session.host.resize 80 64

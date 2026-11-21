@@ -32,7 +32,8 @@ import EditorCore.EditorPackage
 
 The real syntax tree binding in a host: a recorded syntax tree request, the
 faces of the library's shipped highlights, the Rust objects' text, and a host of
-the Vim scheme that ships (`withVimHost`). Shared by several test modules; it
+the Vim scheme that ships (`vimStaged`), stepped (`withVimHost`) or real
+(`withRealVimHost`). Shared by several test modules; it
 holds no checks of its own.
 -/
 
@@ -93,71 +94,92 @@ unit struct. -/
 def rustObjectsText : String :=
   "struct S;\n\nimpl S {\n    fn one(&self) -> u8 {\n        let x = 1;\n        x\n    }\n}\n"
 
-/-- Runs `check` against a host of the Vim scheme that ships, made over the
-collaborators the executable's hosts are made of (`Headless.shippedOver`),
-handed the packages of the core's Lake package
-(`EditorCore.EditorPackage.packages`),
-with the real elaborator, a config directory of `files` and the services of
-a stage of its own; its syntax tree is the real binding over the library's
-syntax service, which after an attach, and before a question of a text's
-captures, waits, with a bound, for the text's tree to be delivered. The host
-lives in its bracket (`Headless.withHost`), which returns once its loop has
-ended; `false` if the check did not hold or the host did not settle after
-it. The directory is removed. A check that holds the editor thread at a line
-hands `emitting`, which the host's output goes through. -/
+/-- What a host of the Vim scheme that ships is made of, for `withVimHost`
+and `withRealVimHost`: a stage of its own over a config directory of
+`files` in `directory`, and collaborators made over the collaborators the
+executable's hosts are made of (`Headless.shippedOver`), handed the packages
+of the core's Lake package (`EditorCore.EditorPackage.packages`), with the
+real elaborator and the stage's services and source ids; its syntax tree is
+the real binding over the library's syntax service, which after an attach,
+and before a question of a text's captures, waits, with a bound, for the
+text's tree to be delivered. With `realFiles`, the jobs reach real files
+through the library's file service, as a file check's do
+(`Stage.overFiles`); with a model, they reach its files and no real one. A
+check that holds the editor thread at a line hands `emitting`, which the
+host's output goes through. -/
+def vimStaged (context : Context) (directory : System.FilePath) (files : List (String × String))
+    (fileModel : Option FileModel) (realFiles : Bool) (workingDirectory : System.FilePath)
+    (home : Option System.FilePath) (emitting : (String → IO Unit) → String → IO Unit) :
+    IO
+      (Stage Config.Elaborate.Base Config.Elaborate.Handle ×
+        Headless.Collaborators Config.Elaborate.Base Config.Elaborate.Handle Vim.Default.scheme) :=
+  do
+  writeConfig directory files
+  let source := Config.Directory.source directory
+  let stage ←
+    if realFiles then
+      Stage.overFiles context source
+    else
+      Stage.new context context.elaborator source
+  let staged := stage.collaborators
+  let services ←
+    match fileModel with
+    | some model =>
+      do
+        let faked ← Job.FakeFiles.new staged.services.completions model
+        pure { staged.services with files := faked.files }
+    | none =>
+      pure staged.services
+  let shipped :=
+    Headless.shippedOver EditorCore.EditorPackage.packages #[`Editor] "" [] ""
+      (emitting staged.emit) services staged.published staged.held
+      (← Config.Elaborate.ModuleFiles.temporary)
+  let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
+    let real ← RealSyntaxTree.new snapshots
+    return fun request => do
+      -- A question of the captures waits for its snapshot's tree, so keys
+      -- that edit and then ask are answered of a delivered tree.
+      if let .capturesOf snapshot .. := request then
+        if let some found← snapshots.find? snapshot then
+          discard (Ffi.syntaxSettle found 5000)
+      let reply ← real.handle request
+      if let .attach snapshot _ := request then
+        if let some found← snapshots.find? snapshot then
+          discard (Ffi.syntaxSettle found 5000)
+      return reply
+  let collaborators :=
+    { shipped with
+      elaborator := context.elaborator, source, requests := staged.requests
+      wakeups := staged.wakeups, jobs := staged.jobs, environment := staged.environment
+      posts := staged.posts, pauseEvents := staged.pauseEvents, log := staged.log, syntaxTree
+      clock := staged.clock, loopStarted := staged.loopStarted, workingDirectory, home }
+  return (stage, collaborators)
+
+/-- Runs `check` against a host of the Vim scheme that ships (`vimStaged`),
+stepped on the check's own thread (`stepping`, over the stage's memory
+queue). `false` if the check did not hold or the host did not settle after
+it. The directory is removed. -/
 def withVimHost (context : Context) (files : List (String × String)) (check : Session → IO Bool)
     (fileModel : Option FileModel := none) (realFiles : Bool := false)
     (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
     (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    writeConfig directory files
-    let source := Config.Directory.source directory
-    -- With `realFiles`, the jobs reach real files through the library's
-    -- file service, as a file check's do (`Stage.overFiles`).
-    let stage ←
-      if realFiles then
-        Stage.overFiles context source
-      else
-        Stage.new context context.elaborator source
-    let staged := stage.collaborators
-    -- With a model, the jobs reach its files and no real one.
-    let services ←
-      match fileModel with
-      | some model =>
-        do
-          let faked ← Job.FakeFiles.new staged.services.completions model
-          pure { staged.services with files := faked.files }
-      | none =>
-        pure staged.services
-    let shipped :=
-      Headless.shippedOver EditorCore.EditorPackage.packages #[`Editor] "" [] ""
-        (emitting staged.emit) services staged.published staged.held
-        (← Config.Elaborate.ModuleFiles.temporary)
-    let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
-      let real ← RealSyntaxTree.new snapshots
-      return fun request => do
-        -- A question of the captures waits for its snapshot's tree, so keys
-        -- that edit and then ask are answered of a delivered tree.
-        if let .capturesOf snapshot .. := request then
-          if let some found← snapshots.find? snapshot then
-            discard (Ffi.syntaxSettle found 5000)
-        let reply ← real.handle request
-        if let .attach snapshot _ := request then
-          if let some found← snapshots.find? snapshot then
-            discard (Ffi.syntaxSettle found 5000)
-        return reply
-    let collaborators :=
-      { shipped with
-        elaborator := context.elaborator, source, requests := staged.requests
-        wakeups := staged.wakeups, jobs := staged.jobs, environment := staged.environment
-        posts := staged.posts, pauseEvents := staged.pauseEvents, log := staged.log, syntaxTree
-        clock := staged.clock, loopStarted := staged.loopStarted, workingDirectory, home }
+    let (stage, collaborators) ←
+      vimStaged context directory files fileModel realFiles workingDirectory home emitting
+    stepping collaborators stage.memory fun drive => check (Session.ofStage drive directory stage)
+
+/-- `withVimHost` with a real host, in its bracket (`Headless.withHost`),
+which returns once its loop has ended. -/
+def withRealVimHost (context : Context) (files : List (String × String))
+    (check : RealSession → IO Bool) (fileModel : Option FileModel := none)
+    (realFiles : Bool := false) (workingDirectory : System.FilePath := "/")
+    (home : Option System.FilePath := none)
+    (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    let (stage, collaborators) ←
+      vimStaged context directory files fileModel realFiles workingDirectory home emitting
     Headless.withHost collaborators (guard := patience) (grace := some hangGuard) fun host => do
-        let held ←
-          check {
-                host, directory, output := stage.output, threads := stage.threads,
-                clock := stage.clock
-                watches := stage.watches, log := stage.log }
+        let held ← check (RealSession.ofStage host directory stage)
         let wait ← host.await patience
         return held && (wait == .settled || wait == .ended)
 

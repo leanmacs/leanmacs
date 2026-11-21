@@ -39,7 +39,7 @@ def setup : SetupM Unit := do
 "
 
 /-- The checks of the syntax tree's text objects through a host of the Vim
-scheme that ships (`withVimHost`), with the real elaborator, the real text
+scheme that ships (`withRealVimHost`), with the real elaborator, the real text
 binding and the library's syntax service: what keys select and delete in a
 Rust buffer. Which node an object is, is `Editor/Evil/TreeObjects.lean`'s,
 pinned by `ModelTest.treeObjectRuleChecks` and `ModelTest.evilObjectChecks`
@@ -50,7 +50,7 @@ def treeObjectChecks (context : Context) : List Check :=
       run :=
         -- Seen to bite once by hand: with `a-function` taken out of
         -- `Evil.objects`, `v a f` leaves the cursor's one cell selected.
-        withVimHost context [("init.lean", rustObjectsConfig)] fun session => do
+        withRealVimHost context [("init.lean", rustObjectsConfig)] fun session => do
           session.ask [.reload]
           session.ask [.run "rust-buffer"]
           let before := lastViewLine (← session.sceneLines)
@@ -70,7 +70,7 @@ def treeObjectChecks (context : Context) : List Check :=
     { name :=
         "in a Rust buffer v i f from a method's fn line, in the function and outside its body, selects inside the body's braces, its lines whole, through the host's loop and the library's syntax tree"
       run :=
-        withVimHost context [("init.lean", rustObjectsConfig)] fun session => do
+        withRealVimHost context [("init.lean", rustObjectsConfig)] fun session => do
           session.ask [.reload]
           session.ask [.run "rust-buffer"]
           session.typed "k v i f"

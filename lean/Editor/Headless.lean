@@ -2651,10 +2651,17 @@ def Collaborators.prepared {β σ : Type} {scheme : InputScheme}
 /-- Starts a host: its loop runs on a dedicated task until it is asked to stop
 or it ends by itself. The loop it makes, when it is first needed, has the
 collaborators' working directory, home directory and state directory in its
-state (`Collaborators.hosting`). Private: a host is had only inside its
-bracket (`withHost`), which ends the loop. -/
+state (`Collaborators.hosting`). It refuses, starting nothing, collaborators
+whose queue a stepper pulls (`Queue.Puller.stepper`). Private: a host is had
+only inside its bracket (`withHost`), which ends the loop. -/
 private def start {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme) :
     IO Host := do
+  -- A real loop pulls the library's queue: collaborators that post to a
+  -- queue a stepper drains would post where nothing takes.
+  unless collaborators.queue.pulledBy == .library do
+    throw <|
+        IO.userError
+          "a real host's queue must be the library's: its collaborators' queue is pulled by a stepper"
   let collaborators ← collaborators.prepared
   let progress ← IO.mkRef {}
   let reached ← IO.mkRef none

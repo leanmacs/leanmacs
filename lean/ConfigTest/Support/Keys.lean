@@ -30,7 +30,7 @@ namespace Session
 window would report them. -/
 def type (session : Session) (text : String) : IO Unit := do
   for key in keysOf text do
-    session.host.press key
+    session.press key
 
 /-- Sends a press of each key the key string `text` names, and waits until
 the editor thread has handled them. Throws if that takes longer than
@@ -43,7 +43,7 @@ def typed (session : Session) (text : String) : IO Unit := do
 thread has handled them. Throws if that takes longer than `patience`. -/
 def pressKeys (session : Session) (keys : List Key) : IO Unit := do
   for key in keys do
-    session.host.press key
+    session.press key
   session.ask []
 
 end Session

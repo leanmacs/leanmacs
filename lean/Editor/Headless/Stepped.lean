@@ -14,9 +14,10 @@ logic, and a mutation of it kills the check as it would on a real loop.
 
 `withStepped` is the bracket, as `withHost` is a real host's:
 
-- It installs the queue itself: the collaborators it steps post to its
-  memory queue (`Queue.Memory.queue Posted.toFfi`), whatever queue the
-  caller handed, so a stepped host's posts and its drain are one queue.
+- It installs the queue itself: the collaborators it steps post to the
+  memory queue it is handed (`Queue.Memory.queue Posted.toFfi`), whatever
+  queue the collaborators carried, so a stepped host's posts and its drain
+  are one queue.
 - On entry it prepares the collaborators as a real host's start does
   (`Collaborators.prepared`) and makes the loop's state (`Running.new`), on
   the caller's thread. It tells the library no interrupt key, since no key
@@ -172,16 +173,17 @@ end Stepped
 
 /-- Runs `body` against a host over `collaborators` stepped on the caller's
 thread, and returns only once its loop has ended, whether `body` returned or
-threw (the module docs). The collaborators' queue is replaced with the
-bracket's own memory queue. The end's wait for a reload still running is
+threw (the module docs). The collaborators' queue is replaced with
+`memory`'s port, whatever it was, and `memory` is closed at the end: a
+caller hands a fresh one, and may build a poster over it before the bracket
+(an environments' report, `reportedEnvironments`). The end's wait for a reload still running is
 guarded by `guard`: past it the hang is said once through `hung`, and with
 `grace` the bracket gives up as a hang that many milliseconds later, the
 reload left running, as `withHost` does. When `body` threw, its error is the
 one thrown; when it returned and a turn threw, that error is. -/
 def withStepped {α β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (body : Stepped → IO α) (guard : Nat := settlePatience) (hung : String → IO Unit := IO.eprintln)
-    (grace : Option Nat := none) : IO α := do
-  let memory ← Queue.Memory.new
+    (memory : Queue.Memory Ffi.Event) (body : Stepped → IO α) (guard : Nat := settlePatience)
+    (hung : String → IO Unit := IO.eprintln) (grace : Option Nat := none) : IO α := do
   let collaborators ← ({ collaborators with queue := memory.queue Posted.toFfi }).prepared
   let ending ← IO.mkRef none
   let progress ← IO.mkRef ({} : Progress)

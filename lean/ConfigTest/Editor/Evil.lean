@@ -108,7 +108,7 @@ def evilChecks (context : Context) : List Check :=
   [{  name :=
         "config names the vocabulary the editor ships and hands it to evil's move command: a command of config's that moves by a motion of config's own, added to that vocabulary, puts the cursor where that motion says, and one that moves by the name of the vocabulary's first entry runs to its end and says nothing in the echo area, so the entry was found"
       run :=
-        withHost context [("init.lean", vocabularyText)] fun session => do
+        withRealHost context [("init.lean", vocabularyText)] fun session => do
           session.ask [.reload]
           unless ← Event.post (.commit "hello") do
             return false
@@ -127,7 +127,7 @@ def evilChecks (context : Context) : List Check :=
     { name :=
         "config names the operators the editor ships and hands them, with the motions, to evil's operate command: a command of config's that runs it with the arguments of d w from the line's start deletes a word; one that hands the repeat command the same change deletes the next, with the operate command the host was handed as compiled code; and one that runs evil's undo gives that word back"
       run :=
-        withHost context [("init.lean", operatorsText)]
+        withRealHost context [("init.lean", operatorsText)]
           (fun session => do
             session.ask [.reload]
             unless ← Event.post (.commit "one two three") do
@@ -149,7 +149,7 @@ def evilChecks (context : Context) : List Check :=
     { name :=
         "the repeat command replays a change with the command the registry holds for its name: with config's operate command registered over the operators that ship and one of config's own, in place of the compiled one, a change made with config's operator is replayed with it, and deletes the next word"
       run :=
-        withHost context [("init.lean", ownOperatorText)]
+        withRealHost context [("init.lean", ownOperatorText)]
           (fun session => do
             session.ask [.reload]
             unless ← Event.post (.commit "one two three") do

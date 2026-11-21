@@ -78,7 +78,7 @@ def faceChecks (context : Context) : List Check :=
           let mirror ←
             RealDisplay.over (← Ffi.Display.newCells 8 16) collaborators.published.reader
                 Theme.builtin
-          onStage { stage with collaborators } fun host _ => do
+          onRealStage { stage with collaborators } fun host _ => do
               -- Names the first of `parts` that does not hold.
               let holds (parts : List (String × Bool)) : IO Unit := do
                 if let some (part, _) := parts.find? (!·.2) then
@@ -171,7 +171,7 @@ def faceChecks (context : Context) : List Check :=
                   Headless.Host.Display.real (← RealDisplay.over library snapshots Theme.builtin)
                 made.set (some display)
                 return display }
-          onStage { stage with collaborators } fun host _ => do
+          onRealStage { stage with collaborators } fun host _ => do
               let settled : IO Unit := do
                 unless ← host.settle patience do
                   throw (IO.userError "the editor thread did not settle")
@@ -219,7 +219,7 @@ def faceChecks (context : Context) : List Check :=
               display := fun snapshots => do
                 Headless.Host.Display.real
                     (← RealDisplay.over (← Ffi.Display.newCells 8 16) snapshots Theme.builtin) }
-          onStage { stage with collaborators } fun host _ => do
+          onRealStage { stage with collaborators } fun host _ => do
               let settled : IO Unit := do
                 unless ← host.settle patience do
                   throw (IO.userError "the editor thread did not settle")

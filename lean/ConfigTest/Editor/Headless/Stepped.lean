@@ -4,6 +4,8 @@ import ConfigTest.Support.Gate
 import ConfigTest.Support.Hosts
 import Editor.Config.Session
 import Editor.Event
+import Editor.Event.Queue
+import Editor.Ffi.Events
 import Editor.Headless
 import Editor.Headless.Stepped
 import Editor.Job.Fake
@@ -53,16 +55,59 @@ def scenesOf (kept : IO.Ref (Option Headless.Host.Display)) : IO Nat := do
   | none =>
     return 0
 
+/-- The window event the library's editor queue holds next among those of
+a window, pulling past any other: a check that posted one by mistake takes
+it back, so no later host takes it. `none` once the queues are quit. -/
+partial def windowPulled : IO (Option Ffi.Event) := do
+  let event ← Ffi.nextEvent .editor
+  if event.kind == .quit then
+    return none
+  if event.source.kind == .window then
+    return some event
+  windowPulled
+
 /-- The checks of a host stepped on the check's own thread. -/
 def steppedChecks (context : Context) : List Check :=
   [{  name :=
+        "a stepped host over collaborators that carry the library's queue still steps a reload to settled: the bracket installs its own queue"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource emptyRoot)
+        let library := stage.collaborators.queue.pulledBy == .library
+        let wait ←
+          Headless.withStepped stage.collaborators stage.memory (guard := patience) (grace :=
+              some hangGuard) fun stepped => do
+              stepped.send .reload
+              stepped.await hangGuard
+        let output ← stage.output.get
+        saw (library && wait == .settled && output.any (·.startsWith "reload 1: installed"))
+            s!"library={library} wait={repr wait} output={output}" },
+    { name := "a check on a stepped stage that posts to the library's editor queue fails, saying so"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        let failed ←
+          try
+            discard <|
+                onStage stage fun _ _ => do
+                  discard <| Event.post (.commit "astray")
+                  return true
+            pure none
+          catch error =>
+            pure (some (toString error))
+        -- Taken back, so no later host takes it.
+        let pulled ← windowPulled
+        saw
+            (failed.any
+                (·.startsWith "a stepped host's check posted to the library's editor queue") &&
+              pulled.any (·.text == "astray"))
+            s!"failed={failed} pulled={repr pulled}" },
+    { name :=
         "a stepped host handles a run request and a commit on the check's own thread: every line it emits is the check's thread's, and no loop thread starts"
       run := do
         let stage ← Stage.new context context.elaborator (memorySource [])
         let before ← context.realLoops.get
         let (wait, lines) ←
-          Headless.withStepped stage.collaborators (guard := patience) (grace := some hangGuard)
-              fun stepped => do
+          Headless.withStepped stage.collaborators (← Headless.Queue.Memory.new) (guard := patience)
+              (grace := some hangGuard) fun stepped => do
               stepped.send (.run "nothing")
               stepped.input (.commit "é")
               stepped.send .scene
@@ -79,8 +124,8 @@ def steppedChecks (context : Context) : List Check :=
         let stage ← Stage.new context (gate.around context.elaborator) (memorySource emptyRoot)
         let order ← IO.mkRef (#[] : Array String)
         let wait ←
-          Headless.withStepped stage.collaborators (guard := patience) (grace := some hangGuard)
-              fun stepped => do
+          Headless.withStepped stage.collaborators (← Headless.Queue.Memory.new) (guard := patience)
+              (grace := some hangGuard) fun stepped => do
               stepped.send .reload
               stepped.await hangGuard (waitBlocked := fun what => do
                   order.modify
@@ -101,8 +146,8 @@ def steppedChecks (context : Context) : List Check :=
         let stage ← Stage.new context context.elaborator (memorySource []) nappingCompiled
         let hung ← IO.mkRef (#[] : Array String)
         let (joined, short, due, waiting) ←
-          Headless.withStepped stage.collaborators (guard := patience) (grace := some hangGuard)
-              fun stepped => do
+          Headless.withStepped stage.collaborators (← Headless.Queue.Memory.new) (guard := patience)
+              (grace := some hangGuard) fun stepped => do
               stepped.send (.run "rest")
               let joined ←
                 stepped.join hangGuard (waitHung := fun line => hung.modify (·.push line))
@@ -123,8 +168,8 @@ def steppedChecks (context : Context) : List Check :=
         let stage ← Stage.new context (gate.around context.elaborator) (memorySource emptyRoot)
         let blocks ← IO.mkRef 0
         let wait ←
-          Headless.withStepped stage.collaborators (guard := patience) (grace := some hangGuard)
-              fun stepped => do
+          Headless.withStepped stage.collaborators (← Headless.Queue.Memory.new) (guard := patience)
+              (grace := some hangGuard) fun stepped => do
               stepped.send .reload
               stepped.await hangGuard (waitBlocked := fun _ => do
                   let block ← blocks.modifyGet fun count => (count + 1, count + 1)
@@ -151,10 +196,11 @@ def steppedChecks (context : Context) : List Check :=
           let stage ← Stage.new context context.elaborator (memorySource []) nappingCompiled
           drive stage.collaborators
         let kept ← IO.mkRef none
+        let memory ← Headless.Queue.Memory.new
         let stepped ←
           counts fun collaborators =>
-              Headless.withStepped (keptDisplay collaborators kept) (guard := patience) (grace :=
-                some hangGuard) fun stepped => do
+              Headless.withStepped (keptDisplay collaborators kept) memory (guard := patience)
+                (grace := some hangGuard) fun stepped => do
                 stepped.send (.run "rest")
                 discard <| stepped.await hangGuard
                 let settled ← scenesOf kept
@@ -184,8 +230,8 @@ def steppedChecks (context : Context) : List Check :=
               ends.modify (·.push what)
               gate.open }
         let wait ←
-          Headless.withStepped collaborators (guard := patience) (grace := some hangGuard)
-              fun stepped => do
+          Headless.withStepped collaborators (← Headless.Queue.Memory.new) (guard := patience)
+              (grace := some hangGuard) fun stepped => do
               stepped.send .reload
               stepped.await 0 (waitHung := fun line => hung.modify (·.push line))
         let hung ← hung.get
@@ -211,8 +257,8 @@ def steppedChecks (context : Context) : List Check :=
           let kept ← IO.mkRef none
           let thrown ←
             try
-              Headless.withStepped collaborators (guard := patience) (grace := some hangGuard)
-                  fun stepped => do
+              Headless.withStepped collaborators (← Headless.Queue.Memory.new) (guard := patience)
+                  (grace := some hangGuard) fun stepped => do
                   kept.set (some stepped)
                   stepped.send (.run "rest")
                   discard <| stepped.join hangGuard
@@ -241,8 +287,8 @@ def steppedChecks (context : Context) : List Check :=
       run := do
         let stage ← Stage.new context context.elaborator (memorySource [])
         let stopped ←
-          Headless.withStepped stage.collaborators (guard := patience) (grace := some hangGuard)
-              fun stepped => do
+          Headless.withStepped stage.collaborators (← Headless.Queue.Memory.new) (guard := patience)
+              (grace := some hangGuard) fun stepped => do
               stepped.post .stop
               let first ← stepped.await hangGuard
               stepped.send .show
@@ -251,8 +297,8 @@ def steppedChecks (context : Context) : List Check :=
         let waits ← IO.mkRef (#[] : Array Headless.Wait)
         let thrown ←
           try
-            Headless.withStepped (brokenDisplay broken.collaborators) (guard := patience) (grace :=
-                some hangGuard) fun stepped => do
+            Headless.withStepped (brokenDisplay broken.collaborators) (← Headless.Queue.Memory.new)
+                (guard := patience) (grace := some hangGuard) fun stepped => do
                 -- The commit makes the frame, and its step publishes a scene.
                 stepped.input (.commit "x")
                 waits.modify (·.push (← stepped.await hangGuard))

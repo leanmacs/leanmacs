@@ -30,7 +30,7 @@ def leaderText (leader : Option String := none) : String :=
     (leader.map fun keys => s!"  leaderKey {keys.quote}\n").getD ""
 
 /-- The checks of the leader through a host of the Vim scheme that ships
-(`withVimHost`), with the real elaborator and the recorder: a config's
+(`withRealVimHost`), with the real elaborator and the recorder: a config's
 binding written with `<leader>` is reached under the scheme's leader, `SPC`,
 under the leader config sets once it is reloaded, and is kept out of
 insert state, where `SPC` types a space (`Editor/Setup.lean`, the leader;
@@ -41,14 +41,14 @@ def leaderChecks (context : Context) : List Check :=
   [{  name :=
         "under the Vim scheme with no leader set by config, a config binding of <leader> f f runs its command on SPC f f in normal state"
       run :=
-        withVimHost context [("init.lean", leaderText)] fun session => do
+        withRealVimHost context [("init.lean", leaderText)] fun session => do
           session.ask [.reload]
           session.typed "SPC f f"
           return (← session.echo) == "leader find".quote },
     { name :=
         "a config that sets the leader to \\ reaches its <leader> f f binding on \\ f f after a reload, and SPC f f no longer runs it"
       run :=
-        withVimHost context [("init.lean", leaderText)] fun session => do
+        withRealVimHost context [("init.lean", leaderText)] fun session => do
           session.ask [.reload]
           session.write "init.lean" (leaderText (some "\\"))
           session.ask [.reload]
@@ -61,7 +61,7 @@ def leaderChecks (context : Context) : List Check :=
     { name :=
         "SPC typed in insert state inserts a space in a config that binds keys under <leader>, and SPC f f after <Escape> still runs the binding"
       run :=
-        withVimHost context [("init.lean", leaderText)] fun session => do
+        withRealVimHost context [("init.lean", leaderText)] fun session => do
           session.ask [.reload]
           session.typed "i a SPC b <Escape>"
           let line := lastViewLine (← session.sceneLines)

@@ -102,7 +102,7 @@ def dispatchChecks (context : Context) : List Check :=
   [{  name :=
         "a key a compiled binding binds runs its compiled command for the focused window, and the scene shows its effect"
       run :=
-        withHost context []
+        withRealHost context []
           (fun session => do
             session.typed "C-c s"
             return (← session.scene) == ("".quote, #[viewLine "!" 1]))
@@ -110,7 +110,7 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "a command that fails after editing: the scene's echo is its error, the view's text and its selection are those before the command, and the next key runs its command"
       run :=
-        withHost context []
+        withRealHost context []
           (fun session => do
             unless ← Event.post (.commit "abcd") do
               return false
@@ -126,7 +126,7 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "the interrupt key arrives while a command loops over requests: the command stops, the scene's echo says so, the view's text is that before the command, and the next key runs its command"
       run :=
-        withHost context []
+        withRealHost context []
           (fun session => do
             session.type "C-c l"
             -- The loop has taken the key that runs the command: it is in the
@@ -146,7 +146,7 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "the interrupt key arrives while no command is running: the flag is down once the loop has taken it, and the next key's command runs to its end"
       run :=
-        withHost context []
+        withRealHost context []
           (fun session => do
             session.host.press Watch.interruptKey
             session.ask []
@@ -157,7 +157,7 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "config registers a command under a compiled command's name: the key bound to the name runs config's command, and after a reload without the registration it runs the compiled one"
       run :=
-        withHost context [("init.lean", stampText)]
+        withRealHost context [("init.lean", stampText)]
           (fun session => do
             session.ask [.reload]
             session.typed "C-c s"
@@ -177,7 +177,7 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "a reload binds a key to a different command: the key then runs the new command, and the old one does not run again"
       run :=
-        withHost context [("init.lean", bindingText "one")] fun session => do
+        withRealHost context [("init.lean", bindingText "one")] fun session => do
           session.ask [.reload]
           session.typed "C-c t"
           session.write "init.lean" (bindingText "two")
@@ -189,7 +189,7 @@ def dispatchChecks (context : Context) : List Check :=
         "config fails to load: the reload is rejected, and the key a compiled binding binds still runs its compiled command; and it runs it with no reload asked at all"
       run := do
         let rejected ←
-          withHost context [("init.lean", "def setup : SetupM Unit := \"not a setup\"\n")]
+          withRealHost context [("init.lean", "def setup : SetupM Unit := \"not a setup\"\n")]
               (fun session => do
                 session.ask [.reload]
                 session.typed "C-c s"
@@ -199,7 +199,7 @@ def dispatchChecks (context : Context) : List Check :=
                     shown == #["commands: stamp", "text 0: \"\"", "text 1: \"compiled\""])
               stampCompiled
         let unasked ←
-          withHost context []
+          withRealHost context []
               (fun session => do
                 session.typed "C-c s"
                 return (← session.shown) ==
@@ -209,14 +209,14 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "a key bound from config to a command over a store runs it, and what it wrote is written back: two presses leave the store at 2"
       run :=
-        withHost context [("init.lean", boundCounterText)] fun session => do
+        withRealHost context [("init.lean", boundCounterText)] fun session => do
           session.ask [.reload]
           session.typed "C-c u C-c u"
           return (← session.shown).contains "store counter v1: 2" },
     { name :=
         "a command that takes longer than the threshold on the fake clock produces one log entry with its name and how long it took, on the log and not on the output; a press with the clock not moved adds none"
       run :=
-        withHost context []
+        withRealHost context []
           (fun session => do
             -- The prefix is typed first: the host reads the clock at its
             -- step, and to arm the key hint delay after it. Then the host
@@ -249,7 +249,7 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "the driver's run of a compiled command that is given its call makes the frame before the first window event and runs it for the focused window, as it does once a window event has arrived"
       run :=
-        withHost context []
+        withRealHost context []
           (fun session => do
             session.ask [.run "stamp", .run "missing"]
             unless ← Event.post (.commit "a") do
@@ -327,7 +327,7 @@ def modeChecks (context : Context) : List Check :=
   [{  name :=
         "a role's key runs the command of the mode config defines in a view of a buffer that has the mode, a store command among them; once a reload drops the mode it runs the global binding, and the store is as it was"
       run :=
-        withHost context [("init.lean", listingText true)]
+        withRealHost context [("init.lean", listingText true)]
           (fun session => do
             session.ask [.reload]
             session.pressKeys nextItemKeys
@@ -344,7 +344,7 @@ def modeChecks (context : Context) : List Check :=
     { name :=
         "a role's key runs the command of a mode compiled code hands the host in a view of a buffer that has the mode, before any reload and after a reload of a config that defines no mode"
       run :=
-        withHost context [("init.lean", listingText false)]
+        withRealHost context [("init.lean", listingText false)]
           (fun session => do
             session.pressKeys nextItemKeys
             let first ← session.shown
@@ -387,7 +387,7 @@ def autoReloadChecks (context : Context) : List Check :=
           let path := files / "note.txt"
           let (old, new, again) := ("one\ntwo\n", "one\ntwo\nthree\n", "rewritten again\n")
           IO.FS.writeBinFile path old.toUTF8
-          withFileHost context [("open-note", path)] fun session => do
+          withRealFileHost context [("open-note", path)] fun session => do
               unless ← session.ran "open-note" do
                 return false
               -- With no argument the command toggles: off, so on.

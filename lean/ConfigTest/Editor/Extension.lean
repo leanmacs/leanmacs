@@ -39,7 +39,7 @@ def extensionChecks (context : Context) : List Check :=
   [{  name :=
         "a config elaborated at runtime registers at an extension point a compiled package reads, and the compiled package runs the value's program"
       run :=
-        withHost context [("init.lean", greeterConfig)]
+        withRealHost context [("init.lean", greeterConfig)]
           (fun session => do
             session.ask [.reload]
             session.ask [.run "greeter-names"]
@@ -51,7 +51,7 @@ def extensionChecks (context : Context) : List Check :=
     { name :=
         "a reload at runtime replaces config's value at an extension point and keeps the compiled package's"
       run :=
-        withHost context [("init.lean", greeterConfig)]
+        withRealHost context [("init.lean", greeterConfig)]
           (fun session => do
             session.ask [.reload]
             session.write "init.lean" noGreeterConfig

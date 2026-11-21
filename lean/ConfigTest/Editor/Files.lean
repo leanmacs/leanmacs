@@ -117,7 +117,7 @@ with every request recorded in the array `check` is handed
 (`recordingSyntaxTree`). The config is loaded before `check` runs. Stops the
 host: `false` if the check did not hold or the host did not stop. -/
 def withLanguageHost (context : Context) (more : String) (opens : List (String × System.FilePath))
-    (check : Session → IO.Ref (Array String) → IO Bool) : IO Bool :=
+    (check : RealSession → IO.Ref (Array String) → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeConfig directory [("init.lean", languageReportText more)]
     let asked ← IO.mkRef #[]
@@ -129,13 +129,11 @@ def withLanguageHost (context : Context) (more : String) (opens : List (String �
             jobs := Files.package.registered.jobs
             modes := Minibuffer.package.registered.modes ++ Language.modes
             languages := Language.shipped }
-    onStage
+    onRealStage
         { stage with
           collaborators := { stage.collaborators with syntaxTree := recordingSyntaxTree asked } }
         fun host stage => do
-        let session : Session :=
-          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
-            watches := stage.watches, log := stage.log }
+        let session := RealSession.ofStage host directory stage
         session.ask [.reload]
         check session asked
 
@@ -299,7 +297,7 @@ completions.
 The first is a job from config. The others are the file commands and their
 jobs as compiled code registers them (`Editor/Files/Compiled.lean`), on real
 files: each check writes its files' bytes itself, in a temporary directory
-it makes, and hands its host the paths (`withFileHost`). -/
+it makes, and hands its host the paths (`withRealFileHost`). -/
 def fileChecks (context : Context) : List Check :=
   [{
       name :=
@@ -342,7 +340,7 @@ def fileChecks (context : Context) : List Check :=
         withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
-          withFileHost context [("open-note", path)] fun session => do
+          withRealFileHost context [("open-note", path)] fun session => do
               let joined ← session.ran "open-note"
               let (echo, lines) ← session.viewsAndStatus
               return joined &&
@@ -357,7 +355,7 @@ def fileChecks (context : Context) : List Check :=
         withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
-          withFileHost context [("open-note", path)] fun session => do
+          withRealFileHost context [("open-note", path)] fun session => do
               unless ← session.ran "open-note" do
                 return false
               unless ← Event.post (.commit "x") do
@@ -383,7 +381,7 @@ def fileChecks (context : Context) : List Check :=
         withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
-          withFileHost context [("open-note", path)] fun session => do
+          withRealFileHost context [("open-note", path)] fun session => do
               unless ← session.ran "open-note" do
                 return false
               let shown ← session.shown
@@ -403,7 +401,8 @@ def fileChecks (context : Context) : List Check :=
               ("open-crlf", files / "crlf.txt", "one\r\ntwo\r\n".toUTF8, 4)]
           for (_, path, bytes, _) in cases do
             IO.FS.writeBinFile path bytes
-          withFileHost context (cases.map fun (name, path, _, _) => (name, path)) fun session => do
+          withRealFileHost context (cases.map fun (name, path, _, _) => (name, path)) fun session =>
+              do
               let mut held := true
               for (name, path, bytes, job) in cases do
                 let opened ← session.ran name
@@ -420,7 +419,7 @@ def fileChecks (context : Context) : List Check :=
         withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
-          withFileHost context [("open-note", path)] fun session => do
+          withRealFileHost context [("open-note", path)] fun session => do
               unless ← session.ran "open-note" do
                 return false
               -- Another length, so the change is seen whatever the file
@@ -453,7 +452,7 @@ def fileChecks (context : Context) : List Check :=
       run :=
         withFiles context fun files => do
           let path := files / "missing.txt"
-          withFileHost context [("open-missing", path)] fun session => do
+          withRealFileHost context [("open-missing", path)] fun session => do
               unless ← Event.post (.commit "kept") do
                 return false
               let joined ← session.ran "open-missing"
@@ -467,7 +466,7 @@ def fileChecks (context : Context) : List Check :=
         withFiles context fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
-          withFileHost context [] fun session => do
+          withRealFileHost context [] fun session => do
               session.ask [.run Files.openName]
               -- The prompt lists the stage's working directory, /: the
               -- listing is waited for, so its job's lines are all printed.
@@ -520,8 +519,8 @@ def reloadChecks (context : Context) : List Check :=
           let path := files / "note.txt"
           let (old, new) := ("one\ntwo\nthree\n", "one, and more\ntwo\nthree\n")
           IO.FS.writeBinFile path old.toUTF8
-          withFileHost context [("open-note", path)] (extra := #[placing "cursor" 6]) fun session =>
-              do
+          withRealFileHost context [("open-note", path)] (extra := #[placing "cursor" 6])
+              fun session => do
               unless ← session.ran "open-note" do
                 return false
               -- Row 1, column 2: the "o" of "two".
@@ -601,8 +600,8 @@ def listingsStarted (output : Array String) : Nat :=
 /-- Runs `check` on a host under the Vim scheme over `promptFiles`, with
 `open-file` run, its listing of `/` waited for, `w/` committed after its
 `/`, and the listing of `/w/` waited for. -/
-def atW (context : Context) (check : Session → IO Bool) : IO Bool :=
-  withVimHost context [] (fileModel := some promptFiles) fun session => do
+def atW (context : Context) (check : RealSession → IO Bool) : IO Bool :=
+  withRealVimHost context [] (fileModel := some promptFiles) fun session => do
     session.ask [.run Files.openName]
     unless (← session.host.join patience) == .settled do
       return false
@@ -662,7 +661,7 @@ def filePromptChecks (context : Context) : List Check :=
         withFiles context fun directory => do
           IO.FS.writeFile (directory / "alpha.txt") "alpha\n"
           IO.FS.writeFile (directory / "alps.md") "alps\n"
-          withVimHost context [] (realFiles := true) fun session => do
+          withRealVimHost context [] (realFiles := true) fun session => do
               session.ask [.run Files.openName]
               unless (← session.host.join patience) == .settled do
                 return false
@@ -693,8 +692,8 @@ def filePromptChecks (context : Context) : List Check :=
           IO.FS.writeFile (home / "alpha.txt") "alpha\n"
           IO.FS.createDir (home / "notes")
           IO.FS.writeFile (home / "notes" / "todo.md") "todo\n"
-          withVimHost context [] (realFiles := true) (workingDirectory := home / "notes") (home :=
-              some home) fun session => do
+          withRealVimHost context [] (realFiles := true) (workingDirectory := home / "notes")
+              (home := some home) fun session => do
               session.ask [.run Files.openName]
               unless (← session.host.join patience) == .settled do
                 return false
@@ -718,7 +717,7 @@ def filePromptChecks (context : Context) : List Check :=
     { name :=
         "AC 6 over the recorder: committing w/locked/ says files: cannot list /w/locked/: the file system does not allow it in the echo area and lists nothing; RET then says the load's refusal, and no prompt is left open"
       run :=
-        withVimHost context [] (fileModel := some promptFiles) fun session => do
+        withRealVimHost context [] (fileModel := some promptFiles) fun session => do
           session.ask [.run Files.openName]
           unless (← session.host.join patience) == .settled do
             return false
@@ -740,7 +739,7 @@ def filePromptChecks (context : Context) : List Check :=
     { name :=
         "AC 5: under the Vim scheme, in a prompt that is not a file prompt, C-n C-n TAB puts the second listed candidate in the minibuffer with the bar at its end, not the first; e TAB puts the first listed for e; the prompt stays open, its status line and the list view still drawn, and nothing is refused"
       run :=
-        withVimHost context [("init.lean", pickText)] fun session => do
+        withRealVimHost context [("init.lean", pickText)] fun session => do
           session.ask [.reload]
           let listed ← realOrder "" #["wq", "edit", "w"]
           let some second := listed[1]? | return false

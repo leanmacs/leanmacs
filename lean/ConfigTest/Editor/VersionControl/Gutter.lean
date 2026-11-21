@@ -126,10 +126,8 @@ def gutterChecks (context : Context) : List Check :=
               collaborators :=
                 { collaborators with
                   services := { services with processes := isolatedProcesses processes home } } }
-          onStage stage fun host stage => do
-              let session : Session :=
-                { host, directory := configDir, output := stage.output, threads := stage.threads
-                  clock := stage.clock, watches := stage.watches, log := stage.log }
+          onRealStage stage fun host stage => do
+              let session : Session := (RealSession.ofStage host configDir stage)
               -- The watch job never ends, so the host's jobs never settle: the
               -- open is asked for, and its outcome polled.
               session.ask [.run "open-a"]

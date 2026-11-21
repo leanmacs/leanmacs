@@ -53,14 +53,14 @@ def noneChosen (lines : Array String) : Bool :=
         (line.splitOn Completion.Displays.chosenFace.name).length > 1
 
 /-- The checks of completion at point through the headless host of the Vim
-scheme that ships (`withVimHost`), with the real elaborator, the real text
+scheme that ships (`withRealVimHost`), with the real elaborator, the real text
 binding, the recorder and the stage's fake clock (`Editor/AtPoint.lean`,
 `docs/design/keymaps-and-modes.md`, "Completion at point"). -/
 def atPointChecks (context : Context) : List Check :=
   [{  name :=
         "C-n in insert state lists the words of open buffers that match the word before the cursor"
       run :=
-        withVimHost context [("init.lean", otherBufferText)] fun session => do
+        withRealVimHost context [("init.lean", otherBufferText)] fun session => do
           session.ask [.reload]
           session.host.resize 640 480
           session.typed "C-c o i"
@@ -87,7 +87,7 @@ def atPointChecks (context : Context) : List Check :=
     { name :=
         "a source that declares a trigger character opens a session when that character is typed, and no other character does"
       run :=
-        withVimHost context [("init.lean", dotsText)] fun session => do
+        withRealVimHost context [("init.lean", dotsText)] fun session => do
           session.ask [.reload]
           session.host.resize 640 480
           session.typed "i a x"
@@ -104,7 +104,7 @@ def atPointChecks (context : Context) : List Check :=
         "pausing after typing two characters of a word opens a session of the words source, with nothing chosen"
       run := do
         let first ←
-          withVimHost context [] fun session => do
+          withRealVimHost context [] fun session => do
               session.ask [.reload]
               session.host.resize 640 480
               session.typed "i"
@@ -126,7 +126,7 @@ def atPointChecks (context : Context) : List Check :=
                   listViewShows lines rows &&
                   noneChosen lines
         let second ←
-          withVimHost context [] fun session => do
+          withRealVimHost context [] fun session => do
               session.ask [.reload]
               session.host.resize 640 480
               session.typed "i"
@@ -140,7 +140,7 @@ def atPointChecks (context : Context) : List Check :=
     { name :=
         "a typed key in insert state arms one pause wait and starts no job: after i a b the clock holds one wait and has withdrawn one, the table of waits holds one, no job line is printed, and a join returns at once"
       run :=
-        withVimHost context [] fun session => do
+        withRealVimHost context [] fun session => do
           session.ask [.reload]
           session.typed "i a b"
           let waiting ← session.clock.waiting
@@ -158,7 +158,7 @@ def atPointChecks (context : Context) : List Check :=
     { name :=
         "the pause's event is queued before the clock's move returns: advance then join, five times over, each time finds the session the pause opened listed"
       run :=
-        withVimHost context [] fun session => do
+        withRealVimHost context [] fun session => do
           session.ask [.reload]
           session.host.resize 640 480
           session.typed "i"

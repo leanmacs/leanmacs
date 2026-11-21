@@ -79,7 +79,7 @@ def defaultConfigChecks (context : Context) : List Check :=
         "the default config: a reload installs it with no diagnostic; SPC f f then runs open-file, which asks for a path, once that is cancelled SPC : opens the command prompt, and once that is cancelled SPC ? opens the binding search, which, once open is typed, lists SPC f f  open-file"
       run := do
         let files ← configFiles context.defaultConfig
-        withVimHost context files fun session => do
+        withRealVimHost context files fun session => do
             session.ask [.reload]
             let output ← session.output.get
             let installed := output.any (·.startsWith "reload 1: installed")
@@ -116,7 +116,7 @@ def defaultConfigChecks (context : Context) : List Check :=
         "the default config: SPC p f opens the workspace finder, once that is cancelled SPC SPC opens it again, and once that is cancelled SPC p p runs find-file-in-project, which says the scratch buffer is in no project"
       run := do
         let files ← configFiles context.defaultConfig
-        withVimHost context files fun session => do
+        withRealVimHost context files fun session => do
             session.ask [.reload]
             let output ← session.output.get
             let installed := output.any (·.startsWith "reload 1: installed")
@@ -209,7 +209,7 @@ def defaultConfigChecks (context : Context) : List Check :=
         "the default config: SPC k o runs working-set-open, which says the scratch buffer is in no workspace"
       run := do
         let files ← configFiles context.defaultConfig
-        withVimHost context files fun session => do
+        withRealVimHost context files fun session => do
             session.ask [.reload]
             session.typed "SPC k o"
             let ran := (← session.host.join patience) == .settled

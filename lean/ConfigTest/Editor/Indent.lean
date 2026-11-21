@@ -92,12 +92,13 @@ def setup : SetupM Unit := do
     "\n"
 
 /-- Runs `check` against a host of the Vim scheme that ships
-(`withVimHost`) over `indentText` of the mangled Rust indent fixture, with
+(`withRealVimHost`) over `indentText` of the mangled Rust indent fixture, with
 the config loaded: handed the fixture's text and the mangled one. -/
-def withIndentHost (context : Context) (check : Session → String → String → IO Bool) : IO Bool := do
+def withIndentHost (context : Context) (check : RealSession → String → String → IO Bool) :
+    IO Bool := do
   let source ← IO.FS.readFile (context.syntaxFixtures / "rust" / "indent.rs")
   let mangled := mangledRust source indentKept
-  withVimHost context [("init.lean", indentText mangled)] fun session => do
+  withRealVimHost context [("init.lean", indentText mangled)] fun session => do
       session.ask [.reload]
       check session source mangled
 
@@ -114,7 +115,7 @@ def Session.loadedAndTyped (session : Session) (name keys : String) : IO String 
   return lastViewLine (← session.sceneLines)
 
 /-- The checks of `=` and of indented new lines through a host of the Vim
-scheme that ships (`withVimHost`), with the real elaborator, the real text
+scheme that ships (`withRealVimHost`), with the real elaborator, the real text
 binding and the library's syntax service with Rust's shipped indents query,
 each through keys: the acceptance criteria of `=` and of `RET`, `o` and
 `O` in a Rust buffer, and in a buffer with no language and one whose
