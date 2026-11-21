@@ -6,7 +6,6 @@ import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Model
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Process
 import Editor.Process.Model
@@ -25,7 +24,6 @@ import Editor.Workspace.Kit
 import Editor.Workspace.Lister
 import Editor.Workspace.Model
 import FilesApiTest.Fake
-import ModelTest.Support.Candidates
 
 /-!
 # Model tests: support: FindFile
@@ -109,7 +107,10 @@ def jobs (name : String) : Option (List Argument → Work) :=
   else workspaceJobsWith FilesApiTest.jobs name
 
 /-- The commands of the checks: the workspace driver's, the finder, the
-minibuffer's next, the candidate checks' accept and self-insert, `register`,
+minibuffer's next, its candidates command (`Test.Minibuffer.candidates`)
+and its delete-backward, `accept` and `cancel`, the API's operations on the
+open prompt, the test scheme's self-insert, which inserts its argument at its
+target's cursors (as the candidate checks' do), `register`,
 which registers `remote` as a workspace of the project on `main`, and
 `strand`, which registers it and gives it to the window's buffer. -/
 def commands : List (String × Dispatched) :=
@@ -127,8 +128,23 @@ def commands : List (String × Dispatched) :=
       ("strand", fun call => do
         registers
         Workspace.setBufferWorkspace call.target.window.buffer remote
-        return none)] ++
-    candidateCommands
+        return none),
+      (Test.Minibuffer.candidatesName, fun call => do
+        Test.Minibuffer.candidates call
+        return none),
+      ("accept", fun _ => do
+        discard acceptPrompt
+        return none),
+      ("cancel", fun _ => do
+        discard cancelPrompt
+        return none),
+      ("delete-backward", fun call => do
+        Test.Minibuffer.deleteBackward call
+        return none),
+      ((TestScheme.selfInsert "").command, fun call => do
+        let [.str text] := call.arguments | throw .badRange
+        call.target.insertAtSelections text
+        return none)]
 
 /-- The bindings of the checks: the workspace driver's, `C-o f` the finder,
 `C-o j` the next candidate, `C-o y` accept, `C-o r` and `C-o s` register

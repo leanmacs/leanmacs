@@ -1,18 +1,20 @@
 import ContractTest.Check
-import Editor.Ffi.Processes
 import Editor.Job
-import Editor.Job.Runner
 import Editor.Program
 import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
 import Editor.Workspace
 import Editor.Workspace.Finder
 
 /-!
-# Contract tests: `Editor/Workspace.lean`
+# Contract tests: `Editor/Workspace/Finder.lean`
 
-The tests of `Editor/Workspace.lean`: `workspaceChecks`, the workspace finder
-over the real process and file services. The root module `ContractTest` runs
+The tests of the workspace finder (`Editor/Workspace/Finder.lean`):
+`workspaceChecks`, the finder over the real process and file services.
+Its subject is the finder, so it is the workspace feature's test, a mirror
+of the finder's module (it was `ContractTest/Editor/Workspace.lean`, whose
+module is the core's). The root module `ContractTest` runs
 them; its module doc says what each shows.
 -/
 
@@ -26,14 +28,14 @@ open Editor.Test.Linked
 `services`; and that every child it ran is reaped. -/
 def findsThrough (services : Job.Services) (fixtures : System.FilePath)
     (asked : List (System.FilePath × Option Workspace.Found)) : IO Bool := do
-  let before ← Ffi.processesPending
+  let before ← Editor.Test.Linked.pendingChildren
   let outcome ←
     runOnTimers services do
         let found ←
           asked.mapM fun (directory, _) =>
               Workspace.find { git := (fixtures / "git").toString } directory
         return found == asked.map (·.2)
-  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  let reaped ← eventually (return (← Editor.Test.Linked.pendingChildren) == before)
   return outcome == .finished true && reaped
 
 /-- The tree of the workspace checks under `base`: a main checkout `main`,

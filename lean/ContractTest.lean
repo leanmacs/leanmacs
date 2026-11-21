@@ -25,8 +25,8 @@ import ContractTest.Editor.VersionControl.Status
 import ContractTest.Editor.Watch.Contract
 import ContractTest.Editor.Watch.Real
 import ContractTest.Editor.WorkingSet.Run
-import ContractTest.Editor.Workspace
 import ContractTest.Editor.Workspace.Contract
+import ContractTest.Editor.Workspace.Finder
 import ContractTest.Editor.Workspace.Lister
 import Editor.Api.Cases
 import Editor.Clipboard.Contract

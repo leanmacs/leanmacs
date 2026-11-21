@@ -1,10 +1,10 @@
 import Editor.Config.Packages
-import Editor.Config.Registry
 import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
 import Editor.Setup
 import Editor.Test.Driver
 import Editor.Test.Minibuffer
+import Editor.Test.Sources
 import Editor.Test.Workspace
 import Editor.Workspace.Compiled
 import Editor.Workspace.FindInProject
@@ -175,12 +175,25 @@ def refused (driver : TestDriver) (keys : String) : String × Bool × Nat × Boo
   (after.loop.state.echo, after.loop.state.prompt.isSome, after.pending.size + after.posting.size,
     after.jobs.processes.started.size == before)
 
-/-- The commands of the escape checks: the picker checks', and the escape. -/
+/-- The label of the prompts the escape checks ask that are not the
+workspace's. -/
+def escapePickLabel : String :=
+  "Pick: "
+
+/-- The commands of the escape checks: the picker checks', the escape, and
+two that ask a prompt labelled `escapePickLabel` of their own, as the
+candidate checks' do: `ask-plain`, with no source, and `ask-category`, for
+the category `pick`, with a source of it, `pick`, as its default. -/
 def escapeCommands : List (String × Dispatched) :=
+  let asks (sources : List Completion.SourceRef) : Dispatched := fun _ => do
+    discard <| prompt escapePickLabel { command := "picked" } "" sources
+    return none
   projectCommands ++
     [(Workspace.FindInProject.escapeName, fun call => do
         Workspace.FindInProject.escapeCommand call
-        return none)]
+        return none),
+      ("ask-plain", asks []),
+      ("ask-category", asks [.category "pick" [.ofTexts "pick" "pick" #["wq", "w"]]])]
 
 /-- The keys of the escape checks: the picker checks', `C-o 1` asks a prompt
 with no source, `C-o 2` one of the category `pick`, and `C-o 3` runs the
@@ -247,325 +260,332 @@ open FindInProjectTest FindFileTest in
 editor's models, the job model, the finder's world and the model of `/r`'s
 repository, every process scripted by its exact command line. -/
 def findInProjectChecks : List Check :=
-  [{  name :=
-        "criterion 1 on the models: in a buffer of /r, find-file-in-project lists r@fix, r@feature and r@main, annotated /u, /w and /r, the two no file was opened in among them and the current one last; the version-control backend is asked for the worktree list once, and the table still holds /r alone"
-      run :=
-        pure <|
-          match projectDriver with
-          | none => false
-          | some driver =>
-            let asked := askedInR driver
-            labelOf asked == some "Find file in a workspace of r: " &&
-              listedTexts asked == some #["r@fix", "r@feature", "r@main"] &&
-              listedAnnotations asked == some #[some "/u", some "/w", some "/r"] &&
-              runs asked listRun == 1 &&
-              asked.loop.state.workspaces.workspaces.map (·.1.location) == #[.local "/r"] },
-    { name :=
-        "no key's handling waits on git: the step of the picker's key returns with the prompt open and no process run, handing back a start of the source's job; only that job lists the worktrees"
-      run :=
-        pure <|
-          match projectDriver (registered := idle) with
-          | none => false
-          | some driver =>
-            let opened := settledAfter driver "C-o a"
-            let (asking, steps) := fedTo opened (presses "C-o p")
-            let starts := (steps.back?.join).map fun stepped => stepped.starts.map (·.name)
-            asking.jobs.processes.started == opened.jobs.processes.started &&
-              labelOf asking == some "Find file in a workspace of r: " &&
-              starts == some #[Workspace.FindInProject.job] },
-    { name :=
-        "criterion 2 on the models: choosing r@feature and accepting opens find-file-in-workspace rooted at /w, listing what git lists there, its lister run in /w"
-      run :=
-        pure <|
-          match projectDriver with
-          | none => false
-          | some driver =>
-            let chosen := drainedAfter (askedInR driver) "C-o j C-o j C-o y"
-            labelOf chosen == some "Find file in r@feature: " &&
-              listedTexts chosen == some #["src/w.lean", "src/b.lean", "only-w"] &&
-              runs chosen (git.command "/w") == 1 },
-    { name :=
-        "criterion 2 on the models: the typed text feat, accepted with nothing chosen, is resolved by the category's style to r@feature and reaches the same finder"
-      run :=
-        pure <|
-          match projectDriver with
-          | none => false
-          | some driver =>
-            let chosen := drainedAfter (askedInR driver) "f e a t C-o y"
-            labelOf chosen == some "Find file in r@feature: " &&
-              listedTexts chosen == some #["src/w.lean", "src/b.lean", "only-w"] },
-    { name :=
-        "choosing r@main, which the table has, runs find-file-in-workspace there with no find; a text no workspace matches is said and opens nothing; a blank answer runs nothing"
-      run :=
-        pure <|
-          match projectDriver with
-          | none => false
-          | some driver =>
-            let asked := askedInR driver
-            let finds (driver : TestDriver) :=
-              runs driver (Workspace.Git.revParseCommand "git" "/r")
-            let main := drainedAfter asked "C-o j C-o j C-o j C-o y"
-            let unmatched := drainedAfter asked "z z z C-o y"
-            let blank := drainedAfter asked "C-o y"
-            labelOf main == some "Find file in r@main: " && finds main == finds asked &&
-              unmatched.loop.state.echo ==
-                s!"{Workspace.FindInProject.name}: no workspace of r matches zzz" &&
-              unmatched.loop.state.prompt.isNone &&
-              blank.loop.state.prompt.isNone &&
-              runs blank listRun == 1 },
-    { name :=
-        "criterion 3 on the models: a worktree first reached through the picker is added to the table with the finder's identity and branch, its answer cached, the finder run there once; choosing it again finds it in the table and runs no second find"
-      run :=
-        pure <|
-          match projectDriver with
-          | none => false
-          | some driver =>
-            let chosen := drainedAfter (askedInR driver) "C-o j C-o j C-o y"
-            let again :=
-              drainedAfter (drainedAfter (settledAfter chosen "C-o q") "C-o p") "C-o j C-o j C-o y"
-            let table := chosen.loop.state.workspaces
-            let finds (driver : TestDriver) :=
-              runs driver (Workspace.Git.revParseCommand "git" "/w")
-            (table.workspace? (.local "/w")).map
-                  (fun workspace => (workspace.branch, workspace.project.identity)) ==
-                some (some (.named "feature"), .remote "github.com/o/r") &&
-              table.cached? "/w" 0 == some (some (.local "/w")) &&
-              finds chosen == 1 &&
-              labelOf again == some "Find file in r@feature: " &&
-              finds again == 1 },
-    { name :=
-        "a worktree whose directory is gone is listed, r@old among the four; choosing it says it is not a repository any more, opens no prompt and caches the miss"
-      run :=
-        pure <|
-          match
-            projectDriver (threeLinked.push { path := "/d", branch := some "old" })
-              #["/u", "/w", "/d"] with
-          | none => false
-          | some driver =>
-            let asked := askedInR driver
-            let chosen := drainedAfter asked "C-o j C-o y"
-            listedTexts asked == some #["r@old", "r@fix", "r@feature", "r@main"] &&
-              chosen.loop.state.echo ==
-                s!"{Workspace.FindInProject.name}: /d is not a repository any more" &&
-              chosen.loop.state.prompt.isNone &&
-              chosen.loop.state.workspaces.cached? "/d" 0 == some none },
-    { name :=
-        "criterion 4 on the models: a registered workspace of the project on another machine is listed, r@agent annotated /srv/r, and choosing it gives find-file-in-workspace's refusal, with no prompt open and no lister run"
-      run :=
-        pure <|
-          match projectDriver with
-          | none => false
-          | some driver =>
-            let asked := drainedAfter (settledAfter (settledAfter driver "C-o a") "C-o k") "C-o p"
-            let chosen := drainedAfter asked "C-o j C-o j C-o j C-o y"
-            listedTexts asked == some #["r@fix", "r@feature", "r@agent", "r@main"] &&
-              listedAnnotations asked == some #[some "/u", some "/w", some "/srv/r", some "/r"] &&
-              chosen.loop.state.echo ==
-                s!"{Workspace.FindFile.name}: r@agent is reachable through ssh host at /srv/r, where files cannot be listed" &&
-              chosen.loop.state.prompt.isNone &&
-              chosen.jobs.processes.started == asked.jobs.processes.started.push listRun },
-    { name :=
-        "criterion 4 on the models: a registered workspace on main beside the local r@main is told apart by its annotation, and choosing it gives the refusal"
-      run :=
-        pure <|
-          match projectDriver with
-          | none => false
-          | some driver =>
-            let asked := drainedAfter (settledAfter (settledAfter driver "C-o a") "C-o r") "C-o p"
-            let chosen := drainedAfter asked "C-o j C-o j C-o j C-o y"
-            listedTexts asked == some #["r@fix", "r@feature", "r@main (/srv/r)", "r@main (/r)"] &&
-              chosen.loop.state.echo ==
-                s!"{Workspace.FindFile.name}: r@main is reachable through ssh host at /srv/r, where files cannot be listed" &&
-              chosen.loop.state.prompt.isNone },
-    { name :=
-        "criterion 5 on the models: in a buffer with no workspace, and in *scratch*, find-file-in-project says there is no project, opens no prompt, starts no job and runs no process"
-      run :=
-        pure <|
-          match projectDriver with
-          | none => false
-          | some driver =>
-            refused (settledAfter driver "C-o x") "C-o p" ==
-                (Workspace.FindInProject.noProject "a.txt", false, 0, true) &&
-              refused driver "C-o p" ==
-                (Workspace.FindInProject.noProject EditorState.scratchName, false, 0, true) },
-    { name :=
-        "a project with no git, found by its marker /m/mise.toml, lists its one workspace, m@m, and runs no process"
-      run :=
-        pure <|
-          match
-            projectDriver (over :=
-              { projectWorld with markers := projectWorld.markers.push "/m/mise.toml" }) with
-          | none => false
-          | some driver =>
-            let opened := settledAfter driver "C-o m"
-            let asked := drainedAfter opened "C-o p"
-            listedTexts asked == some #["m@m"] &&
-              labelOf asked == some "Find file in a workspace of m: " &&
-              asked.jobs.processes.started == opened.jobs.processes.started },
-    { name := "a worktree list the backend refuses is said in the echo area, named by the source"
-      run :=
-        pure <|
-          match projectDriver with
-          | none => false
-          | some driver =>
-            -- The backend refuses the worktree list, as git does outside a
-            -- repository.
-            let asked := drainedAfter (settledAfter (unlisted driver) "C-o w") "C-o p"
-            asked.loop.state.echo.startsWith s!"{Workspace.FindInProject.sourceName}: " &&
-              listedTexts asked == some #[] },
-    { name :=
-        "a worktree list that succeeds for the source but that the backend refuses when the accept lists again is said as find-file-in-project: <why>, with no prompt open and no find started"
-      run :=
-        pure <|
-          match projectDriver with
-          | none => false
-          | some driver =>
-            let asked := askedInR driver
-            -- The accept's list runs with a backend that refuses the
-            -- worktree list; the source asked so says why under its own
-            -- name.
-            let chosen := drainedAfter (unlisted asked) "C-o j C-o j C-o y"
-            let why :=
-              (askedInR (unlisted driver)).loop.state.echo.drop
-                  (Workspace.FindInProject.sourceName.length + 2) |>.toString
-            let finds (driver : TestDriver) :=
-              runs driver (Workspace.Git.revParseCommand "git" "/w")
-            listedTexts asked == some #["r@fix", "r@feature", "r@main"] && !why.isEmpty &&
-              chosen.loop.state.echo == s!"{Workspace.FindInProject.name}: {why}" &&
-              chosen.loop.state.prompt.isNone &&
-              finds chosen == finds asked &&
-              chosen.pending.size + chosen.posting.size == 0 },
-    { name :=
-        "the source's job asked with nothing in its query's context fails, saying so; the choose order survives its arguments' round trip"
-      run :=
-        pure <|
-          let failed :=
-            match
-              ((Workspace.FindInProject.answer none { text := "", view := ⟨0⟩ } fun _ =>
-                      pure ()).runModel
-                  {}).1 with
-            | .failed said => some said
-            | _ => none
-          let asked : Workspace.Projects.Asked :=
-            { git := "git", repository := some "/r", name := "r", current := .local "/r"
-              known := #[{ location := .local "/r", label := "r@main" }] }
-          let choose : Workspace.FindInProject.ChooseOrder :=
-            { answer := "r@fix", view := ⟨2⟩, asked }
-          failed == some Workspace.FindInProject.noProjectAsked &&
-            Workspace.FindInProject.ChooseOrder.ofArguments? choose.arguments == some choose &&
-            Workspace.FindInProject.ChooseOrder.ofArguments?
-                { choose with typed := "b" }.arguments ==
-              some { choose with typed := "b" } },
-    { name :=
-        "phase 4 criterion 1 on the models: the escape key in the workspace finder closes it and opens the project's workspace picker, its input empty, listing r@fix, r@feature and r@main; the backend is asked for the worktree list once"
-      run :=
-        pure <|
-          match escapeDriver shipped with
-          | none => false
-          | some driver =>
-            let finding := findingB driver
-            let escaped := drainedAfter finding "C-x C-d"
-            labelOf finding == some "Find file in r@main: " && minibufferText finding == some "b" &&
-              labelOf escaped == some "Find file in a workspace of r: " &&
-              minibufferText escaped == some "" &&
-              listedTexts escaped == some #["r@fix", "r@feature", "r@main"] &&
-              (escaped.loop.state.prompt.map (·.candidates.category)) ==
-                some (some Workspace.FindInProject.category) &&
-              runs escaped listRun == 1 },
-    { name :=
-        "the escape from the finder in a buffer with no project closes the finder and says there is no project; run with no prompt open it says so and opens nothing; run in a prompt of another category it says so and leaves that prompt open; cancelling the picker after the escape leaves no prompt and starts no finder"
-      run :=
-        pure <|
-          match escapeDriver shipped with
-          | none => false
-          | some driver =>
-            let noProject :=
-              drainedAfter (drainedAfter (settledAfter driver "C-o x") "C-o f") "C-x C-d"
-            let unopened := drainedAfter (settledAfter driver "C-o a") "C-o 3"
-            let other := drainedAfter (drainedAfter (settledAfter driver "C-o a") "C-o 2") "C-o 3"
-            let escaped := drainedAfter (findingB driver) "C-x C-d"
-            let cancelled := drainedAfter escaped "C-o q"
-            noProject.loop.state.echo == Workspace.FindInProject.noProject "a.txt" &&
-              noProject.loop.state.prompt.isNone &&
-              unopened.loop.state.echo ==
-                s!"{Workspace.FindInProject.escapeName}: {PromptRefusal.notOpen.describe}" &&
-              unopened.loop.state.prompt.isNone &&
-              other.loop.state.echo == Workspace.FindInProject.notFinder &&
-              labelOf other == some pickLabel &&
-              cancelled.loop.state.prompt.isNone &&
-              cancelled.pending.size + cancelled.posting.size == 0 &&
-              cancelled.jobs.processes.started == escaped.jobs.processes.started },
-    { name :=
-        "phase 4 criterion 2 on the models: after the escape, choosing r@feature, which the table does not have, opens its finder with b typed and the list matched against it; choosing r@main, which it has, does the same there"
-      run :=
-        pure <|
-          match escapeDriver shipped with
-          | none => false
-          | some driver =>
-            let escaped := drainedAfter (findingB driver) "C-x C-d"
-            let feature := drainedAfter escaped "C-o j C-o j C-o y"
-            let main := drainedAfter escaped "C-o j C-o j C-o j C-o y"
-            let filtered (driver : TestDriver) (root : System.FilePath) : Bool :=
-              driver.jobs.processes.started.contains
-                ((Workspace.FindFile.filtering git root).filterFor "b")
-            labelOf feature == some "Find file in r@feature: " &&
-              minibufferText feature == some "b" &&
-              listedTexts feature == some #["src/b.lean"] &&
-              runs feature (Workspace.Git.revParseCommand "git" "/w") == 1 &&
-              filtered feature "/w" &&
-              labelOf main == some "Find file in r@main: " &&
-              minibufferText main == some "b" &&
-              listedTexts main == some #[] },
-    { name :=
-        "phase 4 criterion 3 on the models: the escape key in the picker, in a prompt with no category, in a prompt of another category and with no prompt open does what it does with no binding of it"
-      run :=
-        pure <|
-          match escapeDriver shipped, escapeDriver bare with
-          | some withKey, some without =>
-            [("C-o a C-o p", "C-x C-d"), ("C-o 1", "C-x C-d"), ("C-o 2", "C-x C-d"),
-                  ("C-o a", "C-x C-d")].all
-              fun (before, keys) =>
-              shown (drainedAfter (settledAfter withKey "C-o a") before) keys ==
-                shown (drainedAfter (settledAfter without "C-o a") before) keys
-          | _, _ => false },
-    { name :=
-        "phase 4 criterion 3 under the Vim scheme: C-x is unbound in the minibuffer state's own table; C-x C-d in the minibuffer state yields the escape with the workspace finder's keymap active, and with another category's what it yields with no keymap"
-      run :=
-        let scheme := Vim.Default.scheme
-        let opened : Vim.State := scheme.openMinibuffer ⟨5⟩ scheme.init
-        let fed (maps : List (Keymap Vim.Bound)) : List (Option String) :=
-          ((scheme.feed (fun _ => maps) ⟨5⟩ opened (keys "C-x C-d")).2).map (·.map (·.command))
-        let own := Vim.Default.keymap Vim.Default.minibufferCommands
-        pure
-          (own.find? (keys "C-x") == none && !own.continues (keys "C-x") &&
-            fed [shipped.categoryKeymap scheme Workspace.FindFile.category] ==
-              [none, some Workspace.FindInProject.escapeName] &&
-            fed [shipped.categoryKeymap scheme Workspace.FindInProject.category] == fed []) },
-    { name :=
-        "phase 4 criterion 4 on the models: config's binding of C-o e in the workspace finder's keymap steps out as the compiled key does, with no compiled binding, and beside it both keys step out"
-      run :=
-        pure <|
-          let configured := bare.replaceBindings .config configBindings
-          let both := shipped.replaceBindings .config configBindings
-          let stepsOut (registry : Config.Registry) (key : String) : Bool :=
-            match escapeDriver registry with
+  [{    name :=
+          "criterion 1 on the models: in a buffer of /r, find-file-in-project lists r@fix, r@feature and r@main, annotated /u, /w and /r, the two no file was opened in among them and the current one last; the version-control backend is asked for the worktree list once, and the table still holds /r alone"
+        run :=
+          pure <|
+            match projectDriver with
             | none => false
             | some driver =>
-              let escaped := drainedAfter (findingB driver) key
+              let asked := askedInR driver
+              labelOf asked == some "Find file in a workspace of r: " &&
+                listedTexts asked == some #["r@fix", "r@feature", "r@main"] &&
+                listedAnnotations asked == some #[some "/u", some "/w", some "/r"] &&
+                runs asked listRun == 1 &&
+                asked.loop.state.workspaces.workspaces.map (·.1.location) == #[.local "/r"] },
+      { name :=
+          "no key's handling waits on git: the step of the picker's key returns with the prompt open and no process run, handing back a start of the source's job; only that job lists the worktrees"
+        run :=
+          pure <|
+            match projectDriver (registered := idle) with
+            | none => false
+            | some driver =>
+              let opened := settledAfter driver "C-o a"
+              let (asking, steps) := fedTo opened (presses "C-o p")
+              let starts := (steps.back?.join).map fun stepped => stepped.starts.map (·.name)
+              asking.jobs.processes.started == opened.jobs.processes.started &&
+                labelOf asking == some "Find file in a workspace of r: " &&
+                starts == some #[Workspace.FindInProject.job] },
+      { name :=
+          "criterion 2 on the models: choosing r@feature and accepting opens find-file-in-workspace rooted at /w, listing what git lists there, its lister run in /w"
+        run :=
+          pure <|
+            match projectDriver with
+            | none => false
+            | some driver =>
+              let chosen := drainedAfter (askedInR driver) "C-o j C-o j C-o y"
+              labelOf chosen == some "Find file in r@feature: " &&
+                listedTexts chosen == some #["src/w.lean", "src/b.lean", "only-w"] &&
+                runs chosen (git.command "/w") == 1 },
+      { name :=
+          "criterion 2 on the models: the typed text feat, accepted with nothing chosen, is resolved by the category's style to r@feature and reaches the same finder"
+        run :=
+          pure <|
+            match projectDriver with
+            | none => false
+            | some driver =>
+              let chosen := drainedAfter (askedInR driver) "f e a t C-o y"
+              labelOf chosen == some "Find file in r@feature: " &&
+                listedTexts chosen == some #["src/w.lean", "src/b.lean", "only-w"] },
+      { name :=
+          "choosing r@main, which the table has, runs find-file-in-workspace there with no find; a text no workspace matches is said and opens nothing; a blank answer runs nothing"
+        run :=
+          pure <|
+            match projectDriver with
+            | none => false
+            | some driver =>
+              let asked := askedInR driver
+              let finds (driver : TestDriver) :=
+                runs driver (Workspace.Git.revParseCommand "git" "/r")
+              let main := drainedAfter asked "C-o j C-o j C-o j C-o y"
+              let unmatched := drainedAfter asked "z z z C-o y"
+              let blank := drainedAfter asked "C-o y"
+              labelOf main == some "Find file in r@main: " && finds main == finds asked &&
+                unmatched.loop.state.echo ==
+                  s!"{Workspace.FindInProject.name}: no workspace of r matches zzz" &&
+                unmatched.loop.state.prompt.isNone &&
+                blank.loop.state.prompt.isNone &&
+                runs blank listRun == 1 },
+      { name :=
+          "criterion 3 on the models: a worktree first reached through the picker is added to the table with the finder's identity and branch, its answer cached, the finder run there once; choosing it again finds it in the table and runs no second find"
+        run :=
+          pure <|
+            match projectDriver with
+            | none => false
+            | some driver =>
+              let chosen := drainedAfter (askedInR driver) "C-o j C-o j C-o y"
+              let again :=
+                drainedAfter (drainedAfter (settledAfter chosen "C-o q") "C-o p")
+                  "C-o j C-o j C-o y"
+              let table := chosen.loop.state.workspaces
+              let finds (driver : TestDriver) :=
+                runs driver (Workspace.Git.revParseCommand "git" "/w")
+              (table.workspace? (.local "/w")).map
+                    (fun workspace => (workspace.branch, workspace.project.identity)) ==
+                  some (some (.named "feature"), .remote "github.com/o/r") &&
+                table.cached? "/w" 0 == some (some (.local "/w")) &&
+                finds chosen == 1 &&
+                labelOf again == some "Find file in r@feature: " &&
+                finds again == 1 },
+      { name :=
+          "a worktree whose directory is gone is listed, r@old among the four; choosing it says it is not a repository any more, opens no prompt and caches the miss"
+        run :=
+          pure <|
+            match
+              projectDriver (threeLinked.push { path := "/d", branch := some "old" })
+                #["/u", "/w", "/d"] with
+            | none => false
+            | some driver =>
+              let asked := askedInR driver
+              let chosen := drainedAfter asked "C-o j C-o y"
+              listedTexts asked == some #["r@old", "r@fix", "r@feature", "r@main"] &&
+                chosen.loop.state.echo ==
+                  s!"{Workspace.FindInProject.name}: /d is not a repository any more" &&
+                chosen.loop.state.prompt.isNone &&
+                chosen.loop.state.workspaces.cached? "/d" 0 == some none },
+      { name :=
+          "criterion 4 on the models: a registered workspace of the project on another machine is listed, r@agent annotated /srv/r, and choosing it gives find-file-in-workspace's refusal, with no prompt open and no lister run"
+        run :=
+          pure <|
+            match projectDriver with
+            | none => false
+            | some driver =>
+              let asked := drainedAfter (settledAfter (settledAfter driver "C-o a") "C-o k") "C-o p"
+              let chosen := drainedAfter asked "C-o j C-o j C-o j C-o y"
+              listedTexts asked == some #["r@fix", "r@feature", "r@agent", "r@main"] &&
+                listedAnnotations asked == some #[some "/u", some "/w", some "/srv/r", some "/r"] &&
+                chosen.loop.state.echo ==
+                  s!"{Workspace.FindFile.name}: r@agent is reachable through ssh host at /srv/r, where files cannot be listed" &&
+                chosen.loop.state.prompt.isNone &&
+                chosen.jobs.processes.started == asked.jobs.processes.started.push listRun },
+      { name :=
+          "criterion 4 on the models: a registered workspace on main beside the local r@main is told apart by its annotation, and choosing it gives the refusal"
+        run :=
+          pure <|
+            match projectDriver with
+            | none => false
+            | some driver =>
+              let asked := drainedAfter (settledAfter (settledAfter driver "C-o a") "C-o r") "C-o p"
+              let chosen := drainedAfter asked "C-o j C-o j C-o j C-o y"
+              listedTexts asked == some #["r@fix", "r@feature", "r@main (/srv/r)", "r@main (/r)"] &&
+                chosen.loop.state.echo ==
+                  s!"{Workspace.FindFile.name}: r@main is reachable through ssh host at /srv/r, where files cannot be listed" &&
+                chosen.loop.state.prompt.isNone },
+      { name :=
+          "criterion 5 on the models: in a buffer with no workspace, and in *scratch*, find-file-in-project says there is no project, opens no prompt, starts no job and runs no process"
+        run :=
+          pure <|
+            match projectDriver with
+            | none => false
+            | some driver =>
+              refused (settledAfter driver "C-o x") "C-o p" ==
+                  (Workspace.FindInProject.noProject "a.txt", false, 0, true) &&
+                refused driver "C-o p" ==
+                  (Workspace.FindInProject.noProject EditorState.scratchName, false, 0, true) },
+      { name :=
+          "a project with no git, found by its marker /m/mise.toml, lists its one workspace, m@m, and runs no process"
+        run :=
+          pure <|
+            match
+              projectDriver (over :=
+                { projectWorld with markers := projectWorld.markers.push "/m/mise.toml" }) with
+            | none => false
+            | some driver =>
+              let opened := settledAfter driver "C-o m"
+              let asked := drainedAfter opened "C-o p"
+              listedTexts asked == some #["m@m"] &&
+                labelOf asked == some "Find file in a workspace of m: " &&
+                asked.jobs.processes.started == opened.jobs.processes.started },
+      { name := "a worktree list the backend refuses is said in the echo area, named by the source"
+        run :=
+          pure <|
+            match projectDriver with
+            | none => false
+            | some driver =>
+              -- The backend refuses the worktree list, as git does outside a
+              -- repository.
+              let asked := drainedAfter (settledAfter (unlisted driver) "C-o w") "C-o p"
+              asked.loop.state.echo.startsWith s!"{Workspace.FindInProject.sourceName}: " &&
+                listedTexts asked == some #[] },
+      { name :=
+          "a worktree list that succeeds for the source but that the backend refuses when the accept lists again is said as find-file-in-project: <why>, with no prompt open and no find started"
+        run :=
+          pure <|
+            match projectDriver with
+            | none => false
+            | some driver =>
+              let asked := askedInR driver
+              -- The accept's list runs with a backend that refuses the
+              -- worktree list; the source asked so says why under its own
+              -- name.
+              let chosen := drainedAfter (unlisted asked) "C-o j C-o j C-o y"
+              let why :=
+                (askedInR (unlisted driver)).loop.state.echo.drop
+                    (Workspace.FindInProject.sourceName.length + 2) |>.toString
+              let finds (driver : TestDriver) :=
+                runs driver (Workspace.Git.revParseCommand "git" "/w")
+              listedTexts asked == some #["r@fix", "r@feature", "r@main"] && !why.isEmpty &&
+                chosen.loop.state.echo == s!"{Workspace.FindInProject.name}: {why}" &&
+                chosen.loop.state.prompt.isNone &&
+                finds chosen == finds asked &&
+                chosen.pending.size + chosen.posting.size == 0 },
+      { name :=
+          "the source's job asked with nothing in its query's context fails, saying so; the choose order survives its arguments' round trip"
+        run :=
+          pure <|
+            let failed :=
+              match
+                ((Workspace.FindInProject.answer none { text := "", view := ⟨0⟩ } fun _ =>
+                        pure ()).runModel
+                    {}).1 with
+              | .failed said => some said
+              | _ => none
+            let asked : Workspace.Projects.Asked :=
+              { git := "git", repository := some "/r", name := "r", current := .local "/r"
+                known := #[{ location := .local "/r", label := "r@main" }] }
+            let choose : Workspace.FindInProject.ChooseOrder :=
+              { answer := "r@fix", view := ⟨2⟩, asked }
+            failed == some Workspace.FindInProject.noProjectAsked &&
+              Workspace.FindInProject.ChooseOrder.ofArguments? choose.arguments == some choose &&
+              Workspace.FindInProject.ChooseOrder.ofArguments?
+                  { choose with typed := "b" }.arguments ==
+                some { choose with typed := "b" } },
+      { name :=
+          "phase 4 criterion 1 on the models: the escape key in the workspace finder closes it and opens the project's workspace picker, its input empty, listing r@fix, r@feature and r@main; the backend is asked for the worktree list once"
+        run :=
+          pure <|
+            match escapeDriver shipped with
+            | none => false
+            | some driver =>
+              let finding := findingB driver
+              let escaped := drainedAfter finding "C-x C-d"
+              labelOf finding == some "Find file in r@main: " &&
+                minibufferText finding == some "b" &&
+                labelOf escaped == some "Find file in a workspace of r: " &&
+                minibufferText escaped == some "" &&
+                listedTexts escaped == some #["r@fix", "r@feature", "r@main"] &&
+                (escaped.loop.state.prompt.map (·.candidates.category)) ==
+                  some (some Workspace.FindInProject.category) &&
+                runs escaped listRun == 1 },
+      { name :=
+          "the escape from the finder in a buffer with no project closes the finder and says there is no project; run with no prompt open it says so and opens nothing; run in a prompt of another category it says so and leaves that prompt open; cancelling the picker after the escape leaves no prompt and starts no finder"
+        run :=
+          pure <|
+            match escapeDriver shipped with
+            | none => false
+            | some driver =>
+              let noProject :=
+                drainedAfter (drainedAfter (settledAfter driver "C-o x") "C-o f") "C-x C-d"
+              let unopened := drainedAfter (settledAfter driver "C-o a") "C-o 3"
+              let other := drainedAfter (drainedAfter (settledAfter driver "C-o a") "C-o 2") "C-o 3"
+              let escaped := drainedAfter (findingB driver) "C-x C-d"
+              let cancelled := drainedAfter escaped "C-o q"
+              noProject.loop.state.echo == Workspace.FindInProject.noProject "a.txt" &&
+                noProject.loop.state.prompt.isNone &&
+                unopened.loop.state.echo ==
+                  s!"{Workspace.FindInProject.escapeName}: {PromptRefusal.notOpen.describe}" &&
+                unopened.loop.state.prompt.isNone &&
+                other.loop.state.echo == Workspace.FindInProject.notFinder &&
+                labelOf other == some escapePickLabel &&
+                cancelled.loop.state.prompt.isNone &&
+                cancelled.pending.size + cancelled.posting.size == 0 &&
+                cancelled.jobs.processes.started == escaped.jobs.processes.started },
+      { name :=
+          "phase 4 criterion 2 on the models: after the escape, choosing r@feature, which the table does not have, opens its finder with b typed and the list matched against it; choosing r@main, which it has, does the same there"
+        run :=
+          pure <|
+            match escapeDriver shipped with
+            | none => false
+            | some driver =>
+              let escaped := drainedAfter (findingB driver) "C-x C-d"
               let feature := drainedAfter escaped "C-o j C-o j C-o y"
-              labelOf escaped == some "Find file in a workspace of r: " &&
-                labelOf feature == some "Find file in r@feature: " &&
-                minibufferText feature == some "b"
-          !configBindings.isEmpty && stepsOut configured "C-o e" && stepsOut both "C-o e" &&
-            stepsOut both "C-x C-d" },
-    { name :=
-        "with no version-control backend registered the picker takes the case no repository: in a buffer of /r it lists r@main alone, asks no backend, and runs no process for the list"
-      run :=
-        pure <|
-          match projectDriver (registered := projectJobsOver #[]) with
-          | none => false
-          | some driver =>
-            let asked := askedInR driver
-            listedTexts asked == some #["r@main"] && runs asked listRun == 0 }]
+              let main := drainedAfter escaped "C-o j C-o j C-o j C-o y"
+              let filtered (driver : TestDriver) (root : System.FilePath) : Bool :=
+                driver.jobs.processes.started.contains
+                  ((Workspace.FindFile.filtering git root).filterFor "b")
+              labelOf feature == some "Find file in r@feature: " &&
+                minibufferText feature == some "b" &&
+                listedTexts feature == some #["src/b.lean"] &&
+                runs feature (Workspace.Git.revParseCommand "git" "/w") == 1 &&
+                filtered feature "/w" &&
+                labelOf main == some "Find file in r@main: " &&
+                minibufferText main == some "b" &&
+                listedTexts main == some #[] },
+      { name :=
+          "phase 4 criterion 3 on the models: the escape key in the picker, in a prompt with no category, in a prompt of another category and with no prompt open does what it does with no binding of it"
+        run :=
+          pure <|
+            match escapeDriver shipped, escapeDriver bare with
+            | some withKey, some without =>
+              [("C-o a C-o p", "C-x C-d"), ("C-o 1", "C-x C-d"), ("C-o 2", "C-x C-d"),
+                    ("C-o a", "C-x C-d")].all
+                fun (before, keys) =>
+                shown (drainedAfter (settledAfter withKey "C-o a") before) keys ==
+                  shown (drainedAfter (settledAfter without "C-o a") before) keys
+            | _, _ => false },
+      { name :=
+          "phase 4 criterion 3 under the Vim scheme: C-x is unbound in the minibuffer state's own table; C-x C-d in the minibuffer state yields the escape with the workspace finder's keymap active, and with another category's what it yields with no keymap"
+        run :=
+          let scheme := Vim.Default.scheme
+          let opened : Vim.State := scheme.openMinibuffer ⟨5⟩ scheme.init
+          let fed (maps : List (Keymap Vim.Bound)) : List (Option String) :=
+            ((scheme.feed (fun _ => maps) ⟨5⟩ opened (keys "C-x C-d")).2).map (·.map (·.command))
+          let own := Vim.Default.keymap Vim.Default.minibufferCommands
+          pure
+            (own.find? (keys "C-x") == none && !own.continues (keys "C-x") &&
+              fed [shipped.categoryKeymap scheme Workspace.FindFile.category] ==
+                [none, some Workspace.FindInProject.escapeName] &&
+              fed [shipped.categoryKeymap scheme Workspace.FindInProject.category] == fed []) },
+      { name :=
+          "phase 4 criterion 4 on the models: config's binding of C-o e in the workspace finder's keymap steps out as the compiled key does, with no compiled binding, and beside it both keys step out"
+        run :=
+          pure <|
+            let configured := bare.replaceBindings .config configBindings
+            let both := shipped.replaceBindings .config configBindings
+            let stepsOut (registry : Config.Registry) (key : String) : Bool :=
+              match escapeDriver registry with
+              | none => false
+              | some driver =>
+                let escaped := drainedAfter (findingB driver) key
+                let feature := drainedAfter escaped "C-o j C-o j C-o y"
+                labelOf escaped == some "Find file in a workspace of r: " &&
+                  labelOf feature == some "Find file in r@feature: " &&
+                  minibufferText feature == some "b"
+            !configBindings.isEmpty && stepsOut configured "C-o e" && stepsOut both "C-o e" &&
+              stepsOut both "C-x C-d" },
+      { name :=
+          "with no version-control backend registered the picker takes the case no repository: in a buffer of /r it lists r@main alone, asks no backend, and runs no process for the list"
+        run :=
+          pure <|
+            match projectDriver (registered := projectJobsOver #[]) with
+            | none => false
+            | some driver =>
+              let asked := askedInR driver
+              listedTexts asked == some #["r@main"] && runs asked listRun == 0 }] ++
+    -- The completion sources' contract over the workspace's find-in-project source,
+    -- the workspace feature's shipped value; the core's
+    -- `sourceContractChecks` run it over the model and the core's sources.
+    (sourceContract Workspace.FindInProject.source).map fun (name, held) =>
+      { name, run := pure held }
 
 end ModelTest

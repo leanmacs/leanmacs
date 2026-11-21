@@ -60,7 +60,6 @@ import Editor.Process.Environment
 import Editor.Program
 import Editor.ProjectMode
 import Editor.ProjectMode.Listing
-import Editor.ProjectSearch.Compiled
 import Editor.Scene
 import Editor.Setup
 import Editor.State
@@ -76,13 +75,7 @@ import Editor.Themes.Compiled
 import Editor.Watch
 import Editor.Window
 import Editor.WindowCommands.Compiled
-import Editor.WorkingSet.Compiled
 import Editor.Workspace
-import Editor.Workspace.Attach
-import Editor.Workspace.Compiled
-import Editor.Workspace.FindFile
-import Editor.Workspace.FindInProject
-import Editor.Workspace.Modes
 import EditorCore.EditorPackage
 
 /-!
@@ -2385,6 +2378,13 @@ def shippedRegistry : Config.Registry :=
     Config.State.ofPackages EditorCore.EditorPackage.packages
   state.registry
 
+/-- The owner of what the package called `name` registers, by its name as
+text (`Package.owner`): what the shipped checks compare an entry's owner
+with for the features that are moving out of the core, so this module
+imports none of their modules. -/
+def owned (name : String) : Config.Owner :=
+  { name }
+
 /-- The checks of what the executable's hosts start with: the registry the
 packages that ship make (`shippedRegistry`), each entry for the owner named
 after its package, and the test scheme's keymap of its bindings. Nothing
@@ -2394,49 +2394,42 @@ def shippedChecks (_ : Unit) : List Check :=
         "the executable's hosts start with find-file-in-workspace registered by the workspace package, the source workspace-files registered by it in the category workspace-file, which it alone is in, filtered and answered later by its job workspace-files, registered by it"
       run := do
         let registry := shippedRegistry
-        return (registry.find? Workspace.FindFile.name).any (·.owner == Workspace.package.owner) &&
+        return (registry.find? "find-file-in-workspace").any (·.owner == owned "workspace") &&
             registry.sources.any
               (fun entry =>
-                entry.source.name == Workspace.FindFile.sourceName &&
-                  entry.owner == Workspace.package.owner &&
+                entry.source.name == "workspace-files" && entry.owner == owned "workspace" &&
                   entry.source.filtered &&
-                  entry.source.later.map (·.job) == some Workspace.FindFile.job) &&
-            registry.sourcesIn Workspace.FindFile.category == #[Workspace.FindFile.sourceName] &&
+                  entry.source.later.map (·.job) == some "workspace-files") &&
+            registry.sourcesIn "workspace-file" == #["workspace-files"] &&
             registry.jobs.any
               (fun entry =>
-                entry.registration.name == Workspace.FindFile.job &&
-                  entry.owner == Workspace.package.owner) },
+                entry.registration.name == "workspace-files" && entry.owner == owned "workspace") },
     { name :=
         "the executable's hosts start with find-file-in-project registered by the workspace package, the source project-workspaces registered by it in the category project-workspace, which it alone is in, answered later by its job project-workspaces, and that job, project-workspace-choose and project-workspace-find registered by it"
       run := do
         let registry := shippedRegistry
-        let jobs :=
-          [Workspace.FindInProject.job, Workspace.FindInProject.chooseJob,
-            Workspace.FindInProject.findJob]
-        return (registry.find? Workspace.FindInProject.name).any
-              (·.owner == Workspace.package.owner) &&
+        let jobs := ["project-workspaces", "project-workspace-choose", "project-workspace-find"]
+        return (registry.find? "find-file-in-project").any (·.owner == owned "workspace") &&
             registry.sources.any
               (fun entry =>
-                entry.source.name == Workspace.FindInProject.sourceName &&
-                  entry.owner == Workspace.package.owner &&
-                  entry.source.later.map (·.job) == some Workspace.FindInProject.job) &&
-            registry.sourcesIn Workspace.FindInProject.category ==
-              #[Workspace.FindInProject.sourceName] &&
+                entry.source.name == "project-workspaces" && entry.owner == owned "workspace" &&
+                  entry.source.later.map (·.job) == some "project-workspaces") &&
+            registry.sourcesIn "project-workspace" == #["project-workspaces"] &&
             jobs.all fun name =>
               registry.jobs.any
                 (fun entry =>
-                  entry.registration.name == name && entry.owner == Workspace.package.owner) },
+                  entry.registration.name == name && entry.owner == owned "workspace") },
     { name :=
         "the executable's hosts start with project-search, project-search-found, project-search-symbol and project-search-visit registered by the project-search package, the mode project-search, and the jobs project-search and project-search-load, registered by it"
       run := do
         let registry := shippedRegistry
-        let owner := ProjectSearch.package.owner
-        return [ProjectSearch.name, ProjectSearch.foundName, ProjectSearch.symbolName,
-                  ProjectSearch.visitName].all
+        let owner := owned "project-search"
+        return ["project-search", "project-search-found", "project-search-symbol",
+                  "project-search-visit"].all
               (fun name => (registry.find? name).any (·.owner == owner)) &&
             registry.modes.any
-              (fun entry => entry.mode.name == ProjectSearch.modeName && entry.owner == owner) &&
-            [ProjectSearch.job, ProjectSearch.loadJob].all fun name =>
+              (fun entry => entry.mode.name == "project-search" && entry.owner == owner) &&
+            ["project-search", "project-search-load"].all fun name =>
               registry.jobs.any fun entry =>
                 entry.registration.name == name && entry.owner == owner },
     { name :=
@@ -2464,13 +2457,13 @@ def shippedChecks (_ : Unit) : List Check :=
         "the executable's hosts start with working-set-add, working-set-open, working-set-visit, working-set-remove, working-set-note and working-set-refresh registered by the working-set package, the mode working-set, and the jobs working-set-files, working-set-load, working-set-write and working-set-save, registered by it"
       run := do
         let registry := shippedRegistry
-        let owner := WorkingSet.package.owner
-        return [WorkingSet.addName, WorkingSet.openName, WorkingSet.visitName,
-                  WorkingSet.removeName, WorkingSet.noteName, WorkingSet.refreshName].all
+        let owner := owned "working-set"
+        return ["working-set-add", "working-set-open", "working-set-visit", "working-set-remove",
+                  "working-set-note", "working-set-refresh"].all
               (fun name => (registry.find? name).any (·.owner == owner)) &&
             registry.modes.any
-              (fun entry => entry.mode.name == WorkingSet.modeName && entry.owner == owner) &&
-            [WorkingSet.filesJob, WorkingSet.loadJob, WorkingSet.writeJob, WorkingSet.saveJob].all
+              (fun entry => entry.mode.name == "working-set" && entry.owner == owner) &&
+            ["working-set-files", "working-set-load", "working-set-write", "working-set-save"].all
               fun name =>
               registry.jobs.any fun entry =>
                 entry.registration.name == name && entry.owner == owner },
@@ -2479,15 +2472,15 @@ def shippedChecks (_ : Unit) : List Check :=
       run := do
         let registry := shippedRegistry
         let escapes :=
-          registry.bindings.filter (·.binding.command == Workspace.FindInProject.escapeName)
+          registry.bindings.filter (·.binding.command == "find-file-in-another-workspace")
         let global : Keymap Invocation := registry.keymap TestScheme.scheme
-        return (registry.find? Workspace.FindInProject.escapeName).any
-              (·.owner == Workspace.package.owner) &&
+        return (registry.find? "find-file-in-another-workspace").any
+              (·.owner == owned "workspace") &&
             escapes.map (fun entry => (entry.owner, entry.binding)) ==
-              #[(Workspace.package.owner,
+              #[(owned "workspace",
                   { keys := (keysOf "C-x C-d").map .key
-                    command := Workspace.FindInProject.escapeName
-                    category := some Workspace.FindFile.category
+                    command := "find-file-in-another-workspace"
+                    category := some "workspace-file"
                     desc := some "Find in another workspace" })] &&
             global.find? (keysOf "C-x") == none &&
             !global.continues (keysOf "C-x") },
@@ -2535,8 +2528,7 @@ def shippedChecks (_ : Unit) : List Check :=
             ownedBy Ex.package Ex.quitName &&
             frameKeys == #["toggle-fullscreen", "minimise-window", Ex.quitName] &&
             ["switch-buffer", "list-buffers", "close-buffer"].all
-              (fun name =>
-                (registry.find? name).any (·.owner == ({ name := "buffers" } : Config.Owner))) &&
+              (fun name => (registry.find? name).any (·.owner == owned "buffers")) &&
             ex "b" == some "switch-buffer" &&
             ex "ls" == some "list-buffers" &&
             ex "bd" == some "close-buffer" },
@@ -2629,10 +2621,10 @@ def shippedChecks (_ : Unit) : List Check :=
         "the executable's hosts start with the jobs find-mode-markers and compile-list registered by the workspace package, beside find-workspace, and compile-list by no other package: the listing is the core's, whichever package gives the contributions it lists"
       run := do
         let registry := shippedRegistry
-        return (registry.findJob? Workspace.markerJob).any (·.owner == Workspace.package.owner) &&
-            (registry.findJob? Workspace.findJob).any (·.owner == Workspace.package.owner) &&
+        return (registry.findJob? "find-mode-markers").any (·.owner == owned "workspace") &&
+            (registry.findJob? "find-workspace").any (·.owner == owned "workspace") &&
             (registry.jobs.filter (·.registration.name == Compile.listJob)).map (·.owner) ==
-              #[Workspace.package.owner] },
+              #[owned "workspace"] },
     { name :=
         "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered by the themes package, and no other theme: the packages of the core's Lake package ship no palette"
       run := do

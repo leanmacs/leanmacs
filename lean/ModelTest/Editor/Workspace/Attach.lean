@@ -1,6 +1,5 @@
 import Editor.Api
 import Editor.Command
-import Editor.Command.Dispatch
 import Editor.File.Model
 import Editor.FileWatch
 import Editor.FileWatch.Model
@@ -8,7 +7,6 @@ import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Model
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Process
 import Editor.Process.Environment

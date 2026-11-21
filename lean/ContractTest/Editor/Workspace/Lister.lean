@@ -1,10 +1,9 @@
 import ContractTest.Check
 import ContractTest.Support.Repositories
-import Editor.Ffi.Processes
 import Editor.Job
-import Editor.Job.Runner
 import Editor.Process
 import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
 import Editor.Workspace.FindFile
 import Editor.Workspace.Lister
@@ -30,7 +29,7 @@ filter under `fixtures` with the empty text, which keeps them all, as
 (both sorted), and every child it ran was reaped. -/
 def listsAt (services : Job.Services) (fixtures : System.FilePath) (lister : Workspace.Lister)
     (root : System.FilePath) (expected : Array String) : IO Bool := do
-  let before ← Ffi.processesPending
+  let before ← Editor.Test.Linked.pendingChildren
   let separator : Completion.Filtering.Separator := if lister.nul then .nul else .newline
   let filter : Process.Command :=
     { program := (fixtures / "filter").toString
@@ -49,7 +48,7 @@ def listsAt (services : Job.Services) (fixtures : System.FilePath) (lister : Wor
           return records.qsort (· < ·) == expected.qsort (· < ·)
         | .error _ =>
           return false
-  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  let reaped ← eventually (return (← Editor.Test.Linked.pendingChildren) == before)
   return outcome == .finished true && reaped
 
 /-- The global git config of the checks, at `home/config`: its excludes file

@@ -1,7 +1,6 @@
-import Editor.Ffi.Processes
 import Editor.Job
-import Editor.Job.Runner
 import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
 import Editor.Workspace
 import Editor.Workspace.Contract
@@ -54,7 +53,7 @@ temporary directory of its own, with git standing in as the fixture under
 `fixtures` (`tests/workspaces`); and that every child it ran is reaped. -/
 def workspaceFailures (services : Job.Services) (fixtures : System.FilePath) : IO (List String) :=
   do
-  let before ← Ffi.processesPending
+  let before ← Editor.Test.Linked.pendingChildren
   let failed ←
     (Workspace.FinderContract.properties "/").filterMapM fun named =>
         withBase fun base => do
@@ -65,7 +64,7 @@ def workspaceFailures (services : Job.Services) (fixtures : System.FilePath) : I
           let outcome ← runOnTimers services (property.holds (gitOf property.world fixtures base))
           return if outcome == .finished true then none
             else some s!"{property.name} ({repr outcome})"
-  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  let reaped ← eventually (return (← Editor.Test.Linked.pendingChildren) == before)
   return failed.map (s!"the workspace finder over the process and file services: {·}") ++
       if reaped then [] else ["every child the workspace finder ran is reaped"]
 

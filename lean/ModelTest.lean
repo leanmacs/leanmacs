@@ -578,8 +578,9 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   runner over `twoBuffers` and the editor's models
   (`Editor.Test.sourceRunner`, `Editor/Test/Sources.lean`), and seen to
   report a source that writes and one that is refused. The files feature's
-  file source is held to it by `pathsChecks`, and the buffers feature's
-  buffer source by `bufferCommandChecks`;
+  file source is held to it by `pathsChecks`, the buffers feature's
+  buffer source by `bufferCommandChecks`, and the workspace's find-file and
+  find-in-project sources by `findFileChecks` and `findInProjectChecks`;
 - `keyHintSourceChecks`: the key hints' source
   (`Editor/Completion/Keys.lean`): a candidate of each kind of hint, its
   annotation and kind, a source of the category `key` that has filtered
