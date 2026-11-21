@@ -13,7 +13,8 @@ import Editor.WindowCheck.Real
 Lean owns the process. `Editor.Main.run` is what the executable's `main`
 calls: it acts on the mode the command line selects
 (`Editor/Executable.lean`, which pins the dispatch as a pure function),
-handing the hosts the packages and the config base it is given.
+handing the hosts the packages, the input scheme and the config base it is
+given.
 
 `editor demo` only shows the build works: it calls the Rust library and
 prints what comes back, and it runs one command against the library through
@@ -102,6 +103,28 @@ hand it to the elaborator with the directories its modules are found in
 the executable, one a package, and in a bundle the bundle's one. A set with
 no package beside the core's hands `Editor` alone.
 
+## The input scheme
+
+The hosts run the input scheme they are handed (`Headless.main`,
+`Window.main`), and `run` hands them the one its package set supplies: the
+generated root passes `run` the `scheme` of each entry module whose Lake
+package declares the keyword `editor-input-scheme`, in the order the
+packages register, and the last is the one run (`SchemePackage.chosen?`,
+`Editor/InputScheme.lean`, "The scheme a package supplies").
+
+A set that supplies none has an editor that refuses to start: the headless
+mode and the window mode print `editor: no input scheme is installed: no
+package of this editor's package set supplies one` on stderr and exit 1.
+So does `--probe`, so that a restart into such a set is given up before the
+session is handed over, with that line as its reason
+(`Editor/Restore/Restart.lean`), and does not leave the user with an editor
+that will not start. `demo`, `--version` and `window-check` run no scheme
+and are not refused. Which modes are refused is pure
+(`Executable.Mode.needsScheme`, pinned by `ModelTest.executableModeChecks`);
+the choice and the text by `ModelTest.schemePackageChecks`; and the gate
+runs the empty set's editor, which has no scheme once evil is a package
+(`mise run ffi-test`).
+
 ## The generated files
 
 A config directory is a Lake package, so that Lean's language server checks
@@ -148,9 +171,17 @@ def demo : IO UInt32 := do
   return if sum == 5 && !leanOnMain && serviceOnMain && appended then 0 else 1
 
 /-- Runs the mode the command line `args` selects (`Executable.mode`),
-with `packages` as the packages the hosts register and `base` as the
-modules config is elaborated on ("The base", in the module docs). The match
-is exhaustive on purpose: it must act on every mode.
+with `packages` as the packages the hosts register, `schemes` as the input
+schemes the package set supplies and `base` as the modules config is
+elaborated on ("The base", in the module docs). The match is exhaustive on
+purpose: it must act on every mode.
+
+A mode that runs an input scheme (`Executable.Mode.needsScheme`: the
+headless mode, the window mode and the probe) is refused when `schemes` is
+empty: `editor: ` and `SchemePackage.noneInstalled` on stderr, and status
+1, before the mode reads its command line ("The input scheme", in the
+module docs). Otherwise the hosts run the scheme chosen of `schemes`
+(`SchemePackage.chosen?`).
 
 With `demo`, the demonstration. With `--version`, the build's version, build
 ID and commit on stdout and status 0, or, when its bundle's `Info.plist`
@@ -166,9 +197,18 @@ command line it does not take. The headless mode and the window mode are
 each handed `packages`, `base` and `origin`, the set's Lake name and the
 toolchain pin, from which they generate a config directory's lakefile and
 toolchain file ("The generated files", in the module docs). -/
-def run (packages : Array Package) (base : Array Lean.Name) (origin : Config.LakePackage.Origin)
-    (args : List String) : IO UInt32 := do
-  match Editor.Executable.mode args with
+def run (packages : Array Package) (schemes : Array SchemePackage) (base : Array Lean.Name)
+    (origin : Config.LakePackage.Origin) (args : List String) : IO UInt32 := do
+  let mode := Editor.Executable.mode args
+  let refused : IO UInt32 := do
+    IO.eprintln s!"editor: {SchemePackage.noneInstalled}"
+    return 1
+  let chosen := SchemePackage.chosen? schemes
+  -- Before the mode reads the rest of its command line, so that a usage
+  -- error does not hide it.
+  if mode.needsScheme && chosen.isNone then
+    return ← refused
+  match mode with
   | .demo =>
     demo
   | .version =>
@@ -194,12 +234,14 @@ def run (packages : Array Package) (base : Array Lean.Name) (origin : Config.Lak
         pure ()
     pure 0
   | .headless launch rest =>
+    let some supplied := chosen | refused
     let launch := { launch with running := some (← IO.appPath) }
-    Editor.Headless.main packages base origin launch rest
+    Editor.Headless.main supplied.scheme packages base origin launch rest
   | .windowCheck options =>
     Editor.WindowCheck.main options
   | .window launch arguments =>
+    let some supplied := chosen | refused
     let launch := { launch with running := some (← IO.appPath) }
-    Editor.Window.main packages base origin launch arguments
+    Editor.Window.main supplied.scheme packages base origin launch arguments
 
 end Editor.Main

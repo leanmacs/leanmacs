@@ -52,6 +52,16 @@ def executableModeChecks : List Check :=
         pure
           (Executable.mode ["--probe"] == .probe {} &&
             Executable.mode ["--probe", "x"] == .window {} ["--probe", "x"] &&
-            Executable.mode ["x", "--probe"] == .window {} ["x", "--probe"]) }]
+            Executable.mode ["x", "--probe"] == .window {} ["x", "--probe"]) },
+    { name :=
+        "the headless mode, the window mode and the probe need an input scheme; the demonstration, the version and the keyboard check do not"
+      run :=
+        pure
+          ((Executable.Mode.headless {} []).needsScheme &&
+            (Executable.Mode.window {} []).needsScheme &&
+            (Executable.Mode.probe {}).needsScheme &&
+            !Executable.Mode.demo.needsScheme &&
+            !Executable.Mode.version.needsScheme &&
+            !(Executable.Mode.windowCheck []).needsScheme) }]
 
 end ModelTest

@@ -2,15 +2,22 @@ import Editor.Event
 import Editor.InputScheme
 import Editor.InputScheme.Test
 import Editor.Invocation
+import Editor.Loop
+import Editor.Loop.Driver
+import Editor.Package
 import Editor.Scene
+import Editor.Setup
+import Editor.Test.Hosted
 import Editor.Test.Keys
+import Editor.Test.Models
 import Editor.Text
 import ModelTest.Check
 
 /-!
 # Model tests: `Editor/InputScheme.lean`
 
-The model tests of `Editor/InputScheme.lean`: `schemeChecks`. The root module
+The model tests of `Editor/InputScheme.lean`: `schemeChecks`, and
+`schemePackageChecks`, the scheme a package supplies. The root module
 `ModelTest` runs them; its module doc says what each shows.
 -/
 
@@ -232,5 +239,91 @@ def schemeHintChecks : List Check :=
         pure
           (bound.hint == { key := "C-s", leads := .binding (some "Save") } &&
             named.hint == { key := "SPC", leads := .prefix (some "file") 3 }) }]
+
+/-- What the hand-written scheme `letters` remembers: how many keys it has
+been handed. It is the scheme's own state type, which no other scheme has. -/
+structure LettersState where
+  /-- The keys handed so far. -/
+  seen : Nat := 0
+
+/-- The hand-written scheme's own table: the key `x` runs the command
+`greet`, and no other key is bound. -/
+def lettersTable : List (Key × String) :=
+  [(charKey "x", "greet")]
+
+/-- An input scheme written here, by hand: its own state, a command's name
+as its binding, and its own table in place of the keymaps it is handed. A
+key of the table yields an invocation of its command, and every other key
+nothing. -/
+def letters : InputScheme :=
+  { State := LettersState, Binding := String, init := {}
+    step := fun _ _ state key =>
+      ({ seen := state.seen + 1 },
+        (lettersTable.find? (·.1 == key)).map fun (_, name) => { command := name })
+    pending := fun _ => []
+    command := id }
+
+/-- A package written here: the command `greet`, which inserts `hello` at
+the selections of the view it is called for. -/
+def greetPackage : Package :=
+  { name := "greeter"
+    setup :=
+      commandWith "greet" fun call => discard <| call.target.window.id.insertAtSelections "hello" }
+
+/-- What the buffer of view 0 holds after each of `typed`, fed in order as
+key presses to a driver of the scheme `supplied` gives over the initial
+state, with what `greetPackage` registers, installed as a host installs it;
+`none` if making the state was refused. -/
+def greeted (supplied : SchemePackage) (typed : List Key) : Option (List (Option String)) :=
+  let registry := hostedRegistry #[greetPackage]
+  let keys : Loop.Keys supplied.scheme :=
+    { command? := fun name =>
+        (registry.find? name).bind fun entry =>
+          match entry.registration.action with
+          | .call run =>
+            some fun call => do
+              run call
+              return none
+          | _ => none
+      registered := registry.registered }
+  match Loop.Driver.over keys (fun _ => none) (EditorState.initial ⟨640, 480⟩) editorModel with
+  | .error _ => none
+  | .ok driver =>
+    some
+      (typed.foldl
+          (fun (driver, texts) key =>
+            let driver := (driver.feed { event := press key, stamp := 0 }).1
+            (driver, texts ++ [driver.model.texts.contents[0]?]))
+          (driver, [])).2
+
+/-- The checks of the scheme a package supplies (`SchemePackage`,
+`Editor/InputScheme.lean`): which of the supplied schemes an editor runs,
+what it says when none is supplied, and the loop driven by a scheme written
+here and supplied as a package's. -/
+def schemePackageChecks : List Check :=
+  [{  name :=
+        "with no scheme package none is chosen, and the refusal says no input scheme is installed"
+      run :=
+        pure
+          ((SchemePackage.chosen? #[]).isNone &&
+            SchemePackage.noneInstalled ==
+              "no input scheme is installed: no package of this editor's package set supplies one") },
+    { name := "of two scheme packages the one supplied last is chosen"
+      run :=
+        let supplied : Array SchemePackage :=
+          #[{ name := "first", scheme := TestScheme.scheme },
+            { name := "letters", scheme := letters }]
+        pure
+          ((SchemePackage.chosen? supplied).map (·.name) == some "letters" &&
+            (SchemePackage.chosen? supplied.reverse).map (·.name) == some "first") },
+    { name := "a hand-written input scheme registered as a scheme package drives the loop"
+      run :=
+        pure <|
+          match SchemePackage.chosen? #[{ name := "letters", scheme := letters }] with
+          | none => false
+          | some supplied =>
+            supplied.name == "letters" &&
+              greeted supplied [charKey "y", charKey "x", charKey "y"] ==
+                some [some "", some "hello", some "hello"] }]
 
 end ModelTest

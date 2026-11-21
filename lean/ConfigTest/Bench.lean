@@ -760,8 +760,9 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
               #[{ name := "noop", action := .plain (pure ()) },
                 { name := "make-buffers", action := .plain makeWordBuffers }] })
     let shipped :=
-      Headless.shippedOver packages #[`Editor] sysroot (ModuleLookup.searchPath oleanDir) "" emit
-        services published (← Job.HeldSnapshots.new) (← Config.Elaborate.ModuleFiles.temporary)
+      Headless.shippedOver Vim.Default.scheme packages #[`Editor] sysroot
+        (ModuleLookup.searchPath oleanDir) "" emit services published (← Job.HeldSnapshots.new)
+        (← Config.Elaborate.ModuleFiles.temporary)
     let host ←
       Headless.start
           { shipped with

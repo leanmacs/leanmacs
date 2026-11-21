@@ -191,6 +191,26 @@ The scheme that ships is not here: it is the Vim scheme
 (`Editor/InputScheme/Vim/Default.lean`). `Editor/InputScheme/Test.lean` is
 the test scheme, published for other modules' tests.
 
+## The scheme a package supplies
+
+The scheme an editor runs comes from its package set
+(`docs/design/packages.md`, "Input schemes"): a Lake package whose lakefile
+declares the keyword `editor-input-scheme` declares `scheme :
+SchemePackage` in its entry module, beside `packages`, and the generated
+root hands the executable every such value, in the order the packages
+register (`Editor.Main.run`). The one run is the last (`SchemePackage.chosen?`),
+and an editor handed none refuses to start, saying
+`SchemePackage.noneInstalled`.
+
+It is a declaration of the entry module and not an extension point or a
+setup request, because a scheme is in `Type 1` (it carries its `State` and
+`Binding` types): an extension point's values travel as `Dynamic`, which
+holds values of types in `Type`, and a `Package` is plain data in `Type`.
+And the host's loop is typed by its scheme (`Loop scheme`), so the scheme is
+chosen before any package's `setup` runs. Pinned by
+`ModelTest.schemePackageChecks`, the third of which drives the loop with a
+scheme written in the test.
+
 ## Where an addition goes
 
 | Addition | Where |
@@ -418,5 +438,25 @@ def InputScheme.feed (scheme : InputScheme) (maps : ViewId → List (Keymap sche
       let (next, yielded) := scheme.step maps view state key
       (next, yields ++ [yielded]))
     (state, [])
+
+/-- The input scheme a package supplies, with the name it is known by
+("The scheme a package supplies", in the module docs). It is in `Type 1`,
+as a scheme is. -/
+structure SchemePackage where
+  /-- The scheme's name, for what an editor says of it. -/
+  name : String
+  /-- The scheme. -/
+  scheme : InputScheme
+
+/-- The scheme an editor runs, of those its package set supplies, in the
+order their packages register: the last one, as the latest value of a
+choice is the one in force; none when none is supplied. -/
+def SchemePackage.chosen? (supplied : Array SchemePackage) : Option SchemePackage :=
+  supplied.back?
+
+/-- What an editor whose package set supplies no input scheme says when it
+refuses to start. -/
+def SchemePackage.noneInstalled : String :=
+  "no input scheme is installed: no package of this editor's package set supplies one"
 
 end Editor

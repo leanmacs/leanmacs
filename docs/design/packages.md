@@ -117,7 +117,8 @@ could move later.
   is named `editor-core` for this: named `editor`, its entry module would
   be `Editor.EditorPackage`, under the namespace that check rules.
 - **The executable's body is a core module, `Editor.Main`**
-  (`lean/Editor/Main.lean`). `Editor.Main.run` takes the packages and the
+  (`lean/Editor/Main.lean`). `Editor.Main.run` takes the packages, the
+  input schemes the set supplies and the
   config base as values and acts on the mode the command line selects; the
   demonstration is there too. It is a module of the host, internal, and it
   imports neither a package nor the config base. `Editor.Core` imports it,
@@ -126,7 +127,7 @@ could move later.
   `lean/` defines `main` for the editor. The package-set build writes the
   root from the set's Lake packages: it imports the core's base,
   `Editor.Main` and each entry module, and its `main` is one call of
-  `Editor.Main.run`, with the packages and the names of the base's modules
+  `Editor.Main.run`, with the packages, the schemes and the names of the base's modules
   ("The package set and its build", below).
 - **A root that links the elaborator imports the config base.** The
   elaborator adapter (`Editor.Config.Elaborate`) imports the base's modules
@@ -335,14 +336,18 @@ import AtPoint.EditorPackage
 import Languages.EditorPackage
 
 def main (args : List String) : IO UInt32 :=
-  Editor.Main.run (EditorCore.EditorPackage.packages ++ Files.EditorPackage.packages ++ Buffers.EditorPackage.packages ++ Workspace.EditorPackage.packages ++ ProjectSearch.EditorPackage.packages ++ WorkingSet.EditorPackage.packages ++ Shell.EditorPackage.packages ++ VersionControl.EditorPackage.packages ++ Completion.EditorPackage.packages ++ ModeLine.EditorPackage.packages ++ Minibuffer.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages ++ ExecuteCommand.EditorPackage.packages ++ BindingSearch.EditorPackage.packages ++ Compile.EditorPackage.packages ++ AtPoint.EditorPackage.packages ++ Languages.EditorPackage.packages) #[`Editor, `Files.EditorPackage, `Buffers.EditorPackage, `Workspace.EditorPackage, `ProjectSearch.EditorPackage, `WorkingSet.EditorPackage, `Shell.EditorPackage, `VersionControl.EditorPackage, `Completion.EditorPackage, `ModeLine.EditorPackage, `Minibuffer.EditorPackage, `ShippedThemes.EditorPackage, `ExecuteCommand.EditorPackage, `BindingSearch.EditorPackage, `Compile.EditorPackage, `AtPoint.EditorPackage, `Languages.EditorPackage] { setName := "default-set", pin := "leanprover/lean4:v4.35.0\n" } args
+  Editor.Main.run (EditorCore.EditorPackage.packages ++ Files.EditorPackage.packages ++ Buffers.EditorPackage.packages ++ Workspace.EditorPackage.packages ++ ProjectSearch.EditorPackage.packages ++ WorkingSet.EditorPackage.packages ++ Shell.EditorPackage.packages ++ VersionControl.EditorPackage.packages ++ Completion.EditorPackage.packages ++ ModeLine.EditorPackage.packages ++ Minibuffer.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages ++ ExecuteCommand.EditorPackage.packages ++ BindingSearch.EditorPackage.packages ++ Compile.EditorPackage.packages ++ AtPoint.EditorPackage.packages ++ Languages.EditorPackage.packages) #[EditorCore.EditorPackage.scheme] #[`Editor, `Files.EditorPackage, `Buffers.EditorPackage, `Workspace.EditorPackage, `ProjectSearch.EditorPackage, `WorkingSet.EditorPackage, `Shell.EditorPackage, `VersionControl.EditorPackage, `Completion.EditorPackage, `ModeLine.EditorPackage, `Minibuffer.EditorPackage, `ShippedThemes.EditorPackage, `ExecuteCommand.EditorPackage, `BindingSearch.EditorPackage, `Compile.EditorPackage, `AtPoint.EditorPackage, `Languages.EditorPackage] { setName := "default-set", pin := "leanprover/lean4:v4.35.0\n" } args
 ```
 
 with a module doc and a doc string, since it is built with the core's Lean
 options and a warning in it fails the build. It imports each entry module
 of the set in order and appends their `packages` in that order; a set of
 the core alone (`tests/empty-set`) passes the core's array as it is and
-the base `Editor` alone. The last value before the arguments is what the
+the base `Editor` alone. The array after the packages holds the `scheme`
+of each entry module whose Lake package declares the keyword
+`editor-input-scheme`, in that order: the input schemes the set supplies,
+of which the editor runs the last ("Input schemes", below). The core's
+Lake package declares it while evil is in the core. The last value before the arguments is what the
 build says of the editor for the files it generates in a config directory
 ("A config directory requires the core and the set", below): the set's Lake name and the
 text of the core's `lean-toolchain`. The gate requires the default set's root to
@@ -3112,21 +3117,50 @@ Its tests moved with it, its kit and doubles among them.
 
 ## Input schemes
 
-An input scheme is not registered by a package today: it is the host's
-type parameter (`Headless.Collaborators σ scheme`), and the executable's
-hosts are typed by the Vim scheme with its default states and bindings
-(`Vim.Default.scheme`, named in `lean/Editor/Headless.lean`). So the core
-imports the feature `evil` for it, and the completeness check of themes
-reads the Vim states' cursor faces from it (`lean/Editor/Themes/Check.lean`).
+**The input scheme comes from a package of the set, and an editor whose
+set supplies none refuses to start** (decided 2026-11-17). It does not
+fall back to a built-in scheme: a set with no scheme has no way to turn a
+key into a command, and saying so at start-up is clearer than an editor
+that opens and takes no input.
 
-**When evil moves out of the core, the scheme comes from a package, and the
-editor refuses to start with no input-scheme package in the set** (decided
-2026-11-17). It does not fall back to a built-in scheme: a set with no
-scheme has no way to turn a key into a command, and saying so at start-up
-is clearer than an editor that opens and takes no input. How a package
-supplies a scheme, and what the refusal says, are that move's work; this
-phase records the decision and the edges it will have to cut (the `evil`
-entry above).
+- **How a package supplies one.** A Lake package whose lakefile declares
+  the keyword `editor-input-scheme` declares `scheme : Editor.SchemePackage`
+  in its entry module, beside `packages` (`lean/Editor/InputScheme.lean`,
+  "The scheme a package supplies"). Lake is asked for the keyword, as for
+  `editor-interface`, so the build reads no source. The generated root
+  hands `Editor.Main.run` the `scheme` of each such entry module, in the
+  order the packages register, and the editor runs the last
+  (`SchemePackage.chosen?`). A keyword with no `scheme` fails the generated
+  root's build, naming `<P>.EditorPackage.scheme`; a keyword on a package
+  with no entry module fails the build's facet, naming the package.
+- **Why a declaration of the entry module, and not an extension point or a
+  setup request.** A scheme is in `Type 1`: it carries its `State` and
+  `Binding` types. An extension point's values travel as `Dynamic`, which
+  holds values of types in `Type`, and a `Package` is plain data in `Type`.
+  And the host's loop is typed by its scheme (`Loop scheme`), so the scheme
+  is chosen before any package's `setup` runs, and a config reload could
+  not replace it.
+- **The hosts are handed their scheme.** `Headless.main`, `Headless.shipped`
+  and `Window.host` take the scheme as their first argument and are typed
+  by it (`Headless.Collaborators β σ scheme`); no host module names a
+  scheme.
+- **The refusal.** With no scheme supplied, the headless mode, the window
+  mode and `--probe` print `editor: no input scheme is installed: no
+  package of this editor's package set supplies one` on stderr and exit 1
+  (`Executable.Mode.needsScheme`, `lean/Editor/Main.lean`, "The input
+  scheme"). The probe refuses so that a restart into such a set is given up
+  before the session is handed over (`lean/Editor/Restore/Restart.lean`).
+  Checking at the set's build that a set has a scheme is left to later
+  ([extension-points.md](extension-points.md), "A required extension
+  point").
+- **Today the core's Lake package supplies it**: evil is still in the
+  core, so `package «editor-core»` declares the keyword and
+  `EditorCore.EditorPackage.scheme` is `Evil.scheme`, the Vim scheme over
+  its default states and bindings (`lean/Editor/Evil/Compiled.lean`). The
+  keyword and the declaration move with evil when it becomes a package,
+  and the set of the core alone then has no scheme. The completeness check
+  of themes still reads the Vim states' cursor faces
+  (`lean/Editor/Themes/Check.lean`).
 
 ## The core imports check
 

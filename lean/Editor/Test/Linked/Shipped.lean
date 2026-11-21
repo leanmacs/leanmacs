@@ -6,6 +6,7 @@ import Editor.Ffi.Syntax
 import Editor.File.Model
 import Editor.Headless
 import Editor.Highlight
+import Editor.InputScheme.Vim.Default
 import Editor.Job.Fake
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
@@ -116,8 +117,8 @@ def withVimHost (context : HostContext) (files : List (String × String)) (check
       | none =>
         pure staged.services
     let shipped :=
-      Headless.shippedOver (#[listingsPackage] ++ packages) #[`Editor] "" [] "" staged.emit services
-        staged.published staged.held (← Config.Elaborate.ModuleFiles.temporary)
+      Headless.shippedOver Vim.Default.scheme (#[listingsPackage] ++ packages) #[`Editor] "" [] ""
+        staged.emit services staged.published staged.held (← Config.Elaborate.ModuleFiles.temporary)
     let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
       let real ← RealSyntaxTree.new snapshots
       return fun request => do

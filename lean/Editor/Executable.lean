@@ -34,6 +34,11 @@ is pure, so `model-test` pins it (`ModelTest.executableModeChecks`), and
   `window-check` is opened as `./demo`, `./headless` or `./window-check`,
   and `editor demo x` is the window mode's, which refuses two files.
 
+`Mode.needsScheme` says which modes run an input scheme: the headless
+mode, the window mode and the probe. `Editor.Main.run` refuses those when
+its package set supplies no scheme (`Editor/InputScheme.lean`, "The scheme
+a package supplies").
+
 It imports only the launch flags' leaf module, and `Editor` does not import
 it, so it adds nothing to what config is elaborated on.
 -/
@@ -67,5 +72,14 @@ def mode (arguments : List String) : Mode :=
   | "headless" :: rest => .headless launch rest
   | "window-check" :: options => .windowCheck options
   | arguments => .window launch arguments
+
+/-- Whether the mode runs an input scheme, so that the executable refuses
+it when its package set supplies none (`Editor.Main.run`): the headless
+mode and the window mode run the loop, and the probe says whether a start
+would succeed. The demonstration, the version and the keyboard check run no
+scheme. -/
+def Mode.needsScheme : Mode → Bool
+  | .headless .. | .window .. | .probe .. => true
+  | .demo | .version | .windowCheck .. => false
 
 end Editor.Executable

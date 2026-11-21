@@ -155,8 +155,9 @@ def main (arguments : List String) : IO UInt32 := do
     -- The host first: it makes the process's one table of waits and starts
     -- its one pump, which the services of the other checks then share.
     let host ←
-      Editor.Headless.shipped setPackages #[`Editor] sysroot [oleans] hostConfigDirectory
-          (fun line => printed.modify (·.push line)) .headless (fakeClock := true)
+      Editor.Headless.shipped Editor.Vim.Default.scheme setPackages #[`Editor] sysroot [oleans]
+          hostConfigDirectory (fun line => printed.modify (·.push line)) .headless (fakeClock :=
+          true)
     let services ← Editor.Test.Linked.Services.over host.services.completions
     let checks :=
       [hostCheck host printed] ++ CompileTest.compileRunChecks services.jobs fixtures ++

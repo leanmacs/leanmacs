@@ -9,6 +9,7 @@ import Editor.Evil.Scroll
 import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
 import Editor.InputScheme.Vim
+import Editor.InputScheme.Vim.Default
 import Editor.Package
 
 /-!
@@ -64,6 +65,17 @@ handed, not what config calls: `Editor.lean` imports the commands, the
 motions (`Editor/Evil/Motions.lean`) and the text objects
 (`Editor/Evil/Objects.lean`), so that config can call them, and not this, which is the one module of evil's it leaves out.
 
+## The scheme
+
+`Evil.scheme` is the input scheme this feature supplies an editor: the Vim
+scheme over its default states and bindings (`Vim.Default.scheme`), named
+`vim`, as a `SchemePackage` (`Editor/InputScheme.lean`, "The scheme a
+package supplies"). The entry module of the Lake package that holds evil
+declares it as its `scheme`. It is here, beside `package`, and not in the
+entry module: an entry module imports package modules and nothing else
+(`tools/host-imports-check.sh`), and this is the package module that
+imports the default tables.
+
 Pinned by `ModelTest.evilMotionChecks`, `ModelTest.evilStateChecks` and
 `ModelTest.evilInsertChecks`, on the models, the scroll commands by
 `ModelTest.viewChecks`, and the clipboard commands by
@@ -118,5 +130,10 @@ def package : Package :=
       commandWith "jump-backward" jumpBackward
       commandWith "jump-forward" jumpForward
       commandWith "set-mark" setMark }
+
+/-- The input scheme evil supplies: the Vim scheme over its default states
+and bindings ("The scheme", in the module docs). -/
+def scheme : SchemePackage :=
+  { name := "vim", scheme := Vim.Default.scheme }
 
 end Editor.Evil

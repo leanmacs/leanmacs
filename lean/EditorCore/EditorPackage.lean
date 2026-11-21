@@ -56,6 +56,17 @@ to live in a package's module, or the check would forbid the host that
 helper too. Tests import it for the list (`ModelTest.packageSetChecks`,
 `ConfigTest.shippedChecks`).
 
+## The scheme
+
+`EditorCore.EditorPackage.scheme` is the input scheme the core's Lake
+package supplies: `Evil.scheme`, the Vim scheme (`Editor/Evil/Compiled.lean`,
+"The scheme"). The core's lakefile declares the keyword
+`editor-input-scheme`, so the generated root hands it to `Editor.Main.run`
+beside the packages (`docs/design/packages.md`, "Input schemes"), and the
+hosts run it. It adds no import here: the value is a package module's.
+When evil moves out into a Lake package of its own, the keyword and this
+declaration move to that package's lakefile and entry module.
+
 ## The order
 
 A host registers the packages in the order of the array, and of two
@@ -135,5 +146,10 @@ them ("The order", in the module docs). -/
 def packages : Array Package :=
   #[Evil.package, Ex.package, FrameCommands.package, Menu.package, WindowCommands.package,
     TabCommands.package, Themes.package, Restore.package, PackageSet.package]
+
+/-- The input scheme the core's Lake package supplies ("The scheme", in the
+module docs): evil's, the Vim scheme. -/
+def scheme : SchemePackage :=
+  Evil.scheme
 
 end EditorCore.EditorPackage

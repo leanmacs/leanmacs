@@ -2004,8 +2004,8 @@ wait 2" with
                 removed.modify (·.push made)
           let staged := stage.collaborators
           let shipped :=
-            Headless.shippedOver #[] #[`Editor] "" [] directory.toString staged.emit staged.services
-              staged.published staged.held files
+            Headless.shippedOver Vim.Default.scheme #[] #[`Editor] "" [] directory.toString
+              staged.emit staged.services staged.published staged.held files
           shipped.dispose
           let before ← removed.get
           discard <| files.directory
@@ -2405,8 +2405,8 @@ def shippedChecks (_ : Unit) : List Check :=
         -- written, and no config is loaded here.
         let files ← Config.Elaborate.ModuleFiles.temporary
         let over (stateDirectory : Option System.FilePath) :=
-          (Headless.shippedOver #[] #[`Editor] "" [] "" (fun _ => pure ()) services published held
-              files stateDirectory).hosting
+          (Headless.shippedOver Vim.Default.scheme #[] #[`Editor] "" [] "" (fun _ => pure ())
+              services published held files stateDirectory).hosting
         let given := ((over (some "/state")).start.runModel {}).1
         let none_ := ((over none).start.runModel {}).1
         return (match given, none_ with

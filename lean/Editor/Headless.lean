@@ -9,7 +9,6 @@ import Editor.Display.Real
 import Editor.Display.Recorder
 import Editor.Event.Queue
 import Editor.Headless.CommandLine
-import Editor.InputScheme.Vim.Default
 import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Pool
@@ -69,8 +68,9 @@ as before, so reload and job completion work as they did.
 
 - **The host is given its input scheme**, as a parameter of its
   collaborators' type (`Collaborators β σ scheme`), and its loop runs that one
-  (`Loop scheme`). The executable's is the Vim scheme over its default
-  states (`Vim.Default.scheme`); a test hands a host the test scheme.
+  (`Loop scheme`). The executable's is the one its package set supplies
+  (`Editor/Main.lean`, "The input scheme"); a test hands a host the test
+  scheme.
 - **The frame is made when the loop is first needed** (`Running.framed`):
   at the first event from the window input, the first command run by name
   or the first job's command to deliver, whichever comes first. The host
@@ -3276,8 +3276,9 @@ source, `emit` as the output and stderr as the log. Config is elaborated on
 caller with no set. Each module of it must be linked into the executable
 and found in `oleans`. It is an argument every caller writes, with no
 default: a host that fell back to `Editor` without a word would reject
-config that names a package's declarations. Its input scheme is the Vim scheme's default
-(`Vim.Default.scheme`), which is the host's type and no package's. Its
+config that names a package's declarations. Its input scheme is `scheme`,
+which is the host's type: the executable passes the one its package set
+supplies (`Editor/Main.lean`, "The input scheme"). Its
 display is the recorder and its clipboard its own, as a host's are by
 default.
 
@@ -3287,11 +3288,11 @@ register is said there and in each package's module.
 
 It is apart from `shipped`, which makes what it is over, so that the
 collaborators can be made with no pump started. -/
-def shippedOver (packages : Array Package) (base : Array Lean.Name) (sysroot : String)
-    (oleans : List String) (configDir : String) (emit : String → IO Unit) (services : Job.Services)
-    (published : Snapshots) (held : Job.HeldSnapshots) (files : Config.Elaborate.ModuleFiles)
-    (stateDirectory : Option System.FilePath := none) :
-    Collaborators Config.Elaborate.Base Config.Elaborate.Handle Vim.Default.scheme :=
+def shippedOver (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Name)
+    (sysroot : String) (oleans : List String) (configDir : String) (emit : String → IO Unit)
+    (services : Job.Services) (published : Snapshots) (held : Job.HeldSnapshots)
+    (files : Config.Elaborate.ModuleFiles) (stateDirectory : Option System.FilePath := none) :
+    Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme :=
   { elaborator :=
       Config.Elaborate.elaborator
         { sysroot, oleanDirs := oleans.map System.FilePath.mk, imports := base } files,
@@ -3311,7 +3312,8 @@ def reportedEnvironments (state : IO.Ref Process.Environments) (source : UInt64)
     (discard <| Ffi.postEvent .editor source 0 text : IO Unit).catchExceptions fun _ => pure ()
 
 /-- The collaborators the executable's hosts are made of, the headless
-mode's and the window mode's, with `packages` as the packages the host
+mode's and the window mode's, which run the input scheme `scheme`, with
+`packages` as the packages the host
 registers: `shippedOver` the library's timer service,
 file service, process service, watch service and diff service for the
 jobs, the library's matcher (`Fuzzy.real`), which the loop's match jobs ask,
@@ -3321,10 +3323,11 @@ Config is elaborated on `base`, which every caller names (`shippedOver`).
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
 queues ends. -/
-def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : String)
-    (oleans : List String) (configDir : String) (emit : String → IO Unit) (host : Process.Host)
-    (fakeClock : Bool := false) (stateDirectory : Option System.FilePath := none) :
-    IO (Collaborators Config.Elaborate.Base Config.Elaborate.Handle Vim.Default.scheme) := do
+def shipped (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Name)
+    (sysroot : String) (oleans : List String) (configDir : String) (emit : String → IO Unit)
+    (host : Process.Host) (fakeClock : Bool := false)
+    (stateDirectory : Option System.FilePath := none) :
+    IO (Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme) := do
   discard <| Job.Pool.warm Job.Pool.size warmPatience
   let completions ← Job.Completions.new
   discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
@@ -3349,7 +3352,7 @@ def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : Strin
   -- temporary directory, made when the first is written.
   let files ← Config.Elaborate.ModuleFiles.temporary
   let collaborators :=
-    shippedOver packages base sysroot oleans configDir emit
+    shippedOver scheme packages base sysroot oleans configDir emit
       { completions, timers
         files := Job.realFiles completions published.reader held
         processes := Job.realProcesses completions refused timers timed
@@ -3418,7 +3421,8 @@ def runningAt (origin : Config.LakePackage.Origin) (appPath : String) (configDir
   PackageSet.at appPath config (directory.map (origin.setName, ·)) coreDirectory sysroot data
       readFile fun path => System.FilePath.pathExists path
 
-/-- The headless mode of the executable, handed the packages its host
+/-- The headless mode of the executable, handed the input scheme its host
+runs, the packages its host
 registers, the base config is elaborated on (`Editor/Main.lean`, "The
 base") and the command line after
 `headless`: `editor headless [--render] [--generate] [<sysroot> <olean dir>]
@@ -3469,8 +3473,9 @@ executable's path; `main` reads that path and the record at the edge
 editor's (`Collaborators.workingDirectory`): where `:!` runs for a buffer
 with neither a workspace nor a file; no path of the command line is read
 against it. -/
-def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.LakePackage.Origin)
-    (launch : Restart.Launch) (arguments : List String) : IO UInt32 := do
+def main (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Name)
+    (origin : Config.LakePackage.Origin) (launch : Restart.Launch) (arguments : List String) :
+    IO UInt32 := do
   let appPath := (← IO.appPath).toString
   -- The record the build wrote beside the executable, read at the edge: a
   -- record that is not there, or cannot be read, names no directory.
@@ -3511,7 +3516,7 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
       IO.eprintln s!"editor: the headless render session could not be started: {reason}"
       return 1
   let shipped ←
-    shipped packages base sysroot oleans configDir IO.println .headless (fakeClock := true)
+    shipped scheme packages base sysroot oleans configDir IO.println .headless (fakeClock := true)
         (stateDirectory := state.map System.FilePath.mk)
   let workingDirectory ← IO.currentDir
   -- Only with `--generate` may the headless mode write into the config

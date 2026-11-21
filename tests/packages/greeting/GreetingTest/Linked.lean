@@ -83,8 +83,8 @@ def configCheck (sysroot oleans : String) : IO Bool := do
   let printed ← IO.mkRef (#[] : Array String)
   let directives ← IO.ofExcept ((Editor.Headless.script configScript).mapError IO.userError)
   let shipped ←
-    Editor.Headless.shipped setPackages #[`Editor] sysroot [oleans] configDirectory
-        (fun line => printed.modify (·.push line)) .headless (fakeClock := true)
+    Editor.Headless.shipped Editor.Vim.Default.scheme setPackages #[`Editor] sysroot [oleans]
+        configDirectory (fun line => printed.modify (·.push line)) .headless (fakeClock := true)
   let failure ←
     Editor.Headless.run
         { shipped with

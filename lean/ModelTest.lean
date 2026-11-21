@@ -891,6 +891,11 @@ need no model and no fake of a collaborator:
   strings: what the keys of a bound sequence yield, that an unbound key
   resets the scheme, which of two keymaps wins, the pending keys it
   reports, its self-insert, and the leaders in force;
+- `schemePackageChecks`: the scheme a package supplies (`SchemePackage`):
+  none is chosen of none, with what an editor says then, the last supplied
+  is chosen of two, and a scheme written by hand in the test, supplied as a
+  scheme package, drives the loop with a command a package written there
+  registers;
 - `schemeHintChecks`: what a scheme says can follow a pending prefix
   (`InputScheme.continuations`): nothing from a scheme that says nothing,
   the test scheme's list, and a continuation as a key hint;
@@ -1423,6 +1428,7 @@ def checks : List Check :=
     invocationChecks ++
     exLineChecks ++
     schemeChecks ++
+    schemePackageChecks ++
     schemeHintChecks ++
     schemeContractChecks ++
     continuationsContractChecks ++
