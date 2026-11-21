@@ -1,10 +1,12 @@
 //! The contract on the published fake, plain and tinted, and on
-//! rasterisers written to break each property: each must fail by that
-//! property's name, or the property could not see what it claims to.
+//! rasterisers written to break each rule: each must fail by that rule,
+//! under its property's name, or the rule could not see what it claims to.
 
 use std::collections::HashSet;
 
-use super::{BASELINE, BIN, Failure, Fixture, KINDS, LUMINANCE, PROPERTIES, SAME, SHAPE, check};
+use super::{
+    BASELINE, BIN, Failure, Fixture, KINDS, LUMINANCE, PROPERTIES, Rule, SAME, SHAPE, check,
+};
 use crate::fake::{FakeRasterizer, font};
 use crate::{GlyphImage, GlyphKey, GlyphRequest, Kind, Rasterize};
 
@@ -28,11 +30,6 @@ fn fake(tinted: bool) -> FakeRasterizer {
     }
 }
 
-/// The names of the properties `failures` holds.
-fn names(failures: &[Failure]) -> Vec<&'static str> {
-    failures.iter().map(|failure| failure.property).collect()
-}
-
 #[test]
 fn every_property_is_named_once() {
     for (index, one) in PROPERTIES.iter().enumerate() {
@@ -51,7 +48,7 @@ fn the_fake_holds_to_the_contract_plain_and_tinted() {
 /// What a rasteriser written to break a property does wrong.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Fault {
-    /// One byte more than its size.
+    /// One byte more than its size, but a space's nothing.
     WrongLength,
     /// A subpixel mask where a mask was asked for.
     SubpixelForMask,
@@ -68,6 +65,12 @@ enum Fault {
     TintedNoChange,
     /// Says it does not, and draws each bucket differently.
     UntintedChange,
+    /// Reads the luminance, and draws lighter text thinner: bucket 4 as
+    /// a tinted fake draws bucket 0, so black and white still differ.
+    Thinning,
+    /// Moves each bin as it should, and draws every bin but 0 with a
+    /// tenth less ink.
+    Fading,
 }
 
 /// The fake, with one fault.
@@ -84,7 +87,7 @@ impl Broken {
     /// A rasteriser with `fault`.
     fn new(fault: Fault) -> Self {
         Self {
-            inner: fake(fault == Fault::UntintedChange),
+            inner: fake(matches!(fault, Fault::UntintedChange | Fault::Thinning)),
             fault,
             count: 0,
         }
@@ -106,11 +109,18 @@ impl Rasterize for Broken {
                 },
                 ..*request
             },
+            Fault::Thinning => GlyphRequest {
+                key: GlyphKey {
+                    bucket: 4 - request.key.bucket,
+                    ..request.key
+                },
+                ..*request
+            },
             _ => *request,
         };
         let mut image = self.inner.rasterize(&asked)?;
         match self.fault {
-            Fault::WrongLength => image.data.push(1),
+            Fault::WrongLength if !image.data.is_empty() => image.data.push(1),
             Fault::SubpixelForMask if !request.key.subpixel => {
                 image.kind = Kind::Subpixel;
                 image.data = image.data.iter().flat_map(|byte| [*byte; 4]).collect();
@@ -121,6 +131,12 @@ impl Rasterize for Broken {
                 }
             }
             Fault::TopAtZero => image.top = 0,
+            // Every byte scaled alike keeps where the ink is centred.
+            Fault::Fading if request.key.bin > 0 => {
+                for byte in &mut image.data {
+                    *byte = (f64::from(*byte) * 0.9).round() as u8;
+                }
+            }
             _ => {}
         }
         Some(image)
@@ -135,21 +151,56 @@ impl Rasterize for Broken {
     }
 }
 
+/// The rules `failures` breaks.
+fn rules(failures: &[Failure]) -> HashSet<Rule> {
+    failures.iter().map(|failure| failure.rule).collect()
+}
+
+/// Each fault breaks the rule it is written to break, under that rule's
+/// property, and no rule but the few it cannot help breaking: a mask
+/// drawn in another kind has no coverage for the rules that read a mask's,
+/// and a counter of requests makes the buckets differ too. So no rule is
+/// seen only through another of its property. `Thinning` pins the falling
+/// ink of [`LUMINANCE`] and `Fading` the ink across the bins of [`BIN`]:
+/// with either rule's branch deleted from [`check`] its fault was seen to
+/// fail this test, and to pass it once the branch was put back.
 #[test]
-fn a_rasteriser_written_to_break_each_property_fails_by_its_name() {
-    for (fault, property) in [
-        (Fault::WrongLength, SHAPE),
-        (Fault::SubpixelForMask, KINDS),
-        (Fault::Counter, SAME),
-        (Fault::Still, BIN),
-        (Fault::Quarters, BIN),
-        (Fault::TopAtZero, BASELINE),
-        (Fault::TintedNoChange, LUMINANCE),
-        (Fault::UntintedChange, LUMINANCE),
+fn a_rasteriser_written_to_break_a_rule_fails_by_that_rule() {
+    for (fault, rule, property, also) in [
+        (Fault::WrongLength, Rule::Misshaped, SHAPE, &[][..]),
+        (
+            Fault::SubpixelForMask,
+            Rule::MaskNotMask,
+            KINDS,
+            &[Rule::BinNoInk, Rule::BelowBaseline, Rule::CentresApart],
+        ),
+        (
+            Fault::Counter,
+            Rule::SameTwice,
+            SAME,
+            &[Rule::SameFresh, Rule::UnreadBucketsDiffer],
+        ),
+        (Fault::Still, Rule::BinStep, BIN, &[]),
+        (Fault::Quarters, Rule::BinStep, BIN, &[]),
+        (Fault::Fading, Rule::BinInk, BIN, &[]),
+        (Fault::TopAtZero, Rule::BelowBaseline, BASELINE, &[]),
+        (Fault::TintedNoChange, Rule::BlackIsWhite, LUMINANCE, &[]),
+        (Fault::Thinning, Rule::InkFalls, LUMINANCE, &[]),
+        (
+            Fault::UntintedChange,
+            Rule::UnreadBucketsDiffer,
+            LUMINANCE,
+            &[],
+        ),
     ] {
         let failures = check(&mut || Box::new(Broken::new(fault)), &fixture());
+        let broken: HashSet<Rule> = also.iter().copied().chain([rule]).collect();
+        assert_eq!(rules(&failures), broken, "{fault:?}: {failures:#?}");
         assert!(
-            names(&failures).contains(&property),
+            failures
+                .iter()
+                .filter(|failure| failure.rule == rule)
+                .all(|failure| failure.property == property),
             "{fault:?}: {failures:#?}"
         );
     }
@@ -165,8 +216,22 @@ fn a_rasteriser_with_no_images_fails_where_it_has_none() {
         },
         &fixture(),
     );
-    for property in [SHAPE, BIN, BASELINE] {
-        assert!(names(&failures).contains(&property), "{failures:#?}");
+    let broken = [
+        (Rule::GlyphMissing, SHAPE),
+        (Rule::SpaceMissing, SHAPE),
+        (Rule::BinNoInk, BIN),
+        (Rule::CapitalMissing, BASELINE),
+    ];
+    assert_eq!(
+        rules(&failures),
+        broken.iter().map(|(rule, _)| *rule).collect(),
+        "{failures:#?}"
+    );
+    for failure in &failures {
+        assert!(
+            broken.contains(&(failure.rule, failure.property)),
+            "{failure:#?}"
+        );
     }
 }
 
@@ -174,6 +239,7 @@ fn a_rasteriser_with_no_images_fails_where_it_has_none() {
 fn a_failure_says_its_property_and_what_was_seen() {
     let failure = Failure {
         property: SHAPE,
+        rule: Rule::SpaceMissing,
         detail: "the space has no image".to_owned(),
     };
     assert_eq!(

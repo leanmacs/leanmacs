@@ -2,8 +2,9 @@
 //! real adapter are held to, and what the painter assumes of an image.
 //!
 //! [`check`] asks fresh rasterisers for the glyphs of a [`Fixture`] and
-//! returns the properties that fail, each by name with what was seen. The
-//! published fake runs it in this crate's tests; swash's adapter runs it in
+//! returns the properties that fail, each by name with the [`Rule`] of it
+//! that was broken and what was seen. The published fake runs it in this
+//! crate's tests; swash's adapter runs it in
 //! `editor-render-wgpu`'s tests, in the gate; Core Text's runs it on
 //! demand, on macOS (`mise run coretext-check`).
 //!
@@ -74,11 +75,79 @@ pub struct Fixture {
     pub hint: bool,
 }
 
-/// A property that failed, and what was seen.
+/// One rule of a property: the check a failure comes from, so that a test
+/// can tell one rule of a property from another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Rule {
+    /// [`SHAPE`]: `H` or `I` has an image at every bin.
+    GlyphMissing,
+    /// [`SHAPE`]: an image's data is its width by its height in its kind's
+    /// bytes.
+    Misshaped,
+    /// [`SHAPE`]: the space has an image.
+    SpaceMissing,
+    /// [`SHAPE`]: the space's image is of no size.
+    SpaceDraws,
+    /// [`KINDS`]: a mask asked for is a mask.
+    MaskNotMask,
+    /// [`KINDS`]: a subpixel mask asked for is not in colour.
+    SubpixelInColour,
+    /// [`SAME`]: a request asked twice gives one image.
+    SameTwice,
+    /// [`SAME`]: a request asked of a fresh rasteriser gives the same image.
+    SameFresh,
+    /// [`BIN`]: `H` has ink at every bin.
+    BinNoInk,
+    /// [`BIN`]: each bin moves the ink by the difference of the offsets.
+    BinStep,
+    /// [`BIN`]: the ink changes by at most [`BIN_INK`] across the bins.
+    BinInk,
+    /// [`BASELINE`]: at least [`ABOVE`] of a capital's ink is above the
+    /// baseline.
+    BelowBaseline,
+    /// [`BASELINE`]: `H` and `I` are centred within [`CENTRES`] of each
+    /// other.
+    CentresApart,
+    /// [`BASELINE`]: `H` and `I` have images.
+    CapitalMissing,
+    /// [`LUMINANCE`]: a rasteriser that reads it has an image in every
+    /// bucket.
+    BucketMissing,
+    /// [`LUMINANCE`]: the ink never falls as the text gets lighter.
+    InkFalls,
+    /// [`LUMINANCE`]: a rasteriser that reads it draws black and white
+    /// differently.
+    BlackIsWhite,
+    /// [`LUMINANCE`]: a rasteriser that does not read it draws every
+    /// bucket alike.
+    UnreadBucketsDiffer,
+}
+
+impl Rule {
+    /// The property it is a rule of ([`PROPERTIES`]).
+    pub fn property(self) -> &'static str {
+        match self {
+            Rule::GlyphMissing | Rule::Misshaped | Rule::SpaceMissing | Rule::SpaceDraws => SHAPE,
+            Rule::MaskNotMask | Rule::SubpixelInColour => KINDS,
+            Rule::SameTwice | Rule::SameFresh => SAME,
+            Rule::BinNoInk | Rule::BinStep | Rule::BinInk => BIN,
+            Rule::BelowBaseline | Rule::CentresApart | Rule::CapitalMissing => BASELINE,
+            Rule::BucketMissing
+            | Rule::InkFalls
+            | Rule::BlackIsWhite
+            | Rule::UnreadBucketsDiffer => LUMINANCE,
+        }
+    }
+}
+
+/// A property that failed, the rule of it that was broken, and what was
+/// seen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Failure {
     /// Which ([`PROPERTIES`]).
     pub property: &'static str,
+    /// Which of its rules.
+    pub rule: Rule,
     /// What was seen.
     pub detail: String,
 }
@@ -166,8 +235,12 @@ fn shaped(image: &GlyphImage) -> bool {
 /// was seen. An empty list is a pass.
 pub fn check(make: &mut dyn FnMut() -> Box<dyn Rasterize>, fixture: &Fixture) -> Vec<Failure> {
     let mut failures = Vec::new();
-    let mut fail = |property: &'static str, detail: String| {
-        failures.push(Failure { property, detail });
+    let mut fail = |rule: Rule, detail: String| {
+        failures.push(Failure {
+            property: rule.property(),
+            rule,
+            detail,
+        });
     };
 
     // Shape.
@@ -177,9 +250,12 @@ pub fn check(make: &mut dyn FnMut() -> Box<dyn Rasterize>, fixture: &Fixture) ->
             for subpixel in [false, true] {
                 for bin in 0..crate::SUBPIXEL_BINS {
                     match ask(&mut *rasterizer, fixture, key(glyph, bin, subpixel, 0)) {
-                        None => fail(SHAPE, format!("{name} at bin {bin} has no image")),
+                        None => fail(
+                            Rule::GlyphMissing,
+                            format!("{name} at bin {bin} has no image"),
+                        ),
                         Some(image) if !shaped(&image) => fail(
-                            SHAPE,
+                            Rule::Misshaped,
                             format!(
                                 "{name} at bin {bin} is {} by {} of {:?} with {} bytes",
                                 image.width,
@@ -194,9 +270,9 @@ pub fn check(make: &mut dyn FnMut() -> Box<dyn Rasterize>, fixture: &Fixture) ->
             }
         }
         match ask(&mut *rasterizer, fixture, key(fixture.space, 0, false, 0)) {
-            None => fail(SHAPE, "the space has no image".to_owned()),
+            None => fail(Rule::SpaceMissing, "the space has no image".to_owned()),
             Some(image) if image.width * image.height != 0 || !image.data.is_empty() => fail(
-                SHAPE,
+                Rule::SpaceDraws,
                 format!(
                     "the space is {} by {} with {} bytes",
                     image.width,
@@ -214,12 +290,18 @@ pub fn check(make: &mut dyn FnMut() -> Box<dyn Rasterize>, fixture: &Fixture) ->
         if let Some(image) = ask(&mut *rasterizer, fixture, key(fixture.h, 0, false, 0))
             && image.kind != Kind::Mask
         {
-            fail(KINDS, format!("a mask asked for is {:?}", image.kind));
+            fail(
+                Rule::MaskNotMask,
+                format!("a mask asked for is {:?}", image.kind),
+            );
         }
         if let Some(image) = ask(&mut *rasterizer, fixture, key(fixture.h, 0, true, 0))
             && image.kind == Kind::Color
         {
-            fail(KINDS, "a subpixel mask asked for is in colour".to_owned());
+            fail(
+                Rule::SubpixelInColour,
+                "a subpixel mask asked for is in colour".to_owned(),
+            );
         }
     }
 
@@ -231,11 +313,11 @@ pub fn check(make: &mut dyn FnMut() -> Box<dyn Rasterize>, fixture: &Fixture) ->
             let again = ask(&mut *rasterizer, fixture, asked);
             let fresh = ask(&mut *make(), fixture, asked);
             if first != again {
-                fail(SAME, format!("{asked:?} twice gives two images"));
+                fail(Rule::SameTwice, format!("{asked:?} twice gives two images"));
             }
             if first != fresh {
                 fail(
-                    SAME,
+                    Rule::SameFresh,
                     format!("{asked:?} on a fresh rasteriser gives another image"),
                 );
             }
@@ -253,7 +335,7 @@ pub fn check(make: &mut dyn FnMut() -> Box<dyn Rasterize>, fixture: &Fixture) ->
             .map(|image| image.as_ref().and_then(centre))
             .collect();
         match centres {
-            None => fail(BIN, "H has no ink at some bin".to_owned()),
+            None => fail(Rule::BinNoInk, "H has no ink at some bin".to_owned()),
             Some(centres) => {
                 let offset = |bin: u8| f64::from(key(fixture.h, bin, false, 0).offset());
                 for (bin, pair) in (1..crate::SUBPIXEL_BINS).zip(centres.windows(2)) {
@@ -261,7 +343,7 @@ pub fn check(make: &mut dyn FnMut() -> Box<dyn Rasterize>, fixture: &Fixture) ->
                     let step = offset(bin) - offset(bin - 1);
                     if (moved - step).abs() > BIN_TOLERANCE {
                         fail(
-                            BIN,
+                            Rule::BinStep,
                             format!(
                                 "from bin {} to {bin} the ink moves {moved:.3} px, not {step:.3} ({centres:.3?})",
                                 bin - 1
@@ -273,7 +355,10 @@ pub fn check(make: &mut dyn FnMut() -> Box<dyn Rasterize>, fixture: &Fixture) ->
                 let least = inks.iter().copied().fold(f64::INFINITY, f64::min);
                 let most = inks.iter().copied().fold(0.0, f64::max);
                 if most > least * (1.0 + BIN_INK) {
-                    fail(BIN, format!("the ink across the bins is {inks:.1?}"));
+                    fail(
+                        Rule::BinInk,
+                        format!("the ink across the bins is {inks:.1?}"),
+                    );
                 }
             }
         }
@@ -289,19 +374,19 @@ pub fn check(make: &mut dyn FnMut() -> Box<dyn Rasterize>, fixture: &Fixture) ->
                 let above = above_baseline(h);
                 if above < ABOVE {
                     fail(
-                        BASELINE,
+                        Rule::BelowBaseline,
                         format!("{:.1}% of H's ink is above the baseline", above * 100.0),
                     );
                 }
                 match (centre(h), centre(i)) {
                     (Some(at_h), Some(at_i)) if (at_h - at_i).abs() <= CENTRES => {}
                     (at_h, at_i) => fail(
-                        BASELINE,
+                        Rule::CentresApart,
                         format!("H's ink is centred at {at_h:.3?} px and I's at {at_i:.3?}"),
                     ),
                 }
             }
-            _ => fail(BASELINE, "H or I has no image".to_owned()),
+            _ => fail(Rule::CapitalMissing, "H or I has no image".to_owned()),
         }
     }
 
@@ -315,22 +400,25 @@ pub fn check(make: &mut dyn FnMut() -> Box<dyn Rasterize>, fixture: &Fixture) ->
         if reads {
             let inks: Vec<f64> = buckets.iter().flatten().map(ink).collect();
             if inks.len() != buckets.len() {
-                fail(LUMINANCE, "H has no image in some bucket".to_owned());
+                fail(
+                    Rule::BucketMissing,
+                    "H has no image in some bucket".to_owned(),
+                );
             } else if inks.windows(2).any(|pair| pair[1] < pair[0]) {
                 fail(
-                    LUMINANCE,
+                    Rule::InkFalls,
                     format!("the ink falls as the text gets lighter: {inks:.1?}"),
                 );
             }
             if buckets[0] == buckets[4] {
                 fail(
-                    LUMINANCE,
+                    Rule::BlackIsWhite,
                     "it reads the luminance, and black and white are one image".to_owned(),
                 );
             }
         } else if buckets.windows(2).any(|pair| pair[0] != pair[1]) {
             fail(
-                LUMINANCE,
+                Rule::UnreadBucketsDiffer,
                 "it does not read the luminance, and the buckets give different images".to_owned(),
             );
         }
