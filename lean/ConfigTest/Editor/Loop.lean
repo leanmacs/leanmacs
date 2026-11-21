@@ -400,6 +400,10 @@ def autoReloadChecks (context : Context) : List Check :=
                 return false
               unless ← rewriteFromOutside path new do
                 return false
+              -- "Within a second" is the criterion under test, over the real
+              -- watch service's coalescing window: real time on purpose, and
+              -- the poll's to move in phase 6. The session's own settles wait
+              -- for the reload's end (`Session.ask`).
               let (shown, saw) ← session.within 1000 (·.contains (viewLine new 0))
               unless shown.isSome do
                 throw (IO.userError s!"the rewrite was not shown within a second: {saw}")

@@ -42,7 +42,8 @@ import Editor.Watch
 Hosts over the real elaborator: a config file's header, a config held in
 memory and built once, files written into a directory, a stage and what compiled code hands it, a session of a host
 and what it printed (`Session`, with `Session.scene` and `Session.shown`), a
-host started over a stage or over files, and polling with a bound (`patience`,
+host started over a stage or over files, the guard of a check's waits for
+its host (`hangGuard`, `settled`), and polling with a bound (`patience`,
 `eventually`, `Session.within`). Shared by several test modules; it holds no
 checks of its own.
 -/
@@ -147,7 +148,9 @@ def writeConfig (directory : System.FilePath) (files : List (String × String)) 
 
 /-- How long a check waits, in milliseconds, for something that should happen
 at once. Only broken code takes this long, and the check then fails instead
-of hanging. -/
+of hanging. A check's waits for its host's reload or jobs have `hangGuard`
+in its place (`Session.ask`, `settled`); the polls (`eventually`) and the
+raw `host.settle patience` sites keep it, to move in a later sweep. -/
 def patience : Nat :=
   5000
 
@@ -155,7 +158,14 @@ def patience : Nat :=
 milliseconds: only a real hang trips it, even under heavy load. A check that
 reaches it fails, reported as a hang, never as a timing result; a check
 that pins a bound of the headless mode on purpose holds a reload or the
-editor thread for good and gives a short guard of its own. -/
+editor thread for good and gives a short guard of its own.
+
+Set from a measurement (2026-11-21, an 18-core Mac under 36 CPU hogs, the
+`yes` processes of `docs/design/concurrency.md`'s stress loop, config-test
+run five times under `taskpolicy -c utility`): the slowest settle of the
+real reload whose root first imports `Lean` (`moduleHostChecks`) took
+6502 ms (the others 5408, 5728, 5816 and 5946). The guard is the larger of
+120 000 ms and ten times that. -/
 def hangGuard : Nat :=
   120000
 
@@ -335,17 +345,33 @@ structure Session where
   watches : Job.FakeFileWatches
   /-- Every entry the host has logged, oldest first. -/
   log : IO.Ref (Array String)
+  /-- Where the check's waits for the host say a hang (`Headless.Host.waitWhile`):
+  stderr unless the check counts them. -/
+  waitHung : String → IO Unit := IO.eprintln
+  /-- What the check's waits for the host call as they are about to block
+  (`Headless.Host.waitWhile`): nothing unless the check lets a held step go
+  on it. -/
+  waitBlocked : String → IO Unit := fun _ => pure ()
+
+/-- Waits until `host`'s editor thread has handled everything sent so far
+and no reload is running: for the reload's end, however long a real
+elaboration takes, with `hangGuard` as a guard against a hang only. `false`
+at the guard, a hang said once through `waitHung`. -/
+def settled (host : Headless.Host) (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+  host.settle hangGuard (waitHung := waitHung) (waitBlocked := waitBlocked)
 
 namespace Session
 
 /-- Sends `requests` to the editor thread in order, and waits until it has
-handled them and no reload is running. Throws if that takes longer than
-`patience`. -/
+handled them and no reload is running (`settled`): for the reload's end,
+with the session's `waitHung` and `waitBlocked`. Throws a hang if the wait
+reaches `hangGuard`. -/
 def ask (session : Session) (requests : List Headless.Request) : IO Unit := do
   for request in requests do
     session.host.send request
-  unless ← session.host.settle patience do
-    throw (IO.userError "the editor thread did not settle")
+  unless ← settled session.host session.waitHung session.waitBlocked do
+    throw (IO.userError s!"a hang: the editor thread had not settled within {hangGuard} ms")
 
 /-- Replaces the text of the config file at `path` below the config
 directory, or adds it, with its header (`headed`). -/
@@ -370,12 +396,14 @@ end Session
 /-- Runs `check` against a host started on `stage`, inside the host's bracket
 (`Headless.withHost`), which returns only once the host's loop has ended,
 whether the check returned or threw. `false` if the check did not hold or
-the host did not settle after it. -/
-def onStage {β σ : Type} (stage : Stage β σ) (check : Headless.Host → Stage β σ → IO Bool) :
-    IO Bool :=
+the host did not settle after it, for the reload's end, `hangGuard` its
+guard against a hang (`waitHung`, `waitBlocked`). -/
+def onStage {β σ : Type} (stage : Stage β σ) (check : Headless.Host → Stage β σ → IO Bool)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
   Headless.withHost stage.collaborators (guard := patience) fun host => do
     let held ← check host stage
-    let wait ← host.await patience
+    let wait ← host.await hangGuard (waitHung := waitHung) (waitBlocked := waitBlocked)
     return held && (wait == .settled || wait == .ended)
 
 /-- Runs `check` against a host started on a stage of its own over
@@ -383,8 +411,11 @@ def onStage {β σ : Type} (stage : Stage β σ) (check : Headless.Host → Stag
 host. `false` if the check did not hold or the host did not stop. -/
 def staged {β σ : Type} (context : Context) (elaborator : Config.Elaborator β σ)
     (source : Config.Source) (check : Headless.Host → Stage β σ → IO Bool)
-    (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real) : IO Bool := do
-  onStage (← Stage.new context elaborator source compiled (fuzzy := fuzzy)) check
+    (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool := do
+  onStage (← Stage.new context elaborator source compiled (fuzzy := fuzzy)) check waitHung
+      waitBlocked
 
 /-- Runs `check` against a host started on a fresh temporary directory
 holding `files`, and stops the host. The host's elaborator is `around` the
@@ -395,23 +426,28 @@ def withHostOver (context : Context) (files : List (String × String))
       Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle →
         Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle)
     (through : Config.Source → Config.Source) (check : Session → IO Bool)
-    (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real) : IO Bool :=
+    (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeConfig directory files
     staged context (around context.elaborator) (through (Config.Directory.source directory))
         (fun host stage =>
           check
             { host, directory, output := stage.output, threads := stage.threads,
-              clock := stage.clock, watches := stage.watches, log := stage.log })
-        compiled fuzzy
+              clock := stage.clock, watches := stage.watches, log := stage.log, waitHung,
+              waitBlocked })
+        compiled fuzzy waitHung waitBlocked
 
 /-- Runs `check` against a host started on a fresh temporary directory
 holding `files`, with the real elaborator, and stops the host. `false` if the
 check did not hold or the host did not stop. The directory is removed. Its
 jobs ask `fuzzy` for the matcher, the library's unless a check holds it. -/
 def withHost (context : Context) (files : List (String × String)) (check : Session → IO Bool)
-    (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real) : IO Bool :=
-  withHostOver context files id id check compiled fuzzy
+    (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+  withHostOver context files id id check compiled fuzzy waitHung waitBlocked
 
 /-- Runs `body` in a fresh temporary directory, removed only once the
 library's services among `targets` have worked what was handed to them under

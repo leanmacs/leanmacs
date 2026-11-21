@@ -675,6 +675,13 @@ def fourFileConfig (a b c : String) (extra : String := "") : List (String × Str
         ("def setup : SetupM Unit := do\n  command \"a\" a\n  command \"b\" b\n  command \"c\" c\n" ++
           extra))]
 
+/-- A root that imports `Lean` and defines `greet`, which makes a text of a
+value of Lean's own (`Lean.Json`): a config file that first imports `Lean`
+makes the base grow for it. -/
+def leanGreetText : String :=
+  importing ["Lean"]
+    "def greet : EditorM Unit := do\n  discard <| createText (Lean.Json.arr #[Lean.Json.str \"v2\"]).compress\n"
+
 /-- The checks of config as modules through the headless host, with the
 real elaborator over files in a temporary directory: which files a reload
 elaborates after a change, a module that is not linked, and a base that
@@ -741,16 +748,41 @@ def moduleHostChecks (context : Context) : List Check :=
       run :=
         withHost context [("init.lean", greetText "v1" ++ setupText)] fun session => do
           session.ask [.reload]
-          session.write "init.lean"
-              (importing ["Lean"]
-                  "def greet : EditorM Unit := do\n  discard <| createText (Lean.Json.arr #[Lean.Json.str \"v2\"]).compress\n" ++
-                setupText)
+          session.write "init.lean" (leanGreetText ++ setupText)
           session.ask [.reload]
           session.ask [.run "greet", .show]
           return (← session.output.get) ==
               #["reload 1: installed, 1 files, 1 commands",
                 "reload 2: installed, 1 files, 1 commands", "run greet: ok", "commands: greet",
-                "text 0: \"\"", "text 1: \"[\\\"v2\\\"]\""] }]
+                "text 0: \"\"", "text 1: \"[\\\"v2\\\"]\""] },
+    { name :=
+        "a settle after a reload whose root first imports Lean waits for the reload's end: the reload is held at the gate until the settle is waiting on it, and the settle answers once it has installed"
+      run := do
+        -- The gate holds the root, `init`, before the real elaboration of
+        -- its `import Lean`, and opens only once the settle has blocked on
+        -- the running reload: the elaboration then runs for however long
+        -- it takes, and only a hang would reach the settle's guard. No
+        -- guard is 0, and the loop's end keeps its own.
+        let gate ← Gate.new (module := "init")
+        let said ← IO.mkRef (#[] : Array String)
+        let held ←
+          withHostOver context [("init.lean", leanGreetText ++ setupText)] gate.around id
+              (waitHung := fun line => said.modify (·.push line)) (waitBlocked := fun what => do
+              if what == "running work" then
+                gate.open)
+              fun session => do
+              -- Opened as the body ends too, so a failing run leaves no
+              -- reload held for the loop's end to wait on.
+              try
+                session.ask [.reload]
+                session.ask [.run "greet"]
+                let output ← session.output.get
+                return output == #["reload 1: installed, 1 files, 1 commands", "run greet: ok"]
+              finally
+                gate.open
+        let said ← said.get
+        let holding ← gate.holding.get
+        saw (held && said.isEmpty && holding) s!"held={held} said={said} holding={holding}" }]
 
 /-- The lines `event <source> 0` up to `event <source> <count - 1>`: what the
 host prints for a script of `count` events fed from a Rust thread. -/
@@ -1811,7 +1843,7 @@ wait 2" with
             Headless.run stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩,
                   ⟨4, .advance 10⟩, ⟨5, .join⟩]
-                patience
+                hangGuard
           let output ← stage.output.get
           -- Nothing is due, so the advance finds the host idle and stalls;
           -- its guard is a hang guard only, and nothing reaches it.
@@ -1924,11 +1956,39 @@ wait 2" with
                       { logical := .character "a", physical := .code "KeyA"
                         modifiers := { shift := true, control := true } }⟩,
                   ⟨4, .request (.run "greet")⟩, ⟨5, .key { logical := .named .escape }⟩]
-                patience
+                hangGuard
           return failure == none &&
               (← stage.output.get) ==
                 #["reload 1: installed, 2 files, 1 commands", "key arrived: a KeyA shift+control",
                   "run greet: ok", "key arrived: <Escape> - -"] },
+    { name :=
+        "a run's settle waits for the reload's end: the reload is held at the gate until the settle has blocked on it, and the run goes on once it has installed, saying no hang"
+      run := do
+        let gate ← Gate.new (module := "Config.Greet")
+        IO.FS.withTempDir fun directory => do
+            writeConfig directory greetConfig
+            let stage ←
+              Stage.new context (gate.around context.elaborator) (Config.Directory.source directory)
+            let said ← IO.mkRef (#[] : Array String)
+            try
+              -- Only the settle's block on the running reload opens the gate:
+              -- the reload then installs, however long it takes.
+              let failure ←
+                Headless.run stage.collaborators
+                    #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.run "greet")⟩] hangGuard
+                    (waitHung := fun line => said.modify (·.push line)) (waitBlocked := fun what =>
+                    do
+                    if what == "running work" then
+                      gate.open)
+              let output ← stage.output.get
+              let said ← said.get
+              let holding ← gate.holding.get
+              saw
+                  (failure.isNone && holding && said.isEmpty &&
+                    output == #["reload 1: installed, 2 files, 1 commands", "run greet: ok"])
+                  s!"failure={repr failure} holding={holding} said={said} output={output}"
+            finally
+              gate.open },
     { name :=
         "a real config that defines a segment and lists the mode line installs: the reload prints a line for the segment nobody registered, the echo area says it, and each status line is the listing's, in its order and on its sides"
       run :=
@@ -1940,7 +2000,7 @@ wait 2" with
           let failure ←
             Headless.run stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .commit "ab"⟩, ⟨4, .request .scene⟩]
-                patience
+                hangGuard
           let output ← stage.output.get
           return failure == none &&
               output.filter (fun line => !line.startsWith "scene " && !line.startsWith "view ") ==
@@ -1962,7 +2022,7 @@ wait 2" with
             Headless.run stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.run "greet")⟩,
                   ⟨4, .request .show⟩]
-                patience
+                hangGuard
           return failure == none &&
               (← stage.output.get) ==
                 #["reload 1: installed, 2 files, 1 commands", "run greet: ok", "commands: greet",
@@ -2034,8 +2094,10 @@ wait 2" with
             Headless.run stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩,
                   ⟨5, .join (some 1)⟩, ⟨6, .request .show⟩]
-                patience
-          saw (failure == some (.waited 1000 (.working (some 5)))) s!"failure={repr failure}" },
+                hangGuard
+          let output ← stage.output.get
+          saw (failure == some (.waited 1000 (.working (some 5))))
+              s!"failure={repr failure} output={output}" },
     { name :=
         "a restarted with its own seconds waits that long for a hand-over, not the run's patience, and its failure says how long it waited"
       run :=
@@ -2044,7 +2106,7 @@ wait 2" with
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           -- No restart is asked for, so none comes: its own patience of
           -- none at all runs out at once, where the run's would be long.
-          let failure ← Headless.run stage.collaborators #[⟨1, .restarted (some 0)⟩] patience
+          let failure ← Headless.run stage.collaborators #[⟨1, .restarted (some 0)⟩] hangGuard
           saw (failure == some (.waited 0 (.notRestarted 1))) s!"failure={repr failure}" },
     { name :=
         "a script that ends while a reload cannot finish fails at its end, with a reload still running and no line"
@@ -2158,7 +2220,7 @@ wait 2" with
             Headless.run stage.collaborators
                 #[⟨1, .resize 640 480⟩, ⟨2, .request .scene⟩, ⟨3, .resize 320 200⟩,
                   ⟨4, .request .scene⟩]
-                patience
+                hangGuard
           return failure == none &&
               (← stage.output.get) ==
                 #["scene 640x480, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
@@ -2175,7 +2237,7 @@ wait 2" with
             Headless.run stage.collaborators
                 #[⟨1, .request .scene⟩, ⟨2, .commit "héllo"⟩, ⟨3, .request .scene⟩,
                   ⟨4, .commit " world"⟩, ⟨5, .request .scene⟩]
-                patience
+                hangGuard
           return failure == none &&
               (← stage.output.get) ==
                 #["scene: none",
@@ -2212,7 +2274,7 @@ wait 2" with
             Headless.run stage.collaborators
                 #[⟨1, .key { logical := .named ⟨"F5"⟩ }⟩, ⟨2, .request .scene⟩, ⟨3, .commit "a"⟩,
                   ⟨4, .request .scene⟩]
-                patience
+                hangGuard
           return failure == none && statusOf != statusOf (modified := true) &&
               (← stage.output.get) ==
                 #["key arrived: <F5> - -",
@@ -2376,7 +2438,7 @@ wait 2" with
             Headless.runAndDispose stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩,
                   ⟨4, .advance 10⟩, ⟨5, .join⟩]
-                patience
+                hangGuard
           let output ← stage.output.get
           return failure.isNone && output.contains "job 1 count: ok" &&
               (← stage.disposed.get) == #[output.size] },
@@ -2441,7 +2503,7 @@ wait 2" with
         let (failure, _) ←
           holdingUntil fun hold letGo =>
               Headless.runAndDispose
-                (heldAtLine stage.collaborators (·.startsWith "commands:") hold) script patience
+                (heldAtLine stage.collaborators (·.startsWith "commands:") hold) script hangGuard
                 (answer := 200) (guard := 0) (hung := fun _ => letGo) (waitHung := fun line =>
                 said.modify (·.push line))
         let disposed ← stage.disposed.get
@@ -2889,7 +2951,7 @@ def ranScript (context : Context) (directives : List Headless.Directive) :
             jobs := Files.package.registered.jobs
             modes := Minibuffer.package.registered.modes
             ex := Ex.package.registered.ex }
-    let failure ← Headless.run stage.collaborators (scriptOf directives) patience
+    let failure ← Headless.run stage.collaborators (scriptOf directives) hangGuard
     return (failure, ← stage.output.get)
 
 /-- The checks of a script that a command ends (`Editor/Headless.lean`,
@@ -3824,14 +3886,14 @@ def restoreOrderChecks (context : Context) : List Check :=
                 host.send (.restore none)
                 host.send (.run "bump-counted")
                 host.send (.run "bump-counted")
-                unless ← host.settle patience do
+                unless ← settled host do
                   return false
                 indexWritten host stage
           let shown (version : Nat) (line : String) :=
             withStateHost context state [] #[countedPackage version] fun host stage => do
               host.send (.restore none)
               host.send .show
-              unless ← host.settle patience do
+              unless ← settled host do
                 return false
               return (← stage.output.get).contains line
           let second ← shown 1 "store counted v1: 2"

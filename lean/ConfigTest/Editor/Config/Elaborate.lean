@@ -84,8 +84,10 @@ def elaboratorChecks (context : Context) : List Check :=
                   "namespace Config.Keys\ndef greeting : String := \"hello\"\ndef bindings : SetupM Unit :=\n  command \"from-keys\" (pure ())\nend Config.Keys\n",
                 root ["Lean", "ConfigFixture", "Config.Keys"]
                   "def viaLean : Lean.Json := Lean.Json.str Config.Keys.greeting\ndef probe : IO Nat := ConfigFixture.bump\ndef setup : SetupM Unit := do\n  Config.Keys.bindings\n  command viaLean.compress (pure ())\n"]
-        return builtCommands outcome == some #["from-keys", "\"hello\""] &&
-            outcome.diagnostics.isEmpty },
+        saw
+            (builtCommands outcome == some #["from-keys", "\"hello\""] &&
+              outcome.diagnostics.isEmpty)
+            s!"commands={builtCommands outcome} diagnostics={outcome.diagnostics.map (·.message)}" },
     { name :=
         "a setup a config file other than the root defines is not run: the root's own is, and the other's registrations are not in the config"
       run := do

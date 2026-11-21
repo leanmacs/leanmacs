@@ -97,7 +97,9 @@ show:
   one file a reload elaborates that file and the files that import it and
   no other; a root that imports a module that is not linked is rejected,
   the diagnostic names the module, and the old config stays; and a reload
-  whose root first imports `Lean` installs, the base growing to hold it;
+  whose root first imports `Lean` installs, the base growing to hold it,
+  and a settle after one waits for its end, its root held at a gate until
+  the settle blocks on it (`waitBlocked`);
 - `hostChecks`: the phase's acceptance tests through the headless host, with
   the real elaborator, the real queue and the real text binding, asserted on
   the lines the host prints; and what a host starts from: handed no
