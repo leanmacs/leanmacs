@@ -981,7 +981,7 @@ pub enum Rasteriser {
 
 /// What draws a window's glyphs where `macos` says whether it is macOS:
 /// Core Text there, as macOS's own apps draw, and swash elsewhere. Both
-/// the process's window ([`window_renderer`]) and the example `window`,
+/// the process's window (`window_renderer`) and the example `window`,
 /// for its renderer and the one it compares it with, take their
 /// rasteriser from this answer.
 pub fn window_rasteriser(macos: bool) -> Rasteriser {
