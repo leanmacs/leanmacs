@@ -102,7 +102,7 @@ def dispatchChecks (context : Context) : List Check :=
   [{  name :=
         "a key a compiled binding binds runs its compiled command for the focused window, and the scene shows its effect"
       run :=
-        withRealHost context []
+        withHost context []
           (fun session => do
             session.typed "C-c s"
             return (← session.scene) == ("".quote, #[viewLine "!" 1]))
@@ -110,10 +110,9 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "a command that fails after editing: the scene's echo is its error, the view's text and its selection are those before the command, and the next key runs its command"
       run :=
-        withRealHost context []
+        withHost context []
           (fun session => do
-            unless ← Event.post (.commit "abcd") do
-              return false
+            session.commit "abcd"
             let before ← session.scene
             session.typed "C-c b"
             let failed ← session.scene
@@ -157,7 +156,7 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "config registers a command under a compiled command's name: the key bound to the name runs config's command, and after a reload without the registration it runs the compiled one"
       run :=
-        withRealHost context [("init.lean", stampText)]
+        withHost context [("init.lean", stampText)]
           (fun session => do
             session.ask [.reload]
             session.typed "C-c s"
@@ -177,7 +176,7 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "a reload binds a key to a different command: the key then runs the new command, and the old one does not run again"
       run :=
-        withRealHost context [("init.lean", bindingText "one")] fun session => do
+        withHost context [("init.lean", bindingText "one")] fun session => do
           session.ask [.reload]
           session.typed "C-c t"
           session.write "init.lean" (bindingText "two")
@@ -189,7 +188,7 @@ def dispatchChecks (context : Context) : List Check :=
         "config fails to load: the reload is rejected, and the key a compiled binding binds still runs its compiled command; and it runs it with no reload asked at all"
       run := do
         let rejected ←
-          withRealHost context [("init.lean", "def setup : SetupM Unit := \"not a setup\"\n")]
+          withHost context [("init.lean", "def setup : SetupM Unit := \"not a setup\"\n")]
               (fun session => do
                 session.ask [.reload]
                 session.typed "C-c s"
@@ -199,7 +198,7 @@ def dispatchChecks (context : Context) : List Check :=
                     shown == #["commands: stamp", "text 0: \"\"", "text 1: \"compiled\""])
               stampCompiled
         let unasked ←
-          withRealHost context []
+          withHost context []
               (fun session => do
                 session.typed "C-c s"
                 return (← session.shown) ==
@@ -209,14 +208,14 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "a key bound from config to a command over a store runs it, and what it wrote is written back: two presses leave the store at 2"
       run :=
-        withRealHost context [("init.lean", boundCounterText)] fun session => do
+        withHost context [("init.lean", boundCounterText)] fun session => do
           session.ask [.reload]
           session.typed "C-c u C-c u"
           return (← session.shown).contains "store counter v1: 2" },
     { name :=
         "a command that takes longer than the threshold on the fake clock produces one log entry with its name and how long it took, on the log and not on the output; a press with the clock not moved adds none"
       run :=
-        withRealHost context []
+        withHost context []
           (fun session => do
             -- The prefix is typed first: the host reads the clock at its
             -- step, and to arm the key hint delay after it. Then the host
@@ -226,34 +225,48 @@ def dispatchChecks (context : Context) : List Check :=
             -- of those readings is held, so the clock is moved between the
             -- last two and at no other time.
             session.typed "C-c"
-            let step ← session.clock.holdReads
+            let holds ← IO.mkRef (#[] : Array (IO.Promise Unit))
+            let hold : IO (IO.Promise Unit) := do
+              let held ← session.clock.holdReads
+              holds.modify (·.push held)
+              return held
+            let step ← hold
             session.type "s"
-            unless ← eventually (return (← session.clock.held) == 1) do
-              return false
-            let first ← session.clock.holdReads
-            step.resolve ()
-            unless ← eventually (return (← session.clock.held) == 2) do
-              return false
-            let second ← session.clock.holdReads
-            first.resolve ()
-            unless ← eventually (return (← session.clock.held) == 3) do
-              return false
-            session.clock.advance 60
-            second.resolve ()
-            session.ask []
-            let once ← session.log.get
-            session.typed "C-c s"
-            return once == #["slow command: stamp took 60 ms"] && (← session.log.get) == once &&
-                !(← session.output.get).any (·.startsWith "slow command"))
+            -- A stepped host reads the clock on the thread that steps it, and
+            -- the holds park that thread: this one drain steps on a
+            -- dedicated task, joined below, while the check lets each read go.
+            let asked ← IO.asTask (prio := .dedicated) (session.ask [])
+            try
+              unless ← eventually (return (← session.clock.held) == 1) do
+                return false
+              let first ← hold
+              step.resolve ()
+              unless ← eventually (return (← session.clock.held) == 2) do
+                return false
+              let second ← hold
+              first.resolve ()
+              unless ← eventually (return (← session.clock.held) == 3) do
+                return false
+              session.clock.advance 60
+              second.resolve ()
+              IO.ofExcept (← IO.wait asked)
+              let once ← session.log.get
+              session.typed "C-c s"
+              return once == #["slow command: stamp took 60 ms"] && (← session.log.get) == once &&
+                  !(← session.output.get).any (·.startsWith "slow command")
+            finally
+              -- Every read let go, so a drain a failed step left parked ends.
+              for held in ← holds.get do
+                held.resolve ()
+              discard <| IO.wait asked)
           { dispatchCompiled with slowAfter := 50 } },
     { name :=
         "the driver's run of a compiled command that is given its call makes the frame before the first window event and runs it for the focused window, as it does once a window event has arrived"
       run :=
-        withRealHost context []
+        withHost context []
           (fun session => do
             session.ask [.run "stamp", .run "missing"]
-            unless ← Event.post (.commit "a") do
-              return false
+            session.commit "a"
             session.ask [.run "stamp"]
             return (← session.output.get) ==
                   #["run stamp: ok", "run missing: no such command", "run stamp: ok"] &&
@@ -327,7 +340,7 @@ def modeChecks (context : Context) : List Check :=
   [{  name :=
         "a role's key runs the command of the mode config defines in a view of a buffer that has the mode, a store command among them; once a reload drops the mode it runs the global binding, and the store is as it was"
       run :=
-        withRealHost context [("init.lean", listingText true)]
+        withHost context [("init.lean", listingText true)]
           (fun session => do
             session.ask [.reload]
             session.pressKeys nextItemKeys
@@ -344,7 +357,7 @@ def modeChecks (context : Context) : List Check :=
     { name :=
         "a role's key runs the command of a mode compiled code hands the host in a view of a buffer that has the mode, before any reload and after a reload of a config that defines no mode"
       run :=
-        withRealHost context [("init.lean", listingText false)]
+        withHost context [("init.lean", listingText false)]
           (fun session => do
             session.pressKeys nextItemKeys
             let first ← session.shown

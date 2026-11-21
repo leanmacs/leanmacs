@@ -2909,7 +2909,7 @@ def hostLoopChecks (context : Context) : List Check :=
   [{  name :=
         "the driver's run of a command goes through the loop: a command that splits its window leaves two views in the scene, and a run before any window event makes the frame"
       run :=
-        withRealHost context []
+        withHost context []
           (fun session => do
             session.ask [.run "split", .run "stamp", .run "missing"]
             let (echo, views) ← session.scene
@@ -2923,10 +2923,9 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "the driver's run of a command that fails is rolled back and says so: the output names the refusal, the scene's echo is its error, and the view's text is that before the command"
       run :=
-        withRealHost context []
+        withHost context []
           (fun session => do
-            unless ← Event.post (.commit "abcd") do
-              return false
+            session.commit "abcd"
             session.ask [.run "boom"]
             return (← session.output.get) == #["run boom: refused: bad range"] &&
                 (← session.scene) == ("boom: refused: bad range".quote, #[viewLine "abcd" 4]))
@@ -2934,10 +2933,9 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "the driver's run of a command of config's that gives up is rolled back and printed so: the output says it gave up, with its reason, the scene's echo is its name and the reason with no refused, and the view's text is that before the command"
       run :=
-        withRealHost context [("init.lean", givingUpText)] fun session => do
+        withHost context [("init.lean", givingUpText)] fun session => do
           session.ask [.reload]
-          unless ← Event.post (.commit "abcd") do
-            return false
+          session.commit "abcd"
           session.ask [.run "quitter"]
           return (← session.lines) ==
                 #["reload 1: installed, 1 files, 1 commands", "run quitter: gave up: no can do"] &&
@@ -2945,10 +2943,9 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "the driver's run of a command of config's that breaks off keeps what the command did and is printed so: the output says it broke off, with its reason, the scene's echo is its name and the reason with no refused, and the view's text holds what the command inserted"
       run :=
-        withRealHost context [("init.lean", breakingOffText)] fun session => do
+        withHost context [("init.lean", breakingOffText)] fun session => do
           session.ask [.reload]
-          unless ← Event.post (.commit "abcd") do
-            return false
+          session.commit "abcd"
           session.ask [.run "stopper"]
           return (← session.lines) ==
                 #["reload 1: installed, 1 files, 1 commands",
@@ -2957,7 +2954,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "the host keeps a clipboard of its own: before a write a command of config's reads no text, after one command wrote a text the next reads it, and so does a finished job's command"
       run :=
-        withRealHost context [("init.lean", clipboardText)] fun session => do
+        withHost context [("init.lean", clipboardText)] fun session => do
           session.ask [.reload]
           session.ask [.run "paste"]
           let (empty, _) ← session.scene
@@ -2966,10 +2963,10 @@ def hostLoopChecks (context : Context) : List Check :=
           session.ask [.run "paste"]
           let (pasted, _) ← session.scene
           session.ask [.spawn "courier"]
-          unless ← eventually (return (← session.clock.waiting) == 1) do
+          unless (← session.join) == .working && (← session.clock.waiting) == 1 do
             return false
           session.clock.advance 10
-          let joined ← session.host.join patience
+          let joined ← session.join
           return empty == "no text".quote && written == "written".quote &&
               pasted == "kept by the host".quote &&
               joined == .settled &&
@@ -3047,17 +3044,17 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "a key's command starts a job with an argument: the host says it started, keys sent while the job sleeps are handled before its result, and once the clock lets it go its command runs after them, with the value the job computed in the text and in the scene's echo"
       run :=
-        withRealHost context [("init.lean", startingText)]
+        withHost context [("init.lean", startingText)]
           (fun session => do
             session.ask [.reload]
             session.typed "C-c a"
-            unless ← eventually (return (← session.clock.waiting) == 1) do
+            unless (← session.join) == .working && (← session.clock.waiting) == 1 do
               return false
             session.typed "C-c s C-c s"
             let sleeping ← session.scene
             let before ← session.output.get
             session.clock.advance 10
-            let joined ← session.host.join patience
+            let joined ← session.join
             let after := (← session.output.get).extract before.size
             return before.contains "job 1 double: started" &&
                 !before.any (·.startsWith "job 1 double: ok") &&
@@ -3100,7 +3097,7 @@ def hostLoopChecks (context : Context) : List Check :=
             setup :=
               for command in commands do
                 Editor.command command (discard <| createText s!"{name}'s {command}") }
-        withRealHost context greetConfig
+        withHost context greetConfig
           (fun session => do
             session.ask [.show, .run "shared", .show]
             let started ← session.lines
@@ -3116,15 +3113,15 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "a host is handed compiled jobs: a compiled command starts one before any config is loaded, a reload that installs does not cancel it, and once the clock lets it go its command runs"
       run :=
-        withRealHost context [("init.lean", emptyText)]
+        withHost context [("init.lean", emptyText)]
           (fun session => do
             session.ask [.run "rest"]
-            unless ← eventually (return (← session.clock.waiting) == 1) do
+            unless (← session.join) == .working && (← session.clock.waiting) == 1 do
               return false
             session.ask [.reload]
             let reloaded ← session.output.get
             session.clock.advance 10
-            let joined ← session.host.join patience
+            let joined ← session.join
             return reloaded ==
                   #["run rest: ok", "job 1 nap: started",
                     "reload 1: installed, 1 files, 0 commands"] &&
@@ -3285,7 +3282,7 @@ def reloadEchoChecks (context : Context) : List Check :=
   [{  name :=
         "a rejected reload says its first error in the echo area and the old config's command still runs, what that command says replaces the error, and a reload that installs clears nothing"
       run :=
-        withRealHost context helloConfig fun session => do
+        withHost context helloConfig fun session => do
           session.ask [.reload]
           session.ask [.run "greet"]
           let said ← session.echo
@@ -3313,12 +3310,12 @@ def reloadEchoChecks (context : Context) : List Check :=
     { name :=
         "a reload rejected before the frame is made is said in the echo area once the frame is made"
       run :=
-        withRealHost context
+        withHost context
           [("Config/Greet.lean", brokenGreetText), ("init.lean", overGreet setupText)]
           fun session => do
           session.ask [.reload]
           let before ← session.scene
-          session.host.resize 80 64
+          session.resize 80 64
           session.ask []
           let made ← session.echo
           return before == ("", #[]) && isGreetError made }]
