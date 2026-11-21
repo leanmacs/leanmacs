@@ -79,28 +79,28 @@ def defaultConfigChecks (context : Context) : List Check :=
         "the default config: a reload installs it with no diagnostic; SPC f f then runs open-file, which asks for a path, once that is cancelled SPC : opens the command prompt, and once that is cancelled SPC ? opens the binding search, which, once open is typed, lists SPC f f  open-file"
       run := do
         let files ← configFiles context.defaultConfig
-        withRealVimHost context files fun session => do
+        withVimHost context files fun session => do
             session.ask [.reload]
             let output ← session.output.get
             let installed := output.any (·.startsWith "reload 1: installed")
             let clean := !output.any (·.startsWith "diagnostic:")
             let before ← session.sceneLines
             session.typed "SPC f f"
-            let joined := (← session.host.join patience) == .settled
+            let joined := (← session.join) == .settled
             let after ← session.sceneLines
             session.typed "<Escape>"
             let cancelled ← session.sceneLines
             session.typed "SPC :"
-            let rejoined := (← session.host.join patience) == .settled
+            let rejoined := (← session.join) == .settled
             let commanding ← session.sceneLines
             session.typed "<Escape>"
             session.typed "SPC ?"
-            let searched := (← session.host.join patience) == .settled
+            let searched := (← session.join) == .settled
             let searching ← session.sceneLines
             -- The list shows only its first rows: typing `open` narrows it
             -- to the bindings that match.
             session.typed "o p e n"
-            let narrowed := (← session.host.join patience) == .settled
+            let narrowed := (← session.join) == .settled
             let opening ← session.sceneLines
             return installed && clean && joined && rejoined && searched && narrowed &&
                 !before.contains (promptStatus Files.openPrompt) &&
@@ -116,7 +116,7 @@ def defaultConfigChecks (context : Context) : List Check :=
         "the default config: SPC p f opens the workspace finder, once that is cancelled SPC SPC opens it again, and once that is cancelled SPC p p runs find-file-in-project, which says the scratch buffer is in no project"
       run := do
         let files ← configFiles context.defaultConfig
-        withRealVimHost context files fun session => do
+        withVimHost context files fun session => do
             session.ask [.reload]
             let output ← session.output.get
             let installed := output.any (·.startsWith "reload 1: installed")
@@ -124,17 +124,17 @@ def defaultConfigChecks (context : Context) : List Check :=
             let label := Workspace.FindFile.promptLabel "/"
             let before ← session.sceneLines
             session.typed "SPC p f"
-            let joined := (← session.host.join patience) == .settled
+            let joined := (← session.join) == .settled
             let finding ← session.sceneLines
             session.typed "<Escape>"
             let cancelled ← session.sceneLines
             session.typed "SPC SPC"
-            let rejoined := (← session.host.join patience) == .settled
+            let rejoined := (← session.join) == .settled
             let refinding ← session.sceneLines
             session.typed "<Escape>"
             let recancelled ← session.sceneLines
             session.typed "SPC p p"
-            let switched := (← session.host.join patience) == .settled
+            let switched := (← session.join) == .settled
             let switching ← session.sceneLines
             let said := s!", echo {(Workspace.FindInProject.noProject "scratch").quote}"
             return installed && clean && joined && rejoined && switched && !promptOf label before &&
@@ -209,10 +209,10 @@ def defaultConfigChecks (context : Context) : List Check :=
         "the default config: SPC k o runs working-set-open, which says the scratch buffer is in no workspace"
       run := do
         let files ← configFiles context.defaultConfig
-        withRealVimHost context files fun session => do
+        withVimHost context files fun session => do
             session.ask [.reload]
             session.typed "SPC k o"
-            let ran := (← session.host.join patience) == .settled
+            let ran := (← session.join) == .settled
             let lines ← session.sceneLines
             let said := s!", echo {(WorkingSet.noWorkspace WorkingSet.openName "scratch").quote}"
             return ran && lines.any fun line => (line.splitOn said).length == 2 },

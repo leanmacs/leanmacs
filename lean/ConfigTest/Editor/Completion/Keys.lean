@@ -77,17 +77,17 @@ def keyHintChecks (context : Context) : List Check :=
   [{  name :=
         "AC1: after SPC in normal state and the default delay on the fake clock, the scene lists the keys that can follow SPC with their descriptions and prefix names, drawn by the minibuffer display directly above the bottom row; none before the delay has passed"
       run :=
-        withRealVimHost context [("init.lean", delayText none)] fun session => do
-          session.host.resize 640 480
+        withVimHost context [("init.lean", delayText none)] fun session => do
+          session.resize 640 480
           session.ask [.reload]
           session.typed "SPC"
           let pending ← session.sceneLines
           let armed := (← session.clock.waiting) == 1
           session.clock.advance 499
-          let early := (← session.host.join patience) == .settled
+          let early := (← session.join) == .settled
           let before ← session.sceneLines
           session.clock.advance 1
-          let joined := (← session.host.join patience) == .settled
+          let joined := (← session.join) == .settled
           let after ← session.sceneLines
           let heights := Headless.cells.heights
           let listed := hintSheetRows leaderHints
@@ -103,7 +103,7 @@ def keyHintChecks (context : Context) : List Check :=
     { name :=
         "AC2: completing the sequence, or resetting it with an unbound key, before the delay passes withdraws the delay and leaves no hints in the scene after it"
       run :=
-        withRealVimHost context [("init.lean", delayText none)] fun session => do
+        withVimHost context [("init.lean", delayText none)] fun session => do
           session.ask [.reload]
           let withdrawnBefore := (← session.clock.withdrawn).size
           session.typed "SPC f f"
@@ -124,7 +124,7 @@ def keyHintChecks (context : Context) : List Check :=
     { name :=
         "AC3: a config that sets the delay to 0 shows the hints in the first scene after the prefix, with no wait on the clock"
       run :=
-        withRealVimHost context [("init.lean", delayText (some "0"))] fun session => do
+        withVimHost context [("init.lean", delayText (some "0"))] fun session => do
           session.ask [.reload]
           session.typed "SPC"
           let lines ← session.sceneLines
@@ -135,7 +135,7 @@ def keyHintChecks (context : Context) : List Check :=
     { name :=
         "AC4: the pending prefix is drawn in the selected window's status line while a sequence is pending, SPC then SPC f, and cleared when it completes"
       run :=
-        withRealVimHost context [("init.lean", delayText none)] fun session => do
+        withVimHost context [("init.lean", delayText none)] fun session => do
           session.ask [.reload]
           let rest ← session.sceneLines
           session.typed "SPC"
@@ -151,8 +151,8 @@ def keyHintChecks (context : Context) : List Check :=
     { name :=
         "AC5: a display config sets for the key category draws the hints: the fake display's rows, not the minibuffer display's"
       run :=
-        withRealVimHost context [("init.lean", delayText (some "0") (display := true))]
-          fun session => do
+        withVimHost context [("init.lean", delayText (some "0") (display := true))] fun session =>
+          do
           session.ask [.reload]
           session.typed "SPC"
           let lines ← session.sceneLines
@@ -162,12 +162,12 @@ def keyHintChecks (context : Context) : List Check :=
     { name :=
         "a config that sets the delay to .never arms no wait and shows no hints however long the prefix is pending, and the pending keys are still drawn"
       run :=
-        withRealVimHost context [("init.lean", delayText (some ".never"))] fun session => do
+        withVimHost context [("init.lean", delayText (some ".never"))] fun session => do
           session.ask [.reload]
           session.typed "SPC"
           let armed ← session.clock.waiting
           session.clock.advance 10000
-          let joined := (← session.host.join patience) == .settled
+          let joined := (← session.join) == .settled
           let lines ← session.sceneLines
           return armed == 0 && joined && (listViewId lines).isNone &&
               !lines.any (·.startsWith "hint ") &&
@@ -175,7 +175,7 @@ def keyHintChecks (context : Context) : List Check :=
     { name :=
         "a reload that sets the delay to .never while SPC is pending with its hints shown closes them: the scene after it lists no hints and draws no list, and SPC is still drawn pending"
       run :=
-        withRealVimHost context [("init.lean", delayText (some "0"))] fun session => do
+        withVimHost context [("init.lean", delayText (some "0"))] fun session => do
           session.ask [.reload]
           session.typed "SPC"
           let shown ← session.sceneLines
@@ -189,22 +189,22 @@ def keyHintChecks (context : Context) : List Check :=
     { name :=
         "a reload before the default delay has passed keeps its wait when the delay is still wanted, so the hints are shown 500 ms after SPC; one that sets .never withdraws the wait, and one that then sets the delay again arms a new wait of the whole delay, all with SPC still pending"
       run :=
-        withRealVimHost context [("init.lean", delayText none)] fun session => do
+        withVimHost context [("init.lean", delayText none)] fun session => do
           session.ask [.reload]
           session.typed "SPC"
           let armed := (← session.clock.waiting) == 1
           let withdrawnArmed := (← session.clock.withdrawn).size
           session.clock.advance 200
-          discard <| session.host.join patience
+          discard <| session.join
           -- A reload that leaves the delay as it was: the wait is kept.
           session.ask [.reload]
           let kept :=
             (← session.clock.waiting) == 1 && (← session.clock.withdrawn).size == withdrawnArmed
           session.clock.advance 299
-          discard <| session.host.join patience
+          discard <| session.join
           let early ← session.sceneLines
           session.clock.advance 1
-          discard <| session.host.join patience
+          discard <| session.join
           let due ← session.sceneLines
           session.typed "<Escape>"
           session.typed "SPC"
@@ -220,10 +220,10 @@ def keyHintChecks (context : Context) : List Check :=
           session.ask [.reload]
           let rearmed := (← session.clock.waiting) == 1
           session.clock.advance 499
-          discard <| session.host.join patience
+          discard <| session.join
           let rearmedEarly ← session.sceneLines
           session.clock.advance 1
-          discard <| session.host.join patience
+          discard <| session.join
           let rearmedDue ← session.sceneLines
           return armed && kept && !early.any (·.startsWith "hint ") &&
               due.filter (·.startsWith "hint ") ==
@@ -237,7 +237,7 @@ def keyHintChecks (context : Context) : List Check :=
     { name :=
         "a reload refuses a delay over a minute, saying keyHintDelayTooLong's sentence, a delay that is not one, and a delay set twice; the previous config's bindings keep working"
       run :=
-        withRealVimHost context [("init.lean", delayText (some "0"))] fun session => do
+        withVimHost context [("init.lean", delayText (some "0"))] fun session => do
           session.ask [.reload]
           -- The frame is made, so each refusal is said in its echo area.
           session.typed "<Escape>"

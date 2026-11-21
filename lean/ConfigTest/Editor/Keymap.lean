@@ -44,7 +44,7 @@ def hintChecks (context : Context) : List Check :=
   [{  name :=
         "criterion 4: after a reload, SPC lists f as the prefix config named, SPC f lists f as the binding config described, and SPC f f runs it and lists nothing"
       run :=
-        withRealVimHost context [("init.lean", hintText true)] fun session => do
+        withVimHost context [("init.lean", hintText true)] fun session => do
           session.ask [.reload]
           session.typed "SPC"
           let afterLeader ← session.hints
@@ -60,7 +60,7 @@ def hintChecks (context : Context) : List Check :=
     { name :=
         "criterion 5: a reload that drops a config's prefix name drops it from the hints, and the prefix is listed unnamed"
       run :=
-        withRealVimHost context [("init.lean", hintText true)] fun session => do
+        withVimHost context [("init.lean", hintText true)] fun session => do
           session.ask [.reload]
           session.typed "SPC"
           let named ← session.hints

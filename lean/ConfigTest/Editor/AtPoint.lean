@@ -60,13 +60,13 @@ def atPointChecks (context : Context) : List Check :=
   [{  name :=
         "C-n in insert state lists the words of open buffers that match the word before the cursor"
       run :=
-        withRealVimHost context [("init.lean", otherBufferText)] fun session => do
+        withVimHost context [("init.lean", otherBufferText)] fun session => do
           session.ask [.reload]
-          session.host.resize 640 480
+          session.resize 640 480
           session.typed "C-c o i"
-          session.host.commit "alpha beta al"
+          session.commit "alpha beta al"
           session.typed "C-n"
-          unless (← session.host.join patience) == .settled do
+          unless (← session.join) == .settled do
             return false
           let lines ← session.sceneLines
           let words :=
@@ -87,9 +87,9 @@ def atPointChecks (context : Context) : List Check :=
     { name :=
         "a source that declares a trigger character opens a session when that character is typed, and no other character does"
       run :=
-        withRealVimHost context [("init.lean", dotsText)] fun session => do
+        withVimHost context [("init.lean", dotsText)] fun session => do
           session.ask [.reload]
-          session.host.resize 640 480
+          session.resize 640 480
           session.typed "i a x"
           let before ← session.sceneLines
           session.typed "."
@@ -104,17 +104,17 @@ def atPointChecks (context : Context) : List Check :=
         "pausing after typing two characters of a word opens a session of the words source, with nothing chosen"
       run := do
         let first ←
-          withRealVimHost context [] fun session => do
+          withVimHost context [] fun session => do
               session.ask [.reload]
-              session.host.resize 640 480
+              session.resize 640 480
               session.typed "i"
-              session.host.commit "alpha alpine"
+              session.commit "alpha alpine"
               session.typed "RET a l"
               let armed ← session.clock.waiting
               let before ← session.sceneLines
               let started := (← session.lines).filter (·.startsWith "job ")
               session.clock.advance 240
-              unless (← session.host.join patience) == .settled do
+              unless (← session.join) == .settled do
                 return false
               let lines ← session.sceneLines
               let rows ←
@@ -126,21 +126,21 @@ def atPointChecks (context : Context) : List Check :=
                   listViewShows lines rows &&
                   noneChosen lines
         let second ←
-          withRealVimHost context [] fun session => do
+          withVimHost context [] fun session => do
               session.ask [.reload]
-              session.host.resize 640 480
+              session.resize 640 480
               session.typed "i"
-              session.host.commit "beta"
+              session.commit "beta"
               session.typed "RET a"
               session.clock.advance 240
-              unless (← session.host.join patience) == .settled do
+              unless (← session.join) == .settled do
                 return false
               return (listViewId (← session.sceneLines)).isNone
         return first && second },
     { name :=
         "a typed key in insert state arms one pause wait and starts no job: after i a b the clock holds one wait and has withdrawn one, the table of waits holds one, no job line is printed, and a join returns at once"
       run :=
-        withRealVimHost context [] fun session => do
+        withVimHost context [] fun session => do
           session.ask [.reload]
           session.typed "i a b"
           let waiting ← session.clock.waiting
@@ -148,7 +148,7 @@ def atPointChecks (context : Context) : List Check :=
           session.typed "c d e"
           let afterMore ← session.clock.waiting
           let withdrawnMore := (← session.clock.withdrawn).size
-          let joined ← session.host.join patience
+          let joined ← session.join
           let jobLines := (← session.lines).filter (·.startsWith "job ")
           let table ← session.clock.completions.waiting
           return waiting == 1 && withdrawn == 1 && afterMore == 1 && withdrawnMore == 4 &&
@@ -158,18 +158,18 @@ def atPointChecks (context : Context) : List Check :=
     { name :=
         "the pause's event is queued before the clock's move returns: advance then join, five times over, each time finds the session the pause opened listed"
       run :=
-        withRealVimHost context [] fun session => do
+        withVimHost context [] fun session => do
           session.ask [.reload]
-          session.host.resize 640 480
+          session.resize 640 480
           session.typed "i"
-          session.host.commit "alpha alpine"
+          session.commit "alpha alpine"
           let mut held := true
           for _ in [0:5] do
             session.typed "RET a l"
             -- No settle between the move and the join: the join's marker
             -- must find the pause's event ahead of it.
             session.clock.advance 240
-            unless (← session.host.join patience) == .settled do
+            unless (← session.join) == .settled do
               return false
             let lines ← session.sceneLines
             held := held && (listViewId lines).isSome

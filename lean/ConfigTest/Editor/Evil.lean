@@ -4,8 +4,6 @@ import ConfigTest.Support.Lines
 import Editor.Completion
 import Editor.Config.Packages
 import Editor.Config.Registry
-import Editor.Event
-import Editor.Event.Queue
 import Editor.Evil.Compiled
 import Editor.Ex.Line
 import Editor.Face
@@ -108,10 +106,9 @@ def evilChecks (context : Context) : List Check :=
   [{  name :=
         "config names the vocabulary the editor ships and hands it to evil's move command: a command of config's that moves by a motion of config's own, added to that vocabulary, puts the cursor where that motion says, and one that moves by the name of the vocabulary's first entry runs to its end and says nothing in the echo area, so the entry was found"
       run :=
-        withRealHost context [("init.lean", vocabularyText)] fun session => do
+        withHost context [("init.lean", vocabularyText)] fun session => do
           session.ask [.reload]
-          unless ← Event.post (.commit "hello") do
-            return false
+          session.commit "hello"
           let committed ← session.scene
           session.ask [.run "own"]
           let own ← session.scene
@@ -127,11 +124,10 @@ def evilChecks (context : Context) : List Check :=
     { name :=
         "config names the operators the editor ships and hands them, with the motions, to evil's operate command: a command of config's that runs it with the arguments of d w from the line's start deletes a word; one that hands the repeat command the same change deletes the next, with the operate command the host was handed as compiled code; and one that runs evil's undo gives that word back"
       run :=
-        withRealHost context [("init.lean", operatorsText)]
+        withHost context [("init.lean", operatorsText)]
           (fun session => do
             session.ask [.reload]
-            unless ← Event.post (.commit "one two three") do
-              return false
+            session.commit "one two three"
             session.ask [.run "delete-word"]
             let deleted ← session.scene
             session.ask [.run "again"]
@@ -149,11 +145,10 @@ def evilChecks (context : Context) : List Check :=
     { name :=
         "the repeat command replays a change with the command the registry holds for its name: with config's operate command registered over the operators that ship and one of config's own, in place of the compiled one, a change made with config's operator is replayed with it, and deletes the next word"
       run :=
-        withRealHost context [("init.lean", ownOperatorText)]
+        withHost context [("init.lean", ownOperatorText)]
           (fun session => do
             session.ask [.reload]
-            unless ← Event.post (.commit "one two three") do
-              return false
+            session.commit "one two three"
             session.ask [.run "erase-word"]
             let erased ← session.scene
             session.ask [.run "again"]

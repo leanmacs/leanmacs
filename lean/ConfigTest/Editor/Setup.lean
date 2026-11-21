@@ -41,14 +41,14 @@ def leaderChecks (context : Context) : List Check :=
   [{  name :=
         "under the Vim scheme with no leader set by config, a config binding of <leader> f f runs its command on SPC f f in normal state"
       run :=
-        withRealVimHost context [("init.lean", leaderText)] fun session => do
+        withVimHost context [("init.lean", leaderText)] fun session => do
           session.ask [.reload]
           session.typed "SPC f f"
           return (← session.echo) == "leader find".quote },
     { name :=
         "a config that sets the leader to \\ reaches its <leader> f f binding on \\ f f after a reload, and SPC f f no longer runs it"
       run :=
-        withRealVimHost context [("init.lean", leaderText)] fun session => do
+        withVimHost context [("init.lean", leaderText)] fun session => do
           session.ask [.reload]
           session.write "init.lean" (leaderText (some "\\"))
           session.ask [.reload]
@@ -61,7 +61,7 @@ def leaderChecks (context : Context) : List Check :=
     { name :=
         "SPC typed in insert state inserts a space in a config that binds keys under <leader>, and SPC f f after <Escape> still runs the binding"
       run :=
-        withRealVimHost context [("init.lean", leaderText)] fun session => do
+        withVimHost context [("init.lean", leaderText)] fun session => do
           session.ask [.reload]
           session.typed "i a SPC b <Escape>"
           let line := lastViewLine (← session.sceneLines)
