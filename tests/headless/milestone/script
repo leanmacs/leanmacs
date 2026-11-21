@@ -12,7 +12,8 @@
 # the library's headless render session, which draws every frame on the CPU
 # renderer. An evil session on a source file ends in `:w`; a layout query a
 # command made agrees with the frame drawn next (`agree`); and once the
-# session has settled, nothing is drawn or submitted for a second (`idle`).
+# session has been handled and the render loop is at rest, nothing more was
+# drawn or submitted (`idle`).
 #
 # `source.txt` is 60 lines, `def v<n> : Nat := <n>` for n from 1 to 60,
 # each ended by a line feed: lines 1 to 9 are 18 bytes, so line n starts at
@@ -99,7 +100,7 @@ join
 scene
 agree
 
-# Once everything has settled and the render loop is at rest, a second
-# passes in which nothing asks for a frame: none is drawn and none is
-# submitted.
-idle 1000
+# Once everything sent has been handled and the render loop is at rest, on
+# the rest itself and never after a time, nothing more was asked of it since
+# the agree: none drawn and none submitted.
+idle

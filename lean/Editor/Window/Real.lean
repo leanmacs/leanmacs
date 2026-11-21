@@ -99,9 +99,12 @@ library.
 
 namespace Editor.Window
 
-/-- How long the window mode waits, once its loop has ended, for the render
-loop to draw what was published last before it closes the window, in
-milliseconds. -/
+/-- hang guard: the render loop's rest, once it has drawn what was published
+last; only a loop that never rests reaches it, and the window then closes
+without it. How long the window mode waits, once its loop has ended, for
+the render loop to draw what was published last before it closes the
+window, in milliseconds; and the bound of each round of the start-up
+config's wait with no bound (`awaitConfig`). -/
 def drawPatience : Nat :=
   1000
 
@@ -124,6 +127,9 @@ def awaitConfig (host : Headless.Host) : Option Nat → IO Bool
   | some patience => return (← host.await patience (waitHung := configWaitHung)) == .settled
   | none => do
     repeat
+      -- hang guard: each round's, the reload's end; with no bound the wait
+      -- goes round again. The window mode's waits poll its progress
+      -- (follow-up window-mode-waits-poll-progress).
       match ← host.await drawPatience (waitHung := configWaitHung) with
       | .settled =>
         return true
@@ -221,9 +227,9 @@ def closeOnceEnded (platform : Ffi.Platform) (loop : Task (Except IO.Error Unit)
   let ended ← IO.wait loop
   if let .error error := ended then
     say s!"editor: the editor loop ended with an error: {error}"
-  discard <|
-      Headless.within drawPatience do
-        return (← Ffi.renderResting) != some false
+  -- On the step that records the rest, never a poll; at once with no render
+  -- session.
+  discard <| Ffi.renderAwaitRest drawPatience.toUInt64
   try
     shutdown
   catch error =>

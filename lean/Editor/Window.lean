@@ -120,8 +120,10 @@ inductive TitleBar where
   | standard
   deriving DecidableEq, Repr, Inhabited
 
-/-- How long the window mode waits for the config it loads at start before
-it opens the window, in milliseconds: the window is opened with the title
+/-- real time under test: the window mode's start-up time limit, which the
+A6 check pins with the reload held for good. How long the window mode waits
+for the config it loads at start before it opens the window, in
+milliseconds: the window is opened with the title
 bar that config chose, so it waits for the start-up reload to finish,
 installed or refused, and for no longer than this. -/
 def configPatience : Nat :=

@@ -373,18 +373,6 @@ def modeChecks (context : Context) : List Check :=
                 made second "compiled" == 0)
           compiledListing }]
 
-/-- Rewrites the file at `path` with `text` from another process, as agents
-and editors write: a temporary file beside it, renamed over it. Waits for
-the process to exit; whether it exited with 0. -/
-def rewriteFromOutside (path : System.FilePath) (text : String) : IO Bool := do
-  let child ←
-    IO.Process.output
-        { cmd := "/bin/sh"
-          args :=
-            #["-c", "printf '%s' \"$2\" > \"$1.tmp\" && mv \"$1.tmp\" \"$1\"", "sh", path.toString,
-              text] }
-  return child.exitCode == 0
-
 /-- The checks of auto-reload through the headless host on real files, with
 the library's watch service (`Editor/Loop.lean`, "Auto-reload"): criteria 9
 and 10, that the rewrite is shown and the edited buffer marked, each seen on

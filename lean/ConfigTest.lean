@@ -546,6 +546,15 @@ def main (args : List String) : IO UInt32 := do
       IO.Process.exit status
     | none =>
       ConfigTest.usage
+  | ["bench-auto-reload", sysroot, oleanDir, syntaxFixtures, defaultConfig, samples] =>
+    match samples.toNat? with
+    | some samples =>
+      IO.Process.exit
+          (←
+            ConfigTest.run (fun context => [ConfigTest.Bench.autoReloadRow context samples]) sysroot
+                oleanDir syntaxFixtures defaultConfig)
+    | none =>
+      ConfigTest.usage
   | [sysroot, oleanDir, syntaxFixtures, defaultConfig] =>
     IO.Process.exit
         (← ConfigTest.run ConfigTest.checks sysroot oleanDir syntaxFixtures defaultConfig)

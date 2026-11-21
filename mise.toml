@@ -1604,6 +1604,12 @@ run = [
   "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-reload-directory \"$(lean --print-prefix)\" .lake/build/lib/lean",
   "sh ../tools/soak-ratio.sh .lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean bench-soak",
   "sh ../tools/soak-ratio.sh .lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean bench-soak-modules",
+  # Auto-reload's criterion 9, "shown within a second", measured over the
+  # library's real watch service: the latency from another process's
+  # rewrite of an open buffer's file to the rewrite shown, printed with its
+  # budget beside it. Real time is what it measures, so it is here, never a
+  # pass or fail of `config-test` (`ConfigTest.autoReloadChecks`).
+  ".lake/build/bin/config-test bench-auto-reload \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default 10",
 ]
 
 # Opt-in: run it by hand on a quiet machine, on macOS, and do not add it to

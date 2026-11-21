@@ -35,9 +35,9 @@ plain names are the stepped helpers (`lean/ConfigTest/Support/Hosts.lean`).
 | A6 | The window mode's wiring (`Editor.Window.host` and its start-up wait) | It is the window mode's edge |
 | A7 | The library's watch service on real files (`Session.shownOn`, the scene asked at each job line) | Background deliveries on the library's clock |
 
-## config-test: 70 checks
+## config-test: 71 checks
 
-By adapter: A1 8, A2 11, A3 26, A4 5, A5 17, A6 1, A7 2. Each name is a
+By adapter: A1 8, A2 11, A3 27, A4 5, A5 17, A6 1, A7 2. Each name is a
 check's name exactly, one a line, inside a `checks` block, which is what
 the gate reads (below).
 
@@ -78,13 +78,14 @@ a wait that runs out says why: a reload is still running, or the editor thread h
 a stepped host publishes the scenes a real host does: a settle one, and a join's later rounds none
 ```
 
-### A3: 26 checks
+### A3: 27 checks
 
 The headless mode's script runner (`Headless.run`, `runAndDispose`, `runFrom`): the CLI's driver, defined over `Host`, which the headless fixtures share.
 
 Lists: `exScriptChecks`, `jobChecks`, `scriptChecks`.
 
 ```checks
+an idle answers only once the render loop is at rest: with a frame in flight as it begins, it waits for the frame's end, on the loop's rest and never for a time, and counts from that rest, so a loop then left alone has drawn and been handed nothing
 a script whose q is refused, for a file's buffer that was edited, runs its later lines: the show line prints the commands, the script has no failure, and the file is as it was
 criterion 1 through the host: a script that runs e on a file, joins, commits text, runs w, joins, runs q, and then has a show line: the script has no failure, the file holds the committed text before what it held, and the show line was not run
 criterion 2 through the host: the same script with wq in place of w, the join and q, and a join after it: the script has no failure, the file holds the buffer's text, and the show line was not run

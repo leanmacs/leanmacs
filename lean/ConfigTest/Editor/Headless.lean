@@ -2053,19 +2053,81 @@ wait 2" with
             | .error message => message.startsWith "line 1: "
             | .ok _ => false) },
     { name :=
-        "agree, idle with a number of milliseconds, and journal are directives; agree asks the editor thread, and idle and journal are the driver's own"
+        "agree, idle and journal are directives, each with nothing after it; agree asks the editor thread, and idle and journal are the driver's own"
       run :=
         pure
-          ((Headless.script "agree\n  idle 1000\nidle 0\njournal\n").toOption ==
-            some #[⟨1, .request .agree⟩, ⟨2, .idle 1000⟩, ⟨3, .idle 0⟩, ⟨4, .journal⟩]) },
+          ((Headless.script "agree\n  idle\njournal\n").toOption ==
+            some #[⟨1, .request .agree⟩, ⟨2, .idle⟩, ⟨3, .journal⟩]) },
     { name :=
-        "an idle with no number, or one that is not a number, and an agree or a journal with anything after it, are refused, with the number of the line"
+        "an idle with anything after it, its old milliseconds among them, and an agree or a journal with anything after it, are refused, with the number of the line, and an idle's refusal names idle"
       run :=
         pure
-          (["idle", "idle x", "idle 10 20", "idle -1", "agree 3", "journal now"].all fun line =>
-            match Headless.script ("reload\n" ++ line) with
-            | .error message => message.startsWith "line 2: "
+          ((["idle 1000", "idle 0", "idle x", "idle 10 20", "agree 3", "journal now"].all
+              fun line =>
+              match Headless.script ("reload\n" ++ line) with
+              | .error message => message.startsWith "line 2: "
+              | .ok _ => false) &&
+            match Headless.script "idle 1000" with
+            | .error message => (message.splitOn "expected idle, with nothing after it").length == 2
             | .ok _ => false) },
+    { name :=
+        "an idle answers only once the render loop is at rest: with a frame in flight as it begins, it waits for the frame's end, on the loop's rest and never for a time, and counts from that rest, so a loop then left alone has drawn and been handed nothing"
+      run := do
+        -- A render loop held mid-frame: it rests only once the frame ends,
+        -- and the frame ends only once the idle has asked for the rest, so
+        -- an idle that answered on a window of time, or before the rest,
+        -- would answer with the frame still in flight.
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        let order ← IO.mkRef (#[] : Array String)
+        let asked ← IO.Promise.new
+        let ended ← IO.Promise.new
+        let entries ← IO.mkRef (#[] : Array Ffi.JournalEntry)
+        let submitted ← IO.mkRef (0 : UInt64)
+        let counters : IO Ffi.RenderCounters := do
+          return {
+              draws := (← entries.get).size.toUInt64, drawsFailed := 0
+              framesSubmitted := ← submitted.get, framesReplaced := 0, rowsRebuilt := 0
+              rowsReused := 0, glyphsRasterised := 0, glyphsReused := 0, glyphsEvicted := 0
+              glyphsSkipped := 0, atlasBytes := 0, journalDropped := 0 }
+        let render : Headless.Render :=
+          { resting := return some (← ended.isResolved)
+            awaitRest := fun bound => do
+              order.modify (·.push "rest asked")
+              asked.resolve ()
+              return some (← Job.awaitWithin bound ended.result?).isSome
+            journal := fun after => return some ((← entries.get).filter (·.serial > after))
+            counters := some <$> counters }
+        -- The frame in flight ends once the rest is asked, from a task of
+        -- its own, joined below.
+        let frame ←
+          IO.asTask (prio := .dedicated) do
+              let some () ← Job.awaitWithin hangGuard asked.result? | return ()
+              entries.modify
+                  (·.push
+                    { serial := 1, inputNs := 0, drawNs := 0, presentNs := 0, rowsRebuilt := 0
+                      rowsReused := 0 })
+              submitted.modify (· + 1)
+              order.modify (·.push "frame ended")
+              ended.resolve ()
+        let collaborators :=
+          { stage.collaborators with
+            render := some render
+            emit := fun line => do
+              if line.startsWith "idle" then
+                order.modify (·.push line)
+              stage.collaborators.emit line }
+        let failure ← Headless.run collaborators #[⟨1, .idle⟩] hangGuard (grace := some hangGuard)
+        -- Whatever the run did, the frame's task ends before the check does.
+        ended.resolve ()
+        asked.resolve ()
+        discard <| IO.wait frame
+        let order ← order.get
+        saw
+            (failure.isNone &&
+              order ==
+                #["rest asked", "frame ended", "rest asked",
+                  "idle: 0 frames drawn, 0 frames submitted"])
+            s!"failure={repr failure} order={order}" },
     { name :=
         "a script that sends a key with modifiers prints that the key arrived with those modifiers, in order with what it asked for"
       run :=
@@ -2634,9 +2696,9 @@ wait 2" with
             none, none, none, some (.busy line), some (.waited 90000 (.busy line))]
         saw
           (failures == expected &&
-            Headless.Failure.within 200 30000 (.unanswered none) ==
+            Headless.Failure.ranOut 200 30000 (.unanswered none) ==
               .waited 200 (.unanswered none) &&
-            Headless.Failure.within 30000 30000 (.working line) == .working line)
+            Headless.Failure.ranOut 30000 30000 (.working line) == .working line)
           s!"failures={repr failures}" },
     { name :=
         "the headless mode's run disposes of its collaborators once its loop has ended: dispose is called once, after every line the script had the host print"
@@ -3984,23 +4046,21 @@ def withStateHost (context : Context) (state : System.FilePath) (files : List (S
                 stage.collaborators.services } }
     onStage stage fun host stage => check host stage
 
-/-- Waits until the host has written the session index: each write's delay
-moved past on the stage's clock, until neither a write nor a save is
-running. A write the host started after the last one rendered, for a change
-its publish had not seen yet, is waited for too. -/
-def indexWritten {β σ : Type} (host : Driven) (stage : Stage β σ) : IO Bool := do
-  for _ in [0:4] do
-    unless ← Headless.within hangGuard (stage.clock.dueWithin Restore.writeDelay) do
-      return false
-    stage.clock.advance Restore.writeDelay
-    if
-        (←
-            host.waitWhile 300
-                { Headless.Wait.Kind.join with busy := fun progress => pure progress.indexing } 300
-                none IO.eprintln (fun _ => pure ())) ==
-          .settled then
-      return true
-  return false
+/-- Waits until the host has written the session index, as the script's
+`indexed` does (`Headless.awaitIndexed`, `Headless.Wait.Kind.indexed`):
+each round ends on an event or at idle, each write's delay is moved past on
+the stage's clock once it is in its sleep, until neither a write nor a save
+is running, with `hangGuard` against a hang only. A write the host started
+after the last one rendered, for a change its publish had not seen yet, is
+waited for too. `waitBlocked` is the wait's, called as it blocks. -/
+def indexWritten {β σ : Type} (host : Driven) (stage : Stage β σ)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool := do
+  let index ←
+    Headless.awaitIndexed
+        -- hang guard: `hangGuard`, on each round's event or idle.
+        (fun kind => host.waitWhile hangGuard kind hangGuard none IO.eprintln waitBlocked)
+        host.progress (some stage.clock)
+  return index == .settled
 
 /-- The text of the highest run's index under `state`, if there is one. -/
 def lastIndex (state : System.FilePath) : IO (Option String) := do
@@ -4188,6 +4248,52 @@ def restoreOrderChecks (context : Context) : List Check :=
               match failed, installed with
               | some failed, some installed => failed < installed
               | _, _ => false },
+    { name :=
+        "the index's write is waited for on events, never on a short guard: with the index's save held until the wait blocks on it, the wait waits the hold out and answers that the index is written"
+      run :=
+        -- Seen to bite: on the wait's old 300 ms guards the held save
+        -- outlasts the guard, the wait answers busy, and the check fails
+        -- every run, as the store checks below did under load.
+        withFiles context fun state =>
+          IO.FS.withTempDir fun directory => do
+            writeConfig directory []
+            let gate ← IO.Promise.new
+            let held ← IO.mkRef 0
+            let stage ←
+              Stage.overFiles context (Config.Directory.source directory)
+                  { packages := #[Files.package, Restore.package, countedPackage 1] }
+            let services := stage.collaborators.services
+            let files := services.files
+            -- The index's save, a session file's, is held until the gate
+            -- opens: the wait's block on running work alone opens it.
+            let holding :=
+              { files with
+                start := fun id request => do
+                  if let .save _ path _ := request then
+                    if (Restore.runOfIndex? (path.fileName.getD "")).isSome then
+                      held.modify (· + 1)
+                      discard <| IO.wait gate.result?
+                  files.start id request }
+            let stage :=
+              { stage with
+                collaborators :=
+                  { stage.collaborators with
+                    stateDirectory := some state
+                    journal := Headless.Journal.real stage.collaborators.published.reader services
+                    services := { services with files := holding } } }
+            try
+              onStage stage fun host stage => do
+                  host.send (.restore none)
+                  host.send (.run "bump-counted")
+                  unless ← settled host do
+                    return false
+                  let written ←
+                    indexWritten host stage (waitBlocked := fun what => do
+                        if what == "running work" then
+                          gate.resolve ())
+                  return written && (← held.get) ≥ 1
+            finally
+              gate.resolve () },
     { name :=
         "a package's declared store kept across a restart, end to end: bumped twice and left uncleanly, the next host shows it before any reload, since packages register before the restore; a host handed the package at version 2 shows it migrated"
       run :=

@@ -168,12 +168,17 @@ directives read the drawing:
   frame <rows>`. The queries are the loop's own, made as it follows the
   cursor before each publish, and a scroll command's. Without `--render`:
   `agree: no frame`.
-- **`idle <ms>`** settles, waits until the render loop is at rest, then
-  counts what it draws and what it is handed over `<ms>` milliseconds:
-  `idle <ms>: <d> frames drawn, <s> frames submitted`. Nothing should ask
-  for a frame while nobody types, so both are 0. `idle 0` paces a key: the
-  key's frame is drawn before the next is sent. Without `--render`:
-  `idle <ms>: no render loop`.
+- **`idle`** waits until the editor thread has handled everything sent so
+  far (a wait that publishes nothing) and the render loop is at rest (on
+  the step that records the rest, never a poll); then the editor thread
+  answers once more with nothing sent, and once the loop has rested again
+  it prints what the loop drew and was handed between the two rests:
+  `idle: <d> frames drawn, <s> frames submitted`. Both ends are rests, so
+  the count is what a loop left alone was asked, fixed by events and never
+  by a window of time: nothing should ask for a frame while nobody types,
+  so both are 0. It paces a key too: the key's frame is drawn before the
+  next is sent. It takes nothing after it: `idle <ms>`, the old windowed form, is
+  refused, naming `idle`. Without `--render`: `idle: no render loop`.
 - **`journal`** settles, waits for the loop to rest, and prints how many
   frames were presented since the last `journal` line, their
   `present - input` median, 99th percentile (nearest rank) and largest in
@@ -183,7 +188,7 @@ directives read the drawing:
 
 `tests/headless/milestone/` is milestone 1's fixture over the whole program:
 `:e` on a 60-line source file, an evil session ending in `:w`, `agree`
-after `C-f` and after the save, and `idle 1000`; `ffi-test` compares its
+after `C-f` and after the save, and `idle`; `ffi-test` compares its
 output and the saved file's bytes ([the-gate.md](the-gate.md)).
 
 ## A config directory
@@ -328,7 +333,7 @@ with no config and `show` lists them before config's
 | `open-file` | Opens the file at the path that is its first argument in the window it is called with: it starts the job `load-file`, and when the file is loaded a buffer of its text, called by its base name, is shown there. A path a buffer already holds is shown at once. A file that is not there, or is refused for another reason, is said in the echo area, `cannot open <path>: <why>`, and the window shows what it showed. With no path it asks for one, with the prompt `Open file: `, whose text starts as the window's directory (its buffer's file's, else its workspace's root, else the working directory) and which lists that directory's entries, directories first, the directory typed so far listed again as it changes; and opens the answer, read as a typed path: a name that is not absolute under that directory, `~` under the home directory, which the headless mode does not know, and a restart after `//` or `/~/` as Emacs reads it. |
 | `save-buffer` | Saves the buffer of the window it is called with to its file: it starts the job `save-file`, and when the file is written the echo area says `wrote <path>` and the buffer is no longer modified. A file that changed on disk since it was loaded is left as it is, and the echo area says `cannot save <path>: <why>`. With `true` as its first argument it writes whatever is on disk. |
 | `reload-buffer` | Reloads the buffer of the window it is called with from its file: it starts the job `reload-file`, which loads the file and diffs it against the buffer's text off the editor thread, and the buffer then takes the file's text as one edit, with the cursor kept on the lines the diff kept, not modified, which one undo takes back. It is refused while the buffer has unsaved changes, saying `<name> has unsaved changes; :e! discards them`, unless its first argument is `true`. A text edited while the file loaded is reloaded once more, and then left, saying `<path> was edited while it reloaded; :e reloads it`. |
-| `auto-reload-mode` | Turns auto-reload on with `true` first, off with `false`, and toggles it with neither, saying `auto-reload on` or `auto-reload off`. With it on, a job `follow-file` watches each file buffer's file, and another program's change reloads a buffer with no unsaved changes, or marks one with them `[changed on disk]` in face `mode-line.changed`, the mode line's `changed` segment. Off by default; config's `autoReload` in `setup` decides until a command does. |
+| `auto-reload-mode` | Turns auto-reload on with `true` first, off with `false`, and toggles it with neither, saying `auto-reload on` or `auto-reload off`. With it on, a job `follow-file` watches each file buffer's file, and another program's change reloads a buffer with no unsaved changes, or marks one with them `[changed on disk]` in face `mode-line.changed`, the mode line's `changed` segment. Off by default; config's `autoReload` in `setup` decides until a command does. How soon a change is shown, criterion 9's "within a second", is real time: it is measured by `mise run config-bench`'s auto-reload row, with its budget beside it, never pass or fail in a test. |
 | `edit-file` | What the ex names `e` and `e!` run: a leading `true` is the force; a path opens it as `open-file` does; with none it reloads the window's buffer as `reload-buffer` does when that has a file, and otherwise asks for a path. |
 
 `run <name>` hands a command no argument, so a script cannot give
@@ -560,9 +565,9 @@ fake clock: real time never moves it, and the script moves it with
 advances past its sleep, and a pause fires only when a script advances, and
 saved outputs stay deterministic. An `advance` waits for a wait due within
 its milliseconds before it moves the clock, so `advance 1` after `spawn
-count` cannot move the clock before `count` is in its sleep. `idle
-<milliseconds>` still waits real milliseconds, for the render loop, which is
-the render thread's and not the job clock's. The window mode keeps the real
+count` cannot move the clock before `count` is in its sleep. `idle` waits
+for the render loop's rest, which is the render thread's and not the job
+clock's, on the rest itself and never for a time. The window mode keeps the real
 timers.
 
 | Directive | Does |
@@ -576,7 +581,7 @@ timers.
 | `advance <milliseconds>` | Moves the headless mode's job clock on by that many milliseconds, once it holds a wait due within them, completing every wait then due: a job's sleep, a time limit, the pause of completion at point. It sends nothing to the editor thread that shows and prints nothing, so a scene count is unchanged by it. One that finds the editor idle with no wait due within the time stalls the run at once, saying `the advance on line N found the editor idle with no wait due within M ms on the clock`. Its 30 seconds are a hang guard only. Anything but one number is refused. |
 | `show` | Prints the commands, the texts and the stores. |
 | `journalled` | Waits as `settle` does, then, for up to 30 seconds, until the library's file service holds no request: the session journal's writes, which nothing else waits for, are then on disk. |
-| `indexed [<seconds>]` | Waits as `settle` does, then, for up to 30 seconds, or for up to the seconds given, until the session index is written: no write or save of it running, no job running but those the script started with `spawn`, and the library's file service holding no request. Each write of the index waits on the job clock (`Restore.writeDelay`), and a job that ends can start another, so once no other job is running it moves the clock past the write's delay, and again for each write that follows: what the jobs changed is then in one write, and the scene count is the same from run to run. It needs no `join`, so a script with a long job of its own running can wait for the index. With seconds, a failure to see the index written names them, in milliseconds. |
+| `indexed [<seconds>]` | Waits as `settle` does, then until the session index is written: no write or save of it running, no job running but those the script started with `spawn`, and the library's file service holding no request. Each round ends on an event or at idle, publishing nothing (`Wait.Kind.indexed`). Each write of the index waits on the job clock (`Restore.writeDelay`), and a job that ends can start another, so at idle with a write in its sleep and no other job running it moves the clock past the write's delay and waits again: what the jobs changed is then in one write, and the scene count is the same from run to run. At idle otherwise, a background job asleep on the clock no `advance` moves, it fails the run at once (`the join or indexed on line N of the script found the editor idle with a job still running`). It needs no `join`, so a script with a long job of its own running can wait for the index. Its 30 seconds, or the seconds given, are a hang guard; with seconds, a failure names them, in milliseconds. |
 | `workspaces` | Prints the workspace table: `workspace <label> at <location>:` and each value of its store as ` <name>=<value>`, a line for each workspace; then `project <name>:` and its values, for each project; then `unscoped:` and the values of the store of the buffers outside any workspace. |
 | `abort` | Ends the process at once with the status 134 and no shutdown, as an abort would, once what was printed is flushed: no job is cancelled and no file request waited for. It is not the signal SIGABRT, which on a macOS desktop raises the crash reporter. |
 | `restarted [<seconds>]` | Waits, for up to 30 seconds, or for up to the seconds given, until the loop has ended with the session handed over (a `:restart` the script asked for): the script stops in this process, which prints `restart: the session is handed over`, shuts down and execs the plan. The next process, started with `--resume`, runs the script from the line after. With no hand-over within the wait, the run fails, naming the line, and with seconds, them, in milliseconds. |
@@ -2224,10 +2229,10 @@ wait through them ([`docs/design/concurrency.md`](../design/concurrency.md),
 | `advance` | A wait due within the move, or idle with none due, which stalls (not a hang) | 30 s | Its hang line, then the run fails as `busy` |
 | The editor thread's answer, inside each wait | The loop answering the wait's marker | The wait's guard, or a `settle <ms>`'s or `join <s>`'s own | Its hang line, then the run fails as `unanswered` |
 | `journalled` | The file service's flush | 30 s | The run fails as `unanswered` |
-| `indexed [<seconds>]` | Still a poll of the index's write with a deadline, to move onto idle in a later change | 30 s, or the seconds given | The run fails as `unanswered` |
+| `indexed [<seconds>]` | The index written, or idle with a write in its sleep, which moves the clock past it and waits again, or idle with a background job still running, which fails as `working` (not a hang) | 30 s, or the seconds given | Its hang line, then the run fails as `unanswered` |
 | `restarted [<seconds>]` | The loop's task ending | 30 s, or the seconds given | The run fails as `notRestarted` |
 | The loop's end | Its task, which ends once a reload it started has ended | 30 s, then `Headless.hangGrace` (5 s) | Its hang line, then the run fails as `hung`, exit 1 |
-| `idle <ms>` | Real milliseconds of the render loop's, not a job-clock wait | | |
+| `idle` | Everything sent handled, then the render loop's rest (`Render.awaitRest`, on the step that records it) | 30 s | `idle: the render loop did not come to rest within M ms` |
 
 ## A package's fixtures
 

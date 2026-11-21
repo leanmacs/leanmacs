@@ -1,6 +1,8 @@
 import ConfigTest.Support.Candidates
+import ConfigTest.Support.Configs
 import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
+import ConfigTest.Support.Lines
 import Editor.Api
 import Editor.AtPoint.Compiled
 import Editor.Clipboard
@@ -539,8 +541,15 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   -- have reached a request, so the pool is computing.
   let computing (count : Nat) : IO Unit := do
     let before ← reads.get
-    unless ← Headless.within patience (return (← reads.get) >= before + count) do
-      throw (IO.userError "the computing jobs did not get going")
+    -- hang guard: the jobs' reads of the clock, re-read each millisecond in
+    -- this opt-in bench (never part of `ci`); only jobs that never get going
+    -- reach `patience`, and the row then fails as a hang.
+    let deadline := (← IO.monoMsNow) + patience
+    while (← reads.get) < before + count do
+      -- hang guard: as above.
+      if (← IO.monoMsNow) >= deadline then
+        throw (IO.userError "a hang: the computing jobs did not get going")
+      IO.sleep 1
   let idle := Row.of "idle" (← row "ticker" 0 (pure ())).1
   let (sleepingTimes, completed, elapsed) ← row "ticker" 64 (pure ())
   let sleeping :=
@@ -1241,6 +1250,47 @@ def journal : IO UInt8 := do
           let times ← journalTimes services published directory size position 10000
           IO.println (Row.of s!"journal_order/{label}/{position}" times).line
   return 0
+
+/-- The auto-reload row of `config-bench` (`config-test bench-auto-reload`):
+the latency, in milliseconds, from another process's rewrite of an open,
+unmodified buffer's file (the rewriting process's exit, its rename done) to
+the rewrite shown, over the library's real watch service, `samples` times,
+each on a host and a directory of its own; printed with its budget beside
+it, auto-reload's criterion 9, a second. It asserts nothing: the criterion
+is real time, so it is measured here, never pass or fail in a test
+(`ConfigTest.autoReloadChecks`). The scene is asked again at each job line
+(`Session.shownOn`), so a sample ends on the event that shows it. -/
+def autoReloadRow (context : Context) (samples : Nat) : Check :=
+  { name := "the auto-reload row: the rewrite-to-shown latency over real watches"
+    run := do
+      let (old, new) := ("one\ntwo\n", "one\ntwo\nthree\n")
+      let mut took : Array Nat := #[]
+      for _ in [0:samples] do
+        let sample ← IO.mkRef (none : Option Nat)
+        discard <|
+            withFiles context (targets := [.files, .fileWatches]) fun files => do
+              let path := files / "note.txt"
+              IO.FS.writeBinFile path old.toUTF8
+              withRealFileHost context [("open-note", path)] fun session => do
+                  unless ← session.ran "open-note" do
+                    return false
+                  session.ask [.run Files.autoReloadName]
+                  unless ← rewriteFromOutside path new do
+                    return false
+                  let rewritten ← IO.monoNanosNow
+                  let (shown, _) ←
+                    session.shownOn (·.startsWith "job ") (·.contains (viewLine new 0))
+                  if shown then
+                    sample.set (some (((← IO.monoNanosNow) - rewritten) / 1000000))
+                  return shown
+        if let some ms← sample.get then
+          took := took.push ms
+      let sorted := took.qsort (· < ·)
+      let median := (sorted[sorted.size / 2]?).getD 0
+      let most := (sorted.back?).getD 0
+      IO.println
+          s!"auto-reload: rewrite to shown over real watches, {took.size} of {samples} samples: median {median} ms, max {most} ms; budget 1000 ms (criterion 9)"
+      return took.size == samples }
 
 end Bench
 

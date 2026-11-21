@@ -1197,17 +1197,18 @@ the display is the real binding over the library's layout in cells of 8 by
 CPU renderer. The script opens a copy of `source.txt`, 60 lines of Lean,
 with `:e`, runs `2dw`, `.`, `u`, `j`, `cw` with a committed `edited`,
 `<Escape>`, `$ p`, `u` and `C-r`, scrolls with `C-f`, saves with `:w`, and
-ends with `idle 1000`. The editor must exit 0, its output must be exactly
+ends with `idle`. The editor must exit 0, its output must be exactly
 `expected` (each `agree` line reads `agrees`: the rows the loop asked for
-are the frame's, and `idle 1000: 0 frames drawn, 0 frames submitted`), and
+are the frame's, and `idle: 0 frames drawn, 0 frames submitted`), and
 the copy must hold the bytes of `source-expected`. That `agree` can say
 anything but `agrees` is pinned in `config-test`
 (`ConfigTest.agreementChecks`): on a scene and answers made there it says
 `agrees`, `disagrees` with both sets of rows, that there is no rows query,
-and that the frame has no such view. The idle second is the
-one real-time wait of the gate's checks of drawing: it starts once the
-render loop is at rest, so a slow machine cannot fail it, and it fails only
-if something asks for a frame while nobody types. The render loop's own
+and that the frame has no such view. The `idle` waits on
+events alone: everything sent handled, then the render loop's rest, on the
+step that records it, so a slow machine cannot fail it, and its count of
+frames is fixed by events: a loop that kept asking for frames while nobody
+types would never rest. The render loop's own
 rules (an equal frame is no demand; a loop at rest draws nothing) are
 `editor-render`'s, pinned on a fake clock.
 

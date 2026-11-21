@@ -225,6 +225,18 @@ def withRealFileHost (context : Context) (opens : List (String × System.FilePat
     let stage ← fileStage context directory opens extra
     onRealStage stage fun host stage => check (RealSession.ofStage host directory stage)
 
+/-- Rewrites the file at `path` with `text` from another process, as agents
+and editors write: a temporary file beside it, renamed over it. Waits for
+the process to exit; whether it exited with 0. -/
+def rewriteFromOutside (path : System.FilePath) (text : String) : IO Bool := do
+  let child ←
+    IO.Process.output
+        { cmd := "/bin/sh"
+          args :=
+            #["-c", "printf '%s' \"$2\" > \"$1.tmp\" && mv \"$1.tmp\" \"$1\"", "sh", path.toString,
+              text] }
+  return child.exitCode == 0
+
 /-- The text of the file `note.txt` of the file checks: two lines, with
 two-byte characters. -/
 def noteText : String :=
