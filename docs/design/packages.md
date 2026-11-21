@@ -2519,7 +2519,7 @@ One row covers modules that share a class and a side of the import rule.
 | The setup port, packages, extension points and stores: `Editor.Setup`, `Editor.Package`, `Editor.Extension`, `Editor.Store`, `.Store.Codec`, `Editor.Value`, `Editor.Json` | 7 | core | yes |
 | The state, and the names of the jobs the loop's reconcilers run: `Editor.State`, `.State.Request`, `Editor.Event`, `Editor.DisplayRules`, `Editor.Floating`, `Editor.Layout`, `Editor.GeneratedView`, `Editor.ExcerptView`, `Editor.Gutter`, `.Gutter.Track`, `Editor.FileJobs`, `Editor.Workspace` | 12 | core | yes |
 | What a search of a workspace's files covers, which the finder and project search decide by: `Editor.SearchRoot` (in `Editor.Workspace`, outside the workspace feature's modules under `Editor.Workspace.`, because it takes the state and a call, which `Editor.Workspace` sits below) | 1 | core | yes |
-| Places, jump lists and marks, which the state holds and the loop follows through edits: `Editor.JumpList`, `Editor.Marks`, `.Marks.Follow`, `Editor.Jumps` | 4 | core | yes |
+| Places, jump lists and marks, which the state holds and the loop follows through edits: `Editor.JumpList`, `Editor.Marks`, `.Marks.Follow`, `Editor.Jumps`, and going to a place, `Editor.Jumps.Go`, which visits a closed file through `files-api` (`FilesApi.files?`) since the features-as-packages roadmap's phase 6 | 5 | core | yes |
 | The scene and display types: `Editor.Scene`, `Editor.Scroll`, `Editor.Face`, `.Face.Vocabulary`, `Editor.Appearance`, `Editor.Highlight`, `Editor.TabBar`, `Editor.ModeLine`, `Editor.Menu` | 9 | core | yes |
 | Keys and modes: `Editor.InputScheme`, `Editor.Invocation`, `Editor.Keymap`, `Editor.Key.Notation`, `Editor.Mode`, `Editor.Role`, `Editor.Vocabulary` | 7 | core | yes |
 | Completion: `Editor.Completion`, `.Candidate`, `.Display`, `.Style`, `.AtPoint`, `.Keys`, `.Later`, `.Filtering` | 8 | core | yes |
@@ -2532,7 +2532,7 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Evil` and 12 of the modules under it (all but `.Compiled`); `Editor.InputScheme.Vim`, `.Vim.Default` | 15 | feature: evil | yes |
 | `Editor.Ex` | 1 | feature: ex | yes |
 | `Editor.Ex.Compiled` | 1 | feature: ex | no |
-| `Editor.Files`, `Editor.Completion.Paths`, `Editor.Jumps.Go` | 3 | feature: files | yes |
+| `Editor.Files`, `Editor.Completion.Paths` | 2 | feature: files | yes |
 | `Editor.Files.Compiled` | 1 | feature: files | no |
 | `Editor.Files.Kit`, the drivers of the real file commands | 1 | feature: files | in tests |
 | `Editor.FrameCommands` | 1 | feature: frame-commands | yes |
@@ -2674,7 +2674,7 @@ the set's base (`import Completion.Styles`, `import Completion.Displays`).
 - **Core modules that import it**: `Headless` (`InputScheme.Vim.Default`).
 - **The test kit's modules that import it**: `Test.Config` (`InputScheme.Vim`).
 - **Other features' modules that import it**: menu: `Menu.Compiled` (`Evil.Clipboard`); project-search: `ProjectSearch.Run` (`Evil.Motions`); themes: `Themes.Check` (`InputScheme.Vim.Default`), `Themes.Picture` (`InputScheme.Vim`).
-- **Other features it imports**: files (`Jumps.Go`, which `Evil` imports to go to a mark).
+- **Other features it imports**: none. `Jumps.Go`, which `Evil` imports to go to a mark, is the core's since phase 6, and visits a closed file through `FilesApi`.
 - **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (27): `ModelTest`: `Api`, `AtPoint`, `ExcerptView`, `Face.Vocabulary`, `InputScheme.Contract`, `Loop`, `Menu`, `Minibuffer`, `State`, `TabBar`, `TabCommands`, `WindowCommands`, `Workspace.FindInProject`, `Support.AtPoint`, `Support.Evil`, `Support.Excerpt`, `Support.OperatorRows`, `Support.Views`, `Support.Vim`, `Support.Windows`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`, `Indent`, `Support.Syntax`; `FfiTest`: `ExcerptView`; `ContractTest`: `SyntaxTree.Real`.
 - **The config base imports**: `Evil.Clipboard`, `Evil.Jumps`, `Evil.Operators`, `Evil.Repeat`, `Evil.Scroll`, `Evil.Theorems`, `Evil.TreeObjects`, `Evil.Undo`, `InputScheme.Vim.Default`.
@@ -2703,10 +2703,10 @@ cross. No core module and no test of a core module imports it. It imports the co
 
 Computed again at the end of the features-as-packages roadmap's phase 5, which cut its imports of the other four of files, buffers, working-set, workspace and version-control: it reaches them through the interface libraries ("The interface libraries of the features-as-packages roadmap's phase 5", above).
 
-- **Modules** (5): `Completion.Paths`, `Files`, `Files.Compiled`, `Files.Kit`, `Jumps.Go`. `Files.Kit`, the drivers of the real file commands, is a test double, which moves into its test library when it moves out.
+- **Modules** (4): `Completion.Paths`, `Files`, `Files.Compiled`, `Files.Kit`. `Jumps.Go` is the core's since phase 6, over `FilesApi`. `Files.Kit`, the drivers of the real file commands, is a test double, which moves into its test library when it moves out.
 - **Core modules that import it**: none; `Editor.Core` imports `Files.Kit` and `Files.Compiled`. The loop's reconcilers run the jobs the core names (`Editor/FileJobs.lean`), where the loop imported `Files`.
 - **The test kit's modules that import it**: none. The kit opens files with its own opener (`Test.Opener`), and runs the hosted packages through `Test.Hosted`.
-- **Other features' modules that import it**: evil: `Evil` (`Jumps.Go`); ex: `Ex` (`Files`), `Ex.Compiled` (`Files`); menu: `Menu.Compiled` (`Files`); project-search: `ProjectSearch.Run` (`Files`, `Jumps.Go`); restore: `Restore.Run` (`Files`); shell: `Shell` (`Files`). Buffers, working-set, workspace and version-control reach it through `FilesApi` (`FilesApi.files?`, its hooks `Opened` and `Saved`, and its names).
+- **Other features' modules that import it**: ex: `Ex` (`Files`), `Ex.Compiled` (`Files`); menu: `Menu.Compiled` (`Files`); project-search: `ProjectSearch.Run` (`Files`); restore: `Restore.Run` (`Files`); shell: `Shell` (`Files`). Buffers, working-set, workspace and version-control reach it through `FilesApi` (`FilesApi.files?`, its hooks `Opened` and `Saved`, and its names).
 - **Other features it imports**: ex (`Ex`, `Ex.Compiled`), by `Files.Kit` alone. It runs `FilesApi.Opened` where it imported `Workspace.Attach` and `WorkingSet.Places`.
 - **Modules of packages outside the core that import it**: compile: `CompileTest.Compile` (`Files`), `CompileTest.Support.Compile` (`Files.Kit`), `CompileTest.Linked.Compile.Shipped` (`Files.Kit`).
 - **Test modules outside its own tests that import it** (7): `ModelTest`: `Ex`, `Evil.Marks`, `Menu`, `Restore.Run`; `ConfigTest`: `Ex`; `ContractTest`: `ProjectSearch.Run`, `Restore.Run`.

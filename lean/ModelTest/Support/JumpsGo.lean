@@ -1,6 +1,8 @@
 import Editor.Files
+import Editor.Files.Compiled
 import Editor.Files.Kit
 import Editor.Jumps.Go
+import Editor.Test.Hosted
 import ModelTest.Support.Jumps
 
 /-!
@@ -44,9 +46,12 @@ def jumpGoCommands : List (String × Dispatched) :=
     jumpStandIns.filter fun (name, _) => name != "open"
 
 /-- The driver of the jump checks of the files feature: the core's commands
-and the real ones (`jumpGoCommands`), and the files feature's jobs. -/
+and the real ones (`jumpGoCommands`), the files feature's jobs, and its
+`FilesApi.Files` value, which going to a place in a closed file visits it
+through. -/
 def goDriver : Option TestDriver :=
-  jumpDriverWith (jumpCoreCommands ++ jumpGoCommands) fileJobs
+  (jumpDriverWith (jumpCoreCommands ++ jumpGoCommands) fileJobs).map fun driver =>
+    { driver with keys := withExtensionsOf driver.keys #[Files.package] }
 
 /-- `driver`, the files feature's, fed the keys `keys`, each followed by
 every load it started being finished (`jumpedWith`). -/

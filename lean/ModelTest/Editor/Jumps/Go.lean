@@ -1,3 +1,5 @@
+import Editor.Test.Hosted
+import FilesApi
 import ModelTest.Check
 import ModelTest.Support.JumpsGo
 
@@ -85,6 +87,16 @@ def jumpGoChecks : List Check :=
         return (goJumpsAfter "C-j 4 C-j v").map (·.1) == some (["0@4:0"], 1) &&
             (goJumpsAfter "C-j 4 C-j v C-j s C-j v").map (·.1) == some (["0@4:0", "0@0:0"], 2) &&
             goJumpsAfter "C-j 4 C-j V" == some (([], 0), "1@1:2") &&
-            goJumpsAfter "C-j 4 C-j V C-j s C-j V" == some (([], 0), "1@1:2") }]
+            goJumpsAfter "C-j 4 C-j V C-j s C-j V" == some (([], 0), "1@1:2") },
+    { name :=
+        "with no files implementation, going to a closed file's place as a jump says so, records the jump, starts no load and leaves the view where it was"
+      run :=
+        let bare := goDriver.map fun driver =>
+          { driver with keys := withoutExtension FilesApi.Files driver.keys }
+        let gone := bare.map (goJumped · "C-j 5 C-j t")
+        return gone.map (fun driver => (driver.loop.state.echo, driver.pending.size)) ==
+              some (FilesApi.noImplementation "jump", 0) &&
+            gone.map (fun driver => (jumpsOf driver, cursorOf driver)) ==
+              some (some (["0@5:0"], 1), some "0@5:0") }]
 
 end ModelTest

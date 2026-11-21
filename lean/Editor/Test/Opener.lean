@@ -27,8 +27,16 @@ without the minibuffer's package (`Editor/Test/Minibuffer.lean`).
   shown at once; any other is loaded by the job `test-load-file`, whose
   command records a jump in the window and makes a buffer over the text, named for the file, holding it,
   with the places a closed buffer of it left held again (`Jumps.attach`),
-  then runs the `opened` runner, then shows it. A refused load says
-  `cannot open <path>: <why>`. With no path it says so: it has no prompt.
+  then runs the `opened` runner, then shows it, and records the language
+  the registry's table chooses for the path (`languageOf`), as the files
+  feature does. A refused load says `cannot open <path>: <why>`, the text
+  `files-api` declares (`FilesApi.notOpened`). With no path it says so: it
+  has no prompt.
+- **A visit** (`visit`) is an open at a point: once the buffer is shown,
+  at once when a buffer holds the path and when the load lands otherwise,
+  the view's cursor goes to the row and column, or the row's first
+  non-blank, and the view is focused when asked. It records a jump in the
+  view unless asked not to, as the jump commands ask.
 - **`save-buffer`** saves the window's buffer (with `true`, whatever is on
   disk): a snapshot written by the job `test-save-file` over the file the
   buffer recorded, the save in flight recorded with `beginSave` and ended
@@ -37,7 +45,7 @@ without the minibuffer's package (`Editor/Test/Minibuffer.lean`).
 
 Its jobs have names of their own, so they never take an order of the
 files feature's. It makes none of the files feature's choices: no prompt,
-no reload, no auto-reload, no language and no `code` mode.
+no reload, no auto-reload and no `code` mode.
 
 The runners default to nothing. The interface library `files-api` makes
 its fake of this opener with its hooks as the runners.
@@ -80,9 +88,10 @@ def noPath : String :=
 
 /-- The buffer of the file at `path`, whose load answered `loaded`: the
 buffer that holds the path, if one does; otherwise a new buffer over the
-loaded text, named for the file, holding it, its places held again, and
-`opened` run. Shown in `view` when one is given. `none` when a step is
-refused. -/
+loaded text, named for the file, holding it, its places held again,
+`opened` run, and the language the registry's table chooses for the path
+(`languageOf`) recorded. Shown in `view` when one is given. `none` when a
+step is refused. -/
 def adopt (opened : BufferId → System.FilePath → EditorM Unit) (path : System.FilePath)
     (loaded : File.Loaded) (view : Option ViewId := none) : EditorM (Option BufferId) := do
   let state ← editorState
@@ -97,14 +106,59 @@ def adopt (opened : BufferId → System.FilePath → EditorM Unit) (path : Syste
   opened buffer path
   if let some view := view then
     let .ok () ← view.show buffer | return none
+  -- The language the registry's table chooses for the path, as the files
+  -- feature records it; no mode is set.
+  if let some language← languageOf path then
+    discard <| buffer.setLanguage (some language)
   return some buffer
 
+/-- Where a visit puts the cursor once the buffer is shown: a row and a
+column in characters, or the row's first non-blank; whether the view is
+focused; and whether the visit records a jump. -/
+structure Point where
+  /-- The row, from 0. -/
+  row : Nat
+  /-- The column, in characters from the row's start. -/
+  column : Nat
+  /-- Whether the cursor goes to the row's first non-blank instead. -/
+  firstNonBlank : Bool := false
+  /-- Whether the view is focused. -/
+  focus : Bool := false
+  /-- Whether a jump is recorded in the view (`Jumps.record`). -/
+  record : Bool := true
+
+/-- The load job's arguments for `path` in `view`: an open's, or, with a
+point, a visit's. -/
+def loadArguments (path : System.FilePath) (view : ViewId) : Option Point → List Argument
+  | none => [.str path.toString, .nat view.index]
+  | some point =>
+    [.str path.toString, .nat view.index, .nat point.row, .nat point.column,
+      .bool point.firstNonBlank, .bool point.focus, .bool point.record]
+
+/-- The path, the view and the point (none for an open) the load job's
+arguments name; `none` for arguments that are not a load's. -/
+def loadOf? : List Argument → Option (System.FilePath × ViewId × Option Point)
+  | [.str path, .nat view] => some (path, ⟨view⟩, none)
+  | [.str path, .nat view, .nat row, .nat column, .bool firstNonBlank, .bool focus, .bool record] =>
+    some (path, ⟨view⟩, some { row, column, firstNonBlank, focus, record })
+  | _ => none
+
+/-- Puts the cursor of `view`, which shows `buffer`, at `point`, and focuses
+the view when the point says so. -/
+def placeAt (view : ViewId) (buffer : BufferId) (point : Point) : EditorM Unit := do
+  let some shown := (← editorState).buffer? buffer | return
+  let offset ← Marks.offsetAt shown.text point.row point.column
+  Jumps.placeCursor view (← Jumps.offsetOn shown.text offset point.firstNonBlank)
+  if point.focus then
+    discard <| view.focus
+
 /-- The load job: loads the file at the path its arguments name and finishes
-with the buffer made of it shown in the view they name, or the refusal
-said. -/
+with the buffer made of it shown in the view they name, the cursor at the
+visit's point when they carry one, or the refusal said. -/
 def loadWork (opened : BufferId → System.FilePath → EditorM Unit) (arguments : List Argument) :
     Work := fun _ => do
-  let [.str path, .nat view] := arguments | throw s!"{loadJob}: its arguments are not a load's"
+  let some (path, view, point) := loadOf? arguments
+    | throw s!"{loadJob}: its arguments are not a load's"
   let reply ← File.load path (1 <<< 30)
   return do
     match reply with
@@ -112,31 +166,37 @@ def loadWork (opened : BufferId → System.FilePath → EditorM Unit) (arguments
       message (notOpened path error)
     | .ok loaded =>
       -- An open is a jump, recorded where the buffer is shown, as a file's
-      -- open records one.
-      Jumps.record ⟨view⟩
-      discard <| adopt opened path loaded (some ⟨view⟩)
+      -- open records one; a visit records one when it says so.
+      if point.all (·.record) then
+        Jumps.record view
+      let some buffer ← adopt opened path loaded (some view) | return
+      if let some point := point then
+        placeAt view buffer point
+
+/-- Opens `path` in `view`, and with a point visits it: shows the buffer
+that holds it, with the cursor at the point, at once, or starts its load,
+which places it once the buffer is shown. A jump is recorded unless the
+point says not to. -/
+def openAt (view : ViewId) (path : System.FilePath) (point : Option Point) : EditorM Unit := do
+  if let some buffer := (← editorState).findFile path then
+    if point.all (·.record) then
+      Jumps.record view
+    let .ok () ← view.show buffer | return
+    if let some point := point then
+      placeAt view buffer point
+  else if let .error refusal← startJob loadJob (loadArguments path view point) then
+    message s!"{FileJobs.openFileCommand}: {refusal.describe}"
 
 /-- Opens `path` in `view`: shows the buffer that holds it, or starts its
 load. -/
-def «open» (view : ViewId) (path : System.FilePath) : EditorM Unit := do
-  if let some buffer := (← editorState).findFile path then
-    Jumps.record view
-    discard <| view.show buffer
-  else if let .error refusal← startJob loadJob [.str path.toString, .nat view.index] then
-    message s!"{FileJobs.openFileCommand}: {refusal.describe}"
+def «open» (view : ViewId) (path : System.FilePath) : EditorM Unit :=
+  openAt view path none
 
-/-- Visits `path` in `view` at the row `row`, column `column`, focusing the
-view with `focus`: a path a buffer holds is shown with the cursor there;
-the opener opens any other, with no cursor placed. -/
-def visit (view : ViewId) (path : System.FilePath) (row column : Nat) (focus : Bool := false) :
-    EditorM Unit := do
-  let some buffer := (← editorState).findFile path | «open» view path
-  Jumps.record view
-  let .ok () ← view.show buffer | return
-  let some shown := (← editorState).buffer? buffer | return
-  Jumps.placeCursor view (← Marks.offsetAt shown.text row column)
-  if focus then
-    discard <| view.focus
+/-- Visits `path` in `view` at `point`: the buffer is shown with the cursor
+at the point, at once when a buffer holds the path and once its load lands
+otherwise, the view focused and a jump recorded when the point says so. -/
+def visit (view : ViewId) (path : System.FilePath) (point : Point) : EditorM Unit :=
+  openAt view path (some point)
 
 /-- The open command as it is called: each string argument a path, opened in
 the window it was called with. -/

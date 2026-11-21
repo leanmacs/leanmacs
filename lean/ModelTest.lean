@@ -609,7 +609,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   the visit of a `C-o` or of a jump to a place, entries edits brought onto
   one line being one at the next move, a move past either end, opening a
   file, a visit and switching buffers each recording a jump, and a visit at
-  a row's first non-blank or that records none;
+  a row's first non-blank or that records none, and with no files
+  implementation a jump to a closed file's place said and nothing loaded;
 - `loopFileJobChecks`: when the loop starts the file jobs
   (`Loop.fileJobs`, `Editor/Loop.lean`) under the core's names, on that
   driver with stand-in works and no files feature: the focus coming back
@@ -1210,8 +1211,10 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   its names; its fake (`FilesApiTest.fake`, the kit's opener with the
   hooks as its runners) keeps its contract; the contract fails a package
   that lacks a command, one that registers none, one whose open and save
-  run no hook, and one whose save starts its follow-up at once, before the
-  file is written and on a refused save; and a set's own `Files` value of
+  run no hook, one whose save starts its follow-up at once, before the
+  file is written and on a refused save, one whose visit ignores the point
+  and one whose visit records a jump whatever it is told; the fake records
+  the language the registry's table chooses for a file it opens; and a set's own `Files` value of
   the name `files`,
   registered after the feature's, is the one `files?` answers;
 - `buffersApiChecks`: the interface library `buffers-api` (`BuffersApi.lean`):

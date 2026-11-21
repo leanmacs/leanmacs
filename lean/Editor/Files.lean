@@ -408,9 +408,11 @@ def LoadOrder.ofArguments? : List Argument → Option LoadOrder
   | _ => none
 
 /-- What the echo area says when the file at `path` could not be opened:
-the refusal's own sentence, after the path. -/
+the refusal's own sentence, after the path. It is `files-api`'s
+(`FilesApi.notOpened`), so a caller that loads a file itself says what
+files would. -/
 def notOpened (path : System.FilePath) (error : FileError) : String :=
-  s!"cannot open {path}: {error.describe}"
+  FilesApi.notOpened path error
 
 /-- What the echo area says when the job that loads `path` was not
 started. -/

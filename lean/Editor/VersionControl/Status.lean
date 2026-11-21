@@ -629,7 +629,7 @@ def visitCommand (call : Call) : EditorM Unit := do
   else
     match ← FilesApi.files? with
     | some files =>
-      files.visit call.target.window.id (order.root / file.path) { row := 0, column := 0 } true
+      files.visit call.target.window.id (order.root / file.path) { row := 0, column := 0 } true true
     | none =>
       message (FilesApi.noImplementation visitName)
 

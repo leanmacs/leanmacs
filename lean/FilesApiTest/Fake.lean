@@ -29,7 +29,10 @@ as its runner. -/
 def files : FilesApi.Files :=
   { name := FilesApi.implementationName
     adopt := fun path loaded view => Opener.adopt FilesApi.runOpened path loaded view
-    visit := fun view path point focus => Opener.visit view path point.row point.column focus
+    visit := fun view path point focus record =>
+      Opener.visit view path
+        { row := point.row, column := point.column, firstNonBlank := point.firstNonBlank, focus
+          record }
     save := fun id force after => Opener.save id force after }
 
 /-- The fake's `setup`: the opener with the interface's hooks as its

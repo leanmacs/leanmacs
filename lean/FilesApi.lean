@@ -28,7 +28,8 @@ out.
 - **`Files`, a choice** under `implementationName`, `files`, read with
   `files?`: what files does for others, `adopt` (the buffer of a path
   whose load answered, shown in a view or nowhere), `visit` (a path at a
-  point, in a view) and `save` (a buffer, forced or not, with a follow-up
+  point, in a view, recording a jump there when asked: every caller asks
+  but the jump commands, `Editor/Jumps/Go.lean`) and `save` (a buffer, forced or not, with a follow-up
   job). A save writes its file in a job, and starts the follow-up only once
   the file is written; a refused save, its file changed on disk or its
   write failed, starts nothing, and the implementation says the refusal as
@@ -43,7 +44,8 @@ The names others reach (`names`, `jobs`): `open-file`, the core's
 (`FileJobs.openFileCommand`), `save-buffer`, `edit-file`, `reload-buffer`
 and `auto-reload-mode`; the jobs `check-files` and `follow-file`, the
 core's. The limits a caller reads a file under (`loadLimit`) and diffs it
-under (`diffLineLimit`).
+under (`diffLineLimit`), and what files says of a load it refused
+(`notOpened`).
 
 Its test library publishes a fake (`FilesApiTest.fake`, the core's test
 kit's opener with this interface's hooks as its runners) and the contract
@@ -92,8 +94,11 @@ structure Files where
   nowhere otherwise; `none` when a step is refused. -/
   adopt : System.FilePath → File.Loaded → Option ViewId → EditorM (Option BufferId)
   /-- Visits the path in the view at the point, focusing the view when the
-  flag says so. -/
-  visit : ViewId → System.FilePath → At → Bool → EditorM Unit
+  first flag says so, and recording a jump in the view (`Jumps.record`)
+  when the second says so. The buffer is shown with the cursor at the
+  point: at once when a buffer holds the path, and otherwise once its load
+  lands. -/
+  visit : ViewId → System.FilePath → At → (focus : Bool) → (record : Bool) → EditorM Unit
   /-- Saves the buffer, whatever is on disk when the flag says so. The write
   runs in a job; the follow-up job, when one is given, is started only once
   the file is written, never in the step that asked. A refused save (the
@@ -125,6 +130,13 @@ def files? : EditorM (Option Files) :=
 /-- What a caller named `name` says when there is no `Files` value. -/
 def noImplementation (name : String) : String :=
   s!"{name}: no files implementation"
+
+/-- What files says of a load of the file at `path` it refused with
+`error`: `cannot open <path>: <the refusal's sentence>`. A caller that
+loads a file itself under `loadLimit` says it of a refused load, as files
+would. -/
+def notOpened (path : System.FilePath) (error : FileError) : String :=
+  s!"cannot open {path}: {error.describe}"
 
 /-- The longest file a caller loads, in bytes: 1 GiB. -/
 def loadLimit : Nat :=

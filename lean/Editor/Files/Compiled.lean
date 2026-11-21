@@ -86,7 +86,7 @@ def package : Package :=
       Extension.add
           ({  name := FilesApi.implementationName
               adopt := fun path loaded view => adopt path loaded view
-              visit := fun view path point focus => visit view path point focus
+              visit := fun view path point focus record => visit view path point focus record
               save := fun id force after => save id force after } : FilesApi.Files)
       commandWith openName openCommand
       commandWith saveName saveCommand

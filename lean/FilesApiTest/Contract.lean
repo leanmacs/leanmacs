@@ -23,7 +23,12 @@ What every implementation of the interface library `files-api`
   that holds the path and shows it nowhere; and the `Files` value's `save`
   with a follow-up starts the follow-up only once the file is written,
   not in the step that asked, while a save refused because the file changed
-  on disk starts nothing and is said as the save command's refusal is.
+  on disk starts nothing and is said as the save command's refusal is; an
+  open of a file that is not there says `FilesApi.notOpened`; and `visit`
+  of a closed file shows it once its load lands with the cursor at the
+  point, or at the row's first non-blank, records one jump in the view when
+  asked and none otherwise, and of a file a buffer holds shows that buffer
+  with the cursor there in the step that asked (over `visitProbe`).
 
 It is a list of sentences, each with whether it holds, as the fixture
 interface package `greeting-api`'s (`tests/packages/greeting-api`).
@@ -72,6 +77,49 @@ def probe : Package :=
           let some id := (← editorState).findFile (inFiles "note.txt") | message "no note"
           files.save id false (some { name := followJob }) }
 
+/-- The file the probe's visits go to: two rows, the second indented by two
+blanks. -/
+def indented : System.FilePath :=
+  inFiles "indented.txt"
+
+/-- The files the visit checks run over: the file command checks' and
+`indented`. -/
+def visitFiles : FileModel :=
+  commandFiles.withFile indented "first\n  second\n".toUTF8
+
+/-- The probe of the visit checks: three commands over the implementation's
+`Files` value, each a visit of `indented` in view 0 with no focus.
+`files-api-visit` goes to row 1, column 3 and records; `files-api-visit-line`
+goes to row 1's first non-blank and records; `files-api-visit-quietly` goes
+to row 1, column 3 and records nothing. -/
+def visitProbe : Package :=
+  { name := "files-api-visit-probe"
+    setup := do
+      let visits : List (String × FilesApi.At × Bool) :=
+        [("files-api-visit", { row := 1, column := 3 }, true),
+          ("files-api-visit-line", { row := 1, column := 0, firstNonBlank := true }, true),
+          ("files-api-visit-quietly", { row := 1, column := 3 }, false)]
+      for (name, point, record) in visits do
+        command name do
+            let some files ← FilesApi.files? | message "no files implementation"
+            files.visit ⟨0⟩ indented point false record }
+
+/-- Where the cursor of view 0 of `driver` is, as `<row>:<column>` in bytes,
+and the path of the file the buffer it shows holds. -/
+def visitedAt (driver : TestDriver) : Option (String × Option System.FilePath) := do
+  let target ← driver.loop.state.target? ⟨0⟩
+  let read : TextM Point := do
+    let selection ← target.selection
+    let head := (selection.ranges[selection.primary]?.map (·.head)).getD 0
+    target.buffer.text.pointOf head
+  let point ← (read.runModel driver.model.texts).1.toOption
+  let buffer ← driver.loop.state.buffer? target.window.buffer
+  return (s!"{point.row}:{point.column}", buffer.file.map (·.path))
+
+/-- How many entries the jump list of view 0 of `driver` holds. -/
+def jumpCount (driver : TestDriver) : Nat :=
+  ((driver.loop.state.window? ⟨0⟩).map (·.jumps.list.entries.size)).getD 0
+
 /-- The texts `driver`'s model holds that start with `lead`. -/
 def textsStarting (driver : TestDriver) (lead : String) : Array String :=
   driver.model.texts.contents.filter (·.startsWith lead)
@@ -99,6 +147,25 @@ def contractChecks (package : Package) : List (String × Bool) :=
   let refused := changed.map fun driver => hostedRan driver { command := "files-api-save" }
   let refusedByCommand :=
     changed.map fun driver => hostedRan driver { command := FilesApi.saveName }
+  let missing := inFiles "missing.txt"
+  let refusedOpen :=
+    (hostedDriver #[package] (files := commandFiles)).map fun driver =>
+      hostedRan driver { command := FilesApi.openFileName, arguments := [.str missing.toString] }
+  let visiting := hostedDriver #[package, visitProbe] (files := visitFiles)
+  let visitedBy (name : String) : Option TestDriver :=
+    visiting.map fun driver => hostedRan driver { command := name }
+  let visited := visitedBy "files-api-visit"
+  let visitedLine := visitedBy "files-api-visit-line"
+  let visitedQuietly := visitedBy "files-api-visit-quietly"
+  let shownAgain :=
+    visiting.map fun driver =>
+      let both :=
+        [indented, note].foldl
+          (fun driver path =>
+            hostedRan driver
+              { command := FilesApi.openFileName, arguments := [.str path.toString] })
+          driver
+      (both.stepped (both.loop.invoke both.handed { command := "files-api-visit" })).1
   (FilesApi.names.toList.map fun name =>
       (s!"`{package.name}` registers a command under `{name}`, a name `files-api` declares",
         commands.contains name)) ++
@@ -132,6 +199,24 @@ def contractChecks (package : Package) : List (String × Bool) :=
         | some driver, some byCommand =>
           textsStarting driver "followed" == #[] && !driver.loop.state.echo.isEmpty &&
             driver.loop.state.echo == byCommand.loop.state.echo
-        | _, _ => false)]
+        | _, _ => false),
+      (s!"opening a file that is not there through `{FilesApi.openFileName}` of `{package.name}` says `FilesApi.notOpened` of its path and the refusal",
+        refusedOpen.map (·.loop.state.echo) == some (FilesApi.notOpened missing .notFound)),
+      (s!"`visit` of `{package.name}`'s `FilesApi.Files` value of a closed file shows it in the view once its load lands, the cursor at the point, and with `firstNonBlank` at the row's first non-blank",
+        match visited, visitedLine with
+        | some driver, some line =>
+          visitedAt driver == some ("1:3", some indented) &&
+            visitedAt line == some ("1:2", some indented)
+        | _, _ => false),
+      (s!"`visit` of `{package.name}`'s `FilesApi.Files` value records one jump in the view with `record`, and none without it",
+        match visiting, visited, visitedQuietly with
+        | some before, some recorded, some quiet =>
+          jumpCount recorded == jumpCount before + 1 && jumpCount quiet == jumpCount before &&
+            visitedAt quiet == some ("1:3", some indented)
+        | _, _, _ => false),
+      (s!"`visit` of `{package.name}`'s `FilesApi.Files` value of a file a buffer holds shows that buffer in the view with the cursor at the point, in the step that asked",
+        match shownAgain with
+        | some driver => visitedAt driver == some ("1:3", some indented)
+        | none => false)]
 
 end FilesApiTest

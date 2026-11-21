@@ -3,6 +3,7 @@ import Editor.Ex
 import Editor.Ex.Compiled
 import Editor.Files.Compiled
 import Editor.Test.Driver
+import Editor.Test.Hosted
 import ModelTest.Check
 import ModelTest.Support.Evil
 import ModelTest.Support.Jumps
@@ -116,11 +117,15 @@ def markJobs (name : String) : Option (List Argument → Work) :=
 
 /-- The driver of the mark checks that cross buffers: under the Vim scheme
 that ships, with the commands compiled code registers for files and
-buffers, over the files of the jump checks (`jumpFiles`), from one buffer,
-`scratch`, holding three lines, the cursor at the start of the second. -/
+buffers, and the files' `FilesApi.Files` value, which a mark in a closed
+file is visited through, over the files of the jump checks (`jumpFiles`),
+from one buffer, `scratch`, holding three lines, the cursor at the start of
+the second. -/
 def markDriver : Option EvilDriver :=
   (Loop.Driver.over
-        (evilHanded (Files.package.registered.commands ++ Buffers.package.registered.commands))
+        (withExtensionsOf
+          (evilHanded (Files.package.registered.commands ++ Buffers.package.registered.commands))
+          #[Files.package])
         markJobs (evilState "s0\ns1\n  s2\n" 3) editorModel).toOption.map
     fun driver => { driver with jobs := { files := jumpFiles } }
 
