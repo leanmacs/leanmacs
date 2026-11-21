@@ -21,7 +21,8 @@ use editor_process::service::{Delivery, End, Service, StreamReply, Streaming};
 use editor_process::{Command, Exit, Input};
 use editor_process_std::StdProcesses;
 
-/// How long the test waits for a reply that should come at once.
+/// hang guard: each reply the test waits for, which must come; only a hang
+/// reaches the bound, and the check then fails as a hang.
 const DEADLINE: Duration = Duration::from_secs(10);
 
 /// What the test writes: 256 KiB, four times the 64 KiB a pipe holds on

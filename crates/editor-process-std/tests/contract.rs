@@ -129,6 +129,12 @@ impl Ground for System {
         fs::write(path, b"").map_err(|error| error.to_string())
     }
 
+    /// hang guard: the child's `echo` completing its line; only a hang
+    /// reaches [`DEADLINE`], and the check then fails as a hang. A read and
+    /// retry, kept so because the contract starts the child before it asks
+    /// for the file, so the ground cannot make it a FIFO first: a read finds
+    /// no file, an empty one or a partial number, and tries again. The
+    /// result is decided by the line appearing, never by the time.
     fn written(&self, path: &Path) -> Option<u32> {
         let end = Instant::now() + DEADLINE;
         loop {
@@ -143,6 +149,8 @@ impl Ground for System {
             if Instant::now() >= end {
                 return None;
             }
+            // hang guard: the same line, read again once it may be there;
+            // the sleep only spaces the reads.
             thread::sleep(Duration::from_millis(2));
         }
     }

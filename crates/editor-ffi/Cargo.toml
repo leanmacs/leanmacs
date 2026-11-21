@@ -155,10 +155,12 @@ editor-launch-std = { path = "../editor-launch-std" }
 tempfile = { version = "=3.27.0", default-features = false }
 # Whether a process is alive, `kill(pid, 0)`, for the process service's
 # shutdown test (`tests/processes_shutdown.rs`), which asks the system
-# directly and not through the adapter. Pinned exactly, as in
-# `editor-process-std`, whose manifest says why this library and not
+# directly and not through the adapter; and, with `fs`, a non-blocking
+# open of a FIFO's write end there, which lets the test's reader of a FIFO
+# a child never opened end rather than wait for ever. Pinned exactly, as
+# in `editor-process-std`, whose manifest says why this library and not
 # `libc`.
-rustix = { version = "=1.1.6", default-features = false, features = ["std", "process"] }
+rustix = { version = "=1.1.6", default-features = false, features = ["std", "process", "fs"] }
 
 # The window that draws is an example, run on demand. What it makes of
 # what it saw is tested in the gate all the same: `cargo test` runs the

@@ -8,13 +8,15 @@
 //! the test returns. By returning at all, the test shows the process was
 //! not ended by the signal.
 
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use editor_process::{Child, ChildInput, Command, Input, Output, Processes, RefusalKind, Stream};
 use editor_process_std::StdProcesses;
 
-/// How long the child is given to say it has closed its input.
+/// hang guard: the child's saying it has closed its input, which must come;
+/// only a hang reaches the bound, and the check then fails as a hang.
 const DEADLINE: Duration = Duration::from_secs(10);
 
 #[test]
@@ -35,7 +37,10 @@ fn a_write_to_an_input_the_child_closed_is_refused_with_sigpipe_at_its_default()
     let mut input = child.take_input().expect("an input");
     let mut out = child.take_output(Stream::Out).expect("its output");
 
-    let said = thread::spawn(move || {
+    // The reader sends what it read once the child has said it, or once
+    // the child's output ends.
+    let (sender, said) = mpsc::channel();
+    let reader = thread::spawn(move || {
         let mut all = Vec::new();
         let mut buffer = [0; 64];
         while !all.ends_with(b"closed\n") {
@@ -44,18 +49,23 @@ fn a_write_to_an_input_the_child_closed_is_refused_with_sigpipe_at_its_default()
                 Ok(count) => all.extend_from_slice(&buffer[..count]),
             }
         }
-        all
+        sender.send(all).ok();
     });
-    let end = std::time::Instant::now() + DEADLINE;
-    while !said.is_finished() && std::time::Instant::now() < end {
-        thread::sleep(Duration::from_millis(2));
-    }
-    assert!(said.is_finished(), "the child said it closed its input");
-    assert_eq!(said.join().expect("the reader ends"), b"closed\n");
-
-    let refusal = input.write(b"x").expect_err("refused");
-
-    assert_eq!(refusal.kind, RefusalKind::InputClosed);
+    let said = said.recv_timeout(DEADLINE);
+    let wrote = said.is_ok().then(|| input.write(b"x"));
+    // Killed whatever was seen, so a reader still waiting ends and is
+    // joined.
     child.kill();
     child.wait();
+    reader.join().expect("the reader ends");
+
+    assert_eq!(
+        said,
+        Ok(b"closed\n".to_vec()),
+        "the child said it closed its input"
+    );
+    let refusal = wrote
+        .expect("written once it was said")
+        .expect_err("refused");
+    assert_eq!(refusal.kind, RefusalKind::InputClosed);
 }

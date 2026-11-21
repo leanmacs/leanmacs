@@ -5,9 +5,10 @@
 //!
 //! It is a test binary of its own because shutting the process-wide
 //! service down is for good. The child writes its own id and its
-//! grandchild's into a temporary directory the test makes and removes; the
-//! test reads them with `std::fs`, which the crate's `clippy.toml` refuses
-//! everywhere else, hence the one `expect` below, and asks the system
+//! grandchild's into FIFOs in a temporary directory the test makes and
+//! removes; the test reads each on a thread it joins, with `std::fs`, which
+//! the crate's `clippy.toml` refuses everywhere else, hence the one `expect`
+//! below, and asks the system
 //! directly, with `kill(pid, 0)`, whether each is alive. The grandchild's
 //! end, which its new parent reaps, is waited for on the system's exit
 //! event with `editor-launch-std`'s `StdPids::wait_exit`: this crate is the
@@ -19,35 +20,49 @@ mod common;
 mod open;
 
 use std::path::Path;
+use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
 
 use common::{DEADLINE, ROOMY, completion_of, next_completion, run, take};
 use editor_ffi::processes::{editor_ffi_processes_pending, editor_ffi_processes_shutdown};
 use editor_launch::ports::{Pid as LaunchPid, Pids, Waited};
 use editor_launch_std::StdPids;
 use open::{comes_to_be_held, open};
+use rustix::fs::{self, Mode, OFlags};
 use rustix::process::{Pid, test_kill_process};
 
-/// The id `echo` wrote to the file at `path`, once it is there whole.
+/// The id `echo` wrote to the FIFO at `path`, read whole on a thread of
+/// its own, which is joined before this returns. The child's `>` blocks
+/// until the reader opens the FIFO, and the read ends when the child's
+/// `echo` closes it, so the line is there whole once the read ends: no
+/// read is tried again.
 #[expect(
     clippy::disallowed_methods,
     reason = "the test reads the ids its child wrote into a temporary directory it owns; it reads no other file"
 )]
 fn written(path: &Path) -> Option<u32> {
-    let end = Instant::now() + DEADLINE;
-    loop {
-        if let Ok(text) = std::fs::read_to_string(path)
-            && let Some(number) = text.strip_suffix('\n')
-            && let Ok(id) = number.parse()
-        {
-            return Some(id);
-        }
-        if Instant::now() >= end {
-            return None;
-        }
-        thread::sleep(Duration::from_millis(2));
-    }
+    let (sender, read) = mpsc::channel();
+    let reader = {
+        let path = path.to_path_buf();
+        thread::spawn(move || {
+            sender.send(std::fs::read_to_string(path).ok()).ok();
+        })
+    };
+    // hang guard: the child's `echo` opening the FIFO and closing it; only
+    // a hang reaches the bound, and the check then fails as a hang.
+    let text = read.recv_timeout(DEADLINE).unwrap_or_else(|_| {
+        // The child never opened it: open its write end, without waiting
+        // for a reader, so a reader still waiting in its open ends with
+        // nothing read.
+        drop(fs::open(
+            path,
+            OFlags::WRONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        ));
+        None
+    });
+    reader.join().expect("the reader ends");
+    text?.strip_suffix('\n')?.parse().ok()
 }
 
 /// Whether a process with the id `id` exists, a zombie counted as alive.
@@ -66,6 +81,12 @@ fn alive(id: u32) -> bool {
 fn after_shutdown_the_child_is_reaped_its_grandchild_ends_and_a_later_run_is_refused() {
     let directory = tempfile::tempdir().expect("a temporary directory can be made");
     let dir = directory.path();
+    // The FIFOs the children write their ids to, made by a run of
+    // `mkfifo`: this crate starts no process but through the C functions.
+    assert!(run(4, "mkfifo child grandchild streaming", dir, ROOMY));
+    assert_eq!(next_completion(), completion_of(4));
+    let made = take(4).expect("the run's result");
+    assert_eq!((made.status, made.words), (0, vec![0, 0]), "exited with 0");
 
     assert!(run(
         1,
