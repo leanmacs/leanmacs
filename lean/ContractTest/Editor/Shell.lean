@@ -7,9 +7,6 @@ import Editor.Completion.AtPoint
 import Editor.Config.Packages
 import Editor.Display
 import Editor.DisplayRules
-import Editor.Ex
-import Editor.Ex.Compiled
-import Editor.Ex.Line
 import Editor.InputScheme
 import Editor.InputScheme.Test
 import Editor.Invocation
@@ -50,13 +47,11 @@ open Editor.Test.Linked
 
 /-! ## `:!` over the real process service -/
 
-/-- The keys of the shell checks: none bound, and the ex line's commands and
-the shell's by name; the shell's job is the one registered. -/
+/-- The keys of the shell checks: none bound, and the shell's commands by
+name; the shell's job is the one registered. -/
 def shellKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      ((Ex.package.registered.commands ++ Shell.package.registered.commands).find?
-            (·.name == name)).bind
-        fun registration =>
+      (Shell.package.registered.commands.find? (·.name == name)).bind fun registration =>
         match registration.action with
         | .call run =>
           some fun call => do
@@ -101,9 +96,13 @@ partial def settle (services : Job.Services) (display : DisplayHandler) (texts :
   return some (loop, texts)
 
 /-- What only the real process service shows of `:!` and a filter, with the
-loop's working directory the fixtures' (`fixtures`, `tests/shell`). -/
+loop's working directory the fixtures' (`fixtures`, `tests/shell`). Each
+check runs `shell-command` or `shell-filter` by name, with the arguments
+ex's line hands it (`Ex.run`): that ex hands a `:!` line to those names is
+ex's, held by the model checks of the shell typed through the kit's ex line
+(`ModelTest.shellChecks`). -/
 def shellChecks (services : Job.Services) (fixtures : System.FilePath) : List Check :=
-  let ran (line : String) (contents : String) : IO (Option (String × String)) := do
+  let ran (invocation : Invocation) (contents : String) : IO (Option (String × String)) := do
     let published ← Snapshots.new
     let recorder ← DisplayRecorder.new { advance := 8, lineHeight := 16 } published.reader
     let display := recorder.handle
@@ -114,8 +113,7 @@ def shellChecks (services : Job.Services) (fixtures : System.FilePath) : List Ch
       return { loop with state := { loop.state with workingDirectory := fixtures } }
     let (started, texts) ← begin.runReal (RealTexts.over published) display
     let .ok loop := started | return none
-    let (stepped, texts) ←
-      (loop.invoke shellKeys { command := Ex.name, arguments := [.str line] }).runReal texts display
+    let (stepped, texts) ← (loop.invoke shellKeys invocation).runReal texts display
     let .ok stepped := stepped | return none
     let some (loop, texts) ← settle services display texts stepped | return none
     let read : EditorM String := do
@@ -128,14 +126,19 @@ def shellChecks (services : Job.Services) (fixtures : System.FilePath) : List Ch
         "criterion 16: over the real process service, `:!` running the fixture `hello` leaves `hello` in the echo area, and its child is reaped"
       run := do
         let before ← Ffi.processesPending
-        let said ← ran s!"!'{fixtures / "hello"}'" ""
+        let hello := s!"'{fixtures / "hello"}'"
+        let said ←
+          ran { command := Shell.commandName, arguments := [.str hello, .str s!"!{hello}"] } ""
         let reaped ← eventually (return (← Ffi.processesPending) == before)
         return said == some ("hello", "") && reaped },
     { name :=
         "criterion 17: over the real process service, `:%!/usr/bin/sort` over the lines b, c and a leaves a, b and c, and its child is reaped"
       run := do
         let before ← Ffi.processesPending
-        let said ← ran "%!/usr/bin/sort" "b\nc\na\n"
+        let said ←
+          ran { command := Shell.filterName
+                arguments := [.nat 1, .nat 3, .str "/usr/bin/sort", .str "%!/usr/bin/sort"] }
+              "b\nc\na\n"
         let reaped ← eventually (return (← Ffi.processesPending) == before)
         return said == some ("3 lines filtered", "a\nb\nc\n") && reaped }]
 

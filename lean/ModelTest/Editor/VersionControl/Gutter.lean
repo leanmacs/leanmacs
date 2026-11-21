@@ -59,7 +59,7 @@ def gutterJobs (name : String) : Option (List Argument → Work) :=
   ((VersionControl.gutterPackage.registered.jobs.find? (·.name == name)).map (·.work)) <|>
     statusJobs name
 
-/-- The keys of the gutter checks: the workspace driver checks', with
+/-- The keys of the gutter checks: the open driver checks' (`openBindings`), with
 `C-g x`, which makes the window's text `new\na\nB\nc\n`, `C-g z`, which
 puts `z\n` at its start, `C-g k`, which closes the window's buffer, and
 `C-g h`, which hands the window's buffer's head fetch a reply of an epoch
@@ -67,10 +67,10 @@ that is not its latest, first content and then a failure; and the gutter's
 command, which its watch job posts. -/
 def gutterKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
-    (workspaceBindings ++
+    (openBindings ++
       [("C-g x", invoke "gutter-edit"), ("C-g z", invoke "gutter-top"),
         ("C-g k", invoke BuffersApi.closeName), ("C-g h", invoke "gutter-stale-head")])
-    (workspaceCommandsWith FilesApiTest.openSaveCommands ++
+    (openCommandsWith FilesApiTest.openSaveCommands ++
       dispatchedOf VersionControl.gutterPackage.registered.commands ++
       BuffersApiTest.commands ++
       [("gutter-edit", fun call => do
@@ -90,20 +90,21 @@ def gutterKeys : Loop.Keys TestScheme.scheme :=
             VersionControl.headFetched order (.error (.unparsable "stale"))
           return none)])
 
-/-- A driver of the gutter checks: the workspace driver's world, with the
+/-- A driver of the gutter checks: the open driver's files (`openDriver`), with the
 gutter's keys and jobs, whose git in `/r` meets `repository`, saying `HEAD`
 has no `src/b.lean`, whose watches may be made in `/r/.git`, and with each
 file of `repository`'s working tree on disk under `/r`; its git the program
 `git`, which the loop is told is config's (`Loop.Registered.git`), and
-the finder meeting `world`; `none` if making the state was refused. -/
+each file's workspace the one `found` answers for its directory, the core
+kit's stand-in for the finder's answer (`openFound`) by default; `none` if
+making the state was refused. -/
 def gutterDriverOf (repository : VersionControl.Model.Repository) (git : String := "git")
-    (world : Workspace.World := workspaceWorld) : Option TestDriver :=
-  (workspaceDriver gutterJobs gutterKeys git world).map fun driver =>
+    (found : System.FilePath → Option Workspace.Found := openFound) : Option TestDriver :=
+  (openDriver gutterJobs gutterKeys).map fun driver =>
     let scripts :=
       (repository.jobModel git "/r" (missing := #[("HEAD", "src/b.lean")])).processes.scripts
     let keys :=
-      withExtensionsOf driver.keys
-        #[worldAttachPackage world, FilesApiTest.fake, BuffersApiTest.fake]
+      withExtensionsOf driver.keys #[attachByPackage found, FilesApiTest.fake, BuffersApiTest.fake]
     { driver with
       keys := { keys with registered := { keys.registered with git } }
       jobs :=
@@ -461,14 +462,14 @@ def gutterChecks : List Check :=
         "a buffer whose repository has HEAD detached is still tracked: a detached HEAD is a branch of the workspace's, and HEAD has the file"
       run :=
         pure <|
-          let detached :=
-            { workspaceWorld with
-              repositories :=
-                workspaceWorld.repositories.map fun repository =>
-                  if repository.toplevel == ("/r" : System.FilePath) then
-                    { repository with branch := none }
-                  else repository }
-          match gutterDriverOf gutterRepository (world := detached) with
+          let detached (directory : System.FilePath) : Option Workspace.Found :=
+            if Workspace.holds "/r" directory then
+              some
+                (Workspace.Found.ofGit
+                  { toplevel := "/r", commonDir := "/r/.git", branch := .detached }
+                  (some openOrigin))
+            else openFound directory
+          match gutterDriverOf gutterRepository (found := detached) with
           | none => false
           | some driver =>
             let opened := settledAfter driver "C-o a"

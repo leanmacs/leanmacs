@@ -1,26 +1,29 @@
 import Editor.Api
 import Editor.Command.Call
-import Editor.Ex
-import Editor.Ex.Compiled
 import Editor.Invocation
 import Editor.Job
 import Editor.Shell
 import Editor.Shell.Compiled
+import Editor.Test.Ex
 import Editor.Test.Keys
 import Editor.Test.Minibuffer
 import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.Workspace
-import Editor.Workspace.Kit
 
 /-!
 # The shell feature's test kit
 
 The shell checks' jobs, bindings and commands, made of the shell's modules
-(`Editor/Shell.lean`, `Editor/Shell/Compiled.lean`) over the workspace
-driver of the workspace feature's kit (`Editor/Workspace/Kit.lean`): its
-jobs and the shell's run job (`shellJobs`), its keys and the shell checks'
-(`shellBindings`), and its commands, the ex line's, the kit's minibuffer's
-and the shell's (`shellCommands`). The shell's child and its replies, and
+(`Editor/Shell.lean`, `Editor/Shell/Compiled.lean`) over the half of the
+workspace driver that names no workspace module, the core kit's
+(`Editor/Test/Workspace.lean`): its jobs and the shell's run job
+(`shellJobs`), its keys and the shell checks' (`shellBindings`), and its
+commands, the kit's ex line's (`Editor.Test.exLinePackage`,
+`Editor/Test/Ex.lean`: ex's own command, the core's, which hands a `:!` line
+to `shell-api`'s names), the kit's minibuffer's and the shell's
+(`shellCommands`). A file's workspace is the core kit's stand-in for the
+finder's answer (`openAttach`). The shell's child and its replies, and
 what a check reads of a driver, are the core's kit's
 (`Editor/Test/Shell.lean`).
 
@@ -34,35 +37,36 @@ namespace Editor.Test
 
 open Editor
 
-/-- The jobs of the shell checks over the workspace driver's jobs
-`workspace`: those, and the shell's run job. -/
+/-- The jobs of the shell checks over the open driver's jobs `workspace`:
+those, and the shell's run job. -/
 def shellJobsWith (workspace : String → Option (List Argument → Work)) (name : String) :
     Option (List Argument → Work) :=
   if name == Shell.runJob then some Shell.runWork else workspace name
 
-/-- The jobs of the shell checks: the workspace driver checks', the kit's
-opener's among them (`workspaceJobs`), and the shell's run job. -/
+/-- The jobs of the shell checks: the open driver checks', the kit's
+opener's, whose load runs the stand-in for the workspace's attach
+(`openJobs`, `openAttach`), and the shell's run job. -/
 def shellJobs (name : String) : Option (List Argument → Work) :=
-  shellJobsWith workspaceJobs name
+  shellJobsWith openJobs name
 
 /-- The bindings of the shell checks (`shellKeys`). -/
 def shellBindings : List (String × Invocation) :=
-  workspaceBindings ++
+  openBindings ++
     [("C-e e", invoke Ex.name), ("C-e y", invoke Minibuffer.acceptName), ("C-e k", invoke "kube"),
       ("C-e g", invoke Shell.interruptName), ("C-e u", invoke "undo"), ("C-e o", invoke "squat"),
       ("C-e s", invoke "split"), ("C-e c", invoke "close"), ("C-e x", invoke "drop"),
       ("C-o s", opens "/r/src/s.txt"), ("C-o t", opens "/r/src/t.txt")]
 
-/-- The commands of the shell checks (`shellKeys`) over the workspace
-driver's commands `workspace`. -/
+/-- The commands of the shell checks (`shellKeys`) over the open driver's
+commands `workspace`. -/
 def shellCommandsWith (workspace : List (String × Dispatched)) : List (String × Dispatched) :=
   workspace ++
     dispatchedOf
-      (Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
+      (exLinePackage.registered.commands ++ Minibuffer.package.registered.commands ++
         Shell.package.registered.commands) ++
     [("kube", fun call => do
         let location := Location.reachable "kube" "pod" "/app"
-        discard <| Workspace.register location workspaceOrigin
+        discard <| Workspace.register location openOrigin
         Workspace.setBufferWorkspace call.target.window.buffer location
         return none),
       ("undo", fun call => do
@@ -86,8 +90,8 @@ def shellCommandsWith (workspace : List (String × Dispatched)) : List (String �
         return none)]
 
 /-- The commands of the shell checks (`shellKeys`), with the kit's opener's
-(`workspaceCommands`). -/
+(`openCommandsWith Opener.commands`). -/
 def shellCommands : List (String × Dispatched) :=
-  shellCommandsWith workspaceCommands
+  shellCommandsWith (openCommandsWith Opener.commands)
 
 end Editor.Test

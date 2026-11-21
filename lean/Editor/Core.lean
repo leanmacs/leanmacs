@@ -11,6 +11,7 @@ import Editor.Config.Elaborator.Model
 import Editor.Display.Contract
 import Editor.Evil.Compiled
 import Editor.Evil.Theorems
+import Editor.Ex.Compiled
 import Editor.Files.Kit
 import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Contract
@@ -40,6 +41,7 @@ import Editor.Watch.Contract
 import Editor.WindowCommands.Compiled
 import Editor.WorkingSet.Compiled
 import Editor.Workspace.Contract
+import Editor.Workspace.Kit
 
 /-!
 # The core
@@ -82,11 +84,13 @@ hand-written minibuffer (`Editor.Test.Minibuffer`), and
 at-point (`Editor.Test.AtPoint`), which no other kit module imports) and the
 linked tests' (`Editor.Test.Linked.…`, `Editor/Test/Linked/`: its rig, its
 services, its trees and its hosts over the real elaborator, which bring
-their listings); and the files feature's test kit
+their listings); and the feature kits: the files feature's
 (`Editor.Files.Kit`, the drivers of the real file commands), which the
 files feature's tests and the tests left to cut in phase 6 import, and
 which brings the kit's own file opener (`Editor.Test.Opener`) through
-`Editor.Test.Workspace`. Everything else comes with them: the kit is the support the
+`Editor.Test.Workspace`; the workspace's (`Editor.Workspace.Kit`, its world,
+finder jobs and driver), which brings `Editor.Test.Listing`; and the
+shell's (`Editor.Shell.Kit`). Everything else comes with them: the kit is the support the
 core's own tests are written on, so it imports the driver of the loop that
 tests run it with (`Editor.Loop.Driver`) and the modules that define the
 packages its fixtures register, and those are not named here again. The theorem modules are also the config base's imports

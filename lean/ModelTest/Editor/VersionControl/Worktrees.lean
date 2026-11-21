@@ -101,8 +101,7 @@ def worktreeJobs (name : String) : Option (List Argument → Work) :=
   if name == VersionControl.worktreesReadJob then some VersionControl.listWork
   else
     if name == VersionControl.worktreeFindJob then
-      some
-        (VersionControl.visitFindWork #[ProjectApiTest.workspacesWith (workspaceWorld.find {} ·)])
+      some (VersionControl.visitFindWork #[ProjectApiTest.workspacesWith openFound])
     else statusJobs name
 
 /-- The keys of the worktree list checks: the status buffer checks', and
@@ -122,9 +121,9 @@ def worktreeKeys : Loop.Keys TestScheme.scheme :=
 
 /-- The driver of the worktree list checks: the status buffer checks' over a
 repository in `/r` with `feature` checked out in `/w` and `/d` detached,
-whose git in `/w` meets `featureRepository`, and whose finder finds `/w`, a
-worktree of `/r`'s repository on `feature` (`workspaceWorld`), and nothing
-at `/d`, whose directory is gone. -/
+whose git in `/w` meets `featureRepository`, and whose stand-in for the
+finder's answer finds `/w`, a worktree of `/r`'s repository on `feature`
+(`openFound`), and nothing at `/d`, whose directory is gone. -/
 def worktreeDriver : Option TestDriver :=
   let repository : VersionControl.Model.Repository :=
     { VersionControlContract.clean
@@ -132,9 +131,7 @@ def worktreeDriver : Option TestDriver :=
       branches := #[("feature", "head")]
       linked := #[{ path := "/w", branch := some "feature" }, { path := "/d", branch := none }] }
   (statusDriverOf repository (registered := worktreeJobs) (keys := worktreeKeys)).map fun driver =>
-    let extra :=
-      (featureRepository.jobModel "git" "/w").processes.scripts ++
-        (workspaceWorld.jobModel "git" #["/w", "/d"]).processes.scripts
+    let extra := (featureRepository.jobModel "git" "/w").processes.scripts
     { driver with
       jobs :=
         { driver.jobs with

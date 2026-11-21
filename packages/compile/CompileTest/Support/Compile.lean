@@ -26,6 +26,7 @@ import Editor.Setup
 import Editor.Shell.Kit
 import Editor.State
 import Editor.Test.Driver
+import Editor.Test.Ex
 import Editor.Test.Files
 import Editor.Test.Hosted
 import Editor.Test.Keys
@@ -170,14 +171,15 @@ def compileCommands : List (String × Dispatched) :=
     [("insert-x", insertX), ("to-start", toStart), ("focus-compilation", focusCompilation),
       ("squat-clone", squat), ("to-point", toPoint), ("zero-base", zeroBase)]
 
-/-- The ex bindings of the compile checks: the `ex` package's, then the
-`compile` package's, which binds its own names, as a host handed both
-registers them. -/
+/-- The ex bindings of the compile checks: the kit's ex line's
+(`Editor.Test.exLinePackage`, standing in for the `ex` package, whose module
+a package's tests may not import), then the `compile` package's, which binds
+its own names, as a host handed both registers them. -/
 def compileExBindings : Array Ex.Binding :=
-  Ex.package.registered.ex ++ Compile.package.registered.ex
+  exLinePackage.registered.ex ++ Compile.package.registered.ex
 
 /-- The keys of the compile checks over `bindings`, with the compile mode
-and the ex names of the `ex` and `compile` packages registered: the active keymaps of a registry
+and the ex names of the kit's ex line and the `compile` package registered: the active keymaps of a registry
 holding the compile mode's modes, so the mode's roles are on their keys in
 a compilation buffer as a host's registry puts them, then the keymap of
 `bindings`. -/

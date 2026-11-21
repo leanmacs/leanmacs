@@ -1952,7 +1952,7 @@ those import them, and a kit that left them behind would not build.
 | `Editor.Test.Loop` | The command loop stepped on the editor's models, with keymaps and commands written in the test |
 | `Editor.Test.Driver` | The loop's driver over the editor's models and the job model, and what a check reads back from it |
 | `Editor.Test.Files` | The file commands' keys, files and driver |
-| `Editor.Test.Workspace` | The workspace a check sees settled, a store for the stores' checks, and since the features-as-packages roadmap's phase 6 the stand-in for the workspace's attach (`attachAt`, `attachPackage found`), which names no workspace module; the workspace's world, jobs, commands, keys and driver are the workspace feature's kit (`Editor.Workspace.Kit`) |
+| `Editor.Test.Workspace` | The workspace a check sees settled, a store for the stores' checks, and since the features-as-packages roadmap's phase 6 the stand-in for the workspace's attach (`attachAt`, `attachPackage found`, and by a directory's answer `attachBy`, `attachByPackage`), and the half of the workspace driver that names no workspace module (`openBindings`, `openCommandsWith`, `openJobs`, `openDriver`, with the stand-in for the finder's answer `openFound`), which the shell's and version control's checks are built on; the workspace's world, finder jobs, commands, keys and driver are the workspace feature's kit (`Editor.Workspace.Kit`) |
 | `Editor.Test.Shell` | A shell command's child and its replies on the process model, compiled commands as a driver dispatches them, and what a check reads of a driver; since phase 6 the shell checks' jobs, bindings and commands are the shell feature's kit (`Editor.Shell.Kit`) |
 | `Editor.Test.Prompts` | Prompts and the minibuffer: their bindings, registry and driver, over a minibuffer package a check hands in, the kit's own (`Editor.Test.Minibuffer`) when it hands none |
 | `Editor.Test.Listing` | A contribution with a listing, its listings' runs and files, which names core modules only, and since phase 6 the stand-in for modes on markers (`markedPackage`); the world it is found in (`listingWorld`, `listingJobModel`) is the workspace feature's kit's |
@@ -2545,7 +2545,7 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Files`, `Editor.Completion.Paths` | 2 | feature: files | yes |
 | `Editor.Files.Compiled` | 1 | feature: files | no |
 | `Editor.Files.Kit`, the drivers of the real file commands | 1 | feature: files | in tests |
-| `Editor.Shell.Kit`, the shell checks' jobs, bindings and commands | 1 | feature: shell | in tests |
+| `Editor.Shell.Kit`, the shell checks' jobs, bindings and commands, over the core kit's open driver and ex line | 1 | feature: shell | in tests |
 | `Editor.FrameCommands` | 1 | feature: frame-commands | yes |
 | `Editor.FrameCommands.Compiled` | 1 | feature: frame-commands | no |
 | `Editor.Menu.Compiled` | 1 | feature: menu | no |

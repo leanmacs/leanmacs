@@ -95,7 +95,8 @@ def setText (text : String) : Invocation :=
 of the worktree list (`Editor/VersionControl/Worktrees.lean`), of `vc-show`, of staging a hunk (`Editor/VersionControl/Stage.lean`) and of
 the message buffer (`Editor/VersionControl/Commit.lean`) over real git: their
 jobs run over the library's process, file and diff services in a temporary
-repository, the real finder recording the workspace, every child's git kept
+repository, the stand-in for the finder's answer (`repositoryFound`) recording
+the workspace, every child's git kept
 from the user's and the system's config. A check that commits runs git
 under `pinnedAwayConfig` (`withConfiguredRepository`), whose user a commit
 needs. -/
@@ -113,12 +114,12 @@ def statusBufferChecks (services : Job.Services) : List Check :=
           let some (listed, texts) ←
             runSettled rig directory
                 [openFile (directory / "a.txt"), { command := VersionControl.worktreesName }]
-                statusKeys statusJobs | return false
+                (statusKeys directory) (statusJobs directory) | return false
           let list ← bufferText rig texts listed "*vc-worktrees: repo@main*"
           let some (visited, texts) ←
             runSettledFrom rig listed texts
-                [toRow 2, { command := VersionControl.worktreesVisitName }] statusKeys
-                statusJobs | return false
+                [toRow 2, { command := VersionControl.worktreesVisitName }] (statusKeys directory)
+                (statusJobs directory) | return false
           let status ← bufferText rig texts visited "*vc-status: repo@feature*"
           return list ==
                 some s!"repo@main: worktrees\nmain: {directory} (this one)\nfeature: {linked}\n" &&
@@ -137,11 +138,11 @@ def statusBufferChecks (services : Job.Services) : List Check :=
           let some (shown, texts) ←
             runSettled rig directory
                 [openFile (directory / "a.txt"), { command := VersionControl.statusName }]
-                statusKeys statusJobs | return false
+                (statusKeys directory) (statusJobs directory) | return false
           let first ← bufferText rig texts shown name
           let some (staged, texts) ←
             runSettledFrom rig shown texts [toRow 1, { command := VersionControl.toggleName }]
-                statusKeys statusJobs | return false
+                (statusKeys directory) (statusJobs directory) | return false
           let afterStage ←
             gitStatusIs isolated directory
                 { head := .branch "main"
@@ -151,7 +152,7 @@ def statusBufferChecks (services : Job.Services) : List Check :=
           let second ← bufferText rig texts staged name
           let some (_, _) ←
             runSettledFrom rig staged texts [toRow 2, { command := VersionControl.toggleName }]
-                statusKeys statusJobs | return false
+                (statusKeys directory) (statusJobs directory) | return false
           let afterUnstage ←
             gitStatusIs isolated directory
                 { head := .branch "main"
@@ -177,7 +178,7 @@ def statusBufferChecks (services : Job.Services) : List Check :=
                 [openFile (directory / "a.txt"),
                   { command := VersionControl.showName, arguments := [.str "v1 a.txt"] },
                   openFile (directory / "a.txt"), { command := VersionControl.showName }]
-                statusKeys statusJobs | return false
+                (statusKeys directory) (statusJobs directory) | return false
           let some old := shown.state.findBuffer "a.txt@v1" | return false
           let some head := shown.state.findBuffer "a.txt@HEAD" | return false
           return (← bufferText rig texts shown "a.txt@v1") == some "then\n" &&
@@ -199,7 +200,7 @@ def statusBufferChecks (services : Job.Services) : List Check :=
             runSettled rig directory
                 [openFile (directory / "a.txt"), setText VersionControlContract.twoChanged, toRow 8,
                   { command := VersionControl.stageHunkName }]
-                statusKeys statusJobs | return false
+                (statusKeys directory) (statusJobs directory) | return false
           let index ← gitIn home directory #["show", ":a.txt"]
           let written ← IO.FS.readFile (directory / "a.txt")
           let state ←
@@ -221,16 +222,18 @@ def statusBufferChecks (services : Job.Services) : List Check :=
           fun home config directory => do
           let rig ← ProjectRig.over (onIsolatedGit services home config)
           let some (opened, texts) ←
-            runSettled rig directory [openFile (directory / "a.txt"), toRow 8] statusKeys
-                statusJobs | return false
+            runSettled rig directory [openFile (directory / "a.txt"), toRow 8]
+                (statusKeys directory) (statusJobs directory) | return false
           let press : Invocation := { command := VersionControl.stageHunkName }
-          let (first, texts) ← (opened.invoke statusKeys press).runReal texts rig.display
+          let (first, texts) ←
+            (opened.invoke (statusKeys directory) press).runReal texts rig.display
           let .ok first := first | return false
-          let (second, texts) ← (first.loop.invoke statusKeys press).runReal texts rig.display
+          let (second, texts) ←
+            (first.loop.invoke (statusKeys directory) press).runReal texts rig.display
           let .ok second := second | return false
           let some (settled, _) ←
             settleQueued rig texts second.loop (first.starts.toList ++ second.starts.toList)
-                statusKeys statusJobs | return false
+                (statusKeys directory) (statusJobs directory) | return false
           let index ← gitIn home directory #["show", ":a.txt"]
           return first.starts.size == 1 && second.starts.size == 1 &&
               index == VersionControlContract.lineSet VersionControlContract.tenLines 8 "nine\n" &&
@@ -248,7 +251,7 @@ def statusBufferChecks (services : Job.Services) : List Check :=
             runSettled rig directory
                 [openFile (directory / "a.txt"), { command := VersionControl.commitName },
                   setText message, { command := VersionControl.acceptName }]
-                statusKeys statusJobs | return false
+                (statusKeys directory) (statusJobs directory) | return false
           let object ← gitIn home directory #["cat-file", "commit", "HEAD"]
           return object.endsWith s!"\n\n{message}" &&
               (committed.state.findBuffer "*vc-commit: repo@main*").isNone },
@@ -266,7 +269,7 @@ def statusBufferChecks (services : Job.Services) : List Check :=
             runSettled rig directory
                 [openFile (directory / "a.txt"), { command := VersionControl.commitName },
                   setText "refused\n", { command := VersionControl.acceptName }]
-                statusKeys statusJobs | return false
+                (statusKeys directory) (statusJobs directory) | return false
           let after ← gitIn home directory #["rev-parse", "HEAD"]
           let output ← bufferText rig texts refused "*vc-commit-output: repo@main*"
           let kept ← bufferText rig texts refused "*vc-commit: repo@main*"

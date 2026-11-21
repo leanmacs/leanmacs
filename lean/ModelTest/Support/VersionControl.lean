@@ -28,6 +28,7 @@ import Editor.Test.Hosted
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.Text
 import Editor.VersionControl.Blame
 import Editor.VersionControl.Commit
@@ -39,7 +40,6 @@ import Editor.VersionControl.Show
 import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
 import Editor.Workspace
-import Editor.Workspace.Kit
 import FilesApiTest.Fake
 import ProjectApiTest.Fake
 import VcApi
@@ -60,17 +60,18 @@ namespace ModelTest
 open Editor
 open Editor.Test
 
-/-- The jobs of the status buffer checks: the workspace driver checks', and
-the status buffer's read and apply jobs. -/
+/-- The jobs of the status buffer checks: `files-api`'s fake's, and the
+status buffer's read and apply jobs. -/
 def statusJobs (name : String) : Option (List Argument → Work) :=
   if name == VersionControl.readJob then some VersionControl.readWork
   else
     if name == VersionControl.applyJob then some VersionControl.applyWork
     else
       if name == VersionControl.showJob then some VersionControl.showWork
-      else workspaceJobsWith FilesApiTest.jobs name
+      else FilesApiTest.jobs name
 
-/-- The bindings of the status buffer checks: the workspace driver checks',
+/-- The bindings of the status buffer checks: the open driver checks'
+(`openBindings`),
 and `C-v s` (`vc-status`), `C-v t` (`vc-status-toggle`), `C-v v`
 (`vc-status-visit`), `C-v r` (`vc-status-refresh`), `C-v a`
 (`vc-status-stage`), `C-v u` (`vc-status-unstage`), `C-v k`, which gives
@@ -78,7 +79,7 @@ the window's buffer a workspace registered as reachable through `kube`,
 and `C-v 0` to `C-v 5`, which put the window's cursor at the start of that
 row. -/
 def statusBindings : List (String × Invocation) :=
-  workspaceBindings ++
+  openBindings ++
     [("C-v s", invoke VersionControl.statusName), ("C-v t", invoke VersionControl.toggleName),
       ("C-v v", invoke VersionControl.visitName), ("C-v r", invoke VersionControl.refreshName),
       ("C-v a", invoke VersionControl.stageName), ("C-v u", invoke VersionControl.unstageName),
@@ -92,7 +93,7 @@ def statusBindings : List (String × Invocation) :=
 
 /-- The commands of the status buffer checks (`statusBindings`). -/
 def statusCommands : List (String × Dispatched) :=
-  workspaceCommandsWith FilesApiTest.openSaveCommands ++
+  openCommandsWith FilesApiTest.openSaveCommands ++
     dispatchedOf VersionControl.package.registered.commands ++
     [("to-row", fun call => do
         if let .nat row :: _ := call.arguments then
@@ -101,7 +102,7 @@ def statusCommands : List (String × Dispatched) :=
         return none),
       ("kube", fun call => do
         let location := Location.reachable "kube" "pod" "/app"
-        discard <| Workspace.register location workspaceOrigin
+        discard <| Workspace.register location openOrigin
         Workspace.setBufferWorkspace call.target.window.buffer location
         return none)]
 
@@ -121,7 +122,8 @@ def statusKeys : Loop.Keys TestScheme.scheme :=
         entering := fun name =>
           (VersionControl.package.registered.modes.find? (·.name == name)).map ([·]) } }
 
-/-- A driver of the status buffer checks: the workspace driver's world, with
+/-- A driver of the status buffer checks: the open driver's files
+(`openDriver`), with
 the status buffer's keys and jobs (or `keys` and `registered`), whose git in `/r` meets `repository`
 (`Repository.jobModel`) and answers `writes`, and with each file of
 `repository`'s working tree on disk under `/r`; `none` if making the state
@@ -130,17 +132,18 @@ def statusDriverOf (repository : VersionControl.Model.Repository)
     (writes : Array VersionControl.Request := #[]) (missing : Array (String × String) := #[])
     (registered : String → Option (List Argument → Work) := statusJobs)
     (keys : Loop.Keys TestScheme.scheme := statusKeys) : Option TestDriver :=
-  (workspaceDriver registered keys).map fun driver =>
+  (openDriver registered keys).map fun driver =>
     let scripts := (repository.jobModel "git" "/r" writes missing).processes.scripts
     { driver with
       -- A file's open attaches its workspace through the kit's stand-in at
       -- `FilesApi.Opened`, `files-api`'s fake is the files feature and
       -- `buffers-api`'s the buffer commands, and `project-api`'s, over the
-      -- finder's model of the world, the workspace's reach.
+      -- core kit's stand-in for the finder's answer (`openFound`), the
+      -- workspace's reach.
       keys :=
         withExtensionsOf driver.keys
-          #[worldAttachPackage, FilesApiTest.fake, BuffersApiTest.fake,
-            ProjectApiTest.fakeWith (workspaceWorld.find {} ·)]
+          #[openAttachPackage, FilesApiTest.fake, BuffersApiTest.fake,
+            ProjectApiTest.fakeWith openFound]
       jobs :=
         { driver.jobs with
           files :=
@@ -164,17 +167,16 @@ def gitStarted (driver : TestDriver) : Array Process.Command :=
 
 /-- The jobs of the hunk and message buffer checks: every job of the
 version-control registrations (`VersionControl.package.registered.jobs`),
-each made as a host makes it with `project-api`'s fake over the finder's
-model of the world registered, and the workspace driver checks', the file
+each made as a host makes it with `project-api`'s fake over the core kit's
+stand-in for the finder's answer (`openFound`) registered, and `files-api`'s
+fake's, the file
 commands' among them. -/
 def stagingJobs (name : String) : Option (List Argument → Work) :=
   ((VersionControl.package.registered.jobs.find? (·.name == name)).map
-      (·.workWith
-        (ProjectApiTest.workspacesValues
-          #[ProjectApiTest.workspacesWith (workspaceWorld.find {} ·)]))) <|>
-    workspaceJobsWith FilesApiTest.jobs name
+      (·.workWith (ProjectApiTest.workspacesValues #[ProjectApiTest.workspacesWith openFound]))) <|>
+    FilesApiTest.jobs name
 
-/-- The bindings of the hunk and message buffer checks: the workspace driver
+/-- The bindings of the hunk and message buffer checks: the open driver
 checks', and `C-v s` (`vc-status`), `C-v g` (`vc-stage-hunk`), `C-v G`
 (`vc-unstage-hunk`), `C-v c` (`vc-commit`), `C-v y` (`vc-commit-accept`),
 `C-v q` (`vc-commit-abort`), `C-v z`, which puts `0\n` at the start of the
@@ -185,7 +187,7 @@ changed it or removed it (`BufferId.markChanged`, as the files
 feature's check records it), and `C-r 0` to `C-r 9`, which
 put the window's cursor at the start of that row, and `C-r t` of row 10. -/
 def stagingBindings : List (String × Invocation) :=
-  workspaceBindings ++
+  openBindings ++
     [("C-v s", invoke VersionControl.statusName), ("C-v g", invoke VersionControl.stageHunkName),
       ("C-v G", invoke VersionControl.unstageHunkName), ("C-v c", invoke VersionControl.commitName),
       ("C-v y", invoke VersionControl.acceptName), ("C-v q", invoke VersionControl.abortName),

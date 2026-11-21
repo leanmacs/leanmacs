@@ -30,7 +30,6 @@ import Editor.Test.Shell
 import Editor.Test.Workspace
 import Editor.Text.Model
 import Editor.Workspace
-import Editor.Workspace.Kit
 import ModelTest.Check
 import ShellApiTest.Contract
 
@@ -65,8 +64,9 @@ def shellScripts : Array Process.Script :=
     { command := shellCommand "/r" "tac", reply := shellReply "a\nc\n" },
     { command := shellCommand "/r" "sort -u", reply := shellReply "a\nb\nc\nd\n" }]
 
-/-- The keys of the shell checks: the workspace driver checks', and `C-e e`
-and `C-e y`, the ex line and its accept key (`exLine`); `C-e g` runs the
+/-- The keys of the shell checks: the open driver checks' (`openBindings`),
+and `C-e e` and `C-e y`, the kit's ex line and its accept key (`exLine`,
+`exLinePackage`); `C-e g` runs the
 interrupt command, as `C-g` does under the Vim scheme; `C-e k` gives the
 window's buffer a workspace registered as reachable through `kube`, which
 cannot run commands; `C-e u` undoes in the window's buffer; `C-e o` makes
@@ -78,11 +78,12 @@ it showed; and `C-o s` and `C-o t` open `/r/src/s.txt` and
 def shellKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys shellBindings shellCommands
 
-/-- A driver of the shell checks: the workspace driver's world, with the
+/-- A driver of the shell checks: the open driver's files and the core
+kit's stand-in for the finder's answer (`openDriver`, `openAttach`), with the
 shell's keys and jobs, and the children of `shellScripts`; `none` if
 making the state was refused. -/
 def shellDriver : Option TestDriver :=
-  (workspaceDriver shellJobs shellKeys).map fun driver =>
+  (openDriver shellJobs shellKeys).map fun driver =>
     { driver with
       jobs :=
         { driver.jobs with
@@ -100,9 +101,10 @@ def outputBuffers (driver : TestDriver) : Array String :=
   (driver.loop.state.buffers.filterMap id).map (·.name) |>.filter (·.startsWith "*shell output")
 
 /-- The checks of `:!` (`Editor/Shell.lean`), on the loop's driver over the
-editor's models, the job model and the process model, in the world of the
-workspace driver checks: a main checkout `/r`, a linked worktree `/w` of one
-project, and `/x` in none. First, each check of `shell-api`'s contract over
+editor's models, the job model and the process model, in the open driver
+checks' world, whose workspaces the core kit's stand-in for the finder gives
+(`openFound`): a main checkout `/r`, a linked worktree `/w` of one project,
+and `/x` in none. First, each check of `shell-api`'s contract over
 the shell's package (`ShellApiTest.contractChecks Shell.package`). -/
 def shellChecks : List Check :=
   let main : Option Location := some (.local "/r")
@@ -469,7 +471,7 @@ def shellChecks : List Check :=
           "`:!` with nothing after it says so and starts nothing; a `:!` whose job no one registered says the refusal and records nothing"
         run :=
           pure <|
-            match shellDriver, workspaceDriver workspaceJobs shellKeys with
+            match shellDriver, openDriver openJobs shellKeys with
             | some driver, some unregistered =>
               let bare := shellRan driver "!"
               let opened := settledAfter unregistered "C-o a"

@@ -48,8 +48,8 @@ def reviewBufferChecks (services : Job.Services) : List Check :=
           let rig ← ProjectRig.over (onIsolatedGit services home config)
           let some (reviewed, texts) ←
             runSettled rig linked
-                [openFile (linked / "a.txt"), { command := VersionControl.reviewName }] reviewKeys
-                statusJobs | return false
+                [openFile (linked / "a.txt"), { command := VersionControl.reviewName }]
+                (reviewKeys directory) (statusJobs directory) | return false
           let headers :=
             ((reviewed.state.focusedTarget?.bind (·.buffer.excerpts)).map fun excerpts =>
                   (excerpts.entries.map (·.header)).filter (!·.isEmpty)).getD
@@ -58,7 +58,7 @@ def reviewBufferChecks (services : Job.Services) : List Check :=
             runSettledFrom rig reviewed texts
                 [{ command := "to-excerpt", arguments := [.nat 1] },
                   { command := VersionControl.reviewRevertName }]
-                reviewKeys statusJobs | return false
+                (reviewKeys directory) (statusJobs directory) | return false
           let first ← bufferText rig texts reverted "a.txt"
           let other ← bufferText rig texts reverted "b.txt"
           return headers ==

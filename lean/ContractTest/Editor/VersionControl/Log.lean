@@ -72,11 +72,11 @@ def historyBufferChecks (services : Job.Services) : List Check :=
             runSettled rig directory
                 [openFile (directory / "a.txt"),
                   { command := VersionControl.logName, arguments := [.str "feature"] }]
-                reviewKeys statusJobs | return false
+                (reviewKeys directory) (statusJobs directory) | return false
           let text ← bufferText rig texts logged "*vc-log: repo@main feature*"
           let some (visited, _) ←
             runSettledFrom rig logged texts [toRow 2, { command := VersionControl.logVisitName }]
-                reviewKeys statusJobs | return false
+                (reviewKeys directory) (statusJobs directory) | return false
           let (g, f, b) :=
             (← shortRevision home directory "feature", ← shortRevision home directory "feature~1",
               ← shortRevision home directory "base")
@@ -93,8 +93,8 @@ def historyBufferChecks (services : Job.Services) : List Check :=
           let rig ← ProjectRig.over (onIsolatedGit services home config)
           let some (blamed, texts) ←
             runSettled rig directory
-                [openFile (directory / "a.txt"), { command := VersionControl.blameName }] reviewKeys
-                statusJobs | return false
+                [openFile (directory / "a.txt"), { command := VersionControl.blameName }]
+                (reviewKeys directory) (statusJobs directory) | return false
           let text ← bufferText rig texts blamed "*vc-blame: a.txt@HEAD*"
           let (head, base) :=
             (← shortRevision home directory "HEAD", ← shortRevision home directory "base")
@@ -111,7 +111,7 @@ def historyBufferChecks (services : Job.Services) : List Check :=
             runSettled rig directory
                 [openFile (directory / "a.txt"),
                   { command := VersionControl.reviewName, arguments := [.str "base"] }]
-                reviewKeys statusJobs | return false
+                (reviewKeys directory) (statusJobs directory) | return false
           let reviewedAt ← shortRevision home directory "HEAD"
           writeMaking (directory / "c.txt") VersionControlContract.tenLines
           discard <| gitIn home directory #["add", "-A"]
@@ -120,7 +120,7 @@ def historyBufferChecks (services : Job.Services) : List Check :=
           let committed ← shortRevision home directory "HEAD"
           let some (since, texts) ←
             runSettledFrom rig reviewed texts [{ command := VersionControl.reviewSinceName }]
-                reviewKeys statusJobs | return false
+                (reviewKeys directory) (statusJobs directory) | return false
           writeMaking (directory / "c.txt") VersionControlContract.sixChanged
           discard <| gitIn home directory #["add", "-A"]
           discard <|
@@ -128,7 +128,7 @@ def historyBufferChecks (services : Job.Services) : List Check :=
                 #["-c", "commit.gpgsign=false", "commit", "-q", "--amend", "-m", "add c"]
           let some (rewritten, texts) ←
             runSettledFrom rig since texts [{ command := VersionControl.reviewSinceName }]
-                reviewKeys statusJobs | return false
+                (reviewKeys directory) (statusJobs directory) | return false
           let range ← bufferText rig texts rewritten "*vc-range-diff: repo@main*"
           return focusedName since == some s!"*vc-review: repo@main since {reviewedAt}*" &&
               focusedHeaders since == #["c.txt @@ -0,0 +1,10 @@"] &&
