@@ -11,7 +11,6 @@ import Editor.Test.Keys
 import Editor.Test.Shell
 import Editor.Workspace
 import Editor.Workspace.Model
-import Editor.Workspace.Modes
 
 /-!
 # The test kit: Listing

@@ -33,17 +33,13 @@ and imports this module (`packages/compile/Compile.lean`).
   such job turns no mode on.
 - **Its command** (`modesFound`) asks the loop for the marker modes now
   registered, and, while the buffer still holds a file in the order's
-  directory, keeps the on-modes (`Workspace.onModes`) as the buffer-local
-  value `marker-modes` (`Workspace.modesLocal`), nearest first, and adds
-  each as a minor mode, the farthest first, so the buffer's minor modes
-  list the nearest first and its keymap wins. Then it checks the on-modes'
-  listings in the buffer's place (`Compile.refreshListings`,
-  `Editor/ProjectMode/Listing.lean`, which this module imports for it), so a
-  mode that computes its commands lists them as it turns on. A buffer
+  directory, turns the on-modes (`Workspace.onModes`) on by the core's rule
+  (`Workspace.turnOnModes`, `Editor/ProjectMode/Listing.lean`, which this
+  module imports for it): kept as the buffer-local value `marker-modes`,
+  nearest first, each a minor mode, and their listings checked. A buffer
   whose markers turn no mode on is left as it was. A reload's
   contributions apply to files opened after it.
-- **Reading them back** (`onModesOf`): the on-modes a buffer keeps, none
-  when it keeps none.
+- **Reading them back** is the core's too (`Workspace.onModesOf`).
 
 Pinned by `ModelTest.listingChecks`, on the loop's driver over the editor's
 models and the job model, with a host of core packages alone: a file's open
@@ -111,14 +107,7 @@ def modesFound (order : MarkerOrder) (present : Array (System.FilePath × String
   let some file := buffer.file | return
   if (file.path.parent.map Process.trimmed) != some order.directory then
     return
-  let on := onModes settings.markerModes order.directory order.bound present
-  if on.isEmpty then
-    return
-  discard <| order.buffer.setValue modesLocal (.list (on.toList.map OnMode.encode))
-  for mode in on.reverse do
-    discard <| order.buffer.addMinorMode mode.mode
-  if let some place := Compile.placeOfBuffer (← editorState) order.buffer then
-    Compile.refreshListings place on
+  turnOnModes order.buffer (onModes settings.markerModes order.directory order.bound present)
 
 /-- The marker job: stamps its order's markers (`presentMarkers`), and
 finishes with what they become (`modesFound`). It fails only for arguments
@@ -127,12 +116,5 @@ def markerWork (arguments : List Argument) : Work := fun _ => do
   let some order :=
     MarkerOrder.ofArguments? arguments | throw s!"{markerJob}: its arguments are not a marker order"
   return modesFound order (← presentMarkers order.markers order.directory order.bound)
-
-/-- The on-modes the buffer `id` keeps in `state`, nearest first; none when
-it keeps none. -/
-def onModesOf (state : EditorState) (id : BufferId) : Array OnMode :=
-  match state.value? id modesLocal with
-  | some (.list items) => items.toArray.filterMap OnMode.decode?
-  | _ => #[]
 
 end Editor.Workspace

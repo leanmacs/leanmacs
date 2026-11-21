@@ -66,8 +66,26 @@ starts it.
 - **What is offered** (`listedCommands`): the commands of a mode's entry at
   a root; none for no entry or a failed one.
 
-Pinned by `ModelTest.listingChecks`, on a host handed core packages'
-commands and jobs alone. What the compile mode makes of what is listed is
+## Turning on-modes on
+
+What a buffer's on-modes come to once they are known (`Workspace.OnMode`,
+`Editor/Workspace.lean`, "Modes on markers"), in `Editor.Workspace`: the
+core's, so the workspace's marker job (`Workspace.modesFound`,
+`Editor/Workspace/Modes.lean`) and a test's stand-in for it turn modes on by
+one rule, and the compile mode reads them back without the workspace.
+
+- **Turning them on** (`turnOnModes`): the on-modes, nearest first, are kept
+  as the buffer-local value `marker-modes` (`Workspace.modesLocal`), each is
+  added as a minor mode, the farthest first, so the buffer's minor modes
+  list the nearest first and its keymap wins, and their listings are
+  checked in the buffer's place (`refreshListings`), so a mode that
+  computes its commands lists them as it turns on. With none the buffer is
+  left as it was.
+- **Reading them back** (`onModesOf`): the on-modes a buffer keeps, nearest
+  first; none when it keeps none.
+
+Pinned by `ModelTest.listingChecks` and `ModelTest.turnOnModesChecks`, on a
+host handed core packages' commands and jobs alone. What the compile mode makes of what is listed is
 its own tests', in its package (`CompileTest.compileListedChecks`,
 `CompileTest.projectModeChecks`).
 -/
@@ -390,3 +408,27 @@ def refreshListings (place : Option Location) (modes : Array Workspace.OnMode) :
     discard <| startJob listJob order.arguments (key := some (listKey on.mode on.root))
 
 end Editor.Compile
+
+namespace Editor.Workspace
+
+/-- The on-modes the buffer `id` keeps in `state`, nearest first; none when
+it keeps none. -/
+def onModesOf (state : EditorState) (id : BufferId) : Array OnMode :=
+  match state.value? id modesLocal with
+  | some (.list items) => items.toArray.filterMap OnMode.decode?
+  | _ => #[]
+
+/-- Turns the on-modes `on`, nearest first, on in the buffer `id` ("Turning
+on-modes on", in the module docs): kept as its value `marker-modes`
+(`modesLocal`), each added as a minor mode, the farthest first, and their
+listings checked in the buffer's place. -/
+def turnOnModes (id : BufferId) (on : Array OnMode) : EditorM Unit := do
+  if on.isEmpty then
+    return
+  discard <| id.setValue modesLocal (.list (on.toList.map OnMode.encode))
+  for mode in on.reverse do
+    discard <| id.addMinorMode mode.mode
+  if let some place := Compile.placeOfBuffer (← editorState) id then
+    Compile.refreshListings place on
+
+end Editor.Workspace

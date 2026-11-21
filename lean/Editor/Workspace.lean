@@ -49,6 +49,12 @@ It imports only the plain trees and the pure part of a child's environment
   config root that holds the directory), the git command lines and the
   reading of what they print (`Git`), and the order the marker adapter looks
   in (`markerPaths`, nearest directory first, then the markers in order).
+- **What a search of a workspace is handed and says** (`typedOf`,
+  `noSuchWorkspace`, `cannotList`): the text typed after a location given
+  as a command's arguments, and the two refusals of what a search covers,
+  each naming the command that searched. The rule of what a search covers
+  is `Workspace.searchRoot` (`Editor/SearchRoot.lean`), which needs the
+  editor state and the call, which this module sits below.
 - **Which adapter found a workspace** is read from its branch
   (`foundByGit`): only the git adapter gives one, so a local workspace with
   a branch is one git found. A workspace does not record its adapter.
@@ -355,6 +361,23 @@ def labelOf (name : String) (branch : Option Branch) (location : Location) : Str
 /-- How a workspace is shown (`labelOf`). -/
 def label (workspace : Workspace) : String :=
   labelOf workspace.project.name workspace.branch workspace.location
+
+/-- The typed text the arguments after a location carry: the first text, or
+the empty text. What a search of a workspace types into its prompt
+(`Editor/SearchRoot.lean`). -/
+def typedOf : List Argument → String
+  | .str typed :: _ => typed
+  | _ => ""
+
+/-- What the command `command` says when no workspace is known at
+`location`. -/
+def noSuchWorkspace (location : Location) (command : String) : String :=
+  s!"{command}: no workspace is known at {location.describe}"
+
+/-- What the command `command` says of `workspace`, whose location cannot
+read files and run commands, so its files cannot be listed. -/
+def cannotList (workspace : Workspace) (command : String) : String :=
+  s!"{command}: {workspace.label} is {workspace.location.describe}, where files cannot be listed"
 
 /-- The name a buffer keeps its workspace's location under, as a
 buffer-local value (`Location.encode`). -/

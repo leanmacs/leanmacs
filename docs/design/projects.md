@@ -469,8 +469,9 @@ open when the table has it: found or registered this session.
   workspace root. It was not built as a phase of its own: the workspace
   finder, `find-file-in-workspace`, is it.
 - `navigation-and-windows` phase 4 (built): `project-search` searches what
-  `find-file-in-workspace` would list, by the same rule
-  (`Workspace.FindFile.searched`): the location's workspace, or the
+  `find-file-in-workspace` would list, by the same rule, the core's
+  (`Workspace.searchRoot`, `lean/Editor/SearchRoot.lean`, which
+  `Workspace.FindFile.searched` adds the lister to): the location's workspace, or the
   buffer's, or the directory a command run for the buffer would use; a
   location that cannot read files and run commands is refused. It does not
   list through the workspace's lister: the library's grep service walks the

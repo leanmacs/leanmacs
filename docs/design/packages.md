@@ -2439,9 +2439,10 @@ of `echo` outside the repository is refused with its reason
 
 ## The module map
 
-Every module under `lean/Editor/`, 308 of them
-(`find lean/Editor -name '*.lean' | wc -l`, at the end of the
-features-as-packages roadmap's phase 5; 254 at `6ba99de5`, phase 4
+Every module under `lean/Editor/`, 310 of them
+(`find lean/Editor -name '*.lean' | wc -l`, in the features-as-packages
+roadmap's phase 6, which added the core's `Editor.Text.Word` and
+`Editor.SearchRoot`; 308 at the end of its phase 5; 254 at `6ba99de5`, phase 4
 added `Editor.Main`, phase 5 added `Editor.Themes.Picture` and moved
 the three modules of the shipped palettes out, phase 6 moved the five
 of the compile mode out and added the 18 of the test kit, phase 7 added
@@ -2458,7 +2459,7 @@ model, the job names of the loop's two reconcilers (`Editor.FileJobs`,
 `Editor.Gutter.Track`), the kit's two (`Editor.Test.Hosted`, `.Opener`)
 and the files feature's kit (`Editor.Files.Kit`)), is
 **core** or part of a **feature that could become a package**. The counts
-below add up to 297: 219 core and 78 in 15 features. The rows were not
+below add up to 299: 221 core and 78 in 15 features. The rows were not
 counted again in full for phase 3 or 4: at phase 3's start they added up
 to 304 against 315 modules, so 11 modules are in no row (the task
 `module-map-count-drift`); phase 4 took its eight moved modules' rows out
@@ -2514,8 +2515,10 @@ One row covers modules that share a class and a side of the import rule.
 | The editor API and what is proved of it: `Editor.Api`, `.Api.Theorems`, `Editor.UndoTree`, `.UndoTree.Theorems` | 4 | core | yes |
 | The composite port and a command: `Editor.Command`, `.Call`, `.Control`, `.Registry`, `.Append`, `Editor.Program` | 6 | core | yes |
 | The ports: `Editor.Clipboard`, `Editor.Diff`, `.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Process`, `.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 14 | core | yes |
+| The word under the cursor, over the text port, which evil's `*` and project search's symbol search ask: `Editor.Text.Word` | 1 | core | yes |
 | The setup port, packages, extension points and stores: `Editor.Setup`, `Editor.Package`, `Editor.Extension`, `Editor.Store`, `.Store.Codec`, `Editor.Value`, `Editor.Json` | 7 | core | yes |
 | The state, and the names of the jobs the loop's reconcilers run: `Editor.State`, `.State.Request`, `Editor.Event`, `Editor.DisplayRules`, `Editor.Floating`, `Editor.Layout`, `Editor.GeneratedView`, `Editor.ExcerptView`, `Editor.Gutter`, `.Gutter.Track`, `Editor.FileJobs`, `Editor.Workspace` | 12 | core | yes |
+| What a search of a workspace's files covers, which the finder and project search decide by: `Editor.SearchRoot` (in `Editor.Workspace`, outside the workspace feature's modules under `Editor.Workspace.`, because it takes the state and a call, which `Editor.Workspace` sits below) | 1 | core | yes |
 | Places, jump lists and marks, which the state holds and the loop follows through edits: `Editor.JumpList`, `Editor.Marks`, `.Marks.Follow`, `Editor.Jumps` | 4 | core | yes |
 | The scene and display types: `Editor.Scene`, `Editor.Scroll`, `Editor.Face`, `.Face.Vocabulary`, `Editor.Appearance`, `Editor.Highlight`, `Editor.TabBar`, `Editor.ModeLine`, `Editor.Menu` | 9 | core | yes |
 | Keys and modes: `Editor.InputScheme`, `Editor.Invocation`, `Editor.Keymap`, `Editor.Key.Notation`, `Editor.Mode`, `Editor.Role`, `Editor.Vocabulary` | 7 | core | yes |

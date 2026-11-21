@@ -42,7 +42,9 @@ open Editor.Test
 /-- The checks of projects, workspaces and locations as data
 (`Editor/Workspace.lean`): how an `origin` URL is normalised, how a project
 is identified and named, how a workspace is labelled, what each location can
-do, and a location's round trip through a buffer-local value. -/
+do, a location's round trip through a buffer-local value, the text typed
+after a location, and what a search that finds no workspace, or one that
+cannot list its files, says. -/
 def workspaceDataChecks : List Check :=
   let origin := "git@github.com:o/r.git"
   [{  name :=
@@ -115,7 +117,24 @@ def workspaceDataChecks : List Check :=
         pure
           (locations.all (fun location => Location.decode? location.encode == some location) &&
             [Value.null, .str "/r", .record [("local", .nat 1)], .record []].all
-              (Location.decode? · == none)) }]
+              (Location.decode? · == none)) },
+    { name :=
+        "the text typed after a location is its first text argument, or the empty text: typedOf reads what a location's arguments carry on"
+      run :=
+        pure <|
+          Workspace.typedOf [.str "ab", .str "cd"] == "ab" && Workspace.typedOf [] == "" &&
+            Workspace.typedOf [.nat 1, .str "ab"] == "" },
+    { name :=
+        "a command that finds no workspace at a location says so, naming itself and the location; one handed a workspace that cannot list its files names itself, the workspace's label and its location"
+      run :=
+        let project := Project.of "/r" (some "/r/.git") (some origin) none
+        let remote : Workspace :=
+          { location := .reachable "kube" "pod/dev" "/src", branch := some (.named "main"),
+            project }
+        pure <|
+          Workspace.noSuchWorkspace (.local "/z") "c" == "c: no workspace is known at local /z" &&
+            Workspace.cannotList remote "c" ==
+              "c: r@main is reachable through kube pod/dev at /src, where files cannot be listed" }]
 
 /-- The checks of how the git adapter reads what git prints
 (`Editor/Workspace.lean`, "The git adapter's command lines"). -/

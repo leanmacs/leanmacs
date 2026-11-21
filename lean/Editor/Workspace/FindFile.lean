@@ -2,6 +2,7 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Completion.Filtering
 import Editor.Job
+import Editor.SearchRoot
 import Editor.Workspace
 import Editor.Workspace.Lister
 import FilesApi
@@ -18,29 +19,34 @@ job. Its candidates are paths relative to the root.
 ## What is searched
 
 `searched`, pure, decides it from the editor state, config's workspace
-settings and the call:
+settings and the call: the core's rule of what a search covers
+(`Workspace.searchRoot`, `Editor/SearchRoot.lean`), and the lister
+`Workspace.lister` chooses for the workspace it answers, or the fallback for
+none.
 
-- **A location as the command's argument** (`Location.arguments`, the
-  first arguments): the workspace the table has there, refused with
-  `noSuchWorkspace` when it has none. A text after the location
-  (`typedArguments`, `typedOf`) is typed into the input when the prompt
-  opens, so its source's first job is asked with it and the list opens
-  matched against it: what the escape from the finder through the
+- **A location as the command's argument**: the workspace the table has
+  there, refused with `noSuchWorkspace` when it has none. A text after the
+  location (`typedArguments`, `typedOf`) is typed into the input when the
+  prompt opens, so its source's first job is asked with it and the list
+  opens matched against it: what the escape from the finder through the
   project's workspaces (`Editor/Workspace/FindInProject.lean`) hands on.
 - **Otherwise the workspace of the buffer of the window it was called
   with.**
-- **A workspace whose location cannot both read files and run commands**
-  (`Location.can`) is refused with `cannotList`, which names it; no prompt
-  opens and no process is started.
-- **Otherwise its root** is searched, its label (`Workspace.label`,
-  `name@branch`) names it, and its lister is `Workspace.lister`'s.
+- **A workspace whose location cannot both read files and run commands** is
+  refused with `cannotList`, which names it; no prompt opens and no process
+  is started.
+- **Otherwise its root** is searched, its label names it, and its lister is
+  `Workspace.lister`'s.
 - **A buffer with no workspace** is searched in the directory a command
-  run for it would use, which the state decides for `:!` too
-  (`EditorState.commandDirectoryOf`, `Editor/State.lean`): its file's
-  directory, or the editor's working directory for a buffer with no file. The directory is its label, and the
-  fallback lists it.
+  run for it would use, which the state decides for `:!` too: its file's
+  directory, or the editor's working directory for a buffer with no file.
+  The directory is its label, and the fallback lists it.
 - **Other arguments**, such as a count and a register a Vim key hands a
   command, are ignored.
+
+`typedOf`, `noSuchWorkspace` and `cannotList` are the core's
+(`Workspace.typedOf`, `.noSuchWorkspace`, `.cannotList`,
+`Editor/Workspace.lean`), the refusals naming this command by default.
 
 ## The command
 
@@ -111,10 +117,9 @@ def typedArguments (typed : String) : List Argument :=
   if typed.isEmpty then [] else [.str typed]
 
 /-- The typed text the arguments after a location carry (`typedArguments`):
-the first text, or the empty text. -/
-def typedOf : List Argument → String
-  | .str typed :: _ => typed
-  | _ => ""
+the core's (`Workspace.typedOf`). -/
+def typedOf (arguments : List Argument) : String :=
+  Editor.Workspace.typedOf arguments
 
 /-- What is searched: the root the lister runs at, the label naming it, and
 the lister. -/
@@ -132,54 +137,31 @@ structure Searched where
   deriving DecidableEq, Repr
 
 /-- What the command `command`, this one by default, says when no workspace
-is known at `location`. -/
+is known at `location`: the core's (`Workspace.noSuchWorkspace`). -/
 def noSuchWorkspace (location : Location) (command : String := name) : String :=
-  s!"{command}: no workspace is known at {location.describe}"
+  Editor.Workspace.noSuchWorkspace location command
 
 /-- What the command `command`, this one by default, says of `workspace`,
-whose location cannot read files and run commands. -/
+whose location cannot read files and run commands: the core's
+(`Workspace.cannotList`). -/
 def cannotList (workspace : Workspace) (command : String := name) : String :=
-  s!"{command}: {workspace.label} is {workspace.location.describe}, where files cannot be listed"
+  Editor.Workspace.cannotList workspace command
 
 /-- What the source's job says when its query carries no lister or no
 root. -/
 def noWorkspaceAsked : String :=
   s!"{sourceName}: asked with no workspace to list"
 
-/-- What is searched in `workspace` ("What is searched", in the module
-docs): its root, its label and its lister; refused with `cannotList` when
-its location cannot read files and run commands. -/
-def ofWorkspace (settings : Settings) (workspace : Workspace) (command : String := name) :
-    Except String Searched :=
-  let can := workspace.location.can
-  match workspace.location.root? with
-  | some root =>
-    if can.readFiles && can.runCommands then
-      .ok { root, label := workspace.label, lister := lister settings (some workspace) }
-    else .error (cannotList workspace command)
-  | none => .error (cannotList workspace command)
-
 /-- What `call` searches in `state`, with config's workspace `settings`
 ("What is searched", in the module docs), or what the command says
-instead. The refusals name `command`, this one by default: project search
-(`Editor/ProjectSearch/Run.lean`) decides what it searches by this rule
-too. -/
+instead: the core's rule (`Workspace.searchRoot`) and the lister
+`Workspace.lister` chooses for the workspace it answers. The refusals name
+`command`, this one by default. -/
 def searched (state : EditorState) (settings : Settings) (call : Call) (command : String := name) :
     Except String Searched :=
-  match Location.of? call.arguments with
-  | some (location, rest) =>
-    match state.workspaces.workspace? location with
-    | some workspace =>
-      (ofWorkspace settings workspace command).map fun searched =>
-        { searched with typed := typedOf rest }
-    | none => .error (noSuchWorkspace location command)
-  | none =>
-    let buffer := call.target.window.buffer
-    match state.workspaceOf? buffer with
-    | some (workspace, _) => ofWorkspace settings workspace command
-    | none =>
-      let directory := state.commandDirectoryOf buffer
-      .ok { root := directory, label := directory.toString, lister := lister settings none }
+  (Editor.Workspace.searchRoot state call command).map fun root =>
+    { root := root.root, label := root.label, typed := root.typed
+      lister := lister settings root.workspace }
 
 /-- The prompt's label for a search labelled `label`. -/
 def promptLabel (label : String) : String :=

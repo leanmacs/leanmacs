@@ -1,5 +1,6 @@
 import Editor.Api
 import Editor.Evil.Marks
+import Editor.Text.Word
 import Editor.Vocabulary
 
 /-!
@@ -399,17 +400,9 @@ def lastLineMotion : Vocabulary.Motion :=
   toLine "last-line" true
 
 /-- The cells of the line of `head` in `text`, each with the offset it
-starts at: its characters up to where its content ends, without its line
-break. -/
-def lineCells (text : TextId) (head : Nat) : TextM (Array (Nat × String)) := do
-  let start ← text.motion .lineStart head
-  let line ← text.slice start (← text.motion .lineEnd head)
-  let mut offset := start
-  let mut cells := #[]
-  for char in line.toList do
-    cells := cells.push (offset, char.toString)
-    offset := offset + char.utf8Size
-  return cells
+starts at: the core's (`Text.Word.cells`, `Editor/Text/Word.lean`). -/
+def lineCells (text : TextId) (head : Nat) : TextM (Array (Nat × String)) :=
+  Text.Word.cells text head
 
 /-- Where `find` leads among `cells`, the cells of a line, from `head`,
 `count` times: the offset of the `count`th cell after `head` (before it,
@@ -530,9 +523,9 @@ def noPreviousPattern : String :=
   "E35: No previous regular expression"
 
 /-- What `*` and `#` say when the line has no word at or after the cursor:
-Vim's E348. -/
+Vim's E348, the core's (`Text.Word.noneUnderCursor`). -/
 def noStringUnderCursor : String :=
-  "E348: No string under cursor"
+  Text.Word.noneUnderCursor
 
 /-- Where `search` leads in `text` from `start`, `count` times, each step from
 where the last one led: the start of each match the text port answers
@@ -609,51 +602,27 @@ def searchNext : Vocabulary.Motion :=
 def searchPrevious : Vocabulary.Motion :=
   searchAgain "search-previous" true
 
-/-- Whether `cell`, a cell of a line's content, is a blank: a space or a tab. -/
+/-- Whether `cell`, a cell of a line's content, is a blank: a space or a
+tab, by the core's rule (`Text.Word.isBlank`). -/
 def isBlankCell (cell : String) : Bool :=
-  cell == " " || cell == "\t"
+  Text.Word.isBlank cell
 
-/-- Whether `cell` holds a word character (`wordCharacter`). -/
+/-- Whether `cell` holds a word character, by the core's rule
+(`Text.Word.isWord`). -/
 def isWordCell (cell : String) : Bool :=
-  cell.toList.all wordCharacter && !cell.isEmpty
+  Text.Word.isWord cell
 
 /-- The word `*` and `#` search for from `head`, among `cells`, the cells of
-its line, with the offset it starts at: the first of the keyword under the
-cursor, the first keyword after the cursor in the line, the run of
-characters that are neither blanks nor word characters under the cursor,
-and the first such run after it (Vim's `:help star`, with its `iskeyword`
-read as the text's word class). `none` when the line has none of the four
-at or after the cursor. -/
+its line, with the offset it starts at: the word under the cursor, the
+core's (`Text.Word.underCursor`, Vim's `:help star`). `none` when the line
+has none at or after the cursor. -/
 def starWord (cells : Array (Nat × String)) (head : Nat) : Option (Nat × String) :=
-  let cursor := (cells.findIdx? (·.1 ≥ head)).getD cells.size
-  let punctuation (cell : String) := !isBlankCell cell && !isWordCell cell
-  -- The run of cells `inside` holds round the index `index`.
-  let run (index : Nat) (inside : String → Bool) : Nat × String :=
-    let before := ((cells.extract 0 index).toList.reverse.takeWhile (inside ·.2)).length
-    let first := index - before
-    let cellsOf := (cells.extract first cells.size).toList.takeWhile (inside ·.2)
-    (cells[first]!.1, String.join (cellsOf.map (·.2)))
-  let firstFrom (inside : String → Bool) : Option Nat :=
-    ((List.range (cells.size - cursor)).map (· + cursor)).find? fun index => inside cells[index]!.2
-  match firstFrom isWordCell with
-  | some index => some (run index isWordCell)
-  | none =>
-    match firstFrom punctuation with
-    | some index => some (run index punctuation)
-    | none => none
+  Text.Word.underCursor cells head
 
-/-- `word` as a pattern of literal characters: each of `\ / . * $ ^ ~ [`
-written with a backslash before it, with `\<` before it when it starts with
-a word character and `\>` after it when it ends with one. This is the
-pattern Vim's `*` builds (`nv_ident`). -/
+/-- `word` as the pattern Vim's `*` builds (`nv_ident`), the core's
+(`Text.Word.wholePattern`). -/
 def starPattern (word : String) : String :=
-  let escaped :=
-    String.join
-      (word.toList.map fun char =>
-        if "\\/.*$^~[".toList.contains char then "\\" ++ char.toString else char.toString)
-  let starts := (word.toList.head?.map wordCharacter).getD false
-  let ends := (word.toList.getLast?.map wordCharacter).getD false
-  (if starts then "\\<" else "") ++ escaped ++ if ends then "\\>" else ""
+  Text.Word.wholePattern word
 
 /-- The motion called `name` to the next whole-word occurrence of the word
 under the cursor (`starWord`), forward when `forward` and back otherwise,

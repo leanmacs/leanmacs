@@ -133,6 +133,7 @@ import ModelTest.Editor.Restore.Value
 import ModelTest.Editor.Restore.Workspaces
 import ModelTest.Editor.Scene
 import ModelTest.Editor.Scroll
+import ModelTest.Editor.SearchRoot
 import ModelTest.Editor.Setup
 import ModelTest.Editor.Shell
 import ModelTest.Editor.State
@@ -146,6 +147,7 @@ import ModelTest.Editor.TabCommands
 import ModelTest.Editor.Text
 import ModelTest.Editor.Text.Contract
 import ModelTest.Editor.Text.Model
+import ModelTest.Editor.Text.Word
 import ModelTest.Editor.Themes
 import ModelTest.Editor.TypedPath
 import ModelTest.Editor.UndoTree
@@ -1166,7 +1168,13 @@ names a scheme's key:
   row's indent in levels, a text with no syntax tree is refused, an empty
   indents source answers 0 for every row, a question is widened to an
   incomplete node's start, a line opened at a position gets its level, and
-  the re-indent's edits are read from the text.
+  the re-indent's edits are read from the text;
+- `wordChecks`: the word under the cursor, the core's (`Editor/Text/Word.lean`),
+  on the text model: a line's cells and their offsets, which cells are
+  blanks and word characters, the word under the cursor by each of its
+  four steps and none, its whole-word pattern, and Vim's E348 when there is
+  none. Evil's `*` and `#` hold the same through the keys
+  (`evilSearchChecks`).
 
 Version control (`Editor/VersionControl.lean` and the modules under
 `Editor/VersionControl/`) is checked with no git: against what git printed,
@@ -1306,7 +1314,13 @@ has its own checks and no check of the core's names the compile mode:
   handed core packages' commands and jobs only: a mode that turns on runs
   its listing once in its root, a failed listing keeps why and says it
   once, what is kept where, no listing where commands cannot run, each end
-  of a run's words, and an order's and an entry's round trip.
+  of a run's words, and an order's and an entry's round trip;
+- `turnOnModesChecks`: turning a buffer's on-modes on, the core's
+  (`Workspace.turnOnModes`, `Workspace.onModesOf`,
+  `Editor/ProjectMode/Listing.lean`), on the same driver: the on-modes kept
+  nearest first and read back, each a minor mode with the nearest first,
+  the listing checked of one that has one, and none turned on leaving the
+  buffer as it was.
 
 What the compile mode makes of them is checked in its package
 (`packages/compile/CompileTest/`): `CompileTest.compileOfferChecks`,
@@ -1445,6 +1459,12 @@ Session restore is checked in Lean alone too:
 
 Listing a workspace's files is checked in Lean alone too:
 
+- `searchRootChecks`: what a search covers, the core's
+  (`Workspace.searchRoot`, `Editor/SearchRoot.lean`), pure: a location
+  given and known, with the text typed after it; given and unknown; a
+  workspace that cannot list its files, given and as the buffer's; the
+  buffer's workspace; and the command directory of a buffer with none,
+  other arguments ignored;
 - `workspaceListerChecks`: which command lists a workspace's files
   (`Editor/Workspace/Lister.lean`), pure: config's lister for the root,
   then for the project, then git's for a workspace git found, then the
@@ -1582,6 +1602,7 @@ def checks : List Check :=
     scrollChecks ++
     blockedScrollChecks ++
     originChecks ++
+    wordChecks ++
     heightChecks ++
     layoutChecks ++
     floatChecks ++
@@ -1711,6 +1732,7 @@ def checks : List Check :=
     menuChecks ++
     clipboardCommandChecks ++
     workspaceDataChecks ++
+    searchRootChecks ++
     workspaceGitChecks ++
     workspaceStateChecks ++
     workspaceChecks ++
@@ -1729,6 +1751,7 @@ def checks : List Check :=
     contributionChecks ++
     formatDataChecks ++
     listingChecks ++
+    turnOnModesChecks ++
     versionControlParserChecks ++
     versionControlPlumbingChecks ++
     versionControlHistoryParserChecks ++

@@ -230,7 +230,7 @@ first. Three commands visit a location and make it the current one:
 
 Minor modes give the compile mode what fits a kind of project
 (`Compile.Contribution`, `Editor/ProjectMode.lean`). A buffer's
-on-modes (`Workspace.onModesOf`, `Editor/Workspace/Modes.lean`), nearest
+on-modes (`Workspace.onModesOf`, `Editor/ProjectMode/Listing.lean`), nearest
 root first, then in registration order, decide where a run goes, what
 `compile` offers and how the output is read. The contributions are asked of
 the loop (`RegistryRequest.compileHook`), so a reload's change holds from the

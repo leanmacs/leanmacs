@@ -27,8 +27,9 @@ import ModelTest.Check
 /-!
 # Model tests: `Editor/ProjectMode/Listing.lean`
 
-The model tests of `Editor/ProjectMode/Listing.lean`: `listingChecks`. The root
-module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `Editor/ProjectMode/Listing.lean`: `listingChecks` and
+`turnOnModesChecks`. The root module `ModelTest` runs them; its module doc
+says what each shows.
 
 The listing is a core module, so these checks name core modules only: their
 host is handed the workspace's, the files', the ex line's, the minibuffer's
@@ -68,6 +69,57 @@ def listingDriver (registry : Config.Registry := listingRegistry) : Option TestD
 found. -/
 def listingRefusedIn (driver : TestDriver) : TestDriver :=
   withScript driver { command := tList "/t2", reply := .error (.notFound "t-list") }
+
+/-- The on-modes the turning checks hand `Workspace.turnOnModes`, nearest
+first: `t-mode` at `/t`, which has a listing, and `u-mode` at `/`, which has
+no contribution. -/
+def turnedOn : Array Workspace.OnMode :=
+  #[{ mode := "t-mode", root := "/t" }, { mode := "u-mode", root := "/" }]
+
+/-- A driver of the listing checks (`listingDriver`'s keys, jobs and world)
+in which `C-p t` turns `on` on in the window's buffer through the core's
+`Workspace.turnOnModes`. -/
+def turningDriver (on : Array Workspace.OnMode) : Option TestDriver :=
+  let turn : Dispatched := fun call => do
+    Workspace.turnOnModes call.target.window.buffer on
+    return none
+  let keys :=
+    dispatchKeys (listingBindings ++ [("C-p t", invoke "turn-on")])
+      (shellCommands ++ [("turn-on", turn)])
+  let keys :=
+    { keys with registered := { keys.registered with compile := listingRegistry.compileHook } }
+  (Loop.Driver.over keys listingJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver => { driver with jobs := listingJobModel }
+
+/-- The checks of turning a buffer's on-modes on, the core's
+(`Workspace.turnOnModes`, `Workspace.onModesOf`,
+`Editor/ProjectMode/Listing.lean`), on the listing checks' driver. -/
+def turnOnModesChecks : List Check :=
+  [{  name :=
+        "turning on-modes on keeps them as the buffer's marker-modes value, nearest first, which onModesOf reads back, adds each as a minor mode so the nearest is first, and checks the listing of each that has one in the buffer's place"
+      run :=
+        pure <|
+          match turningDriver turnedOn with
+          | none => false
+          | some driver =>
+            let (turned, names) := settledNames driver "C-p t"
+            Workspace.onModesOf turned.loop.state ⟨0⟩ == turnedOn &&
+              ((turned.loop.state.buffer? ⟨0⟩).map (·.minors)) == some #["t-mode", "u-mode"] &&
+              names.contains Compile.listJob &&
+              startedCount turned (tList "/t") == 1 &&
+              (Compile.entriesOf turned.loop.state none).size == 1 },
+    { name :=
+        "turning no on-mode on leaves the buffer as it was: no value, no minor mode, no listing; a buffer that keeps none has no on-modes"
+      run :=
+        pure <|
+          match turningDriver #[] with
+          | none => false
+          | some driver =>
+            let (turned, names) := settledNames driver "C-p t"
+            Workspace.onModesOf turned.loop.state ⟨0⟩ == #[] &&
+              turned.loop.state.value? ⟨0⟩ Workspace.modesLocal == none &&
+              ((turned.loop.state.buffer? ⟨0⟩).map (·.minors)) == some #[] &&
+              !names.contains Compile.listJob }]
 
 /-- The checks of a contribution's computed commands
 (`Editor/ProjectMode/Listing.lean`), on the loop's driver over the editor's
