@@ -282,24 +282,38 @@ fn settings(per_channel: bool, matches_core_text: bool) -> Settings {
     }
 }
 
-/// What draws the glyphs of the renderer on the window and of the one
-/// it is compared with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Compared {
-    /// The renderer on the window's.
-    pub window: Rasteriser,
-    /// The headless renderer's, whose picture it is compared with.
-    pub picture: Rasteriser,
+/// A renderer that can be handed what draws its glyphs: the renderer on
+/// the window, and the headless one it is compared with.
+trait Handed: Sized {
+    /// The renderer, drawing its glyphs with what `rasteriser` names, and
+    /// with swash for what that declines.
+    fn handed(self, rasteriser: Rasteriser) -> Self;
 }
 
-/// What draws the glyphs of each renderer where `macos` says whether it
-/// is macOS: the window's own rasteriser for both
-/// ([`window_rasteriser`]), so the pictures compared are drawn alike.
-fn compared(macos: bool) -> Compared {
-    Compared {
-        window: window_rasteriser(macos),
-        picture: window_rasteriser(macos),
+impl Handed for WgpuRenderer {
+    fn handed(self, rasteriser: Rasteriser) -> Self {
+        handed(self, rasteriser, WgpuRenderer::rasterizing_with)
     }
+}
+
+impl Handed for HeadlessRenderer {
+    fn handed(self, rasteriser: Rasteriser) -> Self {
+        handed(self, rasteriser, HeadlessRenderer::rasterizing_with)
+    }
+}
+
+/// The renderer on the window, `window`, and the headless renderer whose
+/// picture it is compared with, made by `picture` from the window's once
+/// it is handed: each handed the one `rasteriser`, so the pictures
+/// compared have their glyphs drawn alike.
+fn alike<W: Handed, P: Handed>(
+    rasteriser: Rasteriser,
+    window: W,
+    picture: impl FnOnce(&W) -> P,
+) -> (W, P) {
+    let window = window.handed(rasteriser);
+    let picture = picture(&window).handed(rasteriser);
+    (window, picture)
 }
 
 /// `renderer`, handed the rasteriser `rasteriser` names through
@@ -343,11 +357,13 @@ pub fn renderer(
         reason = "this example is the one place a renderer is made on a window: it is the window's check, run on demand"
     )]
     let made = unsafe { WgpuRenderer::on_window(window, settings(true, macos)) };
-    let rasterisers = compared(macos);
-    let mut gpu = handed(
+    let (mut gpu, headless) = alike(
+        window_rasteriser(macos),
         made.map_err(|error| error.to_string())?,
-        rasterisers.window,
-        WgpuRenderer::rasterizing_with,
+        // An adapter that cannot blend by a coverage for each channel
+        // draws plain masks whatever it is asked: so must what it is
+        // compared with, at the same weight.
+        |gpu: &WgpuRenderer| HeadlessRenderer::new(settings(gpu.per_channel(), macos)),
     );
     // A run that reads no picture asks the renderer to keep none: a draw
     // then costs what the editor's own would, and not a read-back more.
@@ -357,15 +373,6 @@ pub fn renderer(
         gpu.adapter(),
         gpu.per_channel()
     ));
-    // An adapter that cannot blend by a coverage for each channel draws
-    // plain masks whatever it is asked: so must what it is compared with,
-    // at the same weight.
-    let alike = settings(gpu.per_channel(), macos);
-    let headless = handed(
-        HeadlessRenderer::new(alike),
-        rasterisers.picture,
-        HeadlessRenderer::rasterizing_with,
-    );
     *locked(&shared.rasterizing) = Some(format!(
         "{} on the window, and {} for the picture it is compared with",
         gpu.rasterizing(),
@@ -396,9 +403,9 @@ mod tests {
     use editor_render::port::{DrawRequest, Renderer};
     use editor_render_wgpu::{Antialiasing, Masks, Settings, SubpixelOrder};
 
-    use editor_ffi::window::{Rasteriser, window_rasteriser};
+    use editor_ffi::window::Rasteriser;
 
-    use super::{Compared, Entered, Ledger, compared, entering, happened, settings};
+    use super::{Entered, Handed, Ledger, alike, entering, happened, settings};
     use crate::tally::Happened;
     use crate::testing::{LARGE, MS, SMALL, began, presented_as};
 
@@ -414,18 +421,48 @@ mod tests {
         assert_eq!(settings(false, true), plain(Settings::core_text()));
     }
 
+    /// A renderer that keeps what it is handed to draw its glyphs with,
+    /// and what it was made from.
+    #[derive(Debug, Default, PartialEq)]
+    struct Holding {
+        /// Each rasteriser it was handed, in order.
+        handed: Vec<Rasteriser>,
+        /// What the renderer it was made from held when it was made;
+        /// `None` of one made from nothing.
+        made_from: Option<Vec<Rasteriser>>,
+    }
+
+    impl Handed for Holding {
+        fn handed(mut self, rasteriser: Rasteriser) -> Self {
+            self.handed.push(rasteriser);
+            self
+        }
+    }
+
+    /// Both renderers are handed the one rasteriser, and the headless one
+    /// is made from the window's once it is handed: so a headless renderer
+    /// made at the window's settings draws its glyphs as the window does.
+    ///
+    /// Seen to bite on 2026-11-20: with `alike` handing the headless
+    /// renderer nothing, it failed, the picture's renderer holding `[]`
+    /// where the window's held `[CoreText]`.
     #[test]
     fn the_window_and_the_picture_it_is_compared_with_draw_glyphs_alike() {
-        for macos in [true, false] {
+        for rasteriser in [Rasteriser::CoreText, Rasteriser::Swash] {
+            let (window, picture) =
+                alike(rasteriser, Holding::default(), |window: &Holding| Holding {
+                    handed: Vec::new(),
+                    made_from: Some(window.handed.clone()),
+                });
+            assert_eq!(window.handed, [rasteriser]);
             assert_eq!(
-                compared(macos),
-                Compared {
-                    window: window_rasteriser(macos),
-                    picture: window_rasteriser(macos),
+                picture,
+                Holding {
+                    handed: vec![rasteriser],
+                    made_from: Some(vec![rasteriser]),
                 }
             );
         }
-        assert_eq!(compared(true).window, Rasteriser::CoreText);
     }
 
     #[test]
