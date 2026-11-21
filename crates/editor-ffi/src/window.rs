@@ -169,6 +169,9 @@ const REQUEST_MENU: u64 = 5;
 /// which no request from Lean has.
 const REQUEST_APPEARANCE_LIGHT: u8 = 6;
 const REQUEST_APPEARANCE_DARK: u8 = 7;
+/// The tag of a background in what a scripted window was asked. No request
+/// from Lean has it: the presenter sends it from each frame's ground.
+const REQUEST_BACKGROUND: u64 = 8;
 
 /// The tags of a title bar, as `editor_ffi_window_run` takes them and
 /// `editor_ffi_window_opened_with` writes them.
@@ -1291,8 +1294,10 @@ pub extern "C" fn editor_ffi_window_request(platform: u8, request: u8) -> bool {
 
 /// The words of what a window was asked, oldest first: for each request its
 /// tag, for a title the tag 3 followed by the count and the scalar values
-/// of its characters, and for a menu bar the tag 5 followed by its layout
-/// (`crate::menu`), each text in it written as a title's is.
+/// of its characters, for a menu bar the tag 5 followed by its layout
+/// (`crate::menu`), each text in it written as a title's is, and for a
+/// background the tag 8 followed by its red, its green and its blue, a
+/// word each.
 ///
 /// The match on [`WindowRequest`] is exhaustive on purpose: this crate must
 /// give every variant its words, since a request with none could not be
@@ -1329,6 +1334,12 @@ pub fn asked_words(asked: &[WindowRequest]) -> Vec<u64> {
             WindowRequest::Menu(menu) => {
                 words.word(REQUEST_MENU);
                 crate::menu::write(&mut words, menu);
+            }
+            WindowRequest::Background(rgb) => {
+                words.word(REQUEST_BACKGROUND);
+                for byte in [rgb.red, rgb.green, rgb.blue] {
+                    words.word(u64::from(byte));
+                }
             }
         }
     }

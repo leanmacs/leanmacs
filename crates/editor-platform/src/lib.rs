@@ -442,6 +442,22 @@ pub enum Request {
     /// Draw the window's own parts (its title and its buttons) in this
     /// appearance. One asked already is asked again harmlessly.
     Appearance(Appearance),
+    /// Fill whatever the window shows that nothing drew with this colour:
+    /// behind the drawable area while it is resized, and before a first
+    /// frame. One asked already is asked again harmlessly. A platform
+    /// with no such setting does nothing with it.
+    Background(Rgb),
+}
+
+/// A colour as three sRGB bytes, opaque.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Rgb {
+    /// Red, 0 to 255, sRGB-encoded.
+    pub red: u8,
+    /// Green.
+    pub green: u8,
+    /// Blue.
+    pub blue: u8,
 }
 
 /// Which of the system's appearances the window's own drawing (its title
