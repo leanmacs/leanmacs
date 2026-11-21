@@ -1045,9 +1045,10 @@ benches, the published test support (`contract`, `fake`, `scripted`,
 `#[cfg(test)]`. It drops comments and string literals, then takes as a site
 each line whose code holds a wait: in Lean `IO.sleep`, `eventually`,
 `within`, `monoMsNow` or a name holding `patience` or ending in `Guard`; in
-Rust a `sleep(` call, `recv_timeout`, `wait_timeout*`, `park_timeout`,
-`yield_now`, `is_finished()`, `try_wait()`, `Instant::now() +` or
-`.elapsed()`. It prints the explained count by kind, then the unexplained
+Rust a `sleep(` call (but one on a receiver named `fake…`, which moves a
+fake clock), `recv_timeout`, `wait_timeout*`, `park_timeout`, `yield_now`,
+`Instant::now() +`, `.elapsed()`, or `is_finished()` or `try_wait()` in a
+`while` condition. It prints the explained count by kind, then the unexplained
 count and each such `file:line`, and exits 1 when there is one; `--list`
 prints every site with its kind.
 
@@ -1056,6 +1057,53 @@ text breaks on changes that do not matter (AGENTS.md, "Test behaviour, never
 text"). It matches a named bound by its last dotted segment, so it points a
 reviewer at sites and proves nothing about them. What shows the tests do not
 depend on time is the stress loop (below) and the forced-interleaving checks.
+
+## The stress loop, on demand
+
+```sh
+mise run stress -- 50 config contract rust open-file
+mise run stress -- 10 ffi
+mise run linux-stress -- 50 config contract rust open-file
+```
+
+A check whose result hangs on how threads are scheduled or how fast the
+machine is passes on an idle laptop and fails on a loaded runner
+(AGENTS.md, "Deterministic concurrency in tests"). The stress loop
+(`tools/stress.sh <rounds> [suite ...]`) runs the gate's thread-heavy suites
+that many rounds under a load of `2 x cores` processes of `yes >/dev/null`
+(`sysctl -n hw.ncpu` on macOS, `nproc` on Linux; `STRESS_HOGS` overrides),
+each suite in the foreground under `taskpolicy -c utility` on macOS and
+`nice -n 19` on Linux, so the hogs win the CPU. The suites:
+
+| Suite | Runs |
+|---|---|
+| `config` | `config-test`, as the gate runs it, from `lean/` |
+| `contract` | `contract-test`, as the gate runs it |
+| `rust` | `cargo test --workspace --locked` |
+| `open-file` | the open-file headless fixture, exactly as `ffi-test` runs it |
+| `ffi` | `mise run ffi-test`, every headless fixture |
+
+With no suite named it runs the first four. Run it after `mise run ci` has
+built everything: it builds nothing, and `cargo test` would build a changed
+tree inside the loop. Each run's output goes to
+`$STRESS_OUT/<suite>-<round>.log` (a fresh temporary directory when it is
+unset). It prints `<suite>: <passed>/<rounds>` for each suite, then each
+failing run with the `FAILED:` lines of the Lean checks or the failing
+Rust tests' names, and exits 1 on any failure. A trap kills the hogs on
+exit or interrupt, so nothing is left running.
+
+A failure is a bug, in a check or in the code. It is fixed and the loop is
+run again from round 1, never retried away. A bound that a loaded run
+reaches on an event that does come is a hang guard set too short: it is
+raised to ten times the slowest that event was seen to take, and the
+measurement goes in its doc.
+
+`mise run linux-stress` runs the same loop in the Linux container of
+`linux-ci` ([below](#the-gate-on-linux-on-demand)), after one `mise run ci`
+there, with `2 x nproc` hogs of the container's CPUs; its logs are in
+`.linux-ci/work/stress-logs/`. It is evidence for the Linux code paths
+(pidfd, inotify, glibc), on the machine's own architecture, not for the
+ubuntu runner.
 
 ## The gate on Linux, on demand
 

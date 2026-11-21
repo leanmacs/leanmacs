@@ -7,12 +7,16 @@
 # needs Docker and, the first time, the network.
 #
 #   tools/linux/run.sh ci [--clean]
+#   tools/linux/run.sh stress <rounds> [suite ...]
 #   tools/linux/run.sh window
 #   tools/linux/run.sh render
 #
 # It builds the image from the Dockerfile beside it and copies the checkout
 # into a work directory. `ci` runs `mise run ci` there, and its exit status is
-# the gate's. `window` builds the editor there and runs seven things under
+# the gate's. `stress` (`mise run linux-stress`) runs `mise run ci` there once
+# to build and gate, then the stress loop, `tools/stress.sh` with its
+# arguments, under `2 x nproc` hogs and `nice -n 19`, its logs in the copy's
+# `stress-logs/`; its exit status is the loop's. `window` builds the editor there and runs seven things under
 # Xvfb, a display that needs no screen and no person, failing if any fails:
 # the winit adapter's example, which holds the real window to the window
 # port's contract; `editor window-check`, with xdotool giving the window the
@@ -80,7 +84,7 @@ die() {
 }
 
 usage() {
-  die "usage: tools/linux/run.sh ci [--clean] | window | render"
+  die "usage: tools/linux/run.sh ci [--clean] | stress <rounds> [suite ...] | window | render"
 }
 
 # ---- Inside the container ----
@@ -134,6 +138,22 @@ inside_ci() {
     ldd /work/packages/.lake/build/bin/editor
   fi
   return "$status"
+}
+
+# The stress loop (tools/stress.sh) in the container, after the gate has
+# built everything and passed: the loop builds nothing.
+inside_stress() {
+  [ $# -ge 1 ] || usage
+  inside_prepare
+  inside_versions
+  local status=0
+  mise run ci || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "linux-stress: \`mise run ci\` exited $status; the loop did not run"
+    return "$status"
+  fi
+  rm -rf /work/stress-logs
+  STRESS_OUT=/work/stress-logs mise exec -- sh tools/stress.sh "$@"
 }
 
 # Runs `editor window-check` under the display, with xdotool giving the
@@ -503,7 +523,7 @@ on_host() {
 
 [ $# -ge 1 ] || usage
 case "$1" in
-ci | window | render)
+ci | stress | window | render)
   on_host "$@"
   ;;
 inside)
@@ -513,6 +533,7 @@ inside)
   shift
   case "$mode" in
   ci) inside_ci "$@" ;;
+  stress) inside_stress "$@" ;;
   window) inside_window "$@" ;;
   render) inside_render "$@" ;;
   *) usage ;;

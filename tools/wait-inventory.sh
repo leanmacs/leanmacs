@@ -32,9 +32,11 @@
 #
 #   Lean  `IO.sleep`, `eventually`, `within`, `monoMsNow`, or a name that
 #         holds `patience`/`Patience` or ends in `Guard`
-#   Rust  a `sleep(`/`sleep_ms(` call, `recv_timeout`, `wait_timeout*`,
-#         `park_timeout`, `yield_now`, `is_finished()`, `try_wait()`,
-#         `Instant::now() +`, `.elapsed()`
+#   Rust  a `sleep(`/`sleep_ms(` call (but one on a receiver named
+#         `fake…`, which moves a fake clock and waits for nothing),
+#         `recv_timeout`, `wait_timeout*`, `park_timeout`, `yield_now`,
+#         `Instant::now() +`, `.elapsed()`, and `is_finished()` or
+#         `try_wait()` in a `while` condition
 #
 # It prints `explained: N (hang guard A, run out on purpose B, real time
 # under test C)` and `unexplained: M` with each unexplained `file:line`, and
@@ -181,8 +183,9 @@ awk -F '\t' -v list="$list" '
           if (tok[k] == "IO.sleep" || last == "eventually" || last == "within" || last == "monoMsNow" || last ~ /[Pp]atience/ || last ~ /Guard$/) site = 1
         }
       } else {
-        if (code ~ /(^|[^A-Za-z0-9_])sleep(_ms)?\(/ && code !~ /fn[ \t]+sleep/) site = 1
-        if (code ~ /recv_timeout|wait_timeout|park_timeout|yield_now|is_finished\(\)|try_wait\(\)|Instant::now\(\)[ \t]*\+|\.elapsed\(\)/) site = 1
+        if (code ~ /(^|[^A-Za-z0-9_])sleep(_ms)?\(/ && code !~ /fn[ \t]+sleep/ && code !~ /(^|[^A-Za-z0-9_])fake[A-Za-z0-9_]*\.sleep/) site = 1
+        if (code ~ /recv_timeout|wait_timeout|park_timeout|yield_now|Instant::now\(\)[ \t]*\+|\.elapsed\(\)/) site = 1
+        if (code ~ /while/ && code ~ /is_finished\(\)|try_wait\(\)/) site = 1
       }
     }
     if (site) {

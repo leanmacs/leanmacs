@@ -1670,6 +1670,17 @@ description = "Opt-in, never part of ci; macOS on arm64 only: link an editor fro
 depends = ["lean"]
 run = "tools/user-link-check.sh lean"
 
+# Opt-in, never part of `ci` or hk.pkl: it runs for hours and loads every
+# core. The stress loop (tools/stress.sh; docs/dev-practices/on-demand-checks.md,
+# "The stress loop, on demand"): `mise run stress -- <rounds> [suite ...]`
+# runs config-test, contract-test, the Rust tests and the open-file fixture
+# (or the suites named, `ffi` for every fixture) that many times under
+# `2 x cores` `yes` hogs at lowered priority, and prints each suite's
+# passes. Run it after `mise run ci` has built everything.
+[tasks.stress]
+description = "Opt-in, never part of ci: run the thread-heavy suites over and over under a CPU load of twice the cores, and print each suite's passes (tools/stress.sh). Run after `mise run ci`"
+run = "sh tools/stress.sh"
+
 # Opt-in, never part of `ci` or hk.pkl: AGENTS.md forbids a test that scans
 # source text, and this is a review aid, not a test. It lists every wait
 # with a bound left in the Lean and Rust tests and test support and whether
@@ -2037,6 +2048,13 @@ run = "cargo run --locked --package editor-render-wgpu --example gpu"
 [tasks.linux-ci]
 description = "Opt-in, never part of ci: run the gate on Linux, in a container (tools/linux/run.sh). Needs Docker"
 run = "tools/linux/run.sh ci"
+
+# Opt-in, never part of `ci` or hk.pkl: the stress loop in the Linux
+# container (tools/linux/run.sh stress): the gate once, then
+# `tools/stress.sh` with the task's arguments under `2 x nproc` hogs.
+[tasks.linux-stress]
+description = "Opt-in, never part of ci: run the gate and then the stress loop on Linux, in a container (tools/linux/run.sh stress). Needs Docker"
+run = "tools/linux/run.sh stress"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It needs
 # Docker, like `linux-ci`, whose image, cache and volume it shares.
