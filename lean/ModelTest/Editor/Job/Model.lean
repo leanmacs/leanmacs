@@ -105,18 +105,18 @@ def jobModelChecks : List Check :=
                       reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
                       takes := 30 }] } }
         let (late, afterLate) := (Process.runWithin slow 100 50).runModel model
-        let (within, afterWithin) := (Process.runWithin quick 100 50).runModel model
+        let (inTime, afterInTime) := (Process.runWithin quick 100 50).runModel model
         pure
           ((match late with
             | .finished (.error (.timedOut 50)) => true
             | _ => false) &&
             afterLate.now == 60 &&
             afterLate.processes.killed == #[slow] &&
-            (match within with
+            (match inTime with
             | .finished (.ok ran) => ran.exit == .code 0
             | _ => false) &&
-            afterWithin.now == 40 &&
-            afterWithin.processes.killed == #[]) },
+            afterInTime.now == 40 &&
+            afterInTime.processes.killed == #[]) },
     { name :=
         "in the job model, a cancel that falls before a run's time limit ends the job cancelled at that instant, and the run is killed once"
       run :=

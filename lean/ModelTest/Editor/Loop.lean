@@ -4605,7 +4605,7 @@ def directoryChecks : List Check :=
       run :=
         pure <|
           let asked := dirSource (some "src/") (offered #["src/x"])
-          let within :=
+          let sameDirectory :=
             match promptLoop { asking := #[asked] } (some "src/ma") with
             | none => false
             | some (loop, view) =>
@@ -4627,7 +4627,7 @@ def directoryChecks : List Check :=
                     (Completion.Order.ofArguments? start.arguments).map fun order =>
                       (order.generation, order.query.text, order.pause)) ==
                   #[some (2, "src/main/", 0)]
-          within && into },
+          sameDirectory && into },
     { name :=
         "the candidates as they answer a text leave a source that is asked again after a pause, or never, as it is, and empty a source asked again by directory whose answer is another directory's"
       run :=

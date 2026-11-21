@@ -45,21 +45,25 @@ def ownerChecks : List Check :=
         let (annas, jobs) ← jobs.start anna "sleeps" sleeps finished
         let (bens, jobs) ← jobs.start ben "sleeps" sleeps finished
         try
-          unless ← eventually (return (← rig.clock.waiting) == 2) do
+          discard <| rig.idle
+          unless (← rig.clock.waiting) == 2 do
             return false
           -- A job that is still running has no result to take, and stays.
           let (early, jobs) ← jobs.finish bens
           let (removed, jobs) ← jobs.removeOwner anna
           -- The clock stays at 0, so only removing the owner can have ended
-          -- Anna's job.
-          let ended ← eventually (return (← woken.get) == #[annas])
+          -- Anna's job. Once it has ended, at idle its `finished` has run.
+          awaitEnded (removed.map (·.handle))
+          discard <| rig.idle
+          let ended := (← woken.get) == #[annas]
           let outcomes ← removed.mapM fun entry => return (← entry.handle.outcome?).map texts
           let withdrawn := (← rig.clock.withdrawn).size == 1 && (← rig.clock.waiting) == 1
           let unmoved := (← rig.clock.now) == 0
           -- The handler cannot run: there is no result to take.
           let (gone, jobs) ← jobs.finish annas
           rig.clock.advance 1000
-          let bensEnded ← eventually (return (← woken.get) == #[annas, bens])
+          discard <| rig.idle
+          let bensEnded := (← woken.get) == #[annas, bens]
           let (result, jobs) ← jobs.finish bens
           let (again, jobs) ← jobs.finish bens
           return early.isNone && ended && removed.map (·.id) == #[annas] &&

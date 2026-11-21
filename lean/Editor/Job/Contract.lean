@@ -741,10 +741,10 @@ def diffProperties : List FileProperty :=
       files := pairFiles [("h\na\nk\nb\nt\n", "h\nA\nk\nB\nt\n")]
       holds := fun root => do
         let over ← diffed root 0 2
-        let within ← diffed root 0 3
+        let under ← diffed root 0 3
         return Diff.Script.run "h\na\nk\nb\nt\n" "h\nA\nk\nB\nt\n" over == some "h\nA\nk\nB\nt\n" &&
             over.changedRuns == 1 &&
-            within.changedRuns == 2
+            under.changedRuns == 2
       after := pairFiles [("h\na\nk\nb\nt\n", "h\nA\nk\nB\nt\n")] },
     { name :=
         "a diff whose source names no snapshot, one the store never published or one the job does not hold, is refused with noSuchSnapshot"
@@ -1346,11 +1346,11 @@ def processProperties : List ProcessProperty :=
               reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }]
         holds := fun root => do
           let late ← Process.runWithin (sh root "/bin/sleep 600") roomyOutput 50
-          let within ← Process.runWithin (sh root "exit 0") roomyOutput 10000
+          let inTime ← Process.runWithin (sh root "exit 0") roomyOutput 10000
           return (match late with
               | .error (.timedOut 50) => true
               | _ => false) &&
-              match within with
+              match inTime with
               | .ok ran => ran.exit == .code 0
               | .error _ => false },
       { name :=

@@ -45,8 +45,9 @@ namespace Editor.HandleContract
 
 open Editor.Job
 
-/-- How long a property waits for a task that should end: a guard against a
-hang, never a result. -/
+/-- hang guard: the task's end, a handle's or a flush's, which must come; only
+a hang reaches the bound, and the property then fails as a hang. How long a
+property waits for it, in milliseconds. -/
 def patience : Nat :=
   10000
 

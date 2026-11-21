@@ -73,22 +73,16 @@ def jobRunnerFailures : IO (List String) := do
 
 /-- Runs `job` on the runner over a fake clock of its own, spawned with a host
 that records each post it is handed, and answers the posts once the job has
-ended. The clock is advanced to each deadline, as `runOnFake` does. -/
+ended. The clock is advanced to each deadline at the rig's idle, as
+`runOnFake` does (`Rig.stepToEnd`); a job stuck or hung there is cancelled,
+and the posts it made are returned. -/
 def postedOnFake (job : JobM Unit) : IO (Array Invocation) := do
   let rig ← Rig.new
   let posts ← IO.mkRef #[]
   let handle ←
     Job.spawn rig.services (Work.of (fun _ => job) fun _ => pure ()) (pure ()) fun invocation =>
         posts.modify (·.push invocation)
-  let ended ←
-    eventually do
-        if ← handle.ended then
-          return true
-        if let some deadline← rig.clock.nextDeadline then
-          rig.clock.advance (deadline - (← rig.clock.now))
-        return false
-  unless ended do
-    handle.cancel
+  discard <| rig.stepToEnd handle
   posts.get
 
 /-- The names of the job port's post properties that do not hold of the job

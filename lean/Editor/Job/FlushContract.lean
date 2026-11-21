@@ -38,8 +38,9 @@ namespace Editor.FlushContract
 
 open Editor.Job
 
-/-- How long a property waits for a flush that should end: a guard against a
-hang, never a result. -/
+/-- hang guard: the flush's end, which must come once the work before it has
+ended; only a hang reaches the bound, and the property then fails as a
+hang. How long a property waits for it, in milliseconds. -/
 def patience : Nat :=
   10000
 
@@ -53,9 +54,9 @@ structure FlushRig where
   gives back how to let it go and whether that work has ended; none for a
   port the rig cannot hold. -/
   held : Option (IO (IO Unit × IO Bool)) := none
-  /-- How long a property waits for a flush that should end, as a guard
-  against a hang: `patience`, but for a check that a flush that never ends
-  is reported as a hang. -/
+  /-- hang guard: the flush's end; only a hang reaches it, and the property
+  then fails as a hang. `patience`, but for a check that a flush that never
+  ends is reported as a hang, which runs it out on purpose. -/
   patience : Nat := patience
 
 /-- One property of a flush: whether it holds on a rig, or why not, thrown. -/

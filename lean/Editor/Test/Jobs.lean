@@ -21,8 +21,11 @@ import Editor.Text.Model
 # The test kit: Jobs
 
 Jobs run on the job model and on the runner over its fakes (`Rig`): the fakes'
-roots, how long a check waits, a job's outcome as a check compares it, and a
-table of published snapshots.
+roots, what a check waits on (the rig's idle, `Rig.idle`; a job's outcome; a
+start reaching a service, `startGate`) and the hang guard that bounds it
+(`patience`), a job's outcome as a check compares it, and a table of
+published snapshots. A check never polls for a state with a deadline: it
+waits for the event, or for idle and then reads once.
 Shared by several test modules under `ModelTest/Editor/`; it holds no checks of
 its own.
 
@@ -52,38 +55,117 @@ def stubborn : JobM Unit := do
     catch _ =>
       pure ()
 
-/-- How long a check waits, in milliseconds, for something that should happen
-at once. Only broken code takes this long, and the check then fails instead
-of hanging. -/
+/-- hang guard: an event a check waits for that must come (a job's end, a
+fake's arrival, the rig's idle, a start reaching a service); only a hang
+reaches the bound, and the check then fails as a hang. In milliseconds: ten
+times the slowest such event seen under the stress load and more, as
+`ConfigTest.hangGuard` is set. -/
 def patience : Nat :=
-  5000
+  120000
 
-/-- Polls `condition` until it holds; `false` if it still does not after
-`patience` milliseconds. The bound is only how long a check takes to fail:
-what a check waits for is something it controls. -/
-def eventually (condition : IO Bool) : IO Bool := do
-  let deadline := (← IO.monoMsNow) + patience
+/-- `task`'s value, waited for on the task itself, an event that must come:
+`what` names it. The bound is `patience`, a hang guard: past it this throws
+a hang, and the check fails as one. -/
+def awaitEvent {α : Type} (what : String) (task : Task α) : IO α := do
+  let some value ←
+    Job.awaitWithin patience
+        task | throw <| IO.userError s!"a hang: {what} had not come within {patience} ms"
+  return value
+
+/-- `start`, a port's start of a request, decorated to resolve the promise it
+returns once its `count`-th call has returned: the `count`-th request has
+reached the service, and the service has recorded it. What a check waits on
+for a request that keeps its job's unit, so that idle cannot say it is there
+(a fake's held completions, a real service). A `count` of 0 is resolved at
+once. -/
+def startGate {ρ : Type} (start : UInt64 → ρ → BaseIO Unit) (count : Nat) :
+    BaseIO ((UInt64 → ρ → BaseIO Unit) × IO.Promise Unit) := do
+  let arrived ← IO.Promise.new
+  let calls ← IO.mkRef 0
+  if count == 0 then
+    arrived.resolve ()
+  let gated := fun id request => do
+    start id request
+    let made ← calls.modifyGet fun made => (made + 1, made + 1)
+    if made == count then
+      arrived.resolve ()
+  return (gated, arrived)
+
+/-- The count `activity` reads at its next change after `seen`, waited for on
+the change itself (`changedSince`). The bound is `patience`, a hang guard:
+past it this throws a hang. -/
+def changedAfter (activity : Job.Activity) (seen : Job.Activity.Seen) : IO Job.Activity.Seen := do
+  awaitEvent s!"a change of the count from {repr seen}" (← activity.changedSince seen.epoch)
+  activity.seen
+
+/-- Waits, on the count's own changes, until `activity`'s epoch has reached
+`epoch`: the steps a check knows will come, counted from a fresh count, so
+it never waits for a change that already happened. The bound is a hang
+guard: past it this throws a hang. -/
+def untilEpoch (activity : Job.Activity) (epoch : Nat) : IO Unit := do
   repeat
-    if ← condition then
-      return true
-    if (← IO.monoMsNow) >= deadline then
-      break
-    IO.sleep 1
-  return false
+    let seen ← activity.seen
+    if seen.epoch >= epoch then
+      return
+    discard <| changedAfter activity seen
+  throw <| IO.userError "unreachable"
 
 /-- A table of waits and a fake clock over it: what a check of the job runner
-works with. Each check has its own, so no check moves another's clock. -/
+works with. Each check has its own, so no check moves another's clock.
+
+Its services keep a count of their activity (`Job.Activity.counting`), so a
+check waits for the rig to be idle (`Rig.idle`) rather than polling for a
+state its jobs reach by themselves. -/
 structure Rig where
   /-- The fake clock. -/
   clock : Job.FakeClock
-  /-- The table of waits and the clock, as the runner is given them. -/
+  /-- The table of waits, the clock and the count, as the runner is given
+  them. -/
   services : Job.Services
 
-/-- A rig whose clock reads 0 and has no waits. -/
+/-- A rig whose clock reads 0 and has no waits, with a fresh count of its
+activity. -/
 def Rig.new : BaseIO Rig := do
   let completions ← Job.Completions.new
   let clock ← Job.FakeClock.new completions
-  return { clock, services := { completions, timers := clock.timers } }
+  let activity ← Job.Activity.counting
+  return { clock, services := { completions, timers := clock.timers, activity } }
+
+/-- Waits for the end of each job of `handles`, on its outcome, an event; the
+bound is a hang guard (`awaitEvent`). What a check waits for after it has
+cancelled jobs, before it waits for idle (`Rig.idle`). -/
+def awaitEnded (handles : Array Job.Handle) : IO Unit := do
+  for handle in handles do
+    discard <| awaitEvent "a cancelled job's end" handle.outcome.result?
+
+/-- Waits until nothing on `rig` can run by itself, and returns the count's
+reading then: every job spawned on it is parked in a wait only the check
+ends (the fake clock's sleep, a fake watch's next) or has ended, its
+`finished` run, and no request is in flight on a service that ends it by
+itself. It stays so until the check acts: moves the clock, changes a watch,
+lets a fake go, spawns.
+
+A cancel is the exception: after one, wait for the cancelled jobs' ends
+first (`awaitEnded`), then for idle. A job parking gives back its unit just
+before it marks itself in the wait (`Job.drive`), so a cancel in between
+withdraws nothing, and the job withdraws its own wait a moment later with
+no unit held in the meantime: idle can read 0 then. Once a job's outcome is
+in, it holds a unit until its `finished` has run, so idle after it is
+sound.
+
+Waited for on the count's own changes, never by time; the bound is a hang
+guard (`changedAfter`). A rig whose services keep no count is refused: it
+is never idle. -/
+def Rig.idle (rig : Rig) : IO Job.Activity.Seen := do
+  let activity := rig.services.activity
+  unless activity.tracked do
+    throw <| IO.userError "this rig's services keep no count of their activity: it is never idle"
+  repeat
+    let seen ← activity.seen
+    if seen.running == 0 then
+      return seen
+    discard <| changedAfter activity seen
+  throw <| IO.userError "unreachable"
 
 /-- A table of published snapshots, each slot a text or `none` for one
 released, as the files' model holds them (`FileModel.snapshots`). -/
@@ -108,6 +190,8 @@ structure Spawned where
   handle : Job.Handle
   /-- How many times the runner has called the job's `finished`. -/
   finishes : IO.Ref Nat
+  /-- Waits for the rig the job was spawned on to be idle (`Rig.idle`). -/
+  idle : IO Unit
 
 namespace Spawned
 
@@ -116,23 +200,53 @@ def outcome (spawned : Spawned) : BaseIO (Option (Job.Outcome (Array String))) :
   return (← spawned.handle.outcome?).map texts
 
 /-- Whether the job ended as `expected`, and the runner then said so once.
-Waits for both, with a bound. -/
+Waits for the job's end on its outcome, an event, and then for the rig's
+idle: the runner calls `finished` after it has left the outcome and gives
+the job's unit back after that, so at idle no further call can come and the
+count read then is the whole of it. Each wait's bound is a hang guard:
+past it this throws a hang. -/
 def endedAs (spawned : Spawned) (expected : Job.Outcome (Array String)) : IO Bool := do
-  let ended ← eventually spawned.handle.ended
-  -- The runner says a job has ended after it has left the outcome.
-  let said ← eventually (return (← spawned.finishes.get) == 1)
-  return ended && said && (← spawned.outcome) == some expected
+  discard <| awaitEvent "the job's end" spawned.handle.outcome.result?
+  spawned.idle
+  return (← spawned.finishes.get) == 1 && (← spawned.outcome) == some expected
 
 end Spawned
 
 /-- Spawns `work` on `rig`, counting the calls of its `finished`. -/
 def Rig.spawn (rig : Rig) (work : Work) : BaseIO Spawned := do
   let finishes ← IO.mkRef 0
-  return { handle := ← Job.spawn rig.services work (finishes.modify (· + 1)), finishes }
+  return {
+      handle := ← Job.spawn rig.services work (finishes.modify (· + 1)), finishes
+      idle := discard rig.idle }
+
+/-- Steps the job behind `handle` on `rig` to its end, standing in for time:
+at each idle of the rig, if the job has ended it stops; else, if a wait is
+due on the fake clock, it advances the clock to the earliest deadline and
+waits for the next idle; else the job is stuck in a wait nothing here ends,
+and it says so. `none` once the job has ended, else why it has not, the job
+then cancelled. Only the idle's hang guard bounds it; a hang is said as
+well. -/
+def Rig.stepToEnd (rig : Rig) (handle : Job.Handle) : IO (Option String) := do
+  try
+    repeat
+      discard <| rig.idle
+      if ← handle.ended then
+        return none
+      let some deadline ← rig.clock.nextDeadline |
+        handle.cancel
+        -- Nothing it started outlives the driver.
+        awaitEnded #[handle]
+        return some "the job is stuck: at idle it had not ended, and no wait was due on the clock"
+      rig.clock.advance (deadline - (← rig.clock.now))
+    return some "unreachable"
+  catch error =>
+    handle.cancel
+    return some (toString error)
 
 /-- Runs `job` on the runner over a fake clock of its own, and returns how it
-ended. The driver stands in for time: while a wait is waiting it advances the
-clock to the earliest deadline. A job that does not end in time has failed. -/
+ended. The driver stands in for time, stepped on the rig's idle
+(`Rig.stepToEnd`): at each idle it advances the clock to the earliest
+deadline. A job stuck at idle, or one that hangs, has failed. -/
 def runOnFake (job : JobM Bool) (rig? : Option Rig := none) : IO (Job.Outcome Bool) := do
   let rig ←
     match rig? with
@@ -141,16 +255,8 @@ def runOnFake (job : JobM Bool) (rig? : Option Rig := none) : IO (Job.Outcome Bo
     | none =>
       Rig.new
   let spawned ← rig.spawn (reporting fun _ => job)
-  let ended ←
-    eventually do
-        if ← spawned.handle.ended then
-          return true
-        if let some deadline← rig.clock.nextDeadline then
-          rig.clock.advance (deadline - (← rig.clock.now))
-        return false
-  unless ended do
-    spawned.handle.cancel
-    return .failed "the job did not end"
+  if let some why← rig.stepToEnd spawned.handle then
+    return .failed s!"the job did not end: {why}"
   match ← spawned.outcome with
   | some (.finished texts) =>
     return .finished (texts == #["true"])

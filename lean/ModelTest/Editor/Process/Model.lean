@@ -73,14 +73,14 @@ def processChecks : List Check :=
           { exit := .code 0, stdout := "123456".toUTF8, stderr := "123456".toUTF8 }
         let model : ProcessModel :=
           { scripts := #[{ command := sleeper, reply := .ok ran, takes := 7 }] }
-        let (within, after, now) := modelRun model 3 none sleeper 6
+        let (atBound, after, now) := modelRun model 3 none sleeper 6
         let (over, _, _) := modelRun model 3 none sleeper 5
         let quiet : ProcessModel :=
           {
             scripts :=
               #[{ command := sleeper, reply := .ok { ran with stdout := .empty }, takes := 7 }] }
         let (err, _, _) := modelRun quiet 3 none sleeper 5
-        return within == .ok ran && after.started == #[sleeper] && now == 10 &&
+        return atBound == .ok ran && after.started == #[sleeper] && now == 10 &&
             over == .error (.outputTooLarge .out 5) &&
             err == .error (.outputTooLarge .err 5) &&
             after.killed.isEmpty },
@@ -102,6 +102,12 @@ def processChecks : List Check :=
       run := do
         let (rig, processes) ← Rig.withProcesses { scripts := #[sleeperScript 0] }
         processes.holdCompletions
+        -- A held run keeps its job's unit: the check waits for its start to
+        -- reach the fake.
+        let (start, runStarted) ← startGate processes.processes.start 1
+        let rig :=
+          { rig with
+            services := { rig.services with processes := { processes.processes with start } } }
         let spawned ←
           rig.spawn
               (reporting fun _ => do
@@ -109,7 +115,8 @@ def processChecks : List Check :=
                 discard <| Process.run sleeper 10
                 return true)
         try
-          unless ← eventually (return (← processes.waiting) == 1) do
+          discard <| awaitEvent "the run's start" runStarted.result?
+          unless (← processes.waiting) == 1 do
             return false
           let id := ((← processes.started)[0]?.map (·.1)).getD 0
           spawned.handle.cancel
@@ -282,11 +289,11 @@ def processChecks : List Check :=
               let (rig, processes) ← Rig.withProcesses { streams := #[script] }
               let spawned ← rig.spawn (reporting fun _ => job)
               if cancel then
-                unless ← eventually (return (← rig.clock.waiting) == 1) do
+                discard <| rig.idle
+                unless (← rig.clock.waiting) == 1 do
                   return false
                 spawned.handle.cancel
-              unless ← eventually spawned.handle.ended do
-                return false
+              discard <| awaitEvent "the job's end" spawned.handle.outcome.result?
               let child := ((← processes.started)[0]?.map (·.1)).getD 0
               let model ← processes.model
               return (← processes.withdrawn) == #[child] && model.killed == #[sleeper] &&
@@ -302,6 +309,12 @@ def processChecks : List Check :=
       run := do
         let script : Process.StreamScript := { command := sleeper, steps := #[.awaitClosed] }
         let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+        -- The child's start, then the read's: a held read keeps its job's
+        -- unit, so the check waits for the second start to reach the fake.
+        let (start, readStarted) ← startGate processes.processes.start 2
+        let rig :=
+          { rig with
+            services := { rig.services with processes := { processes.processes with start } } }
         let spawned ←
           rig.spawn
               (reporting fun _ => do
@@ -309,12 +322,14 @@ def processChecks : List Check :=
                 sleep 10
                 discard <| Process.read child
                 return true)
-        unless ← eventually (return (← rig.clock.waiting) == 1) do
+        discard <| rig.idle
+        unless (← rig.clock.waiting) == 1 do
           return false
         processes.holdCompletions
         rig.clock.advance 10
         try
-          unless ← eventually (return (← processes.waiting) == 1) do
+          discard <| awaitEvent "the read's start" readStarted.result?
+          unless (← processes.waiting) == 1 do
             return false
           let started ← processes.started
           let child := (started[0]?.map (·.1)).getD 0

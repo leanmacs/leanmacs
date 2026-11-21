@@ -153,6 +153,7 @@ import ModelTest.Editor.SyntaxTree.Contract
 import ModelTest.Editor.SyntaxTree.Model
 import ModelTest.Editor.TabBar
 import ModelTest.Editor.TabCommands
+import ModelTest.Editor.Test.Jobs
 import ModelTest.Editor.Text
 import ModelTest.Editor.Text.Contract
 import ModelTest.Editor.Text.Model
@@ -709,6 +710,12 @@ The job system is tested here with no Rust library:
   already due never lets the count read 0, a cancel in a park gives back
   exactly one unit, and a load on a file service that ends it by itself
   holds the job's. Each waits on the count's own changes;
+- `rigChecks`: the test kit's waits (`Editor/Test/Jobs.lean`), each forced
+  into the order it must not get wrong: a rig's idle has not come while a
+  job is held in its leading work, the start gate resolves at its count and
+  after the start it decorates, and the stepped driver fails a job stuck at
+  idle at once. They hold a job in pure code, so they run after the checks
+  that count pool threads;
 - `flushContractChecks`: the services' flush contract
   (`Editor/Job/FlushContract.lean`) on the fakes: the fake files, diffs and
   processes held by their held completions, so a flush asked behind held
@@ -1505,6 +1512,7 @@ def checks : List Check :=
     activityChecks ++
     runnerChecks ++
     activityRunnerChecks ++
+    rigChecks ++
     flushContractChecks ++
     handleContractChecks ++
     queueContractChecks ++

@@ -335,7 +335,13 @@ structure Window where
   /-- Prints one line of the report. -/
   emit : String → IO Unit
 
-/-- How often, in milliseconds, the task that enforces the time limit looks
+/-- hang guard: the run's end, which the time limit's task looks for (`over`);
+it reads the window's clock every this many milliseconds, so a check of the
+limit on the fake window ends on real ticks, not on an event the fake
+completes; follow-up window-check-limit-polls-the-clock (a timer on the
+`Window` port that the fake completes).
+
+How often, in milliseconds, the task that enforces the time limit looks
 at the clock. -/
 def limitPoll : UInt32 :=
   50

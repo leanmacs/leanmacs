@@ -73,6 +73,8 @@ def holdAll (count guard : Nat) : IO (Option (Array UInt64)) := do
             IO.sleep 1
   if count == 0 then
     all.resolve ()
+  -- hang guard: the `count`-th start; only a pool with fewer threads to give
+  -- reaches the bound, and the caller then reports a hang.
   let reached ← Job.awaitWithin guard all.result?
   -- Read before the tasks are let go: they are all running.
   let held ← started.get

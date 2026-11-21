@@ -112,7 +112,8 @@ def flushContractChecks : List Check :=
         let fakes ← FlushFakes.new
         let stuck : Services :=
           { fakes.services with files := { fakes.services.files with flush := fun _ => pure () } }
-        -- The flush never ends, so the guard always runs out: a short one.
+        -- hang guard, run out on purpose: the flush, which never ends; the
+        -- check pins the hang. The guard always runs out, so a short one.
         let rig : FlushContract.FlushRig :=
           { name := "the fake file service", flush := stuck.flushed .files, patience := 50 }
         let failed ← FlushContract.failures [rig]

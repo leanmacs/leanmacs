@@ -103,15 +103,28 @@ structure FakeWindowState where
   so forgotten. -/
   forgotten : Nat := 0
 
+/-- Resolves the promise in `changed` and puts a fresh one in its place: what
+a wait of the fake for its own state wakes on. -/
+def bumped (changed : IO.Ref (IO.Promise Unit)) : BaseIO Unit := do
+  let fresh ← IO.Promise.new
+  let woken ← changed.modifyGet fun current => (current, fresh)
+  woken.resolve ()
+
 /-- The fake as the record the check runs on. `closed` is resolved by a
 close asked for while the window is running, and ends the run. A close asked
-for at any other time is forgotten, as the window port's contract has it. -/
+for at any other time is forgotten, as the window port's contract has it.
+
+The fake waits for its own state on events, never by time: each change a
+wait looks for (the run's start, a stop, a forgotten close) resolves the
+promise in `changed` (`bumped`), and a wait reads that promise before it
+looks at the state, so a change between the two still wakes it. -/
 def FakeWindow.window (fake : FakeWindow) (state : IO.Ref FakeWindowState)
-    (closed : IO.Promise Unit) : WindowCheck.Window :=
+    (closed : IO.Promise Unit) (changed : IO.Ref (IO.Promise Unit)) : WindowCheck.Window :=
   let called (call : String) : IO Unit :=
     state.modify fun state => { state with calls := state.calls.push call }
   { next := do
       repeat
+        let wake ← changed.get
         let pulled ←
           state.modifyGet fun state =>
               match state.pending with
@@ -126,7 +139,8 @@ def FakeWindow.window (fake : FakeWindow) (state : IO.Ref FakeWindowState)
                   else (none, state)
         if let some input := pulled then
           return input
-        IO.sleep 1
+        -- Nothing to give until the run starts or the loop is stopped.
+        discard <| IO.wait wake.result?
       return (.stop, 0)
     clock := return (← state.get).now
     serviceOnMain := do
@@ -137,13 +151,16 @@ def FakeWindow.window (fake : FakeWindow) (state : IO.Ref FakeWindowState)
       if let some reason := fake.cannotOpen then
         return .error reason
       if fake.slowToBegin then
-        while (← state.get).forgotten == 0 && !(← closed.isResolved) do
-          IO.sleep 1
+        repeat
+          let wake ← changed.get
+          if (← state.get).forgotten > 0 || (← closed.isResolved) then
+            break
+          discard <| IO.waitAny [wake.result?, closed.result?]
       state.modify fun state =>
           { state with
             pending := fake.arrivals, running := true }
-      while !(← closed.isResolved) do
-        IO.sleep 1
+      bumped changed
+      discard <| IO.wait closed.result?
       state.modify fun state => { state with running := false }
       return .ok ()
     close := do
@@ -154,9 +171,12 @@ def FakeWindow.window (fake : FakeWindow) (state : IO.Ref FakeWindowState)
               if state.running then state else { state with forgotten := state.forgotten + 1 })
       if running then
         closed.resolve ()
+      else
+        bumped changed
     stop := do
       called "stop"
       state.modify fun state => { state with stopped := true }
+      bumped changed
     emit := fun line => state.modify fun state => { state with lines := state.lines.push line } }
 
 /-- What one check on a fake window showed. -/
@@ -165,7 +185,7 @@ structure Checked where
   lines : List String
   /-- The calls it made of the window, in order. -/
   calls : List String
-  /-- Its exit status; `none` if it did not end in time. -/
+  /-- Its exit status; `none` if it hung (`FakeWindow.drive`). -/
   status : Option UInt32
   /-- What it said to the person at the terminal, apart from the report. -/
   said : List String
@@ -173,20 +193,23 @@ structure Checked where
   forgotten : Nat
 
 /-- Runs `act` on `fake`'s window and on somewhere to say a line, and returns
-what it did. It runs on a dedicated task that this polls, so one that never
-ends fails here instead of hanging the executable, and the fake's window is
-closed whatever happened, so its run is not left behind. -/
+what it did. It runs on a dedicated task that this waits for, bounded by the
+kit's `patience`, a hang guard, so one that never ends fails here instead of
+hanging the executable; and the fake's window is closed whatever happened,
+so its run is not left behind. -/
 def FakeWindow.drive (fake : FakeWindow)
     (act : WindowCheck.Window → (String → IO Unit) → IO UInt32) : IO Checked := do
   let state ← IO.mkRef { now := fake.askedAt }
   let closed ← IO.Promise.new
+  let changed ← IO.mkRef (← IO.Promise.new)
   let say (line : String) : IO Unit :=
     state.modify fun state => { state with said := state.said.push line }
-  let task ← IO.asTask (prio := .dedicated) (act (fake.window state closed) say)
+  let task ← IO.asTask (prio := .dedicated) (act (fake.window state closed changed) say)
   let status ←
-    if ← eventually (IO.hasFinished task) then
-      some <$> IO.ofExcept task.get
-    else
+    match ← Job.awaitWithin patience task with
+    | some ran =>
+      some <$> IO.ofExcept ran
+    | none =>
       pure none
   closed.resolve ()
   let state ← state.get
@@ -481,6 +504,9 @@ def windowLoopChecks : List Check :=
         "a window that runs and never says that it opened is closed by the time limit, and gives the eight lines of a window that could not open, with that reason in the second, and status 1"
       run := do
         let silent : FakeWindow := { arrivals := [], idleAt := some 3000000000 }
+        -- hang guard: the run's end, once the limit's close has come; the
+        -- limit looks at the clock on real ticks (`limitPoll`), so the count
+        -- of closes is tolerated; follow-up window-check-limit-polls-the-clock.
         let checked ← silent.check { seconds := 2 }
         return checked.lines ==
               ["window-check: composition on, limit 2 s; the main-thread service is on the process's main thread: yes",
@@ -504,6 +530,9 @@ def windowLoopChecks : List Check :=
         let checked ← idle.check { seconds := 2 }
         -- The limit asks again at every look until the run has ended, so
         -- there is one close or several in a row.
+        -- hang guard: the run's end, once the limit's close has come; the
+        -- limit looks on real ticks (`limitPoll`); follow-up
+        -- window-check-limit-polls-the-clock.
         return checked.calls.eraseReps == ["probe", "run true", "close", "stop"] &&
             checked.lines.getLast? == some "ended: the time limit" &&
             checked.status == some 0 },
@@ -514,6 +543,10 @@ def windowLoopChecks : List Check :=
           { arrivals := [{ input := .opened "fake", arrived := 1, handled := 2 }]
             slowToBegin := true }
         let checked ← slow.check { seconds := 0 }
+        -- hang guard: the run's end, once a close the run kept has come; the
+        -- limit asks on real ticks (`limitPoll`), so how many closes were
+        -- forgotten first is tolerated; follow-up
+        -- window-check-limit-polls-the-clock.
         return checked.forgotten >= 1 && checked.status == some 0 &&
             checked.lines[1]?.any (·.startsWith "window: opened by fake ") &&
             checked.lines.getLast? == some "ended: the time limit" },

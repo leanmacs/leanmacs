@@ -231,7 +231,10 @@ def runnerChecks : List Check :=
           rig.spawn fun _ => do
               sleep 2
               throw "no thanks"
-        unless ← eventually (return (← rig.clock.waiting) == 2) do
+        -- At idle both jobs are in their sleep: each gives back its unit
+        -- once its wait is in the clock.
+        discard <| rig.idle
+        unless (← rig.clock.waiting) == 2 do
           return false
         rig.clock.advance 2
         return (← ends.endedAs (.finished #["42"])) && (← throws.endedAs (.failed "no thanks")) },
@@ -298,11 +301,14 @@ def runnerChecks : List Check :=
         try
           -- A runner that parked a thread in a system call for each wait
           -- would let only a pool's worth of jobs get this far.
-          unless ← eventually (return (← rig.clock.waiting) == count) do
+          discard <| rig.idle
+          unless (← rig.clock.waiting) == count do
             return false
           let ran ← IO.Promise.new
           discard <| BaseIO.asTask (ran.resolve ())
-          let notDelayed ← eventually ran.isResolved
+          -- hang guard: the new task's run; a pool all of whose threads the
+          -- jobs held would never run it.
+          let notDelayed := (← Job.awaitWithin patience ran.result?).isSome
           -- The clock has not moved, so every job is still in its wait.
           let allWaiting := (← rig.clock.waiting) == count && (← rig.clock.now) == 0
           let noneEnded ← jobs.allM fun job => return !(← job.handle.ended)
@@ -323,6 +329,11 @@ def runnerChecks : List Check :=
                 JobContract.rawFile)
         files.holdCompletions
         let count := max 64 ((← Job.Pool.expected) + 1)
+        -- A held load keeps its job's unit, so idle cannot say the loads are
+        -- in: the check waits for the `count`-th start to reach the fake.
+        let (start, allStarted) ← startGate files.files.start count
+        let rig :=
+          { rig with services := { rig.services with files := { files.files with start } } }
         let mut jobs := #[]
         for _ in [0:count] do
           jobs :=
@@ -332,11 +343,14 @@ def runnerChecks : List Check :=
                     (reporting fun _ => do
                       return (← JobContract.loaded (fileRoot / "a.txt")).stamp.size))
         try
-          unless ← eventually (return (← files.waiting) == count) do
+          discard <| awaitEvent s!"the start of {count} loads" allStarted.result?
+          unless (← files.waiting) == count do
             return false
           let ran ← IO.Promise.new
           discard <| BaseIO.asTask (ran.resolve ())
-          let notDelayed ← eventually ran.isResolved
+          -- hang guard: the new task's run; a pool all of whose threads the
+          -- loads held would never run it.
+          let notDelayed := (← Job.awaitWithin patience ran.result?).isSome
           let allWaiting := (← files.waiting) == count
           let noneEnded ← jobs.allM fun job => return !(← job.handle.ended)
           let threads := distinct (← files.startThreads)
@@ -359,12 +373,13 @@ def runnerChecks : List Check :=
           -- caller's thread would not return while the gate is held, and
           -- the wait for it would run out.
           let spawning ← BaseIO.asTask (prio := .dedicated) (rig.spawn work)
-          let returned ← eventually (IO.hasFinished spawning)
+          -- hang guard: the spawn's return, which a spawn that applied the
+          -- job on its caller's thread never makes while the gate is shut.
+          let returned ← Job.awaitWithin patience spawning
           let held := !(← gate.isResolved)
           gate.resolve ()
-          unless returned do
-            return false
-          return held && (← spawning.get.endedAs (.finished #["ran"]))
+          let some spawned := returned | return false
+          return held && (← spawned.endedAs (.finished #["ran"]))
         finally
           gate.resolve () },
     { name :=
@@ -377,7 +392,8 @@ def runnerChecks : List Check :=
                 sleep 1000
                 return true)
         try
-          unless ← eventually (return (← rig.clock.waiting) == 1) do
+          discard <| rig.idle
+          unless (← rig.clock.waiting) == 1 do
             return false
           let started ← rig.clock.started
           sleeper.handle.cancel
@@ -398,16 +414,18 @@ def runnerChecks : List Check :=
               stubborn
               return makes "resumed"
         try
-          unless ← eventually (return (← rig.clock.waiting) == 1) do
+          discard <| rig.idle
+          unless (← rig.clock.waiting) == 1 do
             return false
           job.handle.cancel
-          -- A job that went on would start its second sleep.
-          discard <|
-              eventually do
-                return (← job.handle.ended) || (← rig.clock.started).size > 1
+          -- A job that went on would start its second sleep, and never end
+          -- here: once it has ended, at idle one read settles it.
+          awaitEnded #[job.handle]
+          discard <| rig.idle
+          let noFurther := (← rig.clock.started).size == 1
           -- Past all five sleeps: a job that had gone on runs to its end.
           rig.clock.advance 100
-          return (← job.endedAs .cancelled) && (← rig.clock.started).size == 1 &&
+          return noFurther && (← job.endedAs .cancelled) && (← rig.clock.started).size == 1 &&
               (← rig.clock.reads) == 1
         finally
           job.handle.cancel },
@@ -430,11 +448,11 @@ def runnerChecks : List Check :=
           job.handle.cancel
           short.handle.cancel
           gate.resolve ()
-          -- A job that went on would read the clock for its sleep.
-          discard <|
-              eventually do
-                return (← job.handle.ended) || (← rig.clock.reads) > 0
-          return (← job.endedAs .cancelled) && (← short.endedAs .cancelled) &&
+          -- A job that went on would read the clock for its sleep: at idle it
+          -- has ended, or is in that sleep, so one read then settles it.
+          discard <| rig.idle
+          let noRead := (← rig.clock.reads) == 0
+          return noRead && (← job.endedAs .cancelled) && (← short.endedAs .cancelled) &&
               (← rig.clock.reads) == 0 &&
               (← rig.clock.started).isEmpty
         finally
@@ -455,8 +473,9 @@ def runnerChecks : List Check :=
                 waitUntil (onceOpen gate instant + 10)
                 return true)
         try
-          unless ← eventually (return (← rig.clock.held) == 1) do
-            return false
+          discard <|
+              awaitEvent "the job's call at the clock's hold"
+                (← rig.clock.arrivedAt (.held 1)).result?
           job.handle.cancel
           reading.resolve ()
           -- The gate is still shut, so the job can only have ended if what
@@ -480,8 +499,9 @@ def runnerChecks : List Check :=
         try
           -- The job has registered its wait and is asking the clock for it:
           -- the cancel finds no wait to withdraw yet.
-          unless ← eventually (return (← rig.clock.held) == 1) do
-            return false
+          discard <|
+              awaitEvent "the job's call at the clock's hold"
+                (← rig.clock.arrivedAt (.held 1)).result?
           job.handle.cancel
           starting.resolve ()
           let cancelled ← job.endedAs .cancelled
@@ -507,8 +527,9 @@ def runnerChecks : List Check :=
                 waitUntil (onceOpen gate instant + 10)
                 return true)
         try
-          unless ← eventually (return (← rig.clock.held) == 1) do
-            return false
+          discard <|
+              awaitEvent "the job's call at the clock's hold"
+                (← rig.clock.arrivedAt (.held 1)).result?
           -- Cancelled before the clock knows the wait, which then completes
           -- at once: the completion wins, and the job's token is set.
           job.handle.cancel
@@ -535,7 +556,8 @@ def runnerChecks : List Check :=
                 sleep 1000
                 return true)
         try
-          unless ← eventually (return (← rig.clock.waiting) == 2) do
+          discard <| rig.idle
+          unless (← rig.clock.waiting) == 2 do
             return false
           rig.clock.advance 5
           unless ← short.endedAs (.finished #["7"]) do
@@ -605,13 +627,16 @@ def runnerChecks : List Check :=
             fun _ => pure ()
         let handle ←
           Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)
-        unless ← eventually (return (← rig.clock.waiting) == 1) do
+        discard <| rig.idle
+        unless (← rig.clock.waiting) == 1 do
           return false
         let before ← posts.get
         handle.cancel
-        let ended ← eventually handle.ended
+        discard <| awaitEvent "the cancelled job's end" handle.outcome.result?
         rig.clock.advance 1000
-        return before == #[JobContract.posting "first"] && ended &&
+        -- At idle no second post can still come.
+        discard <| rig.idle
+        return before == #[JobContract.posting "first"] &&
             (← posts.get) == #[JobContract.posting "first"] &&
             (← handle.outcome?).map texts == some .cancelled }]
 
@@ -677,12 +702,18 @@ def fileRunnerChecks : List Check :=
         let (rig, files) ← Rig.withFiles twoFiles
         files.publish #[some pubContent]
         files.holdCompletions
+        -- A held save keeps its job's unit: the check waits for its start to
+        -- reach the fake.
+        let (start, saveStarted) ← startGate files.files.start 1
+        let rig :=
+          { rig with services := { rig.services with files := { files.files with start } } }
         let saver ←
           rig.spawn
               (reporting fun _ => do
                 return (← JobContract.saved (.snapshot ⟨0⟩) (fileRoot / "new.txt") .absent).size)
         try
-          unless ← eventually (return (← files.waiting) == 1) do
+          discard <| awaitEvent "the save's start" saveStarted.result?
+          unless (← files.waiting) == 1 do
             return false
           let started := (← files.started).map (·.1)
           saver.handle.cancel
@@ -709,8 +740,7 @@ def fileRunnerChecks : List Check :=
                 return (←
                       JobContract.saved (.held file.snapshot) (fileRoot / "new.txt") .absent).size)
         try
-          unless ← eventually (return (← files.takesHeld) == 1) do
-            return false
+          discard <| awaitEvent "the load's take at the hold" (← files.takesArrivedAt 1).result?
           loader.handle.cancel
           hold.resolve ()
           let cancelled ← loader.endedAs .cancelled
@@ -759,13 +789,16 @@ def fileRunnerChecks : List Check :=
             return (← JobContract.loaded (fileRoot / "a.txt")).stamp.size
         let jobs : Job.Jobs := { services := rig.services }
         let (annas, jobs) ← jobs.start anna "loads" loads finished
-        unless ← eventually (return (← woken.get) == #[annas]) do
+        -- At idle the job has ended and its `finished` has run.
+        discard <| rig.idle
+        unless (← woken.get) == #[annas] do
           return false
         let before ← files.released
         let (removed, jobs) ← jobs.removeOwner anna
         let afterRemoval ← files.released
         let (bens, jobs) ← jobs.start ben "loads" loads finished
-        unless ← eventually (return (← woken.get) == #[annas, bens]) do
+        discard <| rig.idle
+        unless (← woken.get) == #[annas, bens] do
           return false
         jobs.cancelAll
         return before.isEmpty && removed.map (·.id) == #[annas] && afterRemoval == #[⟨0⟩] &&
@@ -782,7 +815,8 @@ def fileRunnerChecks : List Check :=
                 sleep 1000
                 return true)
         try
-          unless ← eventually (return (← rig.clock.waiting) == 1) do
+          discard <| rig.idle
+          unless (← rig.clock.waiting) == 1 do
             return false
           let #[theirs] ← holder.handle.holding | return false
           let thief ←
@@ -812,11 +846,13 @@ def fileRunnerChecks : List Check :=
                       .absent
                 return early.size == 7 && late.size == 4 && gone)
         try
-          unless ← eventually (return (← rig.clock.waiting) == 1) do
+          discard <| rig.idle
+          unless (← rig.clock.waiting) == 1 do
             return false
           files.publish #[some pubContent, some { contents := "lé\n" }]
           rig.clock.advance 10
-          unless ← eventually (return (← rig.clock.waiting) == 1) do
+          discard <| rig.idle
+          unless (← rig.clock.waiting) == 1 do
             return false
           files.publish #[none, some { contents := "lé\n" }]
           rig.clock.advance 10
@@ -858,7 +894,8 @@ def fileWatchRunnerChecks : List Check :=
       run := do
         let (rig, _, watches) ← Rig.withWatches {} rootWatches
         let holder ← rig.spawn (reporting fun _ => watchesThenSleeps 1000)
-        unless ← eventually (return (← watches.watching) == 1) do
+        discard <| rig.idle
+        unless (← watches.watching) == 1 do
           return false
         let id := ((← watches.started)[0]?.map (·.1)).getD 0
         let other ←
@@ -886,7 +923,8 @@ def fileWatchRunnerChecks : List Check :=
         let cancelled ← rig.spawn (reporting fun _ => watchesThenSleeps 1000000)
         let ended ←
           (return (← finished.endedAs (.finished #["true"])) && (← failed.endedAs (.failed "failed")))
-        unless ← eventually (return (← watches.watching) == 1) do
+        discard <| rig.idle
+        unless (← watches.watching) == 1 do
           return false
         cancelled.handle.cancel
         let cancelledEnded ← cancelled.endedAs .cancelled
@@ -903,7 +941,10 @@ def fileWatchRunnerChecks : List Check :=
                 let .ok watch ← FileWatch.start (.file (watchRoot / "f")) atOnce | return false
                 discard <| FileWatch.next watch
                 return true)
-        unless ← eventually (return (← watches.started).size == 2) do
+        -- At idle the job is parked in its next: the start and the next have
+        -- both reached the fake.
+        discard <| rig.idle
+        unless (← watches.started).size == 2 do
           return false
         let started ← watches.started
         spawned.handle.cancel
@@ -918,13 +959,20 @@ def fileWatchRunnerChecks : List Check :=
         let jobs : Job.Jobs := { services := rig.services }
         let (_, jobs) ← jobs.start anna "watches" sleeps fun _ => pure ()
         let (_, jobs) ← jobs.start ben "watches" sleeps fun _ => pure ()
-        unless ← eventually (return (← watches.watching) == 2) do
+        discard <| rig.idle
+        unless (← watches.watching) == 2 do
           return false
-        let (_, jobs) ← jobs.removeOwner anna
-        let annasEnded ← eventually (return (← watches.watching) == 1)
+        let (removed, jobs) ← jobs.removeOwner anna
+        -- Once Anna's job has ended, its watch has ended with it.
+        awaitEnded (removed.map (·.handle))
+        discard <| rig.idle
+        let annasEnded := (← watches.watching) == 1
         let one := (← watches.ended).size == 1
+        let left := jobs.table.entries.map (·.handle)
         jobs.cancelAll
-        let allEnded ← eventually (return (← watches.watching) == 0)
+        awaitEnded left
+        discard <| rig.idle
+        let allEnded := (← watches.watching) == 0
         return annasEnded && one && allEnded }]
 
 /-- The checks of the runner's grep port on the fake file service, whose
@@ -943,7 +991,8 @@ def grepRunnerChecks : List Check :=
                 let .ok _ ← Grep.start fileRoot "x" #[] { files := 9, found := 9 } 9 | return false
                 sleep 1000000
                 return true)
-        unless ← eventually (return (← files.searching) == 1) do
+        discard <| rig.idle
+        unless (← files.searching) == 1 do
           return false
         let id := ((← files.grepsStarted)[0]?.map (·.1)).getD 0
         let other ←
@@ -964,61 +1013,81 @@ def saw (holds : Bool) (observed : String) : IO Bool := do
     throw <| IO.userError s!"saw {observed}"
   return true
 
-/-- `rig`, its services keeping a count of their activity
-(`Job.Activity.counting`), and that count. -/
-def _root_.Editor.Test.Rig.counted (rig : Rig) : BaseIO (Rig × Job.Activity) := do
-  let activity ← Job.Activity.counting
-  return ({ rig with services := { rig.services with activity } }, activity)
+/-- What `recorded` notes: an entry for each step, the count it left and the
+thread that made it, and a promise each entry resolves (and replaces), so a
+check waits for the entries it reads (`untilHolds`). The count's own epoch
+moves inside the step, before the entry is noted, so a wait on the count
+(`untilEpoch`) can return before the entry it reads is there. -/
+structure ActivityLog where
+  /-- The entries, oldest first. -/
+  entries : IO.Ref (Array (Nat × UInt64))
+  /-- Resolved, and replaced, by the next entry. -/
+  grown : IO.Ref (IO.Promise Unit)
+
+namespace ActivityLog
+
+/-- An empty log. -/
+def new : BaseIO ActivityLog := do
+  return { entries := ← IO.mkRef #[], grown := ← IO.mkRef (← IO.Promise.new) }
+
+/-- Notes `entry`, then wakes a check waiting for it. -/
+def note (log : ActivityLog) (entry : Nat × UInt64) : BaseIO Unit := do
+  log.entries.modify (·.push entry)
+  let fresh ← IO.Promise.new
+  let woken ← log.grown.modifyGet fun current => (current, fresh)
+  woken.resolve ()
+
+/-- The entries now. -/
+def get (log : ActivityLog) : BaseIO (Array (Nat × UInt64)) :=
+  log.entries.get
+
+/-- Replaces the entries with `entries`. -/
+def set (log : ActivityLog) (entries : Array (Nat × UInt64)) : BaseIO Unit :=
+  log.entries.set entries
+
+/-- The entries, once there are at least `count`: waited for on each entry
+as it is noted, never by time. The promise is read before the entries, so
+an entry noted between the two still wakes the wait; the bound is a hang
+guard (`awaitEvent`). -/
+def untilHolds (log : ActivityLog) (count : Nat) : IO (Array (Nat × UInt64)) := do
+  repeat
+    let wake ← log.grown.get
+    let entries ← log.entries.get
+    if entries.size >= count then
+      return entries
+    discard <| awaitEvent s!"the activity log's entry {count}" wake.result?
+  throw <| IO.userError "unreachable"
+
+end ActivityLog
 
 /-- `activity`, noting in `log`, at each `begin` and each `done`, the count
 it left and the thread that called it. A check reads the log of one job,
 whose steps follow one another, so each entry is the count that step left. -/
-def recorded (activity : Job.Activity) (log : IO.Ref (Array (Nat × UInt64))) : Job.Activity :=
+def recorded (activity : Job.Activity) (log : ActivityLog) : Job.Activity :=
   { activity with
     begin := do
       activity.begin
       let seen ← activity.seen
-      log.modify (·.push (seen.running, ← IO.getTID))
+      log.note (seen.running, ← IO.getTID)
     done := do
       activity.done
       let seen ← activity.seen
-      log.modify (·.push (seen.running, ← IO.getTID)) }
-
-/-- The count `activity` reads at its next change after `seen`, waited for on
-the change itself (`changedSince`). The bound is a hang guard, never a
-result: past it this throws a hang. -/
-def changedAfter (activity : Job.Activity) (seen : Job.Activity.Seen) : IO Job.Activity.Seen := do
-  let some () ←
-    Job.awaitWithin patience
-        (←
-          activity.changedSince
-              seen.epoch) | throw <| IO.userError s!"a hang: the count had not changed from {repr seen} within {patience} ms"
-  activity.seen
-
-/-- Waits, on the count's own changes, until `activity`'s epoch has reached
-`epoch`: the steps a check knows will come, counted from a fresh count, so
-it never waits for a change that already happened. The bound is a hang
-guard, never a result: past it this throws a hang. -/
-def untilEpoch (activity : Job.Activity) (epoch : Nat) : IO Unit := do
-  repeat
-    let seen ← activity.seen
-    if seen.epoch >= epoch then
-      return
-    discard <| changedAfter activity seen
-  throw <| IO.userError "unreachable"
+      log.note (seen.running, ← IO.getTID) }
 
 /-- The checks of the runner's activity accounting (`Editor/Job/Runner.lean`,
-"Activity"), each on a fake clock of its own and a count of its own: a job
+"Activity"), each on a fake clock of its own and the fresh count its rig
+keeps (`Rig.new`): a job
 holds a unit while it can run, a wait only a test ends (the fake clock's)
 holds none, and a wait on a service that ends it by itself holds the job's.
-A check waits on the count's own changes (`changedAfter`), and holds the
+A check waits on the count's own changes (the kit's `changedAfter`), and holds the
 port (`holdReads`, held completions) to look while a step is in flight. -/
 def activityRunnerChecks : List Check :=
   [{  name :=
         "a job on the fake clock holds a unit from its spawn until its sleep is in the clock, then none; once the clock is moved past it holds one again until it has ended, and none once its finished has run"
       run := do
-        let (rig, counted) ← (← Rig.new).counted
-        let log ← IO.mkRef #[]
+        let rig ← Rig.new
+        let counted := rig.services.activity
+        let log ← ActivityLog.new
         let activity := recorded counted log
         let rig := { rig with services := { rig.services with activity } }
         let spawned ←
@@ -1030,11 +1099,10 @@ def activityRunnerChecks : List Check :=
         untilEpoch activity 2
         let waiting ← rig.clock.waiting
         rig.clock.advance 10
-        -- The wake's step, on this thread, then the end's.
-        untilEpoch activity 4
+        -- The wake's step, on this thread, then the end's, each noted.
+        let counts := (← log.untilHolds 4).map (·.1)
         let finishes ← spawned.finishes.get
         let outcome ← spawned.outcome
-        let counts := (← log.get).map (·.1)
         saw
             (counts == #[1, 0, 1, 0] && waiting == 1 && finishes == 1 &&
               outcome == some (.finished #["1"]) &&
@@ -1043,8 +1111,9 @@ def activityRunnerChecks : List Check :=
     { name :=
         "a job whose sleep the clock ends is runnable from the wait's end: its unit is taken on the thread that moves the clock, before the job runs, and held while its next request is in flight, until its next sleep is in the clock"
       run := do
-        let (rig, counted) ← (← Rig.new).counted
-        let log ← IO.mkRef #[]
+        let rig ← Rig.new
+        let counted := rig.services.activity
+        let log ← ActivityLog.new
         let activity := recorded counted log
         let rig := { rig with services := { rig.services with activity } }
         let spawned ←
@@ -1058,6 +1127,9 @@ def activityRunnerChecks : List Check :=
         -- The second sleep's reading of the clock is held: the job is
         -- runnable, inside a request, until the check lets it go.
         let hold ← rig.clock.holdReads
+        -- The park's entry is noted after its step: cleared only once it is
+        -- there, so it cannot land after the clear.
+        discard <| log.untilHolds 2
         log.set #[]
         rig.clock.advance 10
         let woken ← log.get
@@ -1078,8 +1150,9 @@ def activityRunnerChecks : List Check :=
     { name :=
         "a sleep already due is ended inside its start: the count goes from 1 to 2 and back to 1 as the job enters it, and never reads 0 before the job has ended"
       run := do
-        let (rig, counted) ← (← Rig.new).counted
-        let log ← IO.mkRef #[]
+        let rig ← Rig.new
+        let counted := rig.services.activity
+        let log ← ActivityLog.new
         let activity := recorded counted log
         let rig := { rig with services := { rig.services with activity } }
         let spawned ←
@@ -1088,13 +1161,15 @@ def activityRunnerChecks : List Check :=
                 sleep 0
                 return 0)
         let ended ← spawned.endedAs (.finished #["0"])
-        let counts := (← log.get).map (·.1)
+        -- The end's entry is noted after its step, so idle can come first.
+        let counts := (← log.untilHolds 4).map (·.1)
         saw (ended && counts == #[1, 2, 1, 0] && (← activity.refused) == 0) s!"counts={counts}" },
     { name :=
         "cancelling a job parked on the fake clock gives back exactly one unit: the count is 0 once it has concluded, and no done ever arrived with nothing held"
       run := do
-        let (rig, counted) ← (← Rig.new).counted
-        let log ← IO.mkRef #[]
+        let rig ← Rig.new
+        let counted := rig.services.activity
+        let log ← ActivityLog.new
         let activity := recorded counted log
         let rig := { rig with services := { rig.services with activity } }
         let spawned ←
@@ -1105,7 +1180,8 @@ def activityRunnerChecks : List Check :=
         untilEpoch activity 2
         spawned.handle.cancel
         let cancelled ← spawned.endedAs .cancelled
-        let counts := (← log.get).map (·.1)
+        -- The end's entry is noted after its step, so idle can come first.
+        let counts := (← log.untilHolds 4).map (·.1)
         saw
             (cancelled && counts == #[1, 0, 1, 0] && (← activity.seen).running == 0 &&
               (← activity.refused) == 0)
@@ -1114,17 +1190,10 @@ def activityRunnerChecks : List Check :=
         "a job's load on a file service that ends it by itself holds the job's unit while the service holds it, and none once it has been let go and the job has ended"
       run := do
         let (rig, files) ← Rig.withFiles twoFiles
-        let (rig, activity) ← rig.counted
-        let started ← IO.Promise.new
+        let activity := rig.services.activity
+        let (start, started) ← startGate files.files.start 1
         let rig :=
-          { rig with
-            services :=
-              { rig.services with
-                files :=
-                  { files.files with
-                    start := fun id request => do
-                      files.start id request
-                      started.resolve () } } }
+          { rig with services := { rig.services with files := { files.files with start } } }
         files.holdCompletions
         let spawned ←
           rig.spawn
@@ -1132,9 +1201,7 @@ def activityRunnerChecks : List Check :=
                 let loaded ← File.load (fileRoot / "a.txt") 100
                 return loaded.isOk)
         try
-          let some _ ←
-            Job.awaitWithin patience
-                started.result? | throw <| IO.userError s!"a hang: the load had not started within {patience} ms"
+          discard <| awaitEvent "the load's start" started.result?
           let held ← activity.seen
           let inFlight ← files.waiting
           files.letGo
@@ -1151,8 +1218,8 @@ def activityRunnerChecks : List Check :=
         "a job in a next of a fake watch holds no unit: it holds one from its spawn until its next is parked, none while parked, and once the test's change answers it one again until it has ended, then none, with no done refused"
       run := do
         let (rig, _, watches) ← Rig.withWatches {} rootWatches
-        let (rig, counted) ← rig.counted
-        let log ← IO.mkRef #[]
+        let counted := rig.services.activity
+        let log ← ActivityLog.new
         let activity := recorded counted log
         let rig := { rig with services := { rig.services with activity } }
         let spawned ←
@@ -1166,10 +1233,9 @@ def activityRunnerChecks : List Check :=
         untilEpoch activity 2
         let parked ← activity.seen
         watches.change (watchRoot / "f") #[.written]
-        -- The change's step, on this thread, then the end's.
-        untilEpoch activity 4
+        -- The change's step, on this thread, then the end's, each noted.
+        let counts := (← log.untilHolds 4).map (·.1)
         let ended ← spawned.endedAs (.finished #["true"])
-        let counts := (← log.get).map (·.1)
         saw (parked.running == 0 && counts == #[1, 0, 1, 0] && ended && (← activity.refused) == 0)
             s!"parked={repr parked} counts={counts} ended={ended}" }]
 
