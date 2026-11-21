@@ -40,7 +40,7 @@ winit = "=0.31.0-beta.4"
 # Cargo.lock (2026-11-20).
 objc2 = "=0.6.5"
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSGeometry", "NSString", "NSURL", "NSUserDefaults"] }
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSMenu", "NSMenuItem", "NSEvent", "NSUserInterfaceItemIdentification", "NSView", "NSViewLayoutRegion", "NSColor", "NSWindow"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSResponder", "NSMenu", "NSMenuItem", "NSEvent", "NSUserInterfaceItemIdentification", "NSView", "NSViewLayoutRegion", "NSColor", "NSWindow"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # For the contract example alone (examples/contract/terminate.rs and
@@ -50,7 +50,19 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std
 # winit-appkit, so no crate is added: `dispatch2` for `run_on_main` (its
 # `objc2` feature), and the bindings the example names
 # (`NSAppleEventDescriptor` and `NSThread`'s `performSelectorOnMainThread:`,
-# `NSWindow`'s title, and `NSMenu`'s and `NSMenuItem`'s items).
+# `NSWindow`'s title, and `NSMenu`'s and `NSMenuItem`'s items). And for the
+# settings example (examples/settings/appkit.rs), which reads the window's
+# background in sRGB (`NSColorSpace`), its appearance, style mask, shadow
+# and title bar, and its views: modules of objc2-app-kit, not crates, so
+# Cargo.lock did not change (2026-11-20).
 dispatch2 = { version = "=0.3.1", default-features = false, features = ["std", "objc2"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSAppleEventDescriptor", "NSThread"] }
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSWindow", "NSMenu", "NSMenuItem"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSResponder", "NSWindow", "NSMenu", "NSMenuItem", "NSAppearance", "NSColor", "NSColorSpace", "NSView"] }
+
+# The window's settings read back from AppKit, run on demand on macOS
+# (`mise run window-layer`, its first half). `cargo test` runs its pure
+# module's tests (`reading`), which open no window and read nothing of
+# AppKit. The `contract` example stays undeclared.
+[[example]]
+name = "settings"
+test = true
