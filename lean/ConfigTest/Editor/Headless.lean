@@ -1584,14 +1584,6 @@ def reached (entered : IO.Promise Unit) (what : String) : IO Unit := do
     Job.awaitWithin hangGuard
         entered.result? | throw <| IO.userError s!"a hang: {what} had not been reached within {hangGuard} ms"
 
-/-- The scene count the last `published <n>` line of `lines` says
-(`Headless.Request.published`), if one says it. -/
-def publishedIn (lines : Array String) : Option Nat :=
-  (lines.filter (·.startsWith "published ")).back?.bind fun line =>
-    match line.splitOn "published " with
-    | ["", rest] => rest.toNat?
-    | _ => none
-
 /-- A job that sleeps 10 ms on the clock, reads the clock, and ends: `once`
 makes a text of its reading. -/
 def readingJob : Config.JobRegistration :=
@@ -1704,7 +1696,7 @@ def idleChecks (context : Context) : List Check :=
         -- sleep is held until the join has blocked on it, so the join
         -- takes a second round; without, the job is in its sleep before the
         -- join, which answers in one.
-        let ran (held : Bool) : IO (Option Nat × Headless.Wait × Nat) := do
+        let ran (held : Bool) : IO (Option Int × Headless.Wait × Nat) := do
           let stage ←
             Stage.new context context.elaborator (memorySource [])
                 { jobs := #[countJob],
@@ -1728,6 +1720,22 @@ def idleChecks (context : Context) : List Check :=
                   -- handled, so what the join publishes is its own: the
                   -- count is only the held job's, or nothing.
                   discard <| countReaches host (if held then 1 else 0)
+                  -- Forced: in the run that takes one round, a foreign event
+                  -- on the library's editor queue, as one an earlier real host
+                  -- leaves there, handled after the frame, publishes a scene
+                  -- of its own. Compared as absolute counts the two runs then
+                  -- differ every time.
+                  unless held do
+                    discard <| Ffi.postEvent .editor 99 0 "left by another host"
+                  -- The count before the join and after it: what the join
+                  -- published is the difference. A real host takes the
+                  -- library's editor queue as it finds it, so an event an
+                  -- earlier real host left there can be handled after the
+                  -- frame and publish a scene of its own; it is handled
+                  -- before this count is asked for, so it is in both.
+                  host.send .published
+                  unless ← host.settle hangGuard do
+                    return false
                   let wait ←
                     host.join hangGuard (waitBlocked := fun what => do
                         if what == "running work" then
@@ -1740,7 +1748,16 @@ def idleChecks (context : Context) : List Check :=
                 finally
                   hold.resolve ()
           let lines ← stage.output.get
-          return (publishedIn lines, if joined then .working else .busy, ← blocks.get)
+          let counts :=
+            lines.filterMap fun line =>
+              match line.splitOn "published " with
+              | ["", rest] => rest.toNat?
+              | _ => none
+          let joinPublished : Option Int :=
+            match counts.toList with
+            | [before, after] => some ((after : Int) - before)
+            | _ => none
+          return (joinPublished, if joined then .working else .busy, ← blocks.get)
         let (twoRounds, forced, blocked) ← ran true
         let (oneRound, unforced, unblocked) ← ran false
         saw
