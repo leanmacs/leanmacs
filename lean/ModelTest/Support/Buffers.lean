@@ -13,9 +13,6 @@ import Editor.Ex.Compiled
 import Editor.Ex.Line
 import Editor.FileWatch
 import Editor.FileWatch.Model
-import Editor.Files
-import Editor.Files.Compiled
-import Editor.Files.Kit
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job.Model
@@ -40,6 +37,7 @@ import Editor.Test.Models
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
+import FilesApiTest.Fake
 
 /-!
 # Model tests: support: Buffers
@@ -56,7 +54,7 @@ open Editor.Test
 
 /-- What a step of the buffer command checks is handed. The commands are the
 ones compiled code registers for files, the buffers and the ex line
-(`Files.package.registered.commands`, `Buffers.package.registered.commands`,
+(`files-api`'s fake's, `FilesApiTest.fake`, `Buffers.package.registered.commands`,
 `Ex.package.registered.commands`) and the kit's minibuffer's
 (`Test.Minibuffer.package.registered.commands`, `Editor/Test/Minibuffer.lean`), each under the name it is registered under, told of the `ex`
 package's ex names (`Ex.package.registered.ex`), and five written here: `split`, which
@@ -83,7 +81,7 @@ view on the call's window's buffer (`ViewId.newTab`), and `C-b c` runs
 `close-anyway`. -/
 def bufferKeys : Loop.Keys TestScheme.scheme :=
   let registrations :=
-    Files.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
+    FilesApiTest.fake.registered.commands ++ Test.Minibuffer.package.registered.commands ++
       Buffers.package.registered.commands ++
       Ex.package.registered.commands
   let compiled : List (String × Dispatched) :=
@@ -142,10 +140,11 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
         exNames := exNamesOf Ex.package.registered.ex } }
 
 /-- A driver of the buffer command checks over the initial state, with the
-file commands' jobs and the files of the file command checks; `none` if
+`files-api`'s fake's jobs and the files of the file command checks; `none` if
 making the state was refused. -/
 def buffersDriver : Option TestDriver :=
-  (Loop.Driver.over bufferKeys fileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+  (Loop.Driver.over bufferKeys FilesApiTest.jobs (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption.map
     fun driver => { driver with jobs := { files := commandFiles } }
 
 /-- `driver` with `note.txt`, `crlf.txt` and `lf.txt` opened in view 0, in

@@ -10,11 +10,13 @@ import Editor.Text.Contract
 import Editor.UndoTree.Cases
 import Editor.Watch.Contract
 import Editor.Workspace.Contract
+import ModelTest.BuffersApi
 import ModelTest.Check
 import ModelTest.Editor.Api
 import ModelTest.Editor.Api.Cases
 import ModelTest.Editor.Appearance
 import ModelTest.Editor.Buffers
+import ModelTest.Editor.Buffers.Compiled
 import ModelTest.Editor.Clipboard.Contract
 import ModelTest.Editor.Clipboard.Model
 import ModelTest.Editor.Command
@@ -1200,6 +1202,10 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   that lacks a command, one that registers none, and one whose open and
   save run no hook; and a set's own `Files` value of the name `files`,
   registered after the feature's, is the one `files?` answers;
+- `buffersApiChecks`: the interface library `buffers-api` (`BuffersApi.lean`):
+  its names; its fake (`BuffersApiTest.fake`, a close over the core's API)
+  keeps its contract; the contract fails a package lacking `close-buffer`
+  and one whose close runs no hook;
 - `versionControlContractFailures`: the version-control contract
   (`VcApiTest/Contract.lean`) against the model;
 - `versionControlGitChecks`, `versionControlWorktreeGitChecks`,
@@ -1657,6 +1663,7 @@ def checks : List Check :=
     stalenessChecks ++
     autoReloadChecks ++
     bufferCommandChecks ++
+    buffersPackageChecks ++
     themeChecks ++
     appearanceChecks ++
     faceVocabularyChecks ++
@@ -1712,6 +1719,7 @@ def checks : List Check :=
     gitModelChecks ++
     vcApiChecks ++
     filesApiChecks ++
+    buffersApiChecks ++
     versionControlGitChecks ++
     versionControlWorktreeGitChecks ++
     versionControlHistoryGitChecks ++

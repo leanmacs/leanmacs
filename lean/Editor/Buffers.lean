@@ -1,7 +1,7 @@
+import BuffersApi
 import Editor.Api
 import Editor.Command.Call
 import Editor.Jumps
-import Editor.WorkingSet.Places
 
 /-!
 # Buffers: switching a window to another buffer, listing them, closing one
@@ -91,10 +91,12 @@ checks compare the echo area with that function, never with a sentence.
 - **The places held in a closed buffer's text outlive it**: before the
   windows show another buffer, every jump list entry and global mark held
   in it is detached into its file's path, row and column, or dropped when
-  it has no file (`Jumps.detach`); its own marks go with it. So do the
-  working sets' ranges held in it: each is detached into its stored form,
-  refreshed from the text as it is (`WorkingSet.detach`,
-  `Editor/WorkingSet/Places.lean`).
+  it has no file (`Jumps.detach`); its own marks go with it. Then the
+  interface library `buffers-api`'s hook `BuffersApi.Closing` runs
+  (`BuffersApi.runClosing`), every value in registration order, while the
+  buffer is still there: the working sets detach the ranges held in it into
+  their stored form and free a set's buffer's drifted quotes. The buffer
+  commands name no working set.
 - **The buffer closed** (`closeCommand`) is the one a string first argument
   names, exactly, and otherwise the buffer of the window the command was
   called with. A name no buffer has is said (`noBuffer`). The minibuffer's
@@ -140,15 +142,15 @@ namespace Editor.Buffers
 
 /-- The name the switch command is registered under. -/
 def switchName : String :=
-  "switch-buffer"
+  BuffersApi.switchName
 
 /-- The name the list command is registered under. -/
 def listName : String :=
-  "list-buffers"
+  BuffersApi.listName
 
 /-- The name the close command is registered under. -/
 def closeName : String :=
-  "close-buffer"
+  BuffersApi.closeName
 
 /-- The label of the prompt the switch command asks for a buffer with. -/
 def switchPrompt : String :=
@@ -337,9 +339,9 @@ window of every tab that shows it, tiled, docked or floating
 def closeInto (id fallback : BufferId) : EditorM Unit := do
   -- The places held in its text outlive it, in its file.
   Jumps.detach id
-  discard <| WorkingSet.detach id
-  -- A working set's buffer takes its drifted quotes with it.
-  WorkingSet.freeDrifted id
+  -- The hook: the working sets' ranges detached, a set's drifted quotes
+  -- freed.
+  BuffersApi.runClosing id
   let state ← editorState
   for view in state.frame.everyWindow do
     if (state.window? view).any (·.buffer == id) then

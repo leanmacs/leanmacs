@@ -1,5 +1,5 @@
+import BuffersApiTest.Fake
 import Editor.Api
-import Editor.Buffers.Compiled
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
@@ -190,7 +190,7 @@ def reloadCommands : List (String × Dispatched) :=
   let compiled : List (String × Dispatched) :=
     (Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
           Files.package.registered.commands ++
-          Buffers.package.registered.commands).toList.filterMap
+          BuffersApiTest.fake.registered.commands).toList.filterMap
       fun (registration : Config.Registration) =>
       match registration.action with
       | .call run =>

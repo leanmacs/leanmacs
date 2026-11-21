@@ -1,3 +1,4 @@
+import BuffersApiTest.Fake
 import Editor.Config.Packages
 import Editor.Files.Compiled
 import Editor.Test.Linked.Rig
@@ -57,8 +58,10 @@ def statusKeys : Loop.Keys TestScheme.scheme :=
     registered :=
       { jobs := fun name => statusJobs.any (·.name == name)
         -- The hooks the files feature runs, as a host's registry holds them:
-        -- the workspace's attach at `FilesApi.Opened`.
-        extensions := (rigKeys #[Files.package, Workspace.package]).registered.extensions
+        -- the workspace's attach at `FilesApi.Opened`; and `buffers-api`'s
+        -- fake, whose `close` the commit's message buffer is closed with.
+        extensions :=
+          (rigKeys #[Files.package, Workspace.package, BuffersApiTest.fake]).registered.extensions
         entering := fun name =>
           (VersionControl.package.registered.modes.find? (·.name == name)).map ([·]) } }
 

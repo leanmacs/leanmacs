@@ -1,5 +1,5 @@
+import BuffersApiTest.Fake
 import Editor.Api
-import Editor.Buffers.Compiled
 import Editor.Config.Registry
 import Editor.File.Model
 import Editor.InputScheme.Vim.Default
@@ -80,10 +80,11 @@ def holdCommand (call : Call) : EditorM Unit := do
   WorkingSet.setKept workspace.location kept
 
 /-- The commands every driver of the checks has: `files-api`'s fake's (the
-kit's opener, `FilesApiTest.fake`), the buffer commands', project search's,
+kit's opener, `FilesApiTest.fake`), `buffers-api`'s fake's
+(`BuffersApiTest.fake`), project search's,
 and `ws-hold` (`holdCommand`). -/
 def baseCommands : Array Config.Registration :=
-  FilesApiTest.fake.registered.commands ++ Buffers.package.registered.commands ++
+  FilesApiTest.fake.registered.commands ++ BuffersApiTest.fake.registered.commands ++
     ProjectSearch.package.registered.commands ++
     #[{ name := "ws-hold", action := .call holdCommand }]
 
@@ -92,7 +93,7 @@ def baseCommands : Array Config.Registration :=
 the fake's `FilesApi.Files` value, and the working sets' own hooks, in that
 order, as a host registers the workspace before the working sets. -/
 def hooks : Array Package :=
-  #[attachPackage, FilesApiTest.fake, WorkingSet.package]
+  #[attachPackage, FilesApiTest.fake, BuffersApiTest.fake, WorkingSet.package]
 
 /-- Evil's keys with `commands` after the base ones, and `modes`, project
 search's among them, as a host's registry holds them, and the extension
@@ -155,7 +156,7 @@ def opened (driver : EvilDriver) (name : String) : EvilDriver :=
 /-- `driver` once the buffer called `name` is closed and everything that
 starts is settled. -/
 def closed (driver : EvilDriver) (name : String) : EvilDriver :=
-  drained (invoked driver Buffers.closeName [.str name])
+  drained (invoked driver BuffersApi.closeName [.str name])
 
 /-- `driver` with the file `/r/<name>` holding `text` on disk, as another
 program would leave it. -/

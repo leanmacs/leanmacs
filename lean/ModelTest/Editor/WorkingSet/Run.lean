@@ -224,7 +224,7 @@ def workingSetRunChecks : List Check :=
             let shownSet := ran (opened cut "b.txt") WorkingSet.openName [.str "demo"]
             let typedBack :=
               evilFed (opened shownSet "a.txt") s!"2 G o {typed "charlie three"} <Escape>"
-            let back := ran typedBack Buffers.switchName [.str (setBuffer "demo")]
+            let back := ran typedBack BuffersApi.switchName [.str (setBuffer "demo")]
             let refreshed := ran back WorkingSet.refreshName
             (rangesOf shownSet "demo").map (·.hold) == #[.drifted] &&
               shown back == some (setBuffer "demo") &&

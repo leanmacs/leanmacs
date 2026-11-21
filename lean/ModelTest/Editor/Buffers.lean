@@ -5,7 +5,6 @@ import Editor.Display.Model
 import Editor.Event
 import Editor.File
 import Editor.File.Cases
-import Editor.Files
 import Editor.Fuzzy.Model
 import Editor.InputScheme.Test
 import Editor.Invocation
@@ -19,6 +18,7 @@ import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Keys
+import Editor.Test.Opener
 import Editor.Test.Prompts
 import Editor.Text
 import Editor.Text.Model
@@ -291,7 +291,7 @@ def bufferCommandChecks : List Check :=
           | some opened =>
             let (saving, _) := fedTo opened ([.commit "x"] ++ exLine "w")
             let (refused, _) := fedTo saving (exLine "bd")
-            let (delivered, _) := refused.finish 4
+            let delivered := finishNamed refused Opener.saveJob
             let (closed, _) := fedTo delivered (exLine "bd")
             (heldFile saving).bind (·.saving) != none &&
               refused.loop.state.findFile (inFiles "lf.txt") != none &&
@@ -299,7 +299,7 @@ def bufferCommandChecks : List Check :=
               (showing refused).bind (·.text) == (showing saving).bind (·.text) &&
               echoOf refused == some (Buffers.beingSaved "lf.txt") &&
               refused.loop.state.wellFormed &&
-              echoOf delivered == some (Files.wrote (inFiles "lf.txt")) &&
+              echoOf delivered == some s!"wrote {inFiles "lf.txt"}" &&
               closed.loop.state.findFile (inFiles "lf.txt") == none &&
               shownName closed == some "crlf.txt" },
     { name :=
@@ -313,12 +313,12 @@ def bufferCommandChecks : List Check :=
             let changed := rewritten opened path JobContract.otherFile
             let (saving, _) := fedTo changed ([.commit "x"] ++ exLine "w")
             let (closing, _) := fedTo saving (exLine "bd")
-            let (refused, _) := closing.finish 4
+            let refused := finishNamed closing Opener.saveJob
             refused.loop.state.findFile path != none && shownName refused == some "lf.txt" &&
               (showing refused).bind (·.text) == (showing saving).bind (·.text) &&
               ((showing saving).bind (·.text)).any (·.startsWith "x") &&
               (showing refused).map (·.buffer.isModified) == some true &&
-              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) &&
+              echoOf refused == some (Opener.notSaved path (.changed (stampOf changed path))) &&
               refused.loop.state.wellFormed },
     { name :=
         "close-buffer run from the minibuffer's view, and run with the name of the minibuffer's buffer, closes nothing and says so by the close command's message; the prompt stays open and the state is well formed"

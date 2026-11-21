@@ -1,5 +1,5 @@
+import BuffersApi
 import Editor.Api
-import Editor.Buffers
 import Editor.Command.Call
 import Editor.Mode
 import Editor.VersionControl.Git
@@ -52,9 +52,12 @@ message, as it is.
     read) is said in the echo area only.
 - **`vc-commit-abort`** (`abortName`; the mode's leader suffix `k`, as
   magit's `C-c C-k`): in the kept message buffer, closes it as the
-  editor closes any buffer (`Buffers.close`: every window that showed it
-  shows the most recent buffer left) and forgets it; refused while a
-  commit runs. A commit made closes it the same way.
+  editor closes any buffer, through the interface library `buffers-api`'s
+  choice (`BuffersApi.buffers?`'s `close`: every window that showed it
+  shows the most recent buffer left; with none it says
+  `vc-commit-abort: no buffers implementation`) and forgets it; refused
+  while a commit runs. A commit made closes it the same way, and keeps it
+  with no buffers implementation.
 
 ## The record
 
@@ -221,7 +224,8 @@ def committed (order : CommitOrder) (reply : Except Error Unit) : EditorM Unit :
     | some id =>
       let some buffer := state.buffer? id | return
       if id == order.buffer && (← buffer.text.revision) == order.revision then
-        Buffers.close id
+        if let some buffers← BuffersApi.buffers? then
+          buffers.close id
         let record := (← editorState).workspaces.get commitStore location
         discard <| Workspace.set commitStore location { record with buffer := none }
         message said
@@ -315,7 +319,8 @@ def abortCommand (call : Call) : EditorM Unit := do
   if record.committing then
     message s!"{abortName}: a commit is running"
     return
-  Buffers.close call.target.window.buffer
+  let some buffers ← BuffersApi.buffers? | message (BuffersApi.noImplementation abortName)
+  buffers.close call.target.window.buffer
   discard <| Workspace.set commitStore (.local root) { record with buffer := none }
 
 /-- The `vc-commit` mode ("The mode", in the module docs). -/

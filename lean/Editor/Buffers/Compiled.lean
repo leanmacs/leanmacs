@@ -1,4 +1,5 @@
 import Editor.Buffers
+import Editor.Extension
 import Editor.Package
 
 /-!
@@ -30,6 +31,9 @@ any config (`Editor/Config/Packages.lean`).
 
 - **The source**: the buffer completion source, so config can ask for it
   by name.
+- **The value** of the interface library `buffers-api`'s choice
+  `BuffersApi.Buffers`, named `buffers`: `close`, which version control's
+  commit closes its message buffer with.
 
 This module is apart from `Editor/Buffers.lean` because it is what a host
 is handed, not what config calls: `Editor.lean` imports the commands, so
@@ -46,6 +50,7 @@ source. -/
 def package : Package :=
   { name := "buffers"
     setup := do
+      Extension.add ({ name := BuffersApi.implementationName, close } : BuffersApi.Buffers)
       commandWith switchName switchCommand
       commandWith listName listCommand
       commandWith closeName closeCommand

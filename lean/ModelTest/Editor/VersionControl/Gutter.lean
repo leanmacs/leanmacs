@@ -1,6 +1,5 @@
+import BuffersApiTest.Fake
 import Editor.Api
-import Editor.Buffers
-import Editor.Buffers.Compiled
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
@@ -75,10 +74,10 @@ def gutterKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     (workspaceBindings ++
       [("C-g x", invoke "gutter-edit"), ("C-g z", invoke "gutter-top"),
-        ("C-g k", invoke Buffers.closeName), ("C-g h", invoke "gutter-stale-head")])
+        ("C-g k", invoke BuffersApi.closeName), ("C-g h", invoke "gutter-stale-head")])
     (workspaceCommandsWith FilesApiTest.openSaveCommands ++
       dispatchedOf VersionControl.gutterPackage.registered.commands ++
-      dispatchedOf Buffers.package.registered.commands ++
+      BuffersApiTest.commands ++
       [("gutter-edit", fun call => do
           let text := call.target.buffer.text
           text.replaceRange 0 (← text.byteLength) "new\na\nB\nc\n"
@@ -107,7 +106,8 @@ def gutterDriverOf (repository : VersionControl.Model.Repository) (git : String 
   (workspaceDriver gutterJobs gutterKeys git world).map fun driver =>
     let scripts :=
       (repository.jobModel git "/r" (missing := #[("HEAD", "src/b.lean")])).processes.scripts
-    let keys := withExtensionsOf driver.keys #[attachPackage world, FilesApiTest.fake]
+    let keys :=
+      withExtensionsOf driver.keys #[attachPackage world, FilesApiTest.fake, BuffersApiTest.fake]
     { driver with
       keys := { keys with registered := { keys.registered with git } }
       jobs :=

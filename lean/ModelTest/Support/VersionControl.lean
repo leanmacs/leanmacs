@@ -1,3 +1,4 @@
+import BuffersApiTest.Fake
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
@@ -138,8 +139,9 @@ def statusDriverOf (repository : VersionControl.Model.Repository)
     let scripts := (repository.jobModel "git" "/r" writes missing).processes.scripts
     { driver with
       -- A file's open attaches its workspace through the kit's stand-in at
-      -- `FilesApi.Opened`, and `files-api`'s fake is the files feature.
-      keys := withExtensionsOf driver.keys #[attachPackage, FilesApiTest.fake]
+      -- `FilesApi.Opened`, `files-api`'s fake is the files feature and
+      -- `buffers-api`'s the buffer commands.
+      keys := withExtensionsOf driver.keys #[attachPackage, FilesApiTest.fake, BuffersApiTest.fake]
       jobs :=
         { driver.jobs with
           files :=
