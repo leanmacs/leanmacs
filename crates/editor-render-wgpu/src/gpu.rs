@@ -17,6 +17,22 @@
 //! fragment output and another blend, one coverage for the three, and the
 //! painter is told to ask for plain masks.
 //!
+//! # The blending
+//!
+//! A device blends in one space for the whole frame
+//! (`Settings::blending`), since a render pass has one attachment format.
+//! In linear light it draws through an sRGB format, which the GPU makes
+//! linear before it blends and encodes after. In sRGB-encoded values, as
+//! macOS blends, it draws through the same bytes in a format that is not
+//! sRGB ([`own_format`] for a target of its own, `surface::choose_format`
+//! for a window's), so that the fixed-function blend works on the stored
+//! values / 255 as they are, and the shader is told, by the globals'
+//! fourth float, to take the colour as given in place of making it linear.
+//! The CPU and the GPU then both compute in unit values and round once.
+//! [`Device::blending`] says which space a device blends in: a window's
+//! surface that offers no format to blend encoded through blends in
+//! linear light.
+//!
 //! # Every draw is checked
 //!
 //! Each draw, and the making of the pipeline, is inside one of wgpu's
