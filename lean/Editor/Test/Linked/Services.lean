@@ -17,7 +17,9 @@ shutdown that ends the pump (`Services.stop`), and the one a process that
 held a host ends with (`shutdown`); and how many children the process
 service has started and not yet reaped (`pendingChildren`), which a check
 of a feature that runs processes compares before and after, once the
-service has been flushed (`childrenReapedTo`).
+service has been flushed (`childrenReapedTo`); and the bracket a check's
+temporary directory lives in (`withFiles`), which removes it only once the
+services have worked what was handed to them under it.
 
 **One table and one pump a process.** The library has one completion queue,
 and a pump ends the wait each completion names in the one table it is given
@@ -148,5 +150,59 @@ before it starts a child and asks this afterwards. -/
 def childrenReapedTo (jobs : Job.Services) (before : UInt64) : IO Bool := do
   let flushed ← Job.awaitWithin reapPatience (← jobs.flushed .processes)
   return flushed == some .completed && (← pendingChildren) == before
+
+/-- The name of `service`, as a hang says it. -/
+private def serviceName : Job.Service → String
+  | .timers => "timer"
+  | .files => "file"
+  | .processes => "process"
+  | .fileWatches => "watch"
+  | .diffs => "diff"
+
+/-- Waits for a flush of each of `targets` among `jobs`, asked in turn, with no
+deadline: one not completed `guard` milliseconds after it was asked is said
+through `hung` as a hang, once, and still waited for, and one the service
+refuses is said through `hung` too, since nothing more will be worked. -/
+private def workedBefore (jobs : Job.Services) (targets : List Job.Service) (guard : Nat)
+    (hung : String → IO Unit) : IO Unit := do
+  for target in targets do
+    let flushed ← jobs.flushed target
+    let completion ←
+      match ← Job.awaitWithin guard flushed with
+      | some completion =>
+        pure completion
+      | none =>
+        hung
+            s!"a hang: the {serviceName target} service had not completed a flush {guard} ms after it was asked; waiting for it"
+        IO.wait flushed
+    if completion == .cancelled then
+      hung
+          s!"the {serviceName target} service refused a flush: its queues are quit, and nothing more will be worked"
+
+/-- Runs `body` in a fresh temporary directory and removes it only once the
+library's services have worked what was handed to them before: whether `body`
+returned or threw, a flush of each of `targets` through `jobs`
+(`Job.Services.flushed`) is waited for, in turn, with no deadline. A flush not
+completed `guard` milliseconds after it was asked is said through `hung` as a
+hang, once, and still waited for. A flush the service refuses (the queues are
+quit) is said through `hung` too, since nothing more will be worked.
+
+A check whose requests under the directory go to the file service, the
+default, writes `withFiles services fun directory => …`; one whose children
+run there, or whose watches start there, names that service in `targets`.
+A check that runs a host over the directory nests the host's bracket inside
+(`withFiles … fun directory => Headless.withHost … fun host => …`): the
+loop has ended, so it hands out nothing more, before the flushes are asked,
+and each flush is behind every request the loop's jobs handed out,
+cancelled ones included. -/
+def withFiles {α : Type} (jobs : Job.Services) (body : System.FilePath → IO α)
+    (targets : List Job.Service := [.files]) (guard : Nat := reapPatience)
+    (hung : String → IO Unit := IO.eprintln) : IO α := do
+  let directory ← IO.FS.createTempDir
+  try
+    body directory
+  finally
+    workedBefore jobs targets guard hung
+    IO.FS.removeDirAll directory
 
 end Editor.Test.Linked
