@@ -26,10 +26,10 @@
 //!    `tests/headless/generate`'s `init.lean`, writes a lakefile naming the
 //!    volume's set and core (`Contents/Resources/lean/lean`); the volume's
 //!    own `lake -d <config> build :editorInstall`, with an empty environment
-//!    but `PATH=/usr/bin:/bin`, `HOME` in the temporary directory and the app's `editor.build`, exits 0, installing
-//!    an editor whose core is the app's and whose `--probe` prints
-//!    `probe: ok`. The volume is read-only, so the build compiled nothing
-//!    of the app.
+//!    but `PATH=/usr/bin:/bin`, `HOME` in the temporary directory and the
+//!    app's `editor.build`, exits 0, installing an editor whose core is the
+//!    app's and whose `--probe` prints `probe: ok`. The volume is read-only,
+//!    so the build compiled nothing of the app.
 //!
 //! It writes nothing but the mount point and step 6's config, home and
 //! install, which go with the temporary directory.
