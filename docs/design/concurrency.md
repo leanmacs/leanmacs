@@ -17,7 +17,7 @@ process, its runtime is the only one that schedules editor code.
 | Thread | Language | Owns | Never does |
 |---|---|---|---|
 | **Main** | Rust | The window, the OS event loop, IME. It makes the renderer and its surface when the window opens, and drops them when it closes; in between it only leaves word with the render thread | Draw or present; wait on anything, but for the render thread to end as the window closes; run Lean code |
-| **Editor** | Lean, a dedicated task | All mutable editor state. The single writer. Pulls events and runs commands and handlers one at a time | Block on I/O or long computation |
+| **Editor** | Lean, a dedicated task | All mutable editor state. The single writer. Pulls events and runs commands and handlers one at a time. In a test whose host is stepped ("Stepped hosts in tests"), the editor thread is the check's own, which takes the same turns of the loop | Block on I/O or long computation |
 | **Lean pool** | Lean | Background jobs that compute or await | Mutate editor state; block |
 | **Dedicated job threads** | Lean | Work that blocks in a system call: the reload job today | Mutate editor state |
 | **Completion pump** | Lean, a dedicated task | Pulling the completion queue and ending the wait each completion names | Run a job; mutate editor state |
@@ -1247,6 +1247,65 @@ whose reload is held at a gate only the wait's `waitBlocked` opens. The
 loop's end waiting for its reload, and a check's bracket's grace, are in
 "Structured lifetimes".
 
+### Stepped hosts in tests
+
+Status: built by deterministic-test-concurrency phase 5. Most of
+`config-test`'s host checks run with no loop thread: the host's loop is
+stepped on the check's own thread. The checks that still start a loop
+thread, and the adapter each covers, are listed in
+`docs/dev-practices/real-thread-checks.md`, which the gate holds to what
+runs.
+
+**One turn, two drivers.** The headless loop is one turn per event
+(`Running.turn`: handle the event, then give back the unit of the activity
+count it came under), the progress it publishes (`Running.progress`) and its
+end (`Running.wind`: cancel the jobs, withdraw the pauses and the hint
+delay, wait for the reload after `endWaits`), over collaborators prepared
+as a host's start prepares them (`Collaborators.prepared`). The real loop
+(`Headless.loop`) takes the turns on its dedicated task, pulling the
+library's editor queue. A stepped host (`Headless.withStepped`,
+`lean/Editor/Headless/Stepped.lean`) takes the same turns on its caller's
+thread. What a check runs is the host's own logic: the reload reducer, the
+registry, the journal and the restore, with the stage's fakes and the real
+elaborator. Only the transport and the thread change, so a mutation of the
+host kills a stepped check as it killed the real one (the phase's mutation
+tables).
+
+**The queue is a port.** The core posts to the editor queue through
+`Collaborators.queue` (`lean/Editor/Headless/Queue.lean`): the library's
+(`Queue.library`, `Queue/Real.lean`, the only queue module that imports the
+library) for every real host, or an in-memory FIFO (`Queue.Memory`) that a
+stepped host drains. Its contract (`Queue/Contract.lean`) runs against both,
+in `model-test` and `contract-test`. The stepped bracket installs its own
+memory queue whatever the collaborators carried, and a real host refuses
+collaborators whose queue a stepper drains (`Queue.Puller`), so a host's
+posts and its pulls are never on two queues.
+
+**The wait's rounds, and the lost wake-up.** `Stepped.waitWhile` has
+`Host.waitWhile`'s signature and outcomes. A round takes the queue's
+next-push task (`Queue.Memory.arrived`) and the count's reading, drains the
+queue through the turn, then judges as the real wait does: `settled` once
+`busy` no longer holds; at idle (the count 0 at the round's epoch and no
+fake-clock wait due) the idle outcome; another round when the count moved;
+and otherwise a block on the first of the next push and the count's next
+change. The push matters: an event posted after the round found the queue
+empty, under no unit of its own (a request, an environment's report), with
+the count unchanged, would be missed by a wait on the count alone. Pinned by
+`ConfigTest.steppedChecks`' forced interleaving, shown failing on a variant
+that blocks on the count alone.
+
+**Scene counts match.** The first round enqueues the wait's marker, which
+publishes the scene a real host's marker does; later rounds enqueue nothing,
+as a real host's probes publish nothing. Pinned by a check that runs the
+same requests on both hosts and compares the published counts.
+
+**Limits.** A stepped host cannot bound a turn: a turn held inside an event
+holds the check's thread, so a check that holds the editor thread inside an
+event, or whose subject is the loop thread or the library's queue, stays on
+a real loop (A1 to A7 in the page above). A check that holds something a
+turn waits on drives that one drain from a dedicated task it joins, and
+lets every hold go in a `finally`.
+
 ### Prompts
 
 Status: decided 2026-11-14 and built, by the command loop's phase 10; a
@@ -2071,6 +2130,14 @@ outlives it (AGENTS.md, "Deterministic concurrency in tests"):
   mode, the bench and the CLI keep what they had (`none`, `none`, `some
   hangGrace`). Pinned by `ConfigTest.bracketChecks`' "a check's bracket
   whose loop is held past its guard and its grace fails as a hang".
+- **A stepped host lives in its bracket too** (deterministic-test-concurrency
+  phase 5): `Headless.withStepped` makes the loop's state on entry and,
+  whether its body returned or threw, closes its memory queue (a late post
+  is refused and gives its unit back), ends the loop (`Running.wind`, its
+  wait for a reload guarded, the hang said once and, with `grace`, given up
+  on as `withHost` does), and drops the loop's state before it returns. The
+  body's error is the one thrown; when it returned, an error a turn threw
+  is. Pinned by `ConfigTest.steppedChecks`.
 - **Not yet in a scope** (tasks filed, `tech-debt`): pool jobs, which `cancelAll` cancels
   and does not wait for (`pool-jobs-outlive-host-loop`); the Rust service
   threads that are waited for by a count and not joined

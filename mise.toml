@@ -656,8 +656,12 @@ run = [
   # from the environment; its third argument is the directory of the syntax
   # fixtures, whose Rust indent fixture the indent checks read (tests/syntax),
   # and its fourth the default config `mise run install` ships, which the
-  # default config checks read (config/default).
-  ".lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default",
+  # default config checks read (config/default). With `--real-threads` it
+  # also writes the names of the checks that started a real editor loop
+  # thread, sorted, which must be exactly the names
+  # docs/dev-practices/real-thread-checks.md lists in its `checks` blocks:
+  # every other host check runs on a host stepped on its own thread.
+  "f=$(mktemp) && trap 'rm -f \"$f\"' EXIT && .lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default --real-threads \"$f\" && { awk '/^```checks$/{on=1;next} /^```$/{on=0} on' ../docs/dev-practices/real-thread-checks.md | LC_ALL=C sort | diff - \"$f\" || { echo 'ffi-test: the checks that ran a real editor loop thread (>) are not the ones docs/dev-practices/real-thread-checks.md lists (<)' >&2; exit 1; }; }",
   # The demonstration. With no arguments the editor is the window mode on
   # an empty buffer, which opens a window, so the gate never runs that.
   "../packages/.lake/build/bin/editor demo",

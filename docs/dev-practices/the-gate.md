@@ -979,7 +979,8 @@ key is pressed. These hosts share one table of waits and one completion
 pump.
 
 `config-test` runs prompts through headless hosts as well
-(`ConfigTest.promptChecks`), over the real queue, the real text binding
+(`ConfigTest.promptChecks`), stepped on the check's own thread over an
+in-memory editor queue, with the real text binding
 and the real elaborator, with the test scheme and the minibuffer's
 commands and mode as compiled code registers them: the scene of an open
 prompt, with a committed text in the minibuffer; the accept key and the
@@ -1354,8 +1355,12 @@ elaborator port's contract, the same properties `model-test` holds of the
 port's pure model (`lean/Editor/Config/Elaborator/Contract.lean`), checks
 what only Lean's elaborator can show of a config file as a module, the
 directory source, and the adapter that reads a lakefile's requires, and
-runs the headless host in-process on the real event queue and the real text
-binding: a reload replaces a command; a type error, a throwing `setup` and
+runs the headless host in-process, on the real text binding: most checks on a
+host stepped on the check's own thread over an in-memory editor queue, and
+the ones listed in [real-thread-checks.md](real-thread-checks.md), each
+with the adapter it covers, on a real loop thread over the library's queue.
+`ffi-test` runs it with `--real-threads` and fails when the checks that
+started a loop thread are not exactly that page's list. A reload replaces a command; a type error, a throwing `setup` and
 a file that declares `initialize` each keep the old config; after a change
 to one config file a reload elaborates that file and the files that import
 it, and no other; a root that imports a module that is not linked is

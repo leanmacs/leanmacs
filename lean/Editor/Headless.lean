@@ -43,7 +43,15 @@ reports a hang, it never ends the wait. `Host`'s constructor and `start` are
 private, so nothing outside this module makes a host, and none outlives
 its loop. `withHostEnding` hands the loop's end back instead of throwing
 its error, for the window mode, whose exit status says it. The loop pulls the
-editor queue and handles one event to its end before the next. It owns the
+editor queue and handles one event to its end before the next: one turn
+(`Running.turn`), after which it publishes its progress (`Running.progress`),
+and at its end it winds down (`Running.wind`). Two drivers take those turns:
+the real loop (`loop`), on its dedicated task over the library's editor
+queue, and, for tests, a host stepped on its caller's thread over an
+in-memory queue (`Editor/Headless/Stepped.lean`). The core posts through the
+queue its collaborators carry (`Collaborators.queue`,
+`Editor/Headless/Queue.lean`), and a real host refuses one a stepper
+drains. It owns the
 config half of the editor's state (`Config.State`) and the table of texts
 (`RealTexts`), feeds the reload reducer (`Config.step`) and performs its
 effects, and runs the command loop's programs with `EditorM.runReal`, with
