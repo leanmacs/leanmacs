@@ -1191,6 +1191,41 @@ never a poll.
   when refused) and keeps the feeder's thread in a process-wide table,
   and the join waits for the feeder to end and joins it, so a Rust poster
   a test starts never outlives the test.
+- **A pull parked** (`Queue::await_waiting`, C `editor_ffi_events_await_waiting`,
+  `Ffi.awaitWaiting`), **a streaming child held** (`Service::wait_held`,
+  `editor_ffi_processes_await_held`, `Ffi.processesAwaitHeld`) and **the
+  scripted window's run parked** (`ScriptedPlatform::wait_parked`,
+  `editor_ffi_window_await_parked`, `Ffi.windowAwaitParked`): the pull, the
+  reader or the run notifies a Condvar of its own as it parks, under the lock
+  its wait then releases, so a test that has seen it knows the thing is in its
+  wait. The scripted window's record keeps the close in its place
+  (`WindowAsked.close`), so a check asserts an order instead of sleeping to
+  make one.
+- **A fake reaching a state** (`FakeClock.arrivedAt`, `FakeFiles.takesArrivedAt`,
+  ConfigTest's `Gate.arrived`, the fake process service's `reads_waiting` and
+  its ground's `ends`): resolved in the same step that makes the state, or at
+  once if it already holds.
+- **The winit loop's requests carried out** (`probe::await_requests_handled`),
+  counted on the main thread.
+- **The pool held** (`Pool.holdAll expected guard`, `Pool.expected`): each
+  task's start resolves a counter; nothing is decided by a task that does
+  not start.
+
+**What a test may still wait on time for.** Three things, each said at the
+site in one of three forms (AGENTS.md, "Deterministic concurrency in
+tests"; `mise run wait-inventory` lists any site that says none): a **hang
+guard**, the bound on a wait for an event that must come, which only a hang
+reaches (`ConfigTest.hangGuard` and the other guards, set to ten times the
+slowest the event was seen to take under the stress loop's load, 120 000 ms
+for Lean where nothing slower was measured); a **hang guard run out on
+purpose**, where a check holds something for good and pins the hang; and
+**real time under test**, where the timing is the subject: a lower bound
+("not before the limit"), which load only makes pass more surely, or a
+real clock's deadline being waited out. A negative decided by a window
+("nothing happened within N ms") is none of these: it is decided at idle,
+after a flush or another barrier, or by a forced order. An upper bound on
+latency is never a result: the auto-reload's one second is a measurement
+(`config-bench`'s `bench-auto-reload` row), not a check.
 
 **Per host, never per stage.** A host whose collaborators track it
 (`Collaborators.tracksIdle`: a test stage's and the headless mode's) starts

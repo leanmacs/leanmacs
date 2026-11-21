@@ -83,9 +83,8 @@ impl Handled {
                     if left.is_zero() {
                         return false;
                     }
-                    // hang guard: the loop counting what it carried out,
-                    // which notifies `changed`; only a loop that never
-                    // carries a request out reaches the bound.
+                    // hang guard: the loop's count of what it carried out;
+                    // only a loop that never carries one out reaches it.
                     self.changed
                         .wait_timeout(counts, left)
                         .unwrap_or_else(PoisonError::into_inner)

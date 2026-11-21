@@ -761,6 +761,10 @@ pub(crate) mod tests {
     use super::*;
     use crate::words::tests::buffer;
 
+    /// hang guard: a completion the service queues at once; only a hang
+    /// reaches the bound, and the test then fails as a hang.
+    const DEADLINE: Duration = Duration::from_secs(5);
+
     /// The words and the string of `command` with `limit`, as Lean lays
     /// them out.
     pub(crate) fn laid_out(command: &Command, limit: u64) -> (Vec<u8>, String) {
@@ -998,7 +1002,7 @@ pub(crate) mod tests {
         let (command, limit) = command_of(&words, strings.as_bytes()).expect("a command");
 
         assert!(service.start(5, command, limit));
-        assert_eq!(completed.recv_timeout(Duration::from_secs(5)), Ok(5));
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(5));
         let raw = RawProcessResult::lending(encoded(service.take(5).expect("a result")));
 
         assert_eq!(raw.status, 0);
@@ -1188,7 +1192,7 @@ pub(crate) mod tests {
         let (command, streaming) = open_of(&words, strings.as_bytes()).expect("an open");
 
         assert!(service.open(5, command, streaming));
-        assert_eq!(completed.recv_timeout(Duration::from_secs(5)), Ok(5));
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(5));
         assert_eq!(
             service.take_stream(5).map(encoded_stream).map(|e| e.status),
             Some(10)
@@ -1197,7 +1201,7 @@ pub(crate) mod tests {
         let mut stdout = Vec::new();
         for wait in 6.. {
             assert!(service.read(5, wait));
-            assert_eq!(completed.recv_timeout(Duration::from_secs(5)), Ok(wait));
+            assert_eq!(completed.recv_timeout(DEADLINE), Ok(wait));
             let reply = encoded_stream(service.take_stream(wait).expect("a delivery"));
             stdout.extend(reply.stdout);
             let ended = *reply.words.last().expect("words") != 0;

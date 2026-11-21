@@ -100,6 +100,8 @@ impl Live {
     pub(crate) fn await_at_most(&self, target: u64, bound: Duration) -> bool {
         let lock = self.lock.lock().unwrap_or_else(PoisonError::into_inner);
         self.waits.fetch_add(1, Ordering::SeqCst);
+        // A free notifies `freed`; only a handle never freed reaches the bound.
+        // hang guard: the free of a handle.
         let (lock, waited) = self
             .freed
             .wait_timeout_while(lock, bound, |_| {

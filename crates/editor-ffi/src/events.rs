@@ -372,6 +372,8 @@ impl Feeds {
         let mut ended = matches!(feed.ended.try_recv(), Err(TryRecvError::Disconnected));
         self.told_read(ended);
         if !ended {
+            // hang guard: the feeder's end, which drops the sender; only a
+            // feed that never ends reaches the bound.
             ended = matches!(
                 feed.ended.recv_timeout(bound),
                 Err(RecvTimeoutError::Disconnected)
