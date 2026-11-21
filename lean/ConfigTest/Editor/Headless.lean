@@ -1699,8 +1699,10 @@ def idleChecks (context : Context) : List Check :=
                   host.send (.spawn "count")
                   unless ← host.settle hangGuard do
                     return false
-                  unless held do
-                    discard <| countReaches host 0
+                  -- Everything the frame's publishes started has been
+                  -- handled, so what the join publishes is its own: the
+                  -- count is only the held job's, or nothing.
+                  discard <| countReaches host (if held then 1 else 0)
                   let wait ←
                     host.join hangGuard (waitBlocked := fun what => do
                         if what == "running work" then
