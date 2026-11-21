@@ -504,7 +504,11 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             services := { completions, timers := counted }, published := ← Snapshots.new,
             held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
             jobs := requests + 2, environment := requests + 3, posts := requests + 4
-            pauseEvents := requests + 5 } fun host => do
+            pauseEvents := requests + 5
+            -- It keeps the activity count the headless mode keeps, so the
+            -- latency measured is the loop's with the count's steps in it
+            -- (`docs/design/concurrency.md`, "The idle signal").
+            tracksIdle := true } fun host => do
           host.send .reload
           unless ← host.settle patience do
             throw (IO.userError "the config did not load")

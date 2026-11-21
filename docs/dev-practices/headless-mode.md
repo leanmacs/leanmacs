@@ -568,12 +568,12 @@ timers.
 | Directive | Does |
 |---|---|
 | `reload` | Asks for the config to be reloaded. Elaboration runs in the background, and the editor goes on answering. The command `reload-config`, and so the ex line `reload`, asks the same. |
-| `settle` | Waits, for up to 30 seconds, until everything asked so far has been handled and no reload is running. |
-| `settle <milliseconds>` | As `settle`, waiting up to that many milliseconds in place of 30 seconds, and a failure names that many. It is for a fixture whose cold reload is known to be slow, with the reason beside it in the script. Anything but one number is refused. |
+| `settle` | Waits until everything asked so far has been handled and no reload is running: for the reload's end. Its 30 seconds are a hang guard: a settle that reaches them says the hang once on stderr and fails the run, so the headless mode never hangs. |
+| `settle <milliseconds>` | As `settle`, with that many milliseconds as its guard in place of 30 seconds, and a failure names that many. It is for a fixture whose cold reload is known to be slow, with the reason beside it in the script. Anything but one number is refused. |
 | `run <name>` | Runs the command registered under that name, through the editor loop, as a key would: with the focused window, guarded against the interrupt key, and rolled back if it does not run to its end. It is no key, so the input scheme's state is as it was: a command that a key enters a Vim state with enters none (the table of evil's commands, above). |
 | `spawn <name>` | Starts the job registered under that name. It runs in the background, and the editor goes on answering. |
-| `join [<seconds>]` | Waits, for up to 30 seconds, or for up to the seconds given, until everything asked so far has been handled and no job is running. A package-set build (`tools/user-sets-test.sh`) takes longer than 30 seconds. With seconds, the editor thread's answer is bounded by them too, as a `settle <milliseconds>`'s is, and a failure names them, in milliseconds. |
-| `advance <milliseconds>` | Moves the headless mode's job clock on by that many milliseconds, once it holds a wait due within them (for up to 30 seconds), completing every wait then due: a job's sleep, a time limit, the pause of completion at point. It sends nothing to the editor thread and prints nothing, so a scene count is unchanged by it. One with no wait due within the time runs out, saying `the advance on line N found no wait due within M ms on the clock within the patience`. Anything but one number is refused. |
+| `join [<seconds>]` | Waits until everything asked so far has been handled and no job is running, or until the editor is idle with a job still running, which fails the run at once (`the join on line N of the script found the editor idle with a job still running`): a job that sleeps on the clock no `advance` moves. Its 30 seconds, or the seconds given, are a hang guard, said once and failing the run: a package-set build (`tools/user-sets-test.sh`) takes longer than 30 seconds. With seconds, the editor thread's answer is guarded by them too, as a `settle <milliseconds>`'s is, and a failure names them, in milliseconds. |
+| `advance <milliseconds>` | Moves the headless mode's job clock on by that many milliseconds, once it holds a wait due within them, completing every wait then due: a job's sleep, a time limit, the pause of completion at point. It sends nothing to the editor thread that shows and prints nothing, so a scene count is unchanged by it. One that finds the editor idle with no wait due within the time stalls the run at once, saying `the advance on line N found the editor idle with no wait due within M ms on the clock`. Its 30 seconds are a hang guard only. Anything but one number is refused. |
 | `show` | Prints the commands, the texts and the stores. |
 | `journalled` | Waits as `settle` does, then, for up to 30 seconds, until the library's file service holds no request: the session journal's writes, which nothing else waits for, are then on disk. |
 | `indexed [<seconds>]` | Waits as `settle` does, then, for up to 30 seconds, or for up to the seconds given, until the session index is written: no write or save of it running, no job running but those the script started with `spawn`, and the library's file service holding no request. Each write of the index waits on the job clock (`Restore.writeDelay`), and a job that ends can start another, so once no other job is running it moves the clock past the write's delay, and again for each write that follows: what the jobs changed is then in one write, and the scene count is the same from run to run. It needs no `join`, so a script with a long job of its own running can wait for the index. With seconds, a failure to see the index written names them, in milliseconds. |
@@ -2173,10 +2173,14 @@ or a command quit the editor before it,
 status 1 a line on stderr says why: the script cannot be read; with
 `--render`, the render session could not be started, with the library's
 reason (the system refused its render thread); a `settle`, named by its
-line, ran out with a reload still running (a file or `setup` is slow or
-does not end); a `join`, named by its line, ran out with a job still
-running; the editor thread did not answer; or the editor loop did not end
-(`editor: the editor loop had not ended …; giving up`).
+line, reached its guard with a reload still running (a file or `setup` is
+slow or does not end); a `join`, named by its line, found the editor idle
+with a job still running; a `join` or an `advance` reached its guard with
+work still running; an `advance` found the editor idle with nothing due; the
+editor thread did not answer; or the editor loop did not end (`editor: the
+editor loop had not ended …; giving up`). Each that reached a guard is a
+hang: its line on stderr starts `a hang:`, after the wait's own `editor: a
+hang: the <wait> on line N had not ended within M ms`, said once.
 
 When the script ends or fails, the headless mode waits for its loop to
 end. A loop that has not ended 30 s (the patience) after the script
@@ -2186,6 +2190,31 @@ then waits up to 5 s more (`Headless.hangGrace`). A loop that ends within
 that grace leaves the exit status as it was: a loop slow to stop is no
 failure by itself. One that does not is the failure above, with status 1,
 so the run never hangs.
+
+### What each wait ends on
+
+Every wait of the headless driver ends on an event: what it waits for
+happening, or the editor being **idle**, which no time can change. A host is
+idle when the editor thread has handled every event posted before the
+wait's marker, no work that can end by itself is running or queued (no job
+that can run, no reload, no request on a real service, no event a job or
+the reload posted and the loop has not handled), and the fake clock holds
+no wait that is due ([`docs/design/concurrency.md`](../design/concurrency.md),
+"The idle signal"). Its milliseconds are only a guard against a hang: a
+wait that reaches its guard says the hang once on stderr and fails the run,
+never passes it.
+
+| Wait | Ends on (the event) | Hang guard | At the guard |
+|---|---|---|---|
+| `settle` | The reload's end, after everything asked was handled | 30 s, or the line's milliseconds | Its hang line, then the run fails as `reloading` |
+| `join` | No job running, or idle with one running, which fails as `working` (not a hang) | 30 s, or the line's seconds | Its hang line, then the run fails as `busy` |
+| `advance` | A wait due within the move, or idle with none due, which stalls (not a hang) | 30 s | Its hang line, then the run fails as `busy` |
+| The editor thread's answer, inside each wait | The loop answering the wait's marker | The wait's guard, or a `settle <ms>`'s or `join <s>`'s own | Its hang line, then the run fails as `unanswered` |
+| `journalled` | The file service's flush | 30 s | The run fails as `unanswered` |
+| `indexed [<seconds>]` | Still a poll of the index's write with a deadline, to move onto idle in a later change | 30 s, or the seconds given | The run fails as `unanswered` |
+| `restarted [<seconds>]` | The loop's task ending | 30 s, or the seconds given | The run fails as `notRestarted` |
+| The loop's end | Its task | 30 s, then `Headless.hangGrace` (5 s) | Its hang line, then the run fails as `hung`, exit 1 |
+| `idle <ms>` | Real milliseconds of the render loop's, not a job-clock wait | | |
 
 ## A package's fixtures
 

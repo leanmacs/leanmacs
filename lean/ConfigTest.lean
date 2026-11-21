@@ -115,18 +115,21 @@ show:
 - `jobChecks`: jobs from config through the host: a handler receives a job's
   result on the editor thread, a reload that installs cancels the old
   config's jobs and a rejected one does not, how each ending of a job is
-  reported, and a join that cannot finish running out as working when the
-  editor thread's answer is slower than its patience; and, a guard on how
-  a script with a short patience is written rather than on the driver,
-  that such a script settles a real reload with a patience of its own,
-  so a reload slower than the join's patience still leaves the join to
-  run out as working;
+  reported, and a join that cannot finish answering working at idle, with
+  nothing said as a hang, also when the editor thread is held inside an
+  event as the join asks for its answer (let go when the join blocks on
+  it, `meetingAnswer`);
 - `idleChecks`: a host's idle signal (`Editor/Headless.lean`, "The idle
   signal"): what holds a unit of a host's activity count, read through the
   host and waited for on the count's own changes, with the editor thread
   held at a line to look while an event is queued: a job asleep on the
   fake clock holds none, a job's result holds one until it is handled, and
-  a pause's event holds one from the clock's move until it is handled;
+  a pause's event holds one from the clock's move until it is handled; a
+  wait's later rounds publish nothing (a join forced to two rounds gives
+  the scene count of one); and a late event just before idle does not make
+  idle early: a join with a job's start of its sleep held, or a job's
+  result on its way, blocks on it (let go from its `waitBlocked`) rather
+  than answer working;
 - `shippedChecks`: what the executable's hosts start with, the registry the
   packages of the core's Lake package make
   (`EditorCore.EditorPackage.packages`), each entry for the owner named
@@ -147,9 +150,11 @@ show:
   program of the loop that is refused, and a window's close request with
   nothing unsaved ending the loop; and the headless mode's run disposing of
   its collaborators once its loop has ended, whether it failed or not, even
-  with the editor thread inside an event when a join or an advance runs
-  out, or with the loop slow to end at the script's end, which patience a
-  failure names (`Wait.failureIn`), and
+  with the editor thread inside an event when a join or an advance waits
+  on it, or with the loop slow to end at the script's end, which guard a
+  failure names (`Wait.failureIn`); a `join` and an `advance` answer at
+  idle, and the checks that pin a bound of the headless mode (a reload or
+  the editor thread held for good) say their hang once (`waitHung`); and
   the executable's hosts' dispose removing the directory of the config
   files' module data once it was made;
 - `dispatchChecks`: keys through the host, with the test scheme and

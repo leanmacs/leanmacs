@@ -1120,6 +1120,108 @@ transaction through. Where those come from is open.
   every refusal as a value, so a save that was started is ended unless the
   loop itself ends first.
 
+### The idle signal
+
+Status: built by deterministic-test-concurrency phase 4. A check that
+something did not happen, or a driver's wait that something cannot end,
+answers at idle instead of after a deadline.
+
+**What idle is.** A host is idle when all three hold:
+
+1. **Up to date.** The editor thread has handled every event posted before
+   the driver's marker.
+2. **Nothing can run.** The host's activity count is 0, and it was 0 with
+   the same epoch when that marker was posted.
+3. **Nothing due.** The fake clock, if the host has one, holds no wait that
+   is due.
+
+**The activity count** (`lean/Editor/Job/Activity.lean`) is the number of
+units held, each a piece of work that can still end by itself, and its
+epoch moves at every change of it. A unit is taken before what it covers can
+run or post, and given back after:
+
+| Unit | Taken | Given back |
+|---|---|---|
+| A job while it can run | `Job.spawn`, before its task; and a parking wait's end, in the wait's action, on the thread that ends it (`Handle.parkingWait`) | When it parks in a wait only a test ends (`drive`), or after its `finished` (`spawn`) |
+| A wait on a service that ends it by itself (the real file, process, diff and grep services, real timers and watches) | Nothing of its own: the job keeps its unit through the wait | |
+| A handle's request (`Services.fileWorked`) | Before the port's start | In the wait's action, after `noted` and the resolve |
+| The reload job | `reduce`'s `.start`, before its task | `reloadJob`'s `finally`, after its counted post |
+| An event the reload, a job, a pause or a hint delay posted | `Collaborators.postCounted`, before the post | The loop, once it has handled the event (`Collaborators.counts`), or at once when the queue refuses it |
+| A pause's or a hint delay's wait in flight on a clock that ends it by itself | At its arm | When it fires or is withdrawn |
+
+A wait that only a test can end holds no unit: the fake clock's
+(`Timers.outside`) and the fake watches' (`FileWatches.outside`). That is
+why a job asleep on a clock nobody moves is idle, and one asleep on a real
+timer is not. A flush (`Services.flushed`) holds none either: it is its
+observer's, not the program's.
+
+**Why the epoch.** The count alone can be 0 at the marker's post, go to 1
+when an earlier event's handler starts a job, and be 0 again when that job
+has ended and posted after the marker. Every unit is taken before the post
+it covers and given back after it, so a post made while its poster holds a
+unit is either handled before a marker posted after the unit's end, or seen
+as a moved epoch. A post made while its poster holds another unit needs
+none of its own: an environment's report is posted from a job's thread
+inside a job request, or from the editor thread while it handles the
+reload's wake-up, a counted event.
+
+**What is outside idle**: Rust's own posters (the FfiTest feeders, the
+window), the syntax worker, which `Ffi.syntaxSettle` covers, and the
+journal's unobserved writes, which `journalled` waits for by a flush.
+
+**Per host, never per stage.** A host whose collaborators track it
+(`Collaborators.tracksIdle`: a test stage's and the headless mode's) starts
+with a count of its own (`Headless.start`), so a late step of an earlier
+host's job on a shared stage cannot reach a later host's. The window mode
+tracks nothing: it carries `Activity.untracked`, whose steps do nothing, and
+its waits look at the progress again as it changes, as they always did.
+
+**The driver's wait** (`Host.waitWhile`, `lean/Editor/Headless.lean`) goes in
+rounds. A round reads the count, posts a marker and waits on the marker's
+promise, which the loop resolves once it has published its progress after
+it. Only the first round's marker publishes a scene, as a settle's and a
+join's always did (an `advance`'s posts none that shows); every later round
+posts a `Signal.probe`, which publishes nothing, so how many rounds a wait
+took changes no scene count. The wait then answers `settled` when what it
+is for is over; at idle it answers its idle outcome, `working` for a join
+and a stall for an advance; when the count moved during the round it goes
+round again; and otherwise it blocks on the count's next change
+(`Activity.changedSince`) or the loop's end.
+
+**Wait guards.** The bound of a driver's wait is a wait guard (`waitGuard`
+and `answer`), named apart from the loop's end's (`guard`, `hung`, `grace`,
+`abandoned`), so the two cannot be wired together by mistake. A wait that
+reaches its guard says the hang once through `waitHung`
+(`Headless.waitHangLine`: `editor: a hang: the <wait> on line N had not
+ended within M ms`) and fails the run as a hang (`Failure.reloading`,
+`unanswered` or `busy`, each described as `a hang: …`). `working` and
+`stalled` are never a guard's outcome. A check's waits pass
+`ConfigTest.hangGuard`, long enough that only a real hang trips it.
+`waitBlocked` is the wait's hook for a test: it is called each time the
+wait is about to block, with `"answer"` before the editor thread's answer
+and `"running work"` before a block on work still running, and a check
+lets a held step go on it, never on a guard. It is to the wait what the
+Rust `when_shutdown_waits` hook is to a teardown.
+
+**Cost.** The editor thread pays one comparison of an event's source
+against four ids per event, and one step of a reference only for the
+counted events; a job's start, park, wake and end each pay one such step;
+a marker one look at the armed marker and one resolve. The window mode's
+steps are closure calls that do nothing. Measured on an 18-core Mac, the
+medians and 99th percentiles of `mise run job-bench` and `mise run
+journal-bench`, two runs each, before and after the count, are below
+("Measured cost").
+
+**Pinned by** `ModelTest.activityChecks` (the count alone),
+`ModelTest.activityRunnerChecks` (the runner's accounting, forced at a
+wait's end, a wait due at once, a cancel in a park and a real-service
+wait), the handle's contract on both file ports
+(`Editor/Job/HandleContract.lean`, `handleCounts` and `jobLoadCounts`),
+and `ConfigTest.idleChecks` (what holds a unit through a host, that a
+wait's later rounds publish nothing, and that a late event just before
+idle, a job's start of its sleep held or its result on its way, does not
+make idle early).
+
 ### Prompts
 
 Status: decided 2026-11-14 and built, by the command loop's phase 10; a

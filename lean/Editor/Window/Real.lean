@@ -117,7 +117,9 @@ def awaitConfig (host : Headless.Host) : Option Nat → IO Bool
   | some patience => return (← host.await patience) == .settled
   | none => do
     repeat
-      match ← host.await drawPatience with
+      -- `drawPatience` is a normal bound here, not a hang: the window opens
+      -- without the config, and the wait goes on. So nothing is said.
+      match ← host.await drawPatience (waitHung := fun _ => pure ()) with
       | .settled =>
         return true
       | .ended =>

@@ -151,6 +151,14 @@ of hanging. -/
 def patience : Nat :=
   5000
 
+/-- The guard of a check's waits for its host (`Headless.Host.waitWhile`), in
+milliseconds: only a real hang trips it, even under heavy load. A check that
+reaches it fails, reported as a hang, never as a timing result; a check
+that pins a bound of the headless mode on purpose holds a reload or the
+editor thread for good and gives a short guard of its own. -/
+def hangGuard : Nat :=
+  120000
+
 /-- What a check hands a host of its own: the collaborators, and what the
 check keeps of them. The host's output goes to a buffer, with the thread
 that emitted each line; its jobs wait on a fake clock the check moves; and it

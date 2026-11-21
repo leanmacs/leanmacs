@@ -25,27 +25,30 @@ advance 50
 settle
 scene
 
-# `next-error` visits the first location: its file is not there, which the
-# echo area says with the path resolved against the directory the run ran
-# in.
-key : Semicolon shift
-commit next-error
-key <Enter> Enter -
-settle
-scene
-
-# `previous-error` from the first location has none before it.
-key : Semicolon shift
-commit previous-error
-key <Enter> Enter -
-scene
-
 # `kill-compilation` cancels the job, which kills the child, and the last
 # line says so.
 key : Semicolon shift
 commit kill-compilation
 key <Enter> Enter -
 join
+scene
+
+# `next-error` visits the first location: its file is not there, which the
+# echo area says with the path resolved against the directory the run ran
+# in. The visit loads the file with a job, which `join` waits for: with the
+# run killed it is the only job, so the scene is the one after the load's
+# refusal, every time. (Before the kill, the run's child is still running,
+# and no wait could end at the load alone.)
+key : Semicolon shift
+commit next-error
+key <Enter> Enter -
+join
+scene
+
+# `previous-error` from the first location has none before it.
+key : Semicolon shift
+commit previous-error
+key <Enter> Enter -
 scene
 
 # `recompile` runs the line again with no prompt, in the same buffer,

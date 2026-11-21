@@ -1185,6 +1185,11 @@ inductive Signal where
   | marker
   /-- End the loop. -/
   | stop
+  /-- A marker the loop counts and does nothing else for: it publishes no
+  scene and releases no held request after it. A wait's later rounds post
+  it (`Host.waitWhile`), so how many rounds a wait took changes nothing a
+  scene count shows. -/
+  | probe
 
 /-- A signal as an event's code and text. -/
 def Signal.encode : Signal → UInt64 × String
@@ -1200,6 +1205,7 @@ def Signal.encode : Signal → UInt64 × String
   | .request (.say text) => (9, text)
   | .request (.restore named) => (10, ((named.map (·.toString)).getD ""))
   | .request .workspaces => (11, "")
+  | .probe => (12, "")
 
 /-- The signal an event's code and text stand for, if they stand for one. -/
 def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
@@ -1216,6 +1222,7 @@ def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
   | 9 => some (.request (.say text))
   | 10 => some (.request (.restore (if text.isEmpty then none else some text)))
   | 11 => some (.request .workspaces)
+  | 12 => some .probe
   | _ => none
 
 mutual
@@ -2378,6 +2385,9 @@ def other (collaborators : Collaborators β σ scheme) (running : Running β σ 
       running.request collaborators request
     | some .marker =>
       return { running with markers := running.markers + 1 }
+    | some .probe =>
+      -- `handle` takes a probe before this: it publishes nothing.
+      return { running with markers := running.markers + 1 }
     | some .stop =>
       return { running with stopped := true }
     | none =>
@@ -2395,6 +2405,11 @@ carries the library's mark (`Event.interruptMarked`), since the event has
 been taken off the queue. -/
 def handle (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
     (event : Ffi.Event) : IO (Running β σ scheme) := do
+  -- A probe is counted and nothing else: no scene, no restore's release.
+  if
+      event.source.kind == .lean && event.source.id == collaborators.requests &&
+        (Signal.decode? event.code event.text).any (· matches .probe) then
+    return { running with markers := running.markers + 1 }
   if takenByLoop event then
     match Event.ofFfi event with
     | .ok received =>
@@ -2479,13 +2494,14 @@ Before the first event it registers the packages it is handed
 none, so that no key raises the flag while no loop takes keys off the
 queue. -/
 def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (progress : IO.Ref Progress) : IO Unit := do
+    (progress : IO.Ref Progress) (reached : IO.Ref (Option (Nat × IO.Promise Unit))) : IO Unit := do
   discard <| Event.setInterruptKey (some collaborators.interruptKey)
   let mut running ← Running.new collaborators
   repeat
     let event ← Ffi.nextEvent .editor
     if event.kind == .quit then
       break
+    let markers := running.markers
     running ← running.handle collaborators event
     -- An event posted under a unit of the host's activity gives it back
     -- once it has been handled (`Collaborators.postCounted`).
@@ -2505,6 +2521,18 @@ def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β
             (running.jobs.table.entries.filter fun entry =>
                 entry.name != Restore.writeJob && entry.name != Restore.saveJob &&
                   !running.spawned.contains entry.id).size }
+    -- A marker or a probe the driver waits on is answered once the progress
+    -- it reads has been published: one look at the armed marker, and only
+    -- after an event that moved the count of markers.
+    if running.markers != markers then
+      let armed ←
+        reached.modifyGet fun armed =>
+            match armed with
+            | some (number, promise) =>
+              if running.markers >= number then (some promise, none) else (none, armed)
+            | none => (none, none)
+      if let some promise := armed then
+        promise.resolve ()
   -- A loop that ended for a restart tells its driver the plan.
   if let some plan := running.handOver then
     progress.modify fun progress => { progress with handOver := some plan }
@@ -2526,6 +2554,10 @@ structure Host where private mk ::
   posted : IO.Ref Nat
   /-- How far the loop has got. -/
   progress : IO.Ref Progress
+  /-- The marker the driver waits for, if it waits for one: its number, and
+  the promise the loop resolves once it has reached it and published the
+  progress after it. -/
+  reached : IO.Ref (Option (Nat × IO.Promise Unit))
   /-- The host's activity count, its idle signal: a count of its own when
   its collaborators track it (`Collaborators.tracksIdle`), and otherwise
   `Job.Activity.untracked`. -/
@@ -2567,9 +2599,10 @@ private def start {β σ : Type} {scheme : InputScheme} (collaborators : Collabo
     else
       pure collaborators
   let progress ← IO.mkRef {}
-  let thread ← IO.asTask (prio := .dedicated) (loop collaborators progress)
+  let reached ← IO.mkRef none
+  let thread ← IO.asTask (prio := .dedicated) (loop collaborators progress reached)
   return {
-      requests := collaborators.requests, posted := ← IO.mkRef 0, progress
+      requests := collaborators.requests, posted := ← IO.mkRef 0, progress, reached
       activity := collaborators.services.activity, clock := collaborators.clock, thread }
 
 /-- What a driver's wait for the editor thread came to. -/
@@ -2578,18 +2611,22 @@ inductive Wait where
   was for is over: no reload is running, for a `settle`, and no job, for a
   `join`. -/
   | settled
-  /-- The wait ran out with the editor thread up to date and a reload still
-  running. -/
+  /-- A hang: the wait reached its guard with the editor thread up to date
+  and a reload still running. -/
   | reloading
-  /-- The wait ran out with the editor thread up to date and a job still
-  running. -/
+  /-- The wait found the host idle (`Host.waitWhile`) with what it was for
+  still not over: for a `join`, a job still running that nothing left to
+  run could end. Not a hang: nothing would change however long it waited. -/
   | working
-  /-- The wait ran out before the editor thread had handled everything sent
-  to it: it is still inside an event. -/
+  /-- A hang: the wait reached its guard before the editor thread had
+  handled everything sent to it: it is still inside an event. -/
   | unanswered
   /-- The editor thread's loop has ended: a command quit the editor, or the
   window was asked to close. Nothing more will be handled. -/
   | ended
+  /-- A hang: a `join` or an `advance` reached its guard with the host not
+  idle, work still running that could end what it waits for. -/
+  | busy
   deriving DecidableEq, Repr
 
 /-- Polls `condition` until it holds; `false` if it still does not after
@@ -2603,6 +2640,34 @@ def within (patience : Nat) (condition : IO Bool) : IO Bool := do
       break
     IO.sleep 1
   return false
+
+/-- What a driver's wait says, through its `waitHung`, when it reaches its
+guard: a hang, once, never a result. `what` is the wait (`settle`, `join`,
+`advance`, or `answer` for the editor thread's answer within one), `line`
+the script's line, if it has one, and `guard` the milliseconds that ran
+out. -/
+def waitHangLine (what : String) (line : Option Nat) (guard : Nat) : String :=
+  let place :=
+    match line with
+    | some line => s!" on line {line}"
+    | none => ""
+  s!"editor: a hang: the {what}{place} had not ended within {guard} ms"
+
+/-- Whether one of `tasks` has ended within `guard` milliseconds, waited for
+on the tasks themselves: a guard against a hang, never a result
+(`Job.awaitWithin`). -/
+def awaitAnyWithin (guard : Nat) (tasks : List (Task Unit)) : IO Bool := do
+  for task in tasks do
+    if ← IO.hasFinished task then
+      return true
+  let first ← IO.Promise.new
+  -- Each map runs on the thread that ends its task, and the list holds them
+  -- for as long as the wait does.
+  let maps ← tasks.mapM fun task => BaseIO.mapTask (fun _ => first.resolve ()) task (sync := true)
+  let ended ← Job.awaitWithin guard first.result?
+  for task in maps do
+    IO.cancel task
+  return ended.isSome
 
 namespace Host
 
@@ -2648,70 +2713,145 @@ def resize (_ : Host) (width height : Nat) : IO Unit := do
     throw (IO.userError "the editor queue refused a resize: it has been quit")
 
 /-- Waits until the editor thread has handled everything sent so far and
-`busy` no longer holds of its progress, for at most `patience` milliseconds
-from its start. Says what the wait came to: `still` if it ran out with the
-editor thread up to date and `busy` still holding.
+`busy` no longer holds of its progress, and says what the wait came to.
+Every wait in it is on an event, and each is bounded only by a guard
+against a hang.
 
-The editor thread's answer, its reaching everything sent so far, is waited
-for up to `answer` milliseconds, and `unanswered` if it does not come by
-then. `busy` is then looked at until `patience` has run out, and at least
-once: so an answer later than `patience`, which only an `answer` longer than
-it allows, is followed by one look at what the wait is for. With `answer`
-equal to `patience`, its default, the wait is one window of `patience`.
+It goes in rounds. A round reads the host's activity count (`Job.Activity`),
+posts a marker (the first round's is `Signal.marker`, which publishes a scene
+as a `settle`'s and a `join`'s always have, unless `marker` is `false`, as
+an `advance`'s, which shows nothing; every later one's a `Signal.probe`,
+which publishes nothing), and waits for the loop to answer it: the loop resolves the marker's promise once it has handled everything
+posted before it and published its progress (`loop`). Then:
+
+- `busy` no longer holds: `settled`.
+- The host is **idle**: the count is 0 and its epoch has not moved since
+  the round began (`Job.Activity.Seen.idleSince`), and the fake clock, if
+  the host has one, holds no wait that is due. Nothing left can run, so
+  nothing can end what the wait is for: it answers `still`, when it has one
+  (`.working` for a `join`, and an `advance`'s stall). A wait with none, a
+  `settle`'s, keeps waiting, for what only its guard can end.
+- The count is 0 but moved during the round: another round.
+- Otherwise work is still running that could end it: the wait blocks on
+  the count's next change, or the loop's end, and then goes round again.
+
+`waitBlocked` is called each time the wait is about to block: with
+`"answer"` before the editor thread's answer, when it has not come yet,
+and with `"running work"` before a block on work still running. It is the
+event a test lets a held step go on, in place of a guard; its default does
+nothing.
+
+The editor thread's answer is guarded by `answer` milliseconds, each round,
+and the whole wait by `waitGuard`. At either guard the wait says the hang
+once, through `waitHung` (`waitHangLine`, naming the wait `what` and its
+script's `line`), and ends: `unanswered` at the answer's, and `hung` at the
+wait's (`reloading` for a `settle`, `busy` for a `join` or an `advance`).
+A guard is never a result: it fails the run as a hang.
+
+A host that keeps no count (`Job.Activity.tracked` false, the window
+mode's) is never idle: once the editor thread has answered, its wait looks
+at `busy` again as the progress changes, until `busy` no longer holds or
+the guard.
 
 A loop that has ended, or ends while the wait runs, is answered `ended` as
 soon as it is seen: its task has finished, so nothing it was waited for
-will happen, and the wait does not run out its patience. The loop's last
-progress is not read then: the loop does not publish it once it has ended,
-so it may still say a job is running. -/
-def waitWhile (host : Host) (patience : Nat) (busy : Progress → Bool) (still : Wait)
-    (answer : Nat := patience) : IO Wait := do
+will happen. The loop's last progress is not read then: the loop does not
+publish it once it has ended, so it may still say a job is running. -/
+def waitWhile (host : Host) (waitGuard : Nat) (busy : Progress → IO Bool) (still : Option Wait)
+    (hung : Wait) (what : String) (answer : Nat := waitGuard) (line : Option Nat := none)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) (marker : Bool := true) : IO Wait := do
   if ← IO.hasFinished host.thread then
     return .ended
-  let start ← IO.monoMsNow
-  let marker ← host.posted.modifyGet fun posted => (posted + 1, posted + 1)
-  host.post .marker
-  -- The marker was posted after everything sent so far: a loop that has
-  -- reached it is up to date, and what it is waiting for is what is busy.
-  discard <|
-      within answer do
-        return (← IO.hasFinished host.thread) || (← host.progress.get).markers >= marker
-  if ← IO.hasFinished host.thread then
-    return .ended
-  if (← host.progress.get).markers < marker then
-    return .unanswered
-  let settled ←
-    within (start + patience - (← IO.monoMsNow)) do
-        return (← IO.hasFinished host.thread) || !busy (← host.progress.get)
-  if ← IO.hasFinished host.thread then
-    return .ended
-  if settled then
-    return .settled
-  return if busy (← host.progress.get) then still else .settled
+  let deadline := (← IO.monoMsNow) + waitGuard
+  let thread := host.thread.map (sync := true) fun _ => ()
+  let mut first := marker
+  repeat
+    if ← IO.hasFinished host.thread then
+      return .ended
+    let before ← host.activity.seen
+    let marker ← host.posted.modifyGet fun posted => (posted + 1, posted + 1)
+    let answered ← IO.Promise.new
+    host.reached.set (some (marker, answered))
+    -- The marker was posted after everything sent so far: a loop that has
+    -- answered it is up to date, and what it is waiting for is what is busy.
+    host.post (if first then .marker else .probe)
+    first := false
+    unless ← answered.isResolved do
+      waitBlocked "answer"
+    discard <| awaitAnyWithin answer [answered.result?.map (sync := true) fun _ => (), thread]
+    if ← IO.hasFinished host.thread then
+      return .ended
+    unless ← answered.isResolved do
+      waitHung (waitHangLine s!"answer to the {what}" line answer)
+      return .unanswered
+    unless ← busy (← host.progress.get) do
+      return .settled
+    let now ← host.activity.seen
+    if host.activity.tracked then
+      let due ←
+        match host.clock with
+        | some clock =>
+          clock.dueWithin 0
+        | none =>
+          pure false
+      if before.idleSince now && !due then
+        if let some idle := still then
+          return idle
+      else if now.running == 0 then
+        -- The count moved during the round: another round says whether
+        -- the host is idle now.
+        continue
+    let remaining := deadline - (← IO.monoMsNow)
+    if remaining == 0 then
+      waitHung (waitHangLine what line waitGuard)
+      return hung
+    waitBlocked "running work"
+    if host.activity.tracked then
+      discard <| awaitAnyWithin remaining [← host.activity.changedSince now.epoch, thread]
+    else
+      -- No count to wait on: what the wait is for is looked at again as
+      -- the progress changes, until the guard.
+      discard <|
+          within remaining do
+            return (← IO.hasFinished host.thread) || !(← busy (← host.progress.get))
+  return .ended
 
 /-- Waits until the editor thread has handled everything sent so far, no
-reload is running and no restore is in flight, for at most `patience`
-milliseconds, the editor thread's answer for at most `answer`
-(`waitWhile`), and says what the wait came to. A restore holds the driver's
-requests after it, the start-up reload among them, so a wait for that
-reload waits for the restore first. -/
-def await (host : Host) (patience : Nat) (answer : Nat := patience) : IO Wait :=
-  host.waitWhile patience (fun progress => progress.reloading || progress.restoring) .reloading
-    answer
+reload is running and no restore is in flight (`waitWhile`), and says what
+the wait came to. A running reload holds a unit of the host's activity, so
+the wait ends at the reload's end, `settled`, or at its guard of
+`waitGuard` milliseconds, `reloading`, a hang. The editor thread's answer is
+guarded by `answer`. A restore holds the driver's requests after it, the
+start-up reload among them, so a wait for that reload waits for the restore
+first. -/
+def await (host : Host) (waitGuard : Nat) (answer : Nat := waitGuard) (line : Option Nat := none)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
+  host.waitWhile waitGuard (fun progress => pure (progress.reloading || progress.restoring)) none
+    .reloading "settle" answer line waitHung waitBlocked
 
 /-- Waits until the editor thread has handled everything sent so far and no
-job is running, for at most `patience` milliseconds, the editor thread's
-answer for at most `answer` (`waitWhile`), and says what the wait came to.
-A job is running from its `spawn` until the editor thread has dealt with its
-result, or has cancelled it with its owner. -/
-def join (host : Host) (patience : Nat) (answer : Nat := patience) : IO Wait :=
-  host.waitWhile patience (·.jobs > 0) .working answer
+job is running (`waitWhile`), and says what the wait came to: `settled`;
+`working` once the host is idle with a job still running, which nothing
+left to run can end, as a job asleep on a fake clock nobody moves; or
+`busy`, a hang, at its guard of `waitGuard` milliseconds. A job is running
+from its `spawn` until the editor thread has dealt with its result, or has
+cancelled it with its owner. -/
+def join (host : Host) (waitGuard : Nat) (answer : Nat := waitGuard) (line : Option Nat := none)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
+  host.waitWhile waitGuard (fun progress => pure (progress.jobs > 0)) (some .working) .busy "join"
+    answer line waitHung waitBlocked
 
 /-- Waits until the editor thread has handled everything sent so far and no
-reload is running; `false` if that takes longer than `patience`
-milliseconds, or the editor thread's answer longer than `answer`. -/
-def settle (host : Host) (patience : Nat) (answer : Nat := patience) : IO Bool :=
-  return (← host.await patience answer) == .settled
+reload is running (`await`); `false` if it did not, a hang said at its
+guard of `waitGuard` milliseconds, or the editor thread's answer's of
+`answer`. -/
+def settle (host : Host) (waitGuard : Nat) (answer : Nat := waitGuard) (line : Option Nat := none)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+  return (← host.await waitGuard answer line waitHung waitBlocked) == .settled
 
 /-- Ends the loop at once, whether a reload is running or not; `false` if it
 has not ended after `patience` milliseconds. Throws the error the loop ended
@@ -2742,8 +2882,9 @@ stuck file system, never a result. -/
 def drainPatience : Nat :=
   2000
 
-/-- How long the headless mode waits at each `settle` and each `join`, and
-for the loop to stop, in milliseconds. -/
+/-- The headless mode's guard of each `settle`, `join` and `advance`, and of
+the loop's stop, in milliseconds: only a hang reaches it, and a wait that
+does fails the run as a hang (`Host.waitWhile`). -/
 def settlePatience : Nat :=
   30000
 
@@ -2846,9 +2987,11 @@ inductive Directive where
   driver's own. -/
   | settleWithin (milliseconds : Nat)
   /-- Wait until the editor thread has handled everything asked so far and no
-  job is running, for at most this many seconds, or the driver's patience
-  (`settlePatience`) with none (`join <seconds>`, for a script that waits
-  on a package-set build). The driver's own, too. -/
+  job is running, or until the host is idle with a job still running, which
+  fails the run as `working` (`Host.join`): a hang only past this many
+  seconds, or the driver's guard (`settlePatience`) with none (`join
+  <seconds>`, for a script that waits on a package-set build). The driver's
+  own, too. -/
   | join (seconds : Option Nat := none)
   /-- Send a press of this key, with no text, as the window would. -/
   | key (key : Key)
@@ -2867,7 +3010,9 @@ inductive Directive where
   | journal
   /-- Wait until the host's fake clock holds a wait due within this many
   milliseconds, then move the clock on by them, completing every wait then
-  due. The driver's own; it sends nothing to the editor thread. -/
+  due. A host found idle with none due stalls the run (`Failure.stalled`);
+  only past the driver's guard is it a hang. The driver's own; it sends
+  nothing to the editor thread that shows: its rounds post probes. -/
   | advance (milliseconds : Nat)
   /-- Settle, then wait until the file service has worked every request
   handed to it, the session journal's orders among them. The driver's
@@ -3095,18 +3240,22 @@ def script (text : String) : Except String (Array Line) := do
   return lines
 
 /-- Why a script did not run to its end. Each carries the line of the
-`settle` or the `join` that ran out, or `none` for the wait at the end of
-the script, before the loop is stopped. -/
+`settle` or the `join` that failed, or `none` for the wait at the end of the
+script, before the loop is stopped. `reloading`, `unanswered` and `busy` are
+hangs: a wait reached its guard (`Host.waitWhile`). `working` and `stalled`
+are not: a wait found the host idle, so nothing would have changed however
+long it waited. -/
 inductive Failure where
-  /-- A wait ran out with a reload still running. -/
+  /-- A hang: a wait reached its guard with a reload still running. -/
   | reloading (line : Option Nat)
-  /-- A `join` ran out with a job still running. -/
+  /-- A `join` found the host idle with a job still running. -/
   | working (line : Option Nat)
-  /-- The editor thread did not answer: a wait ran out before it had handled
-  everything sent to it, with no line the wait at the script's end. -/
+  /-- A hang: the editor thread did not answer: a wait reached its guard
+  before it had handled everything sent to it, with no line the wait at the
+  script's end. -/
   | unanswered (line : Option Nat)
-  /-- The `advance` on `line` of `milliseconds` found no wait due within
-  them on the clock. -/
+  /-- The `advance` on `line` of `milliseconds` found the host idle with no
+  wait due within them on the clock. -/
   | stalled (line : Nat) (milliseconds : Nat)
   /-- The `advance` on `line` ran on a host whose clock is real. -/
   | noClock (line : Nat)
@@ -3121,6 +3270,10 @@ inductive Failure where
   `settle <milliseconds>`, or a `join`, `indexed` or `restarted` with its
   seconds, failed so. -/
   | waited (milliseconds : Nat) (failure : Failure)
+  /-- A hang: the `join` or `advance` on `line`, or the wait at the script's
+  end, reached its guard with the host not idle: work was still running
+  that could end what it waited for. -/
+  | busy (line : Option Nat)
   deriving DecidableEq, Repr
 
 /-- What an `advance` on a host whose clock is real says. -/
@@ -3131,25 +3284,29 @@ def advanceNeedsClock : String :=
 milliseconds, but for a wait that had its own (`waited`). -/
 def Failure.describe (patience : Nat) : Failure → String
   | .reloading (some line) =>
-    s!"the settle on line {line} of the script did not finish within {patience} ms: a reload was still running. A file or `setup` of the config is slow, or does not end"
+    s!"a hang: the settle on line {line} of the script did not finish within {patience} ms: a reload was still running. A file or `setup` of the config is slow, or does not end"
   | .reloading none =>
-    s!"the script ended, and the reload it had asked for did not finish within {patience} ms. A file or `setup` of the config is slow, or does not end"
+    s!"a hang: the script ended, and the reload it had asked for did not finish within {patience} ms. A file or `setup` of the config is slow, or does not end"
   | .working (some line) =>
-    s!"the join on line {line} of the script did not finish within {patience} ms: a job was still running. A job of the config is slow, or does not end"
+    s!"the join on line {line} of the script found the editor idle with a job still running: nothing left to run could end it. A job of the config waits on something the script does not do (a sleep on the clock no advance moves)"
   | .working none =>
-    s!"the script ended, and a job it had started did not finish within {patience} ms. A job of the config is slow, or does not end"
+    "the script ended, and found the editor idle with a job it had started still running: nothing left to run could end it. A job of the config waits on something the script does not do (a sleep on the clock no advance moves)"
   | .unanswered (some line) =>
-    s!"the settle or join on line {line} of the script did not finish within {patience} ms: the editor thread had not handled everything sent to it. It is still inside a command or another event, or it has ended"
+    s!"a hang: the settle or join on line {line} of the script did not finish within {patience} ms: the editor thread had not handled everything sent to it. It is still inside a command or another event, or it has ended"
   | .unanswered none =>
-    s!"the script ended, and the editor thread had not handled everything sent to it within {patience} ms"
+    s!"a hang: the script ended, and the editor thread had not handled everything sent to it within {patience} ms"
   | .stalled line milliseconds =>
-    s!"the advance on line {line} found no wait due within {milliseconds} ms on the clock within {patience} ms"
+    s!"the advance on line {line} found the editor idle with no wait due within {milliseconds} ms on the clock"
   | .noClock line => s!"the advance on line {line}: {advanceNeedsClock}"
   | .notRestarted line =>
     s!"the restarted on line {line} of the script found no restart within {patience} ms: the loop did not end with the session handed over"
   | .hung guard grace =>
     s!"the editor loop had not ended {grace} ms after the hang was said ({guard} ms after the script stopped it); giving up"
   | .waited milliseconds failure => failure.describe milliseconds
+  | .busy (some line) =>
+    s!"a hang: the join or advance on line {line} of the script did not finish within {patience} ms: work was still running that could end it. A job of the config is slow, or does not end"
+  | .busy none =>
+    s!"a hang: the script ended, and work it had started was still running after {patience} ms. A job of the config is slow, or does not end"
 
 /-- The failure a wait that did not settle is, at `line` of the script. -/
 def Wait.failure (line : Option Nat) : Wait → Option Failure
@@ -3158,6 +3315,7 @@ def Wait.failure (line : Option Nat) : Wait → Option Failure
   | .working => some (.working line)
   | .unanswered => some (.unanswered line)
   | .ended => none
+  | .busy => some (.busy line)
 
 /-- `failure`, of a wait whose patience of `milliseconds` ran out, as the
 run describes it with its own `patience` (`Failure.describe`): as it is
@@ -3253,8 +3411,14 @@ after its `resume`-th `restarted`, and says why it could not run to its end,
 or the plan of the restart a `restarted` found. It never stops the loop:
 the bracket it runs in does. -/
 private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (host : Host) (script : Array Line) (patience resume answer : Nat) :
+    (host : Host) (script : Array Line) (waitGuard resume answer : Nat)
+    (waitHung : String → IO Unit) (waitBlocked : String → IO Unit) :
     IO (Option Failure × Option Restart.Plan) := do
+  -- The waits of the script, each said with its line when it hangs.
+  let await (line : Nat) (guard : Nat := waitGuard) (answer : Nat := answer) : IO Wait :=
+    host.await guard answer (some line) waitHung waitBlocked
+  let join (line : Nat) (guard : Nat := waitGuard) (answer : Nat := answer) : IO Wait :=
+    host.join guard answer (some line) waitHung waitBlocked
   -- With a state directory, the session is restored first: the index a
   -- restart handed over, when there is one.
   if collaborators.stateDirectory.isSome then
@@ -3281,55 +3445,55 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
         host.resize width height
         continue
       | .settle =>
-        host.await patience answer
+        await line.number
       | .settleWithin milliseconds =>
-        -- One window of its own milliseconds, the editor thread's answer
-        -- too; its failure says how long it waited, not the run's patience.
-        let wait ← host.await milliseconds
+        -- Its own milliseconds guard it, the editor thread's answer too; its
+        -- failure says how long it waited, not the run's guard.
+        let wait ← await line.number milliseconds milliseconds
         if let some failure :=
-            wait.failureIn (some line.number) patience answer (own := some milliseconds) then
+            wait.failureIn (some line.number) waitGuard answer (own := some milliseconds) then
           return (some failure, none)
         pure wait
       | .join none =>
-        host.join patience answer
+        join line.number
       | .join (some seconds) =>
-        -- As a `settle <milliseconds>`: one window of its own seconds, the
+        -- As a `settle <milliseconds>`: its own seconds guard it, the
         -- editor thread's answer too, and its failure says how long.
         let milliseconds := seconds * 1000
-        let wait ← host.join milliseconds
+        let wait ← join line.number milliseconds milliseconds
         if let some failure :=
-            wait.failureIn (some line.number) patience answer (own := some milliseconds) then
+            wait.failureIn (some line.number) waitGuard answer (own := some milliseconds) then
           return (some failure, none)
         pure wait
       | .idle milliseconds =>
-        let wait ← host.await patience answer
+        let wait ← await line.number
         if wait == .settled then
-          collaborators.emit (← idled collaborators.render patience milliseconds)
+          collaborators.emit (← idled collaborators.render waitGuard milliseconds)
         pure wait
       | .journal =>
-        let wait ← host.await patience answer
+        let wait ← await line.number
         if wait == .settled then
-          let (said, last) ← journalSince collaborators.render patience journaled
+          let (said, last) ← journalSince collaborators.render waitGuard journaled
           journaled := last
           collaborators.emit said
         pure wait
       | .journalled =>
-        let wait ← host.await patience answer
+        let wait ← await line.number
         if wait == .settled then
-          -- The drain is a flush of the file service: bounded by `patience`
+          -- The drain is a flush of the file service: bounded by `waitGuard`
           -- only as a guard against a stuck file system.
-          let drained ← Job.awaitWithin patience (← collaborators.journal.drained)
+          let drained ← Job.awaitWithin waitGuard (← collaborators.journal.drained)
           unless drained == some true do
             return (some (.unanswered (some line.number)), none)
         pure wait
       | .indexed seconds =>
-        let wait ← host.await patience answer
+        let wait ← await line.number
         if wait == .settled then
           -- The index's write is bounded by the line's own seconds, if it
           -- gives them, and its failure then says how long it waited.
           let own := seconds.map (· * 1000)
           let written ←
-            within (own.getD patience) do
+            within (own.getD waitGuard) do
                 let progress ← host.progress.get
                 if !progress.indexing && progress.background == 0 then
                   return true
@@ -3346,7 +3510,7 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
           -- bounded by the line's own seconds only as a hang guard.
           let drained ←
             if written then
-              Job.awaitWithin (own.getD patience) (← collaborators.journal.drained)
+              Job.awaitWithin (own.getD waitGuard) (← collaborators.journal.drained)
             else
               pure none
           unless drained == some true do
@@ -3356,11 +3520,11 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
         (← IO.getStdout).flush
         IO.Process.exit abortStatus
       | .restarted seconds =>
-        -- The loop ends by itself once it has handed the session over,
-        -- within the line's own seconds if it gives them, and a failure
-        -- then says how long it waited.
+        -- The loop ends by itself once it has handed the session over: its
+        -- task is waited for, guarded by the line's own seconds if it gives
+        -- them, and a failure then says how long it waited.
         let own := seconds.map (· * 1000)
-        let ended ← within (own.getD patience) (IO.hasFinished host.thread)
+        let ended := (← Job.awaitWithin (own.getD waitGuard) host.thread).isSome
         let plan := (← host.progress.get).handOver
         match ended, plan with
         | true, some plan =>
@@ -3371,18 +3535,33 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
       | .advance milliseconds =>
         let some clock := collaborators.clock | return (some (.noClock line.number), none)
         -- Only once a wait is due within the move: so a job that is about
-        -- to sleep is in its sleep before the clock moves past it.
-        unless ← within patience (clock.dueWithin milliseconds) do
+        -- to sleep is in its sleep before the clock moves past it. A wait
+        -- already due moves it at once, with no marker; otherwise the wait
+        -- is the driver's, and the host found idle with none due is a
+        -- stall.
+        if ← clock.dueWithin milliseconds then
+          clock.advance milliseconds
+          continue
+        let wait ←
+          host.waitWhile waitGuard (fun _ => return !(← clock.dueWithin milliseconds))
+              (some .working) .busy "advance" answer (some line.number) waitHung waitBlocked
+              (marker := false)
+        match wait with
+        | .settled =>
+          clock.advance milliseconds
+          continue
+        | .working =>
           return (some (.stalled line.number milliseconds), none)
-        clock.advance milliseconds
-        continue
+        | other =>
+          pure other
     if wait == .ended then
       break
-    if let some failure := wait.failureIn (some line.number) patience answer then
+    if let some failure := wait.failureIn (some line.number) waitGuard answer then
       return (some failure, none)
   -- The end of the script: wait for a reload that is still running. The
   -- bracket the script runs in then stops the loop and waits for it to end.
-  return ((← host.await patience answer).failureIn none patience answer, none)
+  let last ← host.await waitGuard answer none waitHung waitBlocked
+  return (last.failureIn none waitGuard answer, none)
 
 /-- Runs `script` against a host of its own, in its bracket (`withHost`), as
 its driver: sends each request in order and waits at each `settle` and each
@@ -3407,34 +3586,48 @@ ended with an error has it thrown, as `Host.halt` throws it. A rejected reload i
 failure, and so is a job that fails. A job the script leaves running is
 cancelled when the loop ends.
 
-Two patiences bound the run's waits. `patience` bounds what a wait is for: a
-reload or a job ending, an `advance`'s wait coming due, a `restarted`'s
-hand-over. `answer`, `patience` unless it is given, bounds what should
-happen at once: the editor thread's answer to a wait (`Host.waitWhile`).
-The loop's end is not bounded: a loop not ended `guard` milliseconds
-(`answer` unless it is given) after the run stopped it is said through
-`hung` as a hang, once, and waited for. With `grace := none`, the default,
-the wait has no deadline; with `some grace`, which only the headless mode
-gives (`main`), a loop still running `grace` milliseconds after the hang
-was said is handed to `abandoned`, so a check can wait for it, and the run
-fails as `Failure.hung`, beside the live loop. A `settle
-<milliseconds>` or a `join <seconds>` bounds its whole wait, the answer
-too, by its own patience alone; an `indexed <seconds>` bounds the index's
-write and a `restarted <seconds>` the hand-over by theirs, in place of
-`patience`. A failure of a wait with its own patience is `waited` it. The
-headless mode passes one patience for both
-(`settlePatience`); a check gives a short `patience` to the one wait it
-means to run out, and a long `answer`; a check that holds the loop's end
-gives `guard := 0`, so that the hang, said at once, is what lets it go. -/
+Every wait of the run is on an event (`Host.waitWhile`), and two guards
+bound them, each only against a hang. `waitGuard` bounds what a wait is for:
+a reload or a job ending, an `advance`'s wait coming due, a `restarted`'s
+hand-over. `answer`, `waitGuard` unless it is given, bounds what should
+happen at once: the editor thread's answer to a wait. A `join` that finds
+the host idle with a job still running answers `working`, and an `advance`
+that finds it idle with nothing due a stall, at once: neither is a guard's
+outcome. At either guard the wait says the hang once through `waitHung`
+(`waitHangLine`), and the run fails, as `reloading`, `unanswered` or
+`busy`, each a hang. `waitBlocked` is the waits' hook for a test, called
+as a wait is about to block (`Host.waitWhile`).
+
+The wait guards are named apart from the loop's end, which `guard`,
+`hung`, `grace` and `abandoned` bound: a loop not ended `guard`
+milliseconds (`answer` unless it is given) after the run stopped it is said
+through `hung` as a hang, once, and waited for. With `grace := none`, the
+default, the wait has no deadline; with `some grace`, which the headless
+mode gives (`main`), a loop still running `grace` milliseconds after the
+hang was said is handed to `abandoned`, so a check can wait for it, and the
+run fails as `Failure.hung`, beside the live loop.
+
+A `settle <milliseconds>` or a `join <seconds>` guards its whole wait, the
+answer too, by its own milliseconds alone; an `indexed <seconds>` guards
+the index's write and a `restarted <seconds>` the hand-over by theirs, in
+place of `waitGuard`. A failure of a wait with its own guard is `waited`
+it. The headless mode passes one guard for both (`settlePatience`); a check
+passes its hang guard (`ConfigTest.hangGuard`), or, to pin a bound of the
+headless mode, a short one with a reload or the editor thread held for
+good; a check that holds the loop's end gives `guard := 0`, so that the
+hang, said at once, is what lets it go. -/
 def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (script : Array Line) (patience : Nat) (resume : Nat := 0) (answer : Nat := patience)
+    (script : Array Line) (waitGuard : Nat) (resume : Nat := 0) (answer : Nat := waitGuard)
     (guard : Nat := answer) (grace : Option Nat := none) (hung : String → IO Unit := IO.eprintln)
-    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) :
+    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ())
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) :
     IO (Option Failure × Option Restart.Plan) := do
   let ran ←
     hostedWithin collaborators
-        (fun host => runScript collaborators host script patience resume answer) guard grace hung
-        abandoned
+        (fun host =>
+          runScript collaborators host script waitGuard resume answer waitHung waitBlocked)
+        guard grace hung abandoned
   match ran with
   | some (result, ended) =>
     -- The loop's error is thrown, as `Host.halt` throws it.
@@ -3447,10 +3640,13 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
 start, with the same patiences, guard and grace, and says only why it could
 not run to its end. -/
 def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (script : Array Line) (patience : Nat) (answer : Nat := patience) (guard : Nat := answer)
+    (script : Array Line) (waitGuard : Nat) (answer : Nat := waitGuard) (guard : Nat := answer)
     (grace : Option Nat := none) (hung : String → IO Unit := IO.eprintln)
-    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) : IO (Option Failure) :=
-  (·.1) <$> runFrom collaborators script patience 0 answer guard grace hung abandoned
+    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ())
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO (Option Failure) :=
+  (·.1) <$>
+    runFrom collaborators script waitGuard 0 answer guard grace hung abandoned waitHung waitBlocked
 
 /-- Runs `script` against a host of its own, as `runFrom` does, and then, the
 host's loop having ended, removes what the collaborators left outside the
@@ -3462,12 +3658,15 @@ headless mode gives up on a hung loop (`grace := some hangGrace`,
 exits. A dispose that throws is ignored, so it neither hides the run's
 failure nor replaces it. What the headless mode runs (`main`). -/
 def runAndDispose {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (script : Array Line) (patience : Nat) (resume : Nat := 0) (answer : Nat := patience)
+    (script : Array Line) (waitGuard : Nat) (resume : Nat := 0) (answer : Nat := waitGuard)
     (guard : Nat := answer) (grace : Option Nat := none) (hung : String → IO Unit := IO.eprintln)
-    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) :
+    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ())
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) :
     IO (Option Failure × Option Restart.Plan) := do
   try
-    runFrom collaborators script patience resume answer guard grace hung abandoned
+    runFrom collaborators script waitGuard resume answer guard grace hung abandoned waitHung
+        waitBlocked
   finally
     try
       collaborators.dispose
