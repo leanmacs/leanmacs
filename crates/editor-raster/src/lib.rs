@@ -139,16 +139,33 @@ impl<R: Rasterize + ?Sized> Rasterize for Box<R> {
     }
 }
 
+/// Where Core Text's font smoothing changes, as the luminance of the text
+/// colour rises: below the first it smooths as for black, and from the
+/// last as for white. Measured on 2026-11-20 on macOS 27.2.1, by drawing
+/// the fixture font at 14 pixels through the Core Text adapter in greys
+/// from 0 to 1 in steps of 0.025, and halving the interval around each
+/// change seven times. Between two of them every grey draws the same mask.
+pub const SMOOTHING_LEVELS: [f32; 4] = [0.3886, 0.6460, 0.8124, 0.9428];
+
 /// The luminance bucket of `color`, from 0 (black) to 4 (white): its
 /// Rec. 709 luminance over the sRGB-encoded channels, `0.2126 r + 0.7152
-/// g + 0.0722 b` with each channel from 0 to 1, times 4 and rounded.
-/// Alpha is not read. Zed's rule: a rasteriser whose masks depend on the
-/// colour draws each bucket in the grey `bucket / 4`.
+/// g + 0.0722 b` with each channel from 0 to 1, as Zed computes it, and
+/// how many of Core Text's [`SMOOTHING_LEVELS`] it reaches. Alpha is not
+/// read. A rasteriser whose masks depend on the colour draws each bucket
+/// in a grey of that bucket's.
+///
+/// Zed's own rule rounds four times the luminance, so that its buckets 0
+/// and 1 draw alike in Core Text and none draws as Core Text does from
+/// 0.8124 to 0.9428, where the default theme's text is (0.869): at 14
+/// pixels that text was 5% lighter than Core Text's own.
 pub fn luminance_bucket(color: Color) -> u8 {
     let [red, green, blue, _] = color.0.to_be_bytes();
     let channel = |value: u8| f32::from(value) / 255.0;
     let luminance = 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue);
-    (4.0 * luminance + 0.5).floor().clamp(0.0, 4.0) as u8
+    SMOOTHING_LEVELS
+        .iter()
+        .filter(|level| luminance >= **level)
+        .count() as u8
 }
 
 /// One rasteriser, and a second for every glyph the first declines.

@@ -15,13 +15,26 @@ fn black_is_the_first_bucket_and_white_the_last() {
 
 #[test]
 fn a_colour_is_bucketed_by_its_encoded_luminance() {
-    // The default theme's text and ground, and mid-grey: mid-grey is 2 by
-    // its encoded value, where its linear light (0.22) would be 1.
+    // The default theme's text (0.869) and ground (0.202), and mid-grey:
+    // mid-grey (0.502) is 1 by its encoded value, where its linear light
+    // (0.216) would be 0.
     assert_eq!(luminance_bucket(Color::rgb(0xd8, 0xde, 0xe9)), 3);
-    assert_eq!(luminance_bucket(Color::rgb(0x80, 0x80, 0x80)), 2);
-    assert_eq!(luminance_bucket(Color::rgb(0x2e, 0x34, 0x40)), 1);
+    assert_eq!(luminance_bucket(Color::rgb(0x80, 0x80, 0x80)), 1);
+    assert_eq!(luminance_bucket(Color::rgb(0x2e, 0x34, 0x40)), 0);
     // Green weighs most and blue least.
     assert!(luminance_bucket(Color::rgb(0, 0xff, 0)) > luminance_bucket(Color::rgb(0, 0, 0xff)));
+}
+
+#[test]
+fn the_buckets_change_where_core_texts_smoothing_does() {
+    // A grey just below and just above each of Core Text's thresholds, in
+    // 8-bit steps: 99 and 100 (0.388, 0.392), 164 and 165 (0.643, 0.647),
+    // 207 and 208 (0.812, 0.816), 240 and 241 (0.941, 0.945).
+    for (below, above, bucket) in [(99, 100, 1), (164, 165, 2), (207, 208, 3), (240, 241, 4)] {
+        let grey = |value: u8| luminance_bucket(Color::rgb(value, value, value));
+        assert_eq!(grey(below), bucket - 1, "{below}");
+        assert_eq!(grey(above), bucket, "{above}");
+    }
 }
 
 #[test]
