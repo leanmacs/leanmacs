@@ -19,6 +19,7 @@ runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 open Editor.PackageSet
 open PackageSetTest
 open RestoreTest

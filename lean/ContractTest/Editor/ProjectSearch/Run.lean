@@ -1,18 +1,20 @@
 import ContractTest.Check
 import Editor.Api
-import Editor.Files.Compiled
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.ProjectSearch.Compiled
 import Editor.Test.Hosted
 import Editor.Test.Linked.Rig
+import FilesApiTest.Fake
 
 /-!
 # Contract tests: `Editor/ProjectSearch/Run.lean`
 
 The tests of `Editor/ProjectSearch/Run.lean` over the real bindings:
 `projectSearchChecks`, what only the library's grep service, file service and
-text store together show.
+text store together show. The files are `files-api`'s fake's (the kit's
+opener over the real file service, `FilesApiTest.fake`): project search names
+no files implementation.
 -/
 
 namespace ContractTest
@@ -20,12 +22,12 @@ namespace ContractTest
 open Editor
 open Editor.Test.Linked
 
-/-- The jobs of the project search checks: the file commands' and project
+/-- The jobs of the project search checks: `files-api`'s fake's and project
 search's, as a host registers them. -/
 def searchJobs : Array Config.JobRegistration :=
-  Files.package.registered.jobs ++ ProjectSearch.package.registered.jobs
+  rigJobs #[FilesApiTest.fake] ++ ProjectSearch.package.registered.jobs
 
-/-- The commands of the checks beside the file commands' and project
+/-- The commands of the checks beside `files-api`'s fake's and project
 search's: `insert-needle` inserts `needle ` at the start of `a.txt`'s buffer,
 unsaved; `edit-b` replaces the match of `x needle` in the results buffer's
 text with `pin`, as a change typed there over it. -/
@@ -49,11 +51,11 @@ def searchExtras : Array Config.Registration :=
           discard <| id.replaceRange at' (at' + 6) "pin" }]
 
 /-- The keys of the checks: none bound; the commands by name; the jobs
-registered; and the extension points as the files feature registers them,
+registered; and the extension points as `files-api`'s fake registers them,
 so a loaded file is taken in through its `FilesApi.Files` value. -/
 def searchKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      ((Files.package.registered.commands ++ ProjectSearch.package.registered.commands ++
+      ((rigCommands #[FilesApiTest.fake] ++ ProjectSearch.package.registered.commands ++
                 searchExtras).find?
             (·.name == name)).bind
         fun registration =>
@@ -65,7 +67,7 @@ def searchKeys : Loop.Keys TestScheme.scheme :=
         | _ => none
     registered :=
       { jobs := fun name => searchJobs.any (·.name == name)
-        extensions := (Editor.Test.hostedRegistry #[Files.package]).extensionsAt } }
+        extensions := (Editor.Test.hostedRegistry #[FilesApiTest.fake]).extensionsAt } }
 
 /-- The checks of project search over the real bindings
 (`Editor/ProjectSearch/Run.lean`), in a fresh temporary directory: a

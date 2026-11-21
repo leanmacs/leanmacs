@@ -1,7 +1,7 @@
+import Editor.Evil.Kit
 import Editor.WorkingSet.Places
 import FilesApi
 import ModelTest.Check
-import ModelTest.Support.Evil
 import ModelTest.Support.WorkingSet
 
 /-!
@@ -15,6 +15,7 @@ the loop's driver over the editor's models and the job model. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 open WorkingSetTest
 
 /-- A driver of the checks with `a.txt` open and its third line, `charlie

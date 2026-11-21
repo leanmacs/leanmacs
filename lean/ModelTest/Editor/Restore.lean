@@ -15,6 +15,7 @@ module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 open Editor.Restore
 open RestoreTest
 

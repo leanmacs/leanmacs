@@ -1,8 +1,8 @@
+import Editor.Evil.Kit
+import Editor.Test.Excerpt
 import Editor.WorkingSet.Compiled
 import FilesApi
 import ModelTest.Check
-import ModelTest.Support.Evil
-import ModelTest.Support.Excerpt
 import ModelTest.Support.WorkingSet
 import VcApiTest.Fake
 
@@ -18,6 +18,7 @@ what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 open WorkingSetTest
 
 namespace WorkingSetDiskTest

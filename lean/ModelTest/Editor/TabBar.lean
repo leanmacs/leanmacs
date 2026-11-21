@@ -18,7 +18,6 @@ import Editor.Test.Models
 import Editor.Test.States
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Evil
 import ModelTest.Support.Views
 import ModelTest.Support.Windows
 

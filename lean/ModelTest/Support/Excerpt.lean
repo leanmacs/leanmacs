@@ -12,6 +12,7 @@ import Editor.Loop.Driver
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Excerpt
 import Editor.Test.Loop
 import Editor.Text
 import Editor.Text.Contract
@@ -20,8 +21,10 @@ import ModelTest.Support.Evil
 /-!
 # Model tests: support: Excerpt
 
-The excerpt buffers' commands, registrations and driver. Shared by several test
-modules under `ModelTest/Editor/`; it holds no checks of its own.
+The excerpt buffers' commands, registrations and driver, under evil's keys.
+What a check reads of an excerpt buffer is the kit's
+(`Editor/Test/Excerpt.lean`). Shared by several test modules under
+`ModelTest/Editor/`; it holds no checks of its own.
 -/
 
 namespace ModelTest
@@ -182,16 +185,6 @@ def excerptFed (driver : EvilDriver) (events : List Event) : EvilDriver :=
 /-- The view `view` of the last scene `driver` published. -/
 def lastView (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option View := do
   (← driver.model.display.scenes.back?).views.find? (·.id == view)
-
-/-- The buffer called `name` in `driver`'s state, if there is one. -/
-def excerptBufferNamed (driver : EvilDriver) (name : String) : Option Buffer := do
-  driver.loop.state.buffer? (← driver.loop.state.findBuffer name)
-
-/-- What the text of the buffer called `name` holds in `driver`'s text model,
-read as a command reads it, so an excerpt text is caught up. -/
-def excerptRead (driver : EvilDriver) (name : String) : Option String := do
-  let buffer ← excerptBufferNamed driver name
-  (buffer.text.read.runModel driver.model.texts).1.toOption
 
 /-- A driver of the excerpt buffer checks: evil's keys and the commands of
 `excerptRegistrations`, over an empty buffer, once `make-ex` has run, so

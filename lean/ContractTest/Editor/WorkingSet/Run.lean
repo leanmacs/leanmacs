@@ -3,10 +3,10 @@ import Editor.Api
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Jumps
-import Editor.ProjectSearch.Compiled
+import Editor.Test.Excerpt
 import Editor.Test.Linked.Rig
+import Editor.Test.Workspace
 import Editor.WorkingSet.Compiled
-import Editor.Workspace.Kit
 import FilesApiTest.Fake
 import VcApiTest.Fake
 import VcApiTest.Linked.Repositories
@@ -16,8 +16,13 @@ import VcApiTest.Linked.Repositories
 
 The tests of the working sets over the real bindings: `workingSetChecks`, both
 acceptance criteria of navigation-and-windows phase 5 with the library's file
-service, text store and fuzzy matcher and real git, which finds the
-workspace, through a restart. The commit a set is written with comes from
+service, text store and fuzzy matcher and real git, through a restart. The
+workspace is the core kit's stand-in for the finder's answer over the
+checks' repository (`Test.checkoutFound`, at `FilesApi.Opened`), and a
+search's results the kit's excerpt buffer (`Test.excerptFiles`): the working
+set names no other feature. That a range is added from project search's
+results is held by the default set's fixture
+`tests/headless/working-set-from-search`. The commit a set is written with comes from
 the version-control interface, through `vc-api`'s fake backend
 (`VcApiTest.backend`): the working set names no version-control
 implementation.
@@ -36,16 +41,13 @@ set reaches only through that interface. -/
 def fakeHead : String :=
   "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00"
 
-/-- The jobs of the working set checks: the file commands', the workspace
-finder's, project search's and the working sets', as a host registers
+/-- The jobs of the working set checks: the file commands' and the working
+sets', as a host registers
 them, each made as a host makes it (`JobRegistration.workWith`) with
 `vc-api`'s fake backend over a repository at `fakeHead` registered, so the
 write asks it for the commit. -/
 def workingSetJobs : Array Config.JobRegistration :=
-  (rigJobs #[FilesApiTest.fake, Test.workspaceFinderPackage] ++
-        ProjectSearch.package.registered.jobs ++
-        WorkingSet.package.registered.jobs).map
-    fun job =>
+  (rigJobs #[FilesApiTest.fake] ++ WorkingSet.package.registered.jobs).map fun job =>
     { job with
       work :=
         job.workWith
@@ -77,13 +79,15 @@ def workingSetExtras : Array Config.Registration :=
                   { selection with
                     ranges := #[⟨start, stop⟩], primary := 0 } }]
 
-/-- The keys of the checks: none bound; the commands by name; the jobs
-registered; the hooks of `files-api` as the packages register them. -/
-def workingSetKeys : Loop.Keys TestScheme.scheme :=
+/-- The keys of the checks in the repository `repository`: none bound; the
+commands by name, the kit's stand-in for a search's results among them
+(`Test.excerptFilesRegistration`); the jobs registered; the hooks of
+`files-api` as the packages register them. -/
+def workingSetKeys (repository : System.FilePath) : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      ((rigCommands #[FilesApiTest.fake] ++ ProjectSearch.package.registered.commands ++
-                WorkingSet.package.registered.commands ++
-                workingSetExtras).find?
+      ((rigCommands #[FilesApiTest.fake] ++ WorkingSet.package.registered.commands ++
+                workingSetExtras ++
+                #[Test.excerptFilesRegistration]).find?
             (·.name == name)).bind
         fun registration =>
         match registration.action with
@@ -95,11 +99,12 @@ def workingSetKeys : Loop.Keys TestScheme.scheme :=
     registered :=
       { jobs := fun name => workingSetJobs.any (·.name == name)
         -- The hooks the files implementation runs, as a host's registry holds
-        -- them: the workspace's attach (the kit's package of the workspace's
-        -- finding) and the working sets' own; and the fake's `Files` value.
+        -- them: the stand-in for the workspace's attach (the checkout of
+        -- `repository`) and the working sets' own; and the fake's `Files`
+        -- value.
         extensions :=
           (rigKeys
-              #[FilesApiTest.fake, Test.workspaceFinderPackage,
+              #[FilesApiTest.fake, Test.attachByPackage (Test.checkoutFound repository),
                 WorkingSet.package]).registered.extensions } }
 
 /-- `a.txt` of the checks: r1, a 40-byte line, on its second row; r2, a
@@ -114,8 +119,9 @@ def workingSetEdited : String :=
   "line one\nlet configuration = load_setting5(path);\nnew one\nnew two\nnew three\nblock start alpha\nblock middle beta\nblock end gamma\nlast line\n"
 
 /-- The loop of a host started fresh, with `state` as its state directory
-and `base` as its working directory, once each of `invocations` has run and
-settled. -/
+and `base` as its working directory, the repository whose checkout each
+file's workspace is (`workingSetKeys`), once each of `invocations` has run
+and settled. -/
 def runHost (rig : ProjectRig) (base state : System.FilePath) (invocations : List Invocation) :
     IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   let begin : EditorM (Loop TestScheme.scheme) := do
@@ -123,7 +129,7 @@ def runHost (rig : ProjectRig) (base state : System.FilePath) (invocations : Lis
     return { loop with state := loop.state.hostedBy base none (some state) }
   let (started, texts) ← begin.runReal (RealTexts.over rig.published) rig.display
   let .ok loop := started | return none
-  runSettledFrom rig loop texts invocations workingSetKeys workingSetJobs
+  runSettledFrom rig loop texts invocations (workingSetKeys base) workingSetJobs
 
 /-- The name of the first buffer of `loop` whose name starts with `lead`. -/
 def bufferStarting (loop : Loop TestScheme.scheme) (lead : String) : Option String :=
@@ -144,7 +150,7 @@ def invoking (command : String) (arguments : List Argument := []) : Invocation :
 and a state directory of their own, both temporary. -/
 def workingSetChecks (services : Job.Services) : List Check :=
   [{  name :=
-        "criteria 1 and 2 over the real bindings and real git: a.txt's rows and a row of project search's results are added and open as the files' rows; the store on disk carries HEAD's id as the version-control backend, vc-api's fake, answers it; a second host over the same state directory, a.txt rewritten outside the editor, opens demo as r1 changed, r2 moved and r3 drifted"
+        "criteria 1 and 2 over the real bindings and real git: a.txt's rows and a row of a search's results (the kit's stand-in, an excerpt buffer of b.txt) are added and open as the files' rows; the store on disk carries HEAD's id as the version-control backend, vc-api's fake, answers it; a second host over the same state directory, a.txt rewritten outside the editor, opens demo as r1 changed, r2 moved and r3 drifted"
       run := do
         withRepository fun home repository => do
             let state := (home.parent.getD home) / "state"
@@ -159,8 +165,8 @@ def workingSetChecks (services : Job.Services) : List Check :=
                     invoking WorkingSet.addName [.str "demo"],
                     invoking "select-rows" [.nat 2, .nat 4],
                     invoking WorkingSet.addName [.str "demo"], invoking "goto-row" [.nat 5],
-                    invoking WorkingSet.addName [.str "demo"],
-                    invoking ProjectSearch.name [.str "needle"], invoking "goto-row" [.nat 1],
+                    invoking WorkingSet.addName [.str "demo"], openFile (repository / "b.txt"),
+                    invoking Test.excerptFilesName [.str "b.txt"], invoking "goto-row" [.nat 1],
                     invoking WorkingSet.addName [.str "pins"],
                     invoking WorkingSet.openName [.str "pins"]] | return false
             let some pins := bufferStarting added "*working-set: pins in " | return false

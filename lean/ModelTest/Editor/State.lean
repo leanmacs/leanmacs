@@ -55,7 +55,6 @@ import Editor.UndoTree
 import Editor.Value
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
 import ModelTest.Support.Frame
 import ModelTest.Support.Listings

@@ -1,8 +1,7 @@
-import Editor.ProjectSearch.Run
+import Editor.Evil.Kit
+import Editor.Test.Excerpt
 import Editor.WorkingSet.Compiled
 import ModelTest.Check
-import ModelTest.Support.Evil
-import ModelTest.Support.Excerpt
 import ModelTest.Support.WorkingSet
 
 /-!
@@ -16,6 +15,7 @@ root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 open WorkingSetTest
 
 namespace WorkingSetRunTest
@@ -55,10 +55,13 @@ linewise and added to `demo`, the selection still there. -/
 def addedDemo (driver : EvilDriver) : EvilDriver :=
   ran (evilFed driver "j V j") WorkingSet.addName [.str "demo"]
 
-/-- `driver` once a search of `needle` has run and settled, its results
-shown. -/
+/-- `driver` once `b.txt` and `c.txt`, each holding a match of `needle`, are
+open and the kit's stand-in for a project search's results is shown: an
+excerpt buffer of the two files' texts, `b.txt`'s first
+(`Editor.Test.excerptFiles`), its cursor at its start, as a search of
+`needle` shows its results. -/
 def searched (driver : EvilDriver) : EvilDriver :=
-  ran driver ProjectSearch.name [.str "needle"]
+  ran (opened (opened driver "b.txt") "c.txt") excerptFilesName [.str "b.txt", .str "c.txt"]
 
 end WorkingSetRunTest
 
@@ -102,7 +105,7 @@ def workingSetRunChecks : List Check :=
                 "alpha one\n|xbravo two\ncharlie three\ndelta four\necho five\nfoxtrot six\n" &&
               shown back == some (setBuffer "demo") },
     { name :=
-        "criterion 1 (b): a row of project search's results added to pins records b.txt's range and line, not the results', and working-set-open pins shows that row of b.txt under b.txt:3"
+        "criterion 1 (b): a row of a search's results (the kit's stand-in, an excerpt buffer of b.txt and c.txt) added to pins records b.txt's range and line, not the results', and working-set-open pins shows that row of b.txt under b.txt:3"
       run :=
         pure <|
           match withA with

@@ -5,7 +5,6 @@ import Editor.Test.Config
 import Editor.Text
 import ModelTest.Check
 import ModelTest.Editor.ExcerptView
-import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
 
 /-!

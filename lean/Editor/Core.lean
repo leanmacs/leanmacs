@@ -9,7 +9,7 @@ import Editor.Completion.StyleContract
 import Editor.Config.Elaborator.Contract
 import Editor.Config.Elaborator.Model
 import Editor.Display.Contract
-import Editor.Evil.Compiled
+import Editor.Evil.Kit
 import Editor.Evil.Theorems
 import Editor.Ex.Compiled
 import Editor.Files.Kit
@@ -22,7 +22,7 @@ import Editor.ProjectSearch.Compiled
 import Editor.Restore.Compiled
 import Editor.Shell.Kit
 import Editor.TabCommands.Compiled
-import Editor.Test.AtPoint
+import Editor.Test.Excerpt
 import Editor.Test.Hosted
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines

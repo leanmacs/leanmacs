@@ -16,7 +16,6 @@ import Editor.WindowCommands.Compiled
 import FilesApi
 import FilesApiTest.Fake
 import ModelTest.Check
-import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
 
 /-!
@@ -31,6 +30,7 @@ shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 namespace ProjectSearchTest
 

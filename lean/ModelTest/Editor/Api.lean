@@ -38,7 +38,6 @@ import Editor.Watch.Model
 import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.Candidates
-import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
 
 /-!

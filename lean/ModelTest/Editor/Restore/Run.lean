@@ -22,6 +22,7 @@ workspace's attach), and name no module of a feature.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 open Editor.Restore
 open RestoreTest
 open JournalReconcileTest

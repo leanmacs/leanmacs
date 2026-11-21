@@ -23,6 +23,7 @@ holds no checks of its own.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- `count` lines of two digits each, `00`, `01` and so on, joined by line
 feeds, and then `ending`. -/

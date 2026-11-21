@@ -12,6 +12,7 @@ The model tests of `Editor/Evil/Jumps.lean`: `evilJumpChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The text of the jump list checks scaled from `:help jumplist`: eight
 lines, each its own number, the cursor on line 1. -/

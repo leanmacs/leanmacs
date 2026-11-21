@@ -24,18 +24,10 @@ standing in for the workspace finder's answer over real git in the
 repository `main` (`withRepository`): under `main`, its main checkout on
 `main`; under `feature` beside it, the linked worktree the checks add on
 `feature`; both of the project whose common directory is `main`'s `.git`,
-with no origin (`Workspace.Found.ofGit`, the core's, as the finder's git
-adapter answers); anywhere else, none. -/
+with no origin (`Test.checkoutFound`); anywhere else, none. -/
 def repositoryFound (main directory : System.FilePath) : Option Workspace.Found :=
-  let linked := main.parent.getD main / "feature"
-  let commonDir := main / ".git"
-  if Workspace.holds main directory then
-    some (Workspace.Found.ofGit { toplevel := main, commonDir, branch := .named "main" } none)
-  else
-    if Workspace.holds linked directory then
-      some
-        (Workspace.Found.ofGit { toplevel := linked, commonDir, branch := .named "feature" } none)
-    else none
+  Test.checkoutFound main (directory := directory) <|>
+    Test.checkoutFound (main.parent.getD main / "feature") "feature" (main / ".git") directory
 
 /-- The packages the status buffer checks in the repository `main` stand on
 beside version control: `files-api`'s fake (the kit's opener over the real

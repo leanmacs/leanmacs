@@ -142,6 +142,20 @@ def attachByPackage (answer : System.FilePath → Option Workspace.Found) : Pack
   { name := "test-workspace"
     setup := Extension.add ({ name := "workspace", opened := attachBy answer } : FilesApi.Opened) }
 
+/-- The workspace a directory is in when it is under `root`, a checkout of
+`branch`, `main` by default, whose common directory is `commonDir`,
+`root`'s `.git` by default, with no origin, standing in for the workspace
+finder's answer over real git (`Workspace.Found.ofGit`, the core's, as the
+finder's git adapter answers); none for a directory not under `root`. A
+linked test that makes its repository in a temporary directory answers with
+it. -/
+def checkoutFound (root : System.FilePath) (branch : String := "main")
+    (commonDir : System.FilePath := root / ".git") (directory : System.FilePath) :
+    Option Workspace.Found :=
+  if Workspace.holds root directory then
+    some (Workspace.Found.ofGit { toplevel := root, commonDir, branch := .named branch } none)
+  else none
+
 /-- Gives the buffer `id` of the file at `path` the workspace `openFound`
 answers for the file's directory (`attachBy`). -/
 def openAttach (id : BufferId) (path : System.FilePath) : EditorM Unit :=

@@ -13,7 +13,6 @@ import Editor.Scroll
 import Editor.State
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
 import ModelTest.Support.Views
 
@@ -27,6 +26,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The header blocks `ex` of `excerptRegistrations` has, its headers `one`
 and `two` before its excerpts' starts `first` and `second`. -/

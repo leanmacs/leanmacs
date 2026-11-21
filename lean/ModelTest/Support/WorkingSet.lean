@@ -1,30 +1,33 @@
 import BuffersApiTest.Fake
 import Editor.Api
+import Editor.Evil.Kit
 import Editor.File.Model
-import Editor.InputScheme.Vim.Default
 import Editor.Job.Model
 import Editor.Loop.Driver
-import Editor.ProjectSearch.Compiled
 import Editor.State
+import Editor.Test.Excerpt
 import Editor.Test.Hosted
 import Editor.Test.Loop
+import Editor.Test.Workspace
 import Editor.WorkingSet.Compiled
 import Editor.WorkingSet.Places
-import Editor.Workspace.Kit
 import FilesApiTest.Fake
-import ModelTest.Support.Evil
 import VcApiTest.Fake
 
 /-!
 # Model tests: support: WorkingSet
 
 The working set checks' world, commands, keys and driver: evil's keys over
-the editor's models, the job model with the workspace finder's git at `/r`
-(`workspaceWorld`), the files of the checks under `/r`, and the commands and
-jobs of `files-api`'s fake, the buffer commands, project search and whatever
-working set commands a check hands in; a file's open attaches its workspace
-through the kit's stand-in at the hook `FilesApi.Opened` (`worldAttachPackage`),
-and the working sets' own hooks are registered. Shared by the
+the editor's models (evil's kit, `Editor/Evil/Kit.lean`), the job model with
+the files of the checks under `/r`, and the commands and jobs of
+`files-api`'s fake, the buffer commands, the kit's stand-in for a project
+search's results (`Editor.Test.excerptFiles`, `Editor/Test/Excerpt.lean`) and
+whatever working set commands a check hands in; a file's open attaches its
+workspace through the kit's stand-in at the hook `FilesApi.Opened`
+(`openAttachPackage`: `/r` is the main checkout on `main`), and the working
+sets' own hooks are registered. No project search: that a range is added from
+its results is held by the default set's fixture
+`tests/headless/working-set-from-search`. Shared by the
 test modules of `Editor/WorkingSet/`; it holds no checks of its own.
 -/
 
@@ -80,27 +83,25 @@ def holdCommand (call : Call) : EditorM Unit := do
 
 /-- The commands every driver of the checks has: `files-api`'s fake's (the
 kit's opener, `FilesApiTest.fake`), `buffers-api`'s fake's
-(`BuffersApiTest.fake`), project search's,
-and `ws-hold` (`holdCommand`). -/
+(`BuffersApiTest.fake`), the kit's stand-in for a project search's results
+(`excerptFilesRegistration`), and `ws-hold` (`holdCommand`). -/
 def baseCommands : Array Config.Registration :=
   FilesApiTest.fake.registered.commands ++ BuffersApiTest.fake.registered.commands ++
-    ProjectSearch.package.registered.commands ++
-    #[{ name := "ws-hold", action := .call holdCommand }]
+    #[excerptFilesRegistration, { name := "ws-hold", action := .call holdCommand }]
 
 /-- What the checks' extension points hold: the workspace's stand-in at
-`FilesApi.Opened` (`worldAttachPackage`, the finder's model of `workspaceWorld`),
+`FilesApi.Opened` (`openAttachPackage`, the core kit's answer for `/r`),
 the fake's `FilesApi.Files` value, and the working sets' own hooks, in that
 order, as a host registers the workspace before the working sets. -/
 def hooks : Array Package :=
-  #[worldAttachPackage, FilesApiTest.fake, BuffersApiTest.fake, WorkingSet.package]
+  #[openAttachPackage, FilesApiTest.fake, BuffersApiTest.fake, WorkingSet.package]
 
-/-- Evil's keys with `commands` after the base ones, and `modes`, project
-search's among them, as a host's registry holds them, and the extension
-points `hooks` register. -/
+/-- Evil's keys with `commands` after the base ones, and `modes`, as a host's
+registry holds them, and the extension points `hooks` register. -/
 def keysWith (commands : Array Config.Registration) (modes : Array Mode) :
     Loop.Keys Vim.Default.scheme :=
   let handed := evilHanded (baseCommands ++ commands)
-  let all := ProjectSearch.package.registered.modes ++ modes
+  let all := modes
   let registry := ({} : Config.Registry).replaceModes .compiled all
   { handed with
     maps := fun state view =>
@@ -114,20 +115,17 @@ def keysWith (commands : Array Config.Registration) (modes : Array Mode) :
 comes before one of theirs of its name. -/
 def jobsWith (more : Array Config.JobRegistration) (name : String) :
     Option (List Argument → Work) :=
-  ((more ++ FilesApiTest.fake.registered.jobs ++ ProjectSearch.package.registered.jobs).find?
-        (·.name == name)).map
+  ((more ++ FilesApiTest.fake.registered.jobs).find? (·.name == name)).map
     (·.workWith (VcApiTest.backendValues #[]))
 
 /-- A driver of the checks: evil's keys over an empty scratch buffer, with
-`commands`, `modes` and `jobs` handed in, whose jobs meet the workspace
-finder's world at `/r` and the files of the checks (`disk`); `none` if
-making the state was refused. -/
+`commands`, `modes` and `jobs` handed in, whose jobs meet the files of the
+checks (`disk`); `none` if making the state was refused. -/
 def driverWith (commands : Array Config.Registration := #[]) (modes : Array Mode := #[])
     (jobs : Array Config.JobRegistration := #[]) : Option EvilDriver :=
   (evilDriver "|" (keysWith commands modes)).map fun driver =>
-    let model := workspaceWorld.jobModel "git" #[root]
     { driver with
-      registered := jobsWith jobs, jobs := { model with files := disk model.files } }
+      registered := jobsWith jobs, jobs := { files := disk {} } }
 
 /-- `driver` once `command` is invoked with `arguments`. -/
 def invoked (driver : EvilDriver) (command : String) (arguments : List Argument := []) :

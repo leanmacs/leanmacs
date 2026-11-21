@@ -22,7 +22,6 @@ import Editor.TabCommands
 import Editor.Test.Completion
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Evil
 import ModelTest.Support.Windows
 
 /-!
