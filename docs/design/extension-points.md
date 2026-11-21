@@ -10,8 +10,13 @@ imports check (`tools/layer-imports-check.sh`, over the facet
 elaborated at runtime registers at a compiled package's extension point
 (`config-test`); and the decision on reaches by name ("Reaches by name",
 below), with its first contract check in the fixture interface package
-`greeting-api`. No feature is on the mechanism yet: the roadmap's later
-phases move them out on it.
+`greeting-api`. The roadmap's later phases move features out on it. Its
+phase 5 added the jobs over an extension point ("To a job") and the first
+four interfaces staged in the core's Lake package (`files-api`,
+`buffers-api`, `project-api`, `vc-api`; [packages.md](packages.md), "The
+interface libraries of the features-as-packages roadmap's phase 5"), with
+the first hooks a feature still in the core runs: `FilesApi.Opened`,
+`FilesApi.Saved` and `BuffersApi.Closing`.
 
 This document says how one package uses what another provides without
 importing it, so that any feature moved out of the core can be written again
@@ -462,9 +467,29 @@ and it is not routed through an extension point.**
   reaches the name through the constant and tests against the fake; and
   greeting-api's own tests pin the check's failure case, a package that
   lacks the name or misspells it. Each feature's interface package builds
-  its own as the feature moves (phases 3 to 8).
+  its own as the feature moves (phases 3 to 8). Phase 5 staged four more,
+  as libraries of the core's Lake package, for the five features of the
+  files cluster, which stay in the core until phase 6: `files-api`
+  (`FilesApi.openFileName`, the core's `FileJobs.openFileCommand`,
+  `saveName`, `editName`, `reloadName`, `autoReloadName`, and the jobs
+  `checkJob` and `followJob`, the core's), `buffers-api`
+  (`BuffersApi.switchName`, `listName`, `closeName`), `project-api`
+  (`ProjectApi.findFileInWorkspaceName`, `findFileInProjectName`, and the
+  job `compileListJob`, the core's `Compile.listJob`) and `vc-api`
+  (`VcApi.gutterJobs`, the core's gutter job names, and
+  `reviewSegmentName`). Each publishes a fake and a contract check that
+  holds the implementation to the names and to what its extension points
+  do. Working-set's two reached names (`working-set-add`,
+  `working-set-open`) get their interface when working-set moves.
 
 ## Open questions
+
+- **A second version-control backend's program.** `VcApi.Backend.connect`
+  is handed the workspace settings' `git`: a jj backend would need a
+  setting of its own. And the workspace finder runs git itself
+  (`Workspace.Finder`, through the core's `Workspace.Git`), so a jj
+  checkout is found only by config's roots or by markers. Neither is
+  changed by phase 5 ([version-control.md](version-control.md)).
 
 - **Order within a hook.** Values come in registration order, which is
   dependency order between Lake packages. Emacs lets a hook function ask to

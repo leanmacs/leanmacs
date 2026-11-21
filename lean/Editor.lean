@@ -226,13 +226,15 @@ which codebase and which checkout a buffer belongs to, as plain values,
 and the finder that answers a directory's workspace through config, git
 and marker files (`Editor/Workspace/Finder.lean`, `Workspace.find`), a job
 like any other. A buffer's workspace is attached when its file opens
-(`Editor/Workspace/Attach.lean`, which comes with the file commands and
-brings the data and the finder with it), and
-`workspace-current` says it; their registrations
-(`Editor/Workspace/Compiled.lean`) name the registry and are not
-imported. A buffer is given the minor modes its markers turn on when its
-file opens (`Editor/Workspace/Modes.lean`, which comes with the attach).
-Its model and its contract
+(`Editor/Workspace/Attach.lean`, which brings the data and the finder with
+it), at the files interface's hook `FilesApi.Opened` (`FilesApi.lean`), so
+the file commands name no workspace module, and `workspace-current` says
+it. Another feature reaches a workspace through the project interface
+(`ProjectApi.lean`, `ProjectApi.Workspaces`), which the workspace package
+answers. Their registrations (`Editor/Workspace/Compiled.lean`) name the
+registry and are not imported. A buffer is given the minor modes its
+markers turn on when its file opens (`Editor/Workspace/Modes.lean`, which
+comes with the attach). Its model and its contract
 (`Editor/Workspace/Model.lean`, `Editor/Workspace/Contract.lean`) are for
 tests, and are not imported.
 
@@ -255,18 +257,19 @@ module and then the entry module of each package of the set
 (`Editor/Main.lean`, "The base"); an editor built from a set without that
 package elaborates config on this module alone.
 
-Version control is here too (`Editor/VersionControl.lean`): the interface
-a version-control system answers, in the editor's own terms, with its git
-implementation (`Editor/VersionControl/Git.lean`), which runs git as jobs,
-and the status buffer, `vc-status`, which shows a workspace's changed files
-and stages and unstages them (`Editor/VersionControl/Status.lean`, which
-brings the interface and git with it); staging and unstaging the hunk on
-the cursor's line (`Editor/VersionControl/Stage.lean`); and the message
-buffer, `vc-commit`, which commits (`Editor/VersionControl/Commit.lean`). Its registrations
+Version control is here too. The interface a version-control system
+answers, in the editor's own terms, is its own library (`VcApi.lean`), with
+the backend a package registers (`VcApi.Backend`); git's implementation
+(`Editor/VersionControl/Git.lean`) runs git as jobs. With them come the
+status buffer, `vc-status`, which shows a workspace's changed files and
+stages and unstages them (`Editor/VersionControl/Status.lean`, which brings
+the interface and git with it); staging and unstaging the hunk on the
+cursor's line (`Editor/VersionControl/Stage.lean`); and the message buffer,
+`vc-commit`, which commits (`Editor/VersionControl/Commit.lean`). Its registrations
 (`Editor/VersionControl/Compiled.lean`) name the registry and are not
-imported. Its model and its contract (`Editor/VersionControl/Model.lean`,
-`Editor/VersionControl/Contract.lean`) are for tests, and are not
-imported.
+imported. The interface's fake and its contract (`VcApiTest/Fake.lean`,
+`VcApiTest/Contract.lean`) are for tests, and are not imported; git's half
+of the model (`Editor/VersionControl/Git/Model.lean`) comes with the core.
 
 Extension points are here too (`Editor/Extension.lean`): config registers
 a value at a package's extension point with `Extension.add`, as a package

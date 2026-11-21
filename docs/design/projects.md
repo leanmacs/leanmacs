@@ -280,8 +280,14 @@ finder into this picker with the typed text is phase 4's (below).
 
 `vc-worktrees-visit` and `find-file-in-project` both name a worktree the
 table may not know yet and then act on its workspace. The shared part is
-the workspace layer's (`Editor/Workspace/Reach.lean`); each command
-supplies only a continuation: what it does with the workspace's location,
+the workspace layer's (`Editor/Workspace/Reach.lean`), and since the
+features-as-packages roadmap's phase 5 a caller in another feature reaches
+it through the interface library `project-api` (`lean/ProjectApi.lean`):
+the order and the continuation are the interface's types, and the
+workspace package registers its `reach` and `work` as the
+`ProjectApi.Workspaces` value, which `vc-worktrees-visit` reaches through
+`ProjectApi.workspaces?` and registers its find job over
+(`Extension.workJob`). Each command supplies only a continuation: what it does with the workspace's location,
 the job name its find runs under, the name a refused start is said under,
 and its sentence for a directory in no repository.
 
@@ -337,8 +343,10 @@ list matched against it. Built by project navigation's phase 4
 
 ## A buffer's workspace
 
-- **On open.** When a file opens into a buffer (`Files.opened`), the buffer
-  is handed to `Workspace.attach`. The finder's answer for the file's
+- **On open.** When a file opens into a buffer (`Files.opened`), the files
+  feature runs the interface library `files-api`'s hook `FilesApi.Opened`,
+  where the workspace package registers `Workspace.attach`, so the buffer is
+  handed to it and files names no workspace module. The finder's answer for the file's
   directory is cached in the editor state, stamped with the config
   generation it was found under; a cached answer under the current
   generation is the buffer's at once and starts no job, so a second file of

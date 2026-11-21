@@ -12,15 +12,22 @@ parsed output, run as a job over the process service
 Git is one implementation of a small interface in the editor's own terms,
 so jj, or an in-process library, is another.
 
-Built in `lean/Editor/VersionControl.lean` (the interface),
+Built in `lean/VcApi.lean` (the interface: the interface library
+`vc-api`, staged in the core's Lake package by the features-as-packages
+roadmap's phase 5, which moves to `packages/vc-api/` with version control
+in phase 6; it holds the port, its hunk helpers, the backend point
+`VcApi.Backend` and the names others reach),
 `lean/Editor/VersionControl/Porcelain.lean` (the reader of git's status),
 `lean/Editor/VersionControl/Plumbing.lean` (the readers of its worktree
 list, branches, raw diff and blobs),
 `lean/Editor/VersionControl/HistoryRead.lean` (the readers of its log,
 blame and range-diff),
 `lean/Editor/VersionControl/Git.lean` (the git implementation),
-`lean/Editor/VersionControl/Model.lean` and
-`lean/Editor/VersionControl/Contract.lean` (its model and its contract),
+`lean/VcApiTest/Fake.lean` and `lean/VcApiTest/Contract.lean` (the
+interface's model, its fake, and its contract, with
+`VcApiTest.registrationChecks`),
+`lean/Editor/VersionControl/Git/Model.lean` (git's half of the model: what
+git prints of it, and the job model that answers git's command lines),
 `lean/Editor/VersionControl/Status.lean` (the status buffer),
 `lean/Editor/VersionControl/Show.lean` (`vc-show`),
 `lean/Editor/VersionControl/Gutter.lean` (the gutter),
@@ -34,7 +41,21 @@ blame and range-diff),
 `lean/Editor/VersionControl/Blame.lean` (the blame view),
 `lean/Editor/VersionControl/Views.lean` (what those buffers share: a day,
 the cursor's row, making a read-only buffer and showing it) and
-`lean/Editor/VersionControl/Compiled.lean` (their registrations).
+`lean/Editor/VersionControl/Compiled.lean` (their registrations, the backend
+`git` among them); the gutter's reconciler and its jobs' names and orders
+are the core's, `lean/Editor/Gutter/Track.lean`.
+
+**The backend point.** `VcApi.Backend { name; connect }` is how a feature
+that is not version control reaches a repository: working-set's write asks
+for `HEAD`'s commit and find-in-project for the worktrees, each from a job
+registered over the point (`Extension.workJob`), through the latest
+backend registered (`VcApi.connect?`), so config's replaces version
+control's; with none each takes the case "no repository". Version control
+registers `{ name := "git", connect := Git.handler }`. Open, and not
+changed by phase 5: the program a consumer passes `connect` is the
+workspace settings' `git`, so a second backend (jj) would need a setting
+of its own; and the workspace finder runs git itself, so a jj checkout is
+found only by config's roots or by markers.
 
 ## The interface
 
@@ -652,7 +673,9 @@ editor with git integration does.
   changed `~` in `diff.changed`, and lines removed an empty `-` in
   `diff.removed` at the start of the line after them; glyphs that read on
   a grid of cells.
-- **The reconciler** runs after each publish, beside auto-reload's, and
+- **The reconciler** (the core's `Gutter.reconcile`,
+  `lean/Editor/Gutter/Track.lean`, which names the three jobs version
+  control registers) runs after each publish, beside auto-reload's, and
   is pure but for the text port, where it takes the diffs' snapshots: it
   keeps the tracked buffers and the watched repositories in step with what
   is wanted, starts the fetches, the diffs and the watches, and for a

@@ -1698,7 +1698,10 @@ interface packages import the core alone.
   `Config.State.ofPackages`), the theme picture check
   (`Editor.Themes.Picture`), and the core's model test kit, `Editor.Test`
   and every module under it but `Editor.Test.Linked`: the support the
-  core's own model tests are written on (`Editor.Test.…`, 18 modules). A
+  core's own model tests are written on (`Editor.Test.…`, 20 modules); and
+  a feature's test kit still in the core (`Editor.….Kit`, such as
+  `Editor.Files.Kit`, the drivers of the real file commands), which moves
+  into that feature's test library when the feature moves out. A
   package's tests are the modules under `<P>Test`.
 - **A package's linked test may also import the linked test kit, and only
   it**: `Editor.Test.Linked` and every module under it (4 modules), the
@@ -2119,6 +2122,64 @@ cut none. What replaced each edge is an interface the core owns.
   core's vocabulary holds, and no core module imports it for them. No edge
   was cut here; they stayed in the core's vocabulary when the mode moved.
 
+## The interface libraries of the features-as-packages roadmap's phase 5
+
+Five features still in the core, `files`, `buffers`, `working-set`,
+`workspace` and `version-control`, imported each other's modules, and the
+loop imported two of them, `files` and `version-control`. Phase 5 cut
+those imports, so that phase 6 can move the five out and cut none. What
+replaced each import is an interface, staged as a library of the core's
+Lake package (`lean/lakefile.lean`): it has the layout it will keep as an
+interface package of its own, a root module that declares and a test
+library that publishes a fake and a contract check, and the core's bundle
+ships it beside `Editor` (`stagedInterfaceLibraries`). Its module is
+outside `lean/Editor/`, so no row of the module map counts it, and a
+package of a set may not import it yet: the package imports check refuses
+a module of the core's Lake package outside `Editor`. The interface
+packages of phases 3 and 4 are the model; these become packages when their
+features move.
+
+| Library | Declares | Publishes for tests | Its own tests | Implemented by | Used by | Moves |
+|---|---|---|---|---|---|---|
+| `FilesApi` (`lean/FilesApi.lean`) | The hooks `FilesApi.Opened` and `.Saved`, run when a file opens into a buffer and when one is saved; the choice `FilesApi.Files` (`adopt`, `visit`, `save`) under the name `files`, answered by `files?`; `loadLimit` and `diffLineLimit`; the commands' and jobs' names (`names`, `jobs`) | `FilesApiTest.fake`, the kit's opener with the hooks as its runners; `FilesApiTest.contractChecks` | `ModelTest.filesApiChecks` | `files` (`Editor.Files.Compiled`), whose `filesPackageChecks` run the contract | buffers, working-set, workspace, version-control; the kit (`Editor.Test.Workspace`) | Stays a core interface: the core's file-opening is the files feature's, and every feature that opens a file reaches it |
+| `BuffersApi` (`lean/BuffersApi.lean`) | The hook `BuffersApi.Closing`, run before a buffer closes; the choice `BuffersApi.Buffers` under the name `buffers`, answered by `buffers?`; the commands' names | `BuffersApiTest.fake`, a close over the core's API; `BuffersApiTest.contractChecks` | `ModelTest.buffersApiChecks` | `buffers` (`Editor.Buffers.Compiled`), whose `buffersPackageChecks` run the contract | working-set (its ranges' detaching), version-control (`vc-commit`) | Until phase 8 |
+| `ProjectApi` (`lean/ProjectApi.lean`) | The order and the continuation of a reach (`Reach.Order`, `Reach.Continuation`) and the roots a command names (`rootArguments`, `rootsOf?`); the choice `ProjectApi.Workspaces` (`reach`, `work`) under the name `workspace`, answered by `workspaces?`, and a job over it (`workOver`); its names | `ProjectApiTest.fake`, a `Workspaces` value that hands every continuation a given workspace; `ProjectApiTest.contractChecks` | `ModelTest.projectApiChecks` | `workspace` (`Editor.Workspace.Compiled`), whose `workspacePackageChecks` run the contract | version-control (`vc-worktrees-visit`); the kit | Phase 6 |
+| `VcApi` (`lean/VcApi.lean`, once `lean/Editor/VersionControl.lean`) | The interface a version-control system answers and its hunks; the backend point `VcApi.Backend`, connected by `connect?`, which takes the latest backend registered; the backend `git`, the gutter's jobs and the mode line's segment `review` by name | `VcApiTest.Fake`, the model (once `Editor.VersionControl.Model`) and a backend over it; `VcApiTest.Contract`, the contract (once `Editor.VersionControl.Contract`), and `registrationChecks` | `ModelTest.vcApiChecks`, `ModelTest.VcApiTest.Fake`'s and `.Contract`'s checks | `version-control` (`Editor.VersionControl.Compiled`), whose `versionControlPackageChecks` run the registration check; git's half of the model is `Editor.VersionControl.Git.Model` | working-set, workspace | Phase 6 |
+
+Each implementing feature's package checks run the contract over its
+package, each sentence one check, and show it bite: over a package of the
+same name that registers nothing, every check of the contract fails. So a
+contract that stopped checking shows as a failing check, and a feature
+that stopped running its contract loses its checks from the count. Three other things moved
+for the cut:
+
+- **Jobs over an extension point.** A feature's job that runs over a
+  value another feature registers is registered over its point
+  (`Extension.workJob`, `SetupRequest.jobOver`), and the loop hands it
+  the values at that point when it runs (`Config.State.work?`). A job over
+  a point with no value fails naming its job.
+- **The loop's reconcilers' names in the core.** The loop started the
+  files' check and follow jobs and the gutter's jobs by importing `Files`
+  and `VersionControl.Gutter`; it now starts them by names the core
+  declares (`Editor.FileJobs`, `Editor.Gutter.Track`), which the features'
+  packages register under.
+- **The kit's own opener and hosted packages.** The core's model test kit
+  opens files with its own opener (`Editor.Test.Opener`) and runs a
+  check's packages through `Editor.Test.Hosted`; the drivers of the real
+  file commands are the files feature's kit, `Editor.Files.Kit`, a test
+  double, which moves into its test library when it moves out.
+
+What phase 6 still has to cut, from the module graph ("What each feature
+would have to cross", below): the five import none of each other, and no
+core module imports `files` or `version-control` but the core's root, the
+list of the core's packages and the config base. Still importing them are
+features phase 6 moves too: evil (`Jumps.Go`), ex (`Files`, `Buffers`),
+the menu, project search (`Files`, `Jumps.Go`, `Workspace.FindFile`),
+restore (`Files`, `Workspace.Attach`) and the shell (`Files`); the kit's
+workspace modules; the compile package's tests; and the test support of
+session restore (`ModelTest.Support.Restore`, which imports
+`Files.Compiled`).
+
 ## Rust in a package
 
 Status: **built** (`phase/packages/phase-11-rust-in-packages`). Third-party
@@ -2347,9 +2408,9 @@ of `echo` outside the repository is refused with its reason
 
 ## The module map
 
-Every module under `lean/Editor/`, 305 of them
+Every module under `lean/Editor/`, 308 of them
 (`find lean/Editor -name '*.lean' | wc -l`, at the end of the
-features-as-packages roadmap's phase 4; 254 at `6ba99de5`, phase 4
+features-as-packages roadmap's phase 5; 254 at `6ba99de5`, phase 4
 added `Editor.Main`, phase 5 added `Editor.Themes.Picture` and moved
 the three modules of the shipped palettes out, phase 6 moved the five
 of the compile mode out and added the 18 of the test kit, phase 7 added
@@ -2359,13 +2420,23 @@ marks added 19, session-restore phase 1 added six, and phase 2 six more,
 the store codec and five of the reconciler's records and formats, and
 features-as-packages phase 1 added `Editor.Extension`; its phase 3 moved
 the six modules of four features out and added the kit's two, and its
-phase 4 the eight of three features and added the kit's two more), is
+phase 4 the eight of three features and added the kit's two more; its
+phase 5 moved the interface of version control and its model and contract
+out of `lean/Editor/`, into the library `VcApi`, added git's half of the
+model, the job names of the loop's two reconcilers (`Editor.FileJobs`,
+`Editor.Gutter.Track`), the kit's two (`Editor.Test.Hosted`, `.Opener`)
+and the files feature's kit (`Editor.Files.Kit`)), is
 **core** or part of a **feature that could become a package**. The counts
-below add up to 294: 215 core and 79 in 15 features. The rows were not
+below add up to 297: 219 core and 78 in 15 features. The rows were not
 counted again in full for phase 3 or 4: at phase 3's start they added up
 to 304 against 315 modules, so 11 modules are in no row (the task
 `module-map-count-drift`); phase 4 took its eight moved modules' rows out
-and added the kit's two to the kit's row, and the 11 are still in no row.
+and added the kit's two to the kit's row, phase 5 counted its own
+additions and removals into their rows, and the 11 are still in no row.
+The four interface libraries of phase 5 (`FilesApi`, `BuffersApi`,
+`ProjectApi`, `VcApi`, each with its test library) are outside
+`lean/Editor/` and are in no row: "The interface libraries of the
+features-as-packages roadmap's phase 5", above, describes them.
 
 - **Core** is what a host with no packages needs to start and run: the
   ports with their models and bindings, the state, the scene and display
@@ -2407,13 +2478,13 @@ One row covers modules that share a class and a side of the import rule.
 | The models: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Config.Elaborator.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Grep.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `.Model.Json`, `.Model.Query`, `Editor.Text.Model`, `Editor.Watch.Model` | 16 | core | in tests |
 | The contracts and cases: `Editor.Clipboard.Contract`, `Editor.Completion.Contract`, `.AtPointContract`, `.DisplayContract`, `.StyleContract`, `Editor.Config.Elaborator.Contract`, `Editor.Display.Contract`, `Editor.Fuzzy.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.SyntaxTree.Contract`, `Editor.Text.Contract`, `Editor.Watch.Contract`, `Editor.Api.Cases`, `Editor.File.Cases`, `Editor.UndoTree.Cases` | 16 | core | in tests |
 | The fakes, the test scheme and the loop's driver: `Editor.Completion.Fake`, `Editor.Job.Fake`, `Editor.InputScheme.Test`, `Editor.Loop.Driver` | 4 | core | in tests |
-| The model test kit: `Editor.Test.AtPoint`, `.Completion`, `.Config`, `.Driver`, `.Files`, `.Geometry`, `.Jobs`, `.Keys`, `.Listing`, `.Loop`, `.Minibuffer`, `.Models`, `.Prompts`, `.Shell`, `.Shipped`, `.Sources`, `.States`, `.Workspace` | 18 | core | in tests |
+| The model test kit: `Editor.Test.AtPoint`, `.Completion`, `.Config`, `.Driver`, `.Files`, `.Geometry`, `.Hosted`, `.Jobs`, `.Keys`, `.Listing`, `.Loop`, `.Minibuffer`, `.Models`, `.Opener`, `.Prompts`, `.Shell`, `.Shipped`, `.Sources`, `.States`, `.Workspace` | 20 | core | in tests |
 | The linked test kit: `Editor.Test.Linked.Jobs`, `.Rig`, `.Services`, `.Trees` | 4 | core | in tests |
 | The editor API and what is proved of it: `Editor.Api`, `.Api.Theorems`, `Editor.UndoTree`, `.UndoTree.Theorems` | 4 | core | yes |
 | The composite port and a command: `Editor.Command`, `.Call`, `.Control`, `.Registry`, `.Append`, `Editor.Program` | 6 | core | yes |
 | The ports: `Editor.Clipboard`, `Editor.Diff`, `.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Process`, `.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 14 | core | yes |
 | The setup port, packages, extension points and stores: `Editor.Setup`, `Editor.Package`, `Editor.Extension`, `Editor.Store`, `.Store.Codec`, `Editor.Value`, `Editor.Json` | 7 | core | yes |
-| The state: `Editor.State`, `.State.Request`, `Editor.Event`, `Editor.DisplayRules`, `Editor.Floating`, `Editor.Layout`, `Editor.GeneratedView`, `Editor.ExcerptView`, `Editor.Gutter`, `Editor.Workspace` | 10 | core | yes |
+| The state, and the names of the jobs the loop's reconcilers run: `Editor.State`, `.State.Request`, `Editor.Event`, `Editor.DisplayRules`, `Editor.Floating`, `Editor.Layout`, `Editor.GeneratedView`, `Editor.ExcerptView`, `Editor.Gutter`, `.Gutter.Track`, `Editor.FileJobs`, `Editor.Workspace` | 12 | core | yes |
 | Places, jump lists and marks, which the state holds and the loop follows through edits: `Editor.JumpList`, `Editor.Marks`, `.Marks.Follow`, `Editor.Jumps` | 4 | core | yes |
 | The scene and display types: `Editor.Scene`, `Editor.Scroll`, `Editor.Face`, `.Face.Vocabulary`, `Editor.Appearance`, `Editor.Highlight`, `Editor.TabBar`, `Editor.ModeLine`, `Editor.Menu` | 9 | core | yes |
 | Keys and modes: `Editor.InputScheme`, `Editor.Invocation`, `Editor.Keymap`, `Editor.Key.Notation`, `Editor.Mode`, `Editor.Role`, `Editor.Vocabulary` | 7 | core | yes |
@@ -2429,6 +2500,7 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Ex.Compiled` | 1 | feature: ex | no |
 | `Editor.Files`, `Editor.Completion.Paths`, `Editor.Jumps.Go` | 3 | feature: files | yes |
 | `Editor.Files.Compiled` | 1 | feature: files | no |
+| `Editor.Files.Kit`, the drivers of the real file commands | 1 | feature: files | in tests |
 | `Editor.FrameCommands` | 1 | feature: frame-commands | yes |
 | `Editor.FrameCommands.Compiled` | 1 | feature: frame-commands | no |
 | `Editor.Menu.Compiled` | 1 | feature: menu | no |
@@ -2442,8 +2514,8 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Themes.Compiled` | 1 | feature: themes | no |
 | `Editor.Themes.Picture`, the theme picture check | 1 | feature: themes | in tests |
 | `Editor.VersionControl.Compiled` | 1 | feature: version-control | no |
-| `Editor.VersionControl.Model`, `.Contract` | 2 | feature: version-control | in tests |
-| `Editor.VersionControl` and 16 of the modules under it (all but `.Compiled`, `.Model` and `.Contract`) | 17 | feature: version-control | yes |
+| `Editor.VersionControl.Git.Model`, git's half of the model | 1 | feature: version-control | in tests |
+| 16 of the modules under `Editor.VersionControl` (all but `.Compiled` and `.Git.Model`) | 16 | feature: version-control | yes |
 | `Editor.WindowCommands` | 1 | feature: window-commands | yes |
 | `Editor.WindowCommands.Compiled` | 1 | feature: window-commands | no |
 | `Editor.WorkingSet`, `.WorkingSet.Disk`, `.WorkingSet.Places`, `.WorkingSet.Refind`, `.WorkingSet.Run` | 5 | feature: working-set | yes |
@@ -2517,15 +2589,17 @@ cross. No core module and no test of a core module imports it. It imports the co
 
 #### `buffers`
 
+Computed again at the end of the features-as-packages roadmap's phase 5, which cut its imports of the other four of files, buffers, working-set, workspace and version-control: it reaches them through the interface libraries ("The interface libraries of the features-as-packages roadmap's phase 5", above).
+
 - **Modules** (2): `Buffers`, `Buffers.Compiled`.
-- **Core modules that import it**: none.
-- **The test kit's modules that import it**: `Test.Files` (`Buffers.Compiled`).
-- **Other features' modules that import it**: ex: `Ex.Compiled` (`Buffers`); version-control: `VersionControl.Commit` (`Buffers`).
-- **Other features it imports**: files (`Files`); working-set (`WorkingSet.Places`, which `Buffers` imports to detach a closed buffer's ranges).
+- **Core modules that import it**: none; `Editor.Core` imports `Buffers.Compiled`, as it imports every feature's.
+- **The test kit's modules that import it**: none. The kit's buffers are `BuffersApiTest.fake`'s.
+- **Other features' modules that import it**: ex: `Ex.Compiled` (`Buffers`). Version-control's `vc-commit` and working-set's close hook reach it through `BuffersApi` (`BuffersApi.buffers?`, `BuffersApi.Closing`).
+- **Other features it imports**: none. It runs `BuffersApi.Closing` where it imported `WorkingSet.Places`.
 - **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (6): `ModelTest`: `Completion.Contract`, `DisplayRules`, `VersionControl.Gutter`, `Support.Buffers`; `ConfigTest`: `Headless`, `Minibuffer`.
+- **Test modules outside its own tests that import it** (5): `ModelTest`: `Completion.Contract`, `DisplayRules`, `Evil.Marks`; `ConfigTest`: `Headless`, `Minibuffer`.
 - **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the `ex` package binds `b`, `ls` and `bd` to its commands; the default config binds `switch-buffer`, `list-buffers` and `close-buffer`.
+- **Reaches by name** (not exhaustive): the `ex` package binds `b`, `ls` and `bd` to its commands; the default config binds `switch-buffer`, `list-buffers` and `close-buffer`, whose names `BuffersApi.names` declares.
 
 #### `compile`
 
@@ -2593,15 +2667,17 @@ cross. No core module and no test of a core module imports it. It imports the co
 
 #### `files`
 
-- **Modules** (4): `Completion.Paths`, `Files`, `Files.Compiled`, `Jumps.Go`.
-- **Core modules that import it**: `Loop` (`Files`).
-- **The test kit's modules that import it**: `Test.Files` (`Completion.Paths`, `Files`, `Files.Compiled`); `Test.Linked.Rig` (`Files`, `Files.Compiled`); `Test.Workspace` (`Files`).
-- **Other features' modules that import it**: buffers: `Buffers` (`Files`); evil: `Evil` (`Jumps.Go`); ex: `Ex` (`Files`), `Ex.Compiled` (`Files`); menu: `Menu.Compiled` (`Files`); project-search: `ProjectSearch.Run` (`Files`, `Jumps.Go`); shell: `Shell` (`Files`); working-set: `WorkingSet.Disk` (`Files`), `WorkingSet.Run` (`Files`, `Jumps.Go`); version-control: `VersionControl.Gutter` (`Files`), `VersionControl.Review` (`Files`), `VersionControl.Show` (`Files`), `VersionControl.Stage` (`Files`), `VersionControl.Status` (`Files`); workspace: `Workspace.FindFile` (`Files`).
-- **Other features it imports**: workspace (`Workspace.Attach`); working-set (`WorkingSet.Places`, which `Files` imports to hold a file's ranges again when it opens).
-- **Modules of packages outside the core that import it**: compile: `CompileTest.Compile` (`Files`).
-- **Test modules outside its own tests that import it** (20): `ModelTest`: `Buffers`, `Command.Dispatch`, `Completion.Contract`, `DisplayRules`, `Ex`, `Loop`, `Menu`, `State`, `VersionControl.Stage`, `Window`, `Workspace.Attach`, `Workspace.FindFile`, `Support.Buffers`, `Support.VersionControl`; `ConfigTest`: `Bench`, `Ex`, `Headless`, `Loop`, `VersionControl.Gutter`, `Support.Configs`.
+Computed again at the end of the features-as-packages roadmap's phase 5, which cut its imports of the other four of files, buffers, working-set, workspace and version-control: it reaches them through the interface libraries ("The interface libraries of the features-as-packages roadmap's phase 5", above).
+
+- **Modules** (5): `Completion.Paths`, `Files`, `Files.Compiled`, `Files.Kit`, `Jumps.Go`. `Files.Kit`, the drivers of the real file commands, is a test double, which moves into its test library when it moves out.
+- **Core modules that import it**: none; `Editor.Core` imports `Files.Kit` and `Files.Compiled`. The loop's reconcilers run the jobs the core names (`Editor/FileJobs.lean`), where the loop imported `Files`.
+- **The test kit's modules that import it**: none. The kit opens files with its own opener (`Test.Opener`), and runs the hosted packages through `Test.Hosted`.
+- **Other features' modules that import it**: evil: `Evil` (`Jumps.Go`); ex: `Ex` (`Files`), `Ex.Compiled` (`Files`); menu: `Menu.Compiled` (`Files`); project-search: `ProjectSearch.Run` (`Files`, `Jumps.Go`); restore: `Restore.Run` (`Files`); shell: `Shell` (`Files`). Buffers, working-set, workspace and version-control reach it through `FilesApi` (`FilesApi.files?`, its hooks `Opened` and `Saved`, and its names).
+- **Other features it imports**: ex (`Ex`, `Ex.Compiled`), by `Files.Kit` alone. It runs `FilesApi.Opened` where it imported `Workspace.Attach` and `WorkingSet.Places`.
+- **Modules of packages outside the core that import it**: compile: `CompileTest.Compile` (`Files`), `CompileTest.Support.Compile` (`Files.Kit`), `CompileTest.Linked.Compile.Shipped` (`Files.Kit`).
+- **Test modules outside its own tests that import it** (7): `ModelTest`: `Ex`, `Evil.Marks`, `Menu`, `Support.Restore`; `ConfigTest`: `Ex`; `ContractTest`: `ProjectSearch.Run`, `Restore.Run`.
 - **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the `ex` package binds `w`, `w!`, `e`, `e!`, `autoread` and `noautoread` to its commands; the `menu` package's Open and Save; the workspace finder accepts through `open-file` (`Workspace/FindFile.lean`); the default config binds `open-file`, `save-buffer` and `reload-buffer`.
+- **Reaches by name** (not exhaustive): the `ex` package binds `w`, `w!`, `e`, `e!`, `autoread` and `noautoread` to its commands; the `menu` package's Open and Save; the workspace finder accepts through `open-file`, by `FilesApi.openFileName`; the default config binds `open-file`, `save-buffer` and `reload-buffer`.
 
 #### `frame-commands`
 
@@ -2734,15 +2810,17 @@ the user asks `load-theme` for one.
 
 #### `version-control`
 
-- **Modules** (20): `VersionControl`, `VersionControl.Blame`, `VersionControl.Commit`, `VersionControl.Compiled`, `VersionControl.Contract`, `VersionControl.Git`, `VersionControl.Gutter`, `VersionControl.HistoryRead`, `VersionControl.Hunk`, `VersionControl.Log`, `VersionControl.Model`, `VersionControl.Plumbing`, `VersionControl.Porcelain`, `VersionControl.Review`, `VersionControl.ReviewHunks`, `VersionControl.Show`, `VersionControl.Stage`, `VersionControl.Status`, `VersionControl.Views`, `VersionControl.Worktrees`.
-- **Core modules that import it**: `Loop` (`VersionControl.Gutter`).
+Computed again at the end of the features-as-packages roadmap's phase 5, which cut its imports of the other four of files, buffers, working-set, workspace and version-control: it reaches them through the interface libraries ("The interface libraries of the features-as-packages roadmap's phase 5", above).
+
+- **Modules** (18): `VersionControl.Blame`, `VersionControl.Commit`, `VersionControl.Compiled`, `VersionControl.Git`, `VersionControl.Git.Model`, `VersionControl.Gutter`, `VersionControl.HistoryRead`, `VersionControl.Hunk`, `VersionControl.Log`, `VersionControl.Plumbing`, `VersionControl.Porcelain`, `VersionControl.Review`, `VersionControl.ReviewHunks`, `VersionControl.Show`, `VersionControl.Stage`, `VersionControl.Status`, `VersionControl.Views`, `VersionControl.Worktrees`. The interface, `Editor.VersionControl` with its model and contract, is the library `VcApi` (`lean/VcApi.lean`, `lean/VcApiTest/`), outside the map.
+- **Core modules that import it**: none; `Editor.Core` imports `VersionControl.Compiled` and git's half of the model, `VersionControl.Git.Model`. The loop's gutter reconciler runs the jobs the core names (`Editor/Gutter/Track.lean`), where the loop imported `VersionControl.Gutter`.
 - **The test kit's modules that import it**: none.
-- **Other features' modules that import it**: working-set: `WorkingSet.Disk` (`VersionControl`, `VersionControl.Git`); workspace: `Workspace.FindInProject` (`VersionControl.Git`), `Workspace.Projects` (`VersionControl`).
-- **Other features it imports**: buffers (`Buffers`); files (`Files`); workspace (`Workspace.Attach`, `Workspace.Reach`).
+- **Other features' modules that import it**: none. Working-set and workspace reach a repository through `VcApi` (`VcApi.Backend`, connected by `VcApi.connect?`).
+- **Other features it imports**: none. It reaches files through `FilesApi`, buffers through `BuffersApi` and a workspace through `ProjectApi`.
 - **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (8): `ModelTest`: `the root`, `Workspace.FindInProject`, `Workspace.Projects`, `Support.Git`, `Support.VersionControl`; `ContractTest`: `the root`, `Support.Git`, `Support.VersionControl`.
+- **Test modules outside its own tests that import it**: none. The repositories the core's tests build are `ModelTest.Support.Repositories` and `ContractTest.Support.Repositories`, over `VcApiTest.Fake`.
 - **The config base imports**: `VersionControl.Commit`, `VersionControl.Stage`.
-- **Reaches by name** (not exhaustive): the default order of the mode line names its segment `review`; its twelve `vc-` ex names are its own package's.
+- **Reaches by name** (not exhaustive): the default order of the mode line names its segment `review` (`VcApi.reviewSegmentName`); its twelve `vc-` ex names are its own package's.
 
 #### `window-commands`
 
@@ -2758,15 +2836,17 @@ the user asks `load-theme` for one.
 
 #### `working-set`
 
+Computed again at the end of the features-as-packages roadmap's phase 5, which cut its imports of the other four of files, buffers, working-set, workspace and version-control: it reaches them through the interface libraries ("The interface libraries of the features-as-packages roadmap's phase 5", above).
+
 - **Modules** (6): `WorkingSet`, `WorkingSet.Compiled`, `WorkingSet.Disk`, `WorkingSet.Places`, `WorkingSet.Refind`, `WorkingSet.Run`.
-- **Core modules that import it**: none.
+- **Core modules that import it**: none; `Editor.Core` imports `WorkingSet.Compiled`.
 - **The test kit's modules that import it**: none.
-- **Other features' modules that import it**: buffers: `Buffers` (`WorkingSet.Places`); files: `Files` (`WorkingSet.Places`).
-- **Other features it imports**: files (`Files`, `Jumps.Go`); version-control (`VersionControl`, `VersionControl.Git`); workspace (`Workspace.Attach`).
+- **Other features' modules that import it**: none. Its package registers its ranges' holding at `FilesApi.Opened` and their detaching at `BuffersApi.Closing`, where files and buffers imported `WorkingSet.Places`.
+- **Other features it imports**: none. It opens a file through `FilesApi.files?`, whose `Opened` hook attaches the buffer's workspace, and reads a repository through `VcApi`.
 - **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (3): `ModelTest`: `Support.WorkingSet`; `ConfigTest`: `DefaultConfig`, `Headless`.
+- **Test modules outside its own tests that import it** (3): `ModelTest`: `Support.Restore`; `ConfigTest`: `DefaultConfig`, `Headless`.
 - **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the default config binds `working-set-add` and `working-set-open`. Its ranges are held while the editor runs through `files` and `buffers`, which import `WorkingSet.Places` to hold them again when a file opens and detach them when its buffer closes: moving it out would need a hook the core offers for both, where the import is now.
+- **Reaches by name** (not exhaustive): the default config binds `working-set-add` and `working-set-open`.
 
 #### `restore`
 
@@ -2782,13 +2862,15 @@ the user asks `load-theme` for one.
 
 #### `workspace`
 
+Computed again at the end of the features-as-packages roadmap's phase 5, which cut its imports of the other four of files, buffers, working-set, workspace and version-control: it reaches them through the interface libraries ("The interface libraries of the features-as-packages roadmap's phase 5", above).
+
 - **Modules** (11): `Workspace.Attach`, `Workspace.Compiled`, `Workspace.Contract`, `Workspace.FindFile`, `Workspace.FindInProject`, `Workspace.Finder`, `Workspace.Lister`, `Workspace.Model`, `Workspace.Modes`, `Workspace.Projects`, `Workspace.Reach`.
-- **Core modules that import it**: none.
-- **The test kit's modules that import it**: `Test.Linked.Rig` (`Workspace.Compiled`); `Test.Listing` (`Workspace.Model`, `Workspace.Modes`); `Test.Shell` (`Workspace.Attach`); `Test.Workspace` (`Workspace.Attach`, `Workspace.Model`, `Workspace.Modes`).
-- **Other features' modules that import it**: files: `Files` (`Workspace.Attach`); project-search: `ProjectSearch.Run` (`Workspace.FindFile`); version-control: `VersionControl.Views` (`Workspace.Attach`), `VersionControl.Worktrees` (`Workspace.Reach`); working-set: `WorkingSet.Run` (`Workspace.Attach`).
-- **Other features it imports**: files (`Files`); version-control (`VersionControl`, `VersionControl.Git`).
+- **Core modules that import it**: none; `Editor.Core` imports `Workspace.Compiled` and `Workspace.Contract`.
+- **The test kit's modules that import it**: `Test.Linked.Rig` (`Workspace.Compiled`); `Test.Listing` (`Workspace.Model`, `Workspace.Modes`); `Test.Workspace` (`Workspace.Attach`, `Workspace.Model`, `Workspace.Modes`, `Workspace.Reach`).
+- **Other features' modules that import it**: project-search: `ProjectSearch.Run` (`Workspace.FindFile`); restore: `Restore.Run` (`Workspace.Attach`). Files reaches it through `FilesApi.Opened`, where its package registers the attach, and version-control through `ProjectApi.Workspaces`, which its package answers.
+- **Other features it imports**: none. It opens through `FilesApi` and reads a repository through `VcApi`.
 - **Modules of packages outside the core that import it**: compile: `Compile` (`Workspace.Modes`), `CompileTest.Compile` (`Workspace.Attach`, `Workspace.Model`, `Workspace.Modes`), `CompileTest.Compile.Shipped` (`Workspace.Model`, `Workspace.Modes`), `CompileTest.Linked.Compile.Shipped` (`Workspace.Modes`).
-- **Test modules outside its own tests that import it** (13): `ModelTest`: `the root`, `Completion.Contract`, `ProjectMode.Listing`, `VersionControl.Gutter`, `VersionControl.Worktrees`, `Support.FindFile`, `Support.VersionControl`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`, `VersionControl.Gutter`; `ContractTest`: `the root`, `Workspace`.
+- **Test modules outside its own tests that import it** (7): `ModelTest`: `Completion.Contract`, `ProjectMode.Listing`, `Support.Restore`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`; `ContractTest`: `Workspace`.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): the default config binds `find-file-in-workspace` and `find-file-in-project`; its package registers the job `compile-list`, which the compile mode, in its package, starts by name.
 
