@@ -3407,9 +3407,13 @@ bound submits nothing.
   the two adapters are the same code down to the quads and the atlas's
   bytes, and differ in the blend of one quad, which is one function and
   one shader that state the same arithmetic.
-- **Where a glyph goes.** At its `x` plus its `dx` across, rounded to a
-  quarter of a pixel, and at its row's top plus the baseline plus its
-  `dy` down, each rounded to a whole pixel: a baseline is a whole pixel.
+- **Where a glyph goes.** At its `x` plus its `dx` across, floored to
+  Core Text's grid of a quarter of a point (a quarter of a pixel at scale
+  1, a half at scale 2, with 1/1024 of a pixel's grace under a line for
+  the error of f32 sums), as `CTLineDraw` with the context's default flags
+  and TextEdit place it; on every platform (owner's decision,
+  2026-11-20). Down, at its row's top plus the baseline plus its `dy`,
+  each rounded to a whole pixel: a baseline is a whole pixel.
 - **The glyph cache.** A glyph image is kept by resolved font id, glyph
   id, one of 4 horizontal bins of a quarter pixel, and the kind asked
   for. There are three kinds, each in atlas pages of its own format:

@@ -30,9 +30,9 @@ nothing of the repository outside itself:
 
 | File | Size | Bytes | sha256 |
 |---|---|---|---|
-| `solarized-dark.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15495 | `efa5fb8bb590520c13310a3182c840534328c0dae8f5ddf10d247bfd31cfe715` |
-| `solarized-light.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15464 | `fe37d976ac452e208cd19eed0ac85696e066f76731f61c23e00f6cf40840abea` |
-| `fairy-floss.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 16054 | `6048381627cfee308b70a1eb3ff54167343f5d48e9755d75353a683d448fcd6f` |
+| `solarized-dark.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15943 | `469e71b1a669682bb0bdfb69650b90df15a7afa7725903ea2ed32242526cb0d6` |
+| `solarized-light.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 16008 | `359460eb89ad153ce0f09866aa5a5ce3d82edc4e4c7d1d7f8b7abb148fe84987` |
+| `fairy-floss.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 16577 | `16c2c881d51ac6a8116ccf61088c5e6bb23ea31660221463b83b391e4be864d0` |
 
 Each is kept small on purpose: the scene's size, 320 by 160, and at most
 20 KB, which the scenario checks.
@@ -71,6 +71,13 @@ font set with no font of the machine; the theme's `monospace` family is
 not in the set and falls through to it. It is drawn at 16 points, the
 theme's default size, at scale 1, with grayscale antialiasing and hinting,
 at the linear weight.
+
+The three files: Made again on 2026-11-20, when the painter began to floor
+each glyph's place to Core Text's grid of a quarter of a point instead of
+rounding it to the nearest quarter of a pixel (`crates/editor-render-
+wgpu/src/glyphs.rs`, `bin_of`): at scale 1 a glyph moves left by up to a
+quarter of a pixel, so the text's edges changed and nothing else did;
+looked at, enlarged, by the agent that made them.
 
 The three files were made again for the window padding and looked at,
 enlarged four times, when they were (2026-11-16), by the agent that

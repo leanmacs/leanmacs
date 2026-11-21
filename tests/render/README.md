@@ -7,7 +7,7 @@ into the test, so no test reads or writes a file when it runs.
 
 | File | Size | Bytes | sha256 |
 |---|---|---|---|
-| `frame.png` | 256 by 96 pixels, 8 bits a channel, no alpha | 5334 | `a4d552a5bab109a3f289020934b2f1ab868aad698f428eb0ce608a929f64a700` |
+| `frame.png` | 256 by 96 pixels, 8 bits a channel, no alpha | 5352 | `a99f679a0e6ead3b7ab643bd656c5303010a42ee2314f52786594a1e63a3cc68` |
 
 It is kept small on purpose: at most 256 by 96 pixels and 20 KB, which
 the test checks. It is the renderer's own reference image. Beside it,
@@ -42,7 +42,12 @@ red, green, blue, and hinting.
 The file was looked at, enlarged four times, when it was made
 (2026-11-14), and each of those was seen: by the agent that implemented
 the renderer, and not yet by a person. A reference image nobody looked at
-pins whatever was drawn, so whoever makes it again looks again.
+pins whatever was drawn, so whoever makes it again looks again. It was
+made again on 2026-11-20, when the painter began to floor each glyph's
+place to Core Text's grid of a quarter of a point instead of rounding it
+to the nearest quarter of a pixel (`crates/editor-render-wgpu/src/glyphs.rs`,
+`bin_of`): some glyphs moved by a quarter of a pixel, and the new file was
+looked at, enlarged, by the agent that made it.
 
 ## The tolerance
 

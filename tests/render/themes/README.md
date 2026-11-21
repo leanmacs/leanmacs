@@ -17,7 +17,7 @@ of the font, so that package reads nothing here.
 
 | File | Size | Bytes | sha256 |
 |---|---|---|---|
-| `default.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15549 | `3344637de4787fddcf636603b3650b983ed153599ede4e2a985be06ce8b4d836` |
+| `default.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 16089 | `c4d42f8b80cb23433d388dac805388087bd47842120c9913b04f6d76b0666490` |
 
 It is kept small on purpose: the scene's size, 320 by 160, and at most
 20 KB, which the scenario checks.
@@ -56,6 +56,13 @@ font set with no font of the machine; the theme's `monospace` family is
 not in the set and falls through to it. It is drawn at 16 points, the
 theme's default size, at scale 1, with grayscale antialiasing and hinting,
 at the linear weight.
+
+Made again on 2026-11-20, when the painter began to floor each glyph's
+place to Core Text's grid of a quarter of a point instead of rounding it to
+the nearest quarter of a pixel (`crates/editor-render-wgpu/src/glyphs.rs`,
+`bin_of`): at scale 1 a glyph moves left by up to a quarter of a pixel, so
+the text's edges changed and nothing else did; looked at, enlarged, by the
+agent that made it.
 
 The file was made when the picture check became the core's (2026-11-19)
 and looked at, enlarged four times, by the agent that made it, and not yet

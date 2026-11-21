@@ -31,9 +31,10 @@
 //! # Where a glyph goes
 //!
 //! A glyph's image is placed by the frame's own numbers and no others. Its
-//! place across is its `x` plus its `dx`, from its row's left, rounded to
-//! a quarter of a pixel: the whole pixels place the quad and the quarters
-//! pick the image ([`bin_of`]). A row's left is its view's left edge plus
+//! place across is its `x` plus its `dx`, from its row's left, floored to
+//! Core Text's grid of a quarter of a point (a quarter of a pixel at scale
+//! 1, a half at scale 2): the whole pixels place the quad and the quarters
+//! of a pixel pick the image ([`bin_of`]). A row's left is its view's left edge plus
 //! the row's `x` (a padded view's padding across), rounded to a pixel as
 //! its top is, so a fractional padding draws on a whole pixel and the
 //! glyph's quarters are its own. Its place down is its row's
@@ -80,14 +81,15 @@
 //! A frame is in physical pixels: layout has already multiplied a theme's
 //! lengths by the scale it was told (`editor_layout::face`, "Units"), so
 //! the painter multiplies nothing in a frame by the scale, and nothing is
-//! scaled twice. The scale of the target changes two things, both the
+//! scaled twice. The scale of the target changes three things, all the
 //! painter's own:
 //!
 //! - what the painter itself sizes is as many pixels thick as the scale,
 //!   rounded, and never less than one: an underline, a strike-through, a
 //!   bar cursor, an underline cursor and the edge of a hollow cursor;
 //! - the kind of mask glyph images are asked in ([`stripes`]), which
-//!   [`Painter::masks`] says of the last paint.
+//!   [`Painter::masks`] says of the last paint;
+//! - the grid a glyph is placed on, a quarter of a point ([`bin_of`]).
 //!
 //! Rows built at one scale are built again at another. A frame laid out
 //! at one scale may be painted once for a target at another, between a
@@ -288,7 +290,11 @@ impl<Z: Rasterize> Painter<Z> {
                 &frame.fonts,
                 line,
                 &mut |key, font| glyphs.get(key, font, hint, &mut ordered),
-                Asked { subpixel, tinted },
+                Asked {
+                    subpixel,
+                    tinted,
+                    scale: target.scale,
+                },
                 unknown,
             )
         });
@@ -417,6 +423,9 @@ struct Asked {
     /// In the luminance bucket of each glyph's run, for a rasteriser whose
     /// images depend on it; in bucket 0 otherwise.
     tinted: bool,
+    /// The target's scale, whose grid each glyph is placed on
+    /// ([`bin_of`]).
+    scale: f32,
 }
 
 /// Builds the quads of `row`, relative to its start, taking its glyph
@@ -450,7 +459,7 @@ fn build_row(
             *unknown += 1;
             continue;
         };
-        let (whole, bin) = bin_of(glyph.x + glyph.dx);
+        let (whole, bin) = bin_of(glyph.x + glyph.dx, asked.scale);
         let key = GlyphKey {
             font: glyph.font,
             glyph: glyph.id,

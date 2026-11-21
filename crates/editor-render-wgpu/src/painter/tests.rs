@@ -259,6 +259,37 @@ fn a_glyphs_quad_is_at_the_frames_own_x_plus_dx_and_baseline_plus_dy() {
 }
 
 #[test]
+fn a_glyph_is_floored_to_core_texts_grid_of_the_targets_scale() {
+    // At 10.9, 20.3 and 30.6 across. At scale 1 the grid is a quarter of a
+    // pixel: 10.75, 20.25 and 30.5. At scale 2 it is a half: 10.5, 20 and
+    // 30.5. Each is floored, never rounded up into the next: rounded,
+    // 10.9 would be the pixel 11.
+    let glyphs = vec![glyph(7, 0, 10.9), glyph(8, 1, 20.3), glyph(9, 2, 30.6)];
+    let shown = || view(vec![row(16.0, glyphs.clone(), vec![(0..3, ink(RED))], 1)]);
+    for (scale, expected) in [
+        (1.0, vec![(10, 3), (20, 1), (30, 2)]),
+        (2.0, vec![(10, 2), (20, 0), (30, 2)]),
+    ] {
+        let mut painter = painter();
+        painter.paint(&frame(vec![shown()]), target(scale));
+        let bins: Vec<u8> = painter
+            .rasterizer()
+            .asked
+            .iter()
+            .map(|(key, _, _)| key.bin)
+            .collect();
+        let lefts: Vec<i32> = quads_of(&painter, QuadKind::Mask, RED)
+            .iter()
+            .map(|quad| quad.x)
+            .collect();
+        let wanted_bins: Vec<u8> = expected.iter().map(|(_, bin)| *bin).collect();
+        let wanted_lefts: Vec<i32> = expected.iter().map(|(whole, _)| *whole).collect();
+        assert_eq!(bins, wanted_bins, "at scale {scale}");
+        assert_eq!(lefts, wanted_lefts, "at scale {scale}");
+    }
+}
+
+#[test]
 fn a_glyph_is_drawn_from_the_image_of_its_fractions_bin() {
     // Cells 10.25 pixels across: each glyph is a quarter of a pixel
     // further into its pixel than the one before.
@@ -272,7 +303,7 @@ fn a_glyph_is_drawn_from_the_image_of_its_fractions_bin() {
     let glyphs = &laid.views[0].rows[0].line.glyphs;
     let places: Vec<(i32, u8)> = glyphs
         .iter()
-        .map(|glyph| bin_of(glyph.x + glyph.dx))
+        .map(|glyph| bin_of(glyph.x + glyph.dx, 1.0))
         .collect();
     assert!(places.iter().any(|(_, bin)| *bin != 0), "{places:?}");
     let mut painter = painter();

@@ -22,10 +22,13 @@
 //!
 //! A glyph's place across a row is a fraction of a pixel, and its image
 //! depends on that fraction. Keeping an image for every fraction would
-//! keep nothing, so a place is rounded to a quarter of a pixel
-//! ([`SUBPIXEL_BINS`], [`bin_of`]): a glyph is drawn at most an eighth of
-//! a pixel from where it was shaped, and has at most four images. There
-//! are no bins down the page: a baseline is a whole pixel.
+//! keep nothing, so a place is floored to Core Text's own grid, a quarter
+//! of a point ([`bin_of`]): a quarter of a pixel at scale 1 and a half at
+//! scale 2. That is where macOS's own text puts a glyph (`CTLineDraw`
+//! with the context's default flags, and TextEdit), on every platform
+//! here, so a glyph has at most four images ([`SUBPIXEL_BINS`]), and two
+//! at scale 2. There are no bins down the page: a baseline is a whole
+//! pixel.
 //!
 //! # Kinds
 //!
@@ -76,13 +79,30 @@ pub use editor_raster::{GlyphImage, GlyphKey, GlyphRequest, Kind, Rasterize, SUB
 
 use crate::atlas::{Atlas, Slot};
 
-/// The whole pixel and the bin of a place `x` pixels across: `x` rounded
-/// to the nearest quarter of a pixel, as the pixel it falls in and how
-/// many quarters past that pixel's left edge.
-pub fn bin_of(x: f32) -> (i32, u8) {
-    let bins = i32::from(SUBPIXEL_BINS);
-    let quarters = (x * f32::from(SUBPIXEL_BINS)).round() as i32;
-    (quarters.div_euclid(bins), quarters.rem_euclid(bins) as u8)
+/// How far under a line of the grid a place may be and still be on it, in
+/// pixels: more than the error of an f32 sum of a row's advances, and far
+/// less than any step of the grid.
+const ON_THE_LINE: f64 = 1.0 / 1024.0;
+
+/// The whole pixel and the bin of a place `x` pixels across on a target of
+/// `scale`: `x` floored to Core Text's grid of a quarter of a point, which
+/// is `scale / 4` pixels (a quarter of a pixel at scale 1, a half at
+/// scale 2), as the pixel it falls in and how many quarters of a pixel
+/// past that pixel's left edge the line it is floored to is. A place
+/// within [`ON_THE_LINE`] under a line is on it. At a scale whose grid is
+/// not of whole quarters of a pixel, the line is floored again, to a
+/// quarter of a pixel. A scale that is not above 0 places as 1.
+pub fn bin_of(x: f32, scale: f32) -> (i32, u8) {
+    let scale = if scale > 0.0 { f64::from(scale) } else { 1.0 };
+    let bins = f64::from(SUBPIXEL_BINS);
+    let lines = (f64::from(x) + ON_THE_LINE) * bins / scale;
+    let place = lines.floor() * scale / bins;
+    let quarters = (place * bins + 1e-9).floor() as i64;
+    let bins = i64::from(SUBPIXEL_BINS);
+    (
+        quarters.div_euclid(bins) as i32,
+        quarters.rem_euclid(bins) as u8,
+    )
 }
 
 /// A glyph image the cache holds, as what draws it needs it.
@@ -831,26 +851,77 @@ mod tests {
     }
 
     #[test]
-    fn a_place_is_rounded_to_the_nearest_quarter_of_a_pixel() {
+    fn at_scale_one_a_place_is_floored_to_a_quarter_of_a_pixel() {
         assert_eq!(SUBPIXEL_BINS, 4);
         let places = [
             (10.0, (10, 0)),
             (10.1, (10, 0)),
-            (10.2, (10, 1)),
+            (10.2, (10, 0)),
             (10.25, (10, 1)),
+            (10.4, (10, 1)),
             (10.5, (10, 2)),
-            (10.7, (10, 3)),
-            // Within an eighth of the next pixel: that pixel, bin 0.
-            (10.9, (11, 0)),
+            (10.7, (10, 2)),
+            (10.75, (10, 3)),
+            // Short of the next pixel by any amount: still this one.
+            (10.9, (10, 3)),
+            (11.0, (11, 0)),
             (0.0, (0, 0)),
             // Left of the row's start.
-            (-0.1, (0, 0)),
+            (-0.1, (-1, 3)),
             (-0.25, (-1, 3)),
             (-1.5, (-2, 2)),
         ];
         for (x, expected) in places {
-            assert_eq!(bin_of(x), expected, "at {x}");
+            assert_eq!(bin_of(x, 1.0), expected, "at {x}");
         }
+    }
+
+    #[test]
+    fn at_scale_two_a_place_is_floored_to_half_a_pixel_a_quarter_point() {
+        // Core Text's grid is a quarter of a point: half a pixel at scale
+        // 2, so only bins 0 and 2 are ever asked for.
+        let places = [
+            (16.0, (16, 0)),
+            (16.3, (16, 0)),
+            (16.5, (16, 2)),
+            (16.8, (16, 2)),
+            (32.6, (32, 2)),
+            (33.4, (33, 0)),
+            (-0.2, (-1, 2)),
+        ];
+        for (x, expected) in places {
+            assert_eq!(bin_of(x, 2.0), expected, "at {x}");
+        }
+        for tenth in 0..100 {
+            let (_, bin) = bin_of(tenth as f32 / 10.0, 2.0);
+            assert!(bin == 0 || bin == 2, "at {tenth} tenths: bin {bin}");
+        }
+    }
+
+    #[test]
+    fn a_place_a_hair_under_a_grid_line_is_on_it() {
+        // A place that is a whole quarter in exact arithmetic can come out
+        // of f32 sums just under it: within 1/1024 of a pixel it is on the
+        // line, and further under it is not.
+        let under = |x: f32| f32::from_bits(x.to_bits() - 1);
+        assert_eq!(bin_of(under(10.25), 1.0), (10, 1));
+        assert_eq!(bin_of(under(11.0), 1.0), (11, 0));
+        assert_eq!(bin_of(under(16.5), 2.0), (16, 2));
+        assert_eq!(bin_of(10.25 - 1.0 / 2048.0, 1.0), (10, 1));
+        assert_eq!(bin_of(10.25 - 1.0 / 512.0, 1.0), (10, 0));
+        assert_eq!(bin_of(16.5 - 1.0 / 512.0, 2.0), (16, 0));
+    }
+
+    #[test]
+    fn at_another_scale_a_place_is_floored_to_its_quarter_point_then_to_a_bin() {
+        // At 1.5 a quarter point is 0.375 pixels: 10.4 is floored to the
+        // line at 10.125, which is bin 0 of the pixel 10; 10.6 to the line
+        // at 10.5, bin 2.
+        assert_eq!(bin_of(10.4, 1.5), (10, 0));
+        assert_eq!(bin_of(10.6, 1.5), (10, 2));
+        // A scale that is no scale places as scale 1.
+        assert_eq!(bin_of(10.3, 0.0), (10, 1));
+        assert_eq!(bin_of(10.3, f32::NAN), (10, 1));
     }
 
     #[test]
@@ -858,7 +929,7 @@ mod tests {
         let (mut cache, mut rasterizer) = (roomy(), FakeRasterizer::new());
         let font = font(16.0);
         let mut image = |x: f32| {
-            let (_, bin) = bin_of(x);
+            let (_, bin) = bin_of(x, 1.0);
             cache.get(GlyphKey { bin, ..key(7) }, &font, true, &mut rasterizer)
         };
         let at = image(3.0);
