@@ -14,9 +14,7 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Completion
 import Editor.Completion.AtPoint
-import Editor.Completion.Compiled
 import Editor.Completion.Display
-import Editor.Completion.Displays
 import Editor.Completion.Paths
 import Editor.Completion.Style
 import Editor.Completion.Words
@@ -2543,7 +2541,7 @@ after its package, and the test scheme's keymap of its bindings. Nothing
 here starts a host or a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
-        "the executable's hosts start with the source files registered by the files package in the category file, its job files, the style path, and the file category matched with path, the completion package's"
+        "the executable's hosts start with the source files registered by the files package in the category file, its job files, and the file category given the style named path, which no package of the core's Lake package registers"
       run := do
         let registry := shippedRegistry
         return registry.sources.any
@@ -2553,10 +2551,7 @@ def shippedChecks (_ : Unit) : List Check :=
               (fun entry =>
                 entry.registration.name == Completion.Paths.job &&
                   entry.owner == Files.package.owner) &&
-            (registry.style? "path").isSome &&
-            (registry.matching.styleFor (some Completion.Paths.category)).name == "path" &&
-            registry.matching.ownerFor (some Completion.Paths.category) ==
-              Completion.package.owner &&
+            (registry.style? "path").isNone &&
             registry.styleDefaults == #[(Completion.Paths.category, "path")] },
     { name :=
         "the executable's hosts start with find-file-in-workspace registered by the workspace package, the source workspace-files registered by it in the category workspace-file, which it alone is in, filtered and answered later by its job workspace-files, registered by it"
@@ -2752,19 +2747,24 @@ def shippedChecks (_ : Unit) : List Check :=
         return (registry.find? "search-bindings").isNone && (registry.source? "bindings").isNone &&
             registry.sourcesIn "binding" == #[] },
     { name :=
-        "the executable's hosts start with the shipped completion styles, fuzzy and orderless, and the shipped completion display, minibuffer, registered by the completion package, and with the shipped sources of each shipped prompt's category the sources in the order of that prompt's defaults"
+        "the executable's hosts start with nothing of the completion package: no style, fuzzy, orderless or path among them, and no display, minibuffer among them, registered by a package of the core's Lake package, so every prompt, the file prompt's among them, is matched with the core's own style and drawn with the core's own display, the owner compiled's"
       run := do
         let registry := shippedRegistry
-        let compiled (name : String) : Bool :=
-          registry.styles.any fun entry =>
-            entry.style.name == name && entry.owner == Completion.package.owner
-        return ["fuzzy", "orderless"].all compiled &&
-            Completion.Displays.shipped.all
-              (fun display =>
-                registry.displays.any fun entry =>
-                  entry.display.name == display.name && entry.owner == Completion.package.owner) &&
-            registry.displays.any (·.display.name == "minibuffer") &&
-            registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] &&
+        let style := registry.styleEntry (some Completion.Paths.category)
+        let display := registry.displayEntry (some Completion.Paths.category)
+        return registry.styles.isEmpty && registry.displays.isEmpty &&
+            ["fuzzy", "orderless", "path"].all (fun name => (registry.style? name).isNone) &&
+            (registry.display? "minibuffer").isNone &&
+            style.style.name == Completion.Style.unregistered.name &&
+            style.owner == .compiled &&
+            (registry.styleEntry none).style.name == Completion.Style.unregistered.name &&
+            display.display.name == Completion.Display.unregistered.name &&
+            display.owner == .compiled },
+    { name :=
+        "the executable's hosts start with the shipped sources of each shipped prompt's category the sources in the order of that prompt's defaults"
+      run := do
+        let registry := shippedRegistry
+        return registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] &&
             registry.sourcesIn "buffer" == #[Buffers.source.name] &&
             registry.sourcesIn "tab" == #[TabCommands.source.name] &&
             registry.sourcesIn "theme" == #[Themes.source.name] },

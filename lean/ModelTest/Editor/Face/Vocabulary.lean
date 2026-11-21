@@ -38,7 +38,7 @@ state, the cursor of a scheme that names no face, and the status fields the
 loop gives a modified buffer and a prompt with candidates listed, one of
 them chosen, and the faces of a status row and of a divider. The shipped
 minibuffer display's faces are checked with it
-(`ModelTest.minibufferDisplayChecks`). -/
+(`CompletionTest.minibufferDisplayChecks`, the `completion` package's). -/
 def drawnFaces : Array FaceName :=
   let scheme := Vim.Default.scheme
   let fed (text : String) : Vim.State := (scheme.feed (fun _ => []) ⟨0⟩ scheme.init (keys text)).1

@@ -16,7 +16,10 @@ scene
 # `load-theme`, called with no name, asks for one, with the registered
 # themes as its candidates. With nothing typed the candidate list, the
 # view after the minibuffer's, holds every theme: `default`, which the core
-# registers, and config's `first`, and no shipped palette.
+# registers, and config's `first`, and no shipped palette. The completion
+# styles and displays are a default package too (packages/completion/), so
+# the list is drawn by the core's own display (`Completion.Display.unregistered`):
+# each row its text after two spaces, nothing chosen, with no faces.
 run load-theme
 scene
 

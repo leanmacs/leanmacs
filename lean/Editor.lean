@@ -1,9 +1,7 @@
 import Editor.Api.Theorems
 import Editor.AtPoint
 import Editor.Command.Append
-import Editor.Completion.Displays
 import Editor.Completion.Filtering
-import Editor.Completion.Styles
 import Editor.Completion.Words
 import Editor.Evil.Clipboard
 import Editor.Evil.Jumps
@@ -71,9 +69,12 @@ output fed to a filter such as fzf with the typed text as an argument, is
 (`Editor/Completion/Filtering.lean`). Which candidates the typed text
 matches is a completion style's (`Editor/Completion/Style.lean`): the
 shipped ones, `fuzzy`, `orderless` and `path`, which matches a path's last
-component, are imported here (`Editor/Completion/Styles.lean`), so that
-config names them, and the `completion` package registers them; with
-none chosen the default is the style registered first. Config registers one with `defineStyle` (`.keeping name keep` for one
+component, are not here: they are the default package `completion`
+(`packages/completion/`), which registers them, and config names them with
+`import Completion.Styles`, a module of the set's base through the
+package's entry module (`Editor/Main.lean`, "The base"); with none chosen
+the default is the style registered first, and with none registered the
+core's own (`Completion.Style.unregistered`). Config registers one with `defineStyle` (`.keeping name keep` for one
 written as a predicate) and chooses the default with `useStyle` and a
 category's with `useStyleFor`. Compiled code may give a category a style
 of its own, which `useStyleFor` overrides and `useStyle` does not reach:
@@ -82,9 +83,9 @@ prompt asks the sources of the category `file`, the shipped `files` source
 by default (`Editor/Completion/Paths.lean`), so config adds to what it
 lists by registering a source in that category. How the listing is drawn is a completion display's
 (`Editor/Completion/Display.lean`): the shipped one, `minibuffer`, which
-lists them one a row above the input, is imported here
-(`Editor/Completion/Displays.lean`), so that config names it, and the
-`completion` package registers it. Config registers one with
+lists them one a row above the input, is the `completion` package's too,
+and config names it with `import Completion.Displays`; with none registered
+the core draws its own (`Completion.Display.unregistered`). Config registers one with
 `defineDisplay` (`defineDisplay (Completion.Displays.minibuffer (rows :=
 15))` replaces the shipped one, which sets its rows) and chooses the
 default with `useDisplay` and a category's with `useDisplayFor`. The

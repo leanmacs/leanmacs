@@ -11,8 +11,8 @@ import ModelTest.Check
 # Model tests: `Editor/Completion/Style.lean`
 
 The model tests of `Editor/Completion/Style.lean`: `styleChecks`, the model,
-the core's own style and the choice. The shipped styles' are in
-`ModelTest/Editor/Completion/Styles.lean`. The root module `ModelTest` runs
+the core's own style and the choice. The shipped styles' are the
+`completion` package's (`packages/completion/CompletionTest/Completion/Styles.lean`). The root module `ModelTest` runs
 them; its module doc says what each shows.
 -/
 

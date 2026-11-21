@@ -59,10 +59,12 @@ starts, before any config (`Editor/Config/Packages.lean`).
 - **The style default**: the path style for the category `file`
   (`useStyleFor`, which in a package is a default): config's `useStyleFor
   "file"` overrides it and its `useStyle` does not reach it. The name,
-  `path`, is the shipped path style's (`Editor/Completion/Styles.lean`),
-  which the `completion` package registers; it is written as text, so
-  this package names no module of that one. With no style registered
-  under it, a file prompt is matched with the default.
+  `path`, is the one the interface package `completion-api` declares
+  (`CompletionApi.pathStyleName`, `packages/completion-api/`), the path
+  style's, which the default package `completion` registers. The core
+  cannot import a package, so this reacher inside the core writes it as
+  text. With no style registered under it, a file prompt is matched with
+  the default.
 
 This module is apart from `Editor/Files.lean` because it is what a host is
 handed, not what config calls: `Editor.lean` imports the commands, so that

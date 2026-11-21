@@ -1,26 +1,44 @@
+import Completion.Displays
+import CompletionTest.Check
 import Editor.Completion.Candidate
 import Editor.Completion.Display
 import Editor.Completion.DisplayContract
-import Editor.Completion.Displays
 import Editor.Completion.Keys
 import Editor.Face.Vocabulary
 import Editor.Scene
-import ModelTest.Check
-import ModelTest.Editor.Completion.Display
 
 /-!
-# Model tests: `Editor/Completion/Displays.lean`
+# Model tests: `Completion/Displays.lean`
 
 The model tests of the display that ships, which the `completion` package
-registers (`Editor/Completion/Displays.lean`): `minibufferDisplayChecks`.
-The model and the choice are `completionDisplayChecks`
-(`ModelTest/Editor/Completion/Display.lean`). The root module `ModelTest`
-runs them; its module doc says what each shows.
+registers (`Completion/Displays.lean`): `minibufferDisplayChecks`. The
+model and the choice are the core's `ModelTest.completionDisplayChecks`
+(`lean/ModelTest/Editor/Completion/Display.lean`). The test driver's root,
+`CompletionTest/Model.lean`, runs them; its module doc says what each
+shows. They were the core's (`ModelTest.minibufferDisplayChecks`) while
+the display was a module of the core, and moved here with their sentences
+as they were. The three helpers that write listings and read rows are this
+module's own copies of the core test's (`listedOf`, `listingOf`,
+`rowTexts`): a package's test imports no test module of the core.
 -/
 
-namespace ModelTest
+namespace CompletionTest
 
 open Editor
+
+/-- A listed candidate of `text` for the display checks, with `ranges`, and
+a label, an annotation and a group when given. -/
+def listedOf (text : String) (ranges : Array Completion.Span := #[])
+    (label annotation group : Option String := none) : Completion.Listed :=
+  { candidate := { text, label, annotation, group }, ranges }
+
+/-- The listing of a candidate of each of `texts`, with no ranges. -/
+def listingOf (texts : Array String) : Array Completion.Listed :=
+  texts.map (listedOf ·)
+
+/-- The texts of `sheet`'s rows. -/
+def rowTexts (sheet : Completion.Sheet) : Array String :=
+  sheet.rows.map (·.text)
 
 /-- The sheet the minibuffer display at `rows` rows answers for `showing`. -/
 def minibufferSheet (showing : Completion.Showing) (rows : Nat := Completion.Displays.rows) :
@@ -28,7 +46,7 @@ def minibufferSheet (showing : Completion.Showing) (rows : Nat := Completion.Dis
   (Completion.Displays.minibuffer rows).sheet showing
 
 /-- The checks of the shipped minibuffer display
-(`Editor/Completion/Displays.lean`): its rule, pure, over listings written
+(`Completion/Displays.lean`): its rule, pure, over listings written
 here, the display contract on it, and its faces in the vocabulary. -/
 def minibufferDisplayChecks : List Check :=
   let texts := (Array.range 15).map (s!"c{·}")
@@ -206,4 +224,4 @@ def minibufferDisplayChecks : List Check :=
           (drawn.all Face.vocabularyNames.contains &&
             faces.all fun face => drawn.contains face && Face.vocabularyNames.contains face) }]
 
-end ModelTest
+end CompletionTest

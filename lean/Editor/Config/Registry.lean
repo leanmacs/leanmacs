@@ -288,9 +288,10 @@ A completion style (`Completion.Style`, `Editor/Completion/Style.lean`) is
 held by owner like a source, in a `StyleEntry`, and replaced as a set
 (`replaceStyles`). The latest entry of a name is the one found (`style?`),
 so config's style of a shipped style's name is used in its place until a
-reload drops it. The `completion` package registers the shipped styles,
-`fuzzy`, `orderless` and `path` (`Editor/Completion/Compiled.lean`);
-`setup` registers more with `defineStyle` (`Editor/Setup.lean`).
+reload drops it. The default package `completion` registers the shipped
+styles, `fuzzy`, `orderless` and `path`
+(`packages/completion/Completion/Compiled.lean`); `setup` registers more
+with `defineStyle` (`Editor/Setup.lean`).
 
 Which style a prompt is matched with is config's choice, by category, with a
 default for the rest (`useStyleFor`, `useStyle`): the choices are config's
@@ -303,9 +304,10 @@ it, and of two packages' defaults for one category the later package's is
 used. `styleEntry` resolves them to the one style entry a category is
 matched with: the entry of the style chosen for it when one is registered
 under that name, else a package's default's for it, else the chosen
-default's, else the style registered under `fuzzy` (config's, when it
-registers one of that name), else the core's own fuzzy style, as the owner
-`compiled`'s, for a registry where no style of that name is. A chosen name
+default's, else the style registered under the name of the style
+registered first (config's, when it registers one of that name), else the
+core's own style (`Completion.Style.unregistered`), as the owner
+`compiled`'s, for a registry where no style is. A chosen name
 no style is registered under is reported at install (`unknownStyles`,
 `Report.unknownStyles`, `Editor/Config/Reload.lean`). `matching` hands the
 loop both the style and who registered it
@@ -326,18 +328,19 @@ is held by owner like a style, in a `DisplayEntry`, and replaced as a set
 (`display?`), so config's display of a shipped display's name is used in
 its place until a reload drops it: that is how config sets the rows the
 minibuffer's list shows, with `defineDisplay (Completion.Displays.minibuffer
-(rows := n))`. The `completion` package registers the shipped display,
-`minibuffer` (`Editor/Completion/Compiled.lean`); `setup` registers
-more with `defineDisplay` (`Editor/Setup.lean`).
+(rows := n))`. The default package `completion` registers the shipped
+display, `minibuffer` (`packages/completion/Completion/Compiled.lean`);
+`setup` registers more with `defineDisplay` (`Editor/Setup.lean`).
 
 Which display a prompt is shown with is config's choice, by category, with
 a default for the rest (`useDisplayFor`, `useDisplay`): the choices are
 config's alone, set by each install (`displayChoices`). `displayEntry`
 resolves them as `styleEntry` does: the entry of the display chosen for the
 category when one is registered under that name, else the chosen
-default's, else the display registered under `minibuffer`, else the
-core's own minibuffer display, as the owner `compiled`'s, for a registry
-where none is. A chosen name no
+default's, else the display registered under the name of the display
+registered first, else the core's own display
+(`Completion.Display.unregistered`), as the owner `compiled`'s, for a
+registry where none is. A chosen name no
 display is registered under is reported at install (`unknownDisplays`,
 `Report.unknownDisplays`, `Editor/Config/Reload.lean`). `displaying` hands
 the loop the result. A display runs only inside the publish and is looked

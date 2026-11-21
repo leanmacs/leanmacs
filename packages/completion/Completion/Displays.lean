@@ -3,11 +3,11 @@ import Editor.Completion.Display
 /-!
 # The completion displays that ship
 
-One display (`Editor/Completion/Display.lean`): the minibuffer's,
+One display (the core's `lean/Editor/Completion/Display.lean`): the minibuffer's,
 `Displays.minibuffer`, the default. It is drawn in a view of its own over
 generated text, at the top of the minibuffer's place, directly above the
-input (`Loop.candidateListView`, `Editor/Loop.lean`; `EditorState`'s
-"The minibuffer's place", `Editor/State.lean`). Its rule is pure.
+input (`Loop.candidateListView`, the core's `lean/Editor/Loop.lean`;
+`EditorState`'s "The minibuffer's place", `lean/Editor/State.lean`). Its rule is pure.
 
 ## The minibuffer display
 
@@ -53,10 +53,10 @@ input (`Loop.candidateListView`, `Editor/Loop.lean`; `EditorState`'s
 
 | Addition | Where |
 |---|---|
-| A new display | A value here, in `shipped`, and run by `ModelTest.minibufferDisplayChecks` |
-| A face the minibuffer display draws | A definition here, an entry of the vocabulary (`Editor/Face/Vocabulary.lean`) and a definition of `Palette.theme` (`Editor/Face.lean`) |
+| A new display | A value here, in `shipped`, and run by `CompletionTest.minibufferDisplayChecks` |
+| A face the minibuffer display draws | A definition here, an entry of the vocabulary (the core's `lean/Editor/Face/Vocabulary.lean`) and a definition of `Palette.theme` (`lean/Editor/Face.lean`) |
 
-Pinned by `ModelTest.minibufferDisplayChecks`: its rule, the display
+Pinned by `CompletionTest.minibufferDisplayChecks`: its rule, the display
 contract on it and its faces in the vocabulary.
 -/
 
@@ -242,7 +242,7 @@ def minibuffer (rows : Nat := Displays.rows) : Display :=
   { name := "minibuffer", sheet := sheetOf rows }
 
 /-- The displays that ship, which the `completion` package registers
-(`Editor/Completion/Compiled.lean`). -/
+(`Completion/Compiled.lean`). -/
 def shipped : Array Display :=
   #[minibuffer]
 

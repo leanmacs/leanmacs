@@ -1,16 +1,17 @@
+import CompletionApi
 import Editor.Completion.Style
 import Editor.TypedPath
 
 /-!
 # The completion styles that ship
 
-Three styles (`Editor/Completion/Style.lean`): the fuzzy matcher's, the
+Three styles (the core's `lean/Editor/Completion/Style.lean`): the fuzzy matcher's, the
 default, orderless's, which proves the interface holds a second rule, and
 the path style, which matches a path's last component.
 
 ## Fuzzy
 
-`Styles.fuzzy` asks the fuzzy port (`Fuzzy.rank`, `Editor/Fuzzy.lean`)
+`Styles.fuzzy` asks the fuzzy port (`Fuzzy.rank`, the core's `lean/Editor/Fuzzy.lean`)
 and answers its indices in its order. So **the order rule is the fuzzy
 style's**: a candidate that is the text comes first, then the matcher's
 scores. The rule stays implemented where it is, in the Rust ranking
@@ -45,10 +46,15 @@ not part of it, so a directory `notes/` is matched as `notes`), and each
 span is shifted by its candidate's offset. **The directory part is never
 matched**, so it never ranks a candidate. A text that ends in `/` has an
 empty last component, and lists every candidate in order. It is the style
-the `files` package gives the category `file` (`Editor/Files/Compiled.lean`).
+the core's `files` package gives the category `file`
+(`lean/Editor/Files/Compiled.lean`). Its name is
+`CompletionApi.pathStyleName`, which the interface package
+`completion-api` declares, since the files package reaches it; the core
+cannot import a package, so it writes the name as text.
 
-Pinned by `ModelTest.shippedStyleChecks`, over the fuzzy model, and
-against the real matcher by `ContractTest.shippedStyleFailures`.
+Pinned by `CompletionTest.shippedStyleChecks`, over the fuzzy model, and
+against the real matcher by `CompletionTest.shippedStyleFailures`, the
+package's linked test.
 -/
 
 namespace Editor.Completion
@@ -143,7 +149,7 @@ def lastComponent (text : String) : Nat × String :=
 against the candidates', each span shifted to its candidate's text. The
 directory part is never matched. -/
 def path : Style :=
-  { name := "path"
+  { name := CompletionApi.pathStyleName
     hits := fun text candidates => do
       let lasts := candidates.map lastComponent
       let hits ← fuzzy.hits (TypedPath.split text).2 (lasts.map (·.2))
@@ -155,7 +161,7 @@ def path : Style :=
                 { start := range.start + offset, stop := range.stop + offset } } }
 
 /-- The styles that ship, which the `completion` package registers
-(`Editor/Completion/Compiled.lean`). -/
+(`Completion/Compiled.lean`). -/
 def shipped : Array Style :=
   #[fuzzy, orderless, path]
 

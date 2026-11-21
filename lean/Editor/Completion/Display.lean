@@ -6,7 +6,7 @@ import Editor.Completion.Candidate
 What draws a listing of candidates: a display. It is an interface like the
 editor's ports, with a pure model (`Display.plain`), the core's own display
 (`Display.unregistered`), the displays that ship, which the `completion`
-package registers (`Editor/Completion/Displays.lean`), and a contract every
+package registers (`packages/completion/Completion/Displays.lean`), and a contract every
 display is held to (`Editor/Completion/DisplayContract.lean`). The loop asks the prompt's
 display at each publish (`EditorState.displayed`, `Editor/State.lean`;
 `Loop.candidateListView`, `Editor/Loop.lean`), chosen by the prompt's
@@ -62,13 +62,13 @@ display is registered under is said in the install report
 |---|---|
 | Something more a display is handed | A field of `Showing` |
 | Something more a row says | A field of `Row` |
-| A new display that ships | A value in the `completion` package (`Editor/Completion/Displays.lean`), in `Displays.shipped`, and run by `minibufferDisplayChecks` |
+| A new display that ships | A value in the `completion` package (`packages/completion/Completion/Displays.lean`), in `Displays.shipped`, and run by `CompletionTest.minibufferDisplayChecks` |
 | A rule every display keeps | A property of `Editor/Completion/DisplayContract.lean` |
 | A placement other than the minibuffer's place | A later phase's (`rdm:task/completion-float-displays`) |
 
 Pinned by `ModelTest.displayContractChecks` (the contract, on the model and
 the core's own display) and `completionDisplayChecks` (the model and the
-choice). The shipped display is pinned by `ModelTest.minibufferDisplayChecks`.
+choice). The shipped display is pinned by `CompletionTest.minibufferDisplayChecks`.
 -/
 
 namespace Editor.Completion

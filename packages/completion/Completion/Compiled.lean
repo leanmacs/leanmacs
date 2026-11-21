@@ -1,5 +1,5 @@
-import Editor.Completion.Displays
-import Editor.Completion.Styles
+import Completion.Displays
+import Completion.Styles
 import Editor.Package
 
 /-!
@@ -7,14 +7,18 @@ import Editor.Package
 
 What a host registers so that a prompt is matched and shown with the styles
 and displays that ship: the package `completion` (`Completion.package`,
-`Editor/Package.lean`), for the owner `completion`, when its loop starts,
-before any config (`Editor/Config/Packages.lean`).
+the core's `lean/Editor/Package.lean`), which the entry module
+`Completion/EditorPackage.lean` lists. A host registers it for the owner
+`completion` when its loop starts, before any config (the core's
+`lean/Editor/Config/Packages.lean`).
 
 - **The styles** that ship (`Completion.Styles.shipped`,
-  `Editor/Completion/Styles.lean`): `fuzzy`, `orderless` and `path`, so
-  config's `useStyle` and `useStyleFor` can choose them.
+  `Completion/Styles.lean`): `fuzzy`, `orderless` and `path`, so config's
+  `useStyle` and `useStyleFor` can choose them. `path` is the name the
+  interface package `completion-api` declares (`CompletionApi.names`),
+  which the core's files package reaches.
 - **The displays** that ship (`Completion.Displays.shipped`,
-  `Editor/Completion/Displays.lean`): `minibuffer`, which config replaces
+  `Completion/Displays.lean`): `minibuffer`, which config replaces
   by defining a display of that name, to set its rows.
 
 A host that is not handed it still matches and shows a prompt: with no
@@ -23,10 +27,12 @@ style or display registered, the registry falls back to the core's own
 `Config.Registry.styleEntry`, `Config.Registry.displayEntry`), and a
 config's choice of `fuzzy`, `orderless` or `path` then names no style.
 
-The data stays in the core modules, which name no package; this module is
-what a host is handed.
+This module is apart from the styles and displays because it is what a
+host is handed, not what config calls.
 
-Pinned by `ModelTest.completionPackageChecks`.
+Pinned by `CompletionTest.completionPackageChecks`, which also runs the
+contract check of `completion-api` over it
+(`CompletionTest/Completion/Compiled.lean`).
 -/
 
 namespace Editor.Completion

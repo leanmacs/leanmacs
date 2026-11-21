@@ -1,6 +1,10 @@
 name = "config"
 
 [[require]]
+name = "completion"
+path = "@REPO@/packages/completion"
+
+[[require]]
 name = "mode-line"
 path = "@REPO@/packages/mode-line"
 

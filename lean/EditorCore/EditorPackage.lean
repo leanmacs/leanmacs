@@ -1,6 +1,5 @@
 import Editor.AtPoint.Compiled
 import Editor.Buffers.Compiled
-import Editor.Completion.Compiled
 import Editor.Evil.Compiled
 import Editor.Ex.Compiled
 import Editor.Files.Compiled
@@ -74,7 +73,6 @@ keeps each kind of entry in the order the hosts registered it before there
 were packages, so the command prompt, the keymaps, the mode line and the
 language table read as they did:
 
-- `completion` comes first: the shipped styles and displays;
 - `menu` comes after `frame-commands` and before `workspace`: the key
   bindings are the frame's, then the menu's, then the workspace finder's;
 - `themes` defines the theme `default` and no package after it defines a
@@ -113,7 +111,12 @@ package, which was thirteenth here, after `themes`, is the default package
 `execute-command` (`packages/execute-command/`): its command follows
 version control's in the command prompt now. The binding search's, which
 was after it, is the default package `binding-search`
-(`packages/binding-search/`), and registers directly after it.
+(`packages/binding-search/`), and registers directly after it. The
+completion styles' and displays' package, which was first here, is the
+default package `completion` (`packages/completion/`), and is the first
+default package to register: its styles and displays are still the first
+registered in the default set, so `fuzzy` and `minibuffer` are still its
+defaults (`Config.Registry.styleEntry`, `displayEntry`).
 -/
 
 namespace EditorCore.EditorPackage
@@ -123,10 +126,10 @@ open Editor
 /-- The packages of the core's Lake package, in the order a host registers
 them ("The order", in the module docs). -/
 def packages : Array Package :=
-  #[Completion.package, Files.package, Minibuffer.package, Evil.package, Ex.package,
-    Buffers.package, FrameCommands.package, Menu.package, WindowCommands.package,
-    TabCommands.package, Themes.package, Workspace.package, ProjectSearch.package,
-    WorkingSet.package, Restore.package, PackageSet.package, Shell.package, AtPoint.package,
-    VersionControl.package, VersionControl.gutterPackage]
+  #[Files.package, Minibuffer.package, Evil.package, Ex.package, Buffers.package,
+    FrameCommands.package, Menu.package, WindowCommands.package, TabCommands.package,
+    Themes.package, Workspace.package, ProjectSearch.package, WorkingSet.package, Restore.package,
+    PackageSet.package, Shell.package, AtPoint.package, VersionControl.package,
+    VersionControl.gutterPackage]
 
 end EditorCore.EditorPackage

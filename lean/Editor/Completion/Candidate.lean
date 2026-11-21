@@ -13,7 +13,7 @@ no program.
 - **A candidate** is the text accepting it gives, with what a display may
   show beside it: a label shown in its place, an annotation, a kind and a
   group, each optional. The label, the annotation and the group are drawn
-  by the display (`Editor/Completion/Displays.lean`); the kind is carried
+  by the display (`packages/completion/Completion/Displays.lean`); the kind is carried
   and not drawn (`docs/design/keymaps-and-modes.md`, "A prompt's
   sources").
 - **A query** is the text typed so far and the view the prompt was asked
@@ -27,7 +27,7 @@ no program.
   matched (`Span`, byte offsets), and a `Listed`, a candidate as a
   prompt's listing holds it, with those ranges. The ranges travel with the
   candidate so a display can draw them, and the minibuffer display does,
-  in `minibuffer.match` (`Editor/Completion/Displays.lean`).
+  in `minibuffer.match` (`packages/completion/Completion/Displays.lean`).
 - **What a prompt's sources answered**: `Answer`, what one named source
   answered with its category and whether it filtered already, and
   `Collected`, what all of a prompt's sources answered together, as the

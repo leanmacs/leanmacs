@@ -25,18 +25,15 @@ import ModelTest.Editor.Command.Control
 import ModelTest.Editor.Command.Dispatch
 import ModelTest.Editor.Command.Registry
 import ModelTest.Editor.Completion.AtPointContract
-import ModelTest.Editor.Completion.Compiled
 import ModelTest.Editor.Completion.Contract
 import ModelTest.Editor.Completion.Display
 import ModelTest.Editor.Completion.DisplayContract
-import ModelTest.Editor.Completion.Displays
 import ModelTest.Editor.Completion.Filtering
 import ModelTest.Editor.Completion.Keys
 import ModelTest.Editor.Completion.Later
 import ModelTest.Editor.Completion.Paths
 import ModelTest.Editor.Completion.Style
 import ModelTest.Editor.Completion.StyleContract
-import ModelTest.Editor.Completion.Styles
 import ModelTest.Editor.Completion.Words
 import ModelTest.Editor.Config.Elaborator.Model
 import ModelTest.Editor.Config.LakePackage
@@ -292,12 +289,9 @@ predicate says, and a category picks its style. Its contract
 style and the model (`styleContractChecks`), and seen to bite on a style
 that answers an index twice and on one with a range past its candidate's
 end; `contract-test` runs it against the core's own style over the real
-binding. The styles that ship (`Editor/Completion/Styles.lean`) are checked
-over the fuzzy model (`shippedStyleChecks`): the fuzzy style answers the
-model's order with its in-order spans, the orderless style matches exactly
-the candidates that hold every component of the text, as a property over
-every short text and candidate of a small alphabet, the path style ranks
-by the last component, and the contract holds of each.
+binding. The styles that ship are the default package `completion`'s
+(`packages/completion/`), whose own tests hold them
+(`CompletionTest.shippedStyleChecks`).
 
 The completion display interface (`Editor/Completion/Display.lean`) is
 checked pure (`completionDisplayChecks`): a sheet's text, whether a listing
@@ -305,13 +299,8 @@ is grouped, the model, the core's own display, and a category's display
 chosen. Its contract (`Editor/Completion/DisplayContract.lean`) is run
 against the model, `Display.plain`, and the core's own display
 (`displayContractChecks`), and seen to bite on a display with a decoration
-past its row's end. The minibuffer display's rule
-(`Editor/Completion/Displays.lean`), the one that ships, is checked pure
-(`minibufferDisplayChecks`): the row cap, the faces of the chosen row and
-the others, the matched ranges and their offsets in the sheet, a label in
-place of the text, the annotation column, the group headers, the window
-round the choice, the contract at 0, 1, 3 and 10 rows, and its five faces
-in the vocabulary.
+past its row's end. The minibuffer display, the one that ships, is the
+`completion` package's too (`CompletionTest.minibufferDisplayChecks`).
 
 The layouts (`Editor/Layout.lean`) are pure functions, checked by
 enumeration (`layoutChecks`): master-and-stack's rectangles tile the area
@@ -823,13 +812,13 @@ The config session's decisions are tested here too, with no elaborator:
   nothing, bare too; a value is registered at its own type's point only;
   a reload replaces config's values and keeps a package's; and `named`
   finds the latest value of a name, config's over a package's;
-- `completionPackageChecks`: the package of what ships in core modules
-  registers it, in order: the shipped styles and displays
-  (`Editor/Completion/Compiled.lean`). The shipped segments are the
-  default package `mode-line`'s (`packages/mode-line/`), and the `code`
-  mode with the shipped languages the default package `languages`'
+- the shipped styles and displays are the default package `completion`'s
+  (`packages/completion/`), the shipped segments the default package
+  `mode-line`'s (`packages/mode-line/`), and the `code` mode with the
+  shipped languages the default package `languages`'
   (`packages/languages/`), whose own tests hold them
-  (`ModeLineTest.modeLinePackageChecks`,
+  (`CompletionTest.completionPackageChecks`,
+  `ModeLineTest.modeLinePackageChecks`,
   `LanguagesTest.languagePackageChecks`);
 - `exPackageChecks` and `versionControlPackageChecks`: each package binds
   its own ex names, in order: the `ex` package the files', its own and the
@@ -1478,7 +1467,6 @@ def checks : List Check :=
     reloadHintChecks ++
     packageChecks ++
     extensionChecks ++
-    completionPackageChecks ++
     exPackageChecks ++
     versionControlPackageChecks ++
     filesPackageChecks ++
@@ -1519,10 +1507,8 @@ def checks : List Check :=
     fuzzyChecks ++
     styleChecks ++
     styleContractChecks ++
-    shippedStyleChecks ++
     displayContractChecks ++
     completionDisplayChecks ++
-    minibufferDisplayChecks ++
     displayStateChecks ++
     syntaxTreeChecks ++
     guardChecks ++

@@ -303,8 +303,9 @@ def setup : SetupM Unit := do
 
 `defineStyle` registers a style for this config; the shipped styles,
 `fuzzy`, `orderless` and `path` (`Completion.Styles.shipped`), are
-registered by the `completion` package, which the default set's hosts are
-handed. `useStyleFor category name` chooses the style of the prompts of
+registered by the default package `completion` (`packages/completion/`),
+which the default set's hosts are handed, and config names them with
+`import Completion.Styles`. `useStyleFor category name` chooses the style of the prompts of
 `category`, and `useStyle name` the default for the others; with none
 chosen the default is the style registered first, in registration order
 (packages by dependency, then config), looked up by name, so config's
@@ -330,7 +331,8 @@ def setup : SetupM Unit := do
 
 `defineDisplay` registers a display for this config; the shipped display,
 `minibuffer` (`Completion.Displays.shipped`), is registered by the
-`completion` package.
+default package `completion` too, and config names it with
+`import Completion.Displays`.
 Config's display of a shipped name is used in its place: the first line
 above replaces the shipped `minibuffer` with one that shows at most 15
 rows, which is how config sets the most rows the minibuffer's list shows

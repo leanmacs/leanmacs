@@ -1,0 +1,55 @@
+# The interface package of the completion styles and displays that ship
+# (docs/design/extension-points.md, "Three layers"): the contract between
+# the default package `completion`, which implements it, and whatever
+# reaches one of its styles by name, the core's `files` package among them,
+# which gives the file prompt's category the style `path`. It declares that
+# name (`CompletionApi.pathStyleName`), as an interface package declares
+# every name another package may reach ("Reaches by name"), and registers
+# no behaviour.
+#
+# It is an interface package: it declares the keyword `editor-interface`
+# below, so another package may import its modules, and the layer imports
+# check reads that keyword from Lake (tools/layer-imports-check.sh).
+#
+# - `CompletionApi` is the package's library: `CompletionApi.lean`, the
+#   names.
+# - `CompletionApiTest` holds what it publishes for other packages' tests,
+#   as the owner of a port publishes its fake and its contract check
+#   (AGENTS.md, "Testing with hand-written mocks"):
+#   `CompletionApiTest/Fake.lean`, a package that registers a style under
+#   every declared name, which a consumer's tests use in place of any
+#   implementation; and `CompletionApiTest/Contract.lean`, the check every
+#   implementation runs. Its own tests are
+#   `CompletionApiTest/CompletionApi.lean`.
+# - `completion-api-test` is its test driver (`lake test`), rooted at
+#   `CompletionApiTest/Model.lean`. It is no default target, as the core's
+#   `model-test` is not: `mise run lean` links with the system compiler,
+#   which this executable has no flags for.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/completion-api update --keep-toolchain
+# then the same for every package and set that reaches this package
+# (packages/completion, packages/, tests/packages, tests/user-link,
+# tests/layer-imports), and commit each lake-manifest.json.
+name = "completion-api"
+keywords = ["editor-interface"]
+testDriver = "«completion-api-test»"
+defaultTargets = ["CompletionApi", "CompletionApiTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "CompletionApi"
+
+[[lean_lib]]
+name = "CompletionApiTest"
+globs = ["CompletionApiTest.+"]
+
+[[lean_exe]]
+name = "completion-api-test"
+root = "CompletionApiTest.Model"

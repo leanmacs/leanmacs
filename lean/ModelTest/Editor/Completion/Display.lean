@@ -9,7 +9,8 @@ import ModelTest.Check
 
 The model tests of `Editor/Completion/Display.lean`: `completionDisplayChecks`,
 the model, the core's own display and the choice, on displays written here.
-The shipped display's are in `ModelTest/Editor/Completion/Displays.lean`.
+The shipped display's are the `completion` package's
+(`packages/completion/CompletionTest/Completion/Displays.lean`).
 The root module `ModelTest` runs them; its module doc says what each shows.
 -/
 

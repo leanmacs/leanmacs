@@ -24,7 +24,7 @@ check (`Themes.problems`, `Editor/Themes/Check.lean`) holds that it does.
   (`Loop.promptFace`), the rows of the candidate list the minibuffer
   display draws (`Completion.Displays.candidateFace`, `chosenFace`,
   `matchFace`, `annotationFace`, `groupFace`,
-  `Editor/Completion/Displays.lean`), the
+  `packages/completion/Completion/Displays.lean`), the
   compile mode's locations by severity (`compilation.error`,
   `compilation.warning`, `compilation.note`; `Compile.Severity.face`), the
   matches of the last search (`Loop.searchMatchFace`), and the tab bar's

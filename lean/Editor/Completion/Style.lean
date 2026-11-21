@@ -9,7 +9,7 @@ Which of a prompt's candidates the text typed so far matches, and in what
 order: a style. It is an interface like the editor's ports, with a pure
 model (`Style.keeping`), the core's own style (`Style.unregistered`), the
 styles that ship, which the `completion` package registers
-(`Editor/Completion/Styles.lean`), and a contract every style is held to
+(`packages/completion/Completion/Styles.lean`), and a contract every style is held to
 (`Editor/Completion/StyleContract.lean`).
 The loop asks the prompt's style before each scene (`Loop.listed`,
 `Editor/Loop.lean`), chosen by the prompt's category (`Matching`).
@@ -60,7 +60,7 @@ registered under is said in the install report (`Style.unknown`).
 
 | Addition | Where |
 |---|---|
-| A new style that ships | A value beside its rule in the `completion` package (`Editor/Completion/Styles.lean`), in `Styles.shipped`, and run by `shippedStyleChecks` |
+| A new style that ships | A value beside its rule in the `completion` package (`packages/completion/Completion/Styles.lean`), in `Styles.shipped`, and run by `CompletionTest.shippedStyleChecks` |
 | A rule every style keeps | A property of `Editor/Completion/StyleContract.lean` |
 | Something more a style answers of a candidate | A field of `Hit` (`Editor/Completion/Candidate.lean`), carried on `Listed`, and what draws it is the display's (`Editor/Completion/Display.lean`) |
 
@@ -68,7 +68,7 @@ Pinned by `ModelTest.styleChecks` (the model, the core's own style and the
 choice) and `styleContractChecks` (the contract, on the model and the
 core's own style), and against the real matcher by
 `ContractTest.styleFailures`. The shipped styles are pinned by
-`ModelTest.shippedStyleChecks` and `ContractTest.shippedStyleFailures`.
+`CompletionTest.shippedStyleChecks` and `CompletionTest.shippedStyleFailures`.
 -/
 
 namespace Editor.Completion

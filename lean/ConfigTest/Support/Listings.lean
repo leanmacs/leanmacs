@@ -2,14 +2,15 @@ import Editor.Completion.Display
 import Editor.Completion.Style
 import Editor.Package
 import Editor.Setup
+import Editor.TypedPath
 
 /-!
 # Config tests: support: Listings
 
 The package the config tests' hosts are handed for prompts' listings
-(`listingsPackage`): a style and a display written for these tests, neither
-the ones that ship, since the core's hosts are handed no package of the
-completion feature. Its rules are stated here and are no shipped one's.
+(`listingsPackage`): styles and a display written for these tests, none of
+them the ones that ship, since the core's hosts are handed no package of
+the completion feature (`packages/completion/`). Its rules are stated here and are no shipped one's.
 Shared by several test modules; it holds no checks of its own.
 -/
 
@@ -30,6 +31,22 @@ their order, with no ranges. -/
 def partsStyle : Completion.Style :=
   .keeping "parts" fun text candidate =>
     (text.splitOn " ").all fun part => part.isEmpty || (candidate.splitOn part).length > 1
+
+/-- The last component of `path`: what follows its last `/`, a trailing `/`
+not counted, so `notes/` is `notes`. -/
+def lastOf (path : String) : String :=
+  (TypedPath.split (if path.endsWith "/" then String.ofList path.toList.dropLast else path)).2
+
+/-- The style the hosts' file prompts are matched with, `path`, the name the
+core's files package gives the category `file` (`Completion.Paths.category`)
+as text: the fuzzy port's ranking of the text's last component, what follows
+its last `/`, against each candidate's (`lastOf`), in its order, with no
+ranges. -/
+def lastsStyle : Completion.Style :=
+  { name := "path"
+    hits := fun text candidates => do
+      return (← Fuzzy.rank (TypedPath.split text).2 (candidates.map lastOf)).map
+          Completion.Hit.ofIndex }
 
 /-- How many rows `rowsDisplay` shows at most. -/
 def listedRows : Nat :=
@@ -79,13 +96,14 @@ def rowsDisplay : Completion.Display :=
                 else #[{ start := 0, stop := text.utf8ByteSize, face }] } } }
 
 /-- The package `listings`, which the config tests' hosts are handed before
-any other of theirs: the styles `library`, the default, and `parts`, and the
-display `rows`, the default. -/
+any other of theirs: the styles `library`, the default, `parts` and `path`,
+and the display `rows`, the default. -/
 def listingsPackage : Package :=
   { name := "listings"
     setup := do
       defineStyle libraryStyle
       defineStyle partsStyle
+      defineStyle lastsStyle
       defineDisplay rowsDisplay }
 
 end ConfigTest

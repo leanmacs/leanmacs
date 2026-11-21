@@ -1,6 +1,6 @@
 import Editor
-import Editor.Completion.Styles
-import Editor.Completion.Displays
+import Completion.Styles
+import Completion.Displays
 open Editor
 
 -- A config that names the completion styles and displays that ship: it

@@ -1,21 +1,24 @@
+import Completion.Styles
+import CompletionTest.Check
 import Editor.Completion.Candidate
 import Editor.Completion.Style
 import Editor.Completion.StyleContract
-import Editor.Completion.Styles
 import Editor.Fuzzy.Model
 import Editor.Test.Completion
-import ModelTest.Check
 
 /-!
-# Model tests: `Editor/Completion/Styles.lean`
+# Model tests: `Completion/Styles.lean`
 
 The model tests of the styles that ship, which the `completion` package
-registers (`Editor/Completion/Styles.lean`): `shippedStyleChecks`, their
-rules over the fuzzy model and the style contract on each. The root module
-`ModelTest` runs them; its module doc says what each shows.
+registers (`Completion/Styles.lean`): `shippedStyleChecks`, their rules
+over the fuzzy model and the style contract on each. The test driver's
+root, `CompletionTest/Model.lean`, runs them; its module doc says what each
+shows. They were the core's (`ModelTest.shippedStyleChecks`) while the
+styles were modules of the core, and moved here with their sentences as
+they were.
 -/
 
-namespace ModelTest
+namespace CompletionTest
 
 open Editor
 open Editor.Test
@@ -56,9 +59,9 @@ def charsWithin (text : String) (span : Completion.Span) : List Char :=
 def shippedStyleBroken (style : Completion.Style) : IO (List String) :=
   Completion.StyleContract.failures (fun program => pure (ranked program)) style
 
-/-- The checks of the shipped styles (`Editor/Completion/Styles.lean`) over
-the fuzzy model: the path, fuzzy and orderless rules, their names, and the
-style contract on each (`Editor/Completion/StyleContract.lean`). -/
+/-- The checks of the shipped styles (`Completion/Styles.lean`) over the
+fuzzy model: the path, fuzzy and orderless rules, their names, and the
+style contract on each (the core's `lean/Editor/Completion/StyleContract.lean`). -/
 def shippedStyleChecks : List Check :=
   [{  name :=
         "the path style ranks by the last component alone, in the fuzzy model's order, its spans within the last component; a pattern that ends in / lists every candidate in order; a directory candidate notes/ is first for notes"
@@ -145,4 +148,4 @@ def shippedStyleChecks : List Check :=
             (← shippedStyleBroken Completion.Styles.orderless).isEmpty &&
             (← shippedStyleBroken Completion.Styles.path).isEmpty }]
 
-end ModelTest
+end CompletionTest
