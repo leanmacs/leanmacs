@@ -32,19 +32,19 @@ logic, and a mutation of it kills the check as it would on a real loop.
   threw is.
 
 `Stepped.waitWhile` is `Host.waitWhile` over the stepped loop, with the same
-signature and outcomes (`Wait`), so `await`, `join` and an `advance`'s wait
-mean the same. A round takes the queue's next-push task (`arrived`) and the
+signature and outcomes (`Wait`), and the same kinds of wait (`Wait.Kind`),
+so a `settle`, a `join` and an `advance` mean the same. Only the transport
+differs. A round takes the queue's next-push task (`arrived`) and the
 activity count's reading, then drains the queue, each event through the
 turn (the first round's marker among them, so a settle publishes the scene
-a real host's does, and a later round posts nothing, so publishes none),
-then judges as `Host.waitWhile` does: `settled` once `busy` no longer
-holds; at idle (the count 0 at the epoch the round began with, and no wait
-of the fake clock due) `still`, when it has one; another round when the
-count is 0 but moved; and otherwise it calls `waitBlocked "running work"`
-and blocks on the first of the next push and the count's next change. The
-push is the one a lost wake-up would miss: an event posted after the round
-found the queue empty, with the count unchanged, is handled. At its guard
-it says the hang once through `waitHung` and answers the hang outcome. A
+a real host's does, and a later round posts nothing, so publishes none).
+The round is then judged by the one verdict both drivers' waits take
+(`Wait.Kind.judge`, `Round.judge`, `Editor/Headless/Wait.lean`); a block,
+after `waitBlocked "running work"`, is on the first of the next push and
+the count's next change. The next push is armed before the drain: an event
+posted after the drain found the queue empty, with the count unchanged, is
+the one a lost wake-up would miss, and it ends the block. At its guard the
+wait says the hang once through `waitHung` and answers the hang outcome. A
 loop that a turn stopped, or that threw, is answered `ended`.
 -/
 
@@ -107,16 +107,18 @@ def input (stepped : Stepped) (event : Event) : IO Unit := do
     | throw (IO.userError "no window reports that event")
   stepped.enqueue delivered
 
-/-- `Host.waitWhile` over the stepped loop (the module docs). -/
-def waitWhile (stepped : Stepped) (waitGuard : Nat) (busy : Progress → IO Bool)
-    (still : Option Wait) (hung : Wait) (what : String) (_answer : Nat := waitGuard)
+/-- `Host.waitWhile` over the stepped loop (the module docs): a round drains
+the queue, and is judged as the real host's is (`Wait.Kind.judge`). -/
+def waitWhile (stepped : Stepped) (waitGuard : Nat) (kind : Wait.Kind) (_answer : Nat := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) (marker : Bool := true) : IO Wait := do
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait := do
   if (← stepped.ending.get).isSome then
     return .ended
   let deadline := (← IO.monoMsNow) + waitGuard
-  let mut first := marker
+  let mut first := kind.marker
   repeat
+    -- The next push's task is armed before the drain: an event posted after
+    -- the drain found the queue empty ends it, so the block below sees it.
     let arrived ← stepped.memory.arrived
     let before ← stepped.activity.seen
     if first then
@@ -125,44 +127,32 @@ def waitWhile (stepped : Stepped) (waitGuard : Nat) (busy : Progress → IO Bool
     stepped.drain
     if (← stepped.ending.get).isSome then
       return .ended
-    unless ← busy (← stepped.progress) do
-      return .settled
-    let now ← stepped.activity.seen
-    if stepped.activity.tracked then
-      let due ←
-        match stepped.clock with
-        | some clock =>
-          clock.dueWithin 0
-        | none =>
-          pure false
-      if before.idleSince now && !due then
-        if let some idle := still then
-          return idle
-      else if now.running == 0 then
-        continue
-    let remaining := deadline - (← IO.monoMsNow)
-    if remaining == 0 then
-      waitHung (waitHangLine what line waitGuard)
-      return hung
-    waitBlocked "running work"
-    discard <| awaitAnyWithin remaining [arrived, ← stepped.activity.changedSince now.epoch]
+    match
+      ←
+        kind.judge (← stepped.progress) stepped.activity stepped.clock before deadline waitGuard
+            line waitHung with
+    | .answer wait | .hang wait =>
+      return wait
+    | .again =>
+      continue
+    | .block since =>
+      waitBlocked "running work"
+      discard <|
+          awaitAnyWithin (deadline - (← IO.monoMsNow))
+            [arrived, ← stepped.activity.changedSince since]
   return .ended
 
-/-- `Host.await` over the stepped loop: until no reload is running and no
-restore is in flight; `reloading` at its guard. -/
+/-- `Host.await` over the stepped loop: a `settle`'s wait (`Wait.Kind.settle`). -/
 def await (stepped : Stepped) (waitGuard : Nat) (answer : Nat := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
-  stepped.waitWhile waitGuard (fun progress => pure (progress.reloading || progress.restoring)) none
-    .reloading "settle" answer line waitHung waitBlocked
+  stepped.waitWhile waitGuard .settle answer line waitHung waitBlocked
 
-/-- `Host.join` over the stepped loop: until no job is running; `working` at
-idle with one still running, and `busy` at its guard. -/
+/-- `Host.join` over the stepped loop: a `join`'s wait (`Wait.Kind.join`). -/
 def join (stepped : Stepped) (waitGuard : Nat) (answer : Nat := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
-  stepped.waitWhile waitGuard (fun progress => pure (progress.jobs > 0)) (some .working) .busy
-    "join" answer line waitHung waitBlocked
+  stepped.waitWhile waitGuard .join answer line waitHung waitBlocked
 
 /-- Whether the loop has ended, stopped by a turn or by the error one
 threw. -/

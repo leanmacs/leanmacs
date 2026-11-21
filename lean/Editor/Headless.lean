@@ -10,6 +10,7 @@ import Editor.Display.Recorder
 import Editor.Event.Queue
 import Editor.Headless.CommandLine
 import Editor.Headless.Queue.Real
+import Editor.Headless.Wait
 import Editor.InputScheme.Vim.Default
 import Editor.Job.Fake
 import Editor.Job.Jobs
@@ -2678,30 +2679,6 @@ private def start {β σ : Type} {scheme : InputScheme} (collaborators : Collabo
       requests := collaborators.requests, posted := ← IO.mkRef 0, progress, reached
       activity := collaborators.services.activity, clock := collaborators.clock, thread }
 
-/-- What a driver's wait for the editor thread came to. -/
-inductive Wait where
-  /-- The editor thread has handled everything sent so far, and what the wait
-  was for is over: no reload is running, for a `settle`, and no job, for a
-  `join`. -/
-  | settled
-  /-- A hang: the wait reached its guard with the editor thread up to date
-  and a reload still running. -/
-  | reloading
-  /-- The wait found the host idle (`Host.waitWhile`) with what it was for
-  still not over: for a `join`, a job still running that nothing left to
-  run could end. Not a hang: nothing would change however long it waited. -/
-  | working
-  /-- A hang: the wait reached its guard before the editor thread had
-  handled everything sent to it: it is still inside an event. -/
-  | unanswered
-  /-- The editor thread's loop has ended: a command quit the editor, or the
-  window was asked to close. Nothing more will be handled. -/
-  | ended
-  /-- A hang: a `join` or an `advance` reached its guard with the host not
-  idle, work still running that could end what it waits for. -/
-  | busy
-  deriving DecidableEq, Repr
-
 /-- Polls `condition` until it holds; `false` if it still does not after
 `patience` milliseconds. -/
 def within (patience : Nat) (condition : IO Bool) : IO Bool := do
@@ -2741,6 +2718,96 @@ def awaitAnyWithin (guard : Nat) (tasks : List (Task Unit)) : IO Bool := do
   for task in maps do
     IO.cancel task
   return ended.isSome
+
+/-- What a driver's wait waits for: one value per kind of wait, the same for
+the real host's wait (`Host.waitWhile`), a stepped host's
+(`Stepped.waitWhile`), the script runner's (`runScript`) and a test's, so a
+`settle`, a `join` and an `advance` mean one thing wherever they are
+waited. -/
+structure Wait.Kind where
+  /-- The wait's name in its hang line (`waitHangLine`). -/
+  what : String
+  /-- Whether what the wait is for still holds of the loop's progress. -/
+  busy : Progress → IO Bool
+  /-- What the wait answers once the host is idle with it still busy
+  (`Round.still`): none waits on to the guard. -/
+  still : Option Wait := none
+  /-- What the wait answers at its guard, a hang (`Round.hung`). -/
+  hung : Wait
+  /-- Whether its first round's marker publishes a scene (`Signal.marker`),
+  or every round's is a probe, which publishes nothing (`Signal.probe`). -/
+  marker : Bool := true
+
+namespace Wait.Kind
+
+/-- A `settle`'s wait: until no reload is running and no restore is in
+flight; at idle it waits on, and at its guard it is `reloading`. A running
+reload holds a unit of the host's activity, so the wait ends at the
+reload's end. A restore holds the driver's requests after it, the start-up
+reload among them, so a wait for that reload waits for the restore first. -/
+def settle : Wait.Kind where
+  what := "settle"
+  busy progress := pure (progress.reloading || progress.restoring)
+  hung := .reloading
+
+/-- A `join`'s wait: until no job is running; `working` once the host is
+idle with a job still running, which nothing left to run can end, as a job
+asleep on a fake clock nobody moves; `busy` at its guard. A job is running
+from its `spawn` until the editor thread has dealt with its result, or has
+cancelled it with its owner. -/
+def join : Wait.Kind where
+  what := "join"
+  busy progress := pure (progress.jobs > 0)
+  still := some .working
+  hung := .busy
+
+/-- An `advance`'s wait: until `clock` holds a wait due within
+`milliseconds`, publishing nothing; `working` at idle with none due, a
+stall, and `busy` at its guard. -/
+def advance (clock : Job.FakeClock) (milliseconds : Nat) : Wait.Kind where
+  what := "advance"
+  busy _ := return !(← clock.dueWithin milliseconds)
+  still := some .working
+  hung := .busy
+  marker := false
+
+/-- A wait only until the host has handled everything sent so far, whatever
+is still running, publishing nothing: `settled` once it has. A stepped host
+handles what was sent only in a wait, so a test that sends a request whose
+start it then watches for asks this first. -/
+def handled : Wait.Kind where
+  what := "answer"
+  busy _ := pure false
+  hung := .unanswered
+  marker := false
+
+/-- The verdict of a round of a wait of this kind (`Round.judge`), read once
+the driver has the loop up to date: whether it is still busy of `progress`,
+the host's `activity` now against `before`, the reading the round began
+with, whether a wait of `clock` is due, and what is left before `deadline`.
+At the hang it says it once, through `waitHung` (`waitHangLine`, naming
+the wait and its script's `line`; `waitGuard` the milliseconds that ran
+out). Both drivers' waits call it, so their rounds are judged as one. -/
+def judge (kind : Wait.Kind) (progress : Progress) (activity : Job.Activity)
+    (clock : Option Job.FakeClock) (before : Job.Activity.Seen) (deadline waitGuard : Nat)
+    (line : Option Nat) (waitHung : String → IO Unit) : IO Round.Verdict := do
+  let busy ← kind.busy progress
+  let now ← activity.seen
+  let due ←
+    match clock with
+    | some clock =>
+      clock.dueWithin 0
+    | none =>
+      pure false
+  let verdict :=
+    Round.judge
+      { busy, tracked := activity.tracked, before, now, due
+        remaining := deadline - (← IO.monoMsNow), still := kind.still, hung := kind.hung }
+  if let .hang _ := verdict then
+    waitHung (waitHangLine kind.what line waitGuard)
+  return verdict
+
+end Wait.Kind
 
 namespace Host
 
@@ -2786,27 +2853,22 @@ def resize (_ : Host) (width height : Nat) : IO Unit := do
     throw (IO.userError "the editor queue refused a resize: it has been quit")
 
 /-- Waits until the editor thread has handled everything sent so far and
-`busy` no longer holds of its progress, and says what the wait came to.
-Every wait in it is on an event, and each is bounded only by a guard
-against a hang.
+what `kind` waits for no longer holds of its progress (`Wait.Kind`), and
+says what the wait came to. Every wait in it is on an event, and each is
+bounded only by a guard against a hang.
 
 It goes in rounds. A round reads the host's activity count (`Job.Activity`),
 posts a marker (the first round's is `Signal.marker`, which publishes a scene
-as a `settle`'s and a `join`'s always have, unless `marker` is `false`, as
-an `advance`'s, which shows nothing; every later one's a `Signal.probe`,
-which publishes nothing), and waits for the loop to answer it: the loop resolves the marker's promise once it has handled everything
-posted before it and published its progress (`loop`). Then:
-
-- `busy` no longer holds: `settled`.
-- The host is **idle**: the count is 0 and its epoch has not moved since
-  the round began (`Job.Activity.Seen.idleSince`), and the fake clock, if
-  the host has one, holds no wait that is due. Nothing left can run, so
-  nothing can end what the wait is for: it answers `still`, when it has one
-  (`.working` for a `join`, and an `advance`'s stall). A wait with none, a
-  `settle`'s, keeps waiting, for what only its guard can end.
-- The count is 0 but moved during the round: another round.
-- Otherwise work is still running that could end it: the wait blocks on
-  the count's next change, or the loop's end, and then goes round again.
+as a `settle`'s and a `join`'s always have, unless the kind's `marker` is
+`false`, as an `advance`'s, which shows nothing; every later one's a
+`Signal.probe`, which publishes nothing), and waits for the loop to answer
+it: the loop resolves the marker's promise once it has handled everything
+posted before it and published its progress (`loop`). Then the round is
+judged as every driver's is (`Wait.Kind.judge`, `Round.judge`,
+`Editor/Headless/Wait.lean`): over, with `settled` or the kind's idle
+outcome; another round; the hang at the guard; or a block on work still
+running, here on the count's next change or the loop's end, and then
+another round.
 
 `waitBlocked` is called each time the wait is about to block: with
 `"answer"` before the editor thread's answer, when it has not come yet,
@@ -2816,29 +2878,28 @@ nothing.
 
 The editor thread's answer is guarded by `answer` milliseconds, each round,
 and the whole wait by `waitGuard`. At either guard the wait says the hang
-once, through `waitHung` (`waitHangLine`, naming the wait `what` and its
-script's `line`), and ends: `unanswered` at the answer's, and `hung` at the
-wait's (`reloading` for a `settle`, `busy` for a `join` or an `advance`).
-A guard is never a result: it fails the run as a hang.
+once, through `waitHung` (`waitHangLine`, naming the kind's `what` and its
+script's `line`), and ends: `unanswered` at the answer's, and the kind's
+`hung` at the wait's (`reloading` for a `settle`, `busy` for a `join` or an
+`advance`). A guard is never a result: it fails the run as a hang.
 
 A host that keeps no count (`Job.Activity.tracked` false, the window
 mode's) is never idle: once the editor thread has answered, its wait looks
-at `busy` again as the progress changes, until `busy` no longer holds or
-the guard.
+at what it waits for again as the progress changes, until it no longer
+holds or the guard.
 
 A loop that has ended, or ends while the wait runs, is answered `ended` as
 soon as it is seen: its task has finished, so nothing it was waited for
 will happen. The loop's last progress is not read then: the loop does not
 publish it once it has ended, so it may still say a job is running. -/
-def waitWhile (host : Host) (waitGuard : Nat) (busy : Progress → IO Bool) (still : Option Wait)
-    (hung : Wait) (what : String) (answer : Nat := waitGuard) (line : Option Nat := none)
-    (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) (marker : Bool := true) : IO Wait := do
+def waitWhile (host : Host) (waitGuard : Nat) (kind : Wait.Kind) (answer : Nat := waitGuard)
+    (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait := do
   if ← IO.hasFinished host.thread then
     return .ended
   let deadline := (← IO.monoMsNow) + waitGuard
   let thread := host.thread.map (sync := true) fun _ => ()
-  let mut first := marker
+  let mut first := kind.marker
   repeat
     if ← IO.hasFinished host.thread then
       return .ended
@@ -2856,66 +2917,48 @@ def waitWhile (host : Host) (waitGuard : Nat) (busy : Progress → IO Bool) (sti
     if ← IO.hasFinished host.thread then
       return .ended
     unless ← answered.isResolved do
-      waitHung (waitHangLine s!"answer to the {what}" line answer)
+      waitHung (waitHangLine s!"answer to the {kind.what}" line answer)
       return .unanswered
-    unless ← busy (← host.progress.get) do
-      return .settled
-    let now ← host.activity.seen
-    if host.activity.tracked then
-      let due ←
-        match host.clock with
-        | some clock =>
-          clock.dueWithin 0
-        | none =>
-          pure false
-      if before.idleSince now && !due then
-        if let some idle := still then
-          return idle
-      else if now.running == 0 then
-        -- The count moved during the round: another round says whether
-        -- the host is idle now.
-        continue
-    let remaining := deadline - (← IO.monoMsNow)
-    if remaining == 0 then
-      waitHung (waitHangLine what line waitGuard)
-      return hung
-    waitBlocked "running work"
-    if host.activity.tracked then
-      discard <| awaitAnyWithin remaining [← host.activity.changedSince now.epoch, thread]
-    else
-      -- No count to wait on: what the wait is for is looked at again as
-      -- the progress changes, until the guard.
-      discard <|
-          within remaining do
-            return (← IO.hasFinished host.thread) || !(← busy (← host.progress.get))
+    match
+      ←
+        kind.judge (← host.progress.get) host.activity host.clock before deadline waitGuard line
+            waitHung with
+    | .answer wait | .hang wait =>
+      return wait
+    | .again =>
+      continue
+    | .block since =>
+      waitBlocked "running work"
+      if host.activity.tracked then
+        discard <|
+            awaitAnyWithin (deadline - (← IO.monoMsNow))
+              [← host.activity.changedSince since, thread]
+      else
+        -- No count to wait on: what the wait is for is looked at again as
+        -- the progress changes, until the guard.
+        discard <|
+            within (deadline - (← IO.monoMsNow)) do
+              return (← IO.hasFinished host.thread) || !(← kind.busy (← host.progress.get))
   return .ended
 
-/-- Waits until the editor thread has handled everything sent so far, no
-reload is running and no restore is in flight (`waitWhile`), and says what
-the wait came to. A running reload holds a unit of the host's activity, so
-the wait ends at the reload's end, `settled`, or at its guard of
-`waitGuard` milliseconds, `reloading`, a hang. The editor thread's answer is
-guarded by `answer`. A restore holds the driver's requests after it, the
-start-up reload among them, so a wait for that reload waits for the restore
-first. -/
+/-- A `settle`'s wait (`waitWhile` of `Wait.Kind.settle`): until the editor
+thread has handled everything sent so far, no reload is running and no
+restore is in flight; `settled` at the reload's end, or `reloading`, a
+hang, at its guard of `waitGuard` milliseconds. The editor thread's answer
+is guarded by `answer`. -/
 def await (host : Host) (waitGuard : Nat) (answer : Nat := waitGuard) (line : Option Nat := none)
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
-  host.waitWhile waitGuard (fun progress => pure (progress.reloading || progress.restoring)) none
-    .reloading "settle" answer line waitHung waitBlocked
+  host.waitWhile waitGuard .settle answer line waitHung waitBlocked
 
-/-- Waits until the editor thread has handled everything sent so far and no
-job is running (`waitWhile`), and says what the wait came to: `settled`;
-`working` once the host is idle with a job still running, which nothing
-left to run can end, as a job asleep on a fake clock nobody moves; or
-`busy`, a hang, at its guard of `waitGuard` milliseconds. A job is running
-from its `spawn` until the editor thread has dealt with its result, or has
-cancelled it with its owner. -/
+/-- A `join`'s wait (`waitWhile` of `Wait.Kind.join`): until the editor
+thread has handled everything sent so far and no job is running; `settled`,
+`working` once the host is idle with a job still running, or `busy`, a
+hang, at its guard of `waitGuard` milliseconds. -/
 def join (host : Host) (waitGuard : Nat) (answer : Nat := waitGuard) (line : Option Nat := none)
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
-  host.waitWhile waitGuard (fun progress => pure (progress.jobs > 0)) (some .working) .busy "join"
-    answer line waitHung waitBlocked
+  host.waitWhile waitGuard .join answer line waitHung waitBlocked
 
 /-- Waits until the editor thread has handled everything sent so far and no
 reload is running (`await`); `false` if it did not, a hang said at its
@@ -3625,9 +3668,8 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
           clock.advance milliseconds
           continue
         let wait ←
-          host.waitWhile waitGuard (fun _ => return !(← clock.dueWithin milliseconds))
-              (some .working) .busy "advance" answer (some line.number) waitHung waitBlocked
-              (marker := false)
+          host.waitWhile waitGuard (.advance clock milliseconds) answer (some line.number) waitHung
+              waitBlocked
         match wait with
         | .settled =>
           clock.advance milliseconds

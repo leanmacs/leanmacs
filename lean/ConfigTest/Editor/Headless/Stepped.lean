@@ -152,9 +152,8 @@ def steppedChecks (context : Context) : List Check :=
               let joined ←
                 stepped.join hangGuard (waitHung := fun line => hung.modify (·.push line))
               let advance (milliseconds : Nat) :=
-                stepped.waitWhile hangGuard
-                  (fun _ => return !(← stage.clock.dueWithin milliseconds)) (some .working) .busy
-                  "advance" (waitHung := fun line => hung.modify (·.push line)) (marker := false)
+                stepped.waitWhile hangGuard (.advance stage.clock milliseconds) (waitHung :=
+                  fun line => hung.modify (·.push line))
               return (joined, ← advance 5, ← advance 10, ← stage.clock.waiting)
         let hung ← hung.get
         saw
@@ -264,9 +263,7 @@ def steppedChecks (context : Context) : List Check :=
                   discard <| stepped.join hangGuard
                   stepped.send .reload
                   -- Handled, with the reload held: nothing waited for.
-                  discard <|
-                      stepped.waitWhile hangGuard (fun _ => pure false) none .unanswered "handled"
-                        (marker := false)
+                  discard <| stepped.waitWhile hangGuard .handled
                   if throws then
                     throw (IO.userError "the body broke")
               pure none

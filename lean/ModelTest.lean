@@ -82,6 +82,7 @@ import ModelTest.Editor.Grep.Model
 import ModelTest.Editor.Gutter
 import ModelTest.Editor.Headless.CommandLine
 import ModelTest.Editor.Headless.Queue
+import ModelTest.Editor.Headless.Wait
 import ModelTest.Editor.Highlight
 import ModelTest.Editor.Indent
 import ModelTest.Editor.InputScheme
@@ -720,6 +721,14 @@ The job system is tested here with no Rust library:
   queue; and `queueMemoryChecks`, what only the memory queue has: its
   next-push task ends at the next push and not before, and a push after
   its close is refused;
+- `waitRoundChecks`: a driver's wait's round judgement (`Round.judge`,
+  `Editor/Headless/Wait.lean`), the one verdict the real host's wait and a
+  stepped host's both take: settled once the wait is no longer busy; at
+  idle, the count 0 at the epoch the round began with and no fake-clock
+  wait due, the wait's idle outcome, or a block until its guard for a wait
+  with none; another round when the count is 0 but moved or a wait is due;
+  and otherwise a block on the count's next change, or the hang at the
+  guard. A host that keeps no count is never idle. Each is a pure verdict;
 - `handleContractChecks`: the contract of a file request's handle
   (`Editor/Job/HandleContract.lean`) on the fake file service, held by its
   held completions: a held request's handle has not ended until it is let
@@ -1500,6 +1509,7 @@ def checks : List Check :=
     handleContractChecks ++
     queueContractChecks ++
     queueMemoryChecks ++
+    waitRoundChecks ++
     tableChecks ++
     ownerChecks ++
     fileRunnerChecks ++

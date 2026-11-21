@@ -351,16 +351,14 @@ structure Driven where
   /-- Sends an event as the window would report it. -/
   input : Event → IO Unit
   /-- The host's `waitWhile` (`Headless.Host.waitWhile`,
-  `Headless.Stepped.waitWhile`): its guard, what is busy, the idle outcome,
-  the hang outcome, what the wait is, the answer's guard, the script's line,
-  where a hang is said, what is called before a block, and whether the first
-  round's marker publishes a scene. -/
+  `Headless.Stepped.waitWhile`): its guard, the kind of wait
+  (`Headless.Wait.Kind`), the answer's guard, the script's line, where a
+  hang is said, and what is called before a block. What each kind waits
+  for is the core's, never this record's. -/
   waitWhile :
     Nat →
-      (Headless.Progress → IO Bool) →
-      Option Headless.Wait →
-      Headless.Wait →
-      String → Nat → Option Nat → (String → IO Unit) → (String → IO Unit) → Bool → IO Headless.Wait
+      Headless.Wait.Kind →
+      Nat → Option Nat → (String → IO Unit) → (String → IO Unit) → IO Headless.Wait
   /-- The host's activity count and its epoch, read in one step. -/
   activitySeen : BaseIO Job.Activity.Seen
   /-- How far the host's loop has got, as it published after its last
@@ -380,8 +378,8 @@ def ofHost (host : Headless.Host) : Driven where
   input event := do
     unless ← Event.post event do
       throw (IO.userError "the editor queue refused an event: it has been quit")
-  waitWhile guard busy still hung what answer line waitHung waitBlocked marker :=
-    host.waitWhile guard busy still hung what answer line waitHung waitBlocked marker
+  waitWhile guard kind answer line waitHung waitBlocked :=
+    host.waitWhile guard kind answer line waitHung waitBlocked
   activitySeen := host.activitySeen
   progress := host.progress.get
   ended? := do
@@ -394,8 +392,8 @@ def ofHost (host : Headless.Host) : Driven where
 def ofStepped (stepped : Headless.Stepped) : Driven where
   send := stepped.send
   input := stepped.input
-  waitWhile guard busy still hung what answer line waitHung waitBlocked marker :=
-    stepped.waitWhile guard busy still hung what answer line waitHung waitBlocked marker
+  waitWhile guard kind answer line waitHung waitBlocked :=
+    stepped.waitWhile guard kind answer line waitHung waitBlocked
   activitySeen := stepped.activitySeen
   progress := stepped.progress
   ended? := stepped.ended?
@@ -414,19 +412,19 @@ scale of 1 and out of fullscreen. -/
 def resize (driven : Driven) (width height : Nat) : IO Unit :=
   driven.input (.resize { width, height, scale := 1.0 })
 
-/-- `Headless.Host.await` on the driven host. -/
+/-- `Headless.Host.await` on the driven host: a `settle`'s wait
+(`Headless.Wait.Kind.settle`). -/
 def await (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
-  driven.waitWhile waitGuard (fun progress => pure (progress.reloading || progress.restoring)) none
-    .reloading "settle" answer line waitHung waitBlocked true
+  driven.waitWhile waitGuard .settle answer line waitHung waitBlocked
 
-/-- `Headless.Host.join` on the driven host. -/
+/-- `Headless.Host.join` on the driven host: a `join`'s wait
+(`Headless.Wait.Kind.join`). -/
 def join (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard) (line : Option Nat := none)
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
-  driven.waitWhile waitGuard (fun progress => pure (progress.jobs > 0)) (some .working) .busy "join"
-    answer line waitHung waitBlocked true
+  driven.waitWhile waitGuard .join answer line waitHung waitBlocked
 
 /-- `Headless.Host.settle` on the driven host. -/
 def settle (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard)
@@ -434,32 +432,17 @@ def settle (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
   return (← driven.await waitGuard answer line waitHung waitBlocked) == .settled
 
-/-- Waits only until the host has handled everything sent so far, whatever
-is still running, and publishes nothing (the wait's marker is a probe):
-`settled` once it has. A stepped host handles what was sent only in a wait,
-so a check that sends a request whose start it then watches for asks this
-first. -/
+/-- A wait only until the host has handled everything sent so far
+(`Headless.Wait.Kind.handled`), publishing nothing. -/
 def handled (driven : Driven) (waitGuard : Nat) : IO Headless.Wait :=
-  driven.waitWhile waitGuard (fun _ => pure false) none .unanswered "answer" waitGuard none
-    IO.eprintln (fun _ => pure ()) false
+  driven.waitWhile waitGuard .handled waitGuard none IO.eprintln fun _ => pure ()
 
-/-- `join` that publishes nothing (its marker is a probe): until no job is
-running, `working` at idle with one still running. What replaces a poll for
-a state the host reaches by itself, such as a job in its sleep, so the
-scene count stays the poll's. -/
+/-- A `join`'s wait that publishes nothing (its marker is a probe): what
+replaces a poll for a state the host reaches by itself, such as a job in
+its sleep, so the scene count stays the poll's. -/
 def idle (driven : Driven) (waitGuard : Nat) : IO Headless.Wait :=
-  driven.waitWhile waitGuard (fun progress => pure (progress.jobs > 0)) (some .working) .busy "join"
-    waitGuard none IO.eprintln (fun _ => pure ()) false
-
-/-- An advance's wait, as the script's `advance` makes it: until the fake
-clock holds a wait due within `milliseconds`, publishing nothing.
-`settled` once one is due, and `working` at idle with none due, which is a
-stall; `busy` at its guard. -/
-def advanceWait (driven : Driven) (clock : Job.FakeClock) (milliseconds waitGuard : Nat)
-    (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
-  driven.waitWhile waitGuard (fun _ => return !(← clock.dueWithin milliseconds)) (some .working)
-    .busy "advance" waitGuard none waitHung waitBlocked false
+  driven.waitWhile waitGuard { Headless.Wait.Kind.join with marker := false } waitGuard none
+    IO.eprintln fun _ => pure ()
 
 end Driven
 

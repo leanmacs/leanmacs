@@ -3946,8 +3946,9 @@ def indexWritten {β σ : Type} (host : Driven) (stage : Stage β σ) : IO Bool 
     stage.clock.advance Restore.writeDelay
     if
         (←
-            host.waitWhile 300 (fun progress => pure progress.indexing) (some .working) .busy "join"
-                300 none IO.eprintln (fun _ => pure ()) true) ==
+            host.waitWhile 300
+                { Headless.Wait.Kind.join with busy := fun progress => pure progress.indexing } 300
+                none IO.eprintln (fun _ => pure ())) ==
           .settled then
       return true
   return false
