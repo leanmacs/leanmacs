@@ -95,6 +95,9 @@
 //! the loop is at rest are read through the presenter's last session's
 //! handle, which outlives the session ([`editor_ffi_render_journal`],
 //! [`editor_ffi_render_counters`], [`editor_ffi_render_resting`]).
+//! Dropping a session ends it as [`Headless::stop`] does, once: it leaves
+//! its presenter's target, stops its loop and joins its render thread, so
+//! a session a failing test drops leaves no loop running.
 //!
 //! A render thread that cannot be started is a reason, as it is for a
 //! window ([`Session::failure`]): [`headless`] answers it and starts
@@ -564,14 +567,29 @@ impl<R> Headless<R> {
 
     /// Takes the session out of its presenter's target, stops the loop and
     /// waits for its thread to end. The presenter's last session's handle
-    /// stays, for the journal and the counters.
+    /// stays, for the journal and the counters. Dropping the session does
+    /// the same, so a session a failing test drops still ends its loop.
     pub fn stop(mut self) {
+        self.end();
+    }
+
+    /// What [`stop`](Self::stop) and the drop do, once: a session already
+    /// ended does nothing, so it never ends a later session's target.
+    fn end(&mut self) {
+        let Some(thread) = self.thread.take() else {
+            return;
+        };
         self.presenter.end();
         self.handle.stop();
-        if let Some(thread) = self.thread.take() {
-            // A thread that panicked has nothing to give back.
-            let _ = thread.join();
-        }
+        // A thread that panicked has nothing to give back.
+        let _ = thread.join();
+    }
+}
+
+impl<R> Drop for Headless<R> {
+    /// Ends the session as [`Headless::stop`] does, if it has not ended.
+    fn drop(&mut self) {
+        self.end();
     }
 }
 
@@ -925,6 +943,7 @@ impl<R: Renderer + Send + 'static> Session<R> {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use editor_layout::Layout;
     use editor_layout::frame::Frame;
@@ -964,6 +983,48 @@ mod tests {
     /// A long time on the loop's clock: longer than any refresh interval a
     /// test sets or the loop begins with.
     const LONG: u64 = 10_000_000_000;
+
+    /// A session that a test drops without `stop`, as a failing test does,
+    /// has stopped its loop and joined its render thread once the drop
+    /// returns, and is no longer its presenter's target. The thread says
+    /// it has ended as its loop returns; no sleep is used.
+    #[test]
+    fn a_headless_session_dropped_without_stop_ends_its_render_thread() {
+        let presenter = Presenter::new();
+        let ended = Arc::new(AtomicBool::new(false));
+        let session = super::headless_with(
+            RecordingRenderer::new,
+            Arc::new(FakeClock::new()),
+            Arc::clone(&presenter),
+            {
+                let ended = Arc::clone(&ended);
+                move |run| {
+                    std::thread::Builder::new()
+                        .name("render-test".into())
+                        .spawn(move || {
+                            let renderer = run();
+                            ended.store(true, Ordering::SeqCst);
+                            renderer
+                        })
+                }
+            },
+        )
+        .expect("the render thread starts");
+        let handle = session.handle();
+
+        drop(session);
+        let ended_at_drop = ended.load(Ordering::SeqCst);
+        // On a session with no drop, the loop still runs: stop it, so the
+        // stray thread ends.
+        handle.stop();
+
+        assert!(
+            ended_at_drop,
+            "the drop returned with the render thread running"
+        );
+        assert!(presenter.target().is_none());
+        assert!(presenter.last().is_some_and(|last| last.same(&handle)));
+    }
 
     /// The frame of `text` in one view, laid out on the fake shaper.
     fn frame_of(text: &str) -> Arc<Frame> {

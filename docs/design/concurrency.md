@@ -223,7 +223,9 @@ thread never waits on the render thread: a submit only leaves word in the
 mailbox. The window mode runs the window on Lean's main thread
 (`Ffi.windowRun`) and the editor loop on a dedicated task, which asks the
 window to close when it ends; the headless mode's `--render` runs a render
-session on a thread of the library's with no window. In a real window the
+session on a thread of the library's with no window. Dropping a headless
+session ends it as its `stop` does: its loop is stopped and its thread
+joined before the drop returns. In a real window the
 session has run with the wgpu renderer under Xvfb (`mise run
 linux-window`); on a desktop it is `mise run edit`
 (`docs/dev-practices/on-demand-checks.md`, "The editor on a file, on
