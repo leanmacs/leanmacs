@@ -1,5 +1,4 @@
 import ConfigTest.Check
-import ConfigTest.Editor.Files
 import ConfigTest.Support.Hosts
 import Editor.Completion
 import Editor.Config.Directory
@@ -8,7 +7,6 @@ import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Ex.Line
 import Editor.Face
-import Editor.Files.Compiled
 import Editor.Headless
 import Editor.InputScheme.Test
 import Editor.Job.Real
@@ -17,8 +15,9 @@ import Editor.Language
 import Editor.Loop
 import Editor.Process
 import Editor.Test.Minibuffer
+import Editor.Test.Workspace
 import Editor.VersionControl.Compiled
-import Editor.Workspace.Compiled
+import FilesApiTest.Fake
 
 /-!
 # Config tests: `Editor/VersionControl/Gutter.lean`
@@ -105,11 +104,19 @@ def gutterChecks (context : Context) : List Check :=
           discard <|
               gitOutside home repo #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "one"]
           IO.FS.writeFile file "a\nB\nc\n"
+          -- `open-a` opens the file with the files implementation's open
+          -- command, here `files-api`'s fake's.
+          let openA : Config.Registration :=
+            { name := "open-a"
+              action :=
+                .plain
+                  (Editor.invoke
+                    { command := FilesApi.openFileName, arguments := [.str file.toString] }) }
           let stage ←
             Stage.overFiles context (Config.Directory.source configDir)
-                { packages := #[Files.package, Workspace.package, VersionControl.gutterPackage]
-                  commands :=
-                    Test.Minibuffer.package.registered.commands ++ #[opening "open-a" file]
+                { packages :=
+                    #[FilesApiTest.fake, Test.workspaceFinderPackage, VersionControl.gutterPackage]
+                  commands := Test.Minibuffer.package.registered.commands ++ #[openA]
                   modes := Test.Minibuffer.package.registered.modes }
           let collaborators := stage.collaborators
           let services := collaborators.services

@@ -4,8 +4,6 @@ import Editor.Command.Dispatch
 import Editor.File.Model
 import Editor.FileWatch
 import Editor.FileWatch.Model
-import Editor.Files
-import Editor.Files.Kit
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
@@ -20,6 +18,7 @@ import Editor.State
 import Editor.State.Request
 import Editor.Store
 import Editor.Test.Driver
+import Editor.Test.Opener
 import Editor.Test.Workspace
 import Editor.Text.Model
 import Editor.Value
@@ -193,9 +192,7 @@ def workspaceChecks : List Check :=
         "with no find job registered, a file still opens, its buffer has no workspace, and nothing is said"
       run :=
         pure <|
-          match
-            workspaceDriver (fileJobs Files.limit) (keys :=
-              dispatchKeys workspaceBindings fileWorkspaceCommands) with
+          match workspaceDriver (Opener.jobsWith Workspace.attach) with
           | none => false
           | some driver =>
             let opened := settledAfter driver "C-o a"

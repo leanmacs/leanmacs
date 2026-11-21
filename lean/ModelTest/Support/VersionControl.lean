@@ -10,7 +10,6 @@ import Editor.Config.Stores
 import Editor.DisplayRules
 import Editor.File
 import Editor.File.Model
-import Editor.Files
 import Editor.InputScheme
 import Editor.InputScheme.Test
 import Editor.Invocation
@@ -187,7 +186,8 @@ checks', and `C-v s` (`vc-status`), `C-v g` (`vc-stage-hunk`), `C-v G`
 window's text, `C-v m` and `C-v n`, which make the window's text the
 messages `stagingMessage` and `edited\n`, `C-v d` and `C-v D`, which hand
 the loop what a check of the window's file finds when another program has
-changed it or removed it (`Files.checked`), and `C-r 0` to `C-r 9`, which
+changed it or removed it (`BufferId.markChanged`, as the files
+feature's check records it), and `C-r 0` to `C-r 9`, which
 put the window's cursor at the start of that row, and `C-r t` of row 10. -/
 def stagingBindings : List (String × Invocation) :=
   workspaceBindings ++
@@ -220,11 +220,14 @@ def stagingCommands : List (String × Dispatched) :=
         return none),
       ("disk-changed", fun call => do
         let buffer := call.target.window.buffer
-        if let some file := ((← editorState).buffer? buffer).bind (·.file) then
-          Files.checked
-              #[({ buffer, path := file.path, stamp := file.stamp },
-                  if call.arguments == [.bool true] then .error .notFound
-                  else .ok { file.stamp with size := file.stamp.size + 1 })]
+        if let some shown := (← editorState).buffer? buffer then
+          if let some file := shown.file then
+            -- What the files feature's check records of a change on disk
+            -- (`markChanged`), written over the core's API.
+            let found :=
+              if call.arguments == [.bool true] then none
+              else some { file.stamp with size := file.stamp.size + 1 }
+            discard <| buffer.markChanged file.stamp found shown.isModified
         return none)]
 
 /-- The keys of the hunk and message buffer checks (`stagingBindings`), with

@@ -27,7 +27,9 @@ import Editor.Workspace
 import Editor.Workspace.Attach
 import Editor.Workspace.Model
 import Editor.Workspace.Modes
+import Editor.Workspace.Reach
 import FilesApi
+import ProjectApi
 
 /-!
 # The test kit: Workspace
@@ -186,5 +188,24 @@ a file's open finds its workspace with the find job, as in a host. -/
 def workspaceAttachPackage : Package :=
   { name := "test-workspace-attach"
     setup := Extension.add ({ name := "workspace", opened := Workspace.attach } : FilesApi.Opened) }
+
+/-- The workspace feature's own finding and reaching, as a package the kit
+makes of the workspace's modules (`Editor/Workspace/Attach.lean`,
+`Editor/Workspace/Reach.lean`): the find job and the mode marker job, the
+attach at `files-api`'s `FilesApi.Opened`, and the reach as `project-api`'s
+`ProjectApi.Workspaces` value. It is for a check of another feature over real
+files or real git, which finds workspaces as a host does but names no module
+of the workspace feature. -/
+def workspaceFinderPackage : Package :=
+  { name := "test-workspace-finder"
+    setup := do
+      workJob Workspace.findJob Workspace.findWork (restarted := true)
+      workJob Workspace.markerJob Workspace.markerWork (restarted := true)
+      Extension.add ({ name := "workspace", opened := Workspace.attach } : FilesApi.Opened)
+      Extension.add
+          ({  name := ProjectApi.implementationName
+              reach := fun continuation path git view carried =>
+                Workspace.Reach.reach continuation path git view carried
+              work := Workspace.Reach.work } : ProjectApi.Workspaces) }
 
 end Editor.Test

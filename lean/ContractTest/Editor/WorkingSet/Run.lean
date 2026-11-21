@@ -1,16 +1,16 @@
 import ContractTest.Check
-import ContractTest.Support.Git
+import ContractTest.Support.Repositories
 import Editor.Api
 import Editor.Config.Registry
-import Editor.Files.Compiled
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Jumps
 import Editor.Loop
 import Editor.ProjectSearch.Compiled
 import Editor.Test.Linked.Rig
+import Editor.Test.Workspace
 import Editor.WorkingSet.Compiled
-import Editor.Workspace.Compiled
+import FilesApiTest.Fake
 import VcApiTest.Fake
 
 /-!
@@ -43,7 +43,7 @@ them, each made as a host makes it (`JobRegistration.workWith`) with
 `vc-api`'s fake backend over a repository at `fakeHead` registered, so the
 write asks it for the commit. -/
 def workingSetJobs : Array Config.JobRegistration :=
-  (Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
+  (rigJobs #[FilesApiTest.fake, Test.workspaceFinderPackage] ++
         ProjectSearch.package.registered.jobs ++
         WorkingSet.package.registered.jobs).map
     fun job =>
@@ -82,8 +82,7 @@ def workingSetExtras : Array Config.Registration :=
 registered; the hooks of `files-api` as the packages register them. -/
 def workingSetKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      ((Files.package.registered.commands ++ Workspace.package.registered.commands ++
-                ProjectSearch.package.registered.commands ++
+      ((rigCommands #[FilesApiTest.fake] ++ ProjectSearch.package.registered.commands ++
                 WorkingSet.package.registered.commands ++
                 workingSetExtras).find?
             (·.name == name)).bind
@@ -96,11 +95,13 @@ def workingSetKeys : Loop.Keys TestScheme.scheme :=
         | _ => none
     registered :=
       { jobs := fun name => workingSetJobs.any (·.name == name)
-        -- The hooks the files feature runs, as a host's registry holds them:
-        -- the workspace's attach, and the working sets' own.
+        -- The hooks the files implementation runs, as a host's registry holds
+        -- them: the workspace's attach (the kit's package of the workspace's
+        -- finding) and the working sets' own; and the fake's `Files` value.
         extensions :=
           (rigKeys
-              #[Files.package, Workspace.package, WorkingSet.package]).registered.extensions } }
+              #[FilesApiTest.fake, Test.workspaceFinderPackage,
+                WorkingSet.package]).registered.extensions } }
 
 /-- `a.txt` of the checks: r1, a 40-byte line, on its second row; r2, a
 block of three rows from its third; r3, a row that will be deleted, on its

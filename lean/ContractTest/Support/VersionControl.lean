@@ -1,9 +1,9 @@
 import BuffersApiTest.Fake
 import Editor.Config.Packages
-import Editor.Files.Compiled
 import Editor.Test.Linked.Rig
+import Editor.Test.Workspace
 import Editor.VersionControl.Compiled
-import Editor.Workspace.Compiled
+import FilesApiTest.Fake
 
 /-!
 # Contract tests: support: VersionControl
@@ -18,11 +18,17 @@ namespace ContractTest
 open Editor
 open Editor.Test.Linked
 
-/-- The jobs of the status buffer check: the file commands', the workspace
-finder's and the status buffer's, as a host registers them. -/
+/-- The packages the status buffer checks stand on beside version control:
+`files-api`'s fake (the kit's opener over the real file service), the
+kit's package of the workspace's finding and reaching
+(`Test.workspaceFinderPackage`), and `buffers-api`'s fake. -/
+def statusNeighbours : Array Package :=
+  #[FilesApiTest.fake, Test.workspaceFinderPackage, BuffersApiTest.fake]
+
+/-- The jobs of the status buffer check: the neighbours' (`statusNeighbours`)
+and the status buffer's, as a host registers them. -/
 def statusJobs : Array Config.JobRegistration :=
-  Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
-    VersionControl.package.registered.jobs
+  rigJobs statusNeighbours ++ VersionControl.package.registered.jobs
 
 /-- The keys of the status buffer check: none bound; the file commands',
 the workspace's and the version-control commands by name, `to-row`, which
@@ -45,8 +51,7 @@ def statusKeys : Loop.Keys TestScheme.scheme :=
       else
         if name == "set-text" then some setText
         else
-          ((Files.package.registered.commands ++ Workspace.package.registered.commands ++
-                    VersionControl.package.registered.commands).find?
+          ((rigCommands statusNeighbours ++ VersionControl.package.registered.commands).find?
                 (·.name == name)).bind
             fun registration =>
             match registration.action with
@@ -57,11 +62,11 @@ def statusKeys : Loop.Keys TestScheme.scheme :=
             | _ => none
     registered :=
       { jobs := fun name => statusJobs.any (·.name == name)
-        -- The hooks the files feature runs, as a host's registry holds them:
-        -- the workspace's attach at `FilesApi.Opened`; and `buffers-api`'s
-        -- fake, whose `close` the commit's message buffer is closed with.
-        extensions :=
-          (rigKeys #[Files.package, Workspace.package, BuffersApiTest.fake]).registered.extensions
+        -- The neighbours' values at the extension points, as a host's
+        -- registry holds them: the workspace's attach at `FilesApi.Opened`,
+        -- the fake's `FilesApi.Files`, the reach at `ProjectApi.Workspaces`
+        -- and `buffers-api`'s fake's `close`.
+        extensions := (rigKeys statusNeighbours).registered.extensions
         entering := fun name =>
           (VersionControl.package.registered.modes.find? (·.name == name)).map ([·]) } }
 

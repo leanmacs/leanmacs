@@ -37,7 +37,6 @@ import Editor.VersionControl.Git
 import Editor.VersionControl.Git.Model
 import Editor.VersionControl.Gutter
 import Editor.Workspace
-import Editor.Workspace.Model
 import FilesApiTest.Fake
 import ModelTest.Check
 import ModelTest.Support.Git

@@ -1,7 +1,6 @@
 import Editor.Extension
 import Editor.File
 import Editor.FileJobs
-import Editor.State.Outbox
 
 /-!
 # The interface library `files-api`

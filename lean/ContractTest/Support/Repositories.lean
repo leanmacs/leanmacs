@@ -1,0 +1,272 @@
+import Editor.Job.Runner
+import Editor.Process
+import Editor.Test.Linked.Rig
+import Editor.Test.Linked.Trees
+import VcApi
+import VcApiTest.Fake
+
+/-!
+# Contract tests: support: Repositories
+
+Real git repositories as fixtures: git isolated from the user's
+configuration, the environment of the runs that write a repository out, a
+repository of `vc-api`'s model written out with git's plumbing
+(`writeGitRepository`), and a fresh home and repository directory for a
+check (`withRepository`). A command with its own `PATH` is the linked test
+kit's (`Editor/Test/Linked/Rig.lean`, `onChanged`). Shared by the
+version-control checks (`ContractTest/Support/Git.lean`), the workspace
+lister's and the working sets'; it names no version-control
+implementation. It holds no checks of its own.
+-/
+
+namespace ContractTest
+
+open Editor
+open Editor.Test.Linked
+
+/-- The variables that keep a git run from reading the user's or the
+system's config: no system config, `global` as the global one, `/dev/null`
+unless it is given, and `home` as its home. -/
+def isolatedGit (home : System.FilePath) (global : System.FilePath := "/dev/null") :
+    Array (String × String) :=
+  #[("GIT_CONFIG_NOSYSTEM", "1"), ("GIT_CONFIG_GLOBAL", global.toString), ("HOME", home.toString),
+    ("XDG_CONFIG_HOME", home.toString)]
+
+/-- `services` whose process service starts every child with the variables
+of `isolatedGit home global` set, over any of theirs its command sets
+(`onChanged`). -/
+def onIsolatedGit (services : Job.Services) (home : System.FilePath)
+    (global : System.FilePath := "/dev/null") : Job.Services :=
+  onChanged services fun command =>
+    let names := (isolatedGit home global).map (·.1)
+    { command with
+      environment :=
+        { command.environment with
+          set :=
+            (command.environment.set.filter (!names.contains ·.1)) ++ isolatedGit home global } }
+
+/-- The environment of the git runs that write a repository out: the
+variables of `isolatedGit home`, a fixed author and committer, and
+`GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` removed. Applied to each
+child only; the test process's environment is never touched. -/
+def writerEnvironment (home : System.FilePath) : Array (String × Option String) :=
+  (isolatedGit home).map (fun (name, value) => (name, some value)) ++
+    #[("GIT_AUTHOR_NAME", some "a"), ("GIT_AUTHOR_EMAIL", some "a@example.com"),
+      ("GIT_COMMITTER_NAME", some "a"), ("GIT_COMMITTER_EMAIL", some "a@example.com"),
+      ("GIT_AUTHOR_DATE", some "2026-01-01T00:00:00Z"),
+      ("GIT_COMMITTER_DATE", some "2026-01-01T00:00:00Z"), ("GIT_DIR", none),
+      ("GIT_WORK_TREE", none), ("GIT_INDEX_FILE", none)]
+
+/-- Runs `git` with `arguments` in `directory`, fed `input` if it is given,
+with the writer's environment and `extra` over it: what it printed, or a
+throw when it did not exit 0. -/
+def gitIn (home directory : System.FilePath) (arguments : Array String)
+    (input : Option String := none) (extra : Array (String × Option String) := #[]) : IO String :=
+  IO.Process.run
+    { cmd := "git", args := arguments, cwd := directory
+      env := (writerEnvironment home).filter (fun (name, _) => !extra.any (·.1 == name)) ++ extra }
+    input
+
+/-- The variables that make a commit's author the one `authored` names, at
+its time, which is also the committer's time; the committer stays the
+writer's `a`, so an author other than `a` differs from the committer. -/
+def authoredEnvironment (authored : VersionControl.Authored) : Array (String × Option String) :=
+  let date := s!"@{authored.time} +0000"
+  #[("GIT_AUTHOR_NAME", some authored.author), ("GIT_AUTHOR_DATE", some date),
+    ("GIT_COMMITTER_DATE", some date)]
+
+/-- The message of a commit of the model whose id is `id`, written by
+`authored`: its subject, or its id when that is empty. -/
+def messageOf (id : String) (authored : VersionControl.Authored) : String :=
+  if authored.subject.isEmpty then id else authored.subject
+
+/-- `gitIn`, with the index git reads and writes the file `index` in place of
+the repository's own. -/
+def gitInIndex (home directory index : System.FilePath) (arguments : Array String) : IO String :=
+  IO.Process.run
+    { cmd := "git", args := arguments, cwd := directory
+      env :=
+        ((writerEnvironment home).filter (·.1 != "GIT_INDEX_FILE")).push
+          ("GIT_INDEX_FILE", some index.toString) }
+
+/-- Writes each named revision of `repository` into the repository at
+`directory` as a commit of its files alone, tagged with its name: its files'
+blobs written, an index of them made in a file of its own under `home`, so
+the repository's index and working tree are left as they are, its tree
+written and committed with `commit-tree`, and the tag pointed at it with
+`update-ref`. -/
+def writeRevisions (home directory : System.FilePath)
+    (repository : VersionControl.Model.Repository) : IO Unit := do
+  for (name, files) in repository.revisions do
+    let index := home / s!"index-{name}"
+    for (path, content) in files do
+      let id := (← gitIn home directory #["hash-object", "-w", "--stdin"] (some content)).trimAscii
+      discard <|
+          gitInIndex home directory index
+            #["update-index", "--add", "--cacheinfo", s!"100644,{id},{path}"]
+    let tree := (← gitInIndex home directory index #["write-tree"]).trimAscii.toString
+    let commit := (← gitIn home directory #["commit-tree", tree, "-m", name]).trimAscii.toString
+    discard <| gitIn home directory #["update-ref", s!"refs/tags/{name}", commit]
+
+/-- Writes `content` as a blob into the repository at `directory`, the store's
+escapes turned back into their bytes (`File.encodeText`), through a file of
+its own under `home`: its id. -/
+def hashBlob (home directory : System.FilePath) (content : String) : IO String := do
+  let file := home / "blob"
+  writeMaking file content
+  return (← gitIn home directory #["hash-object", "-w", file.toString]).trimAscii.toString
+
+/-- Writes a commit of `files` with the parents `parents`, real ids, into the
+repository at `directory`, made with an index file of its own named after
+`name` under `home`, `write-tree` and `commit-tree`, written by `authored`
+(`authoredEnvironment`), its message `messageOf name authored`: its id. -/
+def writeCommit (home directory : System.FilePath) (name : String) (files : Array (String × String))
+    (parents : Array String) (authored : VersionControl.Authored) : IO String := do
+  let index := home / s!"index-commit-{name}"
+  for (path, content) in files do
+    discard <|
+        gitInIndex home directory index
+          #["update-index", "--add", "--cacheinfo",
+            s!"100644,{← hashBlob home directory content},{path}"]
+  let tree := (← gitInIndex home directory index #["write-tree"]).trimAscii.toString
+  let arguments :=
+    #["commit-tree", tree, "-m", messageOf name authored] ++ parents.flatMap (#["-p", ·])
+  return (←
+        gitIn home directory arguments (extra := authoredEnvironment authored)).trimAscii.toString
+
+/-- The real id of the model's commit `id` among `written`, the model's ids
+with the real ones, or none. -/
+def realId (written : Array (String × String)) (id : String) : Option String :=
+  VersionControl.Model.lookup written id
+
+/-- `text` as one word of `/bin/sh`: in single quotes, each of its own made
+`'\\''`. -/
+def shellQuoted (text : String) : String :=
+  "'" ++ "'\\''".intercalate (text.splitOn "'") ++ "'"
+
+/-- Writes the pre-commit hook of the repository at `directory` that refuses
+every commit, printing `printed`: its first line on its standard output and
+the rest on its standard error (`Repository.hook`). -/
+def writeHook (directory : System.FilePath) (printed : String) : IO Unit := do
+  let lines := VersionControl.linesOf printed |>.map (·.trimAsciiEnd.toString)
+  let say (line : String) (stream : String) := s!"printf '%s\\n' {shellQuoted line}{stream}\n"
+  let script :=
+    "#!/bin/sh\n" ++ String.join ((lines.toList.take 1).map (say · "")) ++
+      String.join ((lines.toList.drop 1).map (say · " >&2")) ++
+      "exit 1\n"
+  let hook := directory / ".git" / "hooks" / "pre-commit"
+  writeMaking hook script
+  IO.setAccessRights hook { user := { read := true, write := true, execution := true } }
+
+/-- Writes `repository` out as a git repository in `directory`, with git's
+own commands: initialised on its branch; each of its `commits` written in
+order (`writeCommit`), its parents mapped to the real ids, by its author at
+its time (`authoredEnvironment`); `HEAD`'s files
+committed, by `headAuthored`, over its `parents` with `commit-tree` and its branch pointed at
+it when it has some, then the index read from it, and checked out detached
+if it is; each of its other `branches` pointed at its commit with
+`update-ref`; `<home>/ignore-revs` written, naming every commit but
+`HEAD`'s, for `pinnedAwayConfig`'s `blame.ignoreRevsFile`; each index entry that differs from `HEAD` written
+with `update-index` (a conflict as its stages, through `--index-info`), each
+named revision committed and tagged (`writeRevisions`), the working tree
+made exactly `repository.worktree`, each `linked` worktree made with `git
+worktree add` beside `directory` under its path's last component, on its
+branch or detached at `HEAD`, a `dirty` one given an untracked file, each
+`occupied` directory made beside `directory` the same way with a file in it, and a
+`hook` written as an executable `.git/hooks/pre-commit` (`writeHook`). A file is written with the store's
+escapes turned back into their bytes (`File.encodeText`), so a content may
+hold a byte that is not UTF-8. -/
+def writeGitRepository (home directory : System.FilePath)
+    (repository : VersionControl.Model.Repository) : IO Unit := do
+  let branch :=
+    match repository.head with
+    | .branch name => name
+    | .detached => "main"
+  discard <| gitIn home directory #["-c", s!"init.defaultBranch={branch}", "init", "-q"]
+  let mut written : Array (String × String) := #[]
+  for (id, commit) in repository.commits do
+    let parents := commit.parents.filterMap (realId written)
+    written :=
+      written.push (id, ← writeCommit home directory id commit.files parents commit.authored)
+  unless repository.committed.isEmpty do
+    for (path, content) in repository.committed do
+      writeMaking (directory / path) content
+    if repository.parents.isEmpty then
+      discard <| gitIn home directory #["add", "-A"]
+      discard <|
+          gitIn home directory
+            #["-c", "commit.gpgsign=false", "commit", "-q", "-m",
+              messageOf repository.headId repository.headAuthored]
+            (extra := authoredEnvironment repository.headAuthored)
+    else
+      let head ←
+        writeCommit home directory repository.headId repository.committed
+            (repository.parents.filterMap (realId written)) repository.headAuthored
+      discard <| gitIn home directory #["update-ref", s!"refs/heads/{branch}", head]
+      discard <| gitIn home directory #["read-tree", "HEAD"]
+    if repository.head == .detached then
+      discard <| gitIn home directory #["checkout", "-q", "--detach"]
+    written :=
+      written.push
+        (repository.headId, (← gitIn home directory #["rev-parse", "HEAD"]).trimAscii.toString)
+  for (name, id) in repository.branches do
+    if let some real := realId written id then
+      discard <| gitIn home directory #["update-ref", s!"refs/heads/{name}", real]
+  -- Every commit but HEAD's, for the hostile config's blame.ignoreRevsFile.
+  IO.FS.writeFile (home / "ignore-revs")
+      (String.join
+        ((written.filter (·.1 != repository.headId)).toList.map fun (_, real) => real ++ "\n"))
+  let hash (content : String) : IO String := do
+    return (←
+          gitIn home directory #["hash-object", "-w", "--stdin"] (some content)).trimAscii.toString
+  let paths := repository.committed.map (·.1) ++ repository.index.map (·.1)
+  for path in paths.toList.eraseDups do
+    let committed := VersionControl.Model.lookup repository.committed path
+    match VersionControl.Model.lookup repository.index path with
+    | some (.file content) =>
+      if committed != some content then
+        discard <|
+            gitIn home directory
+              #["update-index", "--add", "--cacheinfo", s!"100644,{← hash content},{path}"]
+    | some (.conflict base ours theirs) =>
+      if committed.isSome then
+        discard <| gitIn home directory #["update-index", "--force-remove", "--", path]
+      let mut lines := ""
+      for (stage, content) in [(1, base), (2, ours), (3, theirs)] do
+        if let some content := content then
+          lines := lines ++ s!"100644 {← hash content} {stage}\t{path}\n"
+      discard <| gitIn home directory #["update-index", "--index-info"] (some lines)
+    | none =>
+      if committed.isSome then
+        discard <| gitIn home directory #["update-index", "--force-remove", "--", path]
+  writeRevisions home directory repository
+  for (path, _) in repository.committed do
+    if (VersionControl.Model.lookup repository.worktree path).isNone then
+      IO.FS.removeFile (directory / path)
+  for (path, content) in repository.worktree do
+    writeMaking (directory / path) content
+  for linked in repository.linked do
+    let target := (directory.parent.getD directory) / (linked.path.fileName.getD "linked")
+    match linked.branch with
+    | some name =>
+      discard <| gitIn home directory #["worktree", "add", "-q", target.toString, name]
+    | none =>
+      discard <|
+          gitIn home directory #["worktree", "add", "-q", "--detach", target.toString, "HEAD"]
+    if linked.dirty then
+      writeMaking (target / "untracked.txt") "untracked\n"
+  for occupied in repository.occupied do
+    let target := (directory.parent.getD directory) / (occupied.fileName.getD "occupied")
+    writeMaking (target / "kept.txt") "kept\n"
+  if let some printed := repository.hook then
+    writeHook directory printed
+
+/-- `check` handed a home and a repository directory of its own, under a
+temporary directory removed afterwards (`withBase`). -/
+def withRepository {α : Type} (check : System.FilePath → System.FilePath → IO α) : IO α :=
+  withBase fun base => do
+    IO.FS.createDirAll (base / "home")
+    IO.FS.createDirAll (base / "repo")
+    check (base / "home") (base / "repo")
+
+end ContractTest

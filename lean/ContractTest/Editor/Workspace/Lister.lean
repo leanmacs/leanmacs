@@ -1,5 +1,5 @@
 import ContractTest.Check
-import ContractTest.Support.Git
+import ContractTest.Support.Repositories
 import Editor.Ffi.Processes
 import Editor.Job
 import Editor.Job.Runner

@@ -1,5 +1,5 @@
-import Editor.Files
 import Editor.WorkingSet.Places
+import FilesApi
 import ModelTest.Check
 import ModelTest.Support.Evil
 import ModelTest.Support.WorkingSet
@@ -49,7 +49,7 @@ def workingSetPlaceChecks : List Check :=
           match heldDriver with
           | none => false
           | some driver =>
-            let saved := drained (invoked (heldEdited driver) Files.saveName)
+            let saved := drained (invoked (heldEdited driver) FilesApi.saveName)
             let gone := closed saved "a.txt"
             match (rangesOf gone "demo")[0]? with
             | some range =>
@@ -66,7 +66,7 @@ def workingSetPlaceChecks : List Check :=
           match heldDriver with
           | none => false
           | some driver =>
-            let saved := drained (invoked (heldEdited driver) Files.saveName)
+            let saved := drained (invoked (heldEdited driver) FilesApi.saveName)
             let again := opened (closed saved "a.txt") "a.txt"
             match (rangesOf again "demo")[0]? with
             | some range =>
