@@ -1860,6 +1860,11 @@ mod tests {
         let (fake, _ground, clock) = fake();
         let (service, completed) = service(&fake, &clock);
         started(&service, &completed, 1, file("/w/f"), AT_ONCE);
+        // The start's thread is done with its ticket only after its
+        // completion, so a flush is waited on first: once it is completed,
+        // no start is in flight.
+        assert!(service.flush(4));
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(4));
         assert!(service.next(1, 2), "a pending read is not waited for");
 
         assert!(service.flush(3));
