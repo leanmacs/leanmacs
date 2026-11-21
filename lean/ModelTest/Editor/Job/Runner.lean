@@ -7,6 +7,7 @@ import Editor.Fuzzy
 import Editor.Fuzzy.Model
 import Editor.Invocation
 import Editor.Job
+import Editor.Job.Activity
 import Editor.Job.Contract
 import Editor.Job.Fake
 import Editor.Job.Jobs
@@ -27,8 +28,10 @@ import ModelTest.Check
 # Model tests: `Editor/Job/Runner.lean`
 
 The model tests of `Editor/Job/Runner.lean`: `waitChecks`, `runnerChecks`,
-`fileRunnerChecks`, `fileWatchRunnerChecks` and `grepRunnerChecks`. `fileWatchRunnerChecks` are the
-runner's watch waits on the fake of the watch service. The root module
+`fileRunnerChecks`, `fileWatchRunnerChecks`, `grepRunnerChecks` and
+`activityRunnerChecks`. `fileWatchRunnerChecks` are the runner's watch waits
+on the fake of the watch service, and `activityRunnerChecks` the runner's
+activity accounting over a count of each check's own. The root module
 `ModelTest` runs them; its module doc says what each shows.
 -/
 
@@ -899,5 +902,75 @@ def grepRunnerChecks : List Check :=
         let cancelled ← spawned.endedAs .cancelled
         return refused && cancelled && (← files.searching) == 0 &&
             (← files.grepsCancelled) == #[id] }]
+
+/-- `true` when `holds`, and otherwise what the check saw, thrown, so its
+failure says it. -/
+def saw (holds : Bool) (observed : String) : IO Bool := do
+  unless holds do
+    throw <| IO.userError s!"saw {observed}"
+  return true
+
+/-- `rig`, its services keeping a count of their activity
+(`Job.Activity.counting`), and that count. -/
+def _root_.Editor.Test.Rig.counted (rig : Rig) : BaseIO (Rig × Job.Activity) := do
+  let activity ← Job.Activity.counting
+  return ({ rig with services := { rig.services with activity } }, activity)
+
+/-- `activity`, noting in `log`, at each `begin` and each `done`, the count
+it left and the thread that called it. A check reads the log of one job,
+whose steps follow one another, so each entry is the count that step left. -/
+def recorded (activity : Job.Activity) (log : IO.Ref (Array (Nat × UInt64))) : Job.Activity :=
+  { activity with
+    begin := do
+      activity.begin
+      let seen ← activity.seen
+      log.modify (·.push (seen.running, ← IO.getTID))
+    done := do
+      activity.done
+      let seen ← activity.seen
+      log.modify (·.push (seen.running, ← IO.getTID)) }
+
+/-- The count `activity` reads at its next change after `seen`, waited for on
+the change itself (`changedSince`). The bound is a hang guard, never a
+result: past it this throws a hang. -/
+def changedAfter (activity : Job.Activity) (seen : Job.Activity.Seen) : IO Job.Activity.Seen := do
+  let some () ←
+    Job.awaitWithin patience
+        (←
+          activity.changedSince
+              seen.epoch) | throw <| IO.userError s!"a hang: the count had not changed from {repr seen} within {patience} ms"
+  activity.seen
+
+/-- The checks of the runner's activity accounting (`Editor/Job/Runner.lean`,
+"Activity"), each on a fake clock of its own and a count of its own: a job
+holds a unit while it can run, a wait only a test ends (the fake clock's)
+holds none, and a wait on a service that ends it by itself holds the job's.
+A check waits on the count's own changes (`changedAfter`), and holds the
+port (`holdReads`, held completions) to look while a step is in flight. -/
+def activityRunnerChecks : List Check :=
+  [{  name :=
+        "a job on the fake clock holds a unit from its spawn until its sleep is in the clock, then none; once the clock is moved past it holds one again until it has ended, and none once its finished has run"
+      run := do
+        let (rig, activity) ← (← Rig.new).counted
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 10
+                return 1)
+        let atSpawn ← activity.seen
+        let parked ← changedAfter activity atSpawn
+        let waiting ← rig.clock.waiting
+        rig.clock.advance 10
+        let woken ← activity.seen
+        let ended ← changedAfter activity woken
+        let finishes ← spawned.finishes.get
+        let outcome ← spawned.outcome
+        saw
+            (atSpawn.running == 1 && parked.running == 0 && waiting == 1 && woken.running == 1 &&
+              ended.running == 0 &&
+              finishes == 1 &&
+              outcome == some (.finished #["1"]) &&
+              (← activity.refused) == 0)
+            s!"atSpawn={repr atSpawn} parked={repr parked} waiting={waiting} woken={repr woken} ended={repr ended} finishes={finishes}" }]
 
 end ModelTest

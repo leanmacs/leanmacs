@@ -700,6 +700,13 @@ The job system is tested here with no Rust library:
   (`Editor/Job/Fake.lean`). A check controls time by moving its own fake
   clock and holds a job on a promise it resolves; it sleeps for nothing, and
   polls only as the bound after which it fails;
+- `activityRunnerChecks`: the runner's activity accounting
+  (`Editor/Job/Runner.lean`, "Activity") over a count of each check's own: a
+  job holds a unit while it can run and none in a sleep on the fake clock,
+  the unit of a wait's end is taken on the thread that ends it, a sleep
+  already due never lets the count read 0, a cancel in a park gives back
+  exactly one unit, and a load on a file service that ends it by itself
+  holds the job's. Each waits on the count's own changes;
 - `flushContractChecks`: the services' flush contract
   (`Editor/Job/FlushContract.lean`) on the fakes: the fake files, diffs and
   processes held by their held completions, so a flush asked behind held
@@ -1481,6 +1488,7 @@ def checks : List Check :=
     waitChecks ++
     activityChecks ++
     runnerChecks ++
+    activityRunnerChecks ++
     flushContractChecks ++
     handleContractChecks ++
     tableChecks ++

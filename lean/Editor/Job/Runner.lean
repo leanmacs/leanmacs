@@ -1,4 +1,5 @@
 import Editor.Job
+import Editor.Job.Activity
 import Std.Data.HashMap
 
 /-!
@@ -94,6 +95,34 @@ cancellation is built here.
   children ended. A child is named by the id of its start's wait, so a job
   cancelled while its start is in flight has the start withdrawn, and the
   library kills the child as it registers it.
+
+## Activity
+
+The runner keeps the host's activity count (`Services.activity`,
+`Editor/Job/Activity.lean`), which a host's idle is made of
+(`docs/design/concurrency.md`, "The idle signal"): a job holds one unit
+while it can run, and none while it is in a wait only a test ends.
+
+- **`spawn`** takes the job's unit before its task exists, and the
+  `finished` it hands the job gives it back last, after the job's own
+  `finished` has run: a wake-up that posts is posted under the unit.
+- **A wait that parks** is one on a port that says its waits end only when a
+  test acts (`Timers.outside`, `FileWatches.outside`: the fake clock's sleep,
+  the fake watches' `next`). `answer` registers it with an action that
+  takes a unit and then resolves the promise (`Handle.parkingWait`), so the
+  unit is taken on the thread that ends the wait, the clock's `advance` or
+  `start`, a withdrawal, before the job's continuation can run; and `drive`
+  gives the job's unit back once `answer` has returned, whether or not the
+  job entered the wait. A wait cancelled ends through the same action, so a
+  take and a give stay paired however the wait ends.
+- **Any other wait** keeps the job's unit: a timer of the library, a real
+  file, process, diff, grep or watch request, a fake one a test holds on
+  purpose. The job is not idle while it waits on something that ends by
+  itself.
+
+A runner given no count has `Activity.untracked`, whose steps do nothing.
+`ModelTest.activityRunnerChecks` pin the accounting on the fake clock and
+the fake files.
 
 ## Posting a command
 
@@ -320,6 +349,11 @@ structure Timers where
   called has been completed. A wait not yet due is not waited for. It
   returns at once and never blocks. -/
   flush : (id : UInt64) → BaseIO Unit
+  /-- Whether a wait on this clock ends only when a test acts: the fake
+  clock's, which only `advance` moves. A job in such a wait holds no unit of
+  the host's activity ("Activity", in the module docs). A real clock's wait
+  ends by itself, so it is `false`, the default. -/
+  outside : Bool := false
 
 /-- The file port: what the runner's file waits are made of. -/
 structure Files where
@@ -431,6 +465,11 @@ structure FileWatches where
   this call has returned: registered or refused. A pending `next` is not
   waited for. It returns at once and never blocks. -/
   flush : (id : UInt64) → BaseIO Unit
+  /-- Whether a `next` on this service ends only when a test acts: the fake
+  watches', which only a test's change answers. A job in such a wait holds
+  no unit of the host's activity ("Activity", in the module docs). The real
+  service's `next` ends by itself, so it is `false`, the default. -/
+  outside : Bool := false
 
 /-- No file-watch service: every request completes at once, refused as
 failed, through the table `completions`. It is what a runner has when it was
@@ -549,6 +588,10 @@ structure Services where
   it now (`JobRequest.snapshot`); `none` for an id that names nothing or
   was released. A runner that is given none answers `none` for every id. -/
   snapshots : SnapshotId → BaseIO (Option String) := fun _ => pure none
+  /-- The count of work that can still end by itself, for the host's idle
+  (`Editor/Job/Activity.lean`; "Activity", in the module docs). A runner
+  that is given none has `Activity.untracked`, which is never idle. -/
+  activity : Activity := Activity.untracked
 
 /-- A service whose flush a host or a test can wait on
 (`Services.flushed`). -/
@@ -790,8 +833,27 @@ inductive Answer (α : Type) where
   /-- The reply, once the wait `id`, whose promise is `wait`, has ended:
   `reply` fetches it then. It is run on the job's thread, once, and only for
   a wait the service completed in a job that is not cancelled; a wait with
-  nothing to fetch, a timer's, answers `pure ()`. -/
-  | later (id : UInt64) (wait : IO.Promise Completion) (reply : BaseIO α)
+  nothing to fetch, a timer's, answers `pure ()`. `parks` says the wait ends
+  only when a test acts (`Timers.outside`, `FileWatches.outside`): the job
+  gives back its unit of the host's activity once it is in the wait, and
+  the wait's end takes one back ("Activity", in the module docs). -/
+  | later (id : UInt64) (wait : IO.Promise Completion) (reply : BaseIO α) (parks : Bool := false)
+
+/-- Registers a wait of the job behind `handle`: its id and its promise. A
+wait that `parks`, one only a test ends, takes a unit of the host's activity
+as it ends, on the thread that ends it and before the promise resolves, so
+the job holds a unit again before it can run ("Activity", in the module
+docs); any other wait keeps the job's own. -/
+def Handle.parkingWait (handle : Handle) (parks : Bool) : BaseIO (UInt64 × IO.Promise Completion) :=
+  do
+  unless parks do
+    return ← handle.services.completions.register
+  let wait ← IO.Promise.new
+  let id ←
+    handle.services.completions.registerWith fun _ completion => do
+        handle.services.activity.begin
+        wait.resolve completion
+  return (id, wait)
 
 /-- Answers a request of the job behind `handle`. A request that waits is
 registered in the table of waits and handed to its service, and nothing here
@@ -799,9 +861,9 @@ waits for it. -/
 def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request.Reply)
   | .now => return .now (← handle.services.timers.now)
   | .waitUntil deadline => do
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.parkingWait handle.services.timers.outside
     handle.services.timers.start id deadline
-    return .later id wait (pure ())
+    return .later id wait (pure ()) (parks := handle.services.timers.outside)
   | .file (.load path limit) => do
     let (id, wait) ← handle.services.completions.register
     handle.services.files.start id (.load path limit)
@@ -917,9 +979,10 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     -- A watch is named for the job that started it, and for no other.
     unless (← handle.watches.get).contains watch do
       return .now (.error .noSuchWatch)
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.parkingWait handle.services.fileWatches.outside
     handle.services.fileWatches.start id (.next watch)
-    return .later id wait (handle.services.fileWatches.take id (.next watch))
+    return .later id wait (handle.services.fileWatches.take id (.next watch)) (parks :=
+        handle.services.fileWatches.outside)
   | .diff request => do
     -- A snapshot a job holds is named for that job and for no other, as a
     -- save's source is.
@@ -994,7 +1057,12 @@ partial def drive (handle : Handle) (finished : BaseIO Unit) :
       if ← handle.cancelled then
         return ← handle.conclude finished .cancelled
       drive handle finished (next reply)
-    | .later id wait reply =>
+    | .later id wait reply parks =>
+      -- A job in a wait only a test ends can no longer run by itself: it
+      -- gives back its unit, entered or not, and the wait's end, cancelled
+      -- included, takes one back before it resolves (`parkingWait`).
+      if parks then
+        handle.services.activity.done
       -- The job is in the wait from here, unless it was cancelled while the
       -- wait was being made: then nobody else will withdraw it.
       let entered ←
@@ -1036,7 +1104,14 @@ def spawn (services : Services) (work : Work) (finished : BaseIO Unit)
     { services, flags := ← IO.mkRef {}, outcome := ← IO.Promise.new, held := ← IO.mkRef #[]
       children := ← IO.mkRef #[], watches := ← IO.mkRef #[], searches := ← IO.mkRef #[]
       posted }
-  discard <| BaseIO.asTask (start handle finished work)
+  -- The job can run from here: it holds a unit of the host's activity until
+  -- it is in a wait only a test ends, or has ended, its `finished` called
+  -- first, so a wake-up it posts there is posted under its unit.
+  services.activity.begin
+  let ended : BaseIO Unit := do
+    finished
+    services.activity.done
+  discard <| BaseIO.asTask (start handle ended work)
   return handle
 
 end Editor.Job

@@ -29,6 +29,13 @@ and nothing sleeps to let something happen.
 
 A wait that is withdrawn is forgotten: `advance` never completes it.
 
+As a port it says its waits end only when a test acts (`Timers.outside`),
+and so does the fake watch service's (`FileWatches.outside`): a job asleep
+on the fake clock, or in a `next` of a fake watch, holds no unit of the
+host's activity (`Editor/Job/Runner.lean`, "Activity"). The fake files,
+processes, diffs and greps do not say so: their waits end by themselves, or
+a test holds them on purpose, and a held wait is not idle.
+
 A test can also hold the port itself: `holdReads` and `holdStarts` park every
 read, or every start, on a promise the test resolves, so the test can act
 while a request is in flight, which no amount of sleeping would arrange.
@@ -145,7 +152,8 @@ def flush (clock : FakeClock) (id : UInt64) : BaseIO Unit :=
 
 /-- The clock as the port the runner is given. -/
 def timers (clock : FakeClock) : Timers :=
-  { now := clock.read, start := clock.start, cancel := clock.cancel, flush := clock.flush }
+  { now := clock.read, start := clock.start, cancel := clock.cancel, flush := clock.flush
+    outside := true }
 
 /-- The waits of `waiting` that are due at `now`, earliest deadline first and,
 of two with one deadline, the one started first; and the rest, in the order
@@ -921,7 +929,8 @@ def flush (watches : FakeFileWatches) (id : UInt64) : BaseIO Unit :=
 
 /-- The service as the port the runner is given. -/
 def fileWatches (watches : FakeFileWatches) : FileWatches :=
-  { start := watches.start, take := watches.take, cancel := watches.cancel, flush := watches.flush }
+  { start := watches.start, take := watches.take, cancel := watches.cancel, flush := watches.flush
+    outside := true }
 
 /-- The model as it is now. -/
 def model (watches : FakeFileWatches) : BaseIO FileWatchModel :=
