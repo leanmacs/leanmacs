@@ -1,15 +1,23 @@
 import Editor.Api
 import Editor.Command.Dispatch
+import Editor.Jumps
 import Editor.Marks.Follow
+import Editor.Test.Driver
+import Editor.Test.Editing
+import Editor.Test.Keys
+import Editor.Test.Loop
 import Editor.Test.Models
 import ModelTest.Check
-import ModelTest.Support.Evil
 
 /-!
 # Model tests: `Editor/Marks/Follow.lean`
 
 The model tests of `Editor/Marks/Follow.lean`: `markFollowChecks`. The root
-module `ModelTest` runs them; its module doc says what each shows.
+module `ModelTest` runs them; its module doc says what each shows. The
+checks through the loop run on the test scheme with the kit's editing keys
+(`Editor/Test/Editing.lean`) and a command written here that sets the mark
+(`markA`), so they name no scheme package's keys; what a scheme's own mark
+and delete commands leave of a mark is that package's to check.
 -/
 
 namespace ModelTest
@@ -20,7 +28,7 @@ open Editor.Test
 /-- A state over `ab`, `cd` and `ef` whose buffer's mark `a` is at the start
 of row 1, its line read by a first `followMarks`, and the mark's marker. -/
 def followedState : TextM (EditorState × MarkerId) := do
-  let state ← evilState "ab\ncd\nef" 0
+  let state ← barState "ab\ncd\nef" 0
   let marker ← (⟨0⟩ : TextId).mark (.anchor { offset := 3, bias := .after })
   let state : EditorState :=
     { state with
@@ -49,18 +57,37 @@ def followedDelete (decided : Bool) : Option (Bool × Array MarkerId) :=
     return ((buffer.marks.find? (·.1 == 'a')).isSome, buffer.markHistory.decided)
 
 /-- Whether the text store of `driver`'s models still holds `marker`. -/
-def markerHeld (driver : EvilDriver) (marker : MarkerId) : Bool :=
+def markerHeld (driver : TestDriver) (marker : MarkerId) : Bool :=
   ((marker.text.marker marker).runModel driver.model.texts).1.toOption.isSome
+
+/-- The command `mark-a` of the checks through the loop, which they bind to
+`C-a`: sets the mark `a` of the call's window's buffer at the head of its
+cursor, through the editor API, as a scheme's command that sets a mark
+does. -/
+def markA : Dispatched := fun call => do
+  if let some (.held buffer marker)← Jumps.here call.target.window.id then
+    discard <| buffer.setMark 'a' (some marker)
+  return none
+
+/-- A driver of the checks through the loop over the state `start` makes:
+the test scheme with the kit's editing keys and commands, and `mark-a` on
+`C-a`. -/
+def markFollowDriver (start : TextM EditorState) : Option TestDriver :=
+  (Loop.Driver.over
+      (dispatchKeys (editingBindings ++ [("C-a", invoke "mark-a")])
+        (editingDispatched ++ [("mark-a", markA)]))
+      (fun _ => none) start editorModel).toOption
 
 /-- From the fixture `fixture`, the keys `before`, which set the mark `a`,
 then the keys `after`: whether the store held the marker of `a` after
 `before`, whether it holds it after `after`, and whether `a` is still set,
 by another marker. -/
 def releasedAfter (fixture before after : String) : Option (Bool × Bool × Bool) := do
-  let driver ← evilDriver fixture
-  let marked := evilFed driver before
+  let (contents, head) := barred fixture
+  let driver ← markFollowDriver (barState contents head)
+  let marked := keysFed driver before
   let old ← marked.loop.state.localMark? ⟨0⟩ 'a'
-  let left := evilFed marked after
+  let left := keysFed marked after
   return (markerHeld marked old, markerHeld left old,
       (left.loop.state.localMark? ⟨0⟩ 'a').any (· != old))
 
@@ -174,14 +201,14 @@ was set by `before`, and whether it is still set after `after`. -/
 def excerptMarkAfter (fixture before after : String) : Option (Bool × Bool) := do
   let start : TextM EditorState := do
     let (contents, head) := barred fixture
-    let state ← evilState contents head
+    let state ← barState contents head
     return { state with
         buffers :=
           state.buffers.modify 0
             (·.map fun (buffer : Buffer) => { buffer with excerpts := some {} }) }
-  let driver ← (Loop.Driver.over evilHanded (fun _ => none) start editorModel).toOption
-  let marked := evilFed driver before
-  let left := evilFed marked after
+  let driver ← markFollowDriver start
+  let marked := keysFed driver before
+  let left := keysFed marked after
   return ((marked.loop.state.localMark? ⟨0⟩ 'a').isSome,
       (left.loop.state.localMark? ⟨0⟩ 'a').isSome)
 
@@ -194,11 +221,15 @@ def markFollowChecks : List Check :=
         "followMarks gives up the marker a mark it put back replaced, when the tree moved by one edge outside the editor API"
       run := return followedUndo == some (false, true) },
     { name :=
-        "through the loop, a mark's marker is given up once the mark is erased, by a charwise delete across its line or by dd, and once an undo puts the mark back by another"
+        "through the loop, a mark's marker is given up once the mark is erased, by a delete of a selection across its line or of its whole line, and once an undo of a delete in its line puts the mark back by another"
       run :=
-        return releasedAfter "|ab\ncd\nef" "j m a" "k v j j d" == some (true, false, false) &&
-            releasedAfter "ab\nc|d\nef" "m a" "d d" == some (true, false, false) &&
-            releasedAfter "ab\nc|d\nef" "m a" "x u" == some (true, false, true) },
+        return releasedAfter "|ab\ncd\nef" "<ArrowDown> C-a"
+                "<ArrowUp> S-<ArrowDown> S-<ArrowDown> <Backspace>" ==
+              some (true, false, false) &&
+            releasedAfter "ab\nc|d\nef" "C-a" "<Home> S-<ArrowDown> <Backspace>" ==
+              some (true, false, false) &&
+            releasedAfter "ab\nc|d\nef" "C-a" "S-<ArrowRight> <Backspace> C-z" ==
+              some (true, false, true) },
     { name :=
         "the marks of an excerpt buffer are not followed: its mark whose line an edit removed stays set"
       run := return followedExcerptDelete == some true },
@@ -212,7 +243,10 @@ def markFollowChecks : List Check :=
             apiFollowed true false == some ("finished", true, true) &&
             apiFollowed false true == some ("refused", true, true) },
     { name :=
-        "through the loop, m a in a window on an excerpt buffer sets the mark, and a charwise delete across its line, which erases a file buffer's, keeps it"
-      run := return excerptMarkAfter "|ab\ncd\nef" "j m a" "k v j j d" == some (true, true) }]
+        "through the loop, a command that sets a mark in a window on an excerpt buffer sets it, and a delete of a selection across its line, which erases a file buffer's, keeps it"
+      run :=
+        return excerptMarkAfter "|ab\ncd\nef" "<ArrowDown> C-a"
+              "<ArrowUp> S-<ArrowDown> S-<ArrowDown> <Backspace>" ==
+            some (true, true) }]
 
 end ModelTest

@@ -2,6 +2,7 @@ import Editor.Evil.Motions
 import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
 import Editor.Loop.Driver
+import Editor.Test.Excerpt
 import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Test.Views
@@ -430,6 +431,38 @@ def evilScrollChecks : List Check :=
               let after := evilFed driver typed
               match viewSeen after with
               | some now => now.anchor == 0 && now.head == 9 && after.loop.state.echo == ""
-              | none => false }]
+              | none => false },
+    { name :=
+        "in a window four rows tall over six headed excerpts, after each of G, k and j across the headers, gg, C-f, C-b, C-d, C-u, z t, z z and z b, the rows the published view shows from its anchor, asked with its blocks, hold the cursor's row"
+      run :=
+        pure <|
+          match evilExcerptDriver with
+          | none => false
+          | some driver =>
+            let six := viewResized (excerptInvoked driver "make-six") ⟨20, 4⟩
+            let keys :=
+              ["G", "k", "k", "k", "k", "k", "k", "j", "j", "j", "g g", "C-f", "C-f", "C-b", "C-d",
+                "C-d", "C-u", "G", "z t", "z z", "z b", "g g", "z b", "j", "j", "z z"]
+            let (_, held) :=
+              keys.foldl
+                (fun (driver, held) key =>
+                  let fed := evilFed driver key
+                  (fed, held && (blockedSeen fed).any (·.2.2)))
+                (six, true)
+            (lastView six).any (·.blocks.size == 6) && held },
+    { name :=
+        "the scroll commands ask the rows a view fits with its blocks: C-f from the start of six headed excerpts in four rows moves the anchor and the cursor two rows, the rows that fit with the headers, not four"
+      run :=
+        pure <|
+          match evilExcerptDriver with
+          | none => false
+          | some driver =>
+            let six := viewResized (excerptInvoked driver "make-six") ⟨20, 4⟩
+            -- `one` and the separator fit with the first header; `two`, at
+            -- 5, is two rows down; without the headers `three`, at 10, is
+            -- four rows down.
+            (blockedSeen six).map (fun (anchor, head, _) => (anchor, head)) == some (0, 0) &&
+              (blockedSeen (evilFed six "C-f")).map (fun (anchor, head, _) => (anchor, head)) ==
+                some (5, 5) }]
 
 end ModelTest

@@ -2,6 +2,8 @@ import Editor.ModeLine
 import Editor.Scene
 import Editor.State
 import Editor.Test.Config
+import Editor.Test.Editing
+import Editor.Test.Excerpt
 import Editor.Text
 import ModelTest.Check
 import ModelTest.Editor.ExcerptView
@@ -156,9 +158,9 @@ def modeLineChecks : List Check :=
           match excerptDriver with
           | none => false
           | some driver =>
-            let marked (driver : EvilDriver) : Bool :=
+            let marked (driver : ExcerptDriver) : Bool :=
               (lastView driver).any (·.status.any (·.text == ModeLine.modifiedMark))
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
-            !marked driver && marked typed && !marked (evilFed typed "u") }]
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
+            !marked driver && marked typed && !marked (keysFed typed "C-z") }]
 
 end ModelTest

@@ -186,10 +186,6 @@ def placed (driver : TestDriver) (offset : Nat) : TestDriver :=
 def replaced (driver : TestDriver) (start stop : Nat) (text : String) : TestDriver :=
   invoked driver "replace-range" [.nat start, .nat stop, .str text]
 
-/-- The view `view` of the last scene `driver` published. -/
-def lastView (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option View := do
-  (← driver.model.display.scenes.back?).views.find? (·.id == view)
-
 /-- The selection of the view 0 of `driver`, as the text model has it. -/
 def selectionOf (driver : TestDriver) : Option Selection := do
   let target ← driver.loop.state.target? ⟨0⟩

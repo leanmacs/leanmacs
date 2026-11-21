@@ -7,13 +7,11 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Display
-import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Display
 import Editor.Display.Model
 import Editor.DisplayRules
 import Editor.Event
-import Editor.Evil.Undo
 import Editor.Ex.Line
 import Editor.File
 import Editor.FileJobs
@@ -21,7 +19,6 @@ import Editor.Floating
 import Editor.GeneratedView
 import Editor.InputScheme
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
 import Editor.Keymap
@@ -40,6 +37,7 @@ import Editor.State
 import Editor.TabBar
 import Editor.Test.Completion
 import Editor.Test.Driver
+import Editor.Test.Editing
 import Editor.Test.Geometry
 import Editor.Test.Keys
 import Editor.Test.Loop
@@ -3399,7 +3397,7 @@ def heightChecks : List Check :=
     { name := "a publish keeps the heights the display answered, for the commands until the next"
       run :=
         pure <|
-          match evilDriver "|abc" with
+          match editingDriver "|abc" with
           | none => false
           | some driver =>
             -- The display model's cells are 1 by 1, so its heights are 1.
@@ -3547,7 +3545,12 @@ def readOnlyChecks : List Check :=
 /-- The checks of excerpt buffers (`Editor/State.lean`, "Excerpt buffers";
 `Editor/Command/Dispatch.lean`, "Read-only buffers and excerpt sources";
 `Editor/Api.lean`, "Undo"), on the loop's driver over the editor's
-models, with evil's keys. -/
+models, under the scheme written for the core's checks and the kit's
+editing keys (`excerptDriver`, `ModelTest/Support/Excerpt.lean`): a session
+is typed between `C-b` and `C-e`, `C-z` and `C-Z` undo and redo, and `C-u`
+and `C-r` make one move in the history and say what it answered
+(`historyTold`). What a scheme's own undo and redo say of a refusal is the
+scheme package's (`evilUndoChecks`, `ModelTest/Editor/Evil/Undo.lean`). -/
 def excerptBufferChecks : List Check :=
   [{  name :=
         "an edit typed in an excerpt buffer changes the source buffer's text at the mapped position, as one revision of the source traced to the user, and the excerpt buffer shows it"
@@ -3556,7 +3559,7 @@ def excerptBufferChecks : List Check :=
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
             let traced := do
               let one ← excerptBufferNamed typed "one"
               (one.text.trace 5 6 |>.runModel typed.model.texts).1.toOption
@@ -3566,16 +3569,15 @@ def excerptBufferChecks : List Check :=
               excerptRead typed "two" == some "alpha\nbeta\n" &&
               traced == some #[⟨5, 6, .entry 1 Origin.user⟩] },
     { name :=
-        "u in the excerpt buffer after a typed session restores the source buffer and the excerpt buffer, one step for the whole session, and C-r redoes it"
+        "an undo in the excerpt buffer after a typed session restores the source buffer and the excerpt buffer, one step for the whole session, and a redo redoes it"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed :=
-              evilFed (excerptFed (evilFed driver "l i") [.commit "X", .commit "Y"]) "<Escape>"
-            let undone := evilFed typed "u"
-            let redone := evilFed undone "C-r"
+            let typed := sessionTyped driver "<ArrowRight>" ["X", "Y"]
+            let undone := keysFed typed "C-z"
+            let redone := keysFed undone "C-Z"
             excerptRead typed "one" == some "one\ntXYwo\nthree\n" &&
               excerptRead undone "one" == some "one\ntwo\nthree\n" &&
               excerptRead undone "ex" == some "two\n\nalpha\n" &&
@@ -3584,116 +3586,118 @@ def excerptBufferChecks : List Check :=
               excerptRead redone "ex" == some "tXYwo\n\nalpha\n" &&
               redone.loop.state.echo.isEmpty },
     { name :=
-        "u in the excerpt buffer after the source was edited in its own buffer since is refused, saying so, and changes nothing"
+        "an undo in the excerpt buffer after the source was edited in its own buffer since is refused, naming the source that moved, and changes nothing"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
             let moved := excerptInvoked typed "edit-one"
-            let undone := evilFed moved "u"
+            let undone := keysFed moved "C-u"
             excerptRead moved "one" == some "Zone\ntXwo\nthree\n" &&
-              undone.loop.state.echo == Evil.sourceMovedSays "one" &&
+              (moved.loop.state.findBuffer "one").any
+                (fun one => undone.loop.state.echo == historyTold (.error (.sourceMoved one))) &&
               excerptRead undone "one" == some "Zone\ntXwo\nthree\n" &&
               excerptRead undone "ex" == some "tXwo\n\nalpha\n" },
     { name :=
-        "C-r in the excerpt buffer after the source was edited in its own buffer since the undo is refused, saying so, and changes nothing"
+        "a redo in the excerpt buffer after the source was edited in its own buffer since the undo is refused, naming the source that moved, and changes nothing"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
-            let moved := excerptInvoked (evilFed typed "u") "edit-one"
-            let redone := evilFed moved "C-r"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
+            let moved := excerptInvoked (keysFed typed "C-z") "edit-one"
+            let redone := keysFed moved "C-r"
             excerptRead moved "one" == some "Zone\ntwo\nthree\n" &&
-              redone.loop.state.echo == Evil.sourceMovedSays "one" &&
+              (moved.loop.state.findBuffer "one").any
+                (fun one => redone.loop.state.echo == historyTold (.error (.sourceMoved one))) &&
               excerptRead redone "one" == some "Zone\ntwo\nthree\n" &&
               excerptRead redone "ex" == some "two\n\nalpha\n" },
     { name :=
-        "a redo in the excerpt buffer while an edit through it is pending answers nothing and keeps the edit, which the next u takes back"
+        "a redo in the excerpt buffer while an edit through it is pending answers nothing and keeps the edit, which the next undo takes back"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
-            let pending := excerptInvoked (evilFed typed "u") "edit-redo"
-            let undone := evilFed pending "u"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
+            let pending := excerptInvoked (keysFed typed "C-z") "insert-redo"
+            let undone := keysFed pending "C-z"
             pending.loop.state.echo.isEmpty &&
               excerptRead pending "one" == some "one\nxtwo\nthree\n" &&
               excerptRead pending "ex" == some "xtwo\n\nalpha\n" &&
               excerptRead undone "one" == some "one\ntwo\nthree\n" &&
               excerptRead undone "ex" == some "two\n\nalpha\n" },
     { name :=
-        "u in the excerpt buffer once a source buffer of its last step was removed says so, under the name the step recorded, and drops that step, so the next u undoes the older step over a live source"
+        "an undo in the excerpt buffer once a source buffer of its last step was removed is refused, with the name the step recorded, and drops that step, so the next undo undoes the older step over a live source and the one after has nothing to undo"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let older := evilFed (excerptFed (evilFed driver "j j i") [.commit "Q"]) "<Escape>"
-            let newer := evilFed (excerptFed (evilFed older "k k i") [.commit "X"]) "<Escape>"
+            let older := sessionTyped driver "<ArrowDown> <ArrowDown>" ["Q"]
+            let newer := sessionTyped older "C-<Home>" ["X"]
             let removed := excerptInvoked newer "remove-one"
-            let refused := evilFed removed "u"
-            let undone := evilFed refused "u"
-            let emptied := evilFed undone "u"
+            let refused := keysFed removed "C-u"
+            let undone := keysFed refused "C-u"
+            let emptied := keysFed undone "C-u"
             excerptRead older "two" == some "Qalpha\nbeta\n" &&
               excerptRead newer "one" == some "one\nXtwo\nthree\n" &&
               (excerptBufferNamed removed "one").isNone &&
-              refused.loop.state.echo == Evil.sourceRemovedSays "one" &&
+              refused.loop.state.echo == historyTold (.error (.sourceRemoved "one")) &&
               excerptRead refused "two" == some "Qalpha\nbeta\n" &&
-              undone.loop.state.echo.isEmpty &&
+              undone.loop.state.echo == historyMoved &&
               excerptRead undone "two" == some "alpha\nbeta\n" &&
-              emptied.loop.state.echo == Evil.nothingToUndo },
+              emptied.loop.state.echo == historyNothing },
     { name :=
-        "u in the excerpt buffer once one of the two sources of its last step was removed says so and drops that source from the step, so the next u undoes the step in the source left"
+        "an undo in the excerpt buffer once one of the two sources of its last step was removed is refused, with its name, and drops that source from the step, so the next undo undoes the step in the source left"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
             let removed := excerptInvoked (excerptInvoked driver "edit-both") "remove-one"
-            let refused := evilFed removed "u"
-            let undone := evilFed refused "u"
+            let refused := keysFed removed "C-u"
+            let undone := keysFed refused "C-u"
             excerptRead removed "two" == some "Alpha\nbeta\n" &&
-              refused.loop.state.echo == Evil.sourceRemovedSays "one" &&
+              refused.loop.state.echo == historyTold (.error (.sourceRemoved "one")) &&
               excerptRead refused "two" == some "Alpha\nbeta\n" &&
-              undone.loop.state.echo.isEmpty &&
+              undone.loop.state.echo == historyMoved &&
               excerptRead undone "two" == some "alpha\nbeta\n" },
     { name :=
-        "C-r in the excerpt buffer once the source buffer of the step to redo was removed says so and drops the step, so the next C-r has nothing to redo"
+        "a redo in the excerpt buffer once the source buffer of the step to redo was removed is refused, with its name, and drops the step, so the next redo has nothing to redo"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
-            let removed := excerptInvoked (evilFed typed "u") "remove-one"
-            let refused := evilFed removed "C-r"
-            let emptied := evilFed refused "C-r"
-            refused.loop.state.echo == Evil.sourceRemovedSays "one" &&
-              emptied.loop.state.echo == Evil.nothingToRedo },
-    { name := "u in the source buffer takes back an edit made through the excerpt buffer"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
+            let removed := excerptInvoked (keysFed typed "C-z") "remove-one"
+            let refused := keysFed removed "C-r"
+            let emptied := keysFed refused "C-r"
+            refused.loop.state.echo == historyTold (.error (.sourceRemoved "one")) &&
+              emptied.loop.state.echo == historyNothing },
+    { name := "an undo in the source buffer takes back an edit made through the excerpt buffer"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
-            let undone := evilFed (excerptInvoked typed "show-one") "u"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
+            let undone := keysFed (excerptInvoked typed "show-one") "C-z"
             excerptRead undone "one" == some "one\ntwo\nthree\n" &&
               excerptRead undone "ex" == some "two\n\nalpha\n" },
     { name :=
-        "a command applying one transaction with an edit in each excerpt changes both source buffers, and one u restores both"
+        "a command applying one transaction with an edit in each excerpt changes both source buffers, and one undo restores both"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
             let edited := excerptInvoked driver "edit-both"
-            let undone := evilFed edited "u"
+            let undone := keysFed edited "C-z"
             excerptRead edited "one" == some "one\ntXwo\nthree\n" &&
               excerptRead edited "two" == some "Alpha\nbeta\n" &&
               excerptRead undone "one" == some "one\ntwo\nthree\n" &&
@@ -3701,19 +3705,19 @@ def excerptBufferChecks : List Check :=
               excerptRead undone "ex" == some "two\n\nalpha\n" &&
               undone.loop.state.echo.isEmpty },
     { name :=
-        "a command that edits both sources through the excerpt buffer and then fails is rolled back in both, the echo area says the refusal and nothing more, and u then has nothing to undo"
+        "a command that edits both sources through the excerpt buffer and then fails is rolled back in both, the echo area says the refusal and nothing more, and an undo then has nothing to undo"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
             let failed := excerptInvoked driver "edit-both-fails"
-            let undone := evilFed failed "u"
+            let undone := keysFed failed "C-u"
             excerptRead failed "one" == some "one\ntwo\nthree\n" &&
               excerptRead failed "two" == some "alpha\nbeta\n" &&
               excerptRead failed "ex" == some "two\n\nalpha\n" &&
               failed.loop.state.echo == "edit-both-fails: refused: bad range" &&
-              undone.loop.state.echo == Evil.nothingToUndo },
+              undone.loop.state.echo == historyNothing },
     { name :=
         "with source two read-only, a command editing both gives up saying so and neither source changes; a commit into the second excerpt is dropped saying so, and one into the first is inserted"
       run :=
@@ -3723,8 +3727,8 @@ def excerptBufferChecks : List Check :=
           | some driver =>
             let readOnly := excerptInvoked driver "two-ro"
             let edited := excerptInvoked readOnly "edit-both"
-            let second := excerptFed (evilFed readOnly "j j i") [.commit "Q"]
-            let first := excerptFed (evilFed readOnly "i") [.commit "Q"]
+            let second := excerptFed (keysFed readOnly "<ArrowDown> <ArrowDown> C-b") [.commit "Q"]
+            let first := excerptFed (keysFed readOnly "C-b") [.commit "Q"]
             edited.loop.state.echo == "edit-both: two is read-only" &&
               excerptRead edited "one" == some "one\ntwo\nthree\n" &&
               excerptRead edited "two" == some "alpha\nbeta\n" &&
@@ -3750,7 +3754,7 @@ def excerptBufferChecks : List Check :=
           | none => false
           | some driver =>
             let made := excerptInvoked driver "make-unheld"
-            let committed := excerptFed (evilFed made "i") [.commit "Q"]
+            let committed := excerptFed (keysFed made "C-b") [.commit "Q"]
             committed.loop.state.echo == EditorState.unheldReason "ex2" &&
               excerptRead committed "ex2" == some "free\n" },
     { name :=
@@ -3777,7 +3781,7 @@ def excerptBufferChecks : List Check :=
           | none => false
           | some driver =>
             let changed := excerptInvoked driver "one-changed"
-            let refused := excerptFed (evilFed changed "i") [.commit "Q"]
+            let refused := excerptFed (keysFed changed "C-b") [.commit "Q"]
             let landed := excerptFed refused [.commit "R"]
             refused.loop.state.echo == FileJobs.changedOnDisk "one.txt" &&
               excerptRead refused "one" == some "one\ntwo\nthree\n" &&

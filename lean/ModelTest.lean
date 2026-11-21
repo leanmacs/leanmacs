@@ -324,10 +324,11 @@ a command decided about is not; the marker a mark put back replaced is
 given up; an excerpt buffer's marks are not followed; a buffer whose text
 refuses is left as it was, the others followed and the refusal handed
 back; `BufferId.followMarks` erases, leaves an excerpt buffer alone and is
-refused by a text that refuses; and, through the loop, a mark's marker is
-given up once the mark is erased by a charwise delete or by `dd`, or put
-back by an undo, and `m a` on an excerpt buffer sets a mark a charwise
-delete across its line keeps.
+refused by a text that refuses; and, through the loop, on the test scheme
+with the kit's editing keys and a command of the checks' that sets the
+mark, a mark's marker is given up once the mark is erased by a delete of a
+selection across its line or of its whole line, or put back by an undo,
+and a mark set on an excerpt buffer is kept by a delete across its line.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that the rectangles of its views are
@@ -1021,8 +1022,12 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   while the tree is not delivered, and as before this phase with neither;
 - `evilUndoChecks`: `u` and `C-r` after one change of each kind
   (`undoRows`): the text and the cursor from before the change, and those
-  the change left; and `u` at the root of a buffer a restore made, which
-  says its history starts there. They are the phase's rule and are not compared with
+  the change left; `u` at the root of a buffer a restore made, which
+  says its history starts there; and, in an excerpt buffer
+  (`evilExcerptDriver`, on the kit's `excerptRegistrations`), what `u` and
+  `C-r` say of a step refused because a source moved or was removed
+  (`Evil.sourceMovedSays`, `sourceRemovedSays`), and of nothing left to
+  undo or redo after it. They are the phase's rule and are not compared with
   Vim, which leaves the cursor at the start of the changed text;
 - `evilRepeatChecks`: `.` after a change of each kind (`repeatRows`), a
   count before it, a change with an insert session and its typed and
@@ -1086,7 +1091,8 @@ acceptance criteria for following, the scroll margin among them, and what
 following costs in requests, as a difference between two frames. Evil's
 scroll commands by key, and the margin after every motion of its
 vocabulary, are checked the same way under the Vim scheme that ships
-(`evilScrollChecks`, `ModelTest/Editor/Evil/Scroll.lean`).
+(`evilScrollChecks`, `ModelTest/Editor/Evil/Scroll.lean`), as are its
+scroll commands over the header blocks of an excerpt buffer.
 
 Modes are checked on the test scheme, by the roles and the leader it reports
 (`InputScheme.roleKey`, `InputScheme.leader`), so that no check of a mode

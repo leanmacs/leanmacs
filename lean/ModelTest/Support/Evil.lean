@@ -24,6 +24,7 @@ import Editor.Program
 import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
+import Editor.Test.Excerpt
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Models
@@ -361,5 +362,13 @@ def evilCrlfDriver (contents : String) (head : Nat) (model : EditorModel := edit
         let state ← evilState contents head
         return { state with buffers := state.buffers.map (·.map ({ · with lineEnding := .crlf })) })
       model).toOption
+
+/-- A driver of evil's checks in an excerpt buffer: evil's keys and the
+commands of the kit's excerpt buffer checks (`excerptRegistrations`,
+`Editor/Test/Excerpt.lean`), over an empty buffer, once `make-ex` has run,
+so the window shows `ex` with its cursor at its start; `none` if making
+the state was refused. -/
+def evilExcerptDriver : Option EvilDriver :=
+  (evilDriver "|" (evilHanded excerptRegistrations)).map (excerptInvoked · "make-ex")
 
 end ModelTest
