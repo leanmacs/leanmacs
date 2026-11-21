@@ -339,8 +339,14 @@ below does; `Files.save buffer` is the save. Or the script runs
 as the fixture `open-file` does. While a load or a save is in flight the editor
 goes on answering: what is typed meanwhile is handled first.
 
-The editor ships two more commands, compiled in, and one mode
-(`lean/Editor/Minibuffer.lean`). A command asks for a string with
+The default package `minibuffer` ships the commands that answer a
+prompt, compiled in, and one mode (`packages/minibuffer/Minibuffer.lean`,
+in the core until the features-as-packages roadmap's phase 4): every
+command in the table below is that package's, and so are
+`minibuffer-delete-backward`, `minibuffer-delete-to-start`,
+`minibuffer-ask` and `minibuffer-candidates`. An editor built from a set
+without it opens a prompt that nothing answers (`tests/empty-set`'s,
+below). A command asks for a string with
 `prompt label continuation initial`, which opens the minibuffer and
 returns at once; `continuation` names the command that receives the
 answer, as its first argument.
@@ -593,12 +599,12 @@ $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/bui
 reload 1: installed, 2 files, 1 commands
 run greet: ok
 run missing: no such command
-commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error greet
+commands: open-file save-buffer edit-file reload-buffer auto-reload-mode move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused greet
 text 0: ""
 text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
-commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error greet
+commands: open-file save-buffer edit-file reload-buffer auto-reload-mode move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused greet
 text 0: ""
 text 1: "hello, world"
 text 2: "counted 42"
@@ -606,15 +612,18 @@ text 2: "counted 42"
 
 Text 0 is the scratch buffer's: the editor loop makes its frame, and that
 buffer, for the first command it runs. `open-file`, `save-buffer`,
-`edit-file`, `reload-buffer` and `auto-reload-mode`, `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`,
-`minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward`,
-`minibuffer-delete-to-start` and `minibuffer-ask`, evil's forty-one,
+`edit-file`, `reload-buffer` and `auto-reload-mode`, evil's forty-one,
 from `move` to `set-mark`, the ex line's four, from `ex` to
 `reload-config`, the three buffer commands, from `switch-buffer` to
 `close-buffer`, the frame's two, `toggle-fullscreen` and
-`minimise-window`, `load-theme`, `execute-command` and `search-bindings`, are
-the commands the editor ships, compiled in: `show` lists them before
-config's.
+`minimise-window`, `load-theme` and the rest to `vc-gutter-moved` are
+the core's commands; the default packages' follow, in the order they
+register: the `minibuffer` package's nine, from `minibuffer-accept` to
+`minibuffer-candidates`, `execute-command`, `search-bindings`, the
+`compile` package's nine, from `compile` to `compile-goto-error`, and the
+`at-point` package's nine, from `at-point-complete` to
+`at-point-paused`. They are the commands the editor ships, compiled in:
+`show` lists them before config's.
 
 The gate runs a second script on the same config, `tests/headless/keys-script`,
 whose output must be exactly `tests/headless/keys-expected`:
@@ -723,8 +732,11 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-A sixth, `tests/headless/prompt/script`, asks for a prompt and answers it,
-on the config in `tests/headless/prompt/config`. A command cannot wait for
+A sixth, the default package `minibuffer`'s
+`packages/minibuffer/tests/headless/prompt/script` (the core's until the
+features-as-packages roadmap's phase 4, moved byte for byte), asks for a
+prompt and answers it, on the config in
+`packages/minibuffer/tests/headless/prompt/config`. A command cannot wait for
 an answer, so it names the command that receives it and returns at once.
 The config registers that command with `commandWith`, which gives it what
 it was called with: the answer is its first argument.
@@ -753,10 +765,11 @@ the `Ada` the prompt was asked with. `<Enter>` accepts and `<Escape>`
 cancels: the minibuffer's state binds those two keys to the compiled
 commands `minibuffer-accept` and `minibuffer-cancel`. The command that
 receives the answer prints no line of its own: what it said is in the echo
-area. Its output must be exactly `tests/headless/prompt/expected`:
+area. Its output must be exactly
+`packages/minibuffer/tests/headless/prompt/expected`:
 
 ```console
-$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/prompt/config ../tests/headless/prompt/script
+$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../packages/minibuffer/tests/headless/prompt/config ../packages/minibuffer/tests/headless/prompt/script
 reload 1: installed, 1 files, 2 commands
 run ask-name: ok
 key arrived: ! Digit1 shift
@@ -873,9 +886,12 @@ Four scenes are published between the first `:` key and the first
 `scene`: for `ex`, for the commit, for the accept command and for `ex`
 with the line. The second line adds a fifth, for `save-buffer`.
 
-A ninth, `tests/headless/candidates/script`, asks for a prompt with
-candidates and chooses one, on the config in
-`tests/headless/candidates/config`, with the library's fuzzy matcher.
+A ninth, the default package `minibuffer`'s
+`packages/minibuffer/tests/headless/candidates/script` (the core's until
+the features-as-packages roadmap's phase 4, moved byte for byte), asks
+for a prompt with candidates and chooses one, on the config in
+`packages/minibuffer/tests/headless/candidates/config`, with the
+library's fuzzy matcher and the `completion` package's `fuzzy` style.
 Config's `pick` asks `Pick: ` with the candidates `wq`, `edit` and `w`.
 With `w` typed, the candidate list, view 2, lists `w` and then `wq`: the
 library scores the two the same and `wq` came first, so only the rule
@@ -886,10 +902,10 @@ typed nothing is listed, so the second prompt's list, which showed three
 rows for the empty initial text, is empty but stays in the scene; `<Tab>`
 puts nothing in the input, and `picked` receives `z`. Last, with `e`
 typed, `<Tab>` puts the first listed, `edit`, in the input, the bar at its
-end and the prompt still open, and `<Enter>` gives `picked` that text. Its output must be exactly `tests/headless/candidates/expected`:
+end and the prompt still open, and `<Enter>` gives `picked` that text. Its output must be exactly `packages/minibuffer/tests/headless/candidates/expected`:
 
 ```console
-$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script
+$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../packages/minibuffer/tests/headless/candidates/config ../packages/minibuffer/tests/headless/candidates/script
 reload 1: installed, 1 files, 2 commands
 run pick: ok
 key arrived: w KeyW -
@@ -1050,13 +1066,23 @@ The core has a themes fixture of its own, `tests/headless/core-themes/script`,
 which `mise run ffi-test` runs on another editor: the one `mise run lean`
 links from the set `tests/empty-set`, which requires the core alone, the
 default set with its packages, `shipped-themes` among them, dropped. Its config defines
-one theme, `first`, and names none. The first scene is drawn in `default`;
-the theme prompt lists `default` and `first`, and no palette; `first` is
-loaded; and `solarized-dark`, answered, is no theme of this editor, which
-the echo area says, the theme in force staying `first`. The mode line's
-segments are a default package too (`packages/mode-line/`), so the main
-window's status line is empty, `-`, in every scene. Its output must be
-exactly `tests/headless/core-themes/expected`:
+one theme, `first`, and names none. The first scene is drawn in `default`,
+and the theme prompt lists `default` and `first`, and no palette. The mode
+line's segments are a default package too (`packages/mode-line/`), so the
+main window's status line is empty, `-`, in every scene; so are the
+completion styles and displays (`packages/completion/`), so the list is
+drawn by the core's own display, each row its text after two spaces with
+no faces; and so are the minibuffer's commands (`packages/minibuffer/`),
+so nothing answers the prompt: `<Enter>` says `minibuffer-accept: no such
+command`, the prompt stays open with `first` typed, the theme in force
+stays `default`, and the second `load-theme`'s `solarized-dark` is typed
+into the prompt still open. Until the features-as-packages roadmap's
+phase 4 this editor loaded `first` and answered `solarized-dark` as no
+theme of it; what the core's list registers, the one theme `default`, is
+held at the registry by `ConfigTest.shippedChecks`
+([packages.md](../design/packages.md), "Dropping `minibuffer` leaves
+prompts that nothing answers"). Its output must be exactly
+`tests/headless/core-themes/expected`:
 
 ```console
 $ ../tests/empty-set/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/core-themes/config ../tests/headless/core-themes/script
@@ -1071,18 +1097,25 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: -
 view 1 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
 status 1: minibuffer.prompt "Theme: "
-view 2 0,0 0x0: "default\nfirst", scroll 0, selections , padding 8 0
-decorations 2: minibuffer.candidate 0..7 minibuffer.candidate 8..13
+view 2 0,0 0x0: "  default\n  first", scroll 0, selections , padding 8 0
 status 2: -
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 8, theme "first"
+scene 0x0, focused 1, echo "minibuffer-accept: no such command", echo padding 8, preedit -, published 6, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: -
+view 1 0,0 0x0: "first", scroll 0, selections 5..5, padding 8 0
+status 1: minibuffer.prompt "Theme: "
+view 2 0,0 0x0: "  first", scroll 0, selections , padding 8 0
+status 2: -
 run load-theme: ok
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "load-theme: no theme is registered as `solarized-dark`", echo padding 8, preedit -, published 13, theme "first"
+scene 0x0, focused 1, echo "minibuffer-accept: no such command", echo padding 8, preedit -, published 10, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: -
+view 1 0,0 0x0: "firstsolarized-dark", scroll 0, selections 19..19, padding 8 0
+status 1: minibuffer.prompt "Theme: "
+view 2 0,0 0x0: "", scroll 0, selections , padding 8 0
+status 2: -
 ```
 
 A twelfth, the default package `mode-line`'s
@@ -1787,8 +1820,12 @@ divider 0,230 318x2 in window-divider
 divider 318,232 2x232 in window-divider
 ```
 
-A twenty-fifth, `tests/headless/at-point/script`, shows completion at
-point's auto popup on the shared config (`tests/headless/config`), under
+A twenty-fifth, the default package `at-point`'s
+`packages/at-point/tests/headless/at-point/script` (the core's until the
+features-as-packages roadmap's phase 4, moved byte for byte), shows
+completion at point's auto popup on the shared config it ran on, copied
+into it byte for byte (`packages/at-point/tests/headless/at-point/config`,
+a copy of `tests/headless/config`), under
 the Vim scheme that ships: in insert state it commits `alpha alpine beta`,
 breaks the line with `RET`, types `a` and `l`, each re-arming the pause of
 the shipped `words` source, and settles; then `advance 240` fires the pause,
@@ -1797,10 +1834,14 @@ buffers that match `al`, nothing chosen, in the candidate list's view above
 the bottom row, the window shorter by its two rows. `C-n` chooses the first
 and previews it in the buffer's text; `RET` accepts it, and the list is
 gone and the window full height again. Its output must be exactly
-`tests/headless/at-point/expected`:
+`packages/at-point/tests/headless/at-point/expected`. Its sibling
+`at-point-tuned`, written before the move, runs the same script with
+`advance 100` on a config that defines `Completion.AtPoint.words (pause
+:= 100)` (`import AtPoint.Words`), so the session opens at the tuned
+pause:
 
 ```console
-$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/at-point/script
+$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../packages/at-point/tests/headless/at-point/config ../packages/at-point/tests/headless/at-point/script
 reload 1: installed, 2 files, 1 commands
 key arrived: i KeyI -
 key arrived: <Enter> Enter -
@@ -2143,7 +2184,9 @@ theme's, and the echo area says each sentence after `reload: `, joined by
 `; ` (`packages/mode-line/tests/headless/mode-line`). A reload whose config chooses a
 completion style nobody registered (`useStyle`, `useStyleFor`) is
 installed too, its category left to the default style and the default to
-`fuzzy`: its report has a line
+the style registered first, `fuzzy` on the default set's editor (the
+`completion` package's), the core's own `ranked` on an editor that
+registers none: its report has a line
 ``style: no completion style is registered under `<name>` `` for each,
 after the segments', and the echo area says each sentence after the
 segments'. A reload whose config makes a display
@@ -2218,9 +2261,12 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   the default set's editor, and none of them changed when the editor came
   to be built from a package set. Five lines of three of them changed
   when the compile mode moved into a default package, for the order it
-  registers in, and three lines of two when the command prompt and the
-  binding search did ([packages.md](../design/packages.md), "Registration
-  order is visible"). `tests/headless/default-config` runs the default
+  registers in, three lines of two when the command prompt and the
+  binding search did, and five lines of three when completion at point
+  and the minibuffer did: the `commands:` lines twice, and `SPC :`'s
+  listing in `tests/headless/default-config`
+  ([packages.md](../design/packages.md), "Registration order is
+  visible"). `tests/headless/default-config` runs the default
   config (`config/default`, copied into a temporary directory): `SPC :`
   and `SPC ?`, run from the binding search as their keys would run, open
   the command prompt and the binding search.
@@ -2231,6 +2277,17 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   `packages/binding-search/tests/headless/binding-search`, written on the
   editor with both features in the core and moved with their config's
   import changed (`import ExecuteCommand`, `import BindingSearch`).
+- **The fixtures of the three features that moved in its phase 4 are
+  their packages'**: `packages/minibuffer/tests/headless/prompt` and
+  `candidates`, and `packages/at-point/tests/headless/at-point`, the
+  core's until then, the last with the shared config it ran on copied in
+  as its `config/`; `packages/completion/tests/headless/completion-choices`,
+  a config that defines `Completion.Displays.minibuffer (rows := 2)` and
+  chooses `Completion.Styles.orderless` for a category of its own, and
+  `packages/at-point/tests/headless/at-point-tuned`, both written on the
+  editor with the features in the core and moved with their config's
+  imports changed (`import Completion.Styles`, `import
+  Completion.Displays`; `import AtPoint.Words`).
 - **The compile mode's fixtures are its package's**:
   `packages/compile/tests/headless/ex-names`, in which each of `:next-error`,
   `:previous-error`, `:recompile`, `:kill-compilation`, `:compile` and
@@ -2251,5 +2308,7 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   (`packages/compile/tests/linked/run/script`).
 - **An editor without the compile package**, the one linked from
   `tests/empty-set`, runs the core's fixture
-  `tests/headless/core-ex-names`: `:compile` is answered `compile: not an
-  ex command`, as `:bogus` is.
+  `tests/headless/core-ex-names`. It has no minibuffer package either, so
+  `<Enter>` on its ex line says `minibuffer-accept: no such command` and
+  the line stays open: `:compile` is never run there (until phase 4 it
+  was answered `compile: not an ex command`, as `:bogus` was).

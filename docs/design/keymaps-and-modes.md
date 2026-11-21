@@ -36,7 +36,7 @@ registers, undo and dot repeat, on the editor API:
 | A buffer's major and minor modes, and the state operations that set them | `lean/Editor/State.lean` |
 | The language entry, the shipped table, the rule that chooses a path's language, and the `code` mode | `lean/Editor/Language.lean`; a buffer's language in `lean/Editor/State.lean`, chosen when a file opens in `lean/Editor/Files.lean` |
 | The notice a scheme is told when the minibuffer's view opens, and the contract's property that a key that prints is text there | `lean/Editor/InputScheme.lean` (`openMinibuffer`), `lean/Editor/InputScheme/Contract.lean` (`minibufferTakesText`), `lean/Editor/Loop.lean` (`Loop.toldViews`) |
-| The minibuffer's mode and its six commands (accept, cancel, the next and the previous candidate, delete backward, and delete to the input's start), and their registrations | `lean/Editor/Minibuffer.lean`, `lean/Editor/Minibuffer/Compiled.lean` |
+| The minibuffer's mode and its six commands (accept, cancel, the next and the previous candidate, delete backward, and delete to the input's start), and their registrations | The default package `minibuffer` (features-as-packages phase 4): `packages/minibuffer/Minibuffer.lean`, `packages/minibuffer/Minibuffer/Compiled.lean`; their names in its interface package, `packages/minibuffer-api/MinibufferApi.lean` |
 | The frame's commands (`toggle-fullscreen`, `minimise-window`) and their compiled bindings `C-s-f` and `s-m` | `lean/Editor/FrameCommands.lean`, `lean/Editor/FrameCommands/Compiled.lean` |
 | The Vim state of the minibuffer's view, and its default keys | `lean/Editor/InputScheme/Vim.lean` (`States.minibuffer`, `State.openMinibuffer`), `lean/Editor/InputScheme/Vim/Default.lean` (`minibufferCommands`) |
 | What a scheme reports of a view, and the contract's property that a key that yields nothing leaves it as it was | `lean/Editor/InputScheme.lean` (`InputScheme.Report`, `report`), `lean/Editor/InputScheme/Contract.lean` (`quietKeyKeepsReport`) |
@@ -3810,7 +3810,10 @@ the prompt closes the row is empty until a command says something.
 
 Status: decided 2026-11-14 and built, by the command loop's phase 10
 (`lean/Editor/Minibuffer.lean` and `lean/Editor/Minibuffer/Compiled.lean`
-for the mode and its commands; `lean/Editor/InputScheme.lean`,
+for the mode and its commands, which the features-as-packages roadmap's
+phase 4 moved into the default package `minibuffer`, now
+`packages/minibuffer/Minibuffer.lean` and
+`packages/minibuffer/Minibuffer/Compiled.lean`; `lean/Editor/InputScheme.lean`,
 `lean/Editor/InputScheme/Contract.lean` and `lean/Editor/Loop.lean` for
 the notice; `lean/Editor/InputScheme/Vim.lean` and
 `lean/Editor/InputScheme/Vim/Default.lean` for the Vim state; the module
@@ -3838,10 +3841,15 @@ own, and that window has the focus.
   (`Prompt.mode`, `lean/Editor/State.lean`). No on-enter action runs, and
   the mode has none. A host that was not handed the mode has a minibuffer
   whose mode contributes nothing; the executable is handed the commands
-  and the mode as the `minibuffer` package
-  (`lean/Editor/Minibuffer/Compiled.lean`), registered for
+  and the mode as the `minibuffer` package, the default package of that
+  name (`packages/minibuffer/Minibuffer/Compiled.lean`), registered for
   the owner `minibuffer`, so they hold when config fails to load and a
-  reload does not replace them.
+  reload does not replace them. An editor built from a set without it
+  opens a prompt that nothing answers: `<Enter>` there says
+  `minibuffer-accept: no such command` ([packages.md](packages.md),
+  "Dropping `minibuffer` leaves prompts that nothing answers"). The
+  core's tests run on the test kit's own minibuffer
+  (`lean/Editor/Test/Minibuffer.lean`), under the same names.
 - **A prompt does not capture the keyboard.** A command may focus another
   window while the prompt is open; keys then go there, and the prompt
   waits. A binding of the global keymap holds in the minibuffer's view as
@@ -4098,8 +4106,9 @@ asked and what accepting gives).
   (`compile-history`, `compile-commands`), by value and not registered:
   what they list is the asking command's scope.
 - **A display draws them** (completion's phase 4,
-  `lean/Editor/Completion/Display.lean`,
-  `lean/Editor/Completion/Displays.lean`).
+  `lean/Editor/Completion/Display.lean`, and the displays that ship in the
+  default package `completion`, `packages/completion/Completion/Displays.lean`,
+  since the features-as-packages roadmap's phase 4).
   - **The interface.** A display is a name and a pure function from what
     it is shown (`Showing`: the whole listing, each candidate with its
     matched ranges, the choice, where its window started in the last
@@ -4114,7 +4123,13 @@ asked and what accepting gives).
     one), and its contract (`DisplayContract`) holds every display to
     decorations inside their row on character boundaries, no line feed in
     a row, no rows for an empty listing and a window inside the listing.
-  - **The minibuffer display**, `minibuffer`, the default. At most `rows`
+  - **The core's own display**, `plain` (`Display.unregistered`), the
+    model, owned by `compiled` and registered by no package: what a set
+    that registers no display draws with ([packages.md](packages.md),
+    "What moving the completion, at-point and minibuffer features added to
+    the core's API").
+  - **The minibuffer display**, `minibuffer`, the default, as the display
+    the `completion` package registers first. At most `rows`
     rows (10, `Completion.Displays.rows`, as vertico's `vertico-count` and
     ivy's `ivy-height`), the best match at the top, one candidate a row in
     the listing's order: the candidates the typed text matches, in the
@@ -4149,8 +4164,9 @@ asked and what accepting gives).
     registered by name as styles are (`defineDisplay`, `useDisplay`,
     `useDisplayFor`, `lean/Editor/Setup.lean`), resolved by the same rule
     (`Config.Registry.displayEntry`): the category's choice, else the
-    default's, else the latest display named `minibuffer`, else the
-    compiled one. So `defineDisplay (Completion.Displays.minibuffer (rows
+    default's, else the latest display of the name of the display
+    registered first (`minibuffer` in the default set), else the core's
+    own. So `defineDisplay (Completion.Displays.minibuffer (rows
     := 15))` replaces the shipped display under its own name and sets the
     rows. A chosen name nobody registered is reported, and a `setup` that
     defines a display twice or chooses one twice is refused.
@@ -4203,7 +4219,7 @@ asked and what accepting gives).
   `vertico-directory-enter` does; any other answer closes the prompt as
   before. With nothing chosen `RET` answers the typed text.
 - **Two commands move a choice through the list**, `minibuffer-next` and
-  `minibuffer-previous` (`lean/Editor/Minibuffer.lean`).
+  `minibuffer-previous` (`packages/minibuffer/Minibuffer.lean`).
   - From nothing chosen, next chooses the first and previous the last;
     next from the last and previous from the first choose nothing. So the
     typed text is one stop of the round, as in Vim's wild menu.
@@ -4334,6 +4350,13 @@ and orderless choose it.
   empty text lists every candidate. `model-test` runs it against the
   shipped styles and the model, `contract-test` against the fuzzy style
   over the real binding.
+- **The core's own style**, `ranked` (`Style.unregistered`), answers what
+  `Fuzzy.rank` answers, in its order, with no ranges. It is owned by
+  `compiled` and registered by no package: what a set that registers no
+  style matches with. The styles below ship in the default package
+  `completion` (`packages/completion/Completion/Styles.lean`, since the
+  features-as-packages roadmap's phase 4), the first to register a style,
+  so `fuzzy` is the default.
 - **The fuzzy style** (`Completion.Styles.fuzzy`, the default) answers
   what `Fuzzy.rank` answers, in its order: **the order rule is the fuzzy
   style's now**, a candidate that is the typed text first, then the
@@ -4514,7 +4537,14 @@ shipped file source, its job and style) and the fixture
 Status: built, by completion's phase 5 (`lean/Editor/Completion/AtPoint.lean`,
 `lean/Editor/Completion/Words.lean`, `lean/Editor/AtPoint.lean`,
 `lean/Editor/Api.lean` "Completion at point", `lean/Editor/Loop.lean`
-"Completion at point"). Typing in a buffer is completed by the prompt's
+"Completion at point"). The features-as-packages roadmap's phase 4 moved
+the commands and `words` into the default package `at-point`
+(`packages/at-point/AtPoint.lean`, `packages/at-point/AtPoint/Words.lean`,
+`packages/at-point/AtPoint/Compiled.lean`, with its names in
+`packages/at-point-api/AtPointApi.lean`); the interface, the session and
+the loop's part stay in the core, which runs the package's commands by
+names it declares (`Completion.AtPoint.triggeredCommand`,
+`.pausedCommand`). Typing in a buffer is completed by the prompt's
 own sources, styles and displays, asked from a position, as Emacs's
 `completion-at-point` asks `completion-at-point-functions`; the keys follow
 Doom Emacs's corfu module (owner decisions, 2026-11-17).
@@ -4581,8 +4611,12 @@ Doom Emacs's corfu module (owner decisions, 2026-11-17).
   and `C-p`/`S-TAB` up, wrapping through nothing chosen; `RET` accepts the
   chosen candidate, and with nothing chosen closes the session and breaks
   the line; `C-g` closes it. With no session `TAB` and `RET` do what they
-  did. The commands are `lean/Editor/AtPoint.lean`'s and work under any
-  scheme.
+  did. The commands are `packages/at-point/AtPoint.lean`'s and work under
+  any scheme. In a set without the `at-point` package nothing registers
+  them, so `RET`, `TAB` and `C-g` in insert state type nothing and say
+  `<name>: no such command` ([packages.md](packages.md), "Dropping
+  `at-point` leaves insert state without line feed or tab"; the task
+  `at-point-insert-keys`).
 - **Triggers and the pause.** A key that typed text asks the chain
   (`Loop.atPointAsks`, pure): a trigger character runs `at-point-triggered`
   as the next step; a source's pause has the host arm a wait on the job
@@ -4593,7 +4627,7 @@ Doom Emacs's corfu module (owner decisions, 2026-11-17).
   `at-point-paused`, which asks on the pause when the view is still
   focused and nothing is open. A typed key's own cost is the pure check
   and the restart of one wait: no text request, no job and no job line.
-- **`words`** (`Completion.Words`), the source that ships: the words of the
+- **`words`** (`Completion.Words`, `packages/at-point/AtPoint/Words.lean`), the source that ships: the words of the
   open buffers, in Vim's `C-n` order, gathered by the job `words` from
   snapshots of the open buffers the asking command took (a job reads a
   snapshot's text with `JobRequest.snapshot`), so gathering never holds a
@@ -4601,7 +4635,7 @@ Doom Emacs's corfu module (owner decisions, 2026-11-17).
   asks by itself after 240 ms once two characters are typed, as
   `corfu-auto` does, and on a key even with nothing typed, which lists every
   word. The `at-point` package uses it in every buffer
-  (`lean/Editor/AtPoint/Compiled.lean`).
+  (`packages/at-point/AtPoint/Compiled.lean`).
 - **The headless mode's clock is fake** (`docs/dev-practices/headless-mode.md`):
   a pause fires only when a script advances it (`advance 240`).
 - **Reload.** At-point sources run only inside commands, looked up through

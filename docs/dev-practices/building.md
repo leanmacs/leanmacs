@@ -18,7 +18,7 @@ fixture set with its packages:
 |---|---|
 | `lake build --wfail` | The core's modules and `ffi-test`, `config-test` and `contract-test`, under `lean/.lake/build` |
 | `lake -d ../packages build --wfail :editor` | The editor, from the default package set (`packages/lakefile.toml`): the package-set build writes its root module, builds it and links `packages/.lake/build/bin/editor` |
-| `sh ../tools/package-set.sh build ../tests/packages` | The fixture set's editor (`tests/packages/.lake/build/bin/editor`), and the default targets and the linked test of each package of the set: the fixture packages, the writing guide's example package `word-count` (`docs/packages/word-count/`) and, through the default set, its six default packages and two interface packages |
+| `sh ../tools/package-set.sh build ../tests/packages` | The fixture set's editor (`tests/packages/.lake/build/bin/editor`), and the default targets and the linked test of each package of the set: the fixture packages, the writing guide's example package `word-count` (`docs/packages/word-count/`) and, through the default set, its nine default packages and five interface packages |
 | `lake -d ../tests/empty-set build --wfail :editor` | An editor from the core alone (`tests/empty-set/.lake/build/bin/editor`), which `ffi-test` runs two fixtures on |
 
 The editor is `packages/.lake/build/bin/editor`. It is not a target of the
@@ -29,8 +29,8 @@ The root module that names the packages is generated into
 `packages/.lake/build/root/EditorSetRoot.lean`; delete it and the next
 build writes it again. Beside the editor the build writes
 `editor.oleans`, the directories the `.olean` files of the set's packages
-are in, for the default set the core's and those of its eight packages,
-the six default packages and the two interface packages,
+are in, for the default set the core's and those of its fourteen
+packages, the nine default packages and the five interface packages,
 which the editor run directly reads and searches, all of them, to find the
 modules config is elaborated on (`lean/Editor/ModuleLookup.lean`): its
 set's base, `Editor` and then the entry module of each default package. `editor demo` shows the build works:

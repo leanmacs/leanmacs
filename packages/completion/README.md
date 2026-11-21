@@ -12,7 +12,8 @@ It implements the interface package
 [`completion-api`](../completion-api/), which declares the name of the
 path style, the one name of it another package reaches: the core's files
 package gives the file prompt's category the style `path`. Its design
-record is in [packages.md](../../docs/design/packages.md).
+record is in [packages.md](../../docs/design/packages.md), "The default
+packages of the features-as-packages roadmap's phase 4".
 
 ## Its source, in reading order
 

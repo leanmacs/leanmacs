@@ -11,10 +11,15 @@
 #   (`lake -d ../tests/empty-set build :editor`, in lean/), and `mise run
 #   ffi-test` runs two fixtures on that editor: tests/headless/core-themes,
 #   an editor with no package but the core's starts in the theme `default`
-#   and offers no shipped palette; and tests/headless/core-ex-names, it
-#   starts, loads config, and answers `compile` on its ex line as it
-#   answers any ex name nobody bound, the compile mode being a default
-#   package (packages/compile/). The mode line's segments are a default
+#   and offers no shipped palette, its list drawn by the core's own
+#   display, the completion styles and displays being a default package
+#   (packages/completion/); and tests/headless/core-ex-names, it starts,
+#   loads config and opens its ex line. The minibuffer's commands are a
+#   default package too (packages/minibuffer/), so `<Enter>` answers
+#   neither prompt: both stay open, saying `minibuffer-accept: no such
+#   command`, and neither fixture reaches a palette's name or `compile`
+#   answered (docs/design/packages.md, "Dropping `minibuffer` leaves
+#   prompts that nothing answers"). The mode line's segments are a default
 #   package too (packages/mode-line/), so the status lines of both are
 #   empty. Its config base is `Editor` alone.
 name = "empty-set"

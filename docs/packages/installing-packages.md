@@ -44,9 +44,19 @@ by hand").
 
 The default set requires the core, `editor-core`, and the default packages:
 
+- [`completion`](../../packages/completion/README.md): the completion
+  styles `fuzzy`, the default, `orderless` and `path`, and the candidate
+  list's display `minibuffer`. It requires its interface package,
+  `completion-api`. Without it every prompt is matched by the core's own
+  style and its list drawn plain.
 - [`mode-line`](../../packages/mode-line/README.md): the segments of the
   mode line that ship, the Vim state's badge, the buffer's name, line:col
   and the rest.
+- [`minibuffer`](../../packages/minibuffer/README.md): the commands that
+  answer a prompt, `minibuffer-accept` (`RET`), `minibuffer-cancel`
+  (`<Escape>`) and the rest, and the minibuffer's mode. It requires its
+  interface package, `minibuffer-api`. Without it a prompt opens and
+  nothing answers it, and no candidate that answers later arrives.
 - [`shipped-themes`](../../packages/shipped-themes/README.md): the themes
   `solarized-dark`, `solarized-light` and `fairy-floss`.
 - [`execute-command`](../../packages/execute-command/README.md): the
@@ -58,6 +68,11 @@ The default set requires the core, `editor-core`, and the default packages:
   its interface package, `binding-search-api`.
 - [`compile`](../../packages/compile/README.md): `:compile`, `:next-error`
   and the rest of the compile mode, with modes for cargo, lake and mise.
+- [`at-point`](../../packages/at-point/README.md): completion at point in
+  insert state, `C-SPC`, `C-n` and the rest, and the source `words`. It
+  requires its interface package, `at-point-api`. Without it `RET`, `TAB`
+  and `C-g` in insert state do nothing, since the Vim scheme binds them to
+  its commands.
 - [`languages`](../../packages/languages/README.md): the languages that
   ship, `rust`, `json`, `markdown`, `toml` and `lean`, and the `code` mode
   files of them open in.
@@ -137,8 +152,16 @@ which the lakefile already requires:
 name = "config"
 
 [[require]]
+name = "completion"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/completion"
+
+[[require]]
 name = "mode-line"
 path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/mode-line"
+
+[[require]]
+name = "minibuffer"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/minibuffer"
 
 [[require]]
 name = "shipped-themes"
@@ -151,6 +174,10 @@ path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/execute-command"
 [[require]]
 name = "binding-search"
 path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/binding-search"
+
+[[require]]
+name = "at-point"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/at-point"
 
 [[require]]
 name = "languages"

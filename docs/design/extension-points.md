@@ -405,7 +405,25 @@ and it is not routed through an extension point.**
   `packages/binding-search-api/`; [packages.md](packages.md), "The
   interface packages `execute-command-api` and `binding-search-api`").
   The default config is in the core until phase 8, so it and its test name
-  the two as text. The fixture
+  the two as text. Phase 4 built three more with the moves of completion,
+  completion at point and the minibuffer, which the core reaches by name
+  (the Vim scheme's insert and minibuffer tables, the command every batch
+  of a source's job is posted as, the commands the loop runs at a trigger
+  and a pause, and the files package's `path` style):
+  `completion-api` (`CompletionApi.pathStyleName`), `at-point-api` (the
+  nine `AtPointApi.…Name`) and `minibuffer-api` (the nine
+  `MinibufferApi.…Name` and the mode's name `MinibufferApi.modeName`;
+  `packages/completion-api/`, `packages/at-point-api/`,
+  `packages/minibuffer-api/`; [packages.md](packages.md), "The interface
+  packages `completion-api`, `at-point-api` and `minibuffer-api`"). The
+  fakes behind the last two are no names-only packages: they are the core
+  test kit's own hand-written minibuffer and at-point
+  (`Editor.Test.Minibuffer`, `Editor.Test.AtPoint`), which the core's tests
+  run on, since the core cannot import an interface package; the
+  interfaces' tests hold them to the contract, and the core's tests hold
+  the Vim tables' text to the kit's names. The core's reachers name the
+  names as text; `compile`, `execute-command` and `binding-search`
+  require `minibuffer-api` and name its constants. The fixture
   interface package `greeting-api` (`tests/packages/greeting-api/`) is the
   first to declare a reached name, `greeting-reply`
   (`GreetingApi.replyName`, and every declared name in `GreetingApi.names`),
@@ -426,8 +444,19 @@ and it is not routed through an extension point.**
   decided when a hook first needs it.
 - **The registrations the core already has.** Completion sources, styles,
   displays and at-point sources, and the compile mode's contributions, are
-  constructors of `SetupRequest` today. Whether each becomes an extension
-  point of an interface package is decided as its feature moves.
+  constructors of `SetupRequest` today. **Styles, displays and at-point
+  sources stay registrations of the core's interfaces** (decided in
+  features-as-packages phase 4, when completion and at-point moved out):
+  they are records any package registers already, the core's loop and
+  registry read them, and the roadmap keeps the core's completion
+  interfaces in the core. What the loop needs of at-point beyond its
+  sources is to run a command at a trigger and at a pause, and the
+  registry resolves a command by its name when it runs ("Reaches by
+  name"), so the core declares those two names
+  (`Completion.AtPoint.triggeredCommand`, `.pausedCommand`) and no
+  extension point was added. Whether the compile mode's contributions
+  become an extension point of an interface package is still open, and is
+  decided as their feature moves.
 - **A required extension point.** Running a package's `setup` registers
   nothing in the editor: the handler that collects is pure
   (`Config.Registrations.collect`). So the build of a package set could run

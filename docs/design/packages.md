@@ -17,19 +17,28 @@ more features out, each into a default package of its own: the mode line's
 segments (`mode-line`), the command prompt (`execute-command`), the
 binding search (`binding-search`) and the languages (`languages`), with
 the first two feature interface packages, `execute-command-api` and
-`binding-search-api`. What a package is and how a host registers one are
-in [lean-runtime.md](lean-runtime.md), "Packages".
+`binding-search-api`. Its phase 4 moved three more: the completion styles
+and displays (`completion`), completion at point (`at-point`) and the
+minibuffer's commands and mode (`minibuffer`), each with an interface
+package of its own (`completion-api`, `at-point-api`, `minibuffer-api`),
+and gave the core a style and a display of its own for a set that
+registers none. What a package is and how a host registers one are in
+[lean-runtime.md](lean-runtime.md), "Packages".
 
-Every feature but those six is still in the core's Lake package
+Every feature but those nine is still in the core's Lake package
 (`lean/lakefile.lean`, the package `editor-core`). The default package set
-(`packages/lakefile.toml`) requires the core and six default packages, in
-this order: `mode-line` (`packages/mode-line/`), `shipped-themes`
+(`packages/lakefile.toml`) requires the core and nine default packages, in
+this order: `completion` (`packages/completion/`, which requires
+`packages/completion-api/`), `mode-line` (`packages/mode-line/`),
+`minibuffer` (`packages/minibuffer/`, which requires
+`packages/minibuffer-api/`), `shipped-themes`
 (`packages/shipped-themes/`), `execute-command`
 (`packages/execute-command/`, which requires `packages/execute-command-api/`),
 `binding-search` (`packages/binding-search/`, which requires
-`packages/binding-search-api/`), `compile` (`packages/compile/`) and
-`languages` (`packages/languages/`). This document draws the lines later
-moves cut along.
+`packages/binding-search-api/`), `compile` (`packages/compile/`),
+`at-point` (`packages/at-point/`, which requires `packages/at-point-api/`)
+and `languages` (`packages/languages/`). This document draws the lines
+later moves cut along.
 
 What a package author and a user read is in `docs/packages/`: the guide
 to writing a package ([writing-a-package.md](../packages/writing-a-package.md))
@@ -48,7 +57,9 @@ packages `shipped-themes` and `compile`, their modules are named
 theirs. The four features of the features-as-packages roadmap's phase 3
 are the Lake packages `mode-line`, `execute-command`, `binding-search` and
 `languages`, their modules named `ModeLine.…`, `ExecuteCommand…`,
-`BindingSearch…` and `Languages.…`.
+`BindingSearch…` and `Languages.…`; the three of its phase 4 are the Lake
+packages `completion`, `at-point` and `minibuffer`, their modules named
+`Completion.…`, `AtPoint…` and `Minibuffer…`.
 
 So the ex line, files, workspaces, version control and every other feature
 that has not moved are core modules, and "core" in the gate's check
@@ -123,12 +134,15 @@ built from one:
 - **The default set is `packages/lakefile.toml`** (the Lake package
   `default-set`). It requires the core (`editor-core`, from `../lean`) and
   the default packages, each of which has a directory under `packages/`
-  and a `require` there. There are six, required in this order:
-  `mode-line` ("The default packages of the features-as-packages roadmap's
-  phase 3", below), `shipped-themes` ("The first default package",
-  below), `execute-command` and `binding-search` (phase 3's, each with
-  its interface package, which it requires), `compile` ("The default
-  package `compile`", below) and `languages` (phase 3's). It is the
+  and a `require` there. There are nine, required in this order:
+  `completion` ("The default packages of the features-as-packages
+  roadmap's phase 4", below), `mode-line` ("The default packages of the
+  features-as-packages roadmap's phase 3", below), `minibuffer` (phase
+  4's), `shipped-themes` ("The first default package", below),
+  `execute-command` and `binding-search` (phase 3's), `compile` ("The
+  default package `compile`", below), `at-point` (phase 4's) and
+  `languages` (phase 3's). Five of them each require an interface package
+  of their own, which is in the set through that `require`. It is the
   lakefile a user's set starts from.
 - **The core defines the build**, as Lake facets in `lean/lakefile.lean`.
   Run in `lean/`, `lake -d ../packages build :editor` writes a root module
@@ -196,7 +210,7 @@ end Greeting.EditorPackage
 - **The module declares `packages : Array Editor.Package`** in the
   namespace of its own name. A Lake package may hold several `Package`
   values, which register in the order the array lists them; the core's
-  holds 20, and each default package's one. An interface package has no
+  holds 17, and each default package's one. An interface package has no
   entry module and contributes no `Package`.
 - **A Lake package with no such module contributes nothing.** The build
   asks Lake whether a library of the package holds a module of that name
@@ -272,15 +286,18 @@ and only when its text would change. For the default set it is:
 import Editor
 import Editor.Main
 import EditorCore.EditorPackage
+import Completion.EditorPackage
 import ModeLine.EditorPackage
+import Minibuffer.EditorPackage
 import ShippedThemes.EditorPackage
 import ExecuteCommand.EditorPackage
 import BindingSearch.EditorPackage
 import Compile.EditorPackage
+import AtPoint.EditorPackage
 import Languages.EditorPackage
 
 def main (args : List String) : IO UInt32 :=
-  Editor.Main.run (EditorCore.EditorPackage.packages ++ ModeLine.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages ++ ExecuteCommand.EditorPackage.packages ++ BindingSearch.EditorPackage.packages ++ Compile.EditorPackage.packages ++ Languages.EditorPackage.packages) #[`Editor, `ModeLine.EditorPackage, `ShippedThemes.EditorPackage, `ExecuteCommand.EditorPackage, `BindingSearch.EditorPackage, `Compile.EditorPackage, `Languages.EditorPackage] { setName := "default-set", pin := "leanprover/lean4:v4.35.0\n" } args
+  Editor.Main.run (EditorCore.EditorPackage.packages ++ Completion.EditorPackage.packages ++ ModeLine.EditorPackage.packages ++ Minibuffer.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages ++ ExecuteCommand.EditorPackage.packages ++ BindingSearch.EditorPackage.packages ++ Compile.EditorPackage.packages ++ AtPoint.EditorPackage.packages ++ Languages.EditorPackage.packages) #[`Editor, `Completion.EditorPackage, `ModeLine.EditorPackage, `Minibuffer.EditorPackage, `ShippedThemes.EditorPackage, `ExecuteCommand.EditorPackage, `BindingSearch.EditorPackage, `Compile.EditorPackage, `AtPoint.EditorPackage, `Languages.EditorPackage] { setName := "default-set", pin := "leanprover/lean4:v4.35.0\n" } args
 ```
 
 with a module doc and a doc string, since it is built with the core's Lean
@@ -291,8 +308,8 @@ the base `Editor` alone. The last value before the arguments is what the
 build says of the editor for the files it generates in a config directory
 ("A config directory requires the core and the set", below): the set's Lake name and the
 text of the core's `lean-toolchain`. The gate requires the default set's root to
-import exactly these nine modules (`lake -d ../packages query
-:editorRootImports`, in `ffi-test`), and its base to be the seven named
+import exactly these twelve modules (`lake -d ../packages query
+:editorRootImports`, in `ffi-test`), and its base to be the ten named
 (`:editorBase`). The interface packages have no entry module, so neither
 names them; their modules come with their implementations' libraries.
 
@@ -475,11 +492,15 @@ globs = ["Config.+"]
   alone was used. The gate starts the window mode's wiring for both sets'
   editors with that default and requires config to load (`ffi-test
   window-host-direct`), and checks each record: the default set's names
-  three directories, the core's, then `shipped-themes`' and `compile`'s,
-  and the fixture set's eight, the core's, `greeting-api`'s, `greeting`'s,
-  `greeting-loud`'s, `echo`'s, `shipped-themes`', `compile`'s and
-  `word-count`'s, each
-  holding its package's modules.
+  fifteen directories, the core's, then those of its nine default
+  packages and five interface packages in the order they register
+  (`completion-api`'s, `completion`'s, `mode-line`'s, `minibuffer-api`'s,
+  `minibuffer`'s, `shipped-themes`', `execute-command-api`'s,
+  `execute-command`'s, `binding-search-api`'s, `binding-search`'s,
+  `compile`'s, `at-point-api`'s, `at-point`'s and `languages`'), and the
+  fixture set's twenty, the core's, `greeting-api`'s, `greeting`'s,
+  `greeting-loud`'s, `echo`'s, the default set's fourteen in that order,
+  and `word-count`'s, each holding its package's modules.
 - **A directory given on the command line is a search path**, one
   directory or several joined with `:`, and outside a bundle the recorded
   directories are searched after the ones given (`ModuleLookup.resolve`).
@@ -496,7 +517,7 @@ globs = ["Config.+"]
   Lake packages of a set: the set's lakefile is the one place, and the
   root is generated from it. Each Lake package's entry module still lists
   its own `Package` values, which is what the root reads. The core's lists
-  20, and fewer as features move out.
+  17, and fewer as features move out.
 - **No root is written by hand, the user-side link's included.** That
   check ([lean-runtime.md](lean-runtime.md), "A link on the user's
   machine, measured") links an editor against a staged core of prebuilt
@@ -559,7 +580,7 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
 - **The gate gives the steps the fixture set**, which requires the default
   set. So the default packages are tested, built, formatted and run through
   it, and `lean-test` requires the line the `test` step prints as it
-  reaches each of them, the six default packages and the two interface
+  reaches each of them, the nine default packages and the five interface
   packages. The default set's own
   `editor` is built beside it, for the standing fixtures under
   `tests/headless/`, and **`run` is also given the default set**, so the
@@ -589,10 +610,12 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   builds, since the generated root imports it, but the facet that lists a
   package's imports asks the library for its modules and would not see it.
   `compile` declares `globs = ["Compile.*"]` for that, and with it the
-  facet lists every module's imports; `execute-command` and
-  `binding-search` do the same, and `mode-line` and `languages`, whose
-  library has no root module, declare `globs = ["ModeLine.+"]` and
-  `["Languages.+"]` (`.*` would ask for a root module that is not there). `shipped-themes` declares its
+  facet lists every module's imports; `execute-command`,
+  `binding-search`, `at-point` and `minibuffer` do the same
+  (`["AtPoint.*"]`, `["Minibuffer.*"]`), and `mode-line`, `languages` and
+  `completion`, whose library has no root module, declare
+  `globs = ["ModeLine.+"]`, `["Languages.+"]` and `["Completion.+"]` (`.*`
+  would ask for a root module that is not there). `shipped-themes` declares its
   library by name alone: its root imports the palettes, and the one module
   the root does not import, the entry module, imports no core module, so
   no line is missed there. The facet could list the entry module whatever
@@ -662,9 +685,15 @@ set, holds its three themes.
   `tests/empty-set` is the default set with its packages dropped: it
   requires the core alone. `mise run lean` links an editor from it and
   `ffi-test` runs the core's fixture `tests/headless/core-themes` on that
-  editor: it starts in the theme `default`, `load-theme` offers `default`
-  and the theme config defines and no palette, and a palette's name is
-  answered with `load-theme: no theme is registered as …`.
+  editor: it starts in the theme `default`, and `load-theme` offers
+  `default` and the theme config defines and no palette. Until the
+  minibuffer moved out (features-as-packages phase 4) a palette's name
+  was answered there with `load-theme: no theme is registered as …`; that
+  editor now has no command to accept a prompt with, so the fixture no
+  longer reaches the answer ("The minibuffer", under "The default
+  packages of the features-as-packages roadmap's phase 4", below), and
+  that the core's list registers the one theme `default` is held by
+  `ConfigTest.shippedChecks` and `ModelTest.packageSetChecks`.
 - **The app bundle carries its module files since phase 6.** Config names
   a theme by its name, and the themes are in the executable, so the bundle
   needed nothing of this package while the config base was the core's
@@ -690,7 +719,7 @@ over the process service, a major mode, ex names and contributions.
 | Path | What |
 |---|---|
 | `README.md` | What the package gives, and a walk through its source and tests in reading order, for a package author |
-| `lakefile.toml` | The package: it requires the core by path, declares the library `Compile` with `globs = ["Compile.*"]`, the test library `CompileTest` and the test driver `compile-test`, and turns every linter on |
+| `lakefile.toml` | The package: it requires the core by path and, since the minibuffer moved out (features-as-packages phase 4), the interface package `minibuffer-api`, whose names and fake its tests use; declares the library `Compile` with `globs = ["Compile.*"]`, the test library `CompileTest` and the test driver `compile-test`, and turns every linter on |
 | `Compile.lean` | The commands and the run: `compile`, `compile-command`, `recompile`, `kill-compilation`, the output's commands, the locations and the steps over them, the mode `compilation` (from `lean/Editor/Compile.lean`) |
 | `Compile/Errors.lean`, `Compile/Contribution.lean`, `Compile/Shipped.lean` | The matcher and the sites it yields; the offers and the formats in use; `cargo-mode`, `lake-mode` and `mise-mode` with rustc's and Lean's formats |
 | `Compile/Compiled.lean` | The `Package` value `Editor.Compile.package`, still named `compile`: nine commands, the job `compile-run`, the mode, the three contributions and six ex names |
@@ -814,9 +843,14 @@ over the process service, a major mode, ex names and contributions.
   test runs in its package's directory, and a package that read
   `../../tests/workspaces` could not be fetched from anywhere else later.
 - **Dropping the package leaves an editor that starts.** The editor of
-  `tests/empty-set` loads config and answers `:compile` with `compile: not
-  an ex command`, the words it has for `:bogus`
-  (`tests/headless/core-ex-names`, in `ffi-test`). The listing job stays
+  `tests/empty-set` loads config and opens its ex line
+  (`tests/headless/core-ex-names`, in `ffi-test`). Until the minibuffer
+  moved out (features-as-packages phase 4) it answered `:compile` with
+  `compile: not an ex command`, the words it has for `:bogus`; it now has
+  no command to accept the line with, so the line is never run ("The
+  minibuffer", under "The default packages of the features-as-packages
+  roadmap's phase 4", below), and that `compile` is bound as no ex name
+  there is held by `ConfigTest.shippedChecks`. The listing job stays
   registered there and lists a contribution's commands, which nothing
   then reads.
 - **The app bundle carries its modules**, built, in this package's own
@@ -836,8 +870,8 @@ declaration stays in its namespace (`Editor.ModeLine.package` in module
 `open Editor` changed import lines only. Each lakefile is shaped as
 `compile`'s: the core by path, a library whose `globs` hold every module,
 a test library, a test driver, every linter on. The minibuffer, planned
-for the same phase, stayed in the core ("`minibuffer`", under "What each
-feature would have to cross").
+for the same phase, stayed in the core then, and moved in phase 4 ("The
+default packages of the features-as-packages roadmap's phase 4", below).
 
 | Package | Library (from) | Entry module | Test driver | Fixtures |
 |---|---|---|---|---|
@@ -887,7 +921,10 @@ feature would have to cross").
   to the core's API", below): `modeLine` and `languages`, which register
   the core's own data under the packages' names. A core test that hosts
   the core's list as the default editor appends them
-  (`ConfigTest.shippedPackages`, `FfiTest.shippedPackages`); one whose
+  (`ConfigTest.shippedPackages`, `FfiTest.shippedPackages`), and since
+  phase 4 the kit's minibuffer and at-point too ("What moving the
+  completion, at-point and minibuffer features added to the core's API",
+  below); one whose
   subject is the core's list (`ModelTest.packageSetChecks`,
   `ConfigTest.shippedChecks`) hosts the list alone, and states that it
   holds nothing of the four.
@@ -904,9 +941,11 @@ feature would have to cross").
   `feat(lean): move the mode-line package …`), from
   `status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8,
   mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4,
-  mode-line.secondary "All" +4` to `status 0 in mode-line.active: -`:
-  - `tests/headless/core-themes/expected`, lines 5, 9, 18 and 23;
-  - `tests/headless/core-ex-names/expected`, lines 6 and 11.
+  mode-line.secondary "All" +4` to `status 0 in mode-line.active: -`,
+  numbered as the files are since phase 4 added lines to both (they were
+  lines 5, 9, 18 and 23, and 6 and 11):
+  - `tests/headless/core-themes/expected`, lines 5, 9, 17 and 26;
+  - `tests/headless/core-ex-names/expected`, lines 6 and 15.
   Version control's `review` is still registered there, and the default
   listing names it, but it draws nothing on a buffer with no review.
 - **Dropping `languages`, `execute-command` or `binding-search`** changed
@@ -961,6 +1000,246 @@ fixture `greeting-api` is.
   `ConfigTest.DefaultConfig`, names them as text too
   (`defaultPackageCommands`).
 
+### The default packages of the features-as-packages roadmap's phase 4
+
+Three features moved out of the core in that phase, each into a default
+package of its own with an interface package beside it: the completion
+styles and displays that ship, completion at point, and the minibuffer's
+commands and mode (the minibuffer was planned for phase 3 and moved here,
+the task `minibuffer-as-package`, which is done when the phase lands).
+Before the moves the core's edges into the three were cut, so that each
+move cut none (checked on `:editorLayerImports`; criterion 1 of the phase:
+`lake -d ../packages query :editorLayerImports | awk -F'\t' '$1 ==
+"editor-core" && $4 != "editor-core"'` prints nothing):
+
+- the core reads the styles and displays a set registers, and has its own
+  for a set that registers none ("What moving the completion, at-point
+  and minibuffer features added to the core's API", below);
+- the loop asks for completion at point through command names the core
+  declares (`Completion.AtPoint.triggeredCommand`, `.pausedCommand`), so
+  it imports no at-point module;
+- the core's tests answer prompts and complete at point through the kit's
+  own hand-written minibuffer and at-point (`Editor.Test.Minibuffer`,
+  `Editor.Test.AtPoint`), written over the core's API.
+
+Each package keeps its declarations' names: modules drop the `Editor.`
+prefix, and every declaration stays in its namespace
+(`Editor.Completion.Styles.fuzzy` in module `Completion.Styles`,
+`Editor.Minibuffer.package` in `Minibuffer.Compiled`), so config and tests
+under `open Editor` changed import lines only. `Editor.Completion.Words`
+became `AtPoint.Words`, under its own library's glob, so that no module
+name is shared with `completion`. Each lakefile is shaped as `compile`'s,
+and each implementation requires its interface package.
+
+| Package | Library (from) | Entry module | Test driver | Fixtures |
+|---|---|---|---|---|
+| `completion` (`packages/completion/`) | `Completion.Styles`, `Completion.Displays`, `Completion.Compiled` (`lean/Editor/Completion/Styles.lean`, `…/Displays.lean`, `…/Compiled.lean`) | `Completion.EditorPackage` | `completion-test`: `CompletionTest.shippedStyleChecks`, `.minibufferDisplayChecks` and `.completionPackageChecks`, 19 checks; linked `CompletionTest.Linked`: `CompletionTest.shippedStyleFailures`, `completion linked test: 6 checks passed` | `completion-choices`, written before the move |
+| `at-point` (`packages/at-point/`) | `AtPoint`, `AtPoint.Words`, `AtPoint.Compiled` (`lean/Editor/AtPoint.lean`, `lean/Editor/Completion/Words.lean`, `lean/Editor/AtPoint/Compiled.lean`) | `AtPoint.EditorPackage` | `at-point-test`: `AtPointTest.atPointChecks`, `.wordsChecks` and `.atPointPackageChecks`, 29 checks | `at-point`, the core's until the move, and `at-point-tuned`, written before it |
+| `minibuffer` (`packages/minibuffer/`) | `Minibuffer`, `Minibuffer.Compiled` (`lean/Editor/Minibuffer.lean`, `…/Compiled.lean`) | `Minibuffer.EditorPackage` | `minibuffer-test`: `MinibufferTest.promptModeChecks` and `.minibufferPackageChecks`, 23 checks | `prompt` and `candidates`, the core's until the move |
+
+- **What each registers.** `completion`: the styles `fuzzy`, `orderless`
+  and `path` and the display `minibuffer` (`Styles.shipped`,
+  `Displays.shipped`). `at-point`: the nine commands `at-point-complete`,
+  `-next`, `-previous`, `-tab`, `-backtab`, `-return`, `-quit`,
+  `-triggered` and `-paused`, the job `words` and the source `words`,
+  with its at-point source. `minibuffer`: the nine commands
+  `minibuffer-accept`, `-cancel`, `-next`, `-previous`, `-insert`,
+  `-delete-backward`, `-delete-to-start`, `-ask` and `-candidates`, and
+  the mode `minibuffer`, which the core makes the minibuffer's buffer with
+  (`Prompt.mode`).
+- **What each library imports of the core** (`lake -d ../packages query
+  :editorPackageImports`), API alone: `completion`'s
+  `Editor.Completion.Display`, `Editor.Completion.Style`, `Editor.Package`
+  and `Editor.TypedPath`; `at-point`'s `Editor.Api`,
+  `Editor.Completion.AtPoint`, `Editor.Completion.Later` and
+  `Editor.Package`; `minibuffer`'s `Editor.Api`, `Editor.Command.Call`,
+  `Editor.Completion.Later`, `Editor.Mode`, `Editor.Package` and
+  `Editor.Role`. Each also imports its interface package's library
+  (`CompletionApi`, `AtPointApi`, `MinibufferApi`), which the layer imports
+  check allows. None imports another of the three.
+- **Their interfaces stay in the core.** The completion interface, its
+  styles', displays' and at-point sources' types and contracts, the
+  sources that answer later and the prompt operations of the API
+  (`Editor.Completion`, `.Style`, `.Display`, `.AtPoint`, `.Later`,
+  `Editor.Api`) are read by the core's loop and registry, and a package
+  registers a style, a display or an at-point source as a `SetupRequest`
+  of them, as config does ([extension-points.md](extension-points.md),
+  "Open questions").
+- **Their tests moved under their kept names** (each was
+  `ModelTest.<name>`, and `shippedStyleFailures` was
+  `ContractTest.shippedStyleFailures`), with their sentences and
+  assertions as they were. Each implementation's driver also runs its
+  interface's contract over its own `Package` value
+  (`completionPackageChecks`, `atPointPackageChecks`,
+  `minibufferPackageChecks`), each pair one check. `at-point`'s test
+  support (`AtPointTest/Support/Words.lean`) holds its own copies of the
+  core's test helpers it used, since a package's tests may import neither
+  the core's own test modules nor `Editor.Evil.Compiled`: evil's commands
+  are not handed to its driver, and its listings are matched and drawn by
+  the core's own style and display.
+- **The core's tests keep a minibuffer and an at-point of their own.** A
+  core test that answers a prompt or opens an at-point session hosts the
+  kit's implementations, and one that hosts the core's list as the
+  default editor appends them (`ConfigTest.shippedPackages`,
+  `FfiTest.shippedPackages`). A test that read what only a shipped style
+  or display makes, fuzzy's match ranges or the `minibuffer` display's
+  rows and faces, now reads a style or display written in the test
+  (`lean/ModelTest/Support/Listings.lean`, and the package `listings` of
+  `lean/ConfigTest/Support/Listings.lean`, handed first to every config
+  test's host), and the shipped value's own rule is held by the package's
+  tests. `ModelTest.packageSetChecks` and `ConfigTest.shippedChecks`
+  host the core's list alone, and state that it holds nothing of the
+  three.
+- **Their fixtures moved with them.** `prompt` and `candidates` moved byte
+  for byte. `at-point` ran on the shared config `tests/headless/config`,
+  which moved into it as its `config/`, byte for byte. `completion-choices`
+  and `at-point-tuned` were written on the editor with the features in the
+  core, before the moves, to show config naming each package's
+  declarations through the set's base, and moved with their configs'
+  imports changed (`import Completion.Styles` and `import
+  Completion.Displays`; `import AtPoint.Words`). No `expected` changed.
+
+#### The interface packages `completion-api`, `at-point-api` and `minibuffer-api`
+
+Each declares the names another package or the core reaches its feature
+by, shaped as `execute-command-api` is.
+
+| Package | Declares | Publishes for tests | Implemented by |
+|---|---|---|---|
+| `completion-api` (`packages/completion-api/`) | `CompletionApi.pathStyleName` = `"path"`, the one completion name another feature reaches (the core's files package gives the file prompt's category the style `path`), and `names` | `CompletionApiTest.fake`, a package that registers `Style.keeping` under each name; `CompletionApiTest.contractChecks`, a style registered under each declared name | `completion`: `Styles.path`'s name is `CompletionApi.pathStyleName` |
+| `at-point-api` (`packages/at-point-api/`) | `AtPointApi.completeName` … `quitName`, the seven names the Vim scheme's insert table binds; `triggeredName` and `pausedName`, the core's `Completion.AtPoint.triggeredCommand` and `.pausedCommand`; and `names`, the nine | `AtPointApiTest.fake`, which is the kit's `Editor.Test.AtPoint.package`; `AtPointApiTest.contractChecks`, a command under each declared name | `at-point`: `AtPoint.<x>Name := AtPointApi.<x>Name` |
+| `minibuffer-api` (`packages/minibuffer-api/`) | `MinibufferApi.acceptName` … `deleteToStartName`, the seven names the Vim scheme's minibuffer table binds; `askName`, the Vim scheme's `askCommand`; `candidatesName`, the core's `Completion.candidatesCommand`, which every batch of a source's job is posted as; `modeName`, the core's `Prompt.mode`; and `names`, the nine commands | `MinibufferApiTest.fake`, which is the kit's `Editor.Test.Minibuffer.package`; `MinibufferApiTest.contractChecks`, a command under each declared name and a mode named `modeName` | `minibuffer`: `Minibuffer.<x>Name := MinibufferApi.<x>Name`, and its mode's name `modeName` |
+
+- **Each declares `keywords = ["editor-interface"]`**, has no entry module
+  and registers nothing. Their libraries import of the core what their
+  names are written from: `completion-api`'s nothing, `at-point-api`'s
+  `Editor.Completion.AtPoint`, `minibuffer-api`'s
+  `Editor.Completion.Later` and `Editor.State`. Their test libraries
+  import `Editor.Config.Packages`, and `completion-api`'s also
+  `Editor.Completion.Style` and `Editor.Package`, the other two the kit's
+  module that is their fake. `tests/hook-targets/fixture-set-graph` pins
+  each with the layer `interface`, and its implementation requiring it.
+- **Their own drivers** hold the fake to the contract, pin `names` whole,
+  and show the contract refusing a package that registers nothing, one
+  that lacks a name and one that misspells it; `minibuffer-api`'s also one
+  that registers every command and no mode `minibuffer`
+  (`completion-api-test: 6 checks passed`, `at-point-api-test: 7`,
+  `minibuffer-api-test: 8`).
+- **Two of the fakes are the kit's working implementations**, not
+  names-only packages. The core cannot import an interface package, and
+  its own tests need a minibuffer that accepts a prompt and an at-point
+  that opens a session, so the kit holds `Editor.Test.Minibuffer` and
+  `Editor.Test.AtPoint`, and the interface packages publish them as their
+  fakes. One value to drift closes a chain of three checks: the core's
+  Vim-table tests compare the tables' text with the kit's names
+  (`ModelTest.vimDefaultChecks`); the interface's tests run its contract
+  over the kit's implementation; and the shipped implementation runs the
+  same contract and is checked to register under the kit's names, in
+  order (`MinibufferTest.promptModeChecks`, `AtPointTest.atPointChecks`).
+  A rename anywhere fails one of the three.
+- **The reachers outside the core name the constants.** `compile`,
+  `execute-command` and `binding-search` require `minibuffer-api`: their
+  tests bind `MinibufferApi.acceptName` or `.cancelName` and register
+  `MinibufferApiTest.fake`, and none imports the minibuffer. The core's
+  reachers, the Vim tables, `Completion.Later.candidatesCommand`,
+  `InputScheme.Vim.askCommand` and `Editor/Files/Compiled.lean`'s `path`,
+  keep naming the text: the core cannot import a package.
+
+#### Dropping `completion` leaves the core's own style and display
+
+The editor of `tests/empty-set` registers no style and no display, so
+every prompt is matched by the core's own style, `ranked` (the fuzzy
+port's ranking, with no ranges), and its candidate list drawn by the core's
+own display, `plain` (each row its text after two spaces, nothing marked,
+with no faces). One fixture line changed, and one went, when the package
+moved: `tests/headless/core-themes/expected`, the theme prompt's list with
+nothing typed, which was
+
+```text
+view 2 0,0 0x0: "default\nfirst", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..7 minibuffer.candidate 8..13
+```
+
+and is line 12, `view 2 0,0 0x0: "  default\n  first", scroll 0,
+selections , padding 8 0`, with no `decorations` line. The list later in
+that fixture (line 20) is drawn the same way. In the default set nothing
+changed: `completion` is the first package to register a style and a
+display, so `fuzzy` and `minibuffer` are still the defaults.
+
+#### Dropping `at-point` leaves insert state without line feed or tab
+
+The Vim scheme's insert table binds `RET`, `TAB` and `C-g` to
+`at-point-return`, `at-point-tab` and `at-point-quit`, which, with no
+session open, run `insert-newline`, `insert-tab` and `keyboard-quit`
+(`lean/Editor/InputScheme/Vim/Default.lean`). In a set without `at-point`
+nothing registers those names: nothing fails to build, but the three keys
+say `<name>: no such command` in the echo area and type nothing, and
+`C-SPC`, `C-n` and `C-p` open no session. No standing fixture of the empty
+set's editor types in insert state, so no line changed. Filed as the task
+`at-point-insert-keys`: when evil moves out (phase 7), at-point
+contributes its insert-state keys and evil's table stops naming at-point's
+commands.
+
+#### Dropping `minibuffer` leaves prompts that nothing answers
+
+- **No later candidate arrives.** The core posts every batch a source's
+  job answers as `minibuffer-candidates`, the minibuffer's command (the
+  phase decided the name is the minibuffer's), so in a set without the
+  package a prompt's job sources and at-point's `words` list nothing that
+  answers later.
+- **No prompt is answered.** The Vim scheme's minibuffer table binds
+  `<Enter>`, `<Escape>`, `TAB`, `C-n`, `C-p`, `<Backspace>` and `C-u` to
+  the seven `minibuffer-*` names, and its own asks for a text run
+  `minibuffer-ask`, all of which nobody registers there. A prompt opens and
+  takes typed text, and `<Enter>` says `minibuffer-accept: no such
+  command` in the echo area and leaves it open and focused, and `<Escape>`
+  does not close it.
+- **The empty set's two fixtures no longer reach their subjects** (phase
+  3's rule: a fixture of the core alone shows what the core alone has,
+  and every changed line is recorded). Both scripts run to their end on
+  that editor, so neither was cut; their steps are unchanged and their
+  comments say what the core alone does. Past their first `<Enter>` they
+  no longer show what they were written for, no shipped palette loaded and
+  no compile ex name refused; that the core's list registers the one theme
+  `default` and binds no ex name `compile` is held by
+  `ConfigTest.shippedChecks`. Filed as the task `empty-set-prompts`, which
+  names the other way: a config of those fixtures that registers a
+  `minibuffer-accept` of its own would keep their subjects.
+  - `tests/headless/core-themes/expected`, after `first` is typed and
+    `<Enter>` pressed: line 15, which was `scene 0x0, focused 0, echo "",
+    echo padding 8, preedit -, published 8, theme "first"`, is
+    `scene 0x0, focused 1, echo "minibuffer-accept: no such command",
+    echo padding 8, preedit -, published 6, theme "default"`, and lines
+    18 to 21 are new: `view 1 0,0 0x0: "first", scroll 0, selections
+    5..5, padding 8 0`, `status 1: minibuffer.prompt "Theme: "`,
+    `view 2 0,0 0x0: "  first", scroll 0, selections , padding 8 0` and
+    `status 2: -`. After the second `load-theme`, `solarized-dark` typed
+    into the prompt still open and `<Enter>`: line 24, which was ``scene
+    0x0, focused 0, echo "load-theme: no theme is registered as
+    `solarized-dark`", echo padding 8, preedit -, published 13, theme
+    "first"``, is `scene 0x0, focused 1, echo "minibuffer-accept: no such
+    command", echo padding 8, preedit -, published 10, theme "default"`,
+    and lines 27 to 30 are new: `view 1 0,0 0x0: "firstsolarized-dark",
+    scroll 0, selections 19..19, padding 8 0`, `status 1:
+    minibuffer.prompt "Theme: "`, `view 2 0,0 0x0: "", scroll 0,
+    selections , padding 8 0` and `status 2: -`.
+  - `tests/headless/core-ex-names/expected`, after `:compile` and
+    `<Enter>`: line 4, which was `scene 0x0, focused 0, echo "compile: not
+    an ex command", echo padding 8, preedit -, published 4, theme
+    "default"`, is `scene 0x0, focused 1, echo "minibuffer-accept: no such
+    command", echo padding 8, preedit -, published 3, theme "default"`, and
+    lines 7 to 10 are new: `view 1 0,0 0x0: "compile", scroll 0,
+    selections 7..7, padding 8 0`, `status 1: minibuffer.prompt ":"`,
+    `view 2 0,0 0x0: "", scroll 0, selections , padding 8 0` and `status
+    2: -`. After `:bogus`, typed into the line still open, and `<Enter>`:
+    line 13, which was `scene 0x0, focused 0, echo "bogus: not an ex
+    command", echo padding 8, preedit -, published 9, theme "default"`, is
+    `scene 0x0, focused 1, echo "minibuffer-accept: no such command", echo
+    padding 8, preedit -, published 7, theme "default"`, and lines 16 to 19
+    are new: `view 1 0,0 0x0: "compile:bogus", scroll 0, selections
+    13..13, padding 8 0`, `status 1: minibuffer.prompt ":"`, `view 2 0,0
+    0x0: "", scroll 0, selections , padding 8 0` and `status 2: -`.
+
 ### The fixture set
 
 Four packages and a set under `tests/packages/`, used by tests alone. They
@@ -976,7 +1255,7 @@ guide quotes.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the six default packages and the two interface packages, then `word-count` |
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the nine default packages and the five interface packages, then `word-count` |
 | `tests/packages/greeting-api/` | The interface package `greeting-api` (`keywords = ["editor-interface"]`): the name `greeting-reply` (`GreetingApi.replyName`) and every name it declares (`GreetingApi.names`); in its test library, the fake `GreetingApiTest.fake` and the contract check `GreetingApiTest.contractChecks`, and its test driver, which holds the fake to the contract and shows the contract refuse a package that lacks or misspells the name. It has no entry module and registers nothing |
 | `tests/packages/greeting/` | The Lake package `greeting`, an implementation of `greeting-api`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), the second under `GreetingApi.replyName`, its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean` and greeting-api's contract check), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting`, to register after it, and `greeting-api`, and registers `greeting-reply` again with another text, by the name `greeting-api` declares. It imports nothing of `greeting`; its tests use greeting-api's fake. Its test driver and the fixture `tests/headless/reply` |
@@ -1012,10 +1291,12 @@ guide quotes.
 ### Manifests: a set's build fetches nothing
 
 **Every Lake root has its `lake-manifest.json` committed**: the core, the
-default set, each default package (`mode-line`, `shipped-themes`,
-`execute-command`, `binding-search`, `compile`, `languages`) and each of
-the two interface packages of the default set (`execute-command-api`,
-`binding-search-api`), the fixture set, each fixture package (`echo` among them), the writing guide's
+default set, each default package (`completion`, `mode-line`,
+`minibuffer`, `shipped-themes`, `execute-command`, `binding-search`,
+`compile`, `at-point`, `languages`) and each of the five interface
+packages of the default set (`completion-api`, `minibuffer-api`,
+`execute-command-api`, `binding-search-api`, `at-point-api`), the fixture
+set, each fixture package (`echo` among them), the writing guide's
 example package (`docs/packages/word-count/`), the empty set, the
 user-side link's set and its package, the Rust bans check's set
 (`tests/rust-bans/`) and its two packages, and the formatter's host.
@@ -1046,8 +1327,8 @@ user-side link's set and its package, the Rust bans check's set
 
 `lean/lean-toolchain` is the one pin every task reads: every Lake command
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
-`lean/` holds a copy of it** (the default set and its eight packages, the
-six default packages and the two interface packages, the fixture set and its three packages, the
+`lean/` holds a copy of it** (the default set and its fourteen packages, the
+nine default packages and the five interface packages, the fixture set and its three packages, the
 writing guide's example package `word-count`, the empty set, the user-side link's set and its package, the Rust bans check's
 set and its two packages, and the formatter's host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file when Lake is run in that
@@ -1395,10 +1676,13 @@ an implementation package; a package may import interface packages. A
 package is an interface package when its lakefile declares
 `keywords = ["editor-interface"]`, and an implementation package
 otherwise. The rule holds for every module of a package, its tests
-included. The six default packages are implementation packages: each
-imports the core alone, and `execute-command` and `binding-search` each
-also their interface package, `execute-command-api` and
-`binding-search-api`, which import the core alone.
+included. The nine default packages are implementation packages: each
+imports the core and, but for `mode-line`, `shipped-themes` and
+`languages`, its own interface package (`completion-api`,
+`minibuffer-api`, `execute-command-api`, `binding-search-api`,
+`at-point-api`), and `execute-command`, `binding-search` and `compile`
+also `minibuffer-api`, whose names and fake their tests use. The five
+interface packages import the core alone.
 
 - **A package may import any core module that is not internal.** The rule
   is about `import` lines. Lean's imports are transitive, so a module an
@@ -1414,7 +1698,7 @@ also their interface package, `execute-command-api` and
   `Config.State.ofPackages`), the theme picture check
   (`Editor.Themes.Picture`), and the core's model test kit, `Editor.Test`
   and every module under it but `Editor.Test.Linked`: the support the
-  core's own model tests are written on (`Editor.Test.…`, 16 modules). A
+  core's own model tests are written on (`Editor.Test.…`, 18 modules). A
   package's tests are the modules under `<P>Test`.
 - **A package's linked test may also import the linked test kit, and only
   it**: `Editor.Test.Linked` and every module under it (4 modules), the
@@ -1568,10 +1852,12 @@ fixture themes made with `Palette.theme` from palettes written in
 `lean/ConfigTest/Support/Themes.lean`, and the appearance checks define
 theirs. No copy of a palette's values is kept in the core, so no licence
 notice is either. `ConfigTest.shippedChecks` and
-`ModelTest.packageSetChecks` state the core's list alone: 20 packages
-since the features-as-packages roadmap's phase 3 (24 when the palettes
-moved), the one theme `default`, and nothing of the compile mode, the mode
-line, the command prompt, the binding search or the languages.
+`ModelTest.packageSetChecks` state the core's list alone: 17 packages
+since the features-as-packages roadmap's phase 4 (20 after its phase 3,
+24 when the palettes moved), the one theme `default`, and nothing of the
+compile mode, the mode line, the command prompt, the binding search, the
+languages, the completion styles and displays, completion at point or the
+minibuffer.
 
 ## What moving the shipped themes added to the core's API
 
@@ -1643,10 +1929,12 @@ those import them, and a kit that left them behind would not build.
 | `Editor.Test.Files` | The file commands' keys, files and driver |
 | `Editor.Test.Workspace` | The workspace's world, jobs, commands, keys and driver |
 | `Editor.Test.Shell` | The shell command's jobs, bindings, commands and replies |
-| `Editor.Test.Prompts` | Prompts and the minibuffer: their commands, bindings, registry and driver |
+| `Editor.Test.Prompts` | Prompts and the minibuffer: their bindings, registry and driver, over a minibuffer package a check hands in, the kit's own (`Editor.Test.Minibuffer`) when it hands none |
 | `Editor.Test.Listing` | A contribution with a listing and its world, which names core modules only |
 | `Editor.Test.Sources` | Added in the features-as-packages roadmap's phase 3: the completion sources' contract runner over the editor's models (`sourceRunner`), and the contract's properties over one source as sentences (`sourceHolds`) |
 | `Editor.Test.Shipped` | Added in the same phase: stand-ins for the default packages whose data the core keeps, `modeLine` and `languages` |
+| `Editor.Test.Minibuffer` | Added in the features-as-packages roadmap's phase 4: a minibuffer written over the core's prompt API, the package `minibuffer` with its nine commands and the mode `Prompt.mode`, and `names`, the nine in registration order; `minibuffer-api`'s fake |
+| `Editor.Test.AtPoint` | Added in the same phase: an at-point written over the API's completion at point, the package `at-point` with its nine commands and no source, and `names`; `at-point-api`'s fake |
 
 The linked kit:
 
@@ -1712,6 +2000,52 @@ the model test kit (16 modules where there were 14), each imported by
 |---|---|---|---|
 | `Editor.Test.Sources` | `sourceRunner`, moved unchanged from the core's `ModelTest/Editor/Completion/Contract.lean`, with `sourceContract`, `answersSomething` and `sourceHolds` over it | `ModelTest.sourceContractChecks`; the command prompt's and the binding search's tests | Their sources were held to the completion sources' contract by the core's test, which could not keep naming them once they moved; their own lists run the contract on the same runner, under the same sentences |
 | `Editor.Test.Shipped` | Two `Package` values named `mode-line` and `languages` that register the core's own data (`ModeLine.shipped`; `Language.modes`, then `Language.shipped`), and both as `packages` | The core's tests that host the core's list as the default editor (`ConfigTest.shippedPackages`, `FfiTest.shippedPackages`, `ConfigTest.Support.Hosts`, `ConfigTest.Bench`) and the compile mode's linked test | Those tests show what the default editor draws, its segments and its languages, and the core cannot import the packages that register them. They are no fake of another package's behaviour: the data and its names are the core's, and the packages register exactly that, which their own tests pin |
+
+## What moving the completion, at-point and minibuffer features added to the core's API
+
+The features-as-packages roadmap's phase 4 added nothing to what a
+package's library may import: each moved library imports API modules only
+("The default packages of the features-as-packages roadmap's phase 4",
+above). It added values to three API modules, so that the core's loop,
+dispatch, registry and hosts no longer import a module of the three
+features, and two modules to the model test kit (18 modules where there
+were 16), each in `Editor.Core`'s closure, as the core imports check's
+second rule requires (`Editor.Test.AtPoint` imported by it,
+`Editor.Test.Minibuffer` through `Editor.Test.Prompts`):
+
+| Addition | Where | What it is | Why the move needed it |
+|---|---|---|---|
+| `Completion.Style.unregistered`, `Completion.Matching.unregistered` | `lean/Editor/Completion/Style.lean` | The core's own style, `ranked`: the fuzzy port's ranking (`Fuzzy.rank`, a core port) with no ranges, owned by `compiled` and registered by no package; and the matching of a loop told of no registry, which matches every prompt with it | The loop, the dispatch and the registry fell back to the shipped `fuzzy` (`Matching.standard`, `Styles.fuzzy`), a module of `completion` |
+| `Completion.Display.unregistered`, `Completion.Displaying.unregistered` | `lean/Editor/Completion/Display.lean` | The core's own display, the interface's model `Display.plain "plain"`, owned by `compiled`; and the displaying of a loop told of no registry | The same, for the shipped `minibuffer` display (`Displaying.standard`, `Displays.minibuffer`) |
+| `Completion.Style.unknown`, `Completion.Display.unknown` | the same two modules | The install report's text for a name no style or display is registered under, moved from `Completion.Styles.unknown` and `Completion.Displays.unknown`, the same text | The config session and the headless host say it |
+| `Completion.AtPoint.triggeredCommand`, `.pausedCommand`, `.noCompletions` | `lean/Editor/Completion/AtPoint.lean` ("The names the core runs") | `at-point-triggered`, which the loop runs when a typed character is a source's trigger; `at-point-paused`, which the headless host and the loop's driver run when a pause fires; and the echo `no completions`, which the loop says | The loop imported `Editor.AtPoint` for `AtPoint.triggeredName`, `.pausedName` and `.noCompletions`; an at-point package registers its commands under the two names, which `at-point-api` declares from these |
+| `Editor.Test.Minibuffer`, `Editor.Test.AtPoint` | `lean/Editor/Test/` | The kit's own minibuffer and at-point, written over the API's prompt and completion-at-point operations, not copied from the shipped ones; where the shipped one makes a choice of its own they do something simpler | The core's tests answer prompts and open at-point sessions, and the core cannot import the packages; the two interface packages publish them as their fakes |
+
+- **Which style and display a set gets by default.** With no choice made,
+  the style registered first, in registration order (packages by
+  dependency, then config), looked up by name, so that config's of that
+  name is used in its place; the same rule picks the display. With none
+  registered, the core's own (`Config.Registry.styleEntry`,
+  `displayEntry`; `ModelTest.registryChecks`). In the default set nothing
+  changed: `completion` registers first, so `fuzzy` and `minibuffer` are
+  still the defaults. Letting a package set the default (`useStyle` in a
+  package) was not chosen: it changes what a package may register, for no
+  fixture's benefit.
+- **Removed**: `Matching.standard`, `Displaying.standard`,
+  `Completion.Styles.unknown` and `Completion.Displays.unknown`; and
+  `Editor.AtPoint.noCompletions`, whose one caller was the loop.
+- **Why names and not an extension point for at-point.** What the loop
+  needs of the feature is to run a command at a trigger and at a pause,
+  and the registry already resolves a command by its name when it runs
+  ([extension-points.md](extension-points.md), "Reaches by name"). Sources,
+  styles and displays are records any package registers already.
+- **No linked kit module was added.** The completion package's linked
+  test runs the fuzzy port's real binding through `Editor.Fuzzy.Real`,
+  which the root of a linked test may import.
+- **The core's tests' own doubles are not the kit's**: the styles and
+  displays written for them (`lean/ModelTest/Support/Listings.lean`,
+  `lean/ConfigTest/Support/Listings.lean`) are core test modules, which no
+  package imports.
 
 ## The interfaces the core owns for the two features that moved
 
@@ -2013,9 +2347,9 @@ of `echo` outside the repository is refused with its reason
 
 ## The module map
 
-Every module under `lean/Editor/`, 311 of them
+Every module under `lean/Editor/`, 305 of them
 (`find lean/Editor -name '*.lean' | wc -l`, at the end of the
-features-as-packages roadmap's phase 3; 254 at `6ba99de5`, phase 4
+features-as-packages roadmap's phase 4; 254 at `6ba99de5`, phase 4
 added `Editor.Main`, phase 5 added `Editor.Themes.Picture` and moved
 the three modules of the shipped palettes out, phase 6 moved the five
 of the compile mode out and added the 18 of the test kit, phase 7 added
@@ -2024,12 +2358,14 @@ six to the config session, and the merge of
 marks added 19, session-restore phase 1 added six, and phase 2 six more,
 the store codec and five of the reconciler's records and formats, and
 features-as-packages phase 1 added `Editor.Extension`; its phase 3 moved
-the six modules of four features out and added the kit's two), is
+the six modules of four features out and added the kit's two, and its
+phase 4 the eight of three features and added the kit's two more), is
 **core** or part of a **feature that could become a package**. The counts
-below add up to 300: 213 core and 87 in 18 features. The rows were not
-counted again in full for phase 3: at its start they added up to 304
-against 315 modules, so 11 modules are in no row (the task
-`module-map-count-drift`).
+below add up to 294: 215 core and 79 in 15 features. The rows were not
+counted again in full for phase 3 or 4: at phase 3's start they added up
+to 304 against 315 modules, so 11 modules are in no row (the task
+`module-map-count-drift`); phase 4 took its eight moved modules' rows out
+and added the kit's two to the kit's row, and the 11 are still in no row.
 
 - **Core** is what a host with no packages needs to start and run: the
   ports with their models and bindings, the state, the scene and display
@@ -2037,19 +2373,21 @@ against 315 modules, so 11 modules are in no row (the task
   any module a core module imports for a type it carries (`Editor.Ex.Line`,
   `Editor.Menu`, `Editor.ModeLine`, `Editor.Language`, `Editor.Workspace`,
   the three `Editor.ProjectMode` modules).
-- **A feature** is code reached through a package's registrations: the 20
-  packages of the core's list, as 19 features (the two version-control packages are
-  one), with the Vim scheme counted with evil. The table names 18 of them:
+- **A feature** is code reached through a package's registrations: the 17
+  packages of the core's list, as 16 features (the two version-control packages are
+  one), with the Vim scheme counted with evil. The table names 15 of them:
   `package-set` has no row (the task `module-map-count-drift`).
 - **Every feature here is in the core's Lake package**,
   and is a core module in the sense of the section above and of the gate's
   check. The map guides later moves; it does not commit to them. The
   shipped palettes, the compile mode, the mode line's segments, the command
-  prompt, the binding search and the languages are no longer in the map:
-  they are the Lake packages `shipped-themes`, `compile`, `mode-line`,
-  `execute-command`, `binding-search` and `languages` ("The first default
-  package", "The default package `compile`" and "The default packages of
-  the features-as-packages roadmap's phase 3", above).
+  prompt, the binding search, the languages, the completion styles and
+  displays, completion at point and the minibuffer are no longer in the
+  map: they are the Lake packages `shipped-themes`, `compile`,
+  `mode-line`, `execute-command`, `binding-search`, `languages`,
+  `completion`, `at-point` and `minibuffer` ("The first default package",
+  "The default package `compile`" and "The default packages of the
+  features-as-packages roadmap's phase 3" and "… phase 4", above).
 
 One row covers modules that share a class and a side of the import rule.
 "A package may import it" is `yes`, `in tests` (a test double) or `no`
@@ -2069,7 +2407,7 @@ One row covers modules that share a class and a side of the import rule.
 | The models: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Config.Elaborator.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Grep.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `.Model.Json`, `.Model.Query`, `Editor.Text.Model`, `Editor.Watch.Model` | 16 | core | in tests |
 | The contracts and cases: `Editor.Clipboard.Contract`, `Editor.Completion.Contract`, `.AtPointContract`, `.DisplayContract`, `.StyleContract`, `Editor.Config.Elaborator.Contract`, `Editor.Display.Contract`, `Editor.Fuzzy.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.SyntaxTree.Contract`, `Editor.Text.Contract`, `Editor.Watch.Contract`, `Editor.Api.Cases`, `Editor.File.Cases`, `Editor.UndoTree.Cases` | 16 | core | in tests |
 | The fakes, the test scheme and the loop's driver: `Editor.Completion.Fake`, `Editor.Job.Fake`, `Editor.InputScheme.Test`, `Editor.Loop.Driver` | 4 | core | in tests |
-| The model test kit: `Editor.Test.Completion`, `.Config`, `.Driver`, `.Files`, `.Geometry`, `.Jobs`, `.Keys`, `.Listing`, `.Loop`, `.Models`, `.Prompts`, `.Shell`, `.Shipped`, `.Sources`, `.States`, `.Workspace` | 16 | core | in tests |
+| The model test kit: `Editor.Test.AtPoint`, `.Completion`, `.Config`, `.Driver`, `.Files`, `.Geometry`, `.Jobs`, `.Keys`, `.Listing`, `.Loop`, `.Minibuffer`, `.Models`, `.Prompts`, `.Shell`, `.Shipped`, `.Sources`, `.States`, `.Workspace` | 18 | core | in tests |
 | The linked test kit: `Editor.Test.Linked.Jobs`, `.Rig`, `.Services`, `.Trees` | 4 | core | in tests |
 | The editor API and what is proved of it: `Editor.Api`, `.Api.Theorems`, `Editor.UndoTree`, `.UndoTree.Theorems` | 4 | core | yes |
 | The composite port and a command: `Editor.Command`, `.Call`, `.Control`, `.Registry`, `.Append`, `Editor.Program` | 6 | core | yes |
@@ -2083,12 +2421,8 @@ One row covers modules that share a class and a side of the import rule.
 | Languages and indentation: `Editor.Language`, `.Language.IndentUnit`, `Editor.Indent` | 3 | core | yes |
 | What a minor mode contributes: `Editor.ProjectMode`, `.ProjectMode.Format`, `.ProjectMode.Listing` | 3 | core | yes |
 | What the ex line and a typed path are as data: `Editor.Ex.Line`, `Editor.TypedPath` | 2 | core | yes |
-| `Editor.AtPoint`, `Editor.Completion.Words` | 2 | feature: at-point | yes |
-| `Editor.AtPoint.Compiled` | 1 | feature: at-point | no |
 | `Editor.Buffers` | 1 | feature: buffers | yes |
 | `Editor.Buffers.Compiled` | 1 | feature: buffers | no |
-| `Editor.Completion.Styles`, `.Displays` | 2 | feature: completion | yes |
-| `Editor.Completion.Compiled` | 1 | feature: completion | no |
 | `Editor.Evil.Compiled` | 1 | feature: evil | no |
 | `Editor.Evil` and 12 of the modules under it (all but `.Compiled`); `Editor.InputScheme.Vim`, `.Vim.Default` | 15 | feature: evil | yes |
 | `Editor.Ex` | 1 | feature: ex | yes |
@@ -2098,8 +2432,6 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.FrameCommands` | 1 | feature: frame-commands | yes |
 | `Editor.FrameCommands.Compiled` | 1 | feature: frame-commands | no |
 | `Editor.Menu.Compiled` | 1 | feature: menu | no |
-| `Editor.Minibuffer` | 1 | feature: minibuffer | yes |
-| `Editor.Minibuffer.Compiled` | 1 | feature: minibuffer | no |
 | `Editor.ProjectSearch`, `.ProjectSearch.Run` | 2 | feature: project-search | yes |
 | `Editor.ProjectSearch.Compiled` | 1 | feature: project-search | no |
 | `Editor.Shell` | 1 | feature: shell | yes |
@@ -2161,15 +2493,20 @@ of them; the rest were not computed again for it:
 
 #### `at-point`
 
-- **Modules** (3): `AtPoint`, `AtPoint.Compiled`, `Completion.Words`.
-- **Core modules that import it**: `Loop` (`AtPoint`).
-- **The test kit's modules that import it**: none.
-- **Other features' modules that import it**: none.
-- **Other features it imports**: none.
-- **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (9): `ModelTest`: `Completion.AtPointContract`, `Config.Registry`, `Config.Reload`, `InputScheme.Vim.Default`, `Loop`, `Support.AtPoint`, `Support.Evil`; `ConfigTest`: `Bench`, `Headless`.
-- **The config base imports**: `AtPoint`, `Completion.Words`.
-- **Reaches by name** (not exhaustive): the Vim scheme's default tables name its commands (`at-point-complete`, `at-point-next` and the rest, `InputScheme/Vim/Default.lean`), and the loop asks it by import.
+Moved out of the core by the features-as-packages roadmap's phase 4: the
+Lake package `at-point` (`packages/at-point/`; "The default packages of
+the features-as-packages roadmap's phase 4", above). It has nothing left
+to cross. No core module and no test of a core module imports it. Its one
+core importer, the loop, which asked it whether a typed character
+triggers a source and said `no completions` for it, now runs commands by
+names the core declares (`Completion.AtPoint.triggeredCommand`,
+`.pausedCommand`), and the core's tests run on the kit's own at-point
+(`Editor.Test.AtPoint`). It imports the core's API alone and its interface
+package, `at-point-api`, which declares the nine names the core reaches it
+by: the seven the Vim scheme's insert table binds and the two the loop and
+the hosts run. The Vim table, still in the core, names them as text, and
+binds `RET`, `TAB` and `C-g` in insert state to three of them (the task
+`at-point-insert-keys`).
 
 #### `binding-search`
 
@@ -2208,15 +2545,20 @@ run them.
 
 #### `completion`
 
-- **Modules** (3): `Completion.Compiled`, `Completion.Displays`, `Completion.Styles`.
-- **Core modules that import it**: `Command.Dispatch` (`Completion.Styles`); `Loop` (`Completion.Displays`, `Completion.Styles`); `Setup` (`Completion.Displays`, `Completion.Styles`).
-- **The test kit's modules that import it**: `Test.Driver` (`Completion.Styles`); `Test.Files` (`Completion.Styles`); `Test.Linked.Rig` (`Completion.Displays`, `Completion.Styles`); `Test.Loop` (`Completion.Displays`); `Test.Prompts` (`Completion.Displays`, `Completion.Styles`).
-- **Other features' modules that import it**: none.
-- **Other features it imports**: none.
-- **Modules of packages outside the core that import it**: compile: `CompileTest.Linked.Compile` (`Completion.Displays`, `Completion.Styles`).
-- **Test modules outside its own tests that import it** (33): `ModelTest`: `Api`, `AtPoint`, `Completion.Contract`, `Completion.DisplayContract`, `Completion.Filtering`, `Completion.Style`, `Completion.StyleContract`, `Config.Packages`, `Config.Registry`, `Config.Reload`, `Ex`, `Face.Vocabulary`, `Files`, `Loop`, `Setup`, `State`, `TabBar`, `TabCommands`, `Themes`, `Workspace`, `Support.AtPoint`, `Support.Candidates`, `Support.Evil`; `ConfigTest`: `Bench`, `AtPoint`, `Completion.Keys`, `Headless`, `Minibuffer`, `Support.Hosts`; `FfiTest`: `State`; `ContractTest`: `Completion.StyleContract`, `Shell`, `Watch.Real`.
-- **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the names `fuzzy`, `orderless`, `path` and `minibuffer`, which config chooses with `useStyle`, `useStyleFor`, `useDisplay`, and which the file prompt's category is given (`path`).
+Moved out of the core by the features-as-packages roadmap's phase 4: the
+Lake package `completion` (`packages/completion/`; "The default packages
+of the features-as-packages roadmap's phase 4", above). It has nothing
+left to cross. No core module and no test of a core module imports it.
+The core's importers, the dispatch, the loop, the setup port, the
+registry's fallbacks and the kit, read the styles and displays a set
+registers and fall back to the core's own (`Completion.Style.unregistered`,
+`Completion.Display.unregistered`), and the core's tests read styles and
+displays written in them. It imports the core's API alone and its
+interface package, `completion-api`, which declares the one name another
+feature reaches it by, `path`; the files package, still in the core, gives
+the file prompt's category that style as text. Config names `fuzzy`,
+`orderless`, `path` and `minibuffer` as text, and the declarations through
+the set's base (`import Completion.Styles`, `import Completion.Displays`).
 
 #### `evil`
 
@@ -2294,40 +2636,36 @@ cross. No core module and no test of a core module imports it. It imports the co
 
 #### `minibuffer`
 
-- **Modules** (2): `Minibuffer`, `Minibuffer.Compiled`.
-- **Core modules that import it**: none.
-- **The test kit's modules that import it**: `Test.Files` (`Minibuffer`, `Minibuffer.Compiled`); `Test.Prompts` (`Minibuffer`, `Minibuffer.Compiled`); `Test.Shell` (`Minibuffer`, `Minibuffer.Compiled`).
-- **Other features' modules that import it**: none.
-- **Other features it imports**: none.
-- **Modules of packages outside the core that import it**: compile: `CompileTest.Support.Compile` (`Minibuffer`); execute-command: `ExecuteCommandTest.ExecuteCommand` (`Minibuffer`); binding-search: `BindingSearchTest.BindingSearch` (`Minibuffer`).
-- **Test modules outside its own tests that import it** (19): `ModelTest`: `Api`, `Evil`, `Evil.Clipboard`, `Ex`, `Files`, `InputScheme.Vim.Default`, `Loop`, `Themes`, `Workspace.FindInProject`, `Support.Buffers`, `Support.Candidates`, `Support.Evil`, `Support.FindFile`; `ConfigTest`: `Bench`, `Files`, `Headless`, `Themes`, `VersionControl.Gutter`, `Support.Configs`.
-- **The config base imports**: `Minibuffer`.
-- **Reaches by name** (not exhaustive): the Vim scheme's default tables name its commands (`minibuffer-accept`, `minibuffer-cancel` and the rest); every feature that asks a prompt needs this package for the prompt to be answered.
-- **Why it did not move in the features-as-packages roadmap's phase 3**,
-  which planned it, checked on `lake -d ../packages query
-  :editorLayerImports` (decided 2026-11-20; it moves in phase 4, the task
-  `minibuffer-as-package`):
-  - three modules of the core's test kit import it, `Editor.Test.Files`,
-    `.Prompts` and `.Shell`, and the kit is shared with packages' tests,
-    so it cannot move with the minibuffer;
-  - about two dozen core test modules of features that stay in the core
-    import it, `ConfigTest.Support.Configs` among them, whose hosts
-    register `Minibuffer.package` as the executable does;
-  - an implementation package imports it: `compile`'s
-    `CompileTest.Support.Compile` names `Minibuffer.cancelName`, which the
-    layer imports check would refuse once the minibuffer were an
-    implementation package;
-  - the core reaches it by name: `Completion.Later.candidatesCommand` is
-    `"minibuffer-candidates"`, the command every asynchronous completion
-    batch is delivered through; `InputScheme.Vim.askCommand` is
-    `"minibuffer-ask"`; and the Vim scheme's default tables bind seven
-    `minibuffer-*` names.
+Moved out of the core by the features-as-packages roadmap's phase 4 (the
+task `minibuffer-as-package`): the Lake package `minibuffer`
+(`packages/minibuffer/`; "The default packages of the features-as-packages
+roadmap's phase 4", above). It has nothing left to cross. No core module
+and no test of a core module imports it. Phase 3 had found four things in
+the way (checked on `lake -d ../packages query :editorLayerImports`), and
+phase 4 cut each:
 
-  Moving it soundly needs a minibuffer interface package (its names, its
-  mode, a fake and a contract check), a way for the core's own tests to
-  answer prompts without the package, `compile` requiring that interface,
-  and a decision on `minibuffer-candidates`, the completion protocol's
-  delivery path, which phase 4 cuts.
+- the core's test kit imported it (`Editor.Test.Files`, `.Prompts`,
+  `.Shell`): the kit now holds a minibuffer of its own, written over the
+  core's prompt API (`Editor.Test.Minibuffer`), and registers that;
+- about two dozen core test modules imported it, among them
+  `ConfigTest.Support.Configs`, whose hosts registered
+  `Minibuffer.package`: they run on the kit's minibuffer, and the facts
+  only the shipped commands make moved to the package's own tests
+  (`MinibufferTest.promptModeChecks`);
+- an implementation package imported it (`compile`'s
+  `CompileTest.Support.Compile`, and the command prompt's and the binding
+  search's tests): `compile`, `execute-command` and `binding-search`
+  require the interface package `minibuffer-api` and name its constants
+  and its fake;
+- the core reaches it by name (`Completion.Later.candidatesCommand`,
+  `minibuffer-candidates`; `InputScheme.Vim.askCommand`, `minibuffer-ask`;
+  the seven `minibuffer-*` names of the Vim scheme's minibuffer table):
+  `minibuffer-api` declares all nine, with the mode's name `Prompt.mode`,
+  the core's reachers keep the text, and the kit's names close the chain
+  between the two ("The interface packages `completion-api`,
+  `at-point-api` and `minibuffer-api`", above). The phase decided
+  `minibuffer-candidates` is the minibuffer's, so a set without it gets
+  no candidate that answers later.
 
 #### `mode-line`
 
@@ -2531,28 +2869,31 @@ so it is part of what the fixtures pin:
 - **The `commands:` lines** of `tests/headless/expected` and
   `tests/headless/bundle/expected` print every command name in
   registration order: the core's, then the default packages' after
-  version control's, `execute-command`, `search-bindings` and the compile
-  package's nine, then config's.
+  version control's, the minibuffer's nine, `execute-command`,
+  `search-bindings`, the compile package's nine and at-point's nine, then
+  config's.
 - **The ex candidates for `e`** in `tests/headless/ex/expected` are the ex
   names in the order they were first bound (`Registry.exNames`), which the
   fuzzy rank keeps among equal scores. The names are bound by `ex`, then
-  `version-control`, the fifth and the nineteenth packages of the core's
-  list, then by `compile`, which registers after the core's twenty.
+  `version-control`, the third and the sixteenth packages of the core's
+  list, then by `compile`, which registers after the core's seventeen.
 
 `ModelTest.packageSetChecks` pins what a model test can see of the core's
-list: its 20 names in order, with no package of the palettes, the compile
-mode, the mode line, the command prompt, the binding search or the
-languages among them; the ex names in bound order, the `ex` package's
+list: its 17 names in order, with no package of the palettes, the compile
+mode, the mode line, the command prompt, the binding search, the
+languages, the completion styles and displays, completion at point or the
+minibuffer among them; the ex names in bound order, the `ex` package's
 and then version control's twelve; and that the one theme it registers is
 `default`. It is the test of the core's entry module
 (`lean/ModelTest/EditorCore/EditorPackage.lean`), over
 `EditorCore.EditorPackage.packages`.
 
 **Packages register by dependency, which puts a default package after the
-core's.** The default set holds six, so the generated root registers the
-core's 20, then `mode-line`, `shipped-themes`, `execute-command`,
-`binding-search`, `compile` and `languages` (the two interface packages
-register nothing).
+core's.** The default set holds nine, so the generated root registers the
+core's 17, then `completion`, `mode-line`, `minibuffer`,
+`shipped-themes`, `execute-command`, `binding-search`, `compile`,
+`at-point` and `languages` (the five interface packages register
+nothing).
 
 - **No fixture line changed when the palettes moved.** The package was
   thirteenth of the core's 22, directly after `themes`, and registered
@@ -2640,6 +2981,56 @@ and the binding search moved** (the features-as-packages roadmap's phase
   (`import ExecuteCommand`, `import BindingSearch`); `mode-line` moved
   byte for byte. Their `expected` files did not change, and none prints
   the order of the commands.
+
+**Five lines of three standing fixtures changed when completion at point
+and the minibuffer moved** (the features-as-packages roadmap's phase 4),
+and none for the completion styles and displays:
+
+- `tests/headless/expected`, lines 4 and 9, and
+  `tests/headless/bundle/expected`, line 3 (the `commands:` lines), twice:
+  - when at-point moved, its nine names, `at-point-complete`,
+    `at-point-next`, `at-point-previous`, `at-point-tab`,
+    `at-point-backtab`, `at-point-return`, `at-point-quit`,
+    `at-point-triggered` and `at-point-paused`, moved from after
+    `keyboard-quit` (the package was seventeenth of the core's 19, after
+    `shell`) to after `compile-goto-error`, before config's `greet`;
+  - when the minibuffer moved, its nine names, `minibuffer-accept`,
+    `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`,
+    `minibuffer-insert`, `minibuffer-delete-backward`,
+    `minibuffer-delete-to-start`, `minibuffer-ask` and
+    `minibuffer-candidates`, moved from after `auto-reload-mode` (the
+    package was second of the core's 18, after `files`) to after
+    `vc-gutter-moved`, the last of the core's, before `execute-command`.
+
+  No name was added or lost, and nothing else on those lines changed.
+- `tests/headless/default-config/expected`, lines 19 and 20: the first ten
+  rows of `SPC :`'s listing, the command prompt's, and their decorations.
+  The five rows `minibuffer-accept` … `minibuffer-insert` are gone, and
+  `move`, `normal`, `visual  v`, `visual-line  V` and `insert  i` follow
+  `auto-reload-mode`; the name column is padded to 18 where it was 21,
+  since the longest name among the ten was `minibuffer-previous` and is
+  `auto-reload-mode`; and the decorations line gives the new rows'
+  candidate and annotation ranges.
+- **The completion styles and displays registered first of the core's
+  list and register first of the set**, by being required first, so
+  `fuzzy` and `minibuffer` are still the first style and display
+  registered and the defaults, and no line changed for them.
+- **Neither binds an ex name**, so `tests/headless/ex/expected` did not
+  change.
+- **Why the old places were not kept**: the compile argument above. A
+  default package registers by dependency, as a user's does, and nothing
+  the at-point or minibuffer commands do depends on the order: the
+  command prompt lists them after version control's commands now, and
+  `SPC :` with nothing typed no longer shows the minibuffer's.
+- **What the moved fixtures show is unchanged.** `prompt`, `candidates`
+  and `at-point` moved byte for byte, `at-point` with the shared config it
+  ran on; `completion-choices` and `at-point-tuned` were written on the
+  editor with the features in the core and moved with their configs'
+  imports changed. Their `expected` files did not change.
+- **The empty set's fixtures changed for what leaving a package out
+  removes, not for order**: "Dropping `completion` …" and "Dropping
+  `minibuffer` …", under "The default packages of the features-as-packages
+  roadmap's phase 4", above.
 
 ## Build times
 

@@ -814,12 +814,7 @@ its sleep, and whose output must be exactly `scene-expected`; and with `dispatch
 interrupt key, then the keys of a command that ends, then the keys of a
 command that starts a job with an argument, whose sleep the script
 advances past and whose result the job's command says in the echo area,
-and whose output must be exactly `dispatch/expected`; and with
-`at-point/script`, on the shared config, which types `a` and `l` in insert
-state, advances the headless mode's clock 240 ms so the shipped `words`
-source's pause fires, and prints the session's candidate list, then
-previews and accepts its first candidate, and whose output must be exactly
-`at-point/expected`; and with `finder-session/script` on the
+and whose output must be exactly `dispatch/expected`; and with `finder-session/script` on the
 config in `finder-session/config`, which runs that config's command by its
 key `C-c h` and by its ex name `finder-hello`, so the fixture is known to
 load and to say `finder-session: config loaded`, and whose output must be exactly
@@ -828,13 +823,7 @@ load and to say `finder-session: config loaded`, and whose output must be exactl
 no file: `save-buffer` on the scratch buffer says it has no file, and a
 command of config's opens a path that is not absolute, which starts the
 compiled load job and is refused by the library before it asks the file
-system, and whose output must be exactly `files/expected`; and with
-`prompt/script` on the config in `prompt/config`, under the Vim scheme the
-executable runs: a command of config's asks for a prompt, a key that
-prints is typed into the minibuffer, whose view the scene prints with the
-prompt text as its status line, `<Enter>` accepts and config's command
-receives the answer and `<Escape>` cancels, and the run touches no file;
-its output must be exactly `prompt/expected`; and with `evil-script`, which has no `reload` and so
+system, and whose output must be exactly `files/expected`; and with `evil-script`, which has no `reload` and so
 loads no config: it sends `i`, the keys of `hello`, `<Escape>` and `0`,
 and its scenes must show the text, the cursor after each, and the state's
 name in the status line, exactly as `evil-expected` has them. That run is
@@ -850,17 +839,19 @@ listing of the working directory is waited for with `join` and not
 printed before `<Escape>` cancels it, and with `q`, which ends
 the loop, so that the `scene` line
 after it prints nothing; its output must be exactly `ex/expected`. The
-ninth is `candidates/script` on the config in `candidates/config`, under
-the Vim scheme and with the library's fuzzy matcher: a command of
-config's asks with the candidates `wq`, `edit` and `w`; `w` is typed and
-the scene lists `w` and then `wq` after the prompt's label, which only
-the rule that a candidate that is the text is first orders, since the
-library scores the two the same; `C-n` twice chooses `wq`, which the
-scene shows in the chosen face; `<Enter>` gives config's command `wq`;
-with `z` typed the scene lists none, `<Tab>` puts nothing in the input,
-and the command receives `z`; and with `e` typed `<Tab>` puts the first
-listed, `edit`, in the input, the prompt still open, and `<Enter>` gives
-the command `edit`. Its output must be exactly `candidates/expected`.
+fixtures `at-point`, `prompt` and `candidates` were the core's and run here
+until the features-as-packages roadmap's phase 4 moved them, byte for
+byte, into the default packages `at-point` and `minibuffer`, whose
+fixtures the package steps run ("The package steps", below):
+`at-point`, on the shared config copied into it, types `a` and `l` in
+insert state, advances the headless mode's clock 240 ms so the shipped
+`words` source's pause fires, and prints the session's candidate list,
+then previews and accepts its first candidate; `prompt` asks for a
+prompt, types into the minibuffer, accepts with `<Enter>` and cancels
+with `<Escape>`; and `candidates` asks with the candidates `wq`, `edit`
+and `w`, lists `w` before `wq` for `w` typed, which only the rule that a
+candidate that is the text is first orders, chooses with `C-n` and
+inserts with `<Tab>`.
 
 `open-file/script` is a process check on real files, of the session
 check's form (below): its entry copies `open-file/tree` into a temporary
@@ -1790,9 +1781,11 @@ package's modules.
   `lake -d ../packages query :editorLayerImports` whose importer's layer
   is `core`, and requires more than none.
 - **The sets it is run over**, each required to pass: the default set,
-  `packages/`, so its six default packages and two interface packages
-  import only the core, and `execute-command` and `binding-search` each
-  their own interface package besides;
+  `packages/`, so its nine default packages and five interface packages
+  import only the core, and the implementations besides only interface
+  packages: `completion`, `minibuffer`, `execute-command`,
+  `binding-search` and `at-point` each its own, and `execute-command`,
+  `binding-search` and `compile` `minibuffer-api`;
   the fixture set, `tests/packages/`, where `greeting-loud` reaches
   `greeting`'s command through `greeting-api`; the user-side link's set,
   `tests/user-link/`; and `tests/empty-set/`, the core alone.
@@ -1832,9 +1825,11 @@ package's tests are by convention are in
   fixture interface package `greeting-api`, the fixture package `echo`,
   which holds Rust, the default set, and the example package of the guide
   to writing a package, `word-count` (`docs/packages/word-count/`). So the
-  default packages, `mode-line`, `shipped-themes`, `execute-command`,
-  `binding-search`, `compile` and `languages`, with the interface packages
-  `execute-command-api` and `binding-search-api`, and the code the guide
+  default packages, `completion`, `mode-line`, `minibuffer`,
+  `shipped-themes`, `execute-command`, `binding-search`, `compile`,
+  `at-point` and `languages`, with the interface packages
+  `completion-api`, `minibuffer-api`, `execute-command-api`,
+  `binding-search-api` and `at-point-api`, and the code the guide
   quotes are tested, built, format-checked and run through it. `run`
   is also given the default set itself, `packages/`, so those packages'
   linked tests and fixtures hold of the default set's editor, the one
@@ -1851,9 +1846,11 @@ package's tests are by convention are in
 - **The default packages' tests are required to have run.** `lean-test`
   keeps the `test` step's output and requires the line the step prints as
   it reaches each of them, `package-set: test <name> (<its directory>)`
-  for `mode-line`, `shipped-themes`, `execute-command-api`,
-  `execute-command`, `binding-search-api`, `binding-search`, `compile`
-  and `languages`, and the same line for `word-count`, matched on what
+  for `completion-api`, `completion`, `mode-line`, `minibuffer-api`,
+  `minibuffer`, `shipped-themes`, `execute-command-api`,
+  `execute-command`, `binding-search-api`, `binding-search`, `compile`,
+  `at-point-api`, `at-point` and `languages`, and the same line for
+  `word-count`, matched on what
   comes before the directory. The step stops at the first driver
   that fails, so those lines and exit 0 say each package's driver ran and
   passed: the themes hold under the core's completeness check, and the
@@ -1869,17 +1866,21 @@ package's tests are by convention are in
   test, `hello`, `reply`, the linked test of `echo` with its line (`echo
   linked test: the contract's 7 properties hold on the Rust-backed
   binding, each request completed through the completion queue`), the
-  linked test of `shipped-themes` with the
+  linked test of `completion` with its line, `completion linked test: 6
+  checks passed`, and its fixture `completion-choices`, the linked test
+  of `shipped-themes` with the
   line its pictures print, its fixtures `load-theme`, `package-names`,
   `shipped-themes` and `themes`, the linked test of `compile` with its
   line, `compile linked test: 7 checks passed`, its fixtures `config`,
   `ex-names` and `shipped-formats`, the fixtures `mode-line` of
-  `mode-line`, `command-prompt` of `execute-command` and `binding-search`
-  of `binding-search`, the three fixtures of `word-count`, `as-config`,
-  `count` and `from-config`, and `package-set: ran 4 linked tests and 15
-  headless fixtures over 13 packages`; and over the default set, the
-  default packages' two linked tests and ten fixtures and `package-set:
-  ran 2 linked tests and 10 headless fixtures over 8 packages`. A fixture or a linked test that is
+  `mode-line`, `candidates` and `prompt` of `minibuffer`, `command-prompt`
+  of `execute-command`, `binding-search` of `binding-search` and
+  `at-point` and `at-point-tuned` of `at-point`, the three fixtures of
+  `word-count`, `as-config`, `count` and `from-config`, and `package-set:
+  ran 5 linked tests and 20 headless fixtures over 19 packages`; and over
+  the default set, the default packages' three linked tests and fifteen
+  fixtures and `package-set: ran 3 linked tests and 15 headless fixtures
+  over 14 packages`. A fixture or a linked test that is
   renamed, moved or no longer found by the naming convention fails that
   line.
 - **The default packages' own checks.** `shipped-themes`: sixteen checks
@@ -1920,21 +1921,41 @@ package's tests are by convention are in
   `binding-search-api` (4 checks each: the fake keeps the contract, and
   the contract refuses a package that lacks or misspells the name)
   ([packages.md](../design/packages.md), "The default packages of the
-  features-as-packages roadmap's phase 3").
+  features-as-packages roadmap's phase 3"). The three of its phase 4:
+  `completion` (19 checks: the shipped styles and display and its
+  `Package` value, the interface's contract check among them; a linked
+  test of 6 checks, the shipped styles' contract over the real fuzzy
+  binding; the fixture `completion-choices`), `at-point` (29 checks, the
+  interface's contract check among them; the fixtures `at-point` and
+  `at-point-tuned`) and `minibuffer` (23 checks, the same; the fixtures
+  `prompt` and `candidates`), and the interface packages
+  `completion-api` (6 checks), `at-point-api` (7) and `minibuffer-api`
+  (8): the names pinned whole, the fake, which for the last two is the
+  core test kit's own implementation, keeps the contract, and the
+  contract refuses a package that registers nothing, lacks a name or
+  misspells one ([packages.md](../design/packages.md), "The default
+  packages of the features-as-packages roadmap's phase 4").
 - **An editor without the default packages.** `mise run lean` also links
   an editor from `tests/empty-set`, the default set with its packages
   dropped, and `ffi-test` runs two of the core's fixtures on it.
-  `tests/headless/core-themes`: it starts in the theme `default`,
+  `tests/headless/core-themes`: it starts in the theme `default`, and
   its theme prompt lists `default` and the theme config defines and no
-  palette, and `solarized-dark`, answered, is said in the echo area to be
-  no registered theme. `tests/headless/core-ex-names`: it starts and loads
-  config, and `compile` typed on its ex line is answered `compile: not an
-  ex command`, as `bogus` is. The mode line's segments are a default
-  package too, so each scene's main status line there is empty, `-`. The
+  palette, drawn by the core's own display, each row after two spaces.
+  `tests/headless/core-ex-names`: it starts, loads config and opens its ex
+  line. The mode line's segments are a default package too, so each
+  scene's main status line there is empty, `-`; and so are the
+  minibuffer's commands, so `<Enter>` in either prompt says
+  `minibuffer-accept: no such command` and the prompt stays open: since
+  the features-as-packages roadmap's phase 4 neither fixture reaches a
+  palette's name answered or `compile` refused as an ex name, which
+  `ConfigTest.shippedChecks` holds of the core's list instead
+  ([packages.md](../design/packages.md), "Dropping `minibuffer` leaves
+  prompts that nothing answers"; the task `empty-set-prompts`). The
   default set's editor prints other lines for each script. The gate also requires that set's config base to be
   `Editor` alone (`lake -d ../tests/empty-set query :editorBase`), and the
-  default set's `Editor`, `ShippedThemes.EditorPackage` and
-  `Compile.EditorPackage`.
+  default set's `Editor` and the entry modules of its nine default
+  packages, in the order they register (`Completion.EditorPackage` …
+  `Languages.EditorPackage`).
 - **`run` refuses a directory that is not a whole fixture.** A directory
   under a package's `tests/headless/` with no `config/`, no `script` or no
   `expected` is exit 2, naming what is missing, and so is a set whose

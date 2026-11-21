@@ -2885,7 +2885,8 @@ decided 2026-11-13 by its phase 2):
     no label, and on a label that ends the candidate's text, shifted onto
     it, as a path's last component ends the path), an annotation in a
     column in `minibuffer.annotation` and a group's header in
-    `minibuffer.group` (`Completion.Displays`). The minibuffer's status
+    `minibuffer.group` (`Completion.Displays`, in the default package
+    `completion`, `packages/completion/Completion/Displays.lean`). The minibuffer's status
     line is the label alone (`Loop.promptStatus`).
     - It needs no buffer and no window: its text, anchor and view id are
       the state's, made once, as the tab bar's are. Both are kept in one

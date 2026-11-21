@@ -17,7 +17,8 @@ which declares the names of its nine commands and of its mode: the seven
 the Vim scheme's minibuffer table binds, the one the Vim scheme yields to
 ask, the one a source's job posts a batch as, and the mode the core makes
 the minibuffer's buffer with. Its design record is in
-[packages.md](../../docs/design/packages.md).
+[packages.md](../../docs/design/packages.md), "The default packages of
+the features-as-packages roadmap's phase 4".
 
 ## Its source, in reading order
 

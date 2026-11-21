@@ -13,7 +13,8 @@ It implements the interface package [`at-point-api`](../at-point-api/),
 which declares the names of its nine commands: the seven the Vim scheme's
 insert table binds, and the two the core runs by itself at a typed trigger
 and at a pause. Its design record is in
-[packages.md](../../docs/design/packages.md).
+[packages.md](../../docs/design/packages.md), "The default packages of
+the features-as-packages roadmap's phase 4".
 
 ## Its source, in reading order
 

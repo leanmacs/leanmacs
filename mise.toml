@@ -370,8 +370,8 @@ run = [
   # shown only when it does not.
   "status=0; out=$(sh ../tools/host-imports-check.sh ConfigTest 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
   # The same check on the root generated for the fixture set
-  # (tests/packages/), with `--set`: that root imports eleven entry
-  # modules, the core's, the three fixture packages', the six default
+  # (tests/packages/), with `--set`: that root imports fourteen entry
+  # modules, the core's, the three fixture packages', the nine default
   # packages' and the writing guide's example package's, and the host's
   # modules must reach none of them, nor what they import (`Greeting`,
   # `GreetingLoud`, `Echo.Packages`, `ShippedThemes`, `Compile.Compiled`,
