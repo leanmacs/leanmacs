@@ -1,5 +1,5 @@
 import ConfigTest.Check
-import ConfigTest.Support.Configs
+import ConfigTest.Editor.Files
 import ConfigTest.Support.Hosts
 import Editor.Completion
 import Editor.Config.Directory

@@ -5,7 +5,6 @@ import Editor.Completion.Candidate
 import Editor.Completion.Contract
 import Editor.Completion.Fake
 import Editor.Completion.Keys
-import Editor.Completion.Paths
 import Editor.Ex
 import Editor.Program
 import Editor.TabCommands
@@ -35,12 +34,13 @@ answers what it was asked, of every source the core ships and of the key
 hints' source (`Completion.Keys.source`), and it reports a source that makes
 a text and one that is refused. The sources of the command prompt and the
 binding search are held to it by their own checks, on the same runner
-(`Editor.Test.sourceHolds`, `Editor/Test/Sources.lean`). -/
+(`Editor.Test.sourceHolds`, `Editor/Test/Sources.lean`), and so is the
+files feature's file source (`ModelTest.pathsChecks`). -/
 def sourceContractChecks : List Check :=
   let subjects : List Completion.Source :=
     [.fixed "fixed" "test" (offered #["wq", "w"]), Completion.Fake.echo "echo" "test",
       Ex.historySource, Ex.namesSource, Buffers.source, TabCommands.source, Themes.source,
-      Completion.Paths.source, Workspace.FindFile.source, Workspace.FindInProject.source,
+      Workspace.FindFile.source, Workspace.FindInProject.source,
       Completion.Keys.source
         #[{ key := "s", leads := .binding (some "Save") }, { key := "f", leads := .prefix none 2 }]]
   let writes : Completion.Source :=

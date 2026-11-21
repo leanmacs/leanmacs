@@ -50,10 +50,16 @@ namespace Editor.Test
 
 open Editor
 
-/-- The jobs of the shell checks: the workspace driver checks', and the
-shell's run job. -/
+/-- The jobs of the shell checks over the workspace driver's jobs
+`workspace`: those, and the shell's run job. -/
+def shellJobsWith (workspace : String → Option (List Argument → Work)) (name : String) :
+    Option (List Argument → Work) :=
+  if name == Shell.runJob then some Shell.runWork else workspace name
+
+/-- The jobs of the shell checks: the workspace driver checks', the kit's
+opener's among them (`workspaceJobs`), and the shell's run job. -/
 def shellJobs (name : String) : Option (List Argument → Work) :=
-  if name == Shell.runJob then some Shell.runWork else workspaceJobs name
+  shellJobsWith workspaceJobs name
 
 /-- `/bin/sh -c text` in `directory`: the child a `:!` line runs. -/
 def shellCommand (directory : System.FilePath) (text : String) : Process.Command :=
@@ -93,9 +99,10 @@ def shellBindings : List (String × Invocation) :=
       ("C-e s", invoke "split"), ("C-e c", invoke "close"), ("C-e x", invoke "drop"),
       ("C-o s", opens "/r/src/s.txt"), ("C-o t", opens "/r/src/t.txt")]
 
-/-- The commands of the shell checks (`shellKeys`). -/
-def shellCommands : List (String × Dispatched) :=
-  workspaceCommands ++
+/-- The commands of the shell checks (`shellKeys`) over the workspace
+driver's commands `workspace`. -/
+def shellCommandsWith (workspace : List (String × Dispatched)) : List (String × Dispatched) :=
+  workspace ++
     dispatchedOf
       (Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
         Shell.package.registered.commands) ++
@@ -123,6 +130,11 @@ def shellCommands : List (String × Dispatched) :=
           discard <| window.id.show elsewhere
           discard <| window.buffer.remove
         return none)]
+
+/-- The commands of the shell checks (`shellKeys`), with the kit's opener's
+(`workspaceCommands`). -/
+def shellCommands : List (String × Dispatched) :=
+  shellCommandsWith workspaceCommands
 
 /-- The text of the buffer `id` in `driver`'s text model. -/
 def bufferText (driver : TestDriver) (id : BufferId) : Option String := do

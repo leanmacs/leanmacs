@@ -11,6 +11,7 @@ import Editor.Display.Contract
 import Editor.Evil.Compiled
 import Editor.Evil.Theorems
 import Editor.Extension
+import Editor.Files.Kit
 import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Contract
 import Editor.Main
@@ -71,9 +72,13 @@ tests' (`Editor.Test.…`, `Editor/Test/`: `Editor.Test.Listing` and
 `Editor.Test.Prompts`, which import the rest of it, among it the kit's
 hand-written minibuffer (`Editor.Test.Minibuffer`), and
 `Editor.Test.Shipped`, `Editor.Test.Sources` and the kit's hand-written
-at-point (`Editor.Test.AtPoint`), which no other kit module imports) and the linked tests'
-(`Editor.Test.Linked.…`, `Editor/Test/Linked/`: its rig, its services and
-its trees). Everything else comes with them: the kit is the support the
+at-point (`Editor.Test.AtPoint`), which no other kit module imports) and the
+linked tests' (`Editor.Test.Linked.…`, `Editor/Test/Linked/`: its rig, its
+services and its trees); and the files feature's test kit
+(`Editor.Files.Kit`, the drivers of the real file commands), which the
+files feature's tests and the tests left to cut in phase 6 import, and
+which brings the kit's own file opener (`Editor.Test.Opener`) through
+`Editor.Test.Workspace`. Everything else comes with them: the kit is the support the
 core's own tests are written on, so it imports the driver of the loop that
 tests run it with (`Editor.Loop.Driver`) and the modules that define the
 packages its fixtures register, and those are not named here again. The theorem modules are also the config base's imports

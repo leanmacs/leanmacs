@@ -2,6 +2,7 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Completion.Filtering
 import Editor.Completion.Later
+import Editor.Files.Kit
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
@@ -103,7 +104,7 @@ def remote : Location :=
 source's job, `workspace-files`. -/
 def jobs (name : String) : Option (List Argument → Work) :=
   if name == Workspace.FindFile.job then some (Completion.answering Workspace.FindFile.answer)
-  else workspaceJobs name
+  else fileWorkspaceJobs name
 
 /-- The commands of the checks: the workspace driver's, the finder, the
 minibuffer's next, the candidate checks' accept and self-insert, `register`,
@@ -111,7 +112,7 @@ which registers `remote` as a workspace of the project on `main`, and
 `strand`, which registers it and gives it to the window's buffer. -/
 def commands : List (String × Dispatched) :=
   let registers : EditorM Unit := discard <| Workspace.register remote workspaceOrigin (some "main")
-  workspaceCommands ++
+  fileWorkspaceCommands ++
     [(Workspace.FindFile.name, fun call => do
         Workspace.FindFile.command call
         return none),

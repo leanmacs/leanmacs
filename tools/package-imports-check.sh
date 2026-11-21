@@ -43,10 +43,13 @@
 # - A test double (`is_double`): the pure models of the ports, the
 #   contracts and cases, the fakes, the test scheme, the loop's driver, the
 #   reading of what a package registers (`Editor.Config.Packages`), the
-#   theme picture check (`Editor.Themes.Picture`) and the core's model test
+#   theme picture check (`Editor.Themes.Picture`), the core's model test
 #   kit, `Editor.Test` and everything under it but `Editor.Test.Linked`:
-#   the support its own model tests are written on. A test module, of any
-#   of the three test kinds, may import one; a library module may not.
+#   the support its own model tests are written on, and a feature's test
+#   kit still in the core (`Editor.*.Kit`, such as `Editor.Files.Kit`, the
+#   drivers of the real file commands), which moves into that feature's
+#   test library when it moves out. A test module, of any of the three test
+#   kinds, may import one; a library module may not.
 # - The linked test kit (`is_linked_kit`): `Editor.Test.Linked` and
 #   everything under it, the rig of the core's checks over the real
 #   services. It runs over the Rust library and hands over the loop, the
@@ -124,6 +127,7 @@ is_double() {
     Editor.InputScheme.Test | Editor.Loop.Driver) return 0 ;;
     Editor.Config.Packages | Editor.Themes.Picture) return 0 ;;
     Editor.Test | Editor.Test.*) return 0 ;;
+    Editor.*.Kit) return 0 ;;
     Editor.*.Model | Editor.*.Model.*) return 0 ;;
     Editor.*Contract | Editor.*.Cases) return 0 ;;
   esac

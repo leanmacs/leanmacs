@@ -9,7 +9,6 @@ import Editor.DisplayRules
 import Editor.Event
 import Editor.Ex.Line
 import Editor.File
-import Editor.Files
 import Editor.Floating
 import Editor.InputScheme.Test
 import Editor.Language
@@ -179,7 +178,7 @@ def displayRuleChecks : List Check :=
             fromMain.shownIn (minibuffer fromMain) == ⟨0⟩ &&
               fromSidebar.shownIn (minibuffer fromSidebar) == ⟨2⟩ &&
               fromSidebar.shownIn ⟨1⟩ == ⟨1⟩ &&
-              Files.shownIn fromSidebar (minibuffer fromSidebar) == ⟨2⟩ &&
+              fromSidebar.shownIn (minibuffer fromSidebar) == ⟨2⟩ &&
               fromSidebar.displaying focused ⟨9⟩ (minibuffer fromSidebar) "e" ==
                 (.showIn ⟨2⟩, true) },
     { name :=

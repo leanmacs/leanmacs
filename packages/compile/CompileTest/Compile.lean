@@ -609,7 +609,7 @@ def compileChecks : List Check :=
         "an empty answer to compile's prompt says compile: no command and starts nothing; with no compile-run registered the start is refused and said"
       run :=
         pure <|
-          match compileDriver, compileDriver (registered := shellJobs) with
+          match compileDriver, compileDriver (registered := fileShellJobs) with
           | some driver, some unregistered =>
             let opened := settledAfter driver "C-o a"
             let empty := (fedTo opened (presses "C-k c C-e y")).1

@@ -1,4 +1,5 @@
 import ConfigTest.Support.Candidates
+import ConfigTest.Support.Configs
 import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Listings
@@ -18,8 +19,7 @@ import Editor.Event
 import Editor.Ex.Line
 import Editor.Face
 import Editor.File.Model
-import Editor.Files
-import Editor.Files.Compiled
+import Editor.FileJobs
 import Editor.Fuzzy
 import Editor.Fuzzy.Real
 import Editor.Headless
@@ -878,12 +878,13 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             wakeups := requests + 1, jobs := requests + 2, environment := requests + 3,
             posts := requests + 4, pauseEvents := requests + 5,
             packages :=
-              #[listingsPackage, Test.Shipped.modeLine, Files.package, Test.Minibuffer.package,
+              #[listingsPackage, Test.Shipped.modeLine, shippedPackage "files",
+                Test.Minibuffer.package,
                 Compiled.package { commands := #[{ name := "noop", action := .plain (pure ()) }] }]
             workingDirectory := "/big" }
     try
       let ask : IO Unit := do
-        host.send (.run Files.openName)
+        host.send (.run FileJobs.openFileCommand)
         unless (← host.join patience) == .settled do
           throw (IO.userError "the file prompt did not list its directory")
       ask
@@ -1024,8 +1025,8 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
           source := memorySource [], emit, services, published, held, requests := 1
           wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
           packages :=
-            #[listingsPackage, Test.Shipped.modeLine, Files.package, Test.Minibuffer.package,
-              Workspace.package,
+            #[listingsPackage, Test.Shipped.modeLine, shippedPackage "files",
+              Test.Minibuffer.package, Workspace.package,
               Compiled.package
                 {
                   commands :=

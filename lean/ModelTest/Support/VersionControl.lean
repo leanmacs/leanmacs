@@ -10,6 +10,7 @@ import Editor.DisplayRules
 import Editor.File
 import Editor.File.Model
 import Editor.Files
+import Editor.Files.Kit
 import Editor.InputScheme
 import Editor.InputScheme.Test
 import Editor.Invocation
@@ -68,7 +69,9 @@ def statusJobs (name : String) : Option (List Argument → Work) :=
   if name == VersionControl.readJob then some VersionControl.readWork
   else
     if name == VersionControl.applyJob then some VersionControl.applyWork
-    else if name == VersionControl.showJob then some VersionControl.showWork else workspaceJobs name
+    else
+      if name == VersionControl.showJob then some VersionControl.showWork
+      else fileWorkspaceJobs name
 
 /-- The bindings of the status buffer checks: the workspace driver checks',
 and `C-v s` (`vc-status`), `C-v t` (`vc-status-toggle`), `C-v v`
@@ -92,7 +95,7 @@ def statusBindings : List (String × Invocation) :=
 
 /-- The commands of the status buffer checks (`statusBindings`). -/
 def statusCommands : List (String × Dispatched) :=
-  workspaceCommands ++ dispatchedOf VersionControl.package.registered.commands ++
+  fileWorkspaceCommands ++ dispatchedOf VersionControl.package.registered.commands ++
     [("to-row", fun call => do
         if let .nat row :: _ := call.arguments then
           let offset ← call.target.buffer.text.offsetOf ⟨row, 0⟩
@@ -158,7 +161,7 @@ version-control registrations (`VersionControl.package.registered.jobs`), and th
 driver checks', the file commands' among them. -/
 def stagingJobs (name : String) : Option (List Argument → Work) :=
   ((VersionControl.package.registered.jobs.find? (·.name == name)).map (·.work)) <|>
-    workspaceJobs name
+    fileWorkspaceJobs name
 
 /-- The bindings of the hunk and message buffer checks: the workspace driver
 checks', and `C-v s` (`vc-status`), `C-v g` (`vc-stage-hunk`), `C-v G`

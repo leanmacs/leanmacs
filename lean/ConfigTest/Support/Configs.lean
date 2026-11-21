@@ -11,12 +11,9 @@ import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Event
 import Editor.Event.Queue
-import Editor.Ex.Compiled
 import Editor.Ex.Line
 import Editor.Face
 import Editor.Ffi.Interrupt
-import Editor.Files
-import Editor.Files.Compiled
 import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.InputScheme.Test
@@ -31,7 +28,7 @@ import Editor.Scene
 import Editor.State
 import Editor.Test.Minibuffer
 import Editor.Text
-import Editor.Value
+import EditorCore.EditorPackage
 
 /-!
 # Config tests: support: Configs
@@ -46,6 +43,14 @@ several test modules; it holds no checks of its own.
 namespace ConfigTest
 
 open Editor
+
+/-- The package named `name` of the core's Lake package, as the executable's
+hosts are handed it (`EditorCore.EditorPackage.packages`), so that a check
+of the core whose host needs a feature's package takes it from that list,
+naming no module of the feature; one that registers nothing when the list
+has none of that name. -/
+def shippedPackage (name : String) : Package :=
+  (EditorCore.EditorPackage.packages.find? (·.name == name)).getD { name, setup := pure () }
 
 /-- What compiled code hands every host of the prompt checks: the kit's
 minibuffer's commands and its mode (`Test.Minibuffer.package`,
@@ -153,64 +158,6 @@ def nappingCompiled : Compiled :=
           work := fun _ =>
             Work.of (fun _ => sleep 10) fun _ =>
               discard <| (⟨0⟩ : ViewId).insertAtSelections "napped" }] }
-
-/-- What compiled code hands every host of the ex checks: the ex line's
-commands and the `ex` package's ex names (`Ex.package.registered.commands`, `Ex.package.registered.ex`,
-`Editor/Ex/Compiled.lean`), the kit's minibuffer's commands and its mode
-(`Editor/Test/Minibuffer.lean`), the file commands, which two of the shipped names run, and `other`, written
-here, which says `other`, on `C-c o`. It is handed no job: no check here
-opens or saves a file. -/
-def exCompiled : Compiled :=
-  { commands :=
-      Ex.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
-        Files.package.registered.commands ++
-        #[{ name := "other", action := .plain (message "other") }]
-    modes := Test.Minibuffer.package.registered.modes
-    ex := Ex.package.registered.ex
-    bindings := #[bound "C-c o" "other"] }
-
-/-- A compiled command called `name`, written for the file checks, that runs
-the compiled open command with `path` as its argument: the driver's `run`
-hands a command no argument, so a check that opens a file hands its host a
-command of this kind for each path. It looks the open command up among the
-commands compiled code registers (`Files.package.registered.commands`), so what runs is that
-registration. -/
-def opening (name : String) (path : System.FilePath) : Config.Registration :=
-  { name
-    action :=
-      .call fun call => do
-        let registered : Option Config.Action :=
-          (Files.package.registered.commands.find? (·.name == Files.openName)).map (·.action)
-        match registered with
-        | some (.call run) =>
-          run { call with arguments := [.str path.toString] }
-        | _ =>
-          message "the open command is not a compiled command that is given its call" }
-
-/-- Runs `check` against a host over the library's file service
-(`Stage.overFiles`), with an empty config directory of its own, that is
-handed the file commands and their jobs as compiled code registers them
-(`Files.package.registered.commands`, `Files.package.registered.jobs`), the
-kit's minibuffer's commands and its mode (`Test.Minibuffer.package.registered.commands`,
-`Test.Minibuffer.package.registered.modes`, `Editor/Test/Minibuffer.lean`), and,
-for each name and path of `opens`, a command of that name that opens that
-path (`opening`). Stops the host: `false` if the check did not hold or the
-host did not stop. -/
-def withFileHost (context : Context) (opens : List (String × System.FilePath))
-    (check : Session → IO Bool) (extra : Array Config.Registration := #[]) : IO Bool :=
-  IO.FS.withTempDir fun directory => do
-    let stage ←
-      Stage.overFiles context (Config.Directory.source directory)
-          { commands :=
-              Files.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
-                (opens.map fun (name, path) => opening name path).toArray ++
-                extra
-            jobs := Files.package.registered.jobs
-            modes := Test.Minibuffer.package.registered.modes }
-    onStage stage fun host stage =>
-        check
-          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
-            watches := stage.watches, log := stage.log }
 
 /-- The text of the file `note.txt` of the file checks: two lines, with
 two-byte characters. -/

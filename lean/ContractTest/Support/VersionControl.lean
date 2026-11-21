@@ -1,6 +1,8 @@
 import Editor.Config.Packages
+import Editor.Files.Compiled
 import Editor.Test.Linked.Rig
 import Editor.VersionControl.Compiled
+import Editor.Workspace.Compiled
 
 /-!
 # Contract tests: support: VersionControl

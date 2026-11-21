@@ -15,6 +15,7 @@ import Editor.FileWatch
 import Editor.FileWatch.Model
 import Editor.Files
 import Editor.Files.Compiled
+import Editor.Files.Kit
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job.Model

@@ -14,8 +14,7 @@ import Editor.Display.Recorder
 import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.Ffi.Snapshot
-import Editor.Files
-import Editor.Files.Compiled
+import Editor.FileJobs
 import Editor.InputScheme
 import Editor.InputScheme.Test
 import Editor.Invocation
@@ -29,6 +28,7 @@ import Editor.Loop
 import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
+import Editor.Package
 import Editor.Process
 import Editor.Program
 import Editor.Scene
@@ -54,12 +54,17 @@ child's `PATH`, set for every child a rig's services start (`withPath`,
 `onChanged`, `onFixturePath`). Shared by several test modules; it holds no
 checks of its own.
 
-**The rig names no feature that is not the core's.** Its default keys and
-jobs are the file commands' and the workspace's, with no contribution told
-to the loop. A check of another feature passes its own: the version-control
-checks theirs (`ContractTest/Support/VersionControl.lean`), and the compile
-mode's, in its package, the compile mode's commands and jobs and the
-shipped contributions (`packages/compile/CompileTest/Linked/Compile/Shipped.lean`).
+**The rig names no file feature.** A check passes the keys and jobs it
+runs with (`runSettled`'s `keys` and `jobs`), which `rigKeys` and `rigJobs`
+make of the packages it names, with no contribution told to the loop: a
+check of files in a workspace names the files package (the files feature's
+test kit hands it, `filesPackage`) and the workspace's (`rigWorkspace`), the
+version-control checks theirs (`ContractTest/Support/VersionControl.lean`),
+and the compile mode's, in its package, the compile mode's commands and jobs
+and the shipped contributions
+(`packages/compile/CompileTest/Linked/Compile/Shipped.lean`). The invocation
+that opens a file names the core's name of the open command
+(`FileJobs.openFileCommand`).
 
 Published for a package's linked test: it is a module of the core's linked
 test kit, in the namespace `Editor.Test.Linked`, which the root of a
@@ -122,30 +127,37 @@ def onChanged (services : Job.Services) (change : Process.Command → Process.Co
 def onFixturePath (services : Job.Services) (path : String) : Job.Services :=
   onChanged services (withPath path)
 
-/-- The jobs a rig's checks run by default: the file commands' and the
-workspace's, the listing job among them, as a host registers them. -/
-def rigJobs : Array Config.JobRegistration :=
-  Files.package.registered.jobs ++ Workspace.package.registered.jobs
+/-- The workspace package, as a host registers it: what a rig's checks of
+files in a workspace pass beside the file commands' package, which the
+rig does not name (the files feature's test kit hands it,
+`Editor/Files/Kit.lean`, `filesPackage`). -/
+def rigWorkspace : Package :=
+  Workspace.package
 
-/-- The commands a rig's checks run by default: the file commands' and the
-workspace's, as a host registers them. A check of another feature appends
-its own, as it appends its jobs to `rigJobs`. -/
-def rigCommands : Array Config.Registration :=
-  Files.package.registered.commands ++ Workspace.package.registered.commands
+/-- The jobs a rig's checks run over `packages`: every package's, as a host
+registers them. -/
+def rigJobs (packages : Array Package) : Array Config.JobRegistration :=
+  packages.flatMap (·.registered.jobs)
 
-/-- The keys a rig's checks run by default: none bound; the file commands'
-and the workspace's commands by name (`rigCommands`); their jobs
-registered; and no contribution told to the loop. -/
-def rigKeys : Loop.Keys TestScheme.scheme :=
+/-- The commands a rig's checks run over `packages`: every package's, as a
+host registers them. A check of another feature appends its own, as it
+appends its jobs to `rigJobs`. -/
+def rigCommands (packages : Array Package) : Array Config.Registration :=
+  packages.flatMap (·.registered.commands)
+
+/-- The keys a rig's checks run over `packages`: none bound; the packages'
+commands by name (`rigCommands`); their jobs registered; and no
+contribution told to the loop. -/
+def rigKeys (packages : Array Package) : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      (rigCommands.find? (·.name == name)).bind fun registration =>
+      ((rigCommands packages).find? (·.name == name)).bind fun registration =>
         match registration.action with
         | .call run =>
           some fun call => do
             run call
             return none
         | _ => none
-    registered := { jobs := fun name => rigJobs.any (·.name == name) } }
+    registered := { jobs := fun name => (rigJobs packages).any (·.name == name) } }
 
 /-- What a rig's checks run with: their services, whose file
 service reads the table of snapshots their texts publish and keeps its loads
@@ -190,7 +202,7 @@ what the job held (`Job.finishWith`); each taken in the same way, at most
 in time or ended otherwise than finished, or a step was refused. -/
 partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
     (stepped : Loop.Stepped TestScheme.scheme) (depth : Nat := 8)
-    (keys : Loop.Keys TestScheme.scheme := rigKeys) (jobs : Array Config.JobRegistration := rigJobs)
+    (keys : Loop.Keys TestScheme.scheme) (jobs : Array Config.JobRegistration)
     (journal : Restore.Order → IO Unit := fun _ => pure ()) :
     IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   if depth == 0 then
@@ -241,9 +253,8 @@ partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
 /-- `loop`, over `texts`, once each of `invocations` has run with `keys` and
 settled with `jobs` (`settleProjects`), in order. -/
 def runSettledFrom (rig : ProjectRig) (loop : Loop TestScheme.scheme) (texts : RealTexts)
-    (invocations : List Invocation) (keys : Loop.Keys TestScheme.scheme := rigKeys)
-    (jobs : Array Config.JobRegistration := rigJobs)
-    (journal : Restore.Order → IO Unit := fun _ => pure ()) :
+    (invocations : List Invocation) (keys : Loop.Keys TestScheme.scheme)
+    (jobs : Array Config.JobRegistration) (journal : Restore.Order → IO Unit := fun _ => pure ()) :
     IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   let mut loop := loop
   let mut texts := texts
@@ -261,8 +272,7 @@ def runSettledFrom (rig : ProjectRig) (loop : Loop TestScheme.scheme) (texts : R
 `invocations` has run with `keys` and settled with `jobs`
 (`settleProjects`), in order. -/
 def runSettled (rig : ProjectRig) (base : System.FilePath) (invocations : List Invocation)
-    (keys : Loop.Keys TestScheme.scheme := rigKeys)
-    (jobs : Array Config.JobRegistration := rigJobs) :
+    (keys : Loop.Keys TestScheme.scheme) (jobs : Array Config.JobRegistration) :
     IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   let begin : EditorM (Loop TestScheme.scheme) := do
     let loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
@@ -273,7 +283,7 @@ def runSettled (rig : ProjectRig) (base : System.FilePath) (invocations : List I
 
 /-- The invocation that opens `path`. -/
 def openFile (path : System.FilePath) : Invocation :=
-  { command := Files.openName, arguments := [.str path.toString] }
+  { command := FileJobs.openFileCommand, arguments := [.str path.toString] }
 
 /-- The text of the buffer called `name` in `loop`. -/
 def bufferText (rig : ProjectRig) (texts : RealTexts) (loop : Loop TestScheme.scheme)

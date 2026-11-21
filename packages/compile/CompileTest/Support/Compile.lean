@@ -6,6 +6,7 @@ import Editor.Command.Call
 import Editor.Config.Packages
 import Editor.DisplayRules
 import Editor.Ex.Line
+import Editor.Files.Kit
 import Editor.InputScheme
 import Editor.InputScheme.Test
 import Editor.Invocation
@@ -54,7 +55,7 @@ open Editor.Test
 and its listing job. -/
 def compileJobs (name : String) : Option (List Argument → Work) :=
   if name == Compile.runJob then some Compile.runWork
-  else if name == Compile.listJob then some Compile.listWork else shellJobs name
+  else if name == Compile.listJob then some Compile.listWork else fileShellJobs name
 
 /-- Steps that write each of `lines` with a line feed on standard output,
 pausing 100 ms between writes, so each is delivered, and posted, alone. -/
@@ -128,7 +129,7 @@ def compileCommands : List (String × Dispatched) :=
     Compile.setRecord placeR
         { record with locations := record.locations.map ({ · with columnBase := 0 }) }
     return none
-  shellCommands ++ dispatchedOf Compile.package.registered.commands ++
+  fileShellCommands ++ dispatchedOf Compile.package.registered.commands ++
     [("insert-x", insertX), ("to-start", toStart), ("focus-compilation", focusCompilation),
       ("squat-clone", squat), ("to-point", toPoint), ("zero-base", zeroBase)]
 

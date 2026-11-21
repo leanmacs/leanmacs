@@ -33,18 +33,65 @@ import Editor.Scene
 import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.Text.Model
+import EditorCore.EditorPackage
 
 /-!
 # Config tests: `Editor/Files.lean`
 
-The tests of `Editor/Files.lean`: `languageChecks`, `fileChecks`, `reloadChecks`
-and `filePromptChecks`, through the headless host on real files. The root module
+The tests of `Editor/Files.lean`: `languageChecks`, `fileChecks`, `reloadChecks`,
+`filePromptChecks` and `autoReloadChecks`, through the headless host on real
+files, the last with the library's watch service: what the files feature's
+follow job does through the loop, which starts it under the core's name
+(`Editor/FileJobs.lean`). The root module
 `ConfigTest` runs them; its module doc says what each shows.
 -/
 
 namespace ConfigTest
 
 open Editor
+
+/-- A compiled command called `name`, written for the file checks, that runs
+the compiled open command with `path` as its argument: the driver's `run`
+hands a command no argument, so a check that opens a file hands its host a
+command of this kind for each path. It looks the open command up among the
+commands compiled code registers (`Files.package.registered.commands`), so what runs is that
+registration. -/
+def opening (name : String) (path : System.FilePath) : Config.Registration :=
+  { name
+    action :=
+      .call fun call => do
+        let registered : Option Config.Action :=
+          (Files.package.registered.commands.find? (·.name == Files.openName)).map (·.action)
+        match registered with
+        | some (.call run) =>
+          run { call with arguments := [.str path.toString] }
+        | _ =>
+          message "the open command is not a compiled command that is given its call" }
+
+/-- Runs `check` against a host over the library's file service
+(`Stage.overFiles`), with an empty config directory of its own, that is
+handed the file commands and their jobs as compiled code registers them
+(`Files.package.registered.commands`, `Files.package.registered.jobs`), the
+kit's minibuffer's commands and its mode (`Test.Minibuffer.package.registered.commands`,
+`Test.Minibuffer.package.registered.modes`, `Editor/Test/Minibuffer.lean`), and,
+for each name and path of `opens`, a command of that name that opens that
+path (`opening`). Stops the host: `false` if the check did not hold or the
+host did not stop. -/
+def withFileHost (context : Context) (opens : List (String × System.FilePath))
+    (check : Session → IO Bool) (extra : Array Config.Registration := #[]) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    let stage ←
+      Stage.overFiles context (Config.Directory.source directory)
+          { commands :=
+              Files.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
+                (opens.map fun (name, path) => opening name path).toArray ++
+                extra
+            jobs := Files.package.registered.jobs
+            modes := Test.Minibuffer.package.registered.modes }
+    onStage stage fun host stage =>
+        check
+          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
+            watches := stage.watches, log := stage.log }
 
 /-- A config whose `setup` registers two jobs that each load a file and whose
 handler makes a text of what was loaded: `open`, of `note.txt` in
@@ -758,6 +805,80 @@ def filePromptChecks (context : Context) : List Check :=
           return second != first && minibufferHolds chosen second && open_ chosen &&
               minibufferHolds fallback typedFirst &&
               open_ fallback &&
-              !(← session.output.get).any (·.startsWith "loop: refused") }]
+              !(← session.output.get).any (·.startsWith "loop: refused") },
+    { name :=
+        "the executable's hosts start with the source files registered by the files package in the category file, its job files, and the file category given the style named path, which no package of the core's Lake package registers"
+      run := do
+        let (state, _) :
+          Config.State Config.Elaborate.Base Config.Elaborate.Handle × Array String :=
+          Config.State.ofPackages EditorCore.EditorPackage.packages
+        let registry := state.registry
+        return registry.sources.any
+              (fun entry => entry.source.name == "files" && entry.owner == Files.package.owner) &&
+            registry.sourcesIn Completion.Paths.category == #["files"] &&
+            registry.jobs.any
+              (fun entry =>
+                entry.registration.name == Completion.Paths.job &&
+                  entry.owner == Files.package.owner) &&
+            (registry.style? "path").isNone &&
+            registry.styleDefaults == #[(Completion.Paths.category, "path")] }]
+
+/-- Rewrites the file at `path` with `text` from another process, as agents
+and editors write: a temporary file beside it, renamed over it. Waits for
+the process to exit; whether it exited with 0. -/
+def rewriteFromOutside (path : System.FilePath) (text : String) : IO Bool := do
+  let child ←
+    IO.Process.output
+        { cmd := "/bin/sh"
+          args :=
+            #["-c", "printf '%s' \"$2\" > \"$1.tmp\" && mv \"$1.tmp\" \"$1\"", "sh", path.toString,
+              text] }
+  return child.exitCode == 0
+
+/-- The checks of auto-reload through the headless host on real files, with
+the library's watch service (`Editor/Loop.lean`, "Auto-reload"): criteria 9
+and 10. Measured on 2026-11-16 on macOS (FSEvents), over six runs: the
+rewrite was shown 66 to 83 ms after the other process exited, a median of
+about 80 ms, and the edited buffer marked in 78 to 84 ms; the 50 ms
+coalescing window is most of it. The bound is a second, and every wait is
+polled, never a fixed sleep. -/
+def autoReloadChecks (context : Context) : List Check :=
+  [{  name :=
+        "criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown within a second; once the buffer is edited, another rewrite leaves its text and marks its status line within a second"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          let (old, new, again) := ("one\ntwo\n", "one\ntwo\nthree\n", "rewritten again\n")
+          IO.FS.writeBinFile path old.toUTF8
+          withFileHost context [("open-note", path)] fun session => do
+              unless ← session.ran "open-note" do
+                return false
+              -- With no argument the command toggles: off, so on.
+              session.ask [.run Files.autoReloadName]
+              let armed ←
+                eventually do
+                    return (← session.output.get).any fun line =>
+                        line.startsWith "job " && line.endsWith s!" {FileJobs.followJob}: started"
+              unless armed do
+                return false
+              unless ← rewriteFromOutside path new do
+                return false
+              let (shown, saw) ← session.within 1000 (·.contains (viewLine new 0))
+              unless shown.isSome do
+                throw (IO.userError s!"the rewrite was not shown within a second: {saw}")
+              unless ← Event.post (.commit "x") do
+                return false
+              unless ← rewriteFromOutside path again do
+                return false
+              let edited := "x" ++ new
+              let (marked, last) ←
+                session.within 1000 fun lines =>
+                    lines ==
+                      #[viewLine edited 1,
+                        statusOf (name := "note.txt") (modified := true) (cursor := ⟨0, 1⟩)
+                          (lines := 3) (file := some path) (changed := true)]
+              unless marked.isSome do
+                throw (IO.userError s!"the edited buffer was not marked within a second: {last}")
+              return (← IO.FS.readBinFile path) == again.toUTF8 }]
 
 end ConfigTest

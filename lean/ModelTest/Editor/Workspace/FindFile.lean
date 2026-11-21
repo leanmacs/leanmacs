@@ -3,6 +3,7 @@ import Editor.Command.Call
 import Editor.Completion.Filtering
 import Editor.Completion.Later
 import Editor.Files
+import Editor.Files.Kit
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
@@ -43,7 +44,7 @@ namespace FindFileTest
 show no step runs the lister or the filter. -/
 def idle (name : String) : Option (List Argument → Work) :=
   if name == Workspace.FindFile.job then some fun _ => Work.of (fun _ => pure ()) fun _ => pure ()
-  else workspaceJobs name
+  else fileWorkspaceJobs name
 
 /-- The lister the prompt open in `driver` was asked with: its context. -/
 def listerOf (driver : TestDriver) : Option Workspace.Lister :=

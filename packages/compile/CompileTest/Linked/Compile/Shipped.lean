@@ -7,6 +7,7 @@ import Editor.Api
 import Editor.Clipboard
 import Editor.Command
 import Editor.Config.Packages
+import Editor.Files.Kit
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Program
@@ -39,11 +40,12 @@ namespace CompileTest
 open Editor
 open Editor.Test.Linked
 
-/-- The jobs of the project mode checks: the rig's (`rigJobs`), the file
-commands' and the workspace's, the listing job among them, and the compile
-mode's, as a host registers them. -/
+/-- The jobs of the project mode checks: the rig's (`rigJobs`) of the file
+commands' package, which the files feature's test kit hands
+(`filesPackage`), and the workspace's (`rigWorkspace`), the listing job
+among them, and the compile mode's, as a host registers them. -/
 def projectJobs : Array Config.JobRegistration :=
-  rigJobs ++ Compile.package.registered.jobs
+  rigJobs #[Test.filesPackage, rigWorkspace] ++ Compile.package.registered.jobs
 
 /-- The keys of the project mode checks: none bound; the rig's commands
 (`rigCommands`), the file commands' and the workspace's, and the compile
@@ -51,7 +53,8 @@ mode's, by name; their jobs registered; and the loop told the shipped
 contributions. -/
 def projectKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      ((rigCommands ++ Compile.package.registered.commands).find? (·.name == name)).bind
+      ((rigCommands #[Test.filesPackage, rigWorkspace] ++ Compile.package.registered.commands).find?
+            (·.name == name)).bind
         fun registration =>
         match registration.action with
         | .call run =>

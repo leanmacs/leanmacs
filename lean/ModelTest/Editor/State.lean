@@ -40,11 +40,11 @@ import Editor.State
 import Editor.TabBar
 import Editor.Test.Completion
 import Editor.Test.Driver
-import Editor.Test.Files
 import Editor.Test.Geometry
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Models
+import Editor.Test.Opener
 import Editor.Test.Prompts
 import Editor.Test.States
 import Editor.Test.Workspace
@@ -3425,7 +3425,7 @@ def titleChecks : List Check :=
         "the scene's title is the selected buffer's name: scratch on the initial state, the file's name once one is opened, and the asking window's buffer's while a prompt is open, not the minibuffer's"
       run :=
         pure <|
-          match newDriver, noteOpen, minibufferDriver with
+          match newDriver, Opener.noteOpened, minibufferDriver with
           | some driver, some opened, some asking =>
             let started := (fedTo driver [resizedTo false]).1
             let prompting := (fedTo asking (presses "C-c a")).1

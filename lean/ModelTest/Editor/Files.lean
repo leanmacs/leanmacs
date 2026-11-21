@@ -19,6 +19,7 @@ import Editor.FileWatch
 import Editor.FileWatch.Model
 import Editor.Files
 import Editor.Files.Compiled
+import Editor.Files.Kit
 import Editor.Fuzzy.Model
 import Editor.InputScheme.Test
 import Editor.Invocation
@@ -1294,7 +1295,27 @@ def fileCommandChecks : List Check :=
               some { pointed with focus := false } &&
             order.arguments == [.str "/a", .nat 2, .str "/b"] &&
             Files.LoadOrder.ofArguments? [.str "/a", .nat 2] ==
-              some { path := "/a", view := ⟨2⟩ }) }]
+              some { path := "/a", view := ⟨2⟩ }) },
+    { name :=
+        "after an open-files input the focused view shows the buffer of its last path, whichever order its loads would finish in: only one is in flight at a time"
+      run :=
+        pure <|
+          let note := inFiles "note.txt"
+          let crlf := inFiles "crlf.txt"
+          match
+            filesDriver.map fun driver =>
+              (fedTo driver [.openFiles [note.toString, crlf.toString]]).1 with
+          | none => false
+          | some asked =>
+            let (first, _) := asked.finish 1
+            let (both, _) := first.finish 2
+            -- Only the first path's load is in flight after the event: the
+            -- second cannot finish before it, since it has not started.
+            asked.pending.map (·.name) == #[Files.loadJob] && (asked.finish 2).2.isNone &&
+              first.pending.map (·.id) == #[2] &&
+              (showing both both.loop.state.frame.focused).map (·.id) ==
+                both.loop.state.findFile crlf &&
+              (both.loop.state.findFile crlf).isSome }]
 
 /-- Whether some piece of the whole text of the buffer `driver`'s view 0
 shows was written by an edit of origin `origin`. -/

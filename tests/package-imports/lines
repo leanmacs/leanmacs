@@ -3,6 +3,7 @@ demo	Demo	library	Editor.Themes.Check
 demo	Demo	library	Editor.Loop
 demo	Demo	library	Editor.Text.Model
 demo	Demo	library	Editor.Test.Keys
+demo	Demo	library	Editor.Files.Kit
 demo	Demo	library	Editor.Test.Linked.Rig
 demo	Demo	library	EditorCore.EditorPackage
 demo	Demo.Commands	library	Editor.Shell.Compiled
@@ -11,6 +12,7 @@ demo	DemoTest.Demo	test	Editor.Completion.AtPointContract
 demo	DemoTest.Demo	test	Editor.Themes.Picture
 demo	DemoTest.Demo	test	Editor.Loop.Driver
 demo	DemoTest.Demo	test	Editor.Test.Driver
+demo	DemoTest.Demo	test	Editor.Files.Kit
 demo	DemoTest.Demo	test	Editor.Test.Linked.Rig
 demo	DemoTest.Demo	test	Editor.Loop
 demo	DemoTest.Demo	test	Editor.Config.Packages

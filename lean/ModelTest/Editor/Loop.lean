@@ -30,7 +30,6 @@ import Editor.File.Model
 import Editor.FileJobs
 import Editor.FileWatch
 import Editor.FileWatch.Model
-import Editor.Files
 import Editor.Floating
 import Editor.Fuzzy
 import Editor.Fuzzy.Model
@@ -72,6 +71,7 @@ import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Models
+import Editor.Test.Opener
 import Editor.Test.Prompts
 import Editor.Test.States
 import Editor.Text
@@ -5102,7 +5102,7 @@ def openFilesChecks : List Check :=
   let note := inFiles "note.txt"
   let crlf := inFiles "crlf.txt"
   let asked (paths : List System.FilePath) : Option TestDriver :=
-    filesDriver.map fun driver => (fedTo driver [.openFiles (paths.map (·.toString))]).1
+    Opener.driver.map fun driver => (fedTo driver [.openFiles (paths.map (·.toString))]).1
   [{  name :=
         "an open-files input of two paths, once both loads are finished, leaves two new buffers holding those files"
       run :=
@@ -5118,22 +5118,6 @@ def openFilesChecks : List Check :=
               (state.buffer? ⟨2⟩).map (·.name) == some "crlf.txt" &&
               both.model.texts.contents[1]? == some FileCases.noteText &&
               state.wellFormed },
-    { name :=
-        "after an open-files input the focused view shows the buffer of its last path, whichever order its loads would finish in: only one is in flight at a time"
-      run :=
-        pure <|
-          match asked [note, crlf] with
-          | none => false
-          | some asked =>
-            let (first, _) := asked.finish 1
-            let (both, _) := first.finish 2
-            -- Only the first path's load is in flight after the event: the
-            -- second cannot finish before it, since it has not started.
-            asked.pending.map (·.name) == #[Files.loadJob] && (asked.finish 2).2.isNone &&
-              first.pending.map (·.id) == #[2] &&
-              (showing both both.loop.state.frame.focused).map (·.id) ==
-                both.loop.state.findFile crlf &&
-              (both.loop.state.findFile crlf).isSome },
     { name := "an open-files input of one path selects that path's buffer once its load is finished"
       run :=
         pure <|
@@ -5146,7 +5130,7 @@ def openFilesChecks : List Check :=
     { name := "an open-files input with no path starts nothing and publishes a scene"
       run :=
         pure <|
-          match filesDriver with
+          match Opener.driver with
           | none => false
           | some driver =>
             let (after, steps) := fedTo driver [.openFiles []]
@@ -5159,11 +5143,11 @@ def openFilesChecks : List Check :=
         pure <|
           let keys : Loop.Keys TestScheme.scheme :=
             dispatchKeys []
-              [(Files.openName, fun call => do
+              [(FileJobs.openFileCommand, fun call => do
                   message s!"mine: {call.arguments.length}"
                   return none)]
           match
-            (Loop.Driver.over keys fileJobs (EditorState.initial ⟨640, 480⟩)
+            (Loop.Driver.over keys Opener.jobs (EditorState.initial ⟨640, 480⟩)
                 editorModel).toOption with
           | none => false
           | some driver =>
@@ -5203,18 +5187,18 @@ be run after it, a reload and the theme `second`: `ask-all` (`a`), and
 def quitKeys : Loop.Keys TestScheme.scheme :=
   {
     dispatchKeys
-      [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
+      [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Opener.saveName),
         ("C-l l", invoke "leave"), ("C-l f", invoke "leave-then-fail"), ("C-l s", invoke "stamp"),
         ("C-l o", invoke "other"), ("C-l h", invoke "hand-leave"),
         ("C-l t", invoke "hand-leave-other"), ("C-l r", invoke "again"),
         ("C-l g", invoke "again-then-fail"), ("C-l p", invoke "pick"),
         ("C-l k", invoke "pick-then-fail"), ("C-l a", invoke "ask-all"),
         ("C-l b", invoke "ask-all-then-fail")]
-      [(Files.openName, fun call => do
-          Files.openCommand call
+      [(FileJobs.openFileCommand, fun call => do
+          Opener.openCommand call
           return none),
-        (Files.saveName, fun call => do
-          Files.saveCommand call
+        (Opener.saveName, fun call => do
+          Opener.saveCommand call
           return none),
         ("leave", fun _ => do
           if let .error (.unsaved name)← quit then
@@ -5249,7 +5233,7 @@ def quitKeys : Loop.Keys TestScheme.scheme :=
 `note.txt` open in view 0: the open command, and its job finished. The load
 is job 1. -/
 def quitDriver (files : FileModel := commandFiles) : Option TestDriver :=
-  (Loop.Driver.over quitKeys fileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+  (Loop.Driver.over quitKeys Opener.jobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => ((fedTo { driver with jobs := { files } } (presses "C-o n")).1.finish 1).1
 
 /-- The checks of quitting in the loop (`Editor/Loop.lean`, "Quit"), on the
@@ -5322,7 +5306,7 @@ def dispatchQuitChecks : List Check :=
             asked.loop.state.quitting && delivered.map (·.next) == some .continue &&
               !refused.stopped &&
               !refused.loop.state.quitting &&
-              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) &&
+              echoOf refused == some (Opener.notSaved path (.changed (stampOf changed path))) &&
               (showing refused).map (·.buffer.isModified) == some true &&
               bytesOf refused path == some JobContract.otherFile },
     { name :=
@@ -5340,7 +5324,7 @@ def dispatchQuitChecks : List Check :=
               delivered.map (·.next) == some .continue &&
               !refused.stopped &&
               !refused.loop.state.quitting &&
-              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) &&
+              echoOf refused == some (Opener.notSaved path (.changed (stampOf changed path))) &&
               bytesOf refused path == some JobContract.otherFile },
     { name :=
         "an edit made while a quit waits for a save withdraws it: the state is no longer asked to quit after the edit's step, and the delivery of the save's result says continue, with the file written and the buffer still modified"
@@ -5431,7 +5415,7 @@ def dispatchQuitChecks : List Check :=
               delivered.map (·.next) == some .continue &&
               !refused.stopped &&
               !refused.loop.state.quitting &&
-              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) },
+              echoOf refused == some (Opener.notSaved path (.changed (stampOf changed path))) },
     { name :=
         "the driver records that a step said stop when the step was one it ran for an invocation a command asked for: the fed step says continue and the driver has stopped"
       run :=
@@ -5539,20 +5523,20 @@ quit checks have them, and `quit` (`Ex.quitName`), bound to `C-l q`, as
 place. -/
 def systemQuitKeys (command : Dispatched := compiledQuit) : Loop.Keys TestScheme.scheme :=
   dispatchKeys
-    [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
+    [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Opener.saveName),
       ("C-l q", invoke Ex.quitName)]
-    [(Files.openName, fun call => do
-        Files.openCommand call
+    [(FileJobs.openFileCommand, fun call => do
+        Opener.openCommand call
         return none),
-      (Files.saveName, fun call => do
-        Files.saveCommand call
+      (Opener.saveName, fun call => do
+        Opener.saveCommand call
         return none),
       (Ex.quitName, command)]
 
 /-- A driver of the system quit checks, with `quit` as `command` does it
 and the file `note.txt` open in view 0, as `quitDriver` opens it. -/
 def systemQuitDriver (command : Dispatched := compiledQuit) : Option TestDriver :=
-  (Loop.Driver.over (systemQuitKeys command) fileJobs (EditorState.initial ⟨640, 480⟩)
+  (Loop.Driver.over (systemQuitKeys command) Opener.jobs (EditorState.initial ⟨640, 480⟩)
         editorModel).toOption.map
     fun driver =>
     ((fedTo { driver with jobs := { files := commandFiles } } (presses "C-o n")).1.finish 1).1
@@ -5617,7 +5601,7 @@ def systemQuitChecks : List Check :=
               !refused.stopped &&
               keptRunning refused == 1 &&
               !refused.loop.state.systemQuit &&
-              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) },
+              echoOf refused == some (Opener.notSaved path (.changed (stampOf changed path))) },
     { name :=
         "config's command named quit runs in place of the compiled one on the system's quit: its message is the echo, and since nothing asked to quit the frame is asked to keep running once"
       run :=

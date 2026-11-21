@@ -1,6 +1,6 @@
 import Editor.Event
 import Editor.File.Cases
-import Editor.Files
+import Editor.FileJobs
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Loop
@@ -9,6 +9,7 @@ import Editor.Scene
 import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Files
+import Editor.Test.Opener
 import Editor.Text
 import Editor.Window
 import ModelTest.Check
@@ -321,27 +322,27 @@ def windowReportChecks : List Check :=
 
 /-- The checks of what the window mode posts to the editor loop before the
 first event (`Window.Options.starts`), and of the loop it starts, on the
-driver whose commands and jobs are the compiled ones (`compiledDriver`):
+driver whose commands and jobs are the kit's opener's (`Opener.driver`):
 each open of the starts is run as the host's open request runs it. -/
 def windowStartChecks : List Check :=
   let parsed (arguments : List String) : Option Window.Options :=
     (Window.parse windowEnvironment arguments).toOption
   let started (starts : Array Window.Start) : Option TestDriver :=
-    compiledDriver.map fun driver =>
+    Opener.driver.map fun driver =>
       starts.foldl
         (fun driver start =>
           match start with
           | .open path =>
             (driver.stepped
                 (driver.loop.invoke driver.handed
-                  { command := Files.openName, arguments := [.str path] })).1
+                  { command := FileJobs.openFileCommand, arguments := [.str path] })).1
           | _ => driver)
         driver
   [{  name :=
         "the window mode's state directory, --state's or the default under XDG_STATE_HOME, is the loop's first state's, as the host hands it over (EditorState.hostedBy); with neither variable set it has none"
       run :=
         let firstState (options : Option Window.Options) : Option (Option System.FilePath) := do
-          let driver ← compiledDriver
+          let driver ← Opener.driver
           let options ← options
           return (driver.loop.state.hostedBy "/work/project" none
                 options.stateDirectory).stateDirectory
@@ -384,7 +385,7 @@ def windowStartChecks : List Check :=
                 (showing opened).bind (·.text) == some "" &&
                 opened.loop.state.windows.size == 1 &&
                 opened.pending.isEmpty &&
-                loading.pending.map (·.name) == #[Files.loadJob]
+                loading.pending.map (·.name) == #[Opener.loadJob]
             | _, _ => false },
     { name :=
         "the window mode started with no file and then handed an open-files input of one path shows that file's buffer once its load is finished, beside scratch"
@@ -397,7 +398,7 @@ def windowStartChecks : List Check :=
             let (asked, _) := fedTo empty [.openFiles [path.toString]]
             let (opened, _) := asked.finish 1
             let state := opened.loop.state
-            empty.pending.isEmpty && asked.pending.map (·.name) == #[Files.loadJob] &&
+            empty.pending.isEmpty && asked.pending.map (·.name) == #[Opener.loadJob] &&
               state.buffers.size == 2 &&
               (state.buffer? ⟨0⟩).map (·.name) == some "scratch" &&
               state.findFile path == some ⟨1⟩ &&

@@ -567,7 +567,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   their own lists hold to it, and the key hints' source, run on the kit's
   runner over `twoBuffers` and the editor's models
   (`Editor.Test.sourceRunner`, `Editor/Test/Sources.lean`), and seen to
-  report a source that writes and one that is refused;
+  report a source that writes and one that is refused. The files feature's
+  file source is held to it by `pathsChecks`;
 - `keyHintSourceChecks`: the key hints' source
   (`Editor/Completion/Keys.lean`): a candidate of each kind of hint, its
   annotation and kind, a source of the category `key` that has filtered
@@ -582,22 +583,25 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   refused start, an asking view closed while a load runs and an interrupted
   delivery among them; saving a buffer, a file that
   changed on disk, a save that reports late, a forced save, and what each
-  command says when it starts nothing; and the commands and jobs as
-  compiled code registers them (`Editor/Files/Compiled.lean`). They touch
-  no file;
+  command says when it starts nothing; the commands and jobs as
+  compiled code registers them (`Editor/Files/Compiled.lean`); and an
+  open-files input of two paths with one load in flight at a time. They
+  touch no file;
 - `jumpChecks`: a window's jump list held by markers (`Editor/Jumps.lean`)
-  on that driver, over the model of files: a record, an entry following
-  edits before it on the text model, entries edits brought onto one line
-  being one at the next move, a move past either end, a closed buffer's
-  places detached into its file or dropped, attached again when the file
-  is loaded, opening a file, a visit and switching buffers each recording
-  a jump, a visit at a row's first non-blank or that records none,
-  deleting rows erasing their lowercase marks, and keeping the first
-  row's as decided;
+  on that driver, over the model of files, with the kit's opener and
+  stand-ins for switching and closing (`ModelTest/Support/Jumps.lean`): a
+  record, an entry following edits before it on the text model, a closed
+  buffer's places detached into its file or dropped, attached again when
+  the file is loaded, deleting rows erasing their lowercase marks, and
+  keeping the first row's as decided;
 - `jumpGoChecks`: going through the list to another buffer or a closed
-  file (`Editor/Jumps/Go.lean`) on that driver: the index moving at once,
-  the cursor at the entry once the load lands, and no entry recorded by
-  the visit of a `C-o` or of a jump to a place;
+  file (`Editor/Jumps/Go.lean`) on that driver with the real file and
+  buffer commands (`ModelTest/Support/JumpsGo.lean`): the index moving at
+  once, the cursor at the entry once the load lands, no entry recorded by
+  the visit of a `C-o` or of a jump to a place, entries edits brought onto
+  one line being one at the next move, a move past either end, opening a
+  file, a visit and switching buffers each recording a jump, and a visit at
+  a row's first non-blank or that records none;
 - `loopFileJobChecks`: when the loop starts the file jobs
   (`Loop.fileJobs`, `Editor/Loop.lean`) under the core's names, on that
   driver with stand-in works and no files feature: the focus coming back
@@ -610,12 +614,13 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   through their arguments and back, the names, and what the loop says of a
   first edit refused for a file changed or gone;
 - `openFilesChecks`: the loop's handling of the files a window asks to open
-  (`Event.openFiles`, `Editor/Loop.lean`) on that driver: it runs
-  `open-file` with the paths, so two paths leave two buffers and the last
-  path's is shown, whichever order its loads would finish in, and config's
+  (`Event.openFiles`, `Editor/Loop.lean`) on that driver with the kit's
+  opener (`Editor/Test/Opener.lean`): it runs `open-file` with the paths,
+  so two paths leave two buffers and one path's is shown, and config's
   command of that name runs in its place. They touch no file;
 - `dispatchQuitChecks`: quitting in the loop (`Editor/Loop.lean`, "Quit")
-  on that driver and the model of files, with commands written here that
+  on that driver and the model of files, with the kit's opener's open and
+  save commands and commands written here that
   ask the editor to quit: the step says stop once the editor can leave,
   after its scene; a quit waits for a save in flight and stops at the
   delivery of its result; and a quit that cannot go ahead is withdrawn,

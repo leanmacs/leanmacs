@@ -1,6 +1,7 @@
 package-imports-check: demo: Demo (library) imports Editor.Loop: internal: the loop or its dispatch
 package-imports-check: demo: Demo (library) imports Editor.Text.Model: a test double, which only a package's tests may import
 package-imports-check: demo: Demo (library) imports Editor.Test.Keys: a test double, which only a package's tests may import
+package-imports-check: demo: Demo (library) imports Editor.Files.Kit: a test double, which only a package's tests may import
 package-imports-check: demo: Demo (library) imports Editor.Test.Linked.Rig: a module of the linked test kit, which only a package's linked test and the modules under it may import
 package-imports-check: demo: Demo (library) imports EditorCore.EditorPackage: the core's entry module, which no package imports
 package-imports-check: demo: Demo.Commands (library) imports Editor.Shell.Compiled: internal: it defines a package still in the core

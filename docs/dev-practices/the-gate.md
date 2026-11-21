@@ -1673,7 +1673,9 @@ graph.
   does not import every module of it declares `globs` that hold them all,
   as `compile`'s does.
 - **The lists are in the script**, as names and patterns: the test
-  doubles, the linked test kit (`Editor.Test.Linked.…`, which only the
+  doubles (a feature's test kit still in the core, `Editor.*.Kit` such as
+  `Editor.Files.Kit`, among them, so a package's tests may import it and
+  its library may not), the linked test kit (`Editor.Test.Linked.…`, which only the
   linked test's root and the modules under it may import), the internal
   modules, each with the reason printed for it, and what the linked
   test's root may import beyond the doubles. They are named,
@@ -1693,10 +1695,11 @@ graph.
   importing a model, a contract, the loop's driver beside the loop, and
   `Editor.Config.Packages` beside another module of the config session; a
   linked test importing a real binding, the headless host, the base and
-  the entry module; a test importing a module of the model test kit; the
+  the entry module; a test importing a module of the model test kit and a
+  feature's kit, `Editor.Files.Kit`; the
   linked test's root and a module under it importing a module of the
   linked test kit). Among the refused: a plain test module and a library
-  importing the linked test kit, and a module under the linked test's
+  importing the linked test kit, a library importing a feature's kit, and a module under the linked test's
   root importing the headless host, a real binding or a raw binding,
   which only the root may, or none may. So a change
   to a list that lets an internal module through, or refuses an allowed

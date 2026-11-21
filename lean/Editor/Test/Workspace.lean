@@ -4,7 +4,6 @@ import Editor.Command.Call
 import Editor.Config.Stores
 import Editor.Event
 import Editor.File.Model
-import Editor.Files
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
@@ -20,6 +19,7 @@ import Editor.Test.Files
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Models
+import Editor.Test.Opener
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
@@ -66,11 +66,19 @@ def workspaceWorld : Workspace.World :=
           origin := some workspaceOrigin }]
     markerDirectories := #["/r/.git"], markers := #["/w/.git"] }
 
-/-- The jobs of the workspace driver checks: the find job, the mode marker
-job and the file command checks' jobs. -/
-def workspaceJobs (name : String) : Option (List Argument → Work) :=
+/-- The jobs of the workspace driver checks with the file jobs `files`: the
+find job, the mode marker job and those. -/
+def workspaceJobsWith (files : String → Option (List Argument → Work)) (name : String) :
+    Option (List Argument → Work) :=
   if name == Workspace.findJob then some Workspace.findWork
-  else if name == Workspace.markerJob then some Workspace.markerWork else fileJobs Files.limit name
+  else if name == Workspace.markerJob then some Workspace.markerWork else files name
+
+/-- The jobs of the workspace driver checks: the find job, the mode marker
+job and the kit's opener's (`Editor/Test/Opener.lean`), whose load attaches
+a buffer that takes in a file to its workspace (`Workspace.attach`), as a
+file's open does. -/
+def workspaceJobs (name : String) : Option (List Argument → Work) :=
+  workspaceJobsWith (Opener.jobsWith Workspace.attach) name
 
 /-- The bindings of the workspace driver checks: `C-o a`, `C-o b`
 and `C-o c` open `a.lean`, `b.lean` and `c.lean` in `/r/src`, `C-o w`
@@ -82,20 +90,24 @@ def workspaceBindings : List (String × Invocation) :=
     ("C-o c", opens "/r/src/c.lean"), ("C-o w", opens "/w/src/b.lean"), ("C-o x", opens "/x/a.txt"),
     ("C-o i", invoke Workspace.currentName), ("C-o n", invoke "inherit")]
 
-/-- The commands of the workspace driver checks, by name: the open command,
-`workspace-current` and `inherit` (`workspaceBindings`). -/
+/-- The commands of the workspace driver checks, by name, with the file
+commands `files`: those, `workspace-current` and `inherit`
+(`workspaceBindings`). -/
+def workspaceCommandsWith (files : List (String × Dispatched)) : List (String × Dispatched) :=
+  files ++
+    [(Workspace.currentName, fun call => do
+        Workspace.currentCommand call
+        return none),
+      ("inherit", fun call => do
+        if let .ok made← createBuffer "made" then
+          discard <| made.inheritWorkspace call.target.window.buffer
+        discard <| createBuffer "bare"
+        return none)]
+
+/-- The commands of the workspace driver checks, by name: the kit's opener's
+(`Opener.commands`), `workspace-current` and `inherit`. -/
 def workspaceCommands : List (String × Dispatched) :=
-  [(Files.openName, fun call => do
-      Files.openCommand call
-      return none),
-    (Workspace.currentName, fun call => do
-      Workspace.currentCommand call
-      return none),
-    ("inherit", fun call => do
-      if let .ok made← createBuffer "made" then
-        discard <| made.inheritWorkspace call.target.window.buffer
-      discard <| createBuffer "bare"
-      return none)]
+  workspaceCommandsWith Opener.commands
 
 /-- The keys of the workspace driver checks (`workspaceBindings`,
 `workspaceCommands`). -/

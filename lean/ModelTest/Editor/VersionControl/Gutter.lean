@@ -13,6 +13,7 @@ import Editor.Event
 import Editor.File.Model
 import Editor.FileWatch
 import Editor.FileWatch.Model
+import Editor.Files.Kit
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
@@ -73,7 +74,7 @@ def gutterKeys : Loop.Keys TestScheme.scheme :=
     (workspaceBindings ++
       [("C-g x", invoke "gutter-edit"), ("C-g z", invoke "gutter-top"),
         ("C-g k", invoke Buffers.closeName), ("C-g h", invoke "gutter-stale-head")])
-    (workspaceCommands ++ dispatchedOf VersionControl.gutterPackage.registered.commands ++
+    (fileWorkspaceCommands ++ dispatchedOf VersionControl.gutterPackage.registered.commands ++
       dispatchedOf Buffers.package.registered.commands ++
       [("gutter-edit", fun call => do
           let text := call.target.buffer.text
