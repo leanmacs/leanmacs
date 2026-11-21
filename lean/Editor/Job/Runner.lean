@@ -19,6 +19,17 @@ the completion carries it back, and a completion for an id that is no longer
 waiting is dropped. An id is a counter from 1 and is never used again in a
 process. A promise that is dropped unresolved reads as `cancelled`.
 
+What the table holds for a wait is the action that ends it, not the promise
+itself: `register` gives a wait whose action resolves its promise, and
+`registerWith` one whose action is the caller's. `finish` removes the wait
+in one atomic step and runs its action outside it, once, on the thread that
+finishes it, whether or not anything still holds the promise or a task of
+it. That matters because a mapped task that is still waiting when its last
+reference goes is deactivated and never runs, so work that must happen when
+a wait ends, such as taking a request's reply from a service that keeps it
+until it is taken, cannot hang off a task a caller may drop; it goes in the
+wait's action (`Services.fileWorked`).
+
 A completion says only that a wait is over. What the wait came to, if it
 came to anything, is fetched afterwards: an answer that waits carries the
 action that gives the reply (`Answer.later`), and the runner runs it on the
@@ -239,8 +250,8 @@ inductive Completion where
 structure Pending where
   /-- The id of the next wait. -/
   next : UInt64 := 1
-  /-- The promise of each wait that has not ended. -/
-  waits : Std.HashMap UInt64 (IO.Promise Completion) := {}
+  /-- What ends each wait that has not ended: run once, by `finish`. -/
+  waits : Std.HashMap UInt64 (Completion → BaseIO Unit) := {}
 
 /-- The table of waits in flight, shared by the runner and whatever completes
 its waits. -/
@@ -254,23 +265,32 @@ namespace Completions
 def new : BaseIO Completions :=
   return { pending := ← IO.mkRef {} }
 
-/-- Registers a wait: its id, and the promise that ends it. -/
+/-- Registers a wait that ends by running `ended id completion`, once, on the
+thread that ends it (`finish`), whether or not anything still waits on it:
+the table holds the action, so it outlives whatever the action resolves.
+Returns the wait's id. -/
+def registerWith (completions : Completions) (ended : UInt64 → Completion → BaseIO Unit) :
+    BaseIO UInt64 :=
+  completions.pending.modifyGet fun pending =>
+    (pending.next,
+      { next := pending.next + 1, waits := pending.waits.insert pending.next (ended pending.next) })
+
+/-- Registers a wait: its id, and the promise that ends it, which `finish`
+resolves (`registerWith` over the promise). -/
 def register (completions : Completions) : BaseIO (UInt64 × IO.Promise Completion) := do
   let wait ← IO.Promise.new
-  let id ←
-    completions.pending.modifyGet fun pending =>
-        (pending.next,
-          { next := pending.next + 1, waits := pending.waits.insert pending.next wait })
+  let id ← completions.registerWith fun _ completion => wait.resolve completion
   return (id, wait)
 
-/-- Ends the wait `id` as `completion`, and forgets it. Does nothing if `id`
-is not waiting: it never was, or it has ended already. -/
+/-- Ends the wait `id` as `completion`, and forgets it: removes it in one
+atomic step, then runs its action outside that step, on this thread. Does
+nothing if `id` is not waiting: it never was, or it has ended already. -/
 def finish (completions : Completions) (id : UInt64) (completion : Completion) : BaseIO Unit := do
-  let wait? ←
+  let ended? ←
     completions.pending.modifyGet fun pending =>
         (pending.waits[id]?, { pending with waits := pending.waits.erase id })
-  if let some wait := wait? then
-    wait.resolve completion
+  if let some ended := ended? then
+    ended completion
 
 /-- How many waits are in flight. -/
 def waiting (completions : Completions) : BaseIO Nat :=

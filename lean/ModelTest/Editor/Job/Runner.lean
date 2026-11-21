@@ -80,6 +80,30 @@ def waitChecks : List Check :=
         let (next, _) ← table.register
         return (← ended wait) == some .cancelled && next == id + 1 && (← table.waiting) == 1 },
     { name :=
+        "a wait registered with an action ends by running it once, with how it ended, on the thread that finishes it: a second finish of its id runs nothing"
+      run := do
+        let table ← Job.Completions.new
+        let log ← IO.mkRef (#[] : Array (UInt64 × Job.Completion))
+        let id ← table.registerWith fun id completion => log.modify (·.push (id, completion))
+        let before ← log.get
+        let waitingBefore ← table.waiting
+        table.finish id .cancelled
+        -- Read as soon as `finish` returns: the action ran inside it.
+        let after ← log.get
+        table.finish id .completed
+        return before.isEmpty && waitingBefore == 1 && after == #[(id, .cancelled)] &&
+            (← log.get) == #[(id, .cancelled)] &&
+            (← table.waiting) == 0 },
+    { name := "a wait's action runs though nothing holds what it resolves"
+      run := do
+        let table ← Job.Completions.new
+        let ran ← IO.mkRef (none : Option Job.Completion)
+        -- No promise and no task is kept here: only the table holds the
+        -- action.
+        let id ← table.registerWith fun _ completion => ran.set (some completion)
+        table.finish id .completed
+        return (← ran.get) == some .completed },
+    { name :=
         "the fake clock completes the waits that are due when it is advanced, earliest deadline first, and leaves the others waiting"
       run := do
         let rig ← Rig.new
