@@ -2279,7 +2279,7 @@ def stateChecks : List Check :=
                       | _ => false
                   | _ => false },
           { name :=
-              "a minor mode added is first and added once, and removing one takes it away; removing one not there changes nothing"
+              "a minor mode added is first and added once, changing nothing else of the state, its major mode among it, and removing one takes it away; removing one not there changes nothing"
             run :=
               pure <|
                 match onTextModel twoBuffers with
@@ -2292,7 +2292,13 @@ def stateChecks : List Check :=
                   let (added, again) := two.addMinorMode ⟨0⟩ "one"
                   let (removed, without) := two.removeMinorMode ⟨0⟩ "one"
                   let (absent, unchanged) := two.removeMinorMode ⟨0⟩ "three"
+                  let coded := (state.setMajorMode ⟨0⟩ "code").2
                   minors state == #[] && minors one == #["one"] && minors two == #["two", "one"] &&
+                    one ==
+                      { state with
+                        buffers :=
+                          state.buffers.modify 0 (·.map ({ · with minors := #["one"] })) } &&
+                    ((coded.addMinorMode ⟨0⟩ "one").2.buffer? ⟨0⟩).bind (·.major) == some "code" &&
                     added matches .ok () &&
                     again == two &&
                     removed matches .ok () &&

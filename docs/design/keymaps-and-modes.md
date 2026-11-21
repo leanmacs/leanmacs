@@ -3670,8 +3670,11 @@ otherwise be a cycle).
   command of the `find-mode-markers` job the open starts. Setting a major
   mode leaves the minor modes alone and adding a minor mode leaves the
   major mode alone, so a `.rs` file under a `Cargo.toml` ends in `code`,
-  with its language, and with `cargo-mode` on (pinned by
-  `CompileTest.compileHookChecks`, in the compile mode's package).
+  with its language, and with `cargo-mode` on (pinned in parts: the
+  language and `code` by the files' `languageOpenChecks`, the minor modes
+  by the workspace's `workspaceModesChecks`, and that each leaves the other
+  alone by the core's mode checks of the editor state; the compile mode's
+  `compileHookChecks` run on stand-ins for the files and the workspace).
 - **A config mode with its own tree wins when the user sets it**: it never
   looks at the language. One derived from `code` with no tree takes the
   language's.

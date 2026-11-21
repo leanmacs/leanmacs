@@ -22,14 +22,13 @@ import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Keys
+import Editor.Test.Listing
 import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Test.Shell
 import Editor.Test.Workspace
 import Editor.Text
 import Editor.Workspace
-import Editor.Workspace.Model
-import Editor.Workspace.Modes
 
 /-!
 # Model tests: `Compile/Shipped.lean`
@@ -117,20 +116,21 @@ def projectFormatChecks : List Check :=
             (lake.push "error: ./Foo/Bar.lean:12:4: unknown identifier 'x'").all
               (general.read? · == none)) }]
 
-/-- The world of the project mode checks: repositories `/c` (Cargo), `/l`
-(Lake), `/m` (mise, with a crate in `/m/crate`), `/mw`, a worktree of `/m`'s
-repository on `feature`, and `/r2`, a Cargo workspace with a member crate in
-`/r2/crates/m`; and their marker files. -/
-def projectWorld : Workspace.World :=
-  { repositories :=
-      #[{ toplevel := "/c", commonDir := "/c/.git" }, { toplevel := "/l", commonDir := "/l/.git" },
-        { toplevel := "/m", commonDir := "/m/.git" },
-        { toplevel := "/mw", commonDir := "/m/.git", branch := some "feature" },
-        { toplevel := "/r2", commonDir := "/r2/.git" }]
-    markerDirectories := #["/c/.git", "/l/.git", "/m/.git", "/r2/.git"]
-    markers :=
-      #["/c/Cargo.toml", "/l/lakefile.lean", "/m/mise.toml", "/m/crate/Cargo.toml", "/mw/mise.toml",
-        "/r2/Cargo.toml", "/r2/crates/m/Cargo.toml"] }
+/-- The workspace a directory of the project mode checks is in, standing in
+for the workspace finder's answer over their repositories (the core kit's
+`checkoutFound`): `/c` (Cargo), `/l` (Lake), `/m` (mise, with a crate in
+`/m/crate`) and `/r2`, a Cargo workspace with a member crate in
+`/r2/crates/m`, each a main checkout on `main` with no origin, and `/mw`, a
+worktree of `/m`'s repository on `feature`; none elsewhere. -/
+def projectFound (directory : System.FilePath) : Option Workspace.Found :=
+  [checkoutFound "/c", checkoutFound "/l", checkoutFound "/m",
+        checkoutFound "/mw" "feature" "/m/.git", checkoutFound "/r2"].findSome?
+    (· directory)
+
+/-- The marker files there are in the project mode checks' repositories. -/
+def projectMarkers : Array System.FilePath :=
+  #["/c/Cargo.toml", "/l/lakefile.lean", "/m/mise.toml", "/m/crate/Cargo.toml", "/mw/mise.toml",
+    "/r2/Cargo.toml", "/r2/crates/m/Cargo.toml"]
 
 /-- The bindings of the project mode checks: those of the compile mode's
 checks of a listing (`compileListingBindings`), and `C-p
@@ -166,29 +166,28 @@ for the owner `compiled`, and no config. -/
 def projectRegistry : Config.Registry :=
   hookRegistry (pure ()) Compile.shipped
 
-/-- A driver of the project mode checks over `registry`: the world of
-`projectWorld`, with its bindings, the compile checks' jobs, its files, runs
-and children; `none` if making the state was refused. -/
+/-- A driver of the project mode checks over `registry`: its bindings, in
+which a file's workspace is the stand-in's for the finder's answer
+(`projectFound`) and its modes on markers the stand-in's over
+`projectMarkers` (the core kit's `attachByPackage` and `markersByPackage`),
+the compile checks' jobs, its files with the marker files, which are empty,
+its runs and its children; `none` if making the state was refused. -/
 def projectDriver (registry : Config.Registry := projectRegistry) : Option TestDriver :=
-  let model :=
-    projectWorld.jobModel "git"
-      #["/c/src", "/l/Foo", "/m", "/m/crate/src", "/mw", "/r2/crates/m/src"]
+  let markers :=
+    projectMarkers.foldl (fun (files : FileModel) path => files.withFile path .empty) {}
   let files :=
     [("/c/src/main.rs", "fn main() {}\n"), ("/l/Foo/Bar.lean", "x\n"), ("/m/notes.txt", "n\n"),
           ("/m/crate/src/main.rs", "fn main() {}\n"), ("/mw/notes.txt", "w\n"),
           ("/r2/crates/m/src/main.rs", "fn main() {}\n")].foldl
-      (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
-  let keys := compileKeysOf projectBindings
+      (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) markers
+  let keys :=
+    compileKeysOf projectBindings
+      #[attachByPackage projectFound, markersByPackage projectFound projectMarkers]
   let keys := { keys with registered := { keys.registered with compile := registry.compileHook } }
   (Loop.Driver.over keys compileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver =>
     { driver with
-      jobs :=
-        { model with
-          files
-          processes :=
-            { model.processes with
-              scripts := model.processes.scripts ++ projectScripts, streams := projectStreams } } }
+      jobs := { files, processes := { scripts := projectScripts, streams := projectStreams } } }
 
 /-- `driver` once the loop is told the next config generation, as a reload
 tells it. -/
@@ -206,8 +205,9 @@ def offeredAfter (driver : TestDriver) (keys : String) : Option (Array String) :
 
 /-- The checks of the shipped modes (`Compile/Shipped.lean`), on the
 loop's driver over the editor's models, the job model and the process
-model, in the world of `projectWorld`, with only the shipped contributions
-registered. -/
+model, with the stand-ins for the workspace's attach and its modes on
+markers (`projectFound`, `projectMarkers`), with only the shipped
+contributions registered. -/
 def projectModeChecks : List Check :=
   [{  name :=
         "modes criterion 1: a buffer under a Cargo.toml has cargo-mode on with that root, one under a lakefile.lean lake-mode, one under a mise.toml mise-mode, and one in a Cargo crate inside a mise project both, the crate's first"
@@ -278,7 +278,7 @@ def projectModeChecks : List Check :=
                 (·.name) ==
               #["rustc", "lean", "general"]) },
     { name :=
-        "modes criterion 5: mise-mode turning on runs mise tasks ls --json in its root, once, after find-mode-markers, and offers mise run <task> for each task it lists, each in the task's dir"
+        "modes criterion 5: mise-mode turning on runs mise tasks ls --json in its root, once, and offers mise run <task> for each task it lists, each in the task's dir"
       run :=
         pure <|
           match projectDriver with
@@ -291,9 +291,7 @@ def projectModeChecks : List Check :=
             let linted := (fedTo opened (exLine "compile-command lint")).1
             let offer (name line : String) (root : System.FilePath) : Compile.Offer :=
               { mode := "mise-mode", name, line, root }
-            names.filter (fun name => name == Workspace.markerJob || name == Compile.listJob) ==
-                #[Workspace.markerJob, Compile.listJob] &&
-              startedCount opened (miseList "/m") == 1 &&
+            names.contains Compile.listJob && startedCount opened (miseList "/m") == 1 &&
               offeredAfter opened "C-k i" ==
                 some #["build (mise-mode)", "test (mise-mode)", "lint (mise-mode)"] &&
               answered.jobs.processes.started.back? == some (shellCommand "/m" "mise run test") &&

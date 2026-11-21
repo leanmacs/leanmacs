@@ -838,10 +838,14 @@ over the process service, a major mode, ex names and contributions.
   first line and the echo of a visit hold the working directory's whole
   path. `ex-names` holds only its last name, `lean`, where the gate runs
   the editor.
-- **It carries its own copy of the git fixture** (`tests/compile/bin/git`,
+- **It carried its own copy of the git fixture** (`tests/compile/bin/git`,
   a byte-for-byte copy of the core's `tests/workspaces/git`): a linked
   test runs in its package's directory, and a package that read
   `../../tests/workspaces` could not be fetched from anywhere else later.
+  Since features-as-packages phase 6 its linked checks of the shipped
+  modes give a file's workspace and its modes on markers by the core
+  kit's stand-ins (`Editor.Test.attachByPackage`,
+  `Editor.Test.markersByPackage`), so no git is run and the copy is gone.
 - **Dropping the package leaves an editor that starts.** The editor of
   `tests/empty-set` loads config and opens its ex line
   (`tests/headless/core-ex-names`, in `ffi-test`). Until the minibuffer

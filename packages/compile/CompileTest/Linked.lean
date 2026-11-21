@@ -29,9 +29,10 @@ mirrors the module it tests, and a check of its own:
   its lines in the compilation buffer before it ends, and its exit status
   in the last line; its child is reaped;
 - `projectRunChecks` (`CompileTest/Linked/Compile/Shipped.lean`): the
-  shipped modes over the real process service, with the programs of
-  `tests/compile/bin` standing in for cargo, lake, mise and git first on
-  each child's `PATH`, in copies of the trees of `tests/compile`: what
+  shipped modes over the real process and file services, with the programs
+  of `tests/compile/bin` standing in for cargo, lake and mise first on each
+  child's `PATH`, in copies of the trees of `tests/compile`, a file's
+  workspace and its modes on markers given by stand-ins: what
   `compile-command` runs fills the compilation buffer, `next-error` visits
   the tool's location, mise's tasks are offered, and two worktrees keep
   separate error lists;
@@ -154,7 +155,7 @@ def main (arguments : List String) : IO UInt32 := do
     let services ← Editor.Test.Linked.Services.over host.services.completions
     let checks :=
       [hostCheck host printed] ++ CompileTest.compileRunChecks services.jobs fixtures ++
-        CompileTest.projectRunChecks services.jobs fixtures (fixtures / "bin")
+        CompileTest.projectRunChecks services.jobs fixtures
     let failed ← CompileTest.failures checks
     for name in failed do
       IO.eprintln s!"FAILED: {name}"

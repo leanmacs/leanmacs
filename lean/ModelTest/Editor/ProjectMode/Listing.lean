@@ -37,9 +37,10 @@ says what each shows.
 The listing is a core module, so these checks name core modules only: their
 host is handed the kit's opener's commands and jobs, with the job
 `compile-list`, and no package outside the core. Where the workspace finds a
-file's workspace and its marker search turns modes on, they run stand-ins
-written over the core's API (`listingOpened`, `kubeOpened`: the kit's
-`attachAt` and `Workspace.turnOnModes`, as the kit's `markedPackage` does);
+file's workspace and its marker search turns modes on, they run the kit's
+stand-ins written over the core's API (`listingOpened`, `kubeOpened`,
+`Editor/Test/Listing.lean`: the kit's `attachAt` and
+`Workspace.turnOnModes`, as the kit's `markedPackage` does);
 that the workspace's marker search starts a listing after it is held by the
 workspace's `workspaceModesChecks`. What the compile mode makes of a listing, the
 commands `compile-command` offers and runs, is checked with the compile mode
@@ -50,47 +51,6 @@ namespace ModelTest
 
 open Editor
 open Editor.Test
-
-/-- The workspace a file of the listing checks is in, standing in for the
-workspace finder's answer: the repository `/t` or `/t2` that holds it, and
-none for one in `/u`, which is in no repository. -/
-def listingFound (path : System.FilePath) : Option Workspace.Found :=
-  (#["/t2", "/t"] : Array System.FilePath).findSome? fun root =>
-    if (path.parent.map (Workspace.holds root)).getD false then
-      some
-        { root,
-          project := { identity := .commonDir (root / ".git"), name := root.fileName.getD "" } }
-    else none
-
-/-- The on-modes a file of the listing checks turns on, standing in for the
-workspace's modes on markers: `t-mode` at the directory of `/t`, `/t2` or
-`/u` that holds it, each of which holds `t.toml`. -/
-def listingOn (path : System.FilePath) : Array Workspace.OnMode :=
-  match
-    (#["/t2", "/t", "/u"] : Array System.FilePath).find? fun root =>
-      (path.parent.map (Workspace.holds root)).getD false with
-  | some root => #[{ mode := "t-mode", root }]
-  | none => #[]
-
-/-- What the listing checks run once a buffer takes in a file, in place of the
-workspace's attach and its marker search: the file's workspace by
-`listingFound` (the kit's `attachAt`), then its on-modes by `listingOn`, as
-the kit's stand-in for modes on markers (`markedPackage`) turns them on
-(`Workspace.turnOnModes`, the core's). -/
-def listingOpened (id : BufferId) (path : System.FilePath) : EditorM Unit := do
-  if let some found := listingFound path then
-    attachAt found id path
-  Workspace.turnOnModes id (listingOn path)
-
-/-- What the listing checks run once a buffer takes in a file in a workspace
-whose location cannot run commands: the buffer's workspace is the reachable
-`kube` location, registered over the core's API, and then its on-modes by
-`listingOn`. -/
-def kubeOpened (id : BufferId) (path : System.FilePath) : EditorM Unit := do
-  let location := Location.reachable "kube" "pod" "/app"
-  discard <| Workspace.register location "git@github.com:o/r.git"
-  Workspace.setBufferWorkspace id location
-  Workspace.turnOnModes id (listingOn path)
 
 /-- The bindings of the listing checks: the keys that open the listing
 checks' files (`listingFiles`). -/

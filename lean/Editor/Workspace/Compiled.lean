@@ -65,7 +65,7 @@ picks a workspace of the project to find files in
 This module is apart from `Editor/Workspace/Attach.lean` because it is what
 a host is handed, not what config calls.
 
-Pinned by `ModelTest.workspaceChecks`, `CompileTest.compileHookChecks` and
+Pinned by `ModelTest.workspaceChecks`, `ModelTest.workspaceModesChecks` and
 `ModelTest.findFileChecks` and `ModelTest.findInProjectChecks`, on the models, and by
 `ConfigTest.shippedChecks` over the hosts' registry.
 -/

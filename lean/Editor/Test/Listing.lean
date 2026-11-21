@@ -11,6 +11,7 @@ import Editor.Setup
 import Editor.Test.Driver
 import Editor.Test.Keys
 import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.Workspace
 import FilesApi
 
@@ -21,14 +22,18 @@ A contribution with a listing, `t-mode`, and its world: the repositories it
 is found in, what its listing prints in each, and what a driver is asked
 about it. The world it is found in (`listingWorld`, `listingJobModel`)
 names the workspace finder's model and is the workspace feature's kit's
-(`Editor/Workspace/Kit.lean`). It names core modules only, with the stand-in for modes on markers
-(`markedPackage`), so the checks of the listing
+(`Editor/Workspace/Kit.lean`). It names core modules only, with stand-ins
+written over the core's API for what the workspace does once a file opens:
+a listing file's workspace and on-modes (`listingFound`, `listingOn`,
+`listingOpened`, and `kubeOpened` for a workspace that cannot run
+commands), modes on markers turned on as given (`markedPackage`), and the
+marker search over a known set of marker files (`markersBy`,
+`markersByPackage`). So the checks of the listing
 (`ModelTest/Editor/ProjectMode/Listing.lean`) build their host from it with
 no package outside the core, and the compile mode's checks of what it makes
-of a listing, in its package (`packages/compile/CompileTest/Compile.lean`,
-`packages/compile/CompileTest/Compile/Contribution.lean`), use the same
-world. It holds no
-checks of its own.
+of a listing and of its hook, in its package
+(`packages/compile/CompileTest/`), use the same world. It holds no checks of
+its own.
 
 Published for a package's tests: it is a module of the core's test kit, a
 test double in the namespace `Editor.Test`, which a package's test modules
@@ -106,6 +111,78 @@ def markedPackage (on : Array Workspace.OnMode) : Package :=
       Extension.add
         ({ name := "marker-modes", opened := fun id _ => Workspace.turnOnModes id on } :
           FilesApi.Opened) }
+
+/-- The workspace a file of the listing checks is in, standing in for the
+workspace finder's answer: the repository `/t` or `/t2` that holds it, and
+none for one in `/u`, which is in no repository. -/
+def listingFound (path : System.FilePath) : Option Workspace.Found :=
+  (#["/t2", "/t"] : Array System.FilePath).findSome? fun root =>
+    if (path.parent.map (Workspace.holds root)).getD false then
+      some
+        { root,
+          project := { identity := .commonDir (root / ".git"), name := root.fileName.getD "" } }
+    else none
+
+/-- The on-modes a file of the listing checks turns on, standing in for the
+workspace's modes on markers: `t-mode` at the directory of `/t`, `/t2` or
+`/u` that holds it, each of which holds `t.toml`. -/
+def listingOn (path : System.FilePath) : Array Workspace.OnMode :=
+  match
+    (#["/t2", "/t", "/u"] : Array System.FilePath).find? fun root =>
+      (path.parent.map (Workspace.holds root)).getD false with
+  | some root => #[{ mode := "t-mode", root }]
+  | none => #[]
+
+/-- What the listing checks run once a buffer takes in a file, in place of the
+workspace's attach and its marker search: the file's workspace by
+`listingFound` (the kit's `attachAt`), then its on-modes by `listingOn`, as
+the kit's stand-in for modes on markers (`markedPackage`) turns them on
+(`Workspace.turnOnModes`, the core's). -/
+def listingOpened (id : BufferId) (path : System.FilePath) : EditorM Unit := do
+  if let some found := listingFound path then
+    attachAt found id path
+  Workspace.turnOnModes id (listingOn path)
+
+/-- What the listing checks run once a buffer takes in a file in a workspace
+whose location cannot run commands: the buffer's workspace is the reachable
+`kube` location, registered over the core's API, and then its on-modes by
+`listingOn`. -/
+def kubeOpened (id : BufferId) (path : System.FilePath) : EditorM Unit := do
+  let location := Location.reachable "kube" "pod" "/app"
+  discard <| Workspace.register location "git@github.com:o/r.git"
+  Workspace.setBufferWorkspace id location
+  Workspace.turnOnModes id (listingOn path)
+
+/-- Turns on, in the buffer `id` of the file at `path`, the on-modes the
+marker files `present` give by the core's rules (`Workspace.markerSearchPaths`,
+`Workspace.onModes`) for the marker modes registered now: looking from the
+file's directory up to the root of the workspace `found` answers for it, or
+in the directory alone when it answers none, as the workspace's marker
+search bounds its look. A stand-in for that search over a known set of
+marker files, which stats none and starts no job. -/
+def markersBy (found : System.FilePath → Option Workspace.Found) (present : Array System.FilePath)
+    (id : BufferId) (path : System.FilePath) : EditorM Unit := do
+  let some directory := path.parent.map Process.trimmed | return
+  let (settings, _) ← RegistryRequest.ask .workspaceSettings
+  let bound := ((found directory).map (·.root)).getD directory
+  let searched :=
+    Workspace.markerSearchPaths (Workspace.markersOf settings.markerModes) directory bound
+  let seen :=
+    searched.filterMap fun (at_, file, marker) =>
+      if present.contains file then some (at_, marker) else none
+  Workspace.turnOnModes id (Workspace.onModes settings.markerModes directory bound seen)
+
+/-- A package, standing in for the workspace's modes on markers, that
+registers `markersBy found present` at `files-api`'s hook `FilesApi.Opened`:
+for a driver or a rig whose files `files-api`'s fake opens, registered after
+the stand-in for the workspace's attach, as the workspace looks for markers
+once a file's workspace is found. -/
+def markersByPackage (found : System.FilePath → Option Workspace.Found)
+    (present : Array System.FilePath) : Package :=
+  { name := "test-marked"
+    setup :=
+      Extension.add
+        ({ name := "marker-modes", opened := markersBy found present } : FilesApi.Opened) }
 
 /-- The on-modes of the buffer the view 0 of `driver` shows. -/
 def shownOnModes (driver : TestDriver) : Option (Array Workspace.OnMode) := do

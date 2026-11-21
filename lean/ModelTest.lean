@@ -1530,9 +1530,16 @@ Listing a workspace's files is checked in Lean alone too:
   said under the continuation's name, the arguments a caller carries
   through the find job handed on, and the order's round trip;
 - `workspaceModesChecks`: the workspace's modes on markers
-  (`Editor/Workspace/Modes.lean`), on the workspace driver over the listing
-  checks' world: a file under a root holding a marker turns its mode on
-  through the marker search, whose listing runs after it once.
+  (`Editor/Workspace/Modes.lean`), on the workspace driver: over the
+  listing checks' world, a file under a root holding a marker turns its
+  mode on through the marker search, whose listing runs after it once; over
+  a world of markers (they were `CompileTest.compileHookChecks`' until the
+  compile mode's tests took stand-ins for the workspace), which markers
+  turn which modes on, with which roots, nearest first, a marker above the
+  workspace's root or, with no workspace, outside the file's directory
+  turning none on, no marker job with no contribution, a cached directory's
+  second file searched with no git run, and the marker order's round
+  trip.
 -/
 
 namespace ModelTest

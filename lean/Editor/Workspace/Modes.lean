@@ -41,11 +41,18 @@ and imports this module (`packages/compile/Compile.lean`).
   contributions apply to files opened after it.
 - **Reading them back** is the core's too (`Workspace.onModesOf`).
 
-Pinned by `ModelTest.listingChecks`, on the loop's driver over the editor's
-models and the job model, with a host of core packages alone: a file's open
-turns its markers' mode on and checks its listing. The compile mode's
+Pinned by `ModelTest.workspaceModesChecks`, on the workspace driver over the
+editor's models and the job model: which markers turn which modes on, with
+which roots and in what order, that no job starts with no contribution and
+that a second file of a cached directory runs the marker job alone, the
+marker order's arguments, and that a mode turned on starts its listing
+after the marker job. Turning on-modes on is the core's
+(`ModelTest.turnOnModesChecks`), and the marker search's own contract
+(`Workspace.MarkerContract`) holds of its model and over the real file
+service. The compile mode's
 checks hold the rest of what a mode's turning on means for it
-(`CompileTest.compileHookChecks`).
+(`CompileTest.compileHookChecks`), on the core kit's stand-ins for this
+search.
 -/
 
 namespace Editor.Workspace
