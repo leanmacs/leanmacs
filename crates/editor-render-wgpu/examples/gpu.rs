@@ -32,9 +32,13 @@
 //!    by about 9 of 255 at half coverage. Then a control that must miss:
 //!    the GPU's encoded picture against the CPU's linear one, with the
 //!    settings otherwise the same, must differ by more than 3, or the
-//!    comparison cannot see the blending (`WITHIN`, and exit 1). Each
-//!    renderer says which space it blends in. The fixture has no colour
-//!    glyph, so a colour image is never drawn here;
+//!    comparison cannot see the blending (`WITHIN`, and exit 1). Then the
+//!    fixture with every glyph a colour image, made by a rasteriser of
+//!    this example's ([`InColour`]), blended encoded: the GPU against the
+//!    CPU, then the control, against the CPU blending in linear light,
+//!    which must miss. The fixture's fonts have no colour glyph, so this
+//!    is where the shader's colour image is drawn. Each renderer says
+//!    which space it blends in;
 //! 3. prints how long a first frame, a frame with a row edited and a
 //!    frame that differs only in its cursor took, with the rows each
 //!    built. The times are for a person to read: nothing is asserted of
@@ -46,6 +50,7 @@ use std::time::{Duration, Instant};
 
 use editor_layout::face::Color;
 use editor_layout::frame::Frame;
+use editor_raster::{GlyphImage, GlyphRequest, Kind, Rasterize};
 use editor_render::contract;
 use editor_render::port::{DrawRequest, Drawn, Renderer};
 use editor_render_wgpu::{
@@ -94,9 +99,67 @@ fn draw(renderer: &mut WgpuRenderer, frame: &Arc<Frame>) -> (Drawn, Duration) {
     })
 }
 
-/// What the headless adapter draws of `frame` with `settings`.
-fn on_the_cpu(frame: &Arc<Frame>, settings: Settings) -> Image {
+/// What makes a comparison's glyph images.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Glyphs {
+    /// The fixture's fonts, through swash, as a renderer makes them until
+    /// it is handed a rasteriser.
+    Fonts,
+    /// [`InColour`], for every glyph.
+    InColour,
+}
+
+/// A rasteriser that draws every glyph as a colour image, which the
+/// fixture's fonts have none of: a box of [`InColour::WIDTH`] by
+/// [`InColour::HEIGHT`] pixels from the pen, in [`InColour::COLOUR`], its
+/// alpha falling by 4 of 255 at each pixel across and down from opaque to
+/// 19 of 255, and its colours multiplied by its alpha as a colour image's
+/// are. So the colour image is laid over the fixture's grounds at sixty
+/// alphas.
+struct InColour;
+
+impl InColour {
+    /// How far across the box is.
+    const WIDTH: u32 = 6;
+    /// How far down, and how far above the baseline its top.
+    const HEIGHT: u32 = 10;
+    /// Its colour, as sRGB values, each far from its linear light.
+    const COLOUR: [u8; 3] = [0x20, 0x70, 0xc0];
+}
+
+impl Rasterize for InColour {
+    fn rasterize(&mut self, _: &GlyphRequest<'_>) -> Option<GlyphImage> {
+        let pixels = Self::WIDTH * Self::HEIGHT;
+        let data = (0..pixels)
+            .flat_map(|pixel| {
+                let alpha = 255 - 4 * pixel;
+                let times = |channel: u8| ((u32::from(channel) * alpha + 127) / 255) as u8;
+                let [red, green, blue] = Self::COLOUR;
+                [times(red), times(green), times(blue), alpha as u8]
+            })
+            .collect();
+        Some(GlyphImage {
+            kind: Kind::Color,
+            width: Self::WIDTH,
+            height: Self::HEIGHT,
+            left: 0,
+            top: Self::HEIGHT as i32,
+            data,
+        })
+    }
+
+    fn name(&self) -> &'static str {
+        "the example's colour images"
+    }
+}
+
+/// What the headless adapter draws of `frame` with `settings`, its glyph
+/// images made by `glyphs`.
+fn on_the_cpu(frame: &Arc<Frame>, settings: Settings, glyphs: Glyphs) -> Image {
     let mut renderer = HeadlessRenderer::new(settings);
+    if glyphs == Glyphs::InColour {
+        renderer = renderer.rasterizing_with(InColour);
+    }
     renderer.draw(&DrawRequest {
         frame,
         target: common::TARGET,
@@ -104,11 +167,12 @@ fn on_the_cpu(frame: &Arc<Frame>, settings: Settings) -> Image {
     renderer.image().clone()
 }
 
-/// What a GPU renderer with `settings` draws of `frame`, read back, after
-/// it says which space it blends in; `None`, said, when there is no
-/// renderer or the draw is refused.
-fn on_the_gpu(frame: &Arc<Frame>, settings: Settings) -> Option<Image> {
+/// What a GPU renderer with `settings` draws of `frame`, its glyph images
+/// made by `glyphs`, read back, after it says which space it blends in;
+/// `None`, said, when there is no renderer or the draw is refused.
+fn on_the_gpu(frame: &Arc<Frame>, settings: Settings, glyphs: Glyphs) -> Option<Image> {
     let mut renderer = match on_this_machine(settings) {
+        Ok(renderer) if glyphs == Glyphs::InColour => renderer.rasterizing_with(InColour),
         Ok(renderer) => renderer,
         Err(none) => {
             println!("render-gpu: {none}");
@@ -134,8 +198,8 @@ fn on_the_gpu(frame: &Arc<Frame>, settings: Settings) -> Option<Image> {
 /// Whether the GPU's picture of `frame` with `settings` is within the
 /// tolerance of the CPU's with the same settings, which is `against`.
 fn held_to_the_cpu(frame: &Arc<Frame>, settings: Settings, against: &str) -> bool {
-    on_the_gpu(frame, settings)
-        .is_some_and(|image| compared(&image, &on_the_cpu(frame, settings), against))
+    on_the_gpu(frame, settings, Glyphs::Fonts)
+        .is_some_and(|image| compared(&image, &on_the_cpu(frame, settings, Glyphs::Fonts), against))
 }
 
 /// Says how `image`, read back from the GPU, differs from `expected`,
@@ -237,7 +301,11 @@ fn main() -> ExitCode {
         match on_this_machine(plain) {
             Ok(mut other) => {
                 held &= draw(&mut other, &fixture).0.presented;
-                held &= compared(&other.read_back(), &on_the_cpu(&fixture, plain), masks);
+                held &= compared(
+                    &other.read_back(),
+                    &on_the_cpu(&fixture, plain, Glyphs::Fonts),
+                    masks,
+                );
             }
             Err(none) => {
                 held = false;
@@ -247,7 +315,7 @@ fn main() -> ExitCode {
     } else {
         // An adapter that cannot blend by a coverage for each channel
         // draws plain masks whatever it is told.
-        held &= compared(&image, &on_the_cpu(&fixture, plain), masks);
+        held &= compared(&image, &on_the_cpu(&fixture, plain, Glyphs::Fonts), masks);
     }
 
     // The same frame at the macOS setting, blended as macOS blends: the
@@ -300,13 +368,42 @@ fn main() -> ExitCode {
         blending: Blending::Linear,
         ..macos_plain
     };
-    match on_the_gpu(&fixture, macos_plain) {
+    match on_the_gpu(&fixture, macos_plain, Glyphs::Fonts) {
         Some(image) => {
             let against =
                 "the headless adapter's picture in linear light (the control, which must miss)";
-            if compared(&image, &on_the_cpu(&fixture, linear_plain), against) {
+            if compared(
+                &image,
+                &on_the_cpu(&fixture, linear_plain, Glyphs::Fonts),
+                against,
+            ) {
                 held = false;
                 println!("render-gpu: WITHIN: the comparison cannot see the blending");
+            }
+        }
+        None => held = false,
+    }
+
+    // Colour images, blended encoded: every glyph of the fixture one, the
+    // GPU held to the CPU; and the control, the GPU against the CPU
+    // blending in linear light, which must miss.
+    match on_the_gpu(&fixture, macos_plain, Glyphs::InColour) {
+        Some(image) => {
+            held &= compared(
+                &image,
+                &on_the_cpu(&fixture, macos_plain, Glyphs::InColour),
+                "the headless adapter's picture with every glyph a colour image, encoded",
+            );
+            let against = "the headless adapter's picture with every glyph a colour image, in linear light (the control, which must miss)";
+            if compared(
+                &image,
+                &on_the_cpu(&fixture, linear_plain, Glyphs::InColour),
+                against,
+            ) {
+                held = false;
+                println!(
+                    "render-gpu: WITHIN: the comparison cannot see how a colour image is blended"
+                );
             }
         }
         None => held = false,

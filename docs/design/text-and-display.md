@@ -4437,10 +4437,11 @@ frame journal and the renderer's counters.
   CPU's blend state one arithmetic twice, kept alike by hand.
 - **No colour glyph from a real font.** No fixture font has one. Colour
   is tested in the cache, the painter and the compositor on images the
-  tests make, and never through the rasteriser. No GPU has drawn a
-  colour image either: the on-demand check draws the fixture frame, in
-  subpixel masks and in plain ones, and that path of the shader is only
-  validated. COLR version 1 glyphs are not drawn in colour by `swash` at
+  tests make, and never through the rasteriser. A GPU draws colour
+  images only in the on-demand check (`mise run render-gpu`), from a
+  rasteriser of the check's own that makes every glyph of the fixture
+  one, blended in sRGB-encoded values; in linear light no GPU has drawn
+  one, and that path of the shader is only validated. COLR version 1 glyphs are not drawn in colour by `swash` at
   the pin, and a colour bitmap's alpha convention was not checked.
 - **What only a person at a display can tune.** Hinting (on by
   default, off at the macOS weight), the weight of text (a per-platform

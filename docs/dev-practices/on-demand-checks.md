@@ -1409,9 +1409,14 @@ the first two held:
    control that must miss: the GPU's encoded picture against the CPU's
    linear one, otherwise alike, must differ by more than 3, or the check
    prints `WITHIN: the comparison cannot see the blending` and fails.
-   Each renderer prints the space it blends in. The fixture has no colour
-   glyph, so a colour image is drawn by no GPU here: that path of the
-   shader is validated in the gate and has never been seen;
+   Then the fixture with every glyph a colour image, made by a rasteriser
+   of the example's own (`InColour`: a box of one colour at sixty alphas,
+   its colours multiplied by its alpha), since the fixture's fonts have
+   no colour glyph: blended encoded, against the CPU drawing it alike,
+   and then the control, against the CPU blending it in linear light,
+   which must miss, or the check prints `WITHIN: the comparison cannot
+   see how a colour image is blended` and fails. Each renderer prints the
+   space it blends in;
 3. prints how long a first frame, a frame with a row edited and a frame
    that differs only in its cursor took, with the rows each built. The
    times are of one run of a debug build: nothing is asserted of them and
@@ -1460,6 +1465,17 @@ macOS setting, 0 pixels differed in plain masks and 0 in subpixel masks;
 the grey text at a contrast of 1, encoded, 0 pixels. Each renderer
 said it blends in the space it was asked to. The control missed as it
 must: 1556 pixels differed, the worst by 73 of 255.
+
+Run again on 2026-11-20 on the same machine, with the colour-image
+comparison added (a review of phase 2 found that no check drew the
+shader's encoded colour image): exit status 0; every figure above as
+before; with every glyph a colour image, blended encoded, 0 pixels
+differed from the CPU's picture. Its control missed as it must: against
+the CPU blending in linear light, 1914 pixels differed, the worst by 53
+of 255. With the shader's encoded colour image left multiplied by its
+alpha (the division by it taken out, a change made for the run and
+undone), the colour comparison failed, 1914 pixels differing, the worst
+by 74: so the check sees that path of the shader.
 
 ## The renderer on Linux, on demand
 
