@@ -51,8 +51,8 @@ use editor_ffi::snapshot::{Snapshot, editor_ffi_snapshot_free, editor_ffi_snapsh
 use editor_ffi::text::editor_ffi_text_free;
 use editor_text::file::FIXTURES;
 
-/// How long the test waits for something that should happen at once. Only
-/// broken code takes this long, and the test then fails instead of hanging.
+/// hang guard: the next completion or event; only a hang reaches the bound, and the test then fails as a hang. Each
+/// wait on it is for something that should happen at once.
 const DEADLINE: Duration = Duration::from_secs(10);
 
 /// The tag of the completion queue.

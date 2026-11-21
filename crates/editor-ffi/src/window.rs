@@ -1412,14 +1412,13 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    /// How long a test waits for something that should happen at once. Only
-    /// broken code takes this long, and the test then fails instead of
-    /// hanging.
+    /// hang guard: the next event the run pushes, what it draws, or its
+    /// return; only a hang reaches the bound, and the test then fails as a hang. Each wait on it is for something that should
+    /// happen at once.
     const DEADLINE: Duration = Duration::from_secs(5);
 
     /// hang guard: the scripted run parks to wait for its close
-    /// ([`ScriptedPlatform::wait_parked`]); only a run that never parks
-    /// takes this long.
+    /// ([`ScriptedPlatform::wait_parked`]); only a hang reaches the bound, and the test then fails as a hang.
     const PARKS: Duration = Duration::from_secs(5);
 
     /// An event from the window, as it should arrive.

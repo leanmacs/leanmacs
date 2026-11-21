@@ -14,8 +14,10 @@ use editor_ffi::main_thread::{
     editor_ffi_main_thread_serve,
 };
 
-/// How long the whole test may take. The service loop never returns, so a
-/// probe that is never answered would otherwise hang `cargo test`.
+/// hang guard: every probe answered and `main` returning, which ends the
+/// process before the watchdog wakes; only a hang reaches the bound, and the test then fails as a hang. It is how long the whole test
+/// may take: the service loop never returns, so a probe that is never
+/// answered would otherwise hang `cargo test`.
 const LIMIT: Duration = Duration::from_secs(30);
 
 fn main() {

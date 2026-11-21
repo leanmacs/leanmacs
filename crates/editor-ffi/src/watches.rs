@@ -360,6 +360,7 @@ mod tests {
     use crate::timers::Monotonic;
     use crate::words::tests::buffer;
 
+    /// hang guard: the next completion of the service; only a hang reaches the bound, and the test then fails as a hang.
     const DEADLINE: Duration = Duration::from_secs(5);
 
     fn kinds(of: &[Kind]) -> Kinds {

@@ -35,7 +35,8 @@ use editor_ffi::text::{ByteRange, editor_ffi_text_find, editor_ffi_text_free};
 /// something that should happen at once: only broken code takes this long.
 const DEADLINE: Duration = Duration::from_secs(5);
 
-/// [`DEADLINE`] in milliseconds, as the C functions take it.
+/// hang guard: as [`DEADLINE`], in milliseconds, as the C functions take
+/// it.
 const DEADLINE_MS: u64 = 5000;
 
 /// The tag of the editor queue.

@@ -1612,9 +1612,8 @@ mod tests {
 
     use super::*;
 
-    /// How long a test waits for something that should happen at once. Only
-    /// a broken service takes this long, and the test then fails instead of
-    /// hanging.
+    /// hang guard: the next completion of the service, or the release a held test gives; only a hang reaches the bound, and the test then fails as a hang. Each wait on it is for something that
+    /// should happen at once.
     const DEADLINE: Duration = Duration::from_secs(5);
 
     /// The file the tests' fake holds.

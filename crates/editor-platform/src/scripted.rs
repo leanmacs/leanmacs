@@ -341,6 +341,8 @@ impl ScriptedPlatform {
                     if left.is_zero() {
                         return false;
                     }
+                    // hang guard: the run's park, which notifies `parks`;
+                    // only a run that never parks reaches the bound.
                     self.parks
                         .wait_timeout(state, left)
                         .unwrap_or_else(PoisonError::into_inner)
@@ -509,9 +511,10 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    /// How long a test waits for something that should happen at once. Only
-    /// a broken platform takes this long, and the test then fails instead of
-    /// hanging.
+    /// hang guard: the next thing the run reports or says, or its return;
+    /// only a hang reaches the bound, and the test then fails as a hang
+    /// instead of hanging. Each wait on it is for something that should
+    /// happen at once.
     const DEADLINE: Duration = Duration::from_secs(5);
 
     /// hang guard: the run parks to wait for its close

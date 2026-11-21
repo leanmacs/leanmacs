@@ -28,13 +28,13 @@ use editor_ffi::window::{
 };
 use editor_platform::{Input, Key, LogicalKey, Modifiers, PhysicalKey, ScriptedPlatform};
 
-/// How long the test waits for something that should happen at once. Only
-/// broken code takes this long, and the test then fails instead of hanging.
+/// hang guard: the next event on the editor queue, or the run's return;
+/// only a hang reaches the bound, and the test then fails as a hang. Each wait on it is for something that should
+/// happen at once.
 const DEADLINE: Duration = Duration::from_secs(5);
 
 /// hang guard: the scripted run parks to wait for its close
-/// (`editor_ffi_window_await_parked`), in milliseconds; only a run that
-/// never parks takes this long.
+/// (`editor_ffi_window_await_parked`), in milliseconds; only a hang reaches the bound, and the test then fails as a hang.
 const PARKS_MS: u64 = 5_000;
 
 /// The tag of the editor queue.

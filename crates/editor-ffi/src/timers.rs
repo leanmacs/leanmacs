@@ -436,9 +436,8 @@ mod tests {
 
     use editor_service::Worker;
 
-    /// How long a test waits for something that should happen at once. Only
-    /// a broken service takes this long, and the test then fails instead of
-    /// hanging.
+    /// hang guard: the next completion of the service, or the release a held test gives; only a hang reaches the bound, and the test then fails as a hang. Each wait on it is for something that
+    /// should happen at once.
     const DEADLINE: Duration = Duration::from_secs(5);
 
     /// A timer service with its loop on a thread of the test's own and its
@@ -662,6 +661,8 @@ mod tests {
         assert!(rig.timers.start(1, deadline));
 
         assert_eq!(rig.next(), 1);
+        // real time under test: the real clock's deadline, a lower bound
+        // that load only makes surer.
         assert!(rig.timers.now_ms() >= deadline);
         rig.stop();
     }

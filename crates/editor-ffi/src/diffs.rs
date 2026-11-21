@@ -540,8 +540,8 @@ mod tests {
     use super::*;
     use crate::words::tests::words_of;
 
-    /// How long a test waits for a completion that should come at once:
-    /// a guard against a hang, never a result.
+    /// hang guard: the next completion, or the release a held test gives;
+    /// only a hang reaches the bound, and the test then fails as a hang. It is never a result.
     const DEADLINE: Duration = Duration::from_secs(5);
 
     fn snapshot(text: &str) -> editor_text::Snapshot {

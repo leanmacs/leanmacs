@@ -24,8 +24,8 @@ use editor_ffi::window::{
 };
 use editor_platform::{Input, Key, LogicalKey, Modifiers};
 
-/// How long the test waits for something that should happen at once. Only
-/// broken code takes this long, and the test then fails instead of hanging.
+/// hang guard: the next event on the editor queue; only a hang reaches the bound, and the test then fails as a hang. Each
+/// wait on it is for something that should happen at once.
 const DEADLINE: Duration = Duration::from_secs(5);
 
 /// The bytes of `words`, as they cross.

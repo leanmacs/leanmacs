@@ -19,8 +19,8 @@ use editor_ffi::watches::{
     editor_ffi_watches_take,
 };
 
-/// How long a test waits for something that should happen at once. Only
-/// broken code takes this long, and the test then fails instead of hanging.
+/// hang guard: the next completion or event; only a hang reaches the bound, and the test then fails as a hang.
+/// Each wait on it is for something that should happen at once.
 pub const DEADLINE: Duration = Duration::from_secs(10);
 
 /// What one event of the completion queue says: its source's kind and id,

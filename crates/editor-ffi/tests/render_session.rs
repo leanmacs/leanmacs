@@ -45,8 +45,8 @@ use editor_render::clock::FakeClock;
 use editor_render::fake::RecordingRenderer;
 use editor_render::port::{DrawRequest, Drawn, Renderer, Target};
 
-/// How long a word from another thread is waited for before the test
-/// fails.
+/// hang guard: a word from another thread, a draw asked of the renderer or
+/// a run's return; only a hang reaches the bound, and the test then fails as a hang.
 const BOUND: Duration = Duration::from_secs(10);
 
 /// A long time on the loop's clock: longer than the loop waits between two

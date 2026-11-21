@@ -192,9 +192,13 @@ fn name(canvas: &Canvas) -> &'static str {
     }
 }
 
-/// How long a run is left alone after its first input, before it is asked to
-/// close, unless [`Check::settling_for`] says otherwise. A run that a close
-/// made before it would end returns in this time.
+/// hang guard, run out on purpose: the run left alone, which a platform that
+/// keeps the contract does not end; the check pins the hang. It is how long a
+/// run is left alone after its first input, before it is asked to close,
+/// unless [`Check::settling_for`] says otherwise. A run that a close made
+/// before it would end returns in this time. Deciding that by a window and
+/// not by an idle notification from the port is follow-up
+/// `platform-contract-settle-window-on-time`.
 pub const SETTLE: Duration = Duration::from_millis(50);
 
 /// The title the check asks for with no run in progress, before the run and
@@ -310,6 +314,9 @@ impl Shared {
     /// Parks the calling thread until `ready` holds of the progress or
     /// `limit` has passed, and returns the progress, locked.
     fn wait(&self, limit: Duration, ready: impl Fn(&Progress) -> bool) -> MutexGuard<'_, Progress> {
+        // hang guard: `ready` holding, which each change of the progress
+        // notifies; only a hang reaches the limit, and the check then fails
+        // as a hang. The settling time runs out on purpose (`SETTLE`).
         let deadline = Instant::now() + limit;
         let mut progress = self.progress();
         loop {
@@ -317,6 +324,7 @@ impl Shared {
             if ready(&progress) || left.is_zero() {
                 return progress;
             }
+            // hang guard: as above, the wait ends on the progress changing.
             progress = self
                 .changed
                 .wait_timeout(progress, left)
@@ -459,6 +467,11 @@ impl Check {
                 (None, Some(started)) => started + self.bound + self.settle + self.bound,
                 (None, None) => continue,
             };
+            // hang guard: the run's return, which the progress notifies;
+            // only a hang reaches the bound, and the check then fails as a
+            // hang. That a loaded machine can take longer than the bound
+            // and be judged so is follow-up
+            // `platform-contract-settle-window-on-time`.
             if Instant::now() >= allowed_until {
                 return Err(Violation::DidNotReturn(self.bound));
             }
@@ -495,6 +508,9 @@ impl Check {
         let Some(asked) = progress.close_asked else {
             return Err(Violation::ReturnedBeforeClose);
         };
+        // hang guard: the run's return after the close; only a hang takes
+        // longer than the bound. Judging it on elapsed time, which load can
+        // stretch, is follow-up `platform-contract-settle-window-on-time`.
         if returned_at.saturating_duration_since(asked) > self.bound {
             return Err(Violation::DidNotReturn(self.bound));
         }
@@ -546,13 +562,16 @@ mod tests {
     use super::*;
     use crate::{Resize, ScriptedPlatform};
 
-    /// A bound no platform that keeps the contract comes near: a check that
-    /// holds returns long before it, and one that fails for another reason
-    /// does not wait for it.
+    /// hang guard: the run's reports and its return once asked to close;
+    /// only a hang reaches the bound, and the check then fails as a hang. No
+    /// platform that keeps the contract comes near it: a check that holds
+    /// returns long before it, and one that fails for another reason does
+    /// not wait for it.
     const GENEROUS: Duration = Duration::from_secs(5);
 
-    /// A bound short enough to wait out, for a platform that is expected to
-    /// miss it.
+    /// hang guard, run out on purpose: a platform that never returns, held
+    /// for good; the check pins the hang. A bound short enough to wait out,
+    /// for a platform that is expected to miss it.
     const SHORT: Duration = Duration::from_millis(50);
 
     /// Something a thread waits for and another opens, once.
@@ -959,8 +978,8 @@ mod tests {
     }
 
     /// A platform that remembers a close made before its run: the run
-    /// reports `Opened` and returns a moment later, with no close asked of
-    /// it, as an event loop does that finds a stale close in its queue.
+    /// reports `Opened` and returns, with no close asked of it, as an event
+    /// loop does that finds a stale close in its queue.
     #[derive(Default)]
     struct Remembers {
         /// Opened by any close, for good, whether a run is in progress or
@@ -978,7 +997,6 @@ mod tests {
             drawer(told_opened());
             report(opened("remembers"));
             self.closed.wait();
-            thread::sleep(Duration::from_millis(10));
             drawer(Canvas::Closing);
             Ok(())
         }
@@ -1157,6 +1175,8 @@ mod tests {
         thread::spawn(move || runner.run(&*platform));
 
         assert_eq!(check.verdict(), Ok(()));
+        // real time under test: the settling time, a lower bound that load
+        // only makes surer.
         let took = began.elapsed();
         assert!(took >= settle, "the run was left alone: {took:?}");
     }
@@ -1342,10 +1362,14 @@ mod tests {
 
         let verdict = check(Arc::clone(&platform), WindowOptions::default(), SHORT);
 
+        // real time under test: the platform has its whole bound, a lower
+        // bound that load only makes surer.
         let took = began.elapsed();
         platform.released.open();
         assert_eq!(verdict, Err(Violation::DidNotReturn(SHORT)));
         assert!(took >= SHORT, "the platform had its whole bound: {took:?}");
+        // hang guard, run out on purpose: the `Deaf` platform never
+        // returns, so the check ends at its bound; the check pins the hang.
         assert!(took < GENEROUS, "the check ended at the bound: {took:?}");
     }
 
