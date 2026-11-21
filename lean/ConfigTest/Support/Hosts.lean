@@ -429,6 +429,15 @@ def settle (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
   return (← driven.await waitGuard answer line waitHung waitBlocked) == .settled
 
+/-- Waits only until the host has handled everything sent so far, whatever
+is still running, and publishes nothing (the wait's marker is a probe):
+`settled` once it has. A stepped host handles what was sent only in a wait,
+so a check that sends a request whose start it then watches for asks this
+first. -/
+def handled (driven : Driven) (waitGuard : Nat) : IO Headless.Wait :=
+  driven.waitWhile waitGuard (fun _ => pure false) none .unanswered "answer" waitGuard none
+    IO.eprintln (fun _ => pure ()) false
+
 /-- An advance's wait, as the script's `advance` makes it: until the fake
 clock holds a wait due within `milliseconds`, publishing nothing.
 `settled` once one is due, and `working` at idle with none due, which is a
@@ -560,6 +569,11 @@ is running, with `hangGuard` and the session's `waitHung` and
 `waitBlocked`: whether it did. -/
 def settle (session : Session) : IO Bool :=
   session.drive.settle hangGuard (waitHung := session.waitHung) (waitBlocked := session.waitBlocked)
+
+/-- Waits until the host has handled everything sent so far, with
+`hangGuard`, and publishes nothing (`Driven.handled`): whether it did. -/
+def handled (session : Session) : IO Bool :=
+  return (← session.drive.handled hangGuard) == .settled
 
 /-- Waits until the host has handled everything sent so far and no job is
 running, with `hangGuard` and the session's `waitHung` and `waitBlocked`:

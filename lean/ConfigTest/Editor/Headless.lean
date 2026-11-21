@@ -339,7 +339,7 @@ tests, asserted on the lines the host emits. -/
 def hostChecks (context : Context) : List Check :=
   [{ name := "reload replaces a command",
      run :=
-       withRealHost context greetConfig fun session => do
+       withHost context greetConfig fun session => do
          session.ask [.reload]
          session.ask [.run "greet", .show]
          session.write "Config/Greet.lean" (greetText "v2")
@@ -379,7 +379,7 @@ def hostChecks (context : Context) : List Check :=
             (← stage.log.get) == #[s!"package: {Package.namedTwice "one"}"] },
     { name := "a type error keeps the old config"
       run :=
-        withRealHost context greetConfig fun session => do
+        withHost context greetConfig fun session => do
           session.ask [.reload]
           session.write "Config/Greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
           session.ask [.reload]
@@ -390,7 +390,7 @@ def hostChecks (context : Context) : List Check :=
                 "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a throwing setup keeps the old config"
       run :=
-        withRealHost context greetConfig fun session => do
+        withHost context greetConfig fun session => do
           session.ask [.reload]
           session.write "init.lean"
               (overGreet
@@ -405,7 +405,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a setup that registers a command name twice keeps the old config, and the diagnostic names the command"
       run :=
-        withRealHost context greetConfig fun session => do
+        withHost context greetConfig fun session => do
           session.ask [.reload]
           session.write "init.lean"
               (overGreet
@@ -419,7 +419,7 @@ def hostChecks (context : Context) : List Check :=
                 "run greet: ok", "commands: greet", "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a reload does not double-register"
       run :=
-        withRealHost context greetConfig fun session => do
+        withHost context greetConfig fun session => do
           session.ask [.reload]
           session.ask [.reload]
           session.write "Config/Greet.lean" (greetText "v1" ++ "\n-- changed\n")
@@ -432,7 +432,7 @@ def hostChecks (context : Context) : List Check :=
                 "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a store value survives a reload"
       run :=
-        withRealHost context [("init.lean", counterText 1)] fun session => do
+        withHost context [("init.lean", counterText 1)] fun session => do
           session.ask [.reload]
           session.ask [.run "bump", .run "bump", .show]
           session.write "init.lean" (counterText 10)
@@ -446,7 +446,7 @@ def hostChecks (context : Context) : List Check :=
                 "store counter v1: 12"] },
     { name := "a store migrates when a reload changes its type and raises its version"
       run :=
-        withRealHost context [("init.lean", counterText 1)] fun session => do
+        withHost context [("init.lean", counterText 1)] fun session => do
           session.ask [.reload]
           session.ask [.run "bump", .run "bump"]
           session.write "init.lean" labelledCounterText
@@ -460,7 +460,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a reload that installs prints the config's warnings, then a warning for the store value it lost"
       run :=
-        withRealHost context [("init.lean", counterText 1)] fun session => do
+        withHost context [("init.lean", counterText 1)] fun session => do
           session.ask [.reload]
           session.ask [.run "bump"]
           session.write "init.lean" unmigratedCounterText
@@ -473,7 +473,7 @@ def hostChecks (context : Context) : List Check :=
                 "store counter v2: 0"] },
     { name := "a config that declares initialize keeps the old config"
       run :=
-        withRealHost context greetConfig fun session => do
+        withHost context greetConfig fun session => do
           session.ask [.reload]
           -- No command of this config reads the constant, so a host that
           -- wrongly installed it would fail this check, not abort.
@@ -488,7 +488,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a store command the library refuses is reported as refused: the store keeps its value, and the text the command made before the refusal stays"
       run :=
-        withRealHost context [("init.lean", refusedText)] fun session => do
+        withHost context [("init.lean", refusedText)] fun session => do
           session.ask [.reload]
           session.ask [.run "bump", .run "broken", .show]
           return (← session.lines) ==
@@ -498,7 +498,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "show lists no text a command released, and the texts made before and after it keep the index they were made with"
       run :=
-        withRealHost context [("init.lean", releasingText)] fun session => do
+        withHost context [("init.lean", releasingText)] fun session => do
           session.ask [.reload]
           session.ask [.run "drop", .show]
           return (← session.lines) ==
@@ -508,7 +508,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command refused for an offset that is no position, and one refused for a snapshot that does not exist, are each reported with that refusal's name"
       run :=
-        withRealHost context [("init.lean", releasingText)] fun session => do
+        withHost context [("init.lean", releasingText)] fun session => do
           session.ask [.reload]
           session.ask [.run "inside", .run "stale"]
           return (← session.lines) ==
@@ -517,7 +517,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command whose transaction's changes do not fit, and one whose transaction's selection does not, are each reported with that refusal's name"
       run :=
-        withRealHost context [("init.lean", transactionText)] fun session => do
+        withHost context [("init.lean", transactionText)] fun session => do
           session.ask [.reload]
           session.ask [.run "short", .run "astray"]
           return (← session.lines) ==
@@ -526,7 +526,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command that asks a text's log about a revision it has not reached, and one that asks about a revision it has forgotten, are each reported with that refusal's name"
       run :=
-        withRealHost context [("init.lean", logText)] fun session => do
+        withHost context [("init.lean", logText)] fun session => do
           session.ask [.reload]
           session.ask [.run "ahead", .run "behind"]
           return (← session.lines) ==
@@ -535,7 +535,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command that marks a text reads its marker back where an edit moved it, and one that asks for a marker it gave up is reported with that refusal's name"
       run :=
-        withRealHost context [("init.lean", markerText)] fun session => do
+        withHost context [("init.lean", markerText)] fun session => do
           session.ask [.reload]
           session.ask [.run "kept", .run "lost"]
           return (← session.lines) ==
@@ -544,7 +544,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command that applies the inverse of its edit reads the text as it was, and one that asks for an inverse it dropped, and one whose text is not where the edit left it, are each reported with that refusal's name"
       run :=
-        withRealHost context [("init.lean", inverseText)] fun session => do
+        withHost context [("init.lean", inverseText)] fun session => do
           session.ask [.reload]
           session.ask [.run "undone", .run "dropped", .run "elsewhere"]
           return (← session.lines) ==
@@ -555,10 +555,9 @@ def hostChecks (context : Context) : List Check :=
       run :=
         IO.FS.withTempDir fun directory => do
           let absent := directory / "absent"
-          hostedReal context context.elaborator (Config.Directory.source absent) fun host output =>
-              do
+          hosted context context.elaborator (Config.Directory.source absent) fun host output => do
               host.send .reload
-              unless ← host.settle patience do
+              unless ← host.settle hangGuard do
                 return false
               let lines ← output.get
               let diagnostic := lines.getD 1 ""
@@ -568,7 +567,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a config file that is not UTF-8 is a rejected reload whose one diagnostic line, at the import of it, names the file, and the old config stays"
       run :=
-        withRealHost context greetConfig fun session => do
+        withHost context greetConfig fun session => do
           session.ask [.reload]
           IO.FS.writeBinFile (session.directory / "Config" / "Bad.lean") notUtf8
           session.write "init.lean" (importing ["Config.Greet", "Config.Bad"] setupText)
@@ -653,8 +652,8 @@ def moduleHostChecks (context : Context) : List Check :=
         "after a change to one config file, a reload elaborates that file and the files that import it, and no other: a file the root imports, a file another file imports, the root, and nothing changed",
       run := do
         let elaborated ← IO.mkRef #[]
-        withRealHostOver context (fourFileConfig "a1" "b1" "c1") (noting elaborated) id
-            fun session => do
+        withHostOver context (fourFileConfig "a1" "b1" "c1") (noting elaborated) id fun session =>
+            do
             let reloaded (files : List (String × String)) : IO (Array String) := do
               writeConfig session.directory files
               elaborated.set #[]
@@ -680,7 +679,7 @@ def moduleHostChecks (context : Context) : List Check :=
     { name :=
         "an import of a config file under a name that differs from the file's in the case of its letters is rejected at the import, on a file system that ignores case as on one that does not, and the old config stays"
       run :=
-        withRealHost context
+        withHost context
           [("Config/Keys.lean", greetText "v1"), ("init.lean", importing ["Config.Keys"] setupText)]
           fun session => do
           session.ask [.reload]
@@ -693,7 +692,7 @@ def moduleHostChecks (context : Context) : List Check :=
     { name :=
         "a root that imports a module that is not linked is rejected with a diagnostic at the import that names the module, and the old config stays"
       run :=
-        withRealHost context [("init.lean", greetText "v1" ++ setupText)] fun session => do
+        withHost context [("init.lean", greetText "v1" ++ setupText)] fun session => do
           session.ask [.reload]
           session.write "init.lean" (importing ["Lake"] (greetText "v2" ++ setupText))
           session.ask [.reload]
@@ -707,7 +706,7 @@ def moduleHostChecks (context : Context) : List Check :=
     { name :=
         "a reload whose root first imports Lean installs: the base grows to hold it, and a command that uses it runs"
       run :=
-        withRealHost context [("init.lean", greetText "v1" ++ setupText)] fun session => do
+        withHost context [("init.lean", greetText "v1" ++ setupText)] fun session => do
           session.ask [.reload]
           session.write "init.lean" (leanGreetText ++ setupText)
           session.ask [.reload]
@@ -821,14 +820,16 @@ def threadChecks (context : Context) : List Check :=
         -- request, running or not, fails this.
         let gate ← Gate.new
         let reads ← IO.mkRef 0
-        withRealHostOver context (slowConfig) gate.around (counting reads) fun session => do
-            session.host.send .reload
+        withHostOver context (slowConfig) gate.around (counting reads) fun session => do
+            session.send .reload
             try
+              unless ← session.handled do
+                return false
               unless ← eventually gate.holding.get do
                 return false
               session.write "Config/Greet.lean" (greetText "v2")
-              session.host.send .reload
-              session.host.send .reload
+              session.send .reload
+              session.send .reload
               -- Both requests are on the queue before the gate opens, so the
               -- editor thread meets them before the job's outcome.
               gate.open
@@ -851,7 +852,7 @@ def threadChecks (context : Context) : List Check :=
         let before ← Ffi.Counter.live
         let files ← IO.mkRef ([] : List (String × String))
         let loaded ←
-          hostedReal context handleElaborator (sourceOver files.get) fun host _ => do
+          hosted context handleElaborator (sourceOver files.get) fun host _ => do
               for round in [0:50] do
                 -- A file the root imports changes, so it and the root are
                 -- elaborated again, and the other file is kept.
@@ -859,7 +860,7 @@ def threadChecks (context : Context) : List Check :=
                     [("init", "import Config.A\nimport Config.B\n"), ("Config.A", toString round),
                       ("Config.B", "b")]
                 host.send .reload
-                unless ← host.settle patience do
+                unless ← host.settle hangGuard do
                   return false
               -- The base and the handles of three files. A finished job's
               -- task may still be going away, so this is polled.
