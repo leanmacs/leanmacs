@@ -21,18 +21,20 @@ open RestoreTest
 
 namespace JournalReconcileTest
 
-/-- The key strings that type `text` in insert state from normal state,
-then leave it. -/
+/-- The key strings that type `text` in one session the scheme reports
+(`C-b`, the text, `C-e`) and then step the cursor back onto its last
+character. -/
 def typing (text : String) : String :=
-  s!"i {typed text} <Escape>"
+  s!"C-b {typed text} C-e <ArrowLeft>"
 
 /-- `driver` once the test command `name` runs with `arguments`, and what
 it starts is settled. -/
-def ran (driver : EvilDriver) (name : String) (arguments : List Argument := []) : EvilDriver :=
+def ran (driver : RestoreDriver) (name : String) (arguments : List Argument := []) :
+    RestoreDriver :=
   drained (invoked driver name arguments)
 
 /-- The live journal of the buffer `index`. -/
-def liveOf (driver : EvilDriver) (index : Nat) : Option Journal :=
+def liveOf (driver : RestoreDriver) (index : Nat) : Option Journal :=
   driver.loop.state.restore.journals.find? (·.buffer == index)
 
 /-- The journal files of the buffer `index`'s generation `generation` of
@@ -42,13 +44,14 @@ def filesOf (index generation : Nat) : Array String :=
     (logPath stateDirectory 1 index generation).toString]
 
 /-- The index of the buffer called `name`. -/
-def indexNamed (driver : EvilDriver) (name : String) : Nat :=
+def indexNamed (driver : RestoreDriver) (name : String) : Nat :=
   ((driver.loop.state.findBuffer name).map (·.index)).getD 999
 
 /-- `driver` with the text of the buffer called `name` edited behind the
 loop's back by `edit`, and its log forgotten up to the revision that
 leaves. -/
-def forgotten (driver : EvilDriver) (name : String) (edit : TextId → TextM Unit) : EvilDriver :=
+def forgotten (driver : RestoreDriver) (name : String) (edit : TextId → TextM Unit) :
+    RestoreDriver :=
   match driver.loop.state.findBuffer name >>= driver.loop.state.buffer? with
   | none => driver
   | some buffer =>
@@ -92,7 +95,7 @@ def placeCommand : Config.Registration :=
 
 /-- The checks' driver, restored, with the test commands. -/
 def driver (state : Option System.FilePath := some stateDirectory) (limit : Nat := Restore.bound) :
-    Option EvilDriver :=
+    Option RestoreDriver :=
   (restoreDriver (state := state) (limit := limit)).map fun driver =>
     begun
       { driver with
@@ -107,13 +110,13 @@ def driver (state : Option System.FilePath := some stateDirectory) (limit : Nat 
               | _ => driver.keys.command? name } }
 
 /-- `driver` handed the host's cells `cells` at the revision `revision`. -/
-def withStores (revision : Nat) (cells : Array KeptCell) (driver : EvilDriver) : EvilDriver :=
+def withStores (revision : Nat) (cells : Array KeptCell) (driver : RestoreDriver) : RestoreDriver :=
   { driver with keys := { driver.keys with stores := { revision, cells := Thunk.pure cells } } }
 
 /-- `driver` handed `running` as the reported jobs running, and
 `otherJobs` as how many others are. -/
-def withRunning (running : Array RunningJob) (driver : EvilDriver) (otherJobs : Nat := 0) :
-    EvilDriver :=
+def withRunning (running : Array RunningJob) (driver : RestoreDriver) (otherJobs : Nat := 0) :
+    RestoreDriver :=
   { driver with
     keys :=
       { driver.keys with
@@ -125,7 +128,8 @@ def keptOf (name : String) (value : Nat) : KeptCell :=
 
 /-- `driver` with `cells` parked with their scopes at the config generation
 0, as a restore parks the table cells no codec met (`Kept.parked`). -/
-def withParked (cells : Array (Document.Scope × KeptCell)) (driver : EvilDriver) : EvilDriver :=
+def withParked (cells : Array (Document.Scope × KeptCell)) (driver : RestoreDriver) :
+    RestoreDriver :=
   let state := driver.loop.state
   { driver with
     loop :=
@@ -139,7 +143,7 @@ def withParked (cells : Array (Document.Scope × KeptCell)) (driver : EvilDriver
 /-- `driver` with the major mode `mode` of the buffer `buffer` deferred at
 the config generation 0, as a restore defers a mode only config registers
 (`Kept.deferred`). -/
-def withDeferred (buffer : Nat) (mode : String) (driver : EvilDriver) : EvilDriver :=
+def withDeferred (buffer : Nat) (mode : String) (driver : RestoreDriver) : RestoreDriver :=
   let state := driver.loop.state
   { driver with
     loop :=
@@ -152,7 +156,7 @@ def withDeferred (buffer : Nat) (mode : String) (driver : EvilDriver) : EvilDriv
 /-- `driver` told that config has installed `generation` times, with the
 codecs `codec?`. -/
 def installedWith (generation : Nat) (codec? : String → Option (String × StoreCodec))
-    (driver : EvilDriver) : EvilDriver :=
+    (driver : RestoreDriver) : RestoreDriver :=
   { driver with
     keys :=
       { driver.keys with
@@ -162,7 +166,7 @@ def installedWith (generation : Nat) (codec? : String → Option (String × Stor
 
 /-- `driver` once the pending job called `name` is finished, the oldest of
 that name. -/
-def finishNamed (driver : EvilDriver) (name : String) : EvilDriver :=
+def finishNamed (driver : RestoreDriver) (name : String) : RestoreDriver :=
   match driver.pending.find? (·.name == name) with
   | some job => (driver.finish job.id).1
   | none => driver
@@ -170,7 +174,7 @@ def finishNamed (driver : EvilDriver) (name : String) : EvilDriver :=
 /-- A driver of the checks launched with the hand-over record of a restart
 (`--handed-over`), the record on disk, with the restore started and
 its two halves finished: restored, its own index not yet written. -/
-def handedDriver : Option EvilDriver :=
+def handedDriver : Option RestoreDriver :=
   (restoreDriver).map fun driver =>
     let record := recordPath stateDirectory
     let launched :=
@@ -184,7 +188,7 @@ def handedDriver : Option EvilDriver :=
     finishNamed (finishNamed started restoreJob) filesJob
 
 /-- The names of the unscoped cells the index of the run `run` lists. -/
-def unscopedNames (driver : EvilDriver) (run : Nat) : Option (Array String) :=
+def unscopedNames (driver : RestoreDriver) (run : Nat) : Option (Array String) :=
   ((indexOf driver run).bind (·.workspaces)).map (·.unscoped.map (·.name))
 
 end JournalReconcileTest
@@ -206,7 +210,7 @@ def journalReconcileChecks : List Check :=
               { shaken with
                 jobs :=
                   { shaken.jobs with files := shaken.jobs.files.withFile record "next".toUTF8 } }
-            let later := drained (evilFed rewritten (typing "x"))
+            let later := drained (keysFed rewritten (typing "x"))
             restored.loop.state.restore.restored && !restored.loop.state.restore.indexWritten &&
               bytesAt restored record == some "record".toUTF8 &&
               restored.loop.state.restore.handedOver == some record &&
@@ -232,7 +236,7 @@ def journalReconcileChecks : List Check :=
           match driver with
           | none => false
           | some begun =>
-            let lines := evilFed begun "i o n e RET t w o <Escape> g g"
+            let lines := keysFed begun "C-b o n e RET t w o C-e <ArrowLeft> C-<Home>"
             let quiet := drained (ran (ran lines WindowCommands.splitName) TabCommands.newName)
             match indexOf quiet 1 with
             | none => false
@@ -249,9 +253,9 @@ def journalReconcileChecks : List Check :=
           | none => false
           | some begun =>
             let written := drained begun
-            let changed := evilFed (withStores 1 #[keptOf "kept" 2] written) "l"
+            let changed := keysFed (withStores 1 #[keptOf "kept" 2] written) idle
             let quiet := drained changed
-            let unchanged := drained (evilFed (withStores 1 #[keptOf "other" 9] quiet) "l")
+            let unchanged := drained (keysFed (withStores 1 #[keptOf "other" 9] quiet) idle)
             pendingNamed changed writeJob == 1 &&
               (indexOf quiet 1).map (·.stores) == some #[keptOf "kept" 2] &&
               quiet.loop.state.restore.stores == #[keptOf "kept" 2] &&
@@ -265,8 +269,8 @@ def journalReconcileChecks : List Check :=
           | none => false
           | some begun =>
             let parked := withParked #[(.unscoped, keptOf "gone" 5)] (drained begun)
-            let waiting := drained (evilFed parked "l")
-            let dropped := evilFed (installedWith 1 (fun _ => none) waiting) "l"
+            let waiting := drained (keysFed parked idle)
+            let dropped := keysFed (installedWith 1 (fun _ => none) waiting) idle
             let quiet := drained dropped
             -- A later mirror, a revision moved, says nothing again.
             let later :=
@@ -302,7 +306,7 @@ def journalReconcileChecks : List Check :=
             let parked :=
               withParked #[(.unscoped, keptOf "count" 4), (.unscoped, keptOf "late" 5)]
                 (drained begun)
-            let met := evilFed (installedWith 1 codec? (drained (evilFed parked "l"))) "l"
+            let met := keysFed (installedWith 1 codec? (drained (keysFed parked idle))) idle
             met.loop.state.workspaces.unscopedValue? "count" == some (.nat 4) &&
               met.loop.state.workspaces.unscopedValue? "late" == some (.nat 0) &&
               met.loop.state.restore.parked.isEmpty &&
@@ -319,7 +323,7 @@ def journalReconcileChecks : List Check :=
               withDeferred 0 "missing-mode"
                 (withParked #[(.unscoped, keptOf "gone" 5)] (drained begun))
             let settled :=
-              evilFed (installedWith 1 (fun _ => none) (drained (evilFed parked "l"))) "l"
+              keysFed (installedWith 1 (fun _ => none) (drained (keysFed parked idle))) idle
             let name := ((settled.loop.state.buffer? ⟨0⟩).map (·.name)).getD ""
             settled.loop.state.restore.parked.isEmpty &&
               settled.loop.state.restore.deferred.isEmpty &&
@@ -340,7 +344,7 @@ def journalReconcileChecks : List Check :=
             let parked :=
               withDeferred 0 "missing-mode"
                 (withParked #[(.unscoped, keptOf "late" 5)] (drained begun))
-            let settled := evilFed (installedWith 1 codec? (drained (evilFed parked "l"))) "l"
+            let settled := keysFed (installedWith 1 codec? (drained (keysFed parked idle))) idle
             let name := ((settled.loop.state.buffer? ⟨0⟩).map (·.name)).getD ""
             settled.loop.state.workspaces.unscopedValue? "late" == some (.nat 0) &&
               settled.loop.state.restore.deferred.isEmpty &&
@@ -353,8 +357,8 @@ def journalReconcileChecks : List Check :=
           | none => false
           | some begun =>
             let job : RunningJob := { owner := "shell", name := "shell-run", key := some "k" }
-            let started := drained (evilFed (withRunning #[job] (drained begun)) "l")
-            let ended := drained (evilFed (withRunning #[] started) "l")
+            let started := drained (keysFed (withRunning #[job] (drained begun)) idle)
+            let ended := drained (keysFed (withRunning #[] started) idle)
             (indexOf started 1).map (·.jobs) == some #[job] &&
               (indexOf ended 1).map (·.jobs) == some #[] },
     { name :=
@@ -373,10 +377,10 @@ def journalReconcileChecks : List Check :=
           | none => false
           | some begun =>
             let quiet := drained begun
-            let started := evilFed (withRunning #[] quiet (otherJobs := 2)) "l"
-            let typed := drained (evilFed (drained started) (typing "a"))
-            let ended := evilFed (withRunning #[] typed) "l"
-            let typedAgain := drained (evilFed (drained ended) (typing "b"))
+            let started := keysFed (withRunning #[] quiet (otherJobs := 2)) idle
+            let typed := drained (keysFed (drained started) (typing "a"))
+            let ended := keysFed (withRunning #[] typed) idle
+            let typedAgain := drained (keysFed (drained ended) (typing "b"))
             (indexOf quiet 1).map (·.otherJobs) == some 0 && pendingNamed started writeJob == 0 &&
               (indexOf (drained started) 1).map (·.otherJobs) == some 0 &&
               (indexOf typed 1).map (·.otherJobs) == some 2 &&
@@ -391,7 +395,7 @@ def journalReconcileChecks : List Check :=
           | none => false
           | some begun =>
             let made := begun.jobs.files.directories.contains (journalsDirectory stateDirectory)
-            let typedIn := evilFed begun (typing "abc")
+            let typedIn := keysFed begun (typing "abc")
             made && begun.loop.state.restore.run == some 1 &&
               ((logOf typedIn 1 0 1).map fun log => (log.header.isSome, log.records.size)) ==
                 some (true, 2) &&
@@ -404,8 +408,8 @@ def journalReconcileChecks : List Check :=
           match driver with
           | none => false
           | some begun =>
-            let typedIn := evilFed begun (typing "ab")
-            let moved := evilFed typedIn "h h l"
+            let typedIn := keysFed begun (typing "ab")
+            let moved := keysFed typedIn "<ArrowLeft> <ArrowLeft> <ArrowRight>"
             (logOf typedIn 1 0 1).map (·.records.size) == some 1 &&
               (logOf moved 1 0 1).map (·.records.size) == some 1 },
     { name := "a save removes the journal of the file's buffer"
@@ -414,7 +418,7 @@ def journalReconcileChecks : List Check :=
           match driver with
           | none => false
           | some begun =>
-            let edited := evilFed (opened begun "a.txt") "x"
+            let edited := keysFed (opened begun "a.txt") "<Delete>"
             let index := indexNamed edited "a.txt"
             let saved := ran edited FilesApi.saveName
             journalFiles edited == filesOf index 1 &&
@@ -427,8 +431,8 @@ def journalReconcileChecks : List Check :=
           match driver with
           | none => false
           | some begun =>
-            let edited := evilFed (opened begun "a.txt") "x"
-            let undone := evilFed edited "u"
+            let edited := keysFed (opened begun "a.txt") "<Delete>"
+            let undone := keysFed edited "C-z"
             journalFiles edited != #[] && journalFiles undone == #[] },
     { name :=
         "past the bound a new generation is written, and the old one's files are removed after it; the live one replays to the text"
@@ -437,7 +441,7 @@ def journalReconcileChecks : List Check :=
           match driver (limit := 150) with
           | none => false
           | some begun =>
-            let typedIn := evilFed begun (typing "abcdef")
+            let typedIn := keysFed begun (typing "abcdef")
             match liveOf typedIn 0 with
             | none => false
             | some live =>
@@ -450,9 +454,9 @@ def journalReconcileChecks : List Check :=
           match driver with
           | none => false
           | some begun =>
-            let typedIn := evilFed begun (typing "ab")
+            let typedIn := keysFed begun (typing "ab")
             let behind := forgotten typedIn EditorState.scratchName fun text => text.insert 0 "z"
-            let after := evilFed behind (typing "c")
+            let after := keysFed behind (typing "c")
             (liveOf after 0).map (·.generation) == some 2 && journalFiles after == filesOf 0 2 &&
               journalText after 1 0 2 == textNamed after EditorState.scratchName },
     { name :=
@@ -462,9 +466,9 @@ def journalReconcileChecks : List Check :=
           match driver with
           | none => false
           | some begun =>
-            let edited := evilFed (opened begun "a.txt") "x"
+            let edited := keysFed (opened begun "a.txt") "<Delete>"
             let index := indexNamed edited "a.txt"
-            let saving := evilFed (invoked edited FilesApi.saveName) "x"
+            let saving := keysFed (invoked edited FilesApi.saveName) "<Delete>"
             let saved := drained saving
             let stamp := (bufferNamed saved "a.txt").bind (·.file.map (·.stamp))
             match liveOf saved index with
@@ -479,7 +483,7 @@ def journalReconcileChecks : List Check :=
           match driver with
           | none => false
           | some begun =>
-            let noted := evilFed (ran begun "test-note") (typing "n")
+            let noted := keysFed (ran begun "test-note") (typing "n")
             let index := indexNamed noted "note"
             let closedNote := ran noted BuffersApi.closeName [.str "note"]
             journalFiles noted == filesOf index 1 && journalFiles closedNote == #[] },
@@ -490,7 +494,7 @@ def journalReconcileChecks : List Check :=
           | none => false
           | some begun =>
             let owned := ran begun "test-owned"
-            let prompted := evilFed owned ": a b"
+            let prompted := keysFed owned "C-x a b"
             journalFiles prompted == #[] && prompted.loop.state.prompt.isSome },
     { name := "with no state directory nothing is journalled"
       run :=
@@ -498,7 +502,7 @@ def journalReconcileChecks : List Check :=
           match driver (state := none) with
           | none => false
           | some begun =>
-            let typedIn := evilFed begun (typing "abc")
+            let typedIn := keysFed begun (typing "abc")
             journalFiles typedIn == #[] && (indexOf typedIn 1).isNone },
     { name := "a leave removes this run's journals and saves its index saying ended"
       run :=
@@ -506,7 +510,7 @@ def journalReconcileChecks : List Check :=
           match driver with
           | none => false
           | some begun =>
-            let typedIn := drained (evilFed begun (typing "abc"))
+            let typedIn := drained (keysFed begun (typing "abc"))
             let left := ran typedIn Ex.quitName
             journalFiles typedIn != #[] && left.stopped && journalFiles left == #[] &&
               (indexOf left 1).map (·.ended) == some true },
@@ -517,7 +521,7 @@ def journalReconcileChecks : List Check :=
           | none => false
           | some begun =>
             let written := drained begun
-            let burst := evilFed written (typing "abc")
+            let burst := keysFed written (typing "abc")
             let quiet := drained burst
             pendingNamed burst writeJob == 1 &&
               ((indexOf quiet 1).map fun document =>
@@ -531,7 +535,8 @@ def journalReconcileChecks : List Check :=
           match driver with
           | none => false
           | some begun =>
-            let lines := evilFed begun "i o n e RET t w o RET t h r e e RET f o u r <Escape>"
+            let lines :=
+              keysFed begun "C-b o n e RET t w o RET t h r e e RET f o u r C-e <ArrowLeft>"
             let split := ran lines WindowCommands.splitName
             let views := split.loop.state.frame.windows
             match views[0]?, views[1]? with

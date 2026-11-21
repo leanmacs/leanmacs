@@ -51,7 +51,7 @@ def restartIntoCommand : Config.Registration :=
 
 /-- `driver` launched as the checks' editor, its probes replying as
 `scripts` say, with `test-restart-into`. -/
-def launched (driver : EvilDriver) (scripts : Array Process.Script) : EvilDriver :=
+def launched (driver : RestoreDriver) (scripts : Array Process.Script) : RestoreDriver :=
   { driver with
     loop := { driver.loop with state := { driver.loop.state with launch } }
     jobs :=
@@ -72,7 +72,7 @@ def launched (driver : EvilDriver) (scripts : Array Process.Script) : EvilDriver
 
 /-- The checks' driver, restored and launched, its probes as `scripts`
 say. -/
-def restartDriver (scripts : Array Process.Script := #[passing running]) : Option EvilDriver :=
+def restartDriver (scripts : Array Process.Script := #[passing running]) : Option RestoreDriver :=
   JournalReconcileTest.driver.map fun begun => launched (drained begun) scripts
 
 /-- The plan the checks' editor hands over, into `into`. -/
@@ -92,7 +92,7 @@ def restartChecks : List Check :=
         "restart is refused with no state directory, while the restore has not finished, while a restart is in flight, and for a relative executable, each said"
       run :=
         pure <|
-          let said (driver : Option EvilDriver) (arguments : List Argument := []) :=
+          let said (driver : Option RestoreDriver) (arguments : List Argument := []) :=
             driver.map fun driver => (invoked driver restartName arguments).loop.state.echo
           let stateless :=
             (restoreDriver (state := none)).map fun driver => launched (begun driver) #[]
@@ -161,7 +161,7 @@ def restartChecks : List Check :=
           match restartDriver with
           | none => false
           | some driver =>
-            let edited := evilFed (opened driver "a.txt") (typing "new ")
+            let edited := keysFed (opened driver "a.txt") (typing "new ")
             let split := ran (ran edited WindowCommands.splitName) TabCommands.newName
             let done := drained (invoked split restartName)
             let index := indexOf done 1
@@ -180,7 +180,7 @@ def restartChecks : List Check :=
           match restartDriver with
           | none => false
           | some driver =>
-            let edited := evilFed (opened driver "a.txt") (typing "new ")
+            let edited := keysFed (opened driver "a.txt") (typing "new ")
             let saving := invoked edited FilesApi.saveName
             let probed := finishNamed (invoked saving restartName) probeJob
             let done := drained probed
@@ -195,7 +195,7 @@ def restartChecks : List Check :=
           | none => false
           | some driver =>
             let probed := finishNamed (invoked driver restartName) probeJob
-            let typed := evilFed probed (typing "zzz")
+            let typed := keysFed probed (typing "zzz")
             textNamed typed "scratch" == textNamed probed "scratch" &&
               typed.loop.state.echo == Restart.handingLine true },
     { name :=
@@ -212,7 +212,7 @@ def restartChecks : List Check :=
                   { driver.jobs with
                     files := (driver.jobs.files.makeDirectory (recordPath stateDirectory)).2 } }
             let done := drained (invoked blocked restartName)
-            let after := drained (evilFed done (typing "x"))
+            let after := drained (keysFed done (typing "x"))
             done.loop.state.restore.handing.isNone && done.handOver.isNone &&
               (done.loop.state.echo.startsWith "restart: the session could not be written: ") &&
               done.loop.state.echo.endsWith "; the editor keeps running" &&
@@ -225,7 +225,7 @@ def restartChecks : List Check :=
           match restartDriver with
           | none => false
           | some driver =>
-            let edited := drained (evilFed driver (typing "x"))
+            let edited := drained (keysFed driver (typing "x"))
             let before := journalFiles edited
             let handing :=
               { edited with
@@ -237,7 +237,7 @@ def restartChecks : List Check :=
                           { edited.loop.state.restore with
                             handing := some { plan := planFor 1 } } } } }
             let abandoned := invoked handing abandonName [.str "restart: given up"]
-            let after := drained (evilFed abandoned "l")
+            let after := drained (keysFed abandoned idle)
             abandoned.loop.state.echo == "restart: given up" &&
               abandoned.loop.state.restore.handing.isNone &&
               !before.isEmpty &&

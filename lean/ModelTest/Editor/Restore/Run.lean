@@ -65,7 +65,7 @@ def cellCommandForTest : Config.Registration :=
 
 /-- `driver` with the checks' commands: the reconcile checks' and
 `test-modes`. -/
-def withCommands (driver : EvilDriver) : EvilDriver :=
+def withCommands (driver : RestoreDriver) : RestoreDriver :=
   { driver with
     keys :=
       { driver.keys with
@@ -82,13 +82,13 @@ def withCommands (driver : EvilDriver) : EvilDriver :=
 
 /-- The first loop: restored over `files`, with `modes`, and the checks'
 commands. -/
-def first (files : Option FileModel := none) (modes : Array Mode := #[]) : Option EvilDriver :=
+def first (files : Option FileModel := none) (modes : Array Mode := #[]) : Option RestoreDriver :=
   (restoredDriver files (modes := modes)).map withCommands
 
 /-- A second loop over the world `driver` left, `change` made to its files
 first, restored, with the checks' commands. -/
-def second (driver : EvilDriver) (change : FileModel → FileModel := id) (modes : Array Mode := #[])
-    (generation : Nat := 0) : Option EvilDriver :=
+def second (driver : RestoreDriver) (change : FileModel → FileModel := id)
+    (modes : Array Mode := #[]) (generation : Nat := 0) : Option RestoreDriver :=
   (restarted driver modes generation change).map withCommands
 
 /-- `files` with the journal `<run>-<buffer>-<generation>` written by hand:
@@ -120,15 +120,15 @@ def filesOf' (run index generation : Nat) : Array String :=
     (logPath stateDirectory run index generation).toString]
 
 /-- The text of the report's buffer. -/
-def reportOf (driver : EvilDriver) : String :=
+def reportOf (driver : RestoreDriver) : String :=
   (textNamed driver reportName).getD ""
 
 /-- The text the focused window shows, with `|` at its cursor. -/
-def focusedShown (driver : EvilDriver) : String :=
-  evilShown driver driver.loop.state.frame.focused
+def focusedShown (driver : RestoreDriver) : String :=
+  shownOf driver driver.loop.state.frame.focused
 
 /-- The frame `driver`'s state records (`Frame.Record.of`), on its models. -/
-def frameOf (driver : EvilDriver) : Option Frame.Record :=
+def frameOf (driver : RestoreDriver) : Option Frame.Record :=
   ((Frame.Record.of driver.loop.state).runModel driver.model.texts).1.toOption
 
 /-- `record` with its views given ids in its order, the tab in view's focused
@@ -140,7 +140,7 @@ def canonical (record : Frame.Record) : Frame.Record :=
 /-- Each view of `driver`'s frame, in its record's order, with its buffer's
 name and its place: the anchor and the head of its selection and its top
 row. -/
-def viewsOf (driver : EvilDriver) : Option (Array (String × Option (Spot × Spot × Nat))) := do
+def viewsOf (driver : RestoreDriver) : Option (Array (String × Option (Spot × Spot × Nat))) := do
   let record ← frameOf driver
   let state := driver.loop.state
   record.views.mapM fun view => do
@@ -151,20 +151,20 @@ def viewsOf (driver : EvilDriver) : Option (Array (String × Option (Spot × Spo
 
 /-- `driver` handed a layout of manual splits inside a left edge, as config
 would hand it. -/
-def edged (driver : EvilDriver) : EvilDriver :=
+def edged (driver : RestoreDriver) : RestoreDriver :=
   { driver with keys := { driver.keys with layout := some (.edge .left 25 Layout.manual) } }
 
 /-- A first loop's frame of two tabs: `a.txt` edited, with jumps recorded by
-`G` and `g g`; in the first tab four windows under manual splits at a left
+`C-<End>` and `C-<Home>` (`jumped`); in the first tab four windows under manual splits at a left
 edge, one widened, one docked at the edge and one floating; a second tab
 named `notes`, split and zoomed; the first tab in view. -/
-def framed : Option EvilDriver :=
+def framed : Option RestoreDriver :=
   (first
         (some
           ((world fun files => files.withFile "/r/a.txt" "one\ntwo\nthree\nfour\n".toUTF8).getD
             {}))).map
     fun begun =>
-    let edited := evilFed (opened (edged begun) "a.txt") "G g g j x"
+    let edited := keysFed (opened (edged begun) "a.txt") "C-<End> C-<Home> <ArrowDown> <Delete>"
     let tiled :=
       [WindowCommands.splitName, WindowCommands.splitVerticallyName, WindowCommands.splitName,
             WindowCommands.widerName, WindowCommands.edgeLeftName, WindowCommands.nextName,
@@ -176,8 +176,8 @@ def framed : Option EvilDriver :=
 
 /-- A second loop over the world `driver` left, with `change` made to its
 driver before its restore runs, and the checks' commands. -/
-def secondWith (driver : EvilDriver) (change : EvilDriver → EvilDriver)
-    (files : FileModel → FileModel := id) : Option EvilDriver :=
+def secondWith (driver : RestoreDriver) (change : RestoreDriver → RestoreDriver)
+    (files : FileModel → FileModel := id) : Option RestoreDriver :=
   (restoreDriver (some (files driver.jobs.files))).map fun fresh =>
     begun (withCommands (change fresh))
 
@@ -195,7 +195,7 @@ def counted : Store Nat :=
 
 /-- `driver` told of the codecs of `names` among `tally` and `later`, counts
 both, of the package `pkg`, and of `counted`, of the package `counter`. -/
-def withCodecs (names : List String) (driver : EvilDriver) : EvilDriver :=
+def withCodecs (names : List String) (driver : RestoreDriver) : RestoreDriver :=
   let count (name : String) : Store Nat :=
     { counted with
       name, version := 1, migrate := fun _ _ => none }
@@ -214,7 +214,7 @@ def keptCell (owner name : String) (version : Nat) (value : Value) : KeptCell :=
 then the previous-context mark, each place named by where it is now,
 `<buffer>:<row>:<column>` for one held in a buffer and
 `file <path>:<row>:<column>` for one in a file, the column in characters. -/
-def jumpsShown (driver : EvilDriver) : Option (Array String × Nat × Option String) := do
+def jumpsShown (driver : RestoreDriver) : Option (Array String × Nat × Option String) := do
   let state := driver.loop.state
   let window ← state.window? state.frame.focused
   let shown (place : Editor.Place) : TextM String :=
@@ -231,8 +231,8 @@ def jumpsShown (driver : EvilDriver) : Option (Array String × Nat × Option Str
 
 /-- What `driver`'s focused window shows once `keys` are typed and what
 they start is settled. -/
-def shownAfter (driver : EvilDriver) (keys : String) : String :=
-  focusedShown (drained (evilFed driver keys))
+def shownAfter (driver : RestoreDriver) (keys : String) : String :=
+  focusedShown (drained (keysFed driver keys))
 
 /-- `document` with every jump of the kept buffer `key` written as a place
 in the file `path`, as an index holds the place of a file no buffer kept
@@ -255,14 +255,15 @@ def filedJumps (document : Document) (key : Nat) (path : String) : Document :=
                       previous := jumps.previous.map filed } } } }
 
 /-- A first loop whose scratch buffer has `one`, `two` and `three` typed
-in, so it is journalled, with jumps in it recorded by `g g` and `G`. -/
-def typedScratch : Option EvilDriver :=
-  (first).map fun begun => drained (evilFed begun "i o n e RET t w o RET t h r e e <Escape> g g G")
+in, so it is journalled, with jumps in it recorded by `C-<Home>` and `C-<End>` (`jumped`). -/
+def typedScratch : Option RestoreDriver :=
+  (first).map fun begun =>
+    drained (keysFed begun "C-b o n e RET t w o RET t h r e e C-e <ArrowLeft> C-<Home> C-<End>")
 
-/-- A first loop with jumps in `b.txt`, by `G` and `g g`, then `a.txt`
+/-- A first loop with jumps in `b.txt`, by `C-<End>` and `C-<Home>`, then `a.txt`
 opened and edited, and `b.txt` closed, so the jumps in it are places in
 its file. -/
-def closedFile : Option EvilDriver :=
+def closedFile : Option RestoreDriver :=
   (first
         (some
           ((world fun files =>
@@ -270,14 +271,14 @@ def closedFile : Option EvilDriver :=
                   "alpha\nbeta\ngamma\n".toUTF8).getD
             {}))).map
     fun begun =>
-    let inB := evilFed (opened begun "b.txt") "G g g"
-    drained (closed (evilFed (opened inB "a.txt") "G x") "b.txt")
+    let inB := keysFed (opened begun "b.txt") "C-<End> C-<Home>"
+    drained (closed (keysFed (opened inB "a.txt") "C-<End> <Delete>") "b.txt")
 
 /-- A loop after a first one that opened `a.txt` and ended uncleanly,
 over its world with `change` made to it, launched with `launch`, its
 restore naming `named`, restored. -/
 def restartedOver (named : Option System.FilePath) (launch : Restart.Launch := {})
-    (change : FileModel → FileModel := id) : Option EvilDriver := do
+    (change : FileModel → FileModel := id) : Option RestoreDriver := do
   let before ← first
   let opened := drained (RestoreTest.opened before "a.txt")
   let driver ← restoreDriver (some (change opened.jobs.files))
@@ -389,17 +390,17 @@ def restoreChecks : List Check :=
             match second before with
             | none => false
             | some again =>
-              let jumpsOf (driver : EvilDriver) : Option (Nat × Nat × Bool) :=
+              let jumpsOf (driver : RestoreDriver) : Option (Nat × Nat × Bool) :=
                 (driver.loop.state.window? driver.loop.state.frame.focused).map
                   fun (window : Window) =>
                   (window.jumps.list.entries.size, window.jumps.list.index,
                     window.jumps.previous.isSome)
               -- The first loop's first entry is in the scratch buffer, which
               -- is not kept: it is dropped, and the index with it.
-              focusedShown (evilFed before "C-o") == focusedShown (evilFed again "C-o") &&
+              focusedShown (keysFed before "C-o") == focusedShown (keysFed again "C-o") &&
                 jumpsOf before == some (3, 3, true) &&
                 jumpsOf again == some (2, 2, true) &&
-                focusedShown (evilFed before "C-o") != focusedShown before },
+                focusedShown (keysFed before "C-o") != focusedShown before },
     { name :=
         "(c) the jump list with its index in the middle, an entry before it dropped: the index moves back past the dropped entry, and the restored window's C-o and C-i go where the first loop's went"
       run :=
@@ -409,7 +410,7 @@ def restoreChecks : List Check :=
           | some before =>
             -- C-o once leaves the index in the middle of the list, after
             -- the scratch buffer's entry, which is not kept.
-            let mid := drained (evilFed before "C-o")
+            let mid := drained (keysFed before "C-o")
             match second mid with
             | none => false
             | some again =>
@@ -453,8 +454,8 @@ def restoreChecks : List Check :=
             match second before with
             | none => false
             | some again =>
-              let back (driver : EvilDriver) : EvilDriver :=
-                drained (evilFed (drained (evilFed driver "C-o")) "C-o")
+              let back (driver : RestoreDriver) : RestoreDriver :=
+                drained (keysFed (drained (keysFed driver "C-o")) "C-o")
               jumpsShown before ==
                   some
                     (#["scratch:0:0", "file /r/b.txt:0:0", "file /r/b.txt:2:0", "file /r/b.txt:0:0",
@@ -496,7 +497,7 @@ def restoreChecks : List Check :=
                 shownAfter attached "C-o" == shownAfter again "C-o"
             | _, _ => false },
     { name :=
-        "(d) undo: every restored buffer is marked as having no history before the restore, and u at its root says so"
+        "(d) undo: every restored buffer is marked as having no history before the restore, and an undo at its root finds no step and leaves its text"
       run :=
         pure <|
           match framed with
@@ -506,7 +507,8 @@ def restoreChecks : List Check :=
             | none => false
             | some again =>
               (bufferNamed again "a.txt").map (·.historyRestored) == some true &&
-                (evilFed again "u").loop.state.echo == Evil.nothingBeforeRestore },
+                textNamed (keysFed again "C-z") "a.txt" == textNamed again "a.txt" &&
+                (textNamed again "a.txt").isSome },
     { name :=
         "(h) a frame the restore refuses falls back to phase 1's placement and says so: a record check refuses, and a prompt open at the restore"
       run :=
@@ -529,7 +531,7 @@ def restoreChecks : List Check :=
                     #[{ name := restoreJob, arguments := [.str stateDirectory.toString] }]
                 match started.pending[0]? with
                 | none => none
-                | some job => some (drained (evilFed (started.finish job.id).1 ":"))
+                | some job => some (drained (keysFed (started.finish job.id).1 "C-x"))
             match second before broken, prompted with
             | some refused, some asked =>
               refused.loop.state.frame.tabs.size == 1 &&
@@ -552,7 +554,7 @@ def restoreChecks : List Check :=
           | some begun =>
             let noted :=
               drained
-                (ran (ran (evilFed begun (typing "kept")) WindowCommands.splitName) "test-note")
+                (ran (ran (keysFed begun (typing "kept")) WindowCommands.splitName) "test-note")
             match second noted with
             | none => false
             | some again =>
@@ -576,7 +578,7 @@ def restoreChecks : List Check :=
               drained
                 ([("tally", 7), ("private", 3), ("later", 5)].foldl
                   (fun driver (name, value) => ran driver "test-cell" [.str name, .nat value])
-                  (evilFed (opened begun "a.txt") "x"))
+                  (keysFed (opened begun "a.txt") "<Delete>"))
             let written := (indexOf celled 1).bind (·.workspaces)
             let names := (written.map fun record => record.unscoped.map (·.name)).getD #[]
             match secondWith celled (withCodecs ["tally"]) with
@@ -584,7 +586,7 @@ def restoreChecks : List Check :=
             | some again =>
               let state := again.loop.state
               let location := (state.workspaces.workspaces[0]?).map (·.1.location)
-              let valueOf (name : String) (driver : EvilDriver) : Option Value :=
+              let valueOf (name : String) (driver : RestoreDriver) : Option Value :=
                 location.bind (driver.loop.state.workspaces.workspaceValue? · name)
               let meanwhile :=
                 ((indexOf again 2).bind (·.workspaces)).map fun record =>
@@ -620,14 +622,14 @@ def restoreChecks : List Check :=
           match first with
           | none => false
           | some begun =>
-            let running : EvilDriver :=
+            let running : RestoreDriver :=
               { begun with
                 keys :=
                   { begun.keys with
                     running :=
                       #[{ owner := "shell", name := "shell-run", key := some "shell outside" }]
                     otherJobs := 2 } }
-            let typed := drained (evilFed running (typing "kept"))
+            let typed := drained (keysFed running (typing "kept"))
             let pendingJob (name : String) : Loop.Driver.Pending :=
               { id := 9, name, outcome := .cancelled, key := some name }
             let handed :=
@@ -638,7 +640,7 @@ def restoreChecks : List Check :=
                         otherJobs := 4
                         registered :=
                           { begun.keys.registered with reported := (· == "waited") } } } :
-                  EvilDriver).handed
+                  RestoreDriver).handed
             match second typed with
             | none => false
             | some again =>
@@ -659,8 +661,8 @@ def restoreChecks : List Check :=
           match first with
           | none => false
           | some begun =>
-            let running : EvilDriver := { begun with keys := { begun.keys with otherJobs := 1 } }
-            match second (drained (evilFed running (typing "kept"))) with
+            let running : RestoreDriver := { begun with keys := { begun.keys with otherJobs := 1 } }
+            match second (drained (keysFed running (typing "kept"))) with
             | none => false
             | some again =>
               ((reportOf again).splitOn "1 jobs were running: the restart stopped them").length ==
@@ -703,7 +705,7 @@ def restoreChecks : List Check :=
               (some ((world fun files => files.withFile "/r/e.txt" "é xy\n".toUTF8).getD {})) with
           | none => false
           | some begun =>
-            let moved := drained (evilFed (opened begun "e.txt") "l l")
+            let moved := drained (keysFed (opened begun "e.txt") "<ArrowRight> <ArrowRight>")
             match second moved with
             | none => false
             | some again => focusedShown moved == "é |xy\n" && focusedShown again == "é |xy\n" },
@@ -718,10 +720,11 @@ def restoreChecks : List Check :=
               #[configMode] with
           | none => false
           | some begun =>
-            let scratched := evilFed begun (typing "kept")
-            let crlf := evilFed (opened scratched "c.txt") "x"
+            let scratched := keysFed begun (typing "kept")
+            let crlf := keysFed (opened scratched "c.txt") "<Delete>"
             let moded := ran crlf "test-modes" [.str configMode.name, .str "spell"]
-            let edited := drained (evilFed (opened moded "a.txt") "j l x")
+            let edited :=
+              drained (keysFed (opened moded "a.txt") "<ArrowDown> <ArrowRight> <Delete>")
             match second edited (modes := #[configMode]) with
             | none => false
             | some again =>
@@ -744,7 +747,7 @@ def restoreChecks : List Check :=
           match first with
           | none => false
           | some begun =>
-            let edited := drained (opened (evilFed (opened begun "a.txt") "x") "b.txt")
+            let edited := drained (opened (keysFed (opened begun "a.txt") "<Delete>") "b.txt")
             match
               second edited (fun files => files.withFile (root / "a.txt") "rewritten\n".toUTF8) with
             | none => false
@@ -766,7 +769,7 @@ def restoreChecks : List Check :=
           match first with
           | none => false
           | some begun =>
-            let both := drained (evilFed (opened (opened begun "b.txt") "a.txt") "x")
+            let both := drained (keysFed (opened (opened begun "b.txt") "a.txt") "<Delete>")
             match second both,
               second both
                 (fun files =>
@@ -807,7 +810,7 @@ def restoreChecks : List Check :=
           match first with
           | none => false
           | some begun =>
-            let edited := drained (evilFed begun (typing "abc"))
+            let edited := drained (keysFed begun (typing "abc"))
             match restoreDriver (some edited.jobs.files) with
             | none => false
             | some fresh =>
@@ -843,7 +846,7 @@ def restoreChecks : List Check :=
           match first with
           | none => false
           | some begun =>
-            let lines := evilFed begun "i o n e RET t w o RET t h r e e <Escape>"
+            let lines := keysFed begun "C-b o n e RET t w o RET t h r e e C-e <ArrowLeft>"
             let split := ran lines WindowCommands.splitName
             let views := split.loop.state.frame.windows
             match views[0]?, views[1]? with
@@ -889,8 +892,8 @@ def restoreChecks : List Check :=
           | none => false
           | some begun =>
             -- Window 0 on b.txt, window 1 on a.txt, focused.
-            let split := ran (evilFed (opened begun "b.txt") "x") WindowCommands.splitName
-            let firstRun := drained (evilFed (opened split "a.txt") "x")
+            let split := ran (keysFed (opened begun "b.txt") "<Delete>") WindowCommands.splitName
+            let firstRun := drained (keysFed (opened split "a.txt") "<Delete>")
             let unframed (files : FileModel) : FileModel :=
               match indexOf firstRun 1 with
               | some document =>
@@ -907,7 +910,7 @@ def restoreChecks : List Check :=
               match second resplit with
               | none => false
               | some again =>
-                let buffers (driver : EvilDriver) : Option (Array String) :=
+                let buffers (driver : RestoreDriver) : Option (Array String) :=
                   (viewsOf driver).map (·.map (·.1))
                 phaseOne.loop.state.restore.places.size == 1 &&
                   buffers resplit == some #["a.txt", "a.txt"] &&
@@ -931,7 +934,7 @@ def restoreChecks : List Check :=
             match restoredDriver (some files) with
             | none => false
             | some again =>
-              let settled := drained (evilFed again "l")
+              let settled := drained (keysFed again idle)
               textNamed settled "note" == some "abc" && textNamed settled "a.txt" == some aText &&
                 bytesAt settled (sessionDirectory stateDirectory / "session-5.json") ==
                   some newer.toUTF8 &&
@@ -954,17 +957,17 @@ def restoreChecks : List Check :=
           | some begun =>
             let moded :=
               drained
-                (ran (evilFed (opened begun "a.txt") "x") "test-modes"
+                (ran (keysFed (opened begun "a.txt") "<Delete>") "test-modes"
                   [.str configMode.name, .str "spell"])
             match second moded, restoredDriver (modes := #[configMode]) (generation := 1),
               restoredDriver (generation := 1) with
             | some again, some withMode, some without =>
               let deferred := (bufferNamed again "a.txt").bind (·.major)
               let installed :=
-                evilFed
+                keysFed
                   { again with keys := { withMode.keys with command? := again.keys.command? } } "l"
               let missing :=
-                evilFed { again with keys := { without.keys with command? := again.keys.command? } }
+                keysFed { again with keys := { without.keys with command? := again.keys.command? } }
                   "l"
               deferred.isNone && again.loop.state.restore.deferred.size == 1 &&
                 (bufferNamed installed "a.txt").bind (·.major) == some configMode.name &&
@@ -981,7 +984,7 @@ def restoreChecks : List Check :=
           match first with
           | none => false
           | some begun =>
-            let edited := drained (evilFed (opened begun "a.txt") "x")
+            let edited := drained (keysFed (opened begun "a.txt") "<Delete>")
             let probe : Package :=
               { name := "restore-opened-probe"
                 setup :=
@@ -990,7 +993,7 @@ def restoreChecks : List Check :=
                         opened := fun id path =>
                           discard <| createText s!"restore-opened {id.index} {path}" } :
                       FilesApi.Opened) }
-            let withProbe (driver : EvilDriver) : EvilDriver :=
+            let withProbe (driver : RestoreDriver) : RestoreDriver :=
               { driver with
                 keys := Test.withExtensionsOf driver.keys (RestoreTest.hooks.push probe) }
             match secondWith edited withProbe with
@@ -1009,8 +1012,8 @@ def restoreChecks : List Check :=
           match first with
           | none => false
           | some begun =>
-            let both := drained (evilFed (opened (opened begun "b.txt") "a.txt") "x")
-            let bare (driver : EvilDriver) : EvilDriver :=
+            let both := drained (keysFed (opened (opened begun "b.txt") "a.txt") "<Delete>")
+            let bare (driver : RestoreDriver) : RestoreDriver :=
               { driver with keys := Test.withoutExtension FilesApi.Files driver.keys }
             match secondWith both bare with
             | none => false

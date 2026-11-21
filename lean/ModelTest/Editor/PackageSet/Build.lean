@@ -88,7 +88,7 @@ def succeeding (order : Order) (crates : String := "") (probe : String := "probe
 processes as `scripts` and `streams` say, and its config directory `/c`
 there. -/
 def buildDriver (running : Running) (scripts : Array Process.Script)
-    (streams : Array Process.StreamScript := #[]) : Option EvilDriver :=
+    (streams : Array Process.StreamScript := #[]) : Option RestoreDriver :=
   (driverWith (Restore.package.registered.commands ++ PackageSet.package.registered.commands)
         Restore.package.registered.modes
         (Restore.package.registered.jobs ++ PackageSet.package.registered.jobs)).map
@@ -110,22 +110,22 @@ def buildDriver (running : Running) (scripts : Array Process.Script)
     begun driver
 
 /-- `driver` once the build of `order` was started and everything settled. -/
-def built (driver : EvilDriver) (order : Order) : EvilDriver :=
+def built (driver : RestoreDriver) (order : Order) : RestoreDriver :=
   drained
     (driver.started #[{ name := buildJob, arguments := [.str order.encode], key := some buildJob }])
 
 /-- The lines of the build's buffer. -/
-def bufferLines (driver : EvilDriver) : Array String :=
+def bufferLines (driver : RestoreDriver) : Array String :=
   ((textNamed driver bufferName).map fun text =>
         (text.splitOn "\n").toArray.filter (!·.isEmpty)).getD
     #[]
 
 /-- The commands started, by their programs and arguments. -/
-def startedRuns (driver : EvilDriver) : Array (String × Array String) :=
+def startedRuns (driver : RestoreDriver) : Array (String × Array String) :=
   driver.jobs.processes.started.map fun command => (command.program, command.arguments)
 
 /-- Whether `driver`'s last buffer line is a failure starting `how`. -/
-def failedWith (driver : EvilDriver) (how : String) : Bool :=
+def failedWith (driver : RestoreDriver) (how : String) : Bool :=
   ((bufferLines driver).back?.map (·.startsWith s!"Package build failed: {how}")).getD false
 
 /-- Two answers of the install's parse are equal when both are the same

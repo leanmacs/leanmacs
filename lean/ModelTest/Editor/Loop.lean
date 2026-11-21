@@ -5874,7 +5874,9 @@ arrows, `<Home>`, `<End>`, `C-<Home>` and `C-<End>`, and the arrows with
 shift, which keep the anchor. -/
 def moveKeys : List String :=
   (editingKeys.filter fun (_, name) =>
-        !["edit-newline", "edit-delete-backward", "edit-undo", "edit-redo"].contains name).map
+        !["edit-newline", "edit-delete-backward", "edit-delete-forward", "edit-undo",
+                "edit-redo"].contains
+            name).map
     (·.1)
 
 /-- The cases in which the scroll margin `margin` does not hold after a

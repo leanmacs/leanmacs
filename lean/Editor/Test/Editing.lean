@@ -25,9 +25,10 @@ text and moves the cursor with these, and drives no key of a real scheme.
 - **`self-insert`** is the test scheme's name for a printable key
   (`TestScheme.selfInsert`): its argument, a text, inserted at the
   selections of the call's view.
-- **`edit-newline`** inserts a line break in the buffer's line ending, and
+- **`edit-newline`** inserts a line break in the buffer's line ending;
   **`edit-delete-backward`** removes each selected range, or, of a bar, the
-  character before it.
+  character before it; and **`edit-delete-forward`** each selected range,
+  or, of a bar, the character after it.
 - **The moves**, `edit-left`, `edit-right`, `edit-up`, `edit-down`,
   `edit-line-start`, `edit-line-end`, `edit-buffer-start` and
   `edit-buffer-end`, move each range to a bar: a character back or on (over
@@ -41,7 +42,7 @@ text and moves the cursor with these, and drives no key of a real scheme.
   back; with no step they say `nothing to undo` or `nothing to redo`.
 
 `editingKeys` puts them on keys that print nothing, so none is ever the
-test scheme's self-insert: the arrows, `<Backspace>`, `RET`, `<Home>`,
+test scheme's self-insert: the arrows, `<Backspace>`, `<Delete>`, `RET`, `<Home>`,
 `<End>`, `C-<Home>`, `C-<End>`, the arrows with shift, `C-z` and `C-Z`.
 
 `editingDriver` is a driver of the test scheme with these, over a state a
@@ -167,6 +168,18 @@ def deleteBackward (call : Call) : EditorM Unit := do
             else range }
   call.target.deleteSelections
 
+/-- Removes each selected range, or, of a bar, the character after it. -/
+def deleteForward (call : Call) : EditorM Unit := do
+  let text ← call.target.buffer.text.read
+  let selection ← call.target.selection
+  call.target.select
+      { selection with
+        ranges :=
+          selection.ranges.map fun range =>
+            if range.anchor == range.head then { range with head := right text range.head }
+            else range }
+  call.target.deleteSelections
+
 /-- One step of the buffer's history by `step` (`BufferId.undo` or `redo`),
 with the selection it hands back placed; says `nothing` when there is no
 step. -/
@@ -185,7 +198,8 @@ end Editing
 def editingCommands : List (String × (Call → EditorM Unit)) :=
   [((TestScheme.selfInsert "").command, Editing.selfInsert),
     ("edit-newline", fun call => call.target.insertLineBreak),
-    ("edit-delete-backward", Editing.deleteBackward), ("edit-left", Editing.moved Editing.left),
+    ("edit-delete-backward", Editing.deleteBackward),
+    ("edit-delete-forward", Editing.deleteForward), ("edit-left", Editing.moved Editing.left),
     ("edit-right", Editing.moved Editing.right), ("edit-up", Editing.moved Editing.up),
     ("edit-down", Editing.moved Editing.down), ("edit-line-start", Editing.moved Editing.lineStart),
     ("edit-line-end", Editing.moved Editing.lineEnd),
@@ -202,11 +216,12 @@ def editingCommands : List (String × (Call → EditorM Unit)) :=
 of the command it runs: keys that print nothing (the module docs). -/
 def editingKeys : List (String × String) :=
   [("<ArrowLeft>", "edit-left"), ("<ArrowRight>", "edit-right"), ("<ArrowUp>", "edit-up"),
-    ("<ArrowDown>", "edit-down"), ("<Backspace>", "edit-delete-backward"), ("RET", "edit-newline"),
-    ("<Home>", "edit-line-start"), ("<End>", "edit-line-end"), ("C-<Home>", "edit-buffer-start"),
-    ("C-<End>", "edit-buffer-end"), ("S-<ArrowLeft>", "edit-select-left"),
-    ("S-<ArrowRight>", "edit-select-right"), ("S-<ArrowUp>", "edit-select-up"),
-    ("S-<ArrowDown>", "edit-select-down"), ("C-z", "edit-undo"), ("C-Z", "edit-redo")]
+    ("<ArrowDown>", "edit-down"), ("<Backspace>", "edit-delete-backward"),
+    ("<Delete>", "edit-delete-forward"), ("RET", "edit-newline"), ("<Home>", "edit-line-start"),
+    ("<End>", "edit-line-end"), ("C-<Home>", "edit-buffer-start"), ("C-<End>", "edit-buffer-end"),
+    ("S-<ArrowLeft>", "edit-select-left"), ("S-<ArrowRight>", "edit-select-right"),
+    ("S-<ArrowUp>", "edit-select-up"), ("S-<ArrowDown>", "edit-select-down"), ("C-z", "edit-undo"),
+    ("C-Z", "edit-redo")]
 
 /-- The kit's editing commands as a driver's dispatch takes them
 (`dispatchKeys`, `Editor/Test/Loop.lean`). -/
