@@ -1,6 +1,6 @@
 import ConfigTest.Check
 import ConfigTest.Support.Shipped
-import Editor.Test.Linked.Shipped
+import Editor.Test.Linked.Vim
 
 /-!
 # Config tests: support: Syntax

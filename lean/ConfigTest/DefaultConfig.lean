@@ -11,6 +11,7 @@ import Editor.InputScheme.Vim.Default
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
+import Editor.Test.Linked.Vim
 
 /-!
 # Config tests: the default config

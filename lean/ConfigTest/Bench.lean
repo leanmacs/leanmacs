@@ -42,6 +42,7 @@ import Editor.Test.Linked.Bench
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Listings
+import Editor.Test.Linked.Vim
 import Editor.Test.Minibuffer
 import Editor.Test.Shipped
 import Editor.Text

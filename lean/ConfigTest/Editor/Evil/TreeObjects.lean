@@ -5,6 +5,7 @@ import Editor.Headless
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
+import Editor.Test.Linked.Vim
 
 /-!
 # Config tests: `Editor/Evil/TreeObjects.lean`

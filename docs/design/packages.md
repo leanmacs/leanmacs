@@ -2152,6 +2152,7 @@ those import them, and a kit that left them behind would not build.
 | `Editor.Test.Modes` | Added in the same phase: the on-enter checks' command `enter` and its invocation (`entersMode`), what it says of a refusal, and the faces the syntax tree model last highlighted (`highlightedFaces`), moved from `ModelTest.Support.Modes` so the files feature's language checks need no core test support |
 | `Editor.Test.Excerpt` | Added in the same phase: what a check reads of an excerpt buffer (`excerptBufferNamed`, `excerptRead`, over any scheme's driver), and the stand-in for a project search's results (`excerptFiles`, the command `excerpt-files`), which names no module of evil or of project search |
 | `Editor.Evil.Kit` | Added in the same phase, evil's feature kit (`Editor.*.Kit`): the driver of evil's checks under the Vim scheme that ships (`EvilDriver`, `evilDriver`, `evilHanded`, `evilFed`, `evilShown`, `barred`), which the working sets' and the workspace's tests use until phase 7 moves it with evil |
+| `Editor.Test.Editing` | Added in the features-as-packages roadmap's phase 7: the kit's editing commands (`editingCommands`, `editingKeys`, `editingDispatched`, `editingBindings`, `editingPackage`), a stand-in for the editing commands an input scheme's package registers, over the core's API alone and for the test scheme: `self-insert`, `edit-newline`, `edit-delete-backward`, the moves `edit-left`, `-right`, `-up`, `-down`, `-line-start`, `-buffer-start` and `-buffer-end`, `edit-select-left`, `-right`, `-up` and `-down`, and `edit-undo` and `edit-redo`, on keys that print nothing. A test whose subject is not a scheme edits with these and drives no key of evil's |
 
 The linked kit:
 
@@ -2164,7 +2165,8 @@ The linked kit:
 | `Editor.Test.Linked.Listings` | The styles and the display every stage of `Editor.Test.Linked.Host` hands its host (`listingsPackage`), written for the tests |
 | `Editor.Test.Linked.Keys` | Keys typed into a host's session (`Session.type`, `.typed`, `.pressKeys`), a binding of them, and the test scheme's role keys |
 | `Editor.Test.Linked.Lines` | What a host's printed scene lines say: a view's line and its status line, a prompt's, a list view's, and the library matcher's order |
-| `Editor.Test.Linked.Shipped` | A host made as the executable's are (`withVimHost`, handed the harness's packages, `HostContext.packages`, unless a check hands others), and the real syntax binding with its requests recorded |
+| `Editor.Test.Linked.Shipped` | A host made as the executable's are (`withShippedHost`, of the input scheme it is given and handed the harness's packages, `HostContext.packages`, unless a check hands others), and the real syntax binding with its requests recorded |
+| `Editor.Test.Linked.Vim` | Added in phase 7, evil's: `withVimHost`, `withShippedHost` of the Vim scheme that ships. The one module of the linked kit that names a module of evil; it moves into evil's linked test support when evil becomes a package |
 | `Editor.Test.Linked.Rig` | The loop over the real services, as a check drives it: its jobs, commands and keys, runs settled until every job has run, and a child's `PATH` |
 | `Editor.Test.Linked.Services` | New: the library's real job services over one table of waits, that table with the completion pump started, the shutdown, and how many children are not yet reaped. `contract-test`'s `main` held the first three inline, and the compile checks read the last from the raw binding |
 

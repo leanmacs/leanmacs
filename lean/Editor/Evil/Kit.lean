@@ -1,11 +1,9 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.Config.Packages
-import Editor.Config.Registry
 import Editor.Event
 import Editor.Evil.Compiled
 import Editor.InputScheme.Vim.Default
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.State
 import Editor.Test.AtPoint

@@ -6,7 +6,6 @@ import Editor.Ffi.Syntax
 import Editor.File.Model
 import Editor.Headless
 import Editor.Highlight
-import Editor.InputScheme.Vim.Default
 import Editor.Job.Fake
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
@@ -16,8 +15,11 @@ import Editor.Test.Linked.Listings
 /-!
 # The linked test kit: Shipped
 
-A host made as the executable's hosts are made (`withVimHost`, over
-`Headless.shippedOver`), handed the packages it is given, and the real
+A host made as the executable's hosts are made (`withShippedHost`, over
+`Headless.shippedOver`), of the input scheme and the packages it is given
+(a test of the core or of a package hands it the test scheme,
+`TestScheme.scheme`; the Vim scheme's host is evil's,
+`Editor/Test/Linked/Vim.lean`), and the real
 syntax tree binding as a check observes it: each request recorded
 (`recordingSyntaxTree`, `recordedRequest`), and the faces the library's
 shipped highlights query draws (`shippedFaces`). It holds no checks of its
@@ -81,7 +83,7 @@ def shippedFaces (grammar : String) (captures : List (String × Option FaceName)
   let faces := Highlight.faces captures (← query.captureNames)
   return s!"highlight {", ".intercalate (faces.map fun face => (face.map (·.name)).getD "-").toList}"
 
-/-- Runs `check` against a host of the Vim scheme that ships, made over the
+/-- Runs `check` against a host of the input scheme `scheme`, made over the
 collaborators the executable's hosts are made of (`Headless.shippedOver`),
 handed the package `listings`, so its listings are matched and shown by the
 style and the display written for these tests whatever else registers one
@@ -92,8 +94,8 @@ a stage of its own; its syntax tree is the real binding over the library's
 syntax service, which after an attach, and before a question of a text's
 captures, waits, with a bound, for the text's tree to be delivered. Stops the host; `false` if the check did not
 hold or the host did not stop. The directory is removed. -/
-def withVimHost (context : HostContext) (files : List (String × String)) (check : Session → IO Bool)
-    (fileModel : Option FileModel := none) (realFiles : Bool := false)
+def withShippedHost (scheme : InputScheme) (context : HostContext) (files : List (String × String))
+    (check : Session → IO Bool) (fileModel : Option FileModel := none) (realFiles : Bool := false)
     (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
     (packages : Array Package := context.packages) : IO Bool :=
   IO.FS.withTempDir fun directory => do
@@ -117,8 +119,8 @@ def withVimHost (context : HostContext) (files : List (String × String)) (check
       | none =>
         pure staged.services
     let shipped :=
-      Headless.shippedOver Vim.Default.scheme (#[listingsPackage] ++ packages) #[`Editor] "" [] ""
-        staged.emit services staged.published staged.held (← Config.Elaborate.ModuleFiles.temporary)
+      Headless.shippedOver scheme (#[listingsPackage] ++ packages) #[`Editor] "" [] "" staged.emit
+        services staged.published staged.held (← Config.Elaborate.ModuleFiles.temporary)
     let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
       let real ← RealSyntaxTree.new snapshots
       return fun request => do

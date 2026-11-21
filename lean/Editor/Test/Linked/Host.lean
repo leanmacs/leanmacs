@@ -82,7 +82,7 @@ structure HostContext where
   the executable was handed them. -/
   oleanDirs : List System.FilePath
   /-- The packages the set the harness stands for hands its editor: what a
-  host made as the executable's are (`withVimHost`) is handed when a check
+  host made as the executable's are (`withShippedHost`) is handed when a check
   names no others. -/
   packages : Array Package
 

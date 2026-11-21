@@ -17,6 +17,7 @@ import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Shipped
+import Editor.Test.Linked.Vim
 import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.Text.Model

@@ -20,14 +20,15 @@ import Editor.PackageSet.Compiled
 import Editor.Restore.Compiled
 import Editor.SearchRoot
 import Editor.TabCommands.Compiled
+import Editor.Test.Editing
 import Editor.Test.Excerpt
 import Editor.Test.Hosted
 import Editor.Test.Linked.Bench
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Rig
-import Editor.Test.Linked.Shipped
 import Editor.Test.Linked.Trees
+import Editor.Test.Linked.Vim
 import Editor.Test.Listing
 import Editor.Test.Modes
 import Editor.Test.Prompts
