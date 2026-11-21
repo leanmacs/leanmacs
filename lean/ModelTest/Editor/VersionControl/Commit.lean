@@ -2,7 +2,6 @@ import Editor.Config.Packages
 import Editor.Event
 import Editor.InputScheme.Test
 import Editor.Job.Model
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Mode
 import Editor.Process

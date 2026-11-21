@@ -1,5 +1,4 @@
 import Editor.Job
-import Editor.Job.Runner
 import Editor.Program
 import Editor.Test.Linked.Jobs
 import Editor.VersionControl.Git

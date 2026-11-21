@@ -1,11 +1,11 @@
 import Editor.Diff.Model
+import Editor.Restore.Value
 import Editor.State
 import Editor.Text
 import Editor.VersionControl.Git.Model
 import Editor.VersionControl.Review
 import Editor.VersionControl.ReviewHunks
 import ModelTest.Check
-import ModelTest.Editor.Restore.Value
 import VcApi
 import VcApiTest.Contract
 import VcApiTest.Fake
@@ -22,6 +22,14 @@ namespace ModelTest
 
 open Editor
 open Editor.VersionControl
+
+/-- Whether `value` written as JSON, rendered, parsed and read back is
+`value`: how the session index keeps a store's value (`Editor/Restore/Value.lean`),
+as the restore's own checks ask it (`RestoreValueTest.roundTrips`). -/
+def reviewRoundTrips (value : Value) : Bool :=
+  match Json.parse (Json.render value.toJson).toUTF8 with
+  | .ok json => Value.ofJson? json == some value && Value.ofJson? value.toJson == some value
+  | .error _ => false
 
 /-- The lines `1` to `20`, each ended by a line feed. -/
 def twentyLines : String :=
@@ -303,8 +311,7 @@ def reviewRecordChecks : List Check :=
         "the review's store, which is kept across a restart, round-trips through the session index's JSON, initial and populated: vc-review"
       run :=
         pure <|
-          RestoreValueTest.roundTrips
-              (VersionControl.reviewStore.encode VersionControl.reviewStore.initial) &&
-            RestoreValueTest.roundTrips (VersionControl.reviewStore.encode reviewedStore) }]
+          reviewRoundTrips (VersionControl.reviewStore.encode VersionControl.reviewStore.initial) &&
+            reviewRoundTrips (VersionControl.reviewStore.encode reviewedStore) }]
 
 end ModelTest

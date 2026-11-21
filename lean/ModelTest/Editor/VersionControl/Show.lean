@@ -1,5 +1,4 @@
 import Editor.InputScheme.Test
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Process
 import Editor.State

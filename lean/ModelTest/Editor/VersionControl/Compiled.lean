@@ -1,5 +1,5 @@
 import Editor.Config.Packages
-import Editor.Config.Registry
+import Editor.Test.Loop
 import Editor.VersionControl.Compiled
 import ModelTest.Check
 import VcApiTest.Contract

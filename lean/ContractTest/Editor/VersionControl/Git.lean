@@ -1,8 +1,6 @@
 import ContractTest.Check
 import ContractTest.Support.Git
-import Editor.Ffi.Processes
 import Editor.Job
-import Editor.Job.Runner
 import Editor.Program
 import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Trees

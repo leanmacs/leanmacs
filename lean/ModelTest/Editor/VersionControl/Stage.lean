@@ -3,7 +3,6 @@ import Editor.Event
 import Editor.File
 import Editor.InputScheme.Test
 import Editor.Job.Model
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Process
 import Editor.Process.Model

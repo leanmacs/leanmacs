@@ -4,7 +4,6 @@ import Editor.Invocation
 import Editor.Job
 import Editor.Job.Model
 import Editor.Keymap
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Mode
 import Editor.Process

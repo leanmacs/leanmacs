@@ -1,11 +1,9 @@
 import Editor.Api
-import Editor.Config.Registry
 import Editor.File
 import Editor.File.Model
 import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job.Model
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.ModeLine
 import Editor.ProjectSearch.Compiled
@@ -13,6 +11,7 @@ import Editor.ProjectSearch.Run
 import Editor.Scene
 import Editor.State
 import Editor.Test.Hosted
+import Editor.Test.Loop
 import Editor.WindowCommands.Compiled
 import FilesApi
 import FilesApiTest.Fake

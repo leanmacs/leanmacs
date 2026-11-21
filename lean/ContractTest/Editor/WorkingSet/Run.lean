@@ -1,10 +1,8 @@
 import ContractTest.Check
 import Editor.Api
-import Editor.Config.Registry
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Jumps
-import Editor.Loop
 import Editor.ProjectSearch.Compiled
 import Editor.Test.Linked.Rig
 import Editor.WorkingSet.Compiled

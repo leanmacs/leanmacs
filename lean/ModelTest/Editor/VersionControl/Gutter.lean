@@ -2,11 +2,8 @@ import BuffersApiTest.Fake
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
-import Editor.Command.Dispatch
 import Editor.Command.Model
 import Editor.Config.Packages
-import Editor.Config.Registry
-import Editor.Config.Stores
 import Editor.Diff.Script
 import Editor.Event
 import Editor.File.Model
@@ -16,7 +13,6 @@ import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Model
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Process
 import Editor.Process.Model

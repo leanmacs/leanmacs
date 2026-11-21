@@ -1,7 +1,6 @@
 import Editor.Api
 import Editor.Event
 import Editor.ExcerptView
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Scene
 import Editor.State
