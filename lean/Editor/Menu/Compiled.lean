@@ -1,4 +1,4 @@
-import Editor.Evil.Clipboard
+import Editor.Clipboard
 import Editor.FrameCommands
 import Editor.Menu
 import Editor.Package
@@ -18,8 +18,12 @@ no menu bar:
 - **`Menu.standard`**: the application's menu (About, Services, Hide, Hide
   Others, Show All, Quit, with the system's own key equivalents `s-h`,
   `M-s-h` and `s-q`), File (Open…, Save), Edit (Undo, Redo, a separator,
-  Cut, Copy, Paste, a separator, Select All: the clipboard commands of
-  `Editor/Evil/Clipboard.lean`) and Window (Minimise, Enter Full Screen). Its command items carry no key: a host
+  Cut, Copy, Paste, a separator, Select All: the clipboard items name the
+  core's names, `Clipboard.cutName`, `copyName`, `pasteName` and
+  `selectAllName` (`Editor/Clipboard.lean`, "The Edit menu's names"), under
+  which the input scheme's package registers its commands, as evil does
+  in `Editor/Evil/Clipboard.lean`; Undo and Redo name evil's `undo` and
+  `redo` as text) and Window (Minimise, Enter Full Screen). Its command items carry no key: a host
   fills them from the registry as it is at each step
   (`Config.Registry.menuBar?`), so a menu item and its key run the same
   command, and config's rebinding moves the shortcut. Config replaces one
@@ -78,13 +82,16 @@ def standard : Menu :=
           items :=
             #[.item "Open…" none (.command FilesApi.openFileName),
               .item "Save" none (.command FilesApi.saveName)] },
-        -- The names of evil's commands (`Editor/Evil/Compiled.lean`).
+        -- Undo and Redo are names of evil's commands
+        -- (`Editor/Evil/Compiled.lean`); the clipboard items' are the core's
+        -- (`Editor/Clipboard.lean`).
         { title := "Edit"
           items :=
             #[.item "Undo" none (.command "undo"), .item "Redo" none (.command "redo"), .separator,
-              .item "Cut" none (.command Evil.cutName), .item "Copy" none (.command Evil.copyName),
-              .item "Paste" none (.command Evil.pasteName), .separator,
-              .item "Select All" none (.command Evil.selectAllName)] },
+              .item "Cut" none (.command Clipboard.cutName),
+              .item "Copy" none (.command Clipboard.copyName),
+              .item "Paste" none (.command Clipboard.pasteName), .separator,
+              .item "Select All" none (.command Clipboard.selectAllName)] },
         { title := "Window", role := some .window
           items :=
             #[.item "Minimise" none (.command FrameCommands.minimiseName),
@@ -96,7 +103,7 @@ private def chord (text : String) : Key :=
 
 /-- The package `menu`: the key bindings of the menu's File and Edit items,
 then the menus of `standard`, in order. The clipboard commands' names
-are `Editor/Evil/Clipboard.lean`'s. -/
+are the core's (`Editor/Clipboard.lean`, "The Edit menu's names"). -/
 def package : Package :=
   { name := "menu"
     setup := do
@@ -104,10 +111,10 @@ def package : Package :=
       bindKeys [chord "s"] FilesApi.saveName
       bindKeys [chord "z"] "undo"
       bindKeys [chord "Z"] "redo"
-      bindKeys [chord "x"] Evil.cutName
-      bindKeys [chord "c"] Evil.copyName
-      bindKeys [chord "v"] Evil.pasteName
-      bindKeys [chord "a"] Evil.selectAllName
+      bindKeys [chord "x"] Clipboard.cutName
+      bindKeys [chord "c"] Clipboard.copyName
+      bindKeys [chord "v"] Clipboard.pasteName
+      bindKeys [chord "a"] Clipboard.selectAllName
       for menu in standard.menus do
         defineMenu menu }
 

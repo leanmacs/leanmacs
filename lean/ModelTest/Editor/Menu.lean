@@ -1,4 +1,5 @@
 import Editor.Api
+import Editor.Clipboard
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
@@ -35,7 +36,9 @@ import Editor.Role
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
+import Editor.Test.Config
 import Editor.Test.Driver
+import Editor.Test.Hosted
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Models
@@ -127,6 +130,21 @@ a command item chosen runs its command as an invocation, and the key
 equivalents the published menu shows are the chords the registry binds. -/
 def menuChecks : List Check :=
   [{  name :=
+        "the Edit menu's Cut, Copy, Paste and Select All, and s-x, s-c, s-v and s-a, name the core's clipboard names"
+      run :=
+        let named :=
+          [("Cut", "s-x", Clipboard.cutName), ("Copy", "s-c", Clipboard.copyName),
+            ("Paste", "s-v", Clipboard.pasteName), ("Select All", "s-a", Clipboard.selectAllName)]
+        let edit := (Menu.standard.menus.find? (·.title == "Edit")).map (·.items)
+        let registry := hostedRegistry #[Menu.package]
+        pure
+          (named.all fun (title, chord, name) =>
+            (edit.getD #[]).any
+                (fun
+                  | .item shown _ (.command command) => shown == title && command == name
+                  | _ => false) &&
+              boundTo registry chord == some { command := name }) },
+    { name :=
         "a menu's undo undoes as u does: after x over abc, both leave abc and the same selection"
       run :=
         pure <|

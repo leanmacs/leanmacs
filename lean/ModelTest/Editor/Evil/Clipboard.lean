@@ -1,4 +1,5 @@
 import Editor.Api
+import Editor.Clipboard
 import Editor.Clipboard.Model
 import Editor.Command
 import Editor.Command.Call
@@ -340,6 +341,15 @@ def clipboardCommandChecks : List Check :=
               [(Evil.cutName, "s-x"), (Evil.copyName, "s-c")].all fun (name, chord) =>
                 (clipLeft byKey name chord "foo |bar" "" { held := some "before" }).map
                     (fun left => (left.1.shown, left.2.1)) ==
-                  some ("foo |bar", some "before") }]
+                  some ("foo |bar", some "before") },
+    { name := "evil registers its four clipboard commands under the core's names"
+      run :=
+        let (state, refusals) : Config.State Unit Unit × Array String :=
+          Config.State.ofPackages #[Evil.package]
+        pure
+          (refusals.isEmpty &&
+            [Clipboard.cutName, Clipboard.copyName, Clipboard.pasteName,
+                  Clipboard.selectAllName].all
+              fun name => (state.registry.find? name).isSome) }]
 
 end ModelTest

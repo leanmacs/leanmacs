@@ -1,3 +1,4 @@
+import Editor.Clipboard
 import Editor.Evil
 import Editor.Evil.Motions
 import Editor.Evil.Registers
@@ -55,21 +56,26 @@ Pinned by `ModelTest.clipboardCommandChecks`, by chord and by menu.
 
 namespace Editor.Evil
 
-/-- The name of the command that cuts the selection to the clipboard. -/
+/-- The name of the command that cuts the selection to the clipboard: the
+core's name for the Edit menu's Cut (`Editor/Clipboard.lean`, "The Edit
+menu's names"). -/
 def cutName : String :=
-  "clipboard-cut"
+  Clipboard.cutName
 
-/-- The name of the command that copies the selection to the clipboard. -/
+/-- The name of the command that copies the selection to the clipboard: the
+core's name for the Edit menu's Copy. -/
 def copyName : String :=
-  "clipboard-copy"
+  Clipboard.copyName
 
-/-- The name of the command that pastes the clipboard. -/
+/-- The name of the command that pastes the clipboard: the core's name for
+the Edit menu's Paste. -/
 def pasteName : String :=
-  "clipboard-paste"
+  Clipboard.pasteName
 
-/-- The name of the command that selects every line. -/
+/-- The name of the command that selects every line: the core's name for
+the Edit menu's Select All. -/
 def selectAllName : String :=
-  "select-all"
+  Clipboard.selectAllName
 
 /-- What Copy and Cut give up with where nothing is selected. -/
 def nothingSelected : String :=

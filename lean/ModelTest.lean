@@ -1057,7 +1057,8 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   `` ` ` `` after a jump into another buffer;
 - `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
   All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
-  item (`clipRan`), in each Vim state, on the clipboard model.
+  item (`clipRan`), in each Vim state, on the clipboard model; and evil
+  registers the four under the core's names (`Editor/Clipboard.lean`).
 
 Each expected text of a row is written by hand from Vim's documented
 behaviour (`docs/design/keymaps-and-modes.md`, "Motions as built"). No
