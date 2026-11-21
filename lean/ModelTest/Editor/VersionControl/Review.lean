@@ -399,6 +399,22 @@ def reviewBufferChecks : List Check :=
               (focusedShowing reviewed).map (·.buffer.name) == some "a.lean" &&
               strayShots reviewed == 0 },
     { name :=
+        "with no files implementation registered, nothing is taken in: a changed file loaded from disk is left out as a refused load is, named, and the review opens nothing"
+      run :=
+        pure <|
+          let changed :=
+            VersionControlContract.forked #[("x.txt", "x\n")] #[("x.txt", "y\n")] #[]
+              #[("base", "B")]
+          match reviewOpened changed with
+          | none => false
+          | some opened =>
+            let bare := { opened with keys := withoutExtension FilesApi.Files opened.keys }
+            let reviewed := reviewAfter bare "C-t r"
+            echoOf reviewed == some "vc-review: left out x.txt: its load was refused" &&
+              (reviewed.loop.state.findBuffer "x.txt").isNone &&
+              (focusedShowing reviewed).map (·.buffer.name) == some "a.lean" &&
+              strayShots reviewed == 0 },
+    { name :=
         "a working buffer edited between its snapshot and the diff says so, opens nothing and holds no snapshot"
       run :=
         pure <|

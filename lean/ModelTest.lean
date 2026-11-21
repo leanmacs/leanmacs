@@ -1241,7 +1241,12 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   message buffer, `Editor/VersionControl/Commit.lean`): the commands, on
   the loop's driver over the editor's models, the job model, the model of
   files and the model of a repository in `/r`, whose git answers as the
-  model does;
+  model does; and, with no implementation of an interface they reach
+  registered (`Editor.Test.withoutExtension`), what each says or does:
+  `vc-status-visit` and `vc-stage-hunk` with no files implementation,
+  `vc-worktrees-visit` with no workspace implementation, each saying so and
+  starting no job, and a commit made and `vc-commit-abort` with no buffers
+  implementation, which keep the message buffer;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1265,7 +1270,8 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   old buffers a round that ends early removes, the rounds its store keeps,
   the commit each records and the store's migration, edits through its
   excerpts, a commit's review, and `vc-review-since`, into a review buffer
-  and, past a rewritten branch, the range-diff buffer;
+  and, past a rewritten branch, the range-diff buffer; and, with no files
+  implementation registered, a changed file left out as a refused load is;
 - `logViewChecks` and `logBufferChecks`, `blameViewChecks` and
   `blameBufferChecks`: the log buffer (`Editor/VersionControl/Log.lean`)
   and the blame view (`Editor/VersionControl/Blame.lean`), their pure views
@@ -1334,8 +1340,9 @@ alone too:
   from; a row of project search's results pinned as its file's range; a
   selection across two files refused; a cursor's row; a range added twice;
   overlapping ranges in one excerpt; the prompt; a set there is none of;
-  and `working-set-remove`, `working-set-note` and `working-set-refresh`
-  in the set's buffer;
+  `working-set-remove`, `working-set-note` and `working-set-refresh` in the
+  set's buffer; and, with no files implementation registered, a file open
+  nowhere left unloaded and its range drifted, as for a refused load;
 - `workingSetDiskChecks`: the sets on disk (`Editor/WorkingSet/Disk.lean`)
   on that driver with the state directory `/state` and the version-control
   interface's model at `/r`, the second acceptance criterion: three ranges

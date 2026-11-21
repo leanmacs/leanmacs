@@ -59,9 +59,9 @@ workspace has no set of is said (`noSuchSet`).
   (`WorkingSet.attach` with `retry`); a range whose file is open in no
   buffer is loaded by the job `working-set-files` (`File.load` under
   `FilesApi.loadLimit`, then the files implementation's `adopt` shown
-  nowhere, whose hook places it; with none the file is left unloaded),
-  whose command fills the buffer again; a file that cannot be loaded leaves
-  its ranges drifted.
+  nowhere, whose hook places it), whose command fills the buffer again; a
+  file that cannot be loaded, or that no files implementation takes in
+  (none is registered), is left unloaded and leaves its ranges drifted.
 - **The excerpts** are each placed range's lines, grouped and merged as
   `WorkingSet.excerpts` decides, headed by `WorkingSet.header`; then each
   drifted range, in the set's order, as a read-only buffer `<path>@drifted`
@@ -441,19 +441,20 @@ def fillAndSay (results : BufferId) (location : Location) (root name key : Strin
 /-- The command a finished files job hands the loop: each file loaded taken
 into a buffer shown nowhere (the `files-api` implementation's `adopt`,
 `FilesApi.files?`, whose hook places its ranges);
-the detached ranges of each file that was not loaded drifted; and the set's
+the detached ranges of each file that was not loaded drifted, a file loaded
+with no files implementation to take it in among them; and the set's
 buffer filled again while it is there. -/
 def arrived (order : FilesOrder) (loads : Array (String × Except FileError File.Loaded)) :
     EditorM Unit := do
   let location := Location.local (System.FilePath.mk order.root)
+  let implementation ← FilesApi.files?
   for (path, reply) in loads do
-    match reply with
-    | .ok loaded =>
-      -- With no files implementation the file is left unloaded, as a
-      -- refused load is.
-      if let some files← FilesApi.files? then
-        discard <| files.adopt path loaded none
-    | .error _ =>
+    match reply, implementation with
+    | .ok loaded, some files =>
+      discard <| files.adopt path loaded none
+    | _, _ =>
+      -- A refused load, or a file no implementation takes in: left
+      -- unloaded, its detached ranges drifted.
       let kept := keptAt (← editorState) location
       let relative := relativeIn order.root path
       let sets :=

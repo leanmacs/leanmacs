@@ -96,4 +96,15 @@ def withExtensionsOf {scheme : InputScheme} (keys : Loop.Keys scheme) (packages 
   { keys with
     registered := { keys.registered with extensions := (hostedRegistry packages).extensionsAt } }
 
+/-- `keys` with nothing registered at the extension point of `α`, the other
+points answered as before: a set with no implementation of an interface,
+for the checks of what a caller does when there is none. -/
+def withoutExtension {scheme : InputScheme} (α : Type) [TypeName α] (keys : Loop.Keys scheme) :
+    Loop.Keys scheme :=
+  { keys with
+    registered :=
+      { keys.registered with
+        extensions := fun key =>
+          if key == TypeName.typeName α then #[] else keys.registered.extensions key } }
+
 end Editor.Test

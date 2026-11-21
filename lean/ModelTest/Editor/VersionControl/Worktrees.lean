@@ -195,6 +195,20 @@ def worktreeBufferChecks : List Check :=
                   (fun id => (visited.loop.state.workspaceOf? id).map (·.1.location)) ==
                 some (.local "/w") &&
               visited.loop.state.workspaces.cached? "/w" 0 == some (some (.local "/w")) },
+    { name :=
+        "with no workspace implementation registered, visiting a linked worktree's row says vc-worktrees-visit: no workspace implementation, starts no job and opens no status buffer"
+      run :=
+        pure <|
+          match worktreeDriver with
+          | none => false
+          | some driver =>
+            let shown := shownList driver
+            let bare := { shown with keys := withoutExtension ProjectApi.Workspaces shown.keys }
+            let visited := settledAfter bare "C-v 3 C-v e"
+            echoOf visited == some "vc-worktrees-visit: no workspace implementation" &&
+              visited.next == bare.next &&
+              (visited.loop.state.buffers.filterMap id).all (!·.name.startsWith "*vc-status") &&
+              (showingFocused visited).map (·.buffer.name) == some worktreesBufferName },
     { name := "visiting this workspace's own row shows its status buffer without a find"
       run :=
         pure <|

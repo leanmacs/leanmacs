@@ -146,6 +146,23 @@ def commitBufferChecks : List Check :=
                 some
                   "vc-commit: committed Subject line; the message buffer was edited since, and is kept" },
     { name :=
+        "with no buffers implementation registered, a commit made says it committed and keeps the message buffer open with its text; vc-commit-abort says vc-commit-abort: no buffers implementation, starts no job and keeps it"
+      run :=
+        pure <|
+          match stagingDriverOf (committingRepository) with
+          | none => false
+          | some driver =>
+            let typed := settledAfter (messageOpen driver) "C-v m"
+            let bare := { typed with keys := withoutExtension BuffersApi.Buffers typed.keys }
+            let accepted := settledAfter bare "C-v y"
+            let aborted := settledAfter bare "C-v q"
+            accepted.jobs.processes.fed == #[(gitCommitRun, stagingMessage.toUTF8)] &&
+              echoOf accepted == some "vc-commit: committed Subject line" &&
+              namedText accepted messageBufferName == some stagingMessage &&
+              echoOf aborted == some "vc-commit-abort: no buffers implementation" &&
+              aborted.next == bare.next &&
+              namedText aborted messageBufferName == some stagingMessage },
+    { name :=
         "vc-commit-abort while a commit runs says so and keeps the message buffer with its text; the commit then closes it"
       run :=
         pure <|

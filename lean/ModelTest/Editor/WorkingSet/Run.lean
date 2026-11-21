@@ -231,6 +231,21 @@ def workingSetRunChecks : List Check :=
               headersOf refreshed (setBuffer "demo") == #["a.txt:3"] &&
               excerptRead refreshed (setBuffer "demo") == some "charlie three\n" &&
               refreshed.loop.state.echo == "demo: 1 ranges, 0 drifted" },
+    { name :=
+        "with no files implementation registered, working-set-open of a set whose file is open nowhere leaves the file unloaded, and its range drifted as for a refused load"
+      run :=
+        pure <|
+          match withA with
+          | none => false
+          | some driver =>
+            let added := ran (evilFed driver "2 j") WorkingSet.addName [.str "demo"]
+            let gone := opened (closed added "a.txt") "b.txt"
+            let bare := { gone with keys := Test.withoutExtension FilesApi.Files gone.keys }
+            let shownSet := ran bare WorkingSet.openName [.str "demo"]
+            (rangesOf gone "demo").map (·.hold) == #[.detached] &&
+              (shownSet.loop.state.findBuffer "a.txt").isNone &&
+              (rangesOf shownSet "demo").map (·.hold) == #[.drifted] &&
+              shownSet.loop.state.echo == "demo: 1 ranges, 1 drifted" },
     { name := "working-set-open of a name the workspace has no set of says so, and opens nothing"
       run :=
         pure <|

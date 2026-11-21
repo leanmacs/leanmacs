@@ -93,6 +93,19 @@ def stageHunkChecks : List Check :=
                 some staged.jobs.processes.fed &&
               echoOf staged == some "staged a hunk of src/a.lean" &&
               liveSnapshots staged == liveSnapshots edited },
+    { name :=
+        "with no files implementation registered, vc-stage-hunk on a buffer with unsaved changes says vc-stage-hunk: no files implementation, starts no job and feeds git nothing"
+      run :=
+        pure <|
+          match stagingDriverOf stagingRepository with
+          | none => false
+          | some driver =>
+            let edited := settledAfter (settledAfter driver "C-o a") "C-v z"
+            let bare := { edited with keys := withoutExtension FilesApi.Files edited.keys }
+            let asked := settledAfter bare "C-r 9 C-v g"
+            echoOf asked == some "vc-stage-hunk: no files implementation" &&
+              asked.next == bare.next &&
+              asked.jobs.processes.fed.isEmpty },
     { name := "a save that is refused starts no fetch, and stages nothing"
       run :=
         pure <|

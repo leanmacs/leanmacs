@@ -296,6 +296,21 @@ def statusBufferChecks : List Check :=
               ((showingFocused kept).bind (·.buffer.file)).map (·.path) ==
                 some ("/r/kept.txt" : System.FilePath) },
     { name :=
+        "with no files implementation registered, visiting on a file's line says vc-status-visit: no files implementation, starts no job and opens nothing, the status buffer still shown"
+      run :=
+        pure <|
+          match statusDriver with
+          | none => false
+          | some driver =>
+            let shown := settledAfter (settledAfter driver "C-o a") "C-v s"
+            let bare := { shown with keys := withoutExtension FilesApi.Files shown.keys }
+            let visited := settledAfter bare "C-v 4 C-v v"
+            let buffers (driver : TestDriver) := (driver.loop.state.buffers.filterMap id).size
+            echoOf visited == some "vc-status-visit: no files implementation" &&
+              visited.next == bare.next &&
+              buffers visited == buffers bare &&
+              (showingFocused visited).map (·.buffer.name) == some statusBufferName },
+    { name :=
         "refreshing reads the status again into the buffer without opening another window; outside a status buffer it says the buffer is not one"
       run :=
         pure <|
