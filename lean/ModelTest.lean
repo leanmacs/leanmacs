@@ -68,6 +68,7 @@ import ModelTest.Editor.ExecuteCommand
 import ModelTest.Editor.Extension
 import ModelTest.Editor.Face
 import ModelTest.Editor.Face.Vocabulary
+import ModelTest.Editor.File
 import ModelTest.Editor.File.Cases
 import ModelTest.Editor.File.Model
 import ModelTest.Editor.FileWatch.Model
@@ -711,6 +712,9 @@ The job system is tested here with no Rust library:
   escapes against texts written out by hand, what a load and a save answer
   and in what order they are refused, and the file data's own functions.
   They touch no file;
+- `fileRefusalChecks`: the refusal a reply to each kind of file request
+  holds (`FileRequest.refusal`, `Editor/File.lean`), pure: the error of a
+  refusal, and none of a result;
 - `processChecks`: the pure model of the processes a job runs
   (`Editor/Process/Model.lean`), its order of refusals and its record of
   what a cancelled job had killed, and the runner's process waits on the
@@ -1352,6 +1356,11 @@ Session restore is checked in Lean alone too:
   (`Restore.offsetOf`, `Editor/Restore/Indexed.lean`), on the text model: its
   column in bytes, after a multi-byte character, clamped past the row's
   content, moved back from inside a character, and a row past the last.
+- `orderFailureChecks`: a journal order's path and failure
+  (`Restore.Order.path`, `Restore.Order.failed`, `Editor/Restore.lean`),
+  pure: for an append, a remove and a save of a snapshot, its path, and of a
+  reply to it, that path and `FileError.describe`'s words for a refusal and
+  nothing for a result; and an order the reconciler never makes, no path;
 - `journalReconcileChecks`: the journal's reconciler
   (`Editor/Restore.lean`) on the loop's driver over the models with the
   state directory `/state`, each read from the file model, decoded and
@@ -1521,6 +1530,7 @@ def checks : List Check :=
     undoTreeChecks ++
     textModelStepChecks ++
     fileModelChecks ++
+    fileRefusalChecks ++
     sceneChecks ++
     modeLineChecks ++
     paddingChecks ++
@@ -1605,6 +1615,7 @@ def checks : List Check :=
     restoreValueChecks ++
     restoreFrameChecks ++
     restoreWorkspaceChecks ++
+    orderFailureChecks ++
     journalReconcileChecks ++
     restoreChecks ++
     driverChecks ++

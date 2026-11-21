@@ -7,8 +7,9 @@ import ModelTest.Support.Restore
 The model tests of `Editor/Restore.lean`: `journalReconcileChecks`, on the
 loop's driver over the editor's models and the job model, with the state
 directory `/state`. Each reads what the journal's orders left in the file
-model, decoded and replayed. The root module `ModelTest` runs them; its
-module doc says what each shows.
+model, decoded and replayed. And `orderFailureChecks`, pure: the path of a
+journal order and what a reply to it says of it. The root module
+`ModelTest` runs them; its module doc says what each shows.
 -/
 
 namespace ModelTest
@@ -555,5 +556,53 @@ def journalReconcileChecks : List Check :=
                 file == some #[focused.index] &&
                 (document.bind (·.focused)) == some focused.index
             | _, _ => false }]
+
+namespace OrderFailureTest
+
+/-- An append to the log `/state/a.log`. -/
+def appendOrder : Order :=
+  { request := .append "/state/a.log" "x".toUTF8 }
+
+/-- A remove of the base `/state/b.base`. -/
+def removeOrder : Order :=
+  { request := .remove "/state/b.base" }
+
+/-- A save of the snapshot 3 as `/state/c.base`, whatever is there, which
+releases it. -/
+def saveOrder : Order :=
+  { request := .save (.snapshot ⟨3⟩) "/state/c.base" .whatever, release := some ⟨3⟩ }
+
+end OrderFailureTest
+
+open OrderFailureTest in
+/-- The checks of a journal order's path and failure (`Restore.Order.path`,
+`Restore.Order.failed`, `Editor/Restore.lean`), pure. -/
+def orderFailureChecks : List Check :=
+  [{  name := "an append order's path is its log's, and a refusal of it says that path and why"
+      run :=
+        pure <|
+          appendOrder.path == "/state/a.log" &&
+            appendOrder.failed (.error .notFound : Except FileError Unit) ==
+              some ("/state/a.log", "nothing is at the path") &&
+            appendOrder.failed (.ok () : Except FileError Unit) == none },
+    { name := "a remove order's path is its file's, and a refusal of it says that path and why"
+      run :=
+        pure <|
+          removeOrder.path == "/state/b.base" &&
+            removeOrder.failed (.error .denied : Except FileError Unit) ==
+              some ("/state/b.base", "the file system does not allow it") &&
+            removeOrder.failed (.ok () : Except FileError Unit) == none },
+    { name :=
+        "a save order's path is the file it writes, and a refusal of it says that path and why"
+      run :=
+        pure <|
+          saveOrder.path == "/state/c.base" &&
+            saveOrder.failed (.error .noSuchSnapshot : Except FileError File.Stamp) ==
+              some ("/state/c.base", "the save names no snapshot") &&
+            saveOrder.failed
+                (.ok { seconds := 1, nanoseconds := 2, size := 3 } : Except FileError File.Stamp) ==
+              none },
+    { name := "an order the reconciler never makes has no path"
+      run := pure <| ({ request := .stamp "/state/d.log" } : Order).path == "" }]
 
 end ModelTest
