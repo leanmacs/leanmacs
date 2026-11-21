@@ -3801,7 +3801,7 @@ window is still run with nothing drawing in it. The threads are in
   contract, a fixture frame of real text is drawn in it and read back
   from its surface within 3 of 255 of the CPU's picture (the run fails
   unless every frame's picture was compared), nothing is
-  drawn over an idle second, input given by xdotool arrives on the queue
+  drawn for nothing before the render loop comes to rest, input given by xdotool arrives on the queue
   as documented, and the clipboard keeps its contract in one process and
   across two ([on-demand-checks.md](../dev-practices/on-demand-checks.md),
   "The window on Linux, on demand"). That task, and not the gate, is

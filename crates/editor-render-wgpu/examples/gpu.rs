@@ -71,6 +71,8 @@ fn timed<T>(run: impl FnOnce() -> T) -> (T, Duration) {
     )]
     let start = Instant::now();
     let value = run();
+    // real time under test: how long the draw took, printed for a person
+    // and never asserted.
     (value, start.elapsed())
 }
 

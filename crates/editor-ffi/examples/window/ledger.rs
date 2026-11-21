@@ -3,7 +3,8 @@
 //! what the window presents and compares it with the headless renderer's
 //! picture of the same frame.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use editor_ffi::render::target;
 use editor_layout::frame::Frame;
@@ -68,6 +69,13 @@ pub struct Ledger {
     clock: Arc<dyn Clock>,
     /// What it keeps.
     kept: Mutex<Kept>,
+    /// Signalled each time something is entered: what
+    /// [`wait`](Self::wait) waits on.
+    changed: Condvar,
+    /// Called each time [`wait`](Self::wait) reads the tally, with what
+    /// it found, under the lock. Set once, by a test.
+    #[cfg(test)]
+    awaited: std::sync::OnceLock<Box<dyn Fn(bool) + Send + Sync>>,
 }
 
 impl Ledger {
@@ -76,6 +84,9 @@ impl Ledger {
         Self {
             clock,
             kept: Mutex::new(Kept::default()),
+            changed: Condvar::new(),
+            #[cfg(test)]
+            awaited: std::sync::OnceLock::new(),
         }
     }
 
@@ -87,6 +98,28 @@ impl Ledger {
         let at_ns = self.clock.now_ns();
         kept.tally.note(at_ns, &happened);
         kept.records.push((at_ns, happened));
+        drop(kept);
+        self.changed.notify_all();
+    }
+
+    /// Waits until `ready` holds of what the ledger comes to, and says
+    /// whether it did: false once `limit` has passed first. It is notified
+    /// as each thing is entered ([`note`](Self::note)), never a poll.
+    pub fn wait(&self, limit: Duration, ready: impl Fn(&Tally) -> bool) -> bool {
+        let (kept, _) = self
+            .changed
+            // hang guard: `ready` holding, which each entry notifies; only
+            // a hang reaches the limit.
+            .wait_timeout_while(locked(&self.kept), limit, |kept| {
+                let found = ready(&kept.tally);
+                #[cfg(test)]
+                if let Some(hook) = self.awaited.get() {
+                    hook(found);
+                }
+                !found
+            })
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        ready(&kept.tally)
     }
 
     /// Enters that `frame`, laid out for the window `window`, is
@@ -114,12 +147,6 @@ impl Ledger {
     fn began(&self, frame: &Arc<Frame>, target: Target) {
         let frame = number_of(&locked(&self.kept).frames, frame);
         self.note(Happened::Began { frame, target });
-    }
-
-    /// Whether a frame is shown and nothing more is asked for or being
-    /// drawn.
-    pub fn settled(&self) -> bool {
-        locked(&self.kept).tally.settled()
     }
 
     /// Everything entered so far and what it comes to, as copies.
@@ -341,8 +368,59 @@ mod tests {
     use editor_render_wgpu::{Antialiasing, Masks, Settings, SubpixelOrder};
 
     use super::{Entered, Ledger, entering, happened, settings};
-    use crate::tally::Happened;
-    use crate::testing::{LARGE, MS, SMALL, began, presented_as};
+    use crate::tally::{Happened, Tally};
+    use crate::testing::{LARGE, MS, PRESENTED, SMALL, began, presented_as};
+
+    /// hang guard: the wait's next reading, or its answer; only a hang
+    /// reaches the bound, and the test then fails as a hang.
+    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
+    #[test]
+    fn a_wait_begun_before_what_it_waits_for_is_entered_returns_once_it_is() {
+        let ledger = ledger();
+        let (read, readings) = std::sync::mpsc::channel();
+        let read = Mutex::new(read);
+        let hook = move |found| {
+            let _ = read.lock().unwrap().send(found);
+        };
+        assert!(ledger.awaited.set(Box::new(hook)).is_ok(), "set once");
+        let shown = |tally: &Tally| tally.shown.is_some();
+        let (answer, answered) = std::sync::mpsc::channel();
+        {
+            let ledger = Arc::clone(&ledger);
+            std::thread::spawn(move || {
+                let _ = answer.send(ledger.wait(DEADLINE, shown));
+            });
+        }
+        assert_eq!(
+            readings.recv_timeout(DEADLINE),
+            Ok(false),
+            "nothing is shown yet"
+        );
+
+        ledger.note(Happened::Opened {
+            size: SMALL,
+            refresh: None,
+        });
+        ledger.note(began(1, SMALL));
+        ledger.note(PRESENTED);
+
+        // A wait that answered at its first reading never reads the draw.
+        let mut last = false;
+        while !last {
+            last = readings
+                .recv_timeout(DEADLINE)
+                .expect("the wait reads again as each thing is entered");
+        }
+        assert_eq!(answered.recv_timeout(DEADLINE), Ok(true));
+    }
+
+    #[test]
+    fn a_wait_for_what_is_never_entered_says_no_once_its_limit_has_passed() {
+        let ledger = ledger();
+        assert!(!ledger.wait(std::time::Duration::ZERO, |tally| tally.shown.is_some()));
+        assert!(ledger.wait(std::time::Duration::ZERO, |tally| tally.shown.is_none()));
+    }
 
     #[test]
     fn the_window_draws_to_core_texts_weight_where_it_matches_core_text_and_linear_elsewhere() {
@@ -498,7 +576,7 @@ mod tests {
         );
         // The renderer was asked for each.
         assert_eq!(renderer.inner.requests().len(), 3);
-        assert!(!ledger.settled());
+        assert!(!ledger.wait(std::time::Duration::ZERO, Tally::settled));
     }
 
     #[test]

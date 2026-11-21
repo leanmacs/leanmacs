@@ -47,7 +47,7 @@ pub enum Happened {
         /// `None` for a renderer that does not say.
         masks: Option<Masks>,
     },
-    /// The idle second began (`true`) or ended (`false`).
+    /// The wait for the render loop's rest began (`true`) or ended (`false`).
     Idle(bool),
 }
 
@@ -83,11 +83,11 @@ pub struct Draw {
     pub presented: bool,
     /// What it was for.
     pub served: Served,
-    /// Whether it began in the idle second.
+    /// Whether it began in the wait for the render loop's rest.
     pub idle: bool,
 }
 
-/// What the idle second showed.
+/// What the wait for the render loop's rest showed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Idle {
     /// Whether everything asked before it began had been drawn by then.
@@ -138,9 +138,9 @@ pub struct Tally {
     /// How many things asked for a draw: a frame published, a new size
     /// told and damage told.
     pub asked: u64,
-    /// Whether the idle second is under way.
+    /// Whether the wait for the render loop's rest is under way.
     pub idling: bool,
-    /// What the idle second showed, once it has begun.
+    /// What the wait for the render loop's rest showed, once it has begun.
     pub idle: Option<Idle>,
 }
 

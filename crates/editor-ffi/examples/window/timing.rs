@@ -1,22 +1,16 @@
 //! What the tally finds of drawing on demand, and the ledger and the
 //! renderer's journal as lines, each with its time since the window opened.
 
-use std::time::Duration;
-
 use editor_render::journal::Entry;
 use editor_render::port::Target;
 
 use crate::judge::{Findings, listed};
 use crate::tally::{Happened, Idle, Record, Served, Tally};
 
-/// How long the window is left alone, with nothing published, to see that
-/// nothing is drawn.
-pub const IDLE: Duration = Duration::from_secs(1);
-
-/// How many times a window left alone for [`IDLE`] may ask to be drawn
-/// again: a system that uncovers the window, or settles its size as it
-/// opens, asks a few times. A window that asks at every refresh asks sixty
-/// times and more.
+/// How many times a window may ask to be drawn again from the time it has
+/// settled to the render loop's rest: a system that uncovers the window,
+/// or settles its size as it opens, asks a few times. A window that asks
+/// whenever it is drawn keeps the loop from resting at all.
 const IDLE_ASKS: u64 = 5;
 
 /// How long after `opened_ns` the time `at_ns` is, in milliseconds.
@@ -42,8 +36,7 @@ pub fn on_demand(tally: &Tally, opened_ns: u64, counted: u64) -> Findings {
                 );
             }
             found.lines.push(format!(
-                "idle: over {} s in which nothing was published, {drawn} frames were drawn and the window asked for {asked}",
-                IDLE.as_secs()
+                "idle: from the window settling to the render loop's rest, {drawn} frames were drawn and the window asked for {asked}"
             ));
             // A second that began before the window had settled may draw
             // for what was asked before it: each draw is judged by itself,
@@ -153,14 +146,14 @@ pub fn timeline(records: &[Record]) -> Vec<String> {
                 }
             ),
             Happened::Idle(true) => format!(
-                "the idle second began{}",
+                "the wait for the render loop's rest began{}",
                 if settled {
                     ""
                 } else {
                     ", before the window had settled"
                 }
             ),
-            Happened::Idle(false) => "the idle second ended".to_owned(),
+            Happened::Idle(false) => "the wait for the render loop's rest ended".to_owned(),
         };
         lines.push(format!("{:>9.1} ms: {what}", since(*opened_ns, *at_ns)));
     }
@@ -253,7 +246,7 @@ mod tests {
             on_demand(&tally, MS, 2),
             Findings {
                 lines: vec![
-                    "idle: over 1 s in which nothing was published, 0 frames were drawn and the window asked for 0".to_owned(),
+                    "idle: from the window settling to the render loop's rest, 0 frames were drawn and the window asked for 0".to_owned(),
                     "over the whole run, 2 draws for 8 things that asked for one".to_owned(),
                 ],
                 failures: Vec::new(),
@@ -263,7 +256,7 @@ mod tests {
         let asked = on_demand(&tally_of(&[draw(5 * MS, FRAME)], idle(2, 2), 3), MS, 1);
         assert_eq!(
             asked.lines[0],
-            "idle: over 1 s in which nothing was published, 2 frames were drawn and the window asked for 2"
+            "idle: from the window settling to the render loop's rest, 2 frames were drawn and the window asked for 2"
         );
         assert_eq!(asked.failures, [] as [String; 0]);
     }
@@ -392,13 +385,13 @@ mod tests {
                 "      7.0 ms: draw 1 ended, presented",
                 "      8.0 ms: draw 2 began, of frame 1 on 800 by 600 at scale 2, for damage",
                 "      9.0 ms: draw 2 ended, not presented",
-                "     10.0 ms: the idle second began, before the window had settled",
+                "     10.0 ms: the wait for the render loop's rest began, before the window had settled",
                 "     11.0 ms: frame 2 was published",
                 "     12.0 ms: the window told its drawer it is 400 by 300 at scale 1",
                 "     13.0 ms: draw 3 began, of frame 2 on 400 by 300 at scale 1, for a frame not yet shown, a size not yet drawn at and damage",
                 "     14.0 ms: draw 3 ended, presented",
                 "     15.0 ms: draw 4 began, of frame 2 on 400 by 300 at scale 1, for nothing that was asked",
-                "     16.0 ms: the idle second ended",
+                "     16.0 ms: the wait for the render loop's rest ended",
                 "     17.0 ms: draw 5 began, of a frame nobody published on 400 by 300 at scale 1, for a frame not yet shown",
             ]
         );
@@ -411,7 +404,10 @@ mod tests {
             quiet[0],
             "      0.0 ms: the window told its drawer it opened, 400 by 300 at scale 1, on a display that does not say how often it refreshes"
         );
-        assert_eq!(quiet[4], "      4.0 ms: the idle second began");
+        assert_eq!(
+            quiet[4],
+            "      4.0 ms: the wait for the render loop's rest began"
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@
 //!
 //! ```text
 //! clipboard contract                 hold the clipboard to the port's contract
-//! clipboard hold <text> <seconds>    write <text>, and stay for <seconds>
+//! clipboard hold <text>              write <text>, and stay until stdin closes
 //! clipboard read                     print the text on the clipboard
 //! ```
 //!
@@ -24,13 +24,14 @@
 //!
 //! `hold` and `read` are for a second process to read what a first wrote,
 //! which one process cannot show: on Linux the text is served by the
-//! process that wrote it, so `hold` stays alive for as long as it is told
-//! and prints a line once the text is written. `read` prints the text and
-//! nothing else, and exits 1 when the clipboard holds none.
+//! process that wrote it, so `hold` prints a line once the text is written
+//! and stays alive until its standard input closes: the process that reads
+//! closes it once it has read, so the order is the pipe's and no time is
+//! waited out. `read` prints the text and nothing else, and exits 1 when
+//! the clipboard holds none.
 
+use std::io::{Read, Write};
 use std::process::ExitCode;
-use std::thread;
-use std::time::Duration;
 
 use editor_platform::clipboard::{Clipboard, ClipboardError, contract};
 use editor_platform_arboard::SystemClipboard;
@@ -91,14 +92,17 @@ fn run(clipboard: &SystemClipboard, arguments: &[String]) -> Option<bool> {
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
     match arguments.as_slice() {
         ["contract"] => Some(held_to_the_contract(clipboard)),
-        ["hold", text, seconds] => {
-            let seconds: u64 = seconds.parse().ok()?;
+        ["hold", text] => {
             if let Err(error) = clipboard.write(text) {
                 eprintln!("clipboard: FAILED: the text could not be written: {error}");
                 return Some(false);
             }
-            println!("clipboard: holding the text for {seconds} s");
-            thread::sleep(Duration::from_secs(seconds));
+            println!("clipboard: holding the text until stdin closes");
+            // Said before the wait, so the reader knows the text is there.
+            let _ = std::io::stdout().flush();
+            // The text is served for as long as this process lives: until
+            // the reader closes this end of the pipe, with no time limit.
+            let _ = std::io::stdin().read_to_end(&mut Vec::new());
             Some(true)
         }
         ["read"] => match clipboard.read() {
@@ -132,7 +136,7 @@ fn main() -> ExitCode {
         Some(true) => ExitCode::SUCCESS,
         Some(false) => ExitCode::FAILURE,
         None => {
-            eprintln!("usage: clipboard contract | hold <text> <seconds> | read");
+            eprintln!("usage: clipboard contract | hold <text> | read");
             ExitCode::from(2)
         }
     }

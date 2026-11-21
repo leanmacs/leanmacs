@@ -19,8 +19,8 @@ const ALONE: Duration = Duration::from_secs(1);
 ///
 /// A window is left alone when [`ALONE`] passes in which it tells its
 /// drawer nothing, no frame is published and no draw begins or ends. The
-/// example's own idle second is not something that happened to the window,
-/// and breaks no such stretch. A stretch is judged when somebody can see
+/// example's own wait for the render loop's rest is not something that
+/// happened to the window, and breaks no such stretch. A stretch is judged when somebody can see
 /// the window (it has not said it is hidden), a frame has been presented,
 /// and no draw is in progress. Then the draw last presented must be of a
 /// frame laid out for the size and the scale the window last said, on that
@@ -200,8 +200,8 @@ mod tests {
     }
 
     #[test]
-    fn the_examples_own_idle_second_neither_breaks_a_stretch_nor_makes_two_of_one() {
-        // More than a second before the idle second begins, the second
+    fn the_examples_own_wait_for_rest_neither_breaks_a_stretch_nor_makes_two_of_one() {
+        // More than a second before the wait for rest begins, the wait
         // itself, and less than one after it: one stretch, of the window's.
         let records = timed(&[
             (

@@ -233,22 +233,33 @@ inside_editor_session() {
 
 # Text written to the clipboard by one process and read by another, which
 # one process cannot show: on X11 the text is served by the process that
-# wrote it, so the writer stays alive while the reader reads. Fails if the
-# text read is not the text written.
+# wrote it, so the writer stays alive while the reader reads. The order is
+# the pipes': the holder says on its output that the text is written, and
+# stays until its input, held open here, is closed once the read is done.
+# Fails if the text read is not the text written.
 inside_clipboard_across() {
-  local text='held by another process: é, 日本' held=/tmp/clipboard-hold.log
-  local holder got waited=0
-  /work/target/debug/examples/clipboard hold "$text" 10 >"$held" 2>&1 &
+  local text='held by another process: é, 日本' pipes holder said got
+  pipes=$(mktemp -d)
+  mkfifo "$pipes/in" "$pipes/out"
+  /work/target/debug/examples/clipboard hold "$text" <"$pipes/in" >"$pipes/out" 2>&1 &
   holder=$!
-  until grep -q '^clipboard: holding' "$held"; do
-    waited=$((waited + 1))
-    [ "$waited" -lt 50 ] || die "the clipboard was not written: $(cat "$held")"
-    sleep 0.1
-  done
+  # Opened in the order the holder opens them, so neither open waits on
+  # the other.
+  exec 3>"$pipes/in" 4<"$pipes/out"
+  # hang guard: the holder's line once the text is written; only a hang
+  # reaches the bound, and the run then fails as a hang.
+  IFS= read -r -t 60 said <&4 || die "the clipboard was not written: the holder said nothing"
+  case "$said" in
+    'clipboard: holding'*) ;;
+    *) die "the clipboard was not written: $said" ;;
+  esac
   got=$(/work/target/debug/examples/clipboard read) ||
     die "another process could not read the clipboard"
-  kill "$holder" 2>/dev/null || true
-  wait "$holder" 2>/dev/null || true
+  # The read is done: closing its input lets the holder end.
+  exec 3>&-
+  wait "$holder" || die "the process that held the clipboard failed"
+  exec 4<&-
+  rm -rf "$pipes"
   printf 'clipboard: one process wrote "%s"; another read "%s"\n' "$text" "$got"
   [ "$got" = "$text" ] || die "the text read is not the text written"
 }

@@ -827,10 +827,13 @@ FAILED:` and exit status 1, unless all of these hold:
   let its texture be copied from prints that the frame's picture was not
   compared, which this task does not fail (`--require-picture` does);
 - no draw is for nothing that was asked, there are no more draws than
-  things that asked for one, and nothing is drawn over the idle second,
-  which begins once the window has drawn what was asked as it opened (or
-  after five seconds), but for a frame or two a system asks for as it
-  uncovers the window;
+  things that asked for one, and once the window has drawn what was
+  asked as it opened (or after five seconds) the render loop comes to
+  rest, with nothing drawn before it does but for a frame or two a system
+  asks for as it uncovers the window. The wait ends on the loop's rest
+  (`RenderHandle::wait_resting`), not on a second of real time: at rest
+  nothing is scheduled, so nothing can draw. A loop that has not rested
+  10 seconds after the window settled fails the run;
 - each time the window is left alone, it shows what was laid out for it
   ("Left alone", below);
 - at least one key or pointer input came off the queue. Each input is
@@ -854,7 +857,8 @@ loosen the 3 to make it pass: a difference past it is a finding.
 
 **Left alone.** A window is left alone when a second passes in which it
 tells its drawer nothing, no frame is published and no draw begins or
-ends; the example's own idle second is the first such time. Each such
+ends; the time the window stays once it is ready is the first such
+time. Each such
 time, if the window has not said it is hidden, a frame has been presented
 and no draw is in progress, the draw last presented must be of a frame
 laid out for the size and the scale the window last said, on that size

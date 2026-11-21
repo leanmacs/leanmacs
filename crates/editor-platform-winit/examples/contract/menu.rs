@@ -9,9 +9,10 @@
 //! 1. The window is asked for a sample menu ([`sample`]): an application
 //!    menu with each system item, a File menu with command items (one with
 //!    no key, one with every modifier) and a separator, and a windows menu.
-//! 2. `NSApp.mainMenu` is read back through the crate's reading
-//!    (`editor_platform_winit::probe`) until the items the adapter built
-//!    spell exactly the sample. Then the application's `servicesMenu` and
+//! 2. Once the loop has carried the request out
+//!    (`probe::await_requests_handled`), `NSApp.mainMenu` is read back once
+//!    through the crate's reading (`editor_platform_winit::probe`), and the
+//!    items the adapter built must spell exactly the sample. Then the application's `servicesMenu` and
 //!    `windowsMenu` must be the submenus built for them, and no item may
 //!    call `toggleFullScreen:` (`NSFullScreenMenuItemEverywhere`). The
 //!    items AppKit added of its own are listed in a failure's reason; they
@@ -25,11 +26,11 @@
 //!    and the perform returns. The module `terminate` asks again only after
 //!    that, so this scenario leaves it one quit reported.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use editor_platform::menu::{Action, Item, KeyEquivalent, Role, Submenu, System};
 use editor_platform::{Input, Menu, Modifiers, Platform, Request};
+use editor_platform_winit::WinitPlatform;
 use editor_platform_winit::probe::{self, Reading};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject};
@@ -37,14 +38,16 @@ use objc2::{MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::NSApplication;
 use objc2_foundation::NSObjectNSThreadPerformAdditions;
 
-use crate::Record;
 use crate::terminate::{opened, reported};
+use crate::{Count, Record};
 
-/// How long each step waits for what it should see.
+/// hang guard: what each step waits for (a report, the loop carrying a
+/// request out, a perform returning); only a hang reaches the bound, and
+/// the scenario then fails as a hang.
 const STEP: Duration = Duration::from_secs(3);
 
 /// How many performs of the Quit item have returned.
-static QUIT_RETURNED: AtomicUsize = AtomicUsize::new(0);
+static QUIT_RETURNED: Count = Count::new();
 
 define_class!(
     /// What performs the application menu's Quit item on the main thread,
@@ -69,7 +72,7 @@ define_class!(
             }) {
                 menu.performActionForItemAtIndex(index as isize);
             }
-            QUIT_RETURNED.fetch_add(1, Ordering::SeqCst);
+            QUIT_RETURNED.add();
         }
     }
 );
@@ -183,26 +186,27 @@ fn read() -> Option<Reading> {
     dispatch2::run_on_main(|_| probe::read_menu_bar())
 }
 
-/// Waits until the menu bar reads as `menu`, and gives the reading.
-fn shown(menu: &Menu) -> Result<Reading, String> {
-    let deadline = Instant::now() + STEP;
-    loop {
-        let reading = read();
-        if let Some(reading) = &reading
-            && reading.menu == *menu
-        {
-            return Ok(reading.clone());
-        }
-        if Instant::now() >= deadline {
-            let (read, foreign) = reading
-                .map(|reading| (Some(reading.menu), reading.foreign))
-                .unwrap_or_default();
-            return Err(format!(
-                "the menu bar read back {read:?}, not the menu asked (AppKit's own items: {foreign:?})"
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(20));
+/// Waits until `platform`'s loop has carried out every request asked of
+/// it, the menu among them, then reads the menu bar once and gives the
+/// reading if it reads as `menu`.
+fn shown(platform: &WinitPlatform, menu: &Menu) -> Result<Reading, String> {
+    if !probe::await_requests_handled(platform, STEP) {
+        return Err(format!(
+            "the loop had not carried the menu bar's request out {STEP:?} after it was asked"
+        ));
     }
+    let reading = read();
+    if let Some(reading) = &reading
+        && reading.menu == *menu
+    {
+        return Ok(reading.clone());
+    }
+    let (read, foreign) = reading
+        .map(|reading| (Some(reading.menu), reading.foreign))
+        .unwrap_or_default();
+    Err(format!(
+        "the menu bar read back {read:?}, not the menu asked (AppKit's own items: {foreign:?})"
+    ))
 }
 
 /// Performs the command item tagged `tag` on the main thread; whether one
@@ -256,11 +260,11 @@ fn quit() {
 }
 
 /// Runs the scenario on `platform`, whose report is `record`.
-pub fn scenario(platform: &impl Platform, record: &Record) -> Result<(), String> {
+pub fn scenario(platform: &WinitPlatform, record: &Record) -> Result<(), String> {
     opened(record)?;
     let menu = sample();
     platform.request(Request::Menu(menu.clone()));
-    let reading = shown(&menu)?;
+    let reading = shown(platform, &menu)?;
     if !reading.services_set {
         return Err("the Services item's submenu is not the application's `servicesMenu`".into());
     }
@@ -296,16 +300,12 @@ pub fn scenario(platform: &impl Platform, record: &Record) -> Result<(), String>
 
     quit();
     reported(record, 1, "after performing the Quit item")?;
-    if QUIT_RETURNED.load(Ordering::SeqCst) != 0 {
+    if QUIT_RETURNED.get() != 0 {
         return Err("the Quit item's perform returned with no reply made".into());
     }
     platform.request(Request::KeepRunning);
-    let deadline = Instant::now() + STEP;
-    while QUIT_RETURNED.load(Ordering::SeqCst) < 1 {
-        if Instant::now() >= deadline {
-            return Err("after keeping running, the Quit item's perform did not return".into());
-        }
-        std::thread::sleep(Duration::from_millis(5));
+    if QUIT_RETURNED.wait(1, STEP) < 1 {
+        return Err("after keeping running, the Quit item's perform did not return".into());
     }
     Ok(())
 }

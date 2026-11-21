@@ -112,6 +112,8 @@ fn main() -> ExitCode {
     let start = Instant::now();
     session.touch(Revision::new(0));
     session.parse_once(&TreeSitter);
+    // real time under test: the first parse's time, printed and never
+    // asserted.
     println!("first parse: {}", ms(start.elapsed()));
 
     let middle = source.len() / 2;
@@ -137,9 +139,12 @@ fn main() -> ExitCode {
         session.touch(revision);
         let start = Instant::now();
         session.parse_once(&TreeSitter);
+        // real time under test: each round's and each refresh's time,
+        // printed and never asserted.
         rounds.push(start.elapsed());
         let start = Instant::now();
         session.refresh_once(&TreeSitter);
+        // real time under test: as above, the refresh's.
         refreshes.push(start.elapsed());
     }
     summary("a round after an edit", rounds);

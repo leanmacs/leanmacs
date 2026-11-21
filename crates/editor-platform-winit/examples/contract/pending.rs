@@ -27,10 +27,9 @@
 
 use std::io::Read;
 use std::process::{Command, Stdio, exit};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
-use std::time::{Duration, Instant};
 
 use editor_platform::{Canvas, Drawer, Platform, Report, WindowOptions};
 
@@ -135,6 +134,12 @@ fn steps(platform: &impl Platform, record: &Record) -> Result<(), String> {
 
 /// Runs this in a process of its own and takes what it came to: status 0
 /// and [`LINE`], within the bound.
+///
+/// A thread of its own reads what the process says to the end, which comes
+/// when the process ends, then reaps it and sends both: the end is waited
+/// for on that event, and a process that never ends is killed at the
+/// bound. The child is shared under a lock the reader takes only once the
+/// output has ended, so the kill finds it free.
 pub fn judge() -> Result<(), String> {
     let program = std::env::current_exe()
         .map_err(|error| format!("the example's own path could not be read: {error}"))?;
@@ -145,26 +150,34 @@ pub fn judge() -> Result<(), String> {
         .map_err(|error| {
             format!("the process with a terminate pending was not started: {error}")
         })?;
-    let deadline = Instant::now() + BOUND + BOUND;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!(
-                    "the process with a terminate pending had not ended {:?} after it started",
-                    BOUND + BOUND
-                ));
+    let stdout = child.stdout.take();
+    let child = Arc::new(Mutex::new(child));
+    let (ended, end) = mpsc::channel();
+    {
+        let child = Arc::clone(&child);
+        thread::spawn(move || {
+            let mut said = String::new();
+            if let Some(mut stdout) = stdout {
+                let _ = stdout.read_to_string(&mut said);
             }
-            Err(error) => return Err(format!("the process with a terminate pending: {error}")),
-        }
-    };
-    let mut said = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        let _ = stdout.read_to_string(&mut said);
+            let status = child.lock().unwrap_or_else(PoisonError::into_inner).wait();
+            let _ = ended.send((status, said));
+        });
     }
+    // hang guard: the process's end, which closes its output and is then
+    // reaped; only a hang reaches the bound, and the check then fails as a
+    // hang.
+    let Ok((status, said)) = end.recv_timeout(BOUND + BOUND) else {
+        let mut child = child.lock().unwrap_or_else(PoisonError::into_inner);
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!(
+            "the process with a terminate pending had not ended {:?} after it started",
+            BOUND + BOUND
+        ));
+    };
+    let status =
+        status.map_err(|error| format!("the process with a terminate pending: {error}"))?;
     if status.code() == Some(0) && said.lines().any(|line| line == LINE) {
         Ok(())
     } else {

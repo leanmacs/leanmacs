@@ -74,14 +74,16 @@
 //!    is for something: a frame that is not the one shown, a size that is
 //!    not the one last drawn at, or damage the window told of since the
 //!    last draw began. A draw of the frame shown, where it is shown, with
-//!    no damage told, fails the run, whenever it happens. The window is
-//!    also left alone for a second, once it has drawn what was asked of it
-//!    as it opened: no more frames are drawn in that second than the
-//!    window asked for in it by being resized or damaged, which is none
-//!    when the window is left alone; and over the whole run no more draws
-//!    are made, presented or not, than things asked for one. A window that
-//!    asks again and again in that second, more than a system uncovering
-//!    it would, fails too: that is a timer by another name.
+//!    no damage told, fails the run, whenever it happens. Once the window
+//!    has drawn what was asked of it as it opened, the render loop must
+//!    come to rest, and no more frames are drawn until it does than the
+//!    window asked for meanwhile by being resized or damaged, which is
+//!    none when the window is left alone; and over the whole run no more
+//!    draws are made, presented or not, than things asked for one. At rest
+//!    nothing is scheduled, so nothing can draw: the wait ends on that
+//!    event, not on a second of real time. A loop that never rests, or a
+//!    window that asks again and again before it does, more than a system
+//!    uncovering it would, fails too: that is a timer by another name.
 //! 4. **Input arrived on the queue**: at least one key or pointer event.
 //! 5. **Left alone, the window shows what was laid out for it.** Whenever
 //!    a second passes in which the window tells its drawer nothing, no
@@ -92,15 +94,16 @@
 //!    times, and each time the window showed what was laid out for it`, or
 //!    fails with which frame, laid out for what, was on what. This is "no
 //!    stale frame", and "no frame of one scale left on a window at
-//!    another", for as often as the window is left for a second: the idle
-//!    second is the first such time, and a person makes the rest by
+//!    another", for as often as the window is left for a second: the time
+//!    it stays once it is ready is the first such time, and a person makes
+//!    the rest by
 //!    waiting a second after a resize, a move to another display, going
 //!    into fullscreen and out of it, and coming back from another Space.
 //!    What the window shows between two sizes, while it is not left alone,
 //!    is not judged: no program here can see it.
 //!
-//! It prints `window: ready for input` once the idle second is over: that
-//! is when to type, click, drag, scroll and resize. Each input is printed
+//! It prints `window: ready for input` once the render loop is at rest:
+//! that is when to type, click, drag, scroll and resize. Each input is printed
 //! on a line beginning `input:`.
 //!
 //! # The ledger
@@ -112,7 +115,7 @@
 //! the kind of mask the renderer says it drew its glyphs with: plain ones
 //! or subpixel ones, which is how a change of antialiasing between two
 //! displays is seen), and
-//! the idle second's two ends. What asks is entered before its word is
+//! the two ends of the wait for the render loop's rest. What asks is entered before its word is
 //! left with the render loop, so no draw is entered before what asked for
 //! it. [`tally::Tally`] is what the ledger comes to, and the run prints all of
 //! it once the window has closed, each line with its time since the window
@@ -149,10 +152,10 @@ mod testing;
 mod timing;
 
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use editor_ffi::events::{EventKind, Queue};
 use editor_ffi::interrupt::Interrupt;
@@ -171,19 +174,27 @@ use crate::input::{described, read_back};
 use crate::judge::{Picture, drawn_at, laid_out, pictured};
 use crate::ledger::{Checked, Entered, Ledger, Watched, entering, renderer};
 use crate::scene::{fonts, scene};
-use crate::tally::Happened;
-use crate::timing::{IDLE, journalled, on_demand, timeline};
+use crate::tally::{Happened, Tally};
+use crate::timing::{journalled, on_demand, timeline};
 
-/// How long the first frame has to be presented.
+/// hang guard: the first frame presented, which the ledger notifies; only a
+/// window that never presents reaches it, and the run then fails for no
+/// frame presented.
 const FIRST_FRAME: Duration = Duration::from_secs(30);
 
-/// How long the window has, once its first frame is presented, to draw
-/// what else was asked of it as it opened, before the idle second begins
-/// whether or not it has.
+/// hang guard: the window settling, which the ledger notifies. It is how
+/// long the window has, once its first frame is presented, to draw what
+/// else was asked of it as it opened, before the wait for the render
+/// loop's rest begins whether or not it has: on purpose a bound to go on
+/// at, which the run then says ("before the window had settled").
 const SETTLE: Duration = Duration::from_secs(5);
 
+/// hang guard: the render loop's rest once the window has settled; only a
+/// loop that never rests reaches it, and the run then fails for it.
+const REST: Duration = Duration::from_secs(10);
+
 /// How many lines of the timeline are printed, and how many of the
-/// journal: enough for a window as it opens, its idle second, and a
+/// journal: enough for a window as it opens, its wait for rest, and a
 /// person's input. A window drawn at every refresh for the whole run
 /// would fill thousands.
 const TIMELINE: usize = 300;
@@ -220,6 +231,9 @@ struct Shared {
     inputs: AtomicU64,
     /// How many of them were keys or the pointer.
     touched: AtomicU64,
+    /// Whether the render loop failed to come to rest within [`REST`] of
+    /// the window settling.
+    restless: AtomicBool,
 }
 
 impl Shared {
@@ -234,6 +248,7 @@ impl Shared {
             ledger: Arc::new(Ledger::new(clock)),
             inputs: AtomicU64::new(0),
             touched: AtomicU64::new(0),
+            restless: AtomicBool::new(false),
         }
     }
 }
@@ -313,34 +328,38 @@ fn edit(
 }
 
 /// Watches the window from a thread of its own: waits for the first frame
-/// and for whatever else was asked as the window opened to be drawn, then
-/// leaves the window alone for [`IDLE`] and enters in the ledger when
-/// that second began and ended, says the window is ready for input, and
-/// closes the window `stay` later if nobody has; with no `stay` the window
-/// is left for a person to close.
+/// and for whatever else was asked as the window opened to be drawn, each
+/// on the ledger's notice of it ([`Ledger::wait`](ledger::Ledger::wait)),
+/// then waits for the render loop to come to rest
+/// (`RenderHandle::wait_resting`) and enters in the ledger when that wait
+/// began and ended, says the window is ready for input, and closes the
+/// window `stay` later if nobody has; with no `stay` the window is left
+/// for a person to close.
 ///
-/// The idle second begins settled, when it can: with nothing asked for
+/// The wait for rest begins settled, when it can: with nothing asked for
 /// that is not yet drawn. A window is asked for more than its first frame
 /// as it opens (on macOS the system asks for its content while that frame
-/// is being drawn), and a second that began the moment the first frame
-/// was presented would see that drawn and nothing ask for it.
+/// is being drawn), and a wait that began the moment the first frame was
+/// presented would see that drawn and nothing ask for it.
 fn watch(session: &Session<Watched>, shared: &Shared, stay: Option<Duration>) {
-    let began = Instant::now();
-    let presented = || session.handle().map_or(0, |handle| handle.counters().draws);
-    while presented() == 0 && began.elapsed() < FIRST_FRAME {
-        thread::sleep(Duration::from_millis(10));
-    }
-    if presented() > 0 {
-        let shown = Instant::now();
-        while !shared.ledger.settled() && shown.elapsed() < SETTLE {
-            thread::sleep(Duration::from_millis(10));
-        }
+    if shared
+        .ledger
+        .wait(FIRST_FRAME, |tally| tally.shown.is_some())
+    {
+        shared.ledger.wait(SETTLE, Tally::settled);
         shared.ledger.note(Happened::Idle(true));
-        thread::sleep(IDLE);
+        let rested = session
+            .handle()
+            .is_some_and(|handle| handle.wait_resting(REST));
         shared.ledger.note(Happened::Idle(false));
+        if !rested {
+            shared.restless.store(true, Ordering::SeqCst);
+        }
     }
     println!("window: ready for input");
     if let Some(stay) = stay {
+        // real time under test: how long the window stays open for a
+        // person, or for the left-alone check, once it is ready.
         thread::sleep(stay);
         PLATFORM.close();
     }
@@ -426,6 +445,11 @@ fn report(session: &Session<Watched>, shared: &Shared, options: &Options) -> Vec
         println!("window: {line}");
     }
     failures.extend(found.failures);
+    if shared.restless.load(Ordering::SeqCst) {
+        failures.push(format!(
+            "the render loop had not come to rest {REST:?} after the window settled: something asks for a draw again and again"
+        ));
+    }
 
     // 5. Left alone, the window shows what was laid out for it.
     let found = left_alone(&records, &shared.ledger.laid());

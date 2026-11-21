@@ -2864,7 +2864,8 @@ reload leaves the old config's watch delivering.
   255 of the CPU's picture; each frame's 14 points drawn at 14 pixels at
   a scale of 1, where that does not show the scale reaching layout, and
   at 28 pixels in a second run where winit is told a scale of 2, where
-  it does; no frame drawn over an idle second; and a key, a
+  it does; no frame drawn for nothing before the render loop comes to
+  rest; and a key, a
   named key, a key with modifiers, a press, a drag, a release, a wheel
   turn and a resize each arriving on the queue as the port documents it;
   and a change of scale under an open window, from 1 to 2, made by

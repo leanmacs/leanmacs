@@ -40,10 +40,11 @@
 //! Apple Event is answered and dropped, and a `terminate:` ends the
 //! process (both seen while this example was written).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use editor_platform::{Input, Platform, Request};
+use editor_platform_winit::WinitPlatform;
+use editor_platform_winit::probe;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, NSObject, Sel};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
@@ -52,13 +53,12 @@ use objc2_foundation::{
     NSAppleEventDescriptor, NSAppleEventSendOptions, NSObjectNSThreadPerformAdditions,
 };
 
-use crate::Record;
+use crate::{Count, Record};
 
-/// How long each step waits for what it should see.
+/// hang guard: what each step waits for (a report, the loop carrying a
+/// request out, an ask coming back); only a hang reaches the bound, and the
+/// scenario then fails as a hang.
 const STEP: Duration = Duration::from_secs(3);
-
-/// How long a step waits to see that nothing more is reported.
-const SETTLE: Duration = Duration::from_millis(200);
 
 /// `kCoreEventClass`, `'aevt'`.
 const CORE_EVENT_CLASS: u32 = u32::from_be_bytes(*b"aevt");
@@ -76,7 +76,7 @@ const ANY_TRANSACTION_ID: i32 = 0;
 /// scenario made has returned, and so has each quit Apple Event it sent.
 /// AppKit waits in `terminate:` until the reply, so this counts the asks
 /// that were answered and let go.
-static RETURNED: AtomicUsize = AtomicUsize::new(0);
+static RETURNED: Count = Count::new();
 
 define_class!(
     /// What asks the application to quit as the system does, on the main
@@ -91,7 +91,7 @@ define_class!(
         #[unsafe(method(terminate:))]
         fn terminate(&self, _: Option<&AnyObject>) {
             NSApplication::sharedApplication(self.mtm()).terminate(None);
-            RETURNED.fetch_add(1, Ordering::SeqCst);
+            RETURNED.add();
         }
 
         /// Sends this process the quit Apple Event, with no reply asked.
@@ -127,7 +127,7 @@ define_class!(
             };
             match event.sendEventWithOptions_timeout_error(NSAppleEventSendOptions::NoReply, 30.0) {
                 Ok(_) => {
-                    RETURNED.fetch_add(1, Ordering::SeqCst);
+                    RETURNED.add();
                 }
                 Err(error) => {
                     eprintln!("window-contract: the quit Apple Event was not sent: {error}");
@@ -168,15 +168,11 @@ fn send_quit_event() {
 /// in the few milliseconds between the reply and AppKit's letting go is
 /// taken for the terminate it is finishing.
 fn answered(count: usize, after: &str) -> Result<(), String> {
-    let deadline = Instant::now() + STEP;
-    while RETURNED.load(Ordering::SeqCst) < count {
-        if Instant::now() >= deadline {
-            return Err(format!(
-                "{after}: {} of the system's asks came back, not {count}: no reply was made",
-                RETURNED.load(Ordering::SeqCst)
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(5));
+    let back = RETURNED.wait(count, STEP);
+    if back < count {
+        return Err(format!(
+            "{after}: {back} of the system's asks came back, not {count}: no reply was made"
+        ));
     }
     Ok(())
 }
@@ -199,8 +195,9 @@ fn quits(inputs: &[Input]) -> usize {
         .count()
 }
 
-/// Waits until exactly `count` quits have been reported, and no more a
-/// moment later.
+/// Waits until `count` quits have been reported, and then that no more
+/// has been once the main queue has turned: a duplicate made in the turn
+/// that reported the last is reported before that round trip returns.
 pub fn reported(record: &Record, count: usize, after: &str) -> Result<(), String> {
     let seen = record.wait(STEP, |inputs| quits(inputs) >= count);
     if quits(&seen) < count {
@@ -209,7 +206,11 @@ pub fn reported(record: &Record, count: usize, after: &str) -> Result<(), String
             quits(&seen)
         ));
     }
-    std::thread::sleep(SETTLE);
+    // A barrier, not a window: the main queue's round trip. A duplicate
+    // AppKit asks of its own later still cannot be ruled out by any
+    // barrier; that needs the loop's idle notification, follow-up
+    // `platform-contract-settle-window-on-time`.
+    dispatch2::run_on_main(|_| ());
     let seen = quits(&record.inputs());
     if seen != count {
         return Err(format!(
@@ -219,23 +220,23 @@ pub fn reported(record: &Record, count: usize, after: &str) -> Result<(), String
     Ok(())
 }
 
-/// Asks for `text` as the window's title and waits until the window shows
-/// it: the loop handled the wake-up and the request.
-fn titled(platform: &impl Platform, text: &str, after: &str) -> Result<(), String> {
+/// Asks for `text` as the window's title, waits until the loop has carried
+/// out every request asked of it (`probe::await_requests_handled`), and
+/// reads the title once: the loop handled the wake-up and the request.
+fn titled(platform: &WinitPlatform, text: &str, after: &str) -> Result<(), String> {
     platform.request(Request::Title(text.into()));
-    let deadline = Instant::now() + STEP;
-    loop {
-        let shown = title();
-        if shown.as_deref() == Some(text) {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            return Err(format!(
-                "{after}: the window's title is {shown:?}, not {text:?}: the loop did not carry the request out"
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(20));
+    if !probe::await_requests_handled(platform, STEP) {
+        return Err(format!(
+            "{after}: the loop had not carried the title's request out {STEP:?} after it was asked"
+        ));
     }
+    let shown = title();
+    if shown.as_deref() == Some(text) {
+        return Ok(());
+    }
+    Err(format!(
+        "{after}: the window's title is {shown:?}, not {text:?}: the loop did not carry the request out"
+    ))
 }
 
 /// Waits until the window has said it opened and how large it is.
@@ -255,7 +256,7 @@ pub fn opened(record: &Record) -> Result<(), String> {
 
 /// Runs the scenario on `platform`, whose report is `record`, which has
 /// reported `base` quits already (the module `menu`'s).
-pub fn scenario(platform: &impl Platform, record: &Record, base: usize) -> Result<(), String> {
+pub fn scenario(platform: &WinitPlatform, record: &Record, base: usize) -> Result<(), String> {
     opened(record)?;
 
     terminate();
@@ -266,7 +267,7 @@ pub fn scenario(platform: &impl Platform, record: &Record, base: usize) -> Resul
         "with `terminate:` pending",
     )?;
 
-    if RETURNED.load(Ordering::SeqCst) != 0 {
+    if RETURNED.get() != 0 {
         return Err("`terminate:` returned with no reply made".into());
     }
 
@@ -286,7 +287,7 @@ pub fn scenario(platform: &impl Platform, record: &Record, base: usize) -> Resul
     terminate();
     reported(record, base + 3, "after a third `terminate:`")?;
 
-    if RETURNED.load(Ordering::SeqCst) != 2 {
+    if RETURNED.get() != 2 {
         return Err("the third `terminate:` returned with no reply made".into());
     }
     Ok(())
