@@ -65,10 +65,10 @@ def holdAll (count guard : Nat) : IO (Option (Array UInt64)) := do
           let now ← started.modifyGet fun threads => (threads.size + 1, threads.push thread)
           if now == count then
             all.resolve ()
-          -- real time under test: a thread held in a system call is not
-          -- counted as blocked, so the pool adds none for it; the task ends
-          -- on the release promise, read each millisecond, and no result is
-          -- decided by the time.
+          -- A thread held in a system call is not counted as blocked, so the
+          -- pool adds none for it; no result is decided by the time.
+          -- real time under test: the hold in a system call, which ends on
+          -- the release promise, read each millisecond.
           while !(← release.isResolved) do
             IO.sleep 1
   if count == 0 then

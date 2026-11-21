@@ -91,14 +91,15 @@ def Services.start : IO Services := do
   return { services with pump := some pump }
 
 /-- Quits the library's queues, for good and process-wide, and says whether
-the pump these services started has ended, within `patience`; `true` when
-they started none. The caller exits explicitly afterwards: a task that
-failed a check may still be blocked in the library. -/
+the pump these services started has ended, waited for on the pump's task
+with `patience`, a hang guard; `true` when they started none. The caller
+exits explicitly afterwards: a task that failed a check may still be blocked
+in the library. -/
 def Services.stop (services : Services) : IO Bool := do
   Ffi.quit
   match services.pump with
   | some pump =>
-    eventually (IO.hasFinished pump)
+    return (← Job.awaitWithin patience pump).isSome
   | none =>
     return true
 
@@ -121,8 +122,10 @@ afterwards. -/
 def pendingChildren : IO UInt64 :=
   Ffi.processesPending
 
-/-- How long `childrenReapedTo` waits for its flush: a guard against a hang,
-never a result. -/
+/-- hang guard: a flush's end (`childrenReapedTo`, `flushedAll`,
+`filesFlushed`, `withFiles`), which comes once the work before it has been
+worked; only a hang reaches the bound, and the check then fails as a hang.
+How long each waits for it, in milliseconds. -/
 def reapPatience : Nat :=
   10000
 
@@ -169,6 +172,8 @@ private def workedBefore (jobs : Job.Services) (targets : List Job.Service) (gua
   for target in targets do
     let flushed ← jobs.flushed target
     let completion ←
+      -- hang guard: the flush's end; past the bound the hang is said, and
+      -- the flush still waited for.
       match ← Job.awaitWithin guard flushed with
       | some completion =>
         pure completion

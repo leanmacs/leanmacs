@@ -67,7 +67,8 @@ partial def settleQueued (rig : ProjectRig) (texts : RealTexts) (loop : Loop Tes
     let posts ← IO.mkRef (#[] : Array Invocation)
     let handle ←
       Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)
-    unless ← eventually handle.ended do
+    -- hang guard: the job's end, on its outcome.
+    if (← Job.awaitWithin patience handle.outcome.result?).isNone then
       handle.cancel
       return none
     let label := s!"job {start.name}"

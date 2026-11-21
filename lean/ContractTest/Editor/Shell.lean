@@ -100,7 +100,8 @@ partial def settle (services : Job.Services) (display : DisplayHandler) (texts :
       (Shell.package.registered.jobs.find? (·.name == start.name)).map
         (·.work start.arguments) | return none
     let handle ← Job.spawn services work (pure ())
-    unless ← eventually handle.ended do
+    -- hang guard: the job's end, on its outcome.
+    if (← Job.awaitWithin patience handle.outcome.result?).isNone then
       handle.cancel
       return none
     let some (.finished command) ← handle.outcome? | return none

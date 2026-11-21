@@ -21,8 +21,9 @@ namespace ContractTest
 
 open Editor
 
-/-- How long a check here waits for a reply it holds the task of: a guard
-against a hang, never a result. -/
+/-- hang guard: the reply a check here holds the task of, which must come;
+only a hang reaches the bound, and the check then fails as a hang. How long
+it waits for it, in milliseconds. -/
 def linkedPatience : Nat :=
   10000
 

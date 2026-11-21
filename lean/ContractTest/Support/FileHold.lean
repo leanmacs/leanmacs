@@ -20,8 +20,9 @@ namespace ContractTest
 
 open Editor
 
-/-- How long a hold waits for the worker to reach it: a guard against a
-hang, never a result. -/
+/-- hang guard: the worker's arrival at the hold, behind the requests handed
+to it before; only a hang reaches the bound, and the check then fails as a
+hang. How long a hold waits for it, in milliseconds. -/
 def holdPatience : Nat :=
   10000
 

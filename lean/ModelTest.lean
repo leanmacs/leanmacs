@@ -702,7 +702,8 @@ The job system is tested here with no Rust library:
 - `runnerChecks`: the runner (`Editor/Job/Runner.lean`) over the fake clock
   (`Editor/Job/Fake.lean`). A check controls time by moving its own fake
   clock and holds a job on a promise it resolves; it sleeps for nothing, and
-  polls only as the bound after which it fails;
+  waits on events (the rig's idle, a job's outcome, a fake's arrival), each
+  bounded only by the kit's hang guard;
 - `activityRunnerChecks`: the runner's activity accounting
   (`Editor/Job/Runner.lean`, "Activity") over a count of each check's own: a
   job holds a unit while it can run and none in a sleep on the fake clock,

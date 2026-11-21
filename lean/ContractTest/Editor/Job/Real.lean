@@ -171,15 +171,18 @@ def processChecks (services : Job.Services) : List Check :=
       run := do
         Editor.Test.Linked.withFiles services (targets := [.processes]) fun directory => do
             let before ← Ffi.processesPending
+            -- The job keeps its unit in a real wait, so no idle says it is
+            -- in: the check waits for the run's start to have returned.
+            let (start, runStarted) ← startsArrive services.processes.start 1
             let handle ←
-              Job.spawn services
+              Job.spawn { services with processes := { services.processes with start } }
                   (reporting fun _ => do
                     discard <| Process.run (JobContract.sh directory "/bin/sleep 600") 10
                     return true)
                   (pure ())
-            -- The run is in the library once the service counts it.
-            -- work started, not finished: phase 4's idle signal
-            let started ← eventually (return (← Ffi.processesPending) == before + 1)
+            discard <| hangGuarded "the run's start" runStarted.result?
+            -- The library counts the run from its start: read once.
+            let started := (← Ffi.processesPending) == before + 1
             handle.cancel
             let cancelled ← endedAs handle .cancelled
             let reaped ← Editor.Test.Linked.childrenReapedTo services before
@@ -253,9 +256,12 @@ def processChecks (services : Job.Services) : List Check :=
             runOnTimers services do
                 return (← Process.runWithin (JobContract.sh directory "exit 0") 10 hour) matches
                     .ok { exit := .code 0, .. }
-          let disarmed ←
-            eventually do
-                return (← timed.size) == 0 && (← services.completions.waiting) == waiting
+          -- The take disarms the alarm before the job ends; once a flush of
+          -- the timers is completed nothing of the alarm is in flight, and
+          -- the tables are read once.
+          let disarmed :=
+            (← Editor.Test.Linked.flushedAll services [.timers]) && (← timed.size) == 0 &&
+              (← services.completions.waiting) == waiting
           return outcome == .finished true && disarmed },
     { name :=
         "a run with a time limit cancelled with its job before the limit leaves no run in the table of time limits and its alarm disarmed, and its child is reaped"
@@ -263,21 +269,24 @@ def processChecks (services : Job.Services) : List Check :=
         timedCheck services fun directory services timed => do
           let waiting ← services.completions.waiting
           let before ← Ffi.processesPending
+          -- The job keeps its unit in a real wait: the check waits for the
+          -- run's start, which starts the run and arms its alarm, to return.
+          let (start, runStarted) ← startsArrive services.processes.start 1
           let handle ←
-            Job.spawn services
+            Job.spawn { services with processes := { services.processes with start } }
                 (reporting fun _ => do
                   discard <| Process.runWithin (JobContract.sh directory "/bin/sleep 600") 10 hour
                   return true)
                 (pure ())
-          -- work started, not finished: phase 4's idle signal
-          let armed ←
-            eventually do
-                return (← Ffi.processesPending) == before + 1 && (← timed.size) == 1
+          discard <| hangGuarded "the run's start" runStarted.result?
+          let armed := (← Ffi.processesPending) == before + 1 && (← timed.size) == 1
           handle.cancel
           let cancelled ← endedAs handle .cancelled
-          let disarmed ←
-            eventually do
-                return (← timed.size) == 0 && (← services.completions.waiting) == waiting
+          -- The cancel disarms the alarm in the call; once a flush of the
+          -- timers is completed nothing of it is in flight: read once.
+          let disarmed :=
+            (← Editor.Test.Linked.flushedAll services [.timers]) && (← timed.size) == 0 &&
+              (← services.completions.waiting) == waiting
           let reaped ← Editor.Test.Linked.childrenReapedTo services before
           return armed && cancelled && disarmed && reaped },
     { name :=
@@ -290,9 +299,11 @@ def processChecks (services : Job.Services) : List Check :=
             runOnTimers services do
                 return refusedAs (.timedOut 200)
                     (← Process.runWithin (JobContract.sh directory "/bin/sleep 600") 10 200)
-          let disarmed ←
-            eventually do
-                return (← timed.size) == 0 && (← services.completions.waiting) == waiting
+          -- The alarm has fired and the take found the run timed out; once
+          -- a flush of the timers is completed nothing of it is in flight.
+          let disarmed :=
+            (← Editor.Test.Linked.flushedAll services [.timers]) && (← timed.size) == 0 &&
+              (← services.completions.waiting) == waiting
           let reaped ← Editor.Test.Linked.childrenReapedTo services before
           return outcome == .finished true && disarmed && reaped }]
 
@@ -331,16 +342,20 @@ def jobChecks (services : Job.Services) (pool : Array UInt64) : List Check :=
         "jobs in real waits do not delay a new pool task: more jobs than the pool has threads all have a timer in the library while a new pool task runs",
       run := do
         let before ← Ffi.timersPending
-        let jobs ← sleepers services many
+        let (start, timersStarted) ← startsArrive services.timers.start many
+        let jobs ← sleepers { services with timers := { services.timers with start } } many
         try
-          -- Each job's timer is in the library's schedule, so every job has
-          -- reached its wait.
-          -- work started, not finished: phase 4's idle signal
-          unless ← eventually (return (← Ffi.timersPending) == before + many.toUInt64) do
+          -- Each job's timer is in the library's schedule once its start has
+          -- returned, so every job has reached its wait. A job keeps its unit
+          -- in a real wait: no idle can say so.
+          discard <| hangGuarded s!"the start of {many} timers" timersStarted.result?
+          unless (← Ffi.timersPending) == before + many.toUInt64 do
             return false
           let ran ← IO.Promise.new
           discard <| BaseIO.asTask (ran.resolve ())
-          let notDelayed ← eventually ran.isResolved
+          -- hang guard: the new task's run; a pool all of whose threads the
+          -- jobs held would never run it.
+          let notDelayed := (← Job.awaitWithin patience ran.result?).isSome
           let allWaiting := (← Ffi.timersPending) == before + many.toUInt64
           let noneEnded ← jobs.allM fun job => return !(← job.ended)
           return notDelayed && allWaiting && noneEnded
@@ -351,10 +366,12 @@ def jobChecks (services : Job.Services) (pool : Array UInt64) : List Check :=
         "cancelling a job withdraws its timer: each job ends cancelled, and the library's schedule is back to what it held"
       run := do
         let before ← Ffi.timersPending
-        let jobs ← sleepers services many
+        let (start, timersStarted) ← startsArrive services.timers.start many
+        let jobs ← sleepers { services with timers := { services.timers with start } } many
         try
-          -- work started, not finished: phase 4's idle signal
-          unless ← eventually (return (← Ffi.timersPending) == before + many.toUInt64) do
+          -- Every job is in its wait once its timer's start has returned.
+          discard <| hangGuarded s!"the start of {many} timers" timersStarted.result?
+          unless (← Ffi.timersPending) == before + many.toUInt64 do
             return false
           for job in jobs do
             job.cancel
@@ -370,15 +387,17 @@ def jobChecks (services : Job.Services) (pool : Array UInt64) : List Check :=
         let before ← Ffi.timersPending
         -- Cut down to a 64-bit word, `2 ^ 64 + 1` is 1: a deadline in the
         -- past, which the service would complete at once.
+        let (start, farStarted) ← startsArrive services.timers.start 1
         let far ←
-          Job.spawn services
+          Job.spawn { services with timers := { services.timers with start } }
               (reporting fun _ => do
                 waitUntil (2 ^ 64 + 1)
                 return true)
               (pure ())
         try
-          -- work started, not finished: phase 4's idle signal
-          unless ← eventually (return (← Ffi.timersPending) == before + 1) do
+          -- The far job is in its wait once its timer's start has returned.
+          discard <| hangGuarded "the far timer's start" farStarted.result?
+          unless (← Ffi.timersPending) == before + 1 do
             return false
           let short ←
             Job.spawn services
@@ -413,7 +432,8 @@ def jobChecks (services : Job.Services) (pool : Array UInt64) : List Check :=
     { name :=
         "the pump is not one of the pool's tasks: with the pump parked in its pull, every thread the pool had before the pump was started is still free to be held, and no other"
       run := do
-        unless ← eventually (return (← Ffi.waiting .completion) == 1) do
+        -- Waited for on the pump's park itself; `patience` is a hang guard.
+        unless ← Ffi.awaitWaiting .completion 1 patience.toUInt64 do
           return false
         -- A pump that was a pool task would be parked on one of these
         -- threads, and the last of the hold could never start.
@@ -461,14 +481,16 @@ def fileChecks (completions : Job.Completions) : List Check :=
                   return true)
                 (pure ())
           try
-            unless ← eventually (return (← rig.clock.waiting) == 1) do
+            -- At idle the load has been worked and the job is in its sleep
+            -- on the fake clock.
+            untilIdle rig.services.activity
+            unless (← rig.clock.waiting) == 1 do
               return false
             let parked :=
               (← rig.published.size) == size && (← Ffi.Snapshot.live) == live + 1 &&
                 (← rig.held.size) == 1
             rig.clock.advance 1000
-            unless ← eventually handle.ended do
-              return false
+            discard <| hangGuarded "the job's end" handle.outcome.result?
             let #[loaded] ← handle.holding | return false
             -- The job's command, on this thread, as the loop runs it.
             let command : EditorM (SnapshotId × String) := do
@@ -482,8 +504,11 @@ def fileChecks (completions : Job.Completions) : List Check :=
                 (← rig.held.size) == 0 &&
                 (← handle.holding).isEmpty
             let (released, _) ← adopted.release.runReal texts
+            -- The free is waited for on the free itself; `patience` is a
+            -- hang guard.
             return parked && read == noteText && adoptedHeld && released.isOk &&
-                (← eventually (return (← Ffi.Snapshot.live) == live))
+                (← Ffi.Snapshot.awaitLive live patience.toUInt64) &&
+                (← Ffi.Snapshot.live) == live
           finally
             handle.cancel },
     { name :=
@@ -491,8 +516,7 @@ def fileChecks (completions : Job.Completions) : List Check :=
       run := do
         let rig ← FileRig.new completions
         let handle ← Job.spawn rig.services (reporting fun _ => pure 1) (pure ())
-        unless ← eventually handle.ended do
-          return false
+        discard <| hangGuarded "the job's end" handle.outcome.result?
         let real ← RealSyntaxTree.new rig.published.reader
         let syntaxTree := settlingAttach rig.published real.handle
         let command : EditorM SnapshotId := do
@@ -529,8 +553,8 @@ def fileChecks (completions : Job.Completions) : List Check :=
           let display := (← recorderOf rig.published).handle
           let (ran, _) ←
             Job.finishWith rig.held handle (pure () : EditorM Unit) (.over rig.published) display
-          return ended && kept && ran.isOk &&
-              (← eventually (return (← Ffi.Snapshot.live) == live)) &&
+          return ended && kept && ran.isOk && (← Ffi.Snapshot.awaitLive live patience.toUInt64) &&
+              (← Ffi.Snapshot.live) == live &&
               (← rig.held.size) == 0 &&
               (← rig.published.size) == 0 },
     { name :=
@@ -551,23 +575,20 @@ def fileChecks (completions : Job.Completions) : List Check :=
               ← Ffi.filesSave id snapshot (directory / s!"ahead-{index}.txt").toString .whatever do
               return false
             ahead := ahead.push id
+          let (start, loadStarted) ← startsArrive rig.services.files.start 1
           let handle ←
-            Job.spawn rig.services
+            Job.spawn { rig.services with files := { rig.services.files with start } }
                 (reporting fun _ => do
                   return (← JobContract.loaded (directory / "note.txt")).stamp.size)
                 (pure ())
           try
-            -- The job is in its wait once its request is at the service. On
-            -- a file system that syncs slowly the load is still waiting
-            -- then; on a fast one it may be done, and the job with it.
-            -- work started, not finished: phase 4's idle signal
-            let reached ←
-              eventually do
-                  return (← handle.flags.get).waiting.isSome || (← handle.ended)
-            unless reached do
-              return false
+            -- The job's request is at the service once its start has
+            -- returned. On a file system that syncs slowly the load is still
+            -- waiting then; on a fast one it may be done, and the job with
+            -- it. The job keeps its unit in a real wait: no idle can say so.
+            discard <| hangGuarded "the load's start" loadStarted.result?
             handle.cancel
-            let ended ← eventually handle.ended
+            discard <| hangGuarded "the cancelled job's end" handle.outcome.result?
             handle.settle
             -- Once a flush of the service is completed the five ahead are
             -- done, their results kept and counted; the job's load is gone,
@@ -576,8 +597,9 @@ def fileChecks (completions : Job.Completions) : List Check :=
               (← Editor.Test.Linked.filesFlushed completions) && (← Ffi.filesPending) == before + 5
             -- The one snapshot left is the one made here, which is read last
             -- so that it is alive until then.
-            return ended && withdrawn && (← rig.held.size) == 0 &&
-                (← eventually (return (← Ffi.Snapshot.live) == live + 1)) &&
+            return withdrawn && (← rig.held.size) == 0 &&
+                (← Ffi.Snapshot.awaitLive (live + 1) patience.toUInt64) &&
+                (← Ffi.Snapshot.live) == live + 1 &&
                 (← snapshot.info).byteLength == 15
           finally
             handle.cancel
@@ -585,10 +607,11 @@ def fileChecks (completions : Job.Completions) : List Check :=
               discard <| Ffi.filesCancel id
               completions.finish id .cancelled
             -- The cancels drop the kept results at once; a flush covers a
-            -- request still in flight. The live snapshots are not a
-            -- service's queue: their poll is phase 6's.
+            -- request still in flight. The snapshots they held are freed on
+            -- the library's threads: waited for on the frees, with
+            -- `patience` as a hang guard.
             discard <| Editor.Test.Linked.filesFlushed completions
-            discard <| eventually (return (← Ffi.Snapshot.live) ≤ live + 1) },
+            discard <| Ffi.Snapshot.awaitLive (live + 1) patience.toUInt64 },
     { name :=
         "a job saves a snapshot a command took, found through the published table, and a snapshot the command has released since is refused as naming none, and writes no file"
       run :=
@@ -641,8 +664,10 @@ def grepChecks (completions : Job.Completions) : List Check :=
                     sleep hour
                     return true)
                   (pure ())
-            -- work started, not finished: phase 4's idle signal
-            let held ← eventually (return (← Ffi.grepPending) > before)
+            -- At idle the job is in its sleep on the fake clock, its search
+            -- started and held.
+            untilIdle rig.services.activity
+            let held := (← Ffi.grepPending) > before
             handle.cancel
             let cancelled ← endedAs handle .cancelled
             -- A readout, final once the outcome is in: `Handle.conclude` ends
@@ -659,8 +684,7 @@ def grepChecks (completions : Job.Completions) : List Check :=
             IO.FS.writeFile (directory / "b") "x needle\n"
             let rig ← FileRig.new completions
             let first ← Job.spawn rig.services (reporting fun _ => pure 1) (pure ())
-            unless ← eventually first.ended do
-              return false
+            discard <| hangGuarded "the first job's end" first.outcome.result?
             let command : EditorM SnapshotId := do
               let text ← createText "y\nneedle needle"
               text.snapshot

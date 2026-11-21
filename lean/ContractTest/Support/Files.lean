@@ -35,7 +35,9 @@ text store whose table of snapshots is published, the file service over its
 read half, the grep service over the same table, and a fake clock a check
 parks a job on. The file waits are
 completed by the process's pump, through `completions`; the clock's by the
-check. Each check has its own, over the process's one table of waits. -/
+check. Each check has its own, over the process's one table of waits, and
+its services keep a count of their activity of its own, so a check waits
+for its jobs to be idle (`Linked.untilIdle`) rather than polling. -/
 structure FileRig where
   /-- The table of snapshots the store publishes. -/
   published : Snapshots
@@ -55,7 +57,7 @@ def FileRig.new (completions : Job.Completions) : BaseIO FileRig := do
   return {
       published, held, clock
       services :=
-        { completions, timers := clock.timers
+        { completions, timers := clock.timers, activity := ← Job.Activity.counting
           files := Job.realFiles completions published.reader held
           greps := Job.realGreps completions published.reader held (← Job.RealGreps.new) } }
 

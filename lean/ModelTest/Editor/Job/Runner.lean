@@ -215,7 +215,8 @@ def onceOpen (gate : IO.Promise Unit) (value : Nat) : Nat :=
 
 /-- The checks of the job runner (`Editor/Job/Runner.lean`), each on a fake
 clock of its own. A check holds what it controls (the clock, a promise) and
-polls only as the bound after which it fails. -/
+waits on events: the rig's idle, a job's outcome, a fake's arrival, each
+bounded only by the kit's hang guard. -/
 def runnerChecks : List Check :=
   [{
       name :=
@@ -672,8 +673,9 @@ def fileOf (files : Job.FakeFiles) (name : String) : BaseIO (Option ByteArray) :
 /-- The checks of the job runner's file waits (`Editor/Job/Runner.lean`),
 each on a fake of the file service of its own (`Job.FakeFiles`,
 `Editor/Job/Fake.lean`), over a model of two files. A check holds what it
-controls (the service's completions, its takes, a clock) and polls only as
-the bound after which it fails. -/
+controls (the service's completions, its takes, a clock) and waits on
+events: the rig's idle, a start reaching the fake (`startGate`), a take's
+arrival at its hold, each bounded only by the kit's hang guard. -/
 def fileRunnerChecks : List Check :=
   [{  name :=
         "a file request handed through the services whose wait is withdrawn ends with the withdrawn reply, and nothing is taken for it"

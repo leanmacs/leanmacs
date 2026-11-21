@@ -24,10 +24,10 @@ open Editor
 open Editor.Test.Linked
 
 /-- How many of the version-control contract's properties run at once. It
-is bounded, not one lane per property, because each property's job must end
-within `patience` or fails as one that did not end, and on a runner with few
-cores and every core busy, every property's git at once could push one past
-it. -/
+is bounded, not one lane per property, so that on a runner with few cores
+and every core busy, every property's git at once does not crowd the
+machine. A property's job is waited for on its end, and `patience` is only
+a hang guard. -/
 def versionControlLanes : Nat :=
   8
 
@@ -36,7 +36,7 @@ that takes every `width`-th item in turn: one result per item, in `items`'
 order. A width of 0 is taken as 1, so no item is ever left unrun. An item
 whose run throws gives `failed` its error, and only that item: the lane
 goes on to its next item, whose result is its own. The lanes are dedicated
-threads, because each item may block on a process or on `eventually`, and
+threads, because each item may block on a process or on a job's end, and
 Lean's task pool must stay as the job checks measure it. -/
 def inLanes {α β : Type} (width : Nat) (items : List α) (run : α → IO β)
     (failed : α → IO.Error → β) : IO (List β) := do

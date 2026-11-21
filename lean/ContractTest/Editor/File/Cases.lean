@@ -58,9 +58,10 @@ def playOnLibrary (completions : Job.Completions) (case : FileCases.Case) : IO (
       let handle ←
         Job.spawn rig.services (Work.of (fun _ => case.job directory start) (case.handler start))
             (pure ())
-      unless ← eventually handle.ended do
+      -- hang guard: the job's end, on its outcome.
+      if (← Job.awaitWithin patience handle.outcome.result?).isNone then
         handle.cancel
-        return some "its job did not end"
+        return some s!"a hang: its job had not ended within {patience} ms"
       match ← handle.outcome? with
       | some (.finished command) =>
         let (ran, texts) ← Job.finishWith rig.held handle command texts display
@@ -99,12 +100,16 @@ def caseFailures (completions : Job.Completions) : IO (List String) := do
             s!"the real text binding and the file service: {case.name} ({reason})"
   -- The file service has worked what it was handed once a flush of it is
   -- completed, and its count is read once then. The live documents and
-  -- snapshots are not a service's queue: their poll is phase 6's.
+  -- snapshots are freed by finalisers on other threads: each is waited for
+  -- on the frees themselves (`awaitLive`), `patience` a hang guard, and the
+  -- counts are read once then.
   let flushed ← Editor.Test.Linked.filesFlushed completions
   let requests ← Ffi.filesPending
-  let freed ←
-    eventually do
-        return (← Ffi.Document.live, ← Ffi.Snapshot.live) == (before.1, before.2.1)
+  let documentsFreed ← Ffi.Document.awaitLive before.1 patience.toUInt64
+  let snapshotsFreed ← Ffi.Snapshot.awaitLive before.2.1 patience.toUInt64
+  let freed :=
+    documentsFreed && snapshotsFreed &&
+      (← Ffi.Document.live, ← Ffi.Snapshot.live) == (before.1, before.2.1)
   let freed := flushed && freed && requests == before.2.2
   return failed ++ if freed then [] else [caseLeakName]
 

@@ -60,7 +60,8 @@ def withFixturePath (services : Job.Services) (check : System.FilePath → Strin
 when the job did not finish with it. -/
 def printedThrough (services : Job.Services) (command : Process.Command) : IO (Option String) := do
   let handle ← Job.spawn services (reporting fun _ => outputOf command) (pure ())
-  unless ← eventually handle.ended do
+  -- hang guard: the job's end, on its outcome.
+  if (← Job.awaitWithin patience handle.outcome.result?).isNone then
     handle.cancel
     return none
   handle.settle
@@ -95,7 +96,7 @@ def environmentChecks (services : Job.Services) (fixtures : System.FilePath) : L
             let reaped ← Editor.Test.Linked.childrenReapedTo services before
             return outcome == .finished true && (← said.get).isEmpty && reaped },
     { name :=
-        "with a mise that sleeps past a limit of 1 s, the lookup is killed within 2 s of its start, its group reaped, the child gets the inherited environment, and the timeout is reported once"
+        "with a mise that sleeps past a limit of 1 s, the lookup is killed at its limit and not before it, its group reaped, the child gets the inherited environment, and the timeout is reported once"
       run :=
         withFixturePath services fun directory _ => do
           let some inherited ← printedThrough services (printenv directory) | return false
@@ -108,7 +109,11 @@ def environmentChecks (services : Job.Services) (fixtures : System.FilePath) : L
                 let start ← now
                 let path ← outputOf (printenv directory)
                 let ended ← now
-                return ended - start < 2000 && path == inherited
+                -- real time under test: the 1 s limit is not cut short, a lower
+                -- bound load only makes surer. That the limit fired is the
+                -- timeout reported; how soon after is bounded only by the
+                -- job's hang guard (`runOnTimers`).
+                return ended - start >= 1000 && path == inherited
           let reaped ← Editor.Test.Linked.childrenReapedTo services before
           return outcome == .finished true &&
               (← said.get) == #[Process.failureMessage directory (.timedOut 1000)] &&

@@ -41,14 +41,16 @@ def jobFailures (services : Job.Services) : IO (List String) := do
 
 /-- Runs `job` on the runner over the library's services, spawned with a host
 that records each post it is handed, and answers the posts once the job has
-ended. A job that does not end in time is cancelled, and a job that ended is
-settled. -/
+ended. Its end is waited for on its outcome; a job that hangs past
+`patience`, a hang guard, is cancelled, and a job that ended is settled. Its
+posts are handed on its thread before its outcome, so they are all in by
+then. -/
 def postedOnTimers (services : Job.Services) (job : JobM Unit) : IO (Array Invocation) := do
   let posts ← IO.mkRef #[]
   let handle ←
     Job.spawn services (Work.of (fun _ => job) fun _ => pure ()) (pure ()) fun invocation =>
         posts.modify (·.push invocation)
-  unless ← eventually handle.ended do
+  if (← Job.awaitWithin patience handle.outcome.result?).isNone then
     handle.cancel
   handle.settle
   posts.get
@@ -123,10 +125,11 @@ def fileFailures (services : Job.Services) (held : Job.HeldSnapshots) : IO (List
   -- resolves the outcome. So the requests are read once, after the flushes.
   let flushed ← Editor.Test.Linked.flushedAll services [.files, .diffs]
   let requests ← pending
-  -- The live snapshots are not a service's queue: their poll is phase 6's.
-  let freed ←
-    eventually do
-        return (← Ffi.Snapshot.live) == before.1 && (← held.size) == 0
+  -- The live snapshots are freed by finalisers on other threads: waited for
+  -- on the frees themselves (`awaitLive`), `patience` a hang guard, and read
+  -- once then. Each job has released what it held before it ended.
+  let snapshotsFreed ← Ffi.Snapshot.awaitLive before.1 patience.toUInt64
+  let freed := snapshotsFreed && (← Ffi.Snapshot.live) == before.1 && (← held.size) == 0
   let freed := flushed && freed && requests == before.2
   let after := (← Ffi.Snapshot.live, requests, ← held.size)
   return failed.map (s!"the job runner over the file service: {·}") ++

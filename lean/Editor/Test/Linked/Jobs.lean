@@ -11,8 +11,10 @@ import Editor.Text.Model
 /-!
 # The linked test kit: Jobs
 
-Jobs on the real runner: how long a check waits (`patience`, `eventually`), a
-job's outcome as a check compares it (`texts`), a job that reports its value,
+Jobs on the real runner: what a check waits on (a task or promise,
+`hangGuarded`; a start reaching the library, `startsArrive`; a rig's idle,
+`untilIdle`) and the hang guard that bounds it (`patience`), a job's
+outcome as a check compares it (`texts`), a job that reports its value,
 whether a job ended as expected, and a run of jobs on the runner over the
 library's timer service. Shared by several test modules; it holds no checks of
 its own.
@@ -29,11 +31,57 @@ namespace Editor.Test.Linked
 
 open Editor
 
-/-- How long a check waits, in milliseconds, for something that should happen
-at once. Only broken code takes this long, and the check then fails instead
-of hanging. -/
+/-- hang guard: an event a check waits for that must come (a job's end, a
+start reaching the library, a pump's end); only a hang reaches the bound,
+and the check then fails as a hang. In milliseconds: ten times the slowest
+such event seen under the stress load and more, as `ConfigTest.hangGuard` is
+set. -/
 def patience : Nat :=
-  5000
+  120000
+
+/-- `task`'s value, waited for on the task itself, an event that must come:
+`what` names it. The bound is `patience`, a hang guard: past it this throws
+a hang, and the check fails as one. -/
+def hangGuarded {α : Type} (what : String) (task : Task α) : IO α := do
+  let some value ←
+    Job.awaitWithin patience
+        task | throw <| IO.userError s!"a hang: {what} had not come within {patience} ms"
+  return value
+
+/-- `start`, a real port's start of a request, decorated to resolve the
+promise it returns once its `count`-th call has returned: the `count`-th
+request has been handed to the library, which counts it from then. What a
+check waits on for a job that has reached its wait on a real service: the
+job keeps its unit there, so no idle can say it is in. A `count` of 0 is
+resolved at once. -/
+def startsArrive {ρ : Type} (start : UInt64 → ρ → BaseIO Unit) (count : Nat) :
+    BaseIO ((UInt64 → ρ → BaseIO Unit) × IO.Promise Unit) := do
+  let arrived ← IO.Promise.new
+  let calls ← IO.mkRef 0
+  if count == 0 then
+    arrived.resolve ()
+  let gated := fun id request => do
+    start id request
+    let made ← calls.modifyGet fun made => (made + 1, made + 1)
+    if made == count then
+      arrived.resolve ()
+  return (gated, arrived)
+
+/-- Waits until `activity`, a count of a rig's own (`Job.Activity.counting`),
+reads 0: every job on it is parked in a wait only the check ends, or has
+ended. Waited for on the count's own changes, never by time; the bound is a
+hang guard. After a cancel, wait for the job's end first: a job parking
+gives back its unit just before it marks itself in the wait, so a cancel in
+between leaves it to withdraw its own wait with no unit held. -/
+def untilIdle (activity : Job.Activity) : IO Unit := do
+  unless activity.tracked do
+    throw <| IO.userError "this count is not kept: it is never idle"
+  repeat
+    let seen ← activity.seen
+    if seen.running == 0 then
+      return
+    hangGuarded s!"a change of the count from {repr seen}" (← activity.changedSince seen.epoch)
+  throw <| IO.userError "unreachable"
 
 /-- Polls `condition` until it holds; `false` if it still does not after
 `patience` milliseconds. -/
@@ -61,20 +109,22 @@ one text, the job's value as a string. -/
 def reporting {α : Type} [ToString α] (job : Unit → JobM α) : Work :=
   Work.of job fun value => discard <| createText (toString value)
 
-/-- Whether the job behind `handle` ended as `expected`, within the bound. -/
+/-- Whether the job behind `handle` ended as `expected`: its end is waited for
+on its outcome, an event, and a hang past `patience` is thrown. -/
 def endedAs (handle : Job.Handle) (expected : Job.Outcome (Array String)) : IO Bool := do
-  let ended ← eventually handle.ended
-  return ended && (← handle.outcome?).map texts == some expected
+  discard <| hangGuarded "the job's end" handle.outcome.result?
+  return (← handle.outcome?).map texts == some expected
 
 /-- Runs `job` on the runner over the library's services, and returns how it
-ended. A job that does not end in time has failed, and is cancelled. A job
+ended. Its end is waited for on its outcome; a job that has not ended within
+`patience`, a hang guard, has hung: it is cancelled, and has failed. A job
 that ended is settled, as whoever takes a finished job's result settles it,
 so what its loads made is released. -/
 def runOnTimers (services : Job.Services) (job : JobM Bool) : IO (Job.Outcome Bool) := do
   let handle ← Job.spawn services (reporting fun _ => job) (pure ())
-  unless ← eventually handle.ended do
+  if (← Job.awaitWithin patience handle.outcome.result?).isNone then
     handle.cancel
-    return .failed "the job did not end"
+    return .failed s!"a hang: the job had not ended within {patience} ms"
   handle.settle
   match (← handle.outcome?).map texts with
   | some (.finished texts) =>
