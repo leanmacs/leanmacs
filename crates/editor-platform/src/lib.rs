@@ -93,11 +93,15 @@
 //! The editor asks things of the running window with [`Platform::request`]:
 //! a [`Request`], one variant for each thing asked (enter or leave
 //! fullscreen, minimise, a title, keep running, the menu bar, the
-//! [`Appearance`] the window's title and buttons are drawn in). Keep running
+//! [`Appearance`] the window's title and buttons are drawn in, the
+//! [`Background`](Request::Background) ([`Rgb`]) shown wherever nothing has
+//! drawn). Keep running
 //! is the editor's answer to a quit the system asked when it does not quit:
 //! it changes nothing the window shows. The menu bar ([`menu`]) is the
 //! application's: a platform with no menu bar changes nothing shown when it
-//! is asked for one, and the rule is [`contract::requests`]'. A request
+//! is asked for one, and the rule is [`contract::requests`]'. A platform with
+//! no background setting likewise changes nothing shown when it is asked for
+//! one. A request
 //! asked with no window running
 //! does nothing and is not remembered. [`Platform::close`] stays a method
 //! of its own: it ends the run, which no request does, and with the
