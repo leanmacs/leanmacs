@@ -2024,6 +2024,19 @@ mod tests {
     }
 
     #[test]
+    fn a_background_a_scripted_window_was_asked_crosses_as_its_tag_and_its_three_bytes() {
+        let paper = editor_platform::Rgb {
+            red: 0x2e,
+            green: 0x34,
+            blue: 0x40,
+        };
+        assert_eq!(
+            asked_words(&[WindowRequest::Background(paper), WindowRequest::Minimise]),
+            [8, 0x2e, 0x34, 0x40, 2]
+        );
+    }
+
+    #[test]
     fn every_other_input_has_no_words() {
         for input in [
             Input::Opened {

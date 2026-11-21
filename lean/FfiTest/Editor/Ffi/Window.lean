@@ -66,13 +66,13 @@ def runScriptedAsking (requests : List Editor.Ffi.WindowRequest) : IO AskedRun :
     for request in requests do
       Editor.Ffi.windowRequest .scripted request
 
-/-- The requests in `asked`, without the titles and the menu bars: each is
-the presenter's, sent when the window opens if a scene bound to it named
-one. -/
+/-- The requests in `asked`, without the titles, the menu bars and the
+backgrounds: each is the presenter's, sent when the window opens if a scene
+bound to it named one, or a frame was presented. -/
 def requestsOf (asked : Array Editor.Ffi.WindowAsked) : Array Editor.Ffi.WindowRequest :=
   asked.filterMap fun
     | .request request => some request
-    | .title _ | .menu _ => none
+    | .title _ | .menu _ | .background .. => none
 
 /-- What the window mode's closer (`Editor.Window.closeOnceEnded`) did once a
 loop that ended with `ended` had: whether it said the loop ended well, the
@@ -301,6 +301,14 @@ def windowChecks (_ : Unit) : List Check :=
         Editor.Ffi.windowRequest .scriptedFailing .keepRunning
         return (← Editor.Ffi.windowAsked .scriptedFailing) == some #[] &&
             (← Editor.Ffi.windowAsked .winit) == none },
+    { name :=
+        "a background in what a window was asked reads as its three bytes, and a byte's word above 255 or a background cut short reads as nothing"
+      run :=
+        pure <|
+          Editor.Ffi.askedOf #[8, 0x2e, 0x34, 0x40, 2] ==
+              some #[.background 0x2e 0x34 0x40, .request .minimise] &&
+            Editor.Ffi.askedOf #[8, 0x2e, 0x134, 0x40] == none &&
+            Editor.Ffi.askedOf #[8, 0x2e] == none },
     { name := "the input clock is never 0 and does not go back"
       run := do
         let first ← Editor.Ffi.inputClock

@@ -188,8 +188,9 @@ queue, as a resize. -/
 def windowRequest (platform : Platform) (request : WindowRequest) : IO Unit :=
   windowRequestRaw platform request.tag
 
-/-- One thing a scripted window was asked: a request, or a title or a menu
-bar the presenter sent it from a scene. -/
+/-- One thing a scripted window was asked: a request, a title or a menu bar
+the presenter sent it from a scene, or a background it sent from a frame's
+ground. -/
 inductive WindowAsked where
   /-- A request Lean made. -/
   | request (request : WindowRequest)
@@ -197,6 +198,9 @@ inductive WindowAsked where
   | title (text : String)
   /-- A menu bar. -/
   | menu (menu : Menu)
+  /-- A background the presenter sent it from a frame's ground: the
+  theme's paper, as its sRGB red, green and blue. -/
+  | background (red green blue : UInt8)
   deriving DecidableEq, Repr
 
 /-- The word of `modifiers` as the library reads it ("The window", in the
@@ -318,10 +322,12 @@ private opaque windowAskedRaw (platform : Platform) : IO RawWords
 
 /-- What the words of `windowAsked` spell from the index `at_` on, each
 thing asked in order: a request's tag, the tag 3, a count and the scalar
-values of a title's characters, or the tag 5 and a menu bar's layout
-(`AskedReader.menu`). `none` when they spell nothing. -/
-private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
-    (asked : Array WindowAsked := #[]) : Option (Array WindowAsked) :=
+values of a title's characters, the tag 5 and a menu bar's layout
+(`AskedReader.menu`), or the tag 8 and a background's red, green and blue,
+a word each. `none` when they spell nothing, a byte's word above 255 among
+them. It is public so that its test module can read words of its own. -/
+partial def askedOf (words : Array UInt64) (at_ : Nat := 0) (asked : Array WindowAsked := #[]) :
+    Option (Array WindowAsked) :=
   if at_ >= words.size then some asked
   else
     match words[at_]! with
@@ -343,10 +349,20 @@ private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
     | 5 => do
       let (menu, next) ← (AskedReader.menu words).run (at_ + 1)
       askedOf words next (asked.push (.menu menu))
+    | 8 => do
+      let byte (offset : Nat) : Option UInt8 := do
+        let word ← words[at_ + offset]?
+        if word ≤ 255 then
+          some word.toUInt8
+        else
+          none
+      let (red, green, blue) := (← byte 1, ← byte 2, ← byte 3)
+      askedOf words (at_ + 4) (asked.push (.background red green blue))
     | _ => none
 
 /-- What the scripted window of `platform` was asked in its latest run, in
-order: the requests while it ran, and the titles the presenter sent it.
+order: the requests while it ran, and the titles, the menu bars and the
+backgrounds the presenter sent it.
 `none` for the real platform, which records nothing. A readout for tests. -/
 def windowAsked (platform : Platform) : IO (Option (Array WindowAsked)) := do
   let raw ← windowAskedRaw platform

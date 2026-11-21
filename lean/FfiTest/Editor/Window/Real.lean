@@ -107,10 +107,25 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
   let requests :=
     ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
       | .request request => some request
-      | .title _ | .menu _ => none
+      | .title _ | .menu _ | .background .. => none
   unless requests == #[.darkAppearance, .minimise] do
     IO.eprintln
         s!"ffi-test window-host: the window was asked {repr requests}, not the dark appearance and then the shutdown's minimise"
+    return 1
+  -- The paper crossed whole, from Lean's theme through layout's frame and
+  -- the presenter to the scripted window's record and back: the last
+  -- background asked is the built-in theme's paper, `#2e3440`, the
+  -- `default` face's background that `Editor/Appearance.lean` classifies.
+  let backgrounds :=
+    ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
+      | .background red green blue => some (red, green, blue)
+      | .request _ | .title _ | .menu _ => none
+  let byte (color : Editor.Color) (shift : UInt32) : UInt8 := (color.word >>> shift).toUInt8
+  let paper : Option (UInt8 × UInt8 × UInt8) :=
+    (Editor.Theme.builtin.paper).map fun color => (byte color 24, byte color 16, byte color 8)
+  unless paper == some (0x2e, 0x34, 0x40) && backgrounds.back? == paper do
+    IO.eprintln
+        s!"ffi-test window-host: the window was last asked for the background {repr backgrounds.back?}, not the built-in theme's paper {repr paper}"
     return 1
   -- With no file the selected buffer is the one empty buffer, whose name is
   -- the window's title. With a file, its load may not finish before the
@@ -119,7 +134,7 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     let titles :=
       ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
         | .title text => some text
-        | .request _ | .menu _ => none
+        | .request _ | .menu _ | .background .. => none
     unless titles.back? == some "scratch" do
       IO.eprintln
           s!"ffi-test window-host: the window was last asked for the title {titles.back?}, not scratch"
@@ -130,7 +145,7 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     let menus :=
       ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
         | .menu menu => some menu
-        | .request _ | .title _ => none
+        | .request _ | .title _ | .background .. => none
     let compiled :=
       ({} : Editor.Config.Registry).replaceBindings .compiled
         (Editor.FrameCommands.package.registered.bindings ++
