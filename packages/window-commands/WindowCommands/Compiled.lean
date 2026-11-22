@@ -1,29 +1,30 @@
 import Editor.Package
-import Editor.WindowCommands
+import WindowCommands
 
 /-!
 # The `window-commands` package: the window commands
 
 What a host registers so that the frame's windows can be split, closed,
-focused and arranged (`Editor/WindowCommands.lean`): the package
-`window-commands` (`WindowCommands.package`, `Editor/Package.lean`), whose
+focused and arranged (`WindowCommands.lean`): the package
+`window-commands` (`WindowCommands.package`, `lean/Editor/Package.lean`), whose
 `setup` registers the window commands, each a command of its call
 (`commandWith`), so it acts on the call's window and reads the count the
 call carries. A host registers it for the owner `window-commands` when its
-loop starts, before any config (`Editor/Config/Packages.lean`), so they
-hold when config fails to load, and config can call them and bind keys to
-them. Both of the executable's hosts are handed it
-(`EditorCore/EditorPackage.lean`).
+loop starts, before any config (`lean/Editor/Config/Packages.lean`), so
+they hold when config fails to load, and config can call them and bind
+keys to them. Both of the executable's hosts are handed it, through the
+entry module of the Lake package `window-commands`
+(`WindowCommands/EditorPackage.lean`).
 
 - **The commands**: every window command, under its name. No
   binding comes with them here: the Vim scheme binds them under `C-w`
   (`Vim.Default.windowKeys`), and a config that wants them in every state
   binds that table with `bindKey`.
 
-This module is apart from `Editor/WindowCommands.lean` because it is what a
-host is handed, not what config calls.
+This module is apart from `WindowCommands.lean` because it is what a host
+is handed, not what config calls.
 
-Pinned by `ModelTest.windowCommandChecks`, on the models.
+Pinned by `WindowCommandsTest.windowCommandChecks`, on the models.
 -/
 
 namespace Editor.WindowCommands

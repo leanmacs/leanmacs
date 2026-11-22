@@ -1,6 +1,7 @@
 import Editor.Test.Windows
 import EvilTest.Check
 import EvilTest.Support.Evil
+import WindowCommandsApi
 
 /-!
 # Model tests: `Evil/Jumps.lean`
@@ -74,12 +75,13 @@ def evilJumpOffsets (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option (L
 
 /-- What `evilHanded` hands a step, with a split written over the core's
 API (the kit's `Test.Windows.split`, `ViewId.split` and a focus) registered
-here under the name the Vim scheme's `C-w s` runs, `window-split`, as the
-window commands' package registers its own, so that `C-w s` splits and the
-checks name no module of that package. -/
+here under the name the Vim scheme's `C-w s` runs
+(`WindowCommandsApi.splitName`), as the window commands' package registers
+its own, so that `C-w s` splits and the checks name no module of that
+package. -/
 def jumpWindowsHanded : Loop.Keys Vim.Default.scheme :=
   evilHanded (commands :=
-    [("window-split", fun call => do
+    [(WindowCommandsApi.splitName, fun call => do
         Test.Windows.split { before := true } call
         return none)])
 

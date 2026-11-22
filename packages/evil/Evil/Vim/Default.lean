@@ -2,12 +2,12 @@ import AtPointApi
 import Editor.Clipboard
 import Editor.Ex
 import Editor.Key.Notation
-import Editor.WindowCommands
 import Evil.Vim
 import EvilApi
 import MinibufferApi
 import ShellApi
 import TabCommandsApi
+import WindowCommandsApi
 
 /-!
 # The Vim scheme's default states and bindings
@@ -330,38 +330,39 @@ def minibufferCommands : List (String × Bound) :=
 
 /-- The window commands' keys, Vim 9.1's under `C-w` (`CTRL-W`): each key
 string, and the name of the window command it runs
-(`Editor/WindowCommands.lean`). Where tmux's tab keys win, `C-w n`,
+(the names are the interface package's, `WindowCommandsApi`,
+`packages/window-commands-api/`). Where tmux's tab keys win, `C-w n`,
 `C-w p`, `C-w c` and `C-w w` (`tabKeys`), Vim's commands keep their
 control spellings, `C-w C-n`, `C-w C-p`, `C-w C-c` and `C-w C-w`. It is
 data a config can bind too: `for (keys, name) in Vim.Default.windowKeys do
 bindKey keys name` puts the window commands in every state. -/
 def windowKeys : List (String × String) :=
-  [("C-w s", WindowCommands.splitName), ("C-w S", WindowCommands.splitName),
-    ("C-w C-s", WindowCommands.splitName), ("C-w v", WindowCommands.splitVerticallyName),
-    ("C-w C-v", WindowCommands.splitVerticallyName), ("C-w C-n", WindowCommands.newName),
-    ("C-w C-c", WindowCommands.closeName), ("C-w q", WindowCommands.quitName),
-    ("C-w C-q", WindowCommands.quitName), ("C-w o", WindowCommands.onlyName),
-    ("C-w C-o", WindowCommands.onlyName), ("C-w h", WindowCommands.leftName),
-    ("C-w C-h", WindowCommands.leftName), ("C-w <ArrowLeft>", WindowCommands.leftName),
-    ("C-w <Backspace>", WindowCommands.leftName), ("C-w j", WindowCommands.downName),
-    ("C-w C-j", WindowCommands.downName), ("C-w <ArrowDown>", WindowCommands.downName),
-    ("C-w k", WindowCommands.upName), ("C-w C-k", WindowCommands.upName),
-    ("C-w <ArrowUp>", WindowCommands.upName), ("C-w l", WindowCommands.rightName),
-    ("C-w C-l", WindowCommands.rightName), ("C-w <ArrowRight>", WindowCommands.rightName),
-    ("C-w C-w", WindowCommands.nextName), ("C-w W", WindowCommands.previousName),
-    ("C-w t", WindowCommands.topName), ("C-w C-t", WindowCommands.topName),
-    ("C-w b", WindowCommands.bottomName), ("C-w C-b", WindowCommands.bottomName),
-    ("C-w C-p", WindowCommands.lastName), ("C-w x", WindowCommands.exchangeName),
-    ("C-w C-x", WindowCommands.exchangeName), ("C-w r", WindowCommands.rotateName),
-    ("C-w C-r", WindowCommands.rotateName), ("C-w R", WindowCommands.rotateBackName),
-    ("C-w =", WindowCommands.balanceName), ("C-w +", WindowCommands.tallerName),
-    ("C-w -", WindowCommands.shorterName), ("C-w >", WindowCommands.widerName),
-    ("C-w <", WindowCommands.narrowerName), ("C-w z", WindowCommands.zoomName),
-    ("C-w m", WindowCommands.promoteName), ("C-w M", WindowCommands.demoteName),
-    ("C-w ,", WindowCommands.mainMoreName), ("C-w .", WindowCommands.mainFewerName),
-    ("C-w H", WindowCommands.edgeLeftName), ("C-w J", WindowCommands.edgeBottomName),
-    ("C-w K", WindowCommands.edgeTopName), ("C-w L", WindowCommands.edgeRightName),
-    ("C-w F", WindowCommands.floatName)]
+  [("C-w s", WindowCommandsApi.splitName), ("C-w S", WindowCommandsApi.splitName),
+    ("C-w C-s", WindowCommandsApi.splitName), ("C-w v", WindowCommandsApi.splitVerticallyName),
+    ("C-w C-v", WindowCommandsApi.splitVerticallyName), ("C-w C-n", WindowCommandsApi.newName),
+    ("C-w C-c", WindowCommandsApi.closeName), ("C-w q", WindowCommandsApi.quitName),
+    ("C-w C-q", WindowCommandsApi.quitName), ("C-w o", WindowCommandsApi.onlyName),
+    ("C-w C-o", WindowCommandsApi.onlyName), ("C-w h", WindowCommandsApi.leftName),
+    ("C-w C-h", WindowCommandsApi.leftName), ("C-w <ArrowLeft>", WindowCommandsApi.leftName),
+    ("C-w <Backspace>", WindowCommandsApi.leftName), ("C-w j", WindowCommandsApi.downName),
+    ("C-w C-j", WindowCommandsApi.downName), ("C-w <ArrowDown>", WindowCommandsApi.downName),
+    ("C-w k", WindowCommandsApi.upName), ("C-w C-k", WindowCommandsApi.upName),
+    ("C-w <ArrowUp>", WindowCommandsApi.upName), ("C-w l", WindowCommandsApi.rightName),
+    ("C-w C-l", WindowCommandsApi.rightName), ("C-w <ArrowRight>", WindowCommandsApi.rightName),
+    ("C-w C-w", WindowCommandsApi.nextName), ("C-w W", WindowCommandsApi.previousName),
+    ("C-w t", WindowCommandsApi.topName), ("C-w C-t", WindowCommandsApi.topName),
+    ("C-w b", WindowCommandsApi.bottomName), ("C-w C-b", WindowCommandsApi.bottomName),
+    ("C-w C-p", WindowCommandsApi.lastName), ("C-w x", WindowCommandsApi.exchangeName),
+    ("C-w C-x", WindowCommandsApi.exchangeName), ("C-w r", WindowCommandsApi.rotateName),
+    ("C-w C-r", WindowCommandsApi.rotateName), ("C-w R", WindowCommandsApi.rotateBackName),
+    ("C-w =", WindowCommandsApi.balanceName), ("C-w +", WindowCommandsApi.tallerName),
+    ("C-w -", WindowCommandsApi.shorterName), ("C-w >", WindowCommandsApi.widerName),
+    ("C-w <", WindowCommandsApi.narrowerName), ("C-w z", WindowCommandsApi.zoomName),
+    ("C-w m", WindowCommandsApi.promoteName), ("C-w M", WindowCommandsApi.demoteName),
+    ("C-w ,", WindowCommandsApi.mainMoreName), ("C-w .", WindowCommandsApi.mainFewerName),
+    ("C-w H", WindowCommandsApi.edgeLeftName), ("C-w J", WindowCommandsApi.edgeBottomName),
+    ("C-w K", WindowCommandsApi.edgeTopName), ("C-w L", WindowCommandsApi.edgeRightName),
+    ("C-w F", WindowCommandsApi.floatName)]
 
 /-- The window commands' keys as a table of normal state's: each runs its
 command, which changes no text and enters no state. -/

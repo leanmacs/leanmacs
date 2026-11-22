@@ -1,7 +1,6 @@
 import Editor.Ex.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.Menu.Compiled
-import Editor.WindowCommands.Compiled
 
 /-!
 # The core's entry module: the packages of the core's Lake package
@@ -141,7 +140,10 @@ too, and registers first, right before `package-set` (its D2): what it
 registers still follows the tab commands' and comes before the package
 set's. The tab commands' package, which was last here then, is the
 default package `tab-commands` (`packages/tab-commands/`) since that phase
-too, and registers first, right before `restore`.
+too, and registers first, right before `restore`. The window commands'
+package, which was last here then, is the default package
+`window-commands` (`packages/window-commands/`) since that phase too, and
+registers first, right before `tab-commands`.
 -/
 
 namespace EditorCore.EditorPackage
@@ -151,6 +153,6 @@ open Editor
 /-- The packages of the core's Lake package, in the order a host registers
 them ("The order", in the module docs). -/
 def packages : Array Package :=
-  #[Ex.package, FrameCommands.package, Menu.package, WindowCommands.package]
+  #[Ex.package, FrameCommands.package, Menu.package]
 
 end EditorCore.EditorPackage

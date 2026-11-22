@@ -42,7 +42,6 @@ import Editor.Theme.Picture
 import Editor.UndoTree.Theorems
 import Editor.Vocabulary
 import Editor.Watch.Contract
-import Editor.WindowCommands.Compiled
 
 /-!
 # The core

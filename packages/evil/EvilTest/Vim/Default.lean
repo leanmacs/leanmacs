@@ -13,7 +13,6 @@ import Editor.Test.Keys
 import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.Theme.Check
-import Editor.WindowCommands
 import Evil.Compiled
 import Evil.Vim
 import Evil.Vim.Default
@@ -22,6 +21,7 @@ import EvilTest.Support.Vim
 import MinibufferApi
 import ShellApi
 import TabCommandsApi
+import WindowCommandsApi
 
 /-!
 # Model tests: `Evil/Vim/Default.lean`
@@ -573,8 +573,9 @@ def vimDefaultChecks : List Check :=
         "criterion 2: in normal state C-w C-n, C-w C-p, C-w C-c and C-w C-w run the window commands Vim binds to C-w n, C-w p, C-w c and C-w w, each changing no text and entering no state"
       run :=
         pure <|
-          [("C-w C-n", WindowCommands.newName), ("C-w C-p", WindowCommands.lastName),
-                ("C-w C-c", WindowCommands.closeName), ("C-w C-w", WindowCommands.nextName)].all
+          [("C-w C-n", WindowCommandsApi.newName), ("C-w C-p", WindowCommandsApi.lastName),
+                ("C-w C-c", WindowCommandsApi.closeName),
+                ("C-w C-w", WindowCommandsApi.nextName)].all
             fun (text, name) =>
             vimDefaultCommand text == some { name } && (vimDefault text).2.head? == some .nothing },
     { name :=
@@ -613,7 +614,7 @@ def vimDefaultChecks : List Check :=
         "every row of the window commands' table binds its keys in normal state to the command it names, and every command it names is a window command that is registered"
       run :=
         pure <|
-          let registered := WindowCommands.names
+          let registered := WindowCommandsApi.names
           !Vim.Default.windowKeys.isEmpty &&
             (Vim.Default.keymap Vim.Default.windowCommands).bindings.length ==
               Vim.Default.windowKeys.length &&
@@ -623,15 +624,16 @@ def vimDefaultChecks : List Check :=
         "C-w H, C-w J, C-w K and C-w L run the commands that move a window to the left, bottom, top and right edge and back, each changing no text and entering no state"
       run :=
         pure <|
-          [("C-w H", WindowCommands.edgeLeftName), ("C-w J", WindowCommands.edgeBottomName),
-                ("C-w K", WindowCommands.edgeTopName), ("C-w L", WindowCommands.edgeRightName)].all
+          [("C-w H", WindowCommandsApi.edgeLeftName), ("C-w J", WindowCommandsApi.edgeBottomName),
+                ("C-w K", WindowCommandsApi.edgeTopName),
+                ("C-w L", WindowCommandsApi.edgeRightName)].all
             fun (text, name) =>
             vimDefaultCommand text == some { name } && (vimDefault text).2.head? == some .nothing },
     { name :=
         "C-w F runs the command that moves a window between the tiles and the floating layer, changing no text and entering no state"
       run :=
         pure <|
-          vimDefaultCommand "C-w F" == some { name := WindowCommands.floatName } &&
+          vimDefaultCommand "C-w F" == some { name := WindowCommandsApi.floatName } &&
             (vimDefault "C-w F").2.head? == some .nothing },
     { name :=
         "C-o, C-i and TAB each run a command evil registers that changes no text and enters no state: C-i and TAB the same one, and C-o another"

@@ -1,14 +1,20 @@
 import Editor.Api
 import Editor.Quit
+import WindowCommandsApi
 
 /-!
 # The window commands
 
 The commands that split, close, focus and arrange the frame's windows, each
 over the window operations of the editor API (`ViewId.split`,
-`ViewId.close`, `ViewId.focus`, `ViewId.arrange`, `Editor/Api.lean`) and
-the state's readers (`EditorState.toward?`, `EditorState.cycled`,
-`Editor/State.lean`). Vim 9.1's behaviour is pinned on the commands, so
+`ViewId.close`, `ViewId.focus`, `ViewId.arrange`, `lean/Editor/Api.lean`)
+and the state's readers (`EditorState.toward?`, `EditorState.cycled`,
+`lean/Editor/State.lean`). A module of the Lake package `window-commands`
+(`packages/window-commands/`) since the features-as-packages roadmap's
+phase 8; its declarations keep their names (`Editor.WindowCommands.…`).
+The commands' names are the interface package's (`WindowCommandsApi`,
+`packages/window-commands-api/`), which whoever reaches a window command
+by name imports in this module's place. Vim 9.1's behaviour is pinned on the commands, so
 which key reaches a command is the bindings' business alone: the Vim
 scheme binds them under `C-w` (`Vim.Default.windowKeys`,
 `packages/evil/Evil/Vim/Default.lean`).
@@ -40,146 +46,146 @@ scheme binds them under `C-w` (`Vim.Default.windowKeys`,
 | `arranging fun _ => .edge side` | `window-edge-left`, `-bottom`, `-top`, `-right` | Docks the window at that edge, moves a window docked at another edge there, or moves a window docked there back to the end of the tiled list (`Arrange.edge`): Vim's `CTRL-W H J K L`, which move a window to the far side at the full extent. Recorded departures: under a layout with no such edge it gives up with `noSuchEdge`, where Vim restructures its frames under any layout, and on a window already at that edge it moves it back into the tiles, where Vim does nothing |
 
 They are a package's: a host registers them for the owner
-`window-commands` (`Editor/WindowCommands/Compiled.lean`), so config can
-call them and bind keys to them. `Editor.lean` imports this module, and not
-that one, which is what a host is handed.
+`window-commands` (`WindowCommands/Compiled.lean`), so config can call
+them and bind keys to them. The package's entry module brings this module
+into the set's config base (`WindowCommands/EditorPackage.lean`).
 
-Pinned by `ModelTest.windowCommandChecks`.
+Pinned by `WindowCommandsTest.windowCommandChecks`.
 -/
 
 namespace Editor.WindowCommands
 
 /-- The name `split` is registered under. -/
 def splitName : String :=
-  "window-split"
+  WindowCommandsApi.splitName
 
 /-- The name `splitVertically` is registered under. -/
 def splitVerticallyName : String :=
-  "window-split-vertically"
+  WindowCommandsApi.splitVerticallyName
 
 /-- The name `new` is registered under. -/
 def newName : String :=
-  "window-new"
+  WindowCommandsApi.newName
 
 /-- The name `close` is registered under. -/
 def closeName : String :=
-  "window-close"
+  WindowCommandsApi.closeName
 
 /-- The name `quit` is registered under. -/
 def quitName : String :=
-  "window-quit"
+  WindowCommandsApi.quitName
 
 /-- The name `only` is registered under. -/
 def onlyName : String :=
-  "window-only"
+  WindowCommandsApi.onlyName
 
 /-- The name `focusToward .left` is registered under. -/
 def leftName : String :=
-  "window-focus-left"
+  WindowCommandsApi.leftName
 
 /-- The name `focusToward .bottom` is registered under. -/
 def downName : String :=
-  "window-focus-down"
+  WindowCommandsApi.downName
 
 /-- The name `focusToward .top` is registered under. -/
 def upName : String :=
-  "window-focus-up"
+  WindowCommandsApi.upName
 
 /-- The name `focusToward .right` is registered under. -/
 def rightName : String :=
-  "window-focus-right"
+  WindowCommandsApi.rightName
 
 /-- The name `focusCycled true` is registered under. -/
 def nextName : String :=
-  "window-focus-next"
+  WindowCommandsApi.nextName
 
 /-- The name `focusCycled false` is registered under. -/
 def previousName : String :=
-  "window-focus-previous"
+  WindowCommandsApi.previousName
 
 /-- The name `focusEnd false` is registered under. -/
 def topName : String :=
-  "window-focus-top"
+  WindowCommandsApi.topName
 
 /-- The name `focusEnd true` is registered under. -/
 def bottomName : String :=
-  "window-focus-bottom"
+  WindowCommandsApi.bottomName
 
 /-- The name `focusLast` is registered under. -/
 def lastName : String :=
-  "window-focus-last"
+  WindowCommandsApi.lastName
 
 /-- The name the exchange is registered under. -/
 def exchangeName : String :=
-  "window-exchange"
+  WindowCommandsApi.exchangeName
 
 /-- The name the forward rotation is registered under. -/
 def rotateName : String :=
-  "window-rotate"
+  WindowCommandsApi.rotateName
 
 /-- The name the backward rotation is registered under. -/
 def rotateBackName : String :=
-  "window-rotate-back"
+  WindowCommandsApi.rotateBackName
 
 /-- The name the balance is registered under. -/
 def balanceName : String :=
-  "window-balance"
+  WindowCommandsApi.balanceName
 
 /-- The name growing along rows is registered under. -/
 def tallerName : String :=
-  "window-taller"
+  WindowCommandsApi.tallerName
 
 /-- The name shrinking along rows is registered under. -/
 def shorterName : String :=
-  "window-shorter"
+  WindowCommandsApi.shorterName
 
 /-- The name growing along columns is registered under. -/
 def widerName : String :=
-  "window-wider"
+  WindowCommandsApi.widerName
 
 /-- The name shrinking along columns is registered under. -/
 def narrowerName : String :=
-  "window-narrower"
+  WindowCommandsApi.narrowerName
 
 /-- The name the zoom is registered under. -/
 def zoomName : String :=
-  "window-zoom"
+  WindowCommandsApi.zoomName
 
 /-- The name the promotion to main is registered under. -/
 def promoteName : String :=
-  "window-promote"
+  WindowCommandsApi.promoteName
 
 /-- The name the demotion is registered under. -/
 def demoteName : String :=
-  "window-demote"
+  WindowCommandsApi.demoteName
 
 /-- The name one more main window is registered under. -/
 def mainMoreName : String :=
-  "window-main-more"
+  WindowCommandsApi.mainMoreName
 
 /-- The name one fewer main window is registered under. -/
 def mainFewerName : String :=
-  "window-main-fewer"
+  WindowCommandsApi.mainFewerName
 
 /-- The name `arranging fun _ => .edge .left` is registered under. -/
 def edgeLeftName : String :=
-  "window-edge-left"
+  WindowCommandsApi.edgeLeftName
 
 /-- The name `arranging fun _ => .edge .bottom` is registered under. -/
 def edgeBottomName : String :=
-  "window-edge-bottom"
+  WindowCommandsApi.edgeBottomName
 
 /-- The name `arranging fun _ => .edge .top` is registered under. -/
 def edgeTopName : String :=
-  "window-edge-top"
+  WindowCommandsApi.edgeTopName
 
 /-- The name `arranging fun _ => .edge .right` is registered under. -/
 def edgeRightName : String :=
-  "window-edge-right"
+  WindowCommandsApi.edgeRightName
 
 /-- The name `arranging fun _ => .float` is registered under. -/
 def floatName : String :=
-  "window-float"
+  WindowCommandsApi.floatName
 
 /-- What `only` says when the window is the only one of the frame. -/
 def alreadyOnly : String :=
@@ -317,16 +323,12 @@ def exchange (count : Nat) : Arrange :=
   .exchange (if count == 0 then none else some count)
 
 /-- The names of the commands the `window-commands` package registers
-(`Editor/WindowCommands/Compiled.lean`), in the order it registers them.
-It is here, in the module a package may import, so that whoever binds keys
-to the window commands, as the Vim scheme's `C-w` table does, can hold its
-table to the commands that exist without importing the package's module.
-`ModelTest.windowCommandChecks` holds the package to it. -/
+(`WindowCommands/Compiled.lean`), in the order it registers them: the
+interface package's (`WindowCommandsApi.names`), which whoever binds keys
+to the window commands, as the Vim scheme's `C-w` table does, holds its
+table to. `WindowCommandsTest.windowCommandChecks` holds the package to
+it. -/
 def names : List String :=
-  [splitName, splitVerticallyName, newName, closeName, quitName, onlyName, leftName, downName,
-    upName, rightName, nextName, previousName, topName, bottomName, lastName, exchangeName,
-    rotateName, rotateBackName, balanceName, tallerName, shorterName, widerName, narrowerName,
-    zoomName, promoteName, demoteName, mainMoreName, mainFewerName, edgeLeftName, edgeBottomName,
-    edgeTopName, edgeRightName, floatName]
+  WindowCommandsApi.names.toList
 
 end Editor.WindowCommands

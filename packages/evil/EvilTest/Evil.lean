@@ -20,7 +20,6 @@ import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.States
 import Editor.Text
-import Editor.WindowCommands
 import Evil
 import Evil.Vim
 import Evil.Vim.Default
@@ -28,6 +27,7 @@ import EvilTest.Check
 import EvilTest.Support.Evil
 import EvilTest.Support.OperatorRows
 import EvilTest.Support.Vim
+import WindowCommandsApi
 
 /-!
 # Model tests: `Evil.lean`
@@ -431,7 +431,8 @@ def evilInsertChecks : List Check :=
           let handed : Loop.Keys Vim.Default.scheme :=
             {
               evilHanded
-                #[focusing WindowCommands.rightName 1, focusing WindowCommands.leftName 0] with
+                #[focusing WindowCommandsApi.rightName 1,
+                  focusing WindowCommandsApi.leftName 0] with
               layout := some Layout.default }
           let bound : Loop.Keys Vim.Default.scheme :=
             { handed with

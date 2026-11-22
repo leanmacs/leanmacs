@@ -1,0 +1,65 @@
+# The window commands: the commands that split, close, focus and arrange
+# the frame's windows: a default package, a Lake package outside the core
+# that the default package set requires (../lakefile.toml;
+# docs/design/packages.md, "The package set and its build"). It was two
+# modules of the core, `Editor.WindowCommands` and
+# `Editor.WindowCommands.Compiled`, until the features-as-packages
+# roadmap's phase 8. The gate's package steps build, test, lint and
+# format-check it through the fixture set, which requires the default set
+# (tools/package-set.sh), and the package imports check holds what it
+# imports of the core (tools/package-imports-check.sh).
+#
+# - `WindowCommands` is the package's library: `WindowCommands.lean`, the
+#   commands, `WindowCommands/Compiled.lean`, the `Package` value, and its
+#   entry module `WindowCommands/EditorPackage.lean`, which the package-set
+#   build reads. Its `globs` hold every module under `WindowCommands`, so
+#   the package imports check sees each one's imports. It implements the
+#   interface package `window-commands-api` (`WindowCommandsApi`), which
+#   declares the commands' names and which it requires, beside the core.
+# - `window-commands-test` is its test driver (`lake test`): the tests that
+#   need no Rust library, rooted at `WindowCommandsTest/Model.lean`. It is
+#   no default target, as the core's `model-test` is not: `mise run lean`
+#   links with the system compiler, which this executable has no flags for.
+# - `WindowCommandsTest` holds the test modules.
+#
+# It has no headless fixture of its own: the core's fixtures that split
+# and arrange windows (`tests/headless/two-windows`, `manual-splits`,
+# `monocle`, `edge-sidebar` and the rest), which run on the default set's
+# editor, do so through it.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its modules,
+# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/window-commands update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages,
+# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+name = "window-commands"
+testDriver = "«window-commands-test»"
+defaultTargets = ["WindowCommands", "WindowCommandsTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+# The interface package of the window commands: their names, its fake and
+# the contract check this package's tests run.
+[[require]]
+name = "window-commands-api"
+path = "../window-commands-api"
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "WindowCommands"
+globs = ["WindowCommands.*"]
+
+[[lean_lib]]
+name = "WindowCommandsTest"
+globs = ["WindowCommandsTest.+"]
+
+[[lean_exe]]
+name = "window-commands-test"
+root = "WindowCommandsTest.Model"

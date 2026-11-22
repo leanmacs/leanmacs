@@ -80,7 +80,8 @@ declare them: `execute-command-api` and `binding-search-api` the first two,
 (bound to `<leader> h t`), and `tab-commands-api` the tab commands the
 config binds under `<leader> TAB`: `tab-switch`, `tab-new`, `tab-close`,
 `tab-rename`, `tab-next`, `tab-previous` and `tab-select-1` to
-`tab-select-9`. That the default editor runs the first fourteen
+`tab-select-9`, and `window-commands-api` the thirty-three window commands
+the config binds under `<leader> w`. That the default editor runs the first fourteen
 for their keys under the Vim scheme's leader (`SPC :`, `SPC ?`, `SPC f f`,
 `SPC p f`, `SPC SPC`, `SPC p p`, `SPC s p`, `SPC /`, `SPC *`, `SPC k a`,
 `SPC k o`) is the headless fixture
@@ -91,7 +92,14 @@ def defaultPackageCommands : Array String :=
     "find-file-in-project", "project-search", "project-search-symbol", "working-set-add",
     "working-set-open", "load-theme", "tab-switch", "tab-new", "tab-close", "tab-rename",
     "tab-next", "tab-previous", "tab-select-1", "tab-select-2", "tab-select-3", "tab-select-4",
-    "tab-select-5", "tab-select-6", "tab-select-7", "tab-select-8", "tab-select-9"]
+    "tab-select-5", "tab-select-6", "tab-select-7", "tab-select-8", "tab-select-9", "window-split",
+    "window-split-vertically", "window-new", "window-close", "window-quit", "window-only",
+    "window-focus-left", "window-focus-down", "window-focus-up", "window-focus-right",
+    "window-focus-next", "window-focus-previous", "window-focus-top", "window-focus-bottom",
+    "window-focus-last", "window-exchange", "window-rotate", "window-rotate-back", "window-balance",
+    "window-taller", "window-shorter", "window-wider", "window-narrower", "window-zoom",
+    "window-promote", "window-demote", "window-main-more", "window-main-fewer", "window-edge-left",
+    "window-edge-bottom", "window-edge-top", "window-edge-right", "window-float"]
 
 /-- The checks of the default config `mise run install` ships
 (`config/default`), read from the directory the fourth argument names: it

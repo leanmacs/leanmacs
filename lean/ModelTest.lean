@@ -130,7 +130,6 @@ import ModelTest.Editor.Watch.Contract
 import ModelTest.Editor.Watch.Model
 import ModelTest.Editor.Window
 import ModelTest.Editor.WindowCheck
-import ModelTest.Editor.WindowCommands
 import ModelTest.Editor.Workspace
 import ModelTest.EditorCore.EditorPackage
 import ModelTest.FilesApi
@@ -852,10 +851,10 @@ The config session's decisions are tested here too, with no elaborator:
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
-  list is the 4 packages, in order, each accepted, with no package of the
+  list is the 3 packages, in order, each accepted, with no package of the
   shipped palettes, of the compile mode, of the seven features phase 6
-  moved out, of the tab commands, of session restore or of the package-set
-  commands among them, in the state they
+  moved out, of the window or the tab commands, of session restore or of
+  the package-set commands among them, in the state they
   make every entry's owner is one of them, the ex names are bound in the
   order the headless fixtures show, the `ex` package's first, and no theme
   is registered; and the set keeps no store across a restart (the shell's
@@ -1355,7 +1354,6 @@ def checks : List Check :=
     floatViewChecks ++
     tabBarChecks ++
     frameCommandChecks ++
-    windowCommandChecks ++
     titleChecks ++
     menuChecks ++
     workspaceDataChecks ++

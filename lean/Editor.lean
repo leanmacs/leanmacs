@@ -8,7 +8,6 @@ import Editor.Jumps.Go
 import Editor.Text.Word
 import Editor.UndoTree.Theorems
 import Editor.Vocabulary
-import Editor.WindowCommands
 
 /-!
 # The editor
@@ -104,15 +103,14 @@ it. The frame's commands are here too
 (`Editor/FrameCommands.lean`): `toggle-fullscreen` and `minimise-window`,
 which ask the platform's window through the display; their registrations
 and default bindings (`Editor/FrameCommands/Compiled.lean`) are not
-imported. The window commands are here too (`Editor/WindowCommands.lean`):
-`window-split`, `window-close`, `window-focus-left` and the rest, which
-split, close, focus and arrange the frame's windows, so a config's command
-can call them; their registrations (`Editor/WindowCommands/Compiled.lean`)
-are not imported. The tab commands (`tab-new`, `tab-close`, `tab-next`,
-`tab-switch` and the rest) are not here: they are the default package
-`tab-commands` (`packages/tab-commands/`) since the features-as-packages
-roadmap's phase 8, and a command of config's calls them through the set's
-base, which holds that package's entry module. The
+imported. The window commands (`window-split`, `window-close`,
+`window-focus-left` and the rest, which split, close, focus and arrange the
+frame's windows) and the tab commands (`tab-new`, `tab-close`, `tab-next`,
+`tab-switch` and the rest) are not here: they are the default packages
+`window-commands` and `tab-commands` (`packages/window-commands/`,
+`packages/tab-commands/`) since the features-as-packages roadmap's phase
+8, and a command of config's calls them through the set's base, which
+holds each package's entry module. The
 command that switches the theme in force, `load-theme`, is not here: it
 is the default package `themes` (`packages/themes/`) since the
 features-as-packages roadmap's phase 7, with the theme `default` it

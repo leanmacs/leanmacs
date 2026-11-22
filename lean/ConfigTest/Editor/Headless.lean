@@ -67,7 +67,6 @@ import Editor.Text.Model
 import Editor.Text.Real
 import Editor.Watch
 import Editor.Window
-import Editor.WindowCommands.Compiled
 import Editor.Workspace
 import EditorCore.EditorPackage
 import FilesApiTest.Fake
@@ -2454,13 +2453,20 @@ def shippedChecks (_ : Unit) : List Check :=
             ex "ls" == some "list-buffers" &&
             ex "bd" == some "close-buffer" },
     { name :=
-        "the executable's hosts start with every window command registered by the window-commands package"
+        "the executable's hosts start with nothing of the window commands' package: none of its thirty-three commands, window-split to window-float, and no entry of an owner window-commands, registered by a package of the core's Lake package"
       run := do
         let registry := shippedRegistry
-        let compiled (name : String) : Bool :=
-          (registry.find? name).any (·.owner == WindowCommands.package.owner)
-        return !WindowCommands.package.registered.commands.isEmpty &&
-            WindowCommands.package.registered.commands.all (compiled ·.name) },
+        let names :=
+          #["window-split", "window-split-vertically", "window-new", "window-close", "window-quit",
+            "window-only", "window-focus-left", "window-focus-down", "window-focus-up",
+            "window-focus-right", "window-focus-next", "window-focus-previous", "window-focus-top",
+            "window-focus-bottom", "window-focus-last", "window-exchange", "window-rotate",
+            "window-rotate-back", "window-balance", "window-taller", "window-shorter",
+            "window-wider", "window-narrower", "window-zoom", "window-promote", "window-demote",
+            "window-main-more", "window-main-fewer", "window-edge-left", "window-edge-bottom",
+            "window-edge-top", "window-edge-right", "window-float"]
+        return names.size == 33 && names.all (fun name => (registry.find? name).isNone) &&
+            !(registry.ownersByKind.flatten.any (·.name == "window-commands")) },
     { name :=
         "the executable's hosts start with nothing of the tab commands' package: no command tab-new, tab-close, tab-next, tab-previous, tab-switch, tab-rename, tab-move-right, tab-move-left or tab-select-1 to tab-select-9, no source tabs, no source in the category tab, and no entry of an owner tab-commands, registered by a package of the core's Lake package"
       run := do
