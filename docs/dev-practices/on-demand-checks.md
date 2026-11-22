@@ -1104,7 +1104,35 @@ open-file` at 5142a367 on an 18-core Mac under 36 hogs printed
 `open-file: 50/50`.
 
 A failure is a bug, in a check or in the code. It is fixed and the loop is
-run again from round 1, never retried away. A bound that a loaded run
+run again from round 1, never retried away.
+
+Measured for the sweep of the tests' sleeps and deadline polls
+(deterministic-test-concurrency, phase 6), each on an 18-core Mac under 36
+hogs unless it says otherwise:
+
+- Before, at b21f6957, 7 rounds: config 4/7, contract 0/7, rust 7/7,
+  open-file 6/7.
+- After, at 43f421a6, from 06:46 to 08:30 CST on 2026-11-22: config 10/10,
+  contract 10/10, rust 10/10, open-file 10/10. The plan asked for 50 rounds;
+  the owner cut the count to 10 on 2026-11-22, nothing having failed.
+  Earlier runs of this loop found five bugs, each fixed with a forced check
+  before the loop was run again from round 1: the later-rounds check's
+  absolute counts, the grep service's shutdown before its flush's
+  completion, the process service's flush completed by an open's answer, the
+  library queue's leftover `parsed` events, and a guard that could leave a
+  check's pull parked for good.
+- The open-file fixture alone, 50 rounds at 5142a367: open-file: 50/50.
+- `mise run stress -- 10 ffi` was not run, under the same cut.
+- Supplementary, the Linux container (arm64 Debian, 8 CPUs, 16 hogs), at
+  43f421a6 with the build `mise run lean` makes (its gate stops at
+  bundle-test, linux-gate-bundle-test-wants-ld64-lld): it failed in round 1
+  of config, its hang guards firing ("a reload whose root first imports
+  Lean installs ... the editor thread had not settled within 120000 ms", and
+  loops not ended 30000 ms and 200 ms after they were asked to stop). Filed
+  as linux-stress-config-hangs, to be fixed after this branch lands. It is
+  evidence for the Linux code paths only, never for the ubuntu leg.
+- The ubuntu leg is open: `.github/workflows/stress.yml`, dispatched at
+  landing, closes it. A bound that a loaded run
 reaches on an event that does come is a hang guard set too short: it is
 raised to ten times the slowest that event was seen to take, and the
 measurement goes in its doc.
