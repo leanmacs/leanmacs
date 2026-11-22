@@ -25,7 +25,9 @@
 # Each suite runs in the foreground under `taskpolicy -c utility` on macOS
 # and `nice -n 19` elsewhere, so the hogs win the CPU. Each run's output goes
 # to `$STRESS_OUT/<suite>-<round>.log` (a fresh temporary directory when
-# STRESS_OUT is unset). At the end it prints `<suite>: <passed>/<rounds>` for
+# STRESS_OUT is unset). A run that has not ended within STRESS_LIMIT seconds
+# (30 minutes) is killed and counts as failed, so a hang shows as a failure.
+# At the end it prints `<suite>: <passed>/<rounds>` for
 # each suite, then each failing run with the names of the checks and tests
 # that failed, and exits 1 on any failure. Nothing is left running.
 #
@@ -95,7 +97,31 @@ run_suite() {
   esac
 }
 
-echo "stress: $rounds rounds of $suites, $hogs hogs on $cores cores, logs in $out"
+# hang guard: each suite's run ending; only a hang reaches the limit, and
+# that run then fails as a hang. A suite's run takes minutes under the load;
+# STRESS_LIMIT (seconds) overrides the 30 minutes.
+limit=${STRESS_LIMIT:-1800}
+
+# Runs one suite as run_suite does, in a process group of its own, and kills
+# that group if it has not ended within $limit seconds, saying so in its log.
+# The guard is killed with its own group once the run ends, so no sleep is
+# left behind.
+bounded() {
+  set -m
+  run_suite "$1" "$2" &
+  pid=$!
+  (sleep "$limit" && kill -TERM -- "-$pid" 2>/dev/null &&
+    echo "stress: a hang: $2 had not ended within $limit s and was killed" >>"$1") &
+  guard=$!
+  set +m
+  status=0
+  wait "$pid" || status=$?
+  kill -TERM -- "-$guard" 2>/dev/null || true
+  wait "$guard" 2>/dev/null || true
+  return "$status"
+}
+
+echo "stress: $rounds rounds of $suites, $hogs hogs on $cores cores, a limit of $limit s a run, logs in $out"
 i=0
 while [ "$i" -lt "$hogs" ]; do
   yes >/dev/null &
@@ -108,7 +134,7 @@ round=1
 while [ "$round" -le "$rounds" ]; do
   for suite in $suites; do
     log="$out/$suite-$round.log"
-    if run_suite "$log" "$suite"; then
+    if bounded "$log" "$suite"; then
       echo "stress: round $round: $suite passed"
     else
       echo "stress: round $round: $suite FAILED ($log)"
