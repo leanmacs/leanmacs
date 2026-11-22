@@ -9,8 +9,6 @@ import Editor.Config.Packages
 import Editor.Display.Model
 import Editor.DisplayRules
 import Editor.Event
-import Editor.Ex
-import Editor.Ex.Compiled
 import Editor.Ex.Line
 import Editor.File
 import Editor.File.Cases
@@ -46,20 +44,21 @@ import Editor.Test.Sources
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
+import Ex.Compiled
+import ExTest.Check
 import FilesApi
 import FilesApiTest.Fake
-import ModelTest.Check
 import ShellApi
 import ShellApiTest.Fake
 
 /-!
-# Model tests: `Editor/Ex.lean`
+# The tests of `Ex.lean`
 
-The model tests of `Editor/Ex.lean`: `exChecks`. The root module `ModelTest`
-runs them; its module doc says what each shows.
+The tests of the ex command line: `exChecks`. The test driver
+`ExTest/Model.lean` runs them; its module doc says what each shows.
 -/
 
-namespace ModelTest
+namespace ExTest
 
 open Editor
 open Editor.Test
@@ -92,7 +91,7 @@ def exListed (pattern : String) (chosen : Option Nat := none)
 compiled code registers for the ex line (`Ex.package.registered.commands`),
 `files-api`'s fake's (`FilesApiTest.fake.registered.commands`) and
 the kit's minibuffer's (`Test.Minibuffer.package.registered.commands`,
-`Editor/Test/Minibuffer.lean`), and those `extra` registers (`shell-api`'s
+`lean/Editor/Test/Minibuffer.lean`), and those `extra` registers (`shell-api`'s
 fake, for the bang lines' checks), each under the
 name it is registered under, and then the commands of the prompt checks:
 `greet`, which says what it was called with, `boom`, `other` and the test
@@ -182,14 +181,14 @@ def exNoteOpen : Option TestDriver :=
   (exDriver Ex.package.registered.ex).map fun driver =>
     ((fedTo driver (exLine s!"e {inFiles "note.txt"}")).1.finish 1).1
 
-/-- The checks of the ex command line (`Editor/Ex.lean`,
-`Editor/Ex/Compiled.lean`), on the loop's driver over the editor's models,
+/-- The checks of the ex command line (`Ex.lean`,
+`Ex/Compiled.lean`), on the loop's driver over the editor's models,
 the model of files and the test scheme: the ex command opens a prompt and
 runs its answer as the command the line's name is bound to. Each message is
 read from the function that makes it. Then the completion sources'
-contract (`Editor/Completion/Contract.lean`) over the ex line's two
+contract (`lean/Editor/Completion/Contract.lean`) over the ex line's two
 sources, its `:!` history and its names, on the kit's runner
-(`Editor/Test/Sources.lean`), and that the names' source answers something
+(`lean/Editor/Test/Sources.lean`), and that the names' source answers something
 on its fixture. -/
 def exChecks : List Check :=
   let closed (driver : TestDriver) : Bool :=
@@ -773,4 +772,4 @@ def exChecks : List Check :=
     [{  name := "the ex names' source answers something on the contract's fixture"
         run := pure (answersSomething Ex.namesSource) }]
 
-end ModelTest
+end ExTest

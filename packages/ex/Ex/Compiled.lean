@@ -1,19 +1,21 @@
 import BuffersApi
-import Editor.Ex
 import Editor.Package
+import Ex
 import FilesApi
 
 /-!
-# The `ex` package: the ex line's commands and the core's ex names
+# The `ex` package: the ex line's commands and the ex names that ship
 
-What a host registers so that it has the ex command line (`Editor/Ex.lean`):
-the package `ex` (`Ex.package`, `Editor/Package.lean`), whose `setup`
+What a host registers so that it has the ex command line (`Ex.lean`):
+the package `ex` (`Ex.package`, `lean/Editor/Package.lean`), whose `setup`
 registers the ex line's commands, the files', its own and the buffers' ex
 names and its completion sources. A host registers it for the owner `ex` when its loop starts,
-before any config (`Editor/Config/Packages.lean`;
-`Editor/Config/Registry.lean`, "Ex bindings"), so they hold when config
+before any config (`lean/Editor/Config/Packages.lean`;
+`lean/Editor/Config/Registry.lean`, "Ex bindings"), so they hold when config
 fails to load, a reload does not replace them, and config's binding of a
-shipped ex name runs in its place until a reload drops it.
+shipped ex name runs in its place until a reload drops it. Both of the
+executable's hosts are handed it, through the entry module of the Lake
+package `ex` (`Ex/EditorPackage.lean`).
 
 - **The commands**: each a command that is given what it was called with
   (`commandWith`).
@@ -53,7 +55,7 @@ shipped ex name runs in its place until a reload drops it.
     `u` undoes ("take theirs"); with a path it opens it as `e` does, since
     buffers persist and nothing is discarded. Only a leading `!` is
     parsed, as the shell's: `e!` and `w!` are names of their own
-    (`Editor/Ex/Line.lean`), each a binding with fixed arguments
+    (`lean/Editor/Ex/Line.lean`), each a binding with fixed arguments
     (`exCommand`'s `arguments`, `Binding.arguments`).
   - `q` runs `quit` and takes nothing. It quits the editor, not the
     window the line was asked from: no shipped command splits a window.
@@ -75,23 +77,23 @@ shipped ex name runs in its place until a reload drops it.
   `previous-error`, in its package outside the core
   (`packages/compile/Compile/Compiled.lean`), and version control's twelve
   `vc-…` names (`packages/version-control/VersionControl/Compiled.lean`). The files'
-  and the buffers' names are bound here because both features are the
-  core's, as this one is (`docs/design/packages.md`). The core's list
-  registers this package before version control's
-  (`EditorCore/EditorPackage.lean`), and the compile mode's package
-  registers after every package of the core's, so the ex names'
-  completion source, which keeps the order the names were bound in, lists
-  this package's, then version control's, then the compile mode's.
+  and the buffers' names are bound here because they were bound here
+  while all three features were the core's (`docs/design/packages.md`);
+  each names its command by an interface's constant, so the binding
+  holds whatever implements `files-api` and `buffers-api`. The default
+  set requires this package first (`packages/lakefile.toml`), so the ex
+  names' completion source, which keeps the order the names were bound
+  in, lists this package's, then the restore's and the package set's,
+  then version control's, then the compile mode's.
 - **The sources**: the `:!` history, then the ex names, so config can ask
   for them by name.
 
-This module is apart from `Editor/Ex.lean` because it is what a host is
-handed, not what config calls: `Editor.lean` imports the commands, so that
-config can call them, and not this.
+This module is apart from `Ex.lean` because it is what a host is
+handed, not what config calls.
 
-Pinned by `ModelTest.exPackageChecks` and `ModelTest.exChecks`, on the
-models; by `ConfigTest.exChecks` and
-`ConfigTest.exScriptChecks`, through the headless host; and on the
+Pinned by `ExTest.exPackageChecks` and `ExTest.exChecks`, on the
+models; by `ExTest.Linked.exChecks` and
+`ExTest.Linked.exScriptChecks`, through the headless host; and on the
 executable by the fixture `tests/headless/ex` and the two process checks
 of the `ffi-test` task.
 -/

@@ -2,6 +2,7 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Ex.Line
 import Editor.Quit
+import ExApi
 import FilesApi
 import ShellApi
 
@@ -10,12 +11,21 @@ import ShellApi
 
 The ex line is a prompt whose answer is run as a named ex command
 (`docs/design/keymaps-and-modes.md`, "The ex command line"). It is one
-command, `ex`, written over the editor API (`Editor/Api.lean`): it asks for
+command, `ex`, written over the editor API (`lean/Editor/Api.lean`): it asks for
 a line and then runs it. The commands the shipped ex names run that are the
 ex line's own are here too: `quit`, `save-and-quit` and `reload-config`.
-`Editor.lean` imports this module, so
-config calls them. The commands as compiled code registers them, and the ex
-names that ship, are in `Editor/Ex/Compiled.lean`.
+The commands as compiled code registers them, and the ex names that ship,
+are in `Ex/Compiled.lean`.
+
+A module of the Lake package `ex` (`packages/ex/`) since the
+features-as-packages roadmap's phase 8; its declarations keep their names
+(`Editor.Ex.…`). The package's entry module brings it into the set's
+config base (`Ex/EditorPackage.lean`), so config calls them. The names
+`ex` and `quit` are the interface package's (`ExApi`,
+`packages/ex-api/`), which whoever reaches the ex line by name, as the
+Vim scheme's `:` does, imports in this module's place. What an ex line is
+made of, its parts, its ranges and a name's binding, stays the core's
+(`lean/Editor/Ex/Line.lean`).
 
 ## The ex command
 
@@ -35,12 +45,12 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   the ex names that are bound**: the history of the asking buffer's project,
   or the editor-wide one for a buffer outside any workspace, newest first
   (`Shell.history`, `shell-api`'s, `ShellApi.lean`), then the bound names (`exNames`,
-  `Editor/Api.lean`), which the loop answers from the registry as it is
+  `lean/Editor/Api.lean`), which the loop answers from the registry as it is
   when the line is asked for. So while a line is being typed the scene
   lists the lines and names it matches, a key of the minibuffer chooses
   one, and accepting runs the chosen one (`packages/minibuffer/Minibuffer.lean`).
   Typing `!` lists the history. The prompt asks for the sources of the
-  category `ex-line` (`Editor/Completion.lean`), with two as its
+  category `ex-line` (`lean/Editor/Completion.lean`), with two as its
   defaults, in that order: `historySource` (`ex-history`) and
   `namesSource` (`ex-names`), which compiled code registers under their
   names in that category too. So config adds to what the ex line lists by
@@ -56,7 +66,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
     `reload`.
 - **Running a line** (`run`):
   1. the line is parsed into its range, its name and its argument
-     (`Ex.parse`, `Editor/Ex/Line.lean`). A line that is empty or all
+     (`Ex.parse`, `lean/Editor/Ex/Line.lean`). A line that is empty or all
      white space runs nothing and says nothing, as Vim's does. A range
      before a name, which no name takes, is said (`noRange`), and nothing
      runs; so is a range alone, which in Vim goes to a line
@@ -68,7 +78,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
      `shell-command` is asked to run after this one with the text after
      the `!` and the line, trimmed (`invoke`). With a range, `:{range}!cmd`,
      the range is resolved against the view the line was asked from
-     (`Range.resolve`, `Editor/Ex/Line.lean`): `.` is its primary cursor's
+     (`Range.resolve`, `lean/Editor/Ex/Line.lean`): `.` is its primary cursor's
      line, `$` its buffer's last (`linesOf`). A range that resolves to no
      lines is said, `<line>: ` and why; otherwise `shell-filter` is asked
      to run with the first and the last line, the text and the line. `:!`
@@ -84,7 +94,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   5. the command asks for the invocation to be run after it (`invoke`).
 - **The command a line runs is a step of its own.** `ex` does not run it:
   the loop hands the invocation to its host, which runs it before the next
-  event, as it runs a prompt's continuation (`Editor/Loop.lean`,
+  event, as it runs a prompt's continuation (`lean/Editor/Loop.lean`,
   "Prompts"). So an accepted ex line is three steps: the accept command,
   `ex` with the line, and the bound command. The bound command is looked
   up by the loop when its step runs, after `ex`'s step, and is run like
@@ -98,9 +108,9 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
 ## Quit
 
 - **`quit`** (`quitName`, `quitCommand`) asks the editor to quit (`quit`,
-  `Editor/Api.lean`; `docs/design/concurrency.md`, "Quit"). The ex name
+  `lean/Editor/Api.lean`; `docs/design/concurrency.md`, "Quit"). The ex name
   `q` is bound to it. The name and the rule are the core's
-  (`Editor/Quit.lean`), since the loop runs both; `quitName`, `notQuitting`
+  (`lean/Editor/Quit.lean`), since the loop runs both; `quitName`, `notQuitting`
   and `closeRequested` here are defined from them.
 - **It is refused while a buffer that holds a file has unsaved changes**,
   and says so in the echo area (`notQuitting`): `quit: <name> has unsaved
@@ -110,7 +120,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   no way to quit once anything was typed there. This departs from Vim,
   which refuses.
 - **It waits for a save in flight.** The command asks, and the loop says
-  stop once the save's result has been delivered (`Editor/Loop.lean`,
+  stop once the save's result has been delivered (`lean/Editor/Loop.lean`,
   "Quit"): `w` then `q`, typed as fast as you like, writes the file and
   quits. If that save is refused the quit is withdrawn, and the save's
   refusal is what the echo area says, whether or not the buffer was
@@ -120,7 +130,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   window and quits when it is the last.
 - **The system's quit runs it.** Command-Q, Quit from the Dock's menu, a
   logout, restart or shutdown reach the loop as `Event.quitRequested`,
-  which runs the command named `quit` by these rules (`Editor/Loop.lean`,
+  which runs the command named `quit` by these rules (`lean/Editor/Loop.lean`,
   "Quit"). When it does not quit, the system is told to keep the editor
   running.
 
@@ -128,7 +138,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
 
 - **A close request is a quit by `q`'s rule.** The rule is one program,
   `closeRequested`, which `quitCommand` is, and which the loop runs itself
-  for a window's close request (`Editor/Loop.lean`, "Quit"): refused with
+  for a window's close request (`lean/Editor/Loop.lean`, "Quit"): refused with
   `notQuitting` while a buffer that holds a file has unsaved changes,
   waiting for a save in flight, and withdrawn by a save that is refused.
 - **The loop runs the rule, not the command registered as `quit`**, so a
@@ -175,7 +185,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
 ## Reload
 
 - **`reload-config`** (`reloadName`, `reloadCommand`) asks for the config
-  to be reloaded (`reloadConfig`, `Editor/Api.lean`). The ex name `reload`
+  to be reloaded (`reloadConfig`, `lean/Editor/Api.lean`). The ex name `reload`
   is bound to it.
 - **The reload is asynchronous.** The command runs to its end at once; the
   host starts the reload job, and the new config is installed between two
@@ -188,19 +198,20 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
 
 | Addition | Where |
 |---|---|
-| An ex name | A binding in `Editor/Ex/Compiled.lean`, or config's `exCommand` (`Editor/Setup.lean`); nothing here |
-| A command an ex name runs | Here if it is the ex line's own, with its name and its messages, and its registration in `Editor/Ex/Compiled.lean` |
-| A part of a line | `Editor/Ex/Line.lean`, and its use in `run` |
+| An ex name | A binding in `Ex/Compiled.lean`, or config's `exCommand` (`lean/Editor/Setup.lean`); nothing here |
+| A command an ex name runs | Here if it is the ex line's own, with its name and its messages, and its registration in `Ex/Compiled.lean` |
+| A part of a line | `lean/Editor/Ex/Line.lean`, and its use in `run` |
 
-Pinned by `ModelTest.exChecks`, on the loop's driver over the editor's
+Pinned by `ExTest.exChecks`, on the loop's driver over the editor's
 models and the test scheme.
 -/
 
 namespace Editor.Ex
 
-/-- The name the ex command is registered under. -/
+/-- The name the ex command is registered under: the interface
+package's. -/
 def name : String :=
-  "ex"
+  ExApi.name
 
 /-- The label of the prompt the ex command asks for its line with. -/
 def label : String :=
@@ -309,10 +320,10 @@ def exCommand (call : Call) : EditorM Unit := do
           [.category "ex-line" [historySource, namesSource]]) then
       message (notAsking refusal)
 
-/-- The name the quit command is registered under: the core's
-(`Quit.name`, `Editor/Quit.lean`). -/
+/-- The name the quit command is registered under: the interface
+package's, which is the core's (`Quit.name`, `lean/Editor/Quit.lean`). -/
 def quitName : String :=
-  Quit.name
+  ExApi.quitName
 
 /-- What the echo area says when the quit command was refused: its name,
 then why. The core's (`Quit.notQuitting`). -/
@@ -321,13 +332,13 @@ def notQuitting : QuitRefusal → String :=
 
 /-- The quit rule, as the quit command and a window's close request run it
 ("A window's close request", in the module docs): the core's
-(`Quit.closeRequested`, `Editor/Quit.lean`), which the loop runs for a
-close request (`Editor/Loop.lean`, "Quit"). -/
+(`Quit.closeRequested`, `lean/Editor/Quit.lean`), which the loop runs for a
+close request (`lean/Editor/Loop.lean`, "Quit"). -/
 def closeRequested : EditorM Unit :=
   Quit.closeRequested
 
 /-- The quit command as it is called: asks the editor to quit (`quit`,
-`Editor/Api.lean`), and says a refusal in the echo area (`notQuitting`), by
+`lean/Editor/Api.lean`), and says a refusal in the echo area (`notQuitting`), by
 the rule a close request runs (`closeRequested`). It reads nothing of its
 call. -/
 def quitCommand (_ : Call) : EditorM Unit :=
@@ -358,7 +369,7 @@ def reloadName : String :=
   "reload-config"
 
 /-- The reload command as it is called: asks for the config to be reloaded
-(`reloadConfig`, `Editor/Api.lean`). It says nothing, and reads nothing of
+(`reloadConfig`, `lean/Editor/Api.lean`). It says nothing, and reads nothing of
 its call. -/
 def reloadCommand (_ : Call) : EditorM Unit :=
   reloadConfig

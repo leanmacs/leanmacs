@@ -35,7 +35,7 @@ whose contract check this package's tests run.
   specific tier shadows is never shown. The text stays the name, so
   resolution is unchanged.
 - **It asks when it is given no name** (`executeCommand`), as the ex
-  command asks for its line (the core's `lean/Editor/Ex.lean`). With a string as its first
+  command asks for its line (`packages/ex/Ex.lean`). With a string as its first
   argument it runs the command that string names. With anything else
   first, or nothing, it asks with a prompt labelled `label`, whose
   continuation is `execute-command` itself; so a Vim key, which hands a

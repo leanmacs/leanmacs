@@ -1,9 +1,9 @@
 import Editor.Api.Theorems
 import Editor.Command.Append
 import Editor.Completion.Filtering
-import Editor.Ex
 import Editor.Indent
 import Editor.Jumps.Go
+import Editor.Quit
 import Editor.Text.Word
 import Editor.UndoTree.Theorems
 import Editor.Vocabulary
@@ -86,12 +86,14 @@ command prompt's below; what they act through, the prompt operations of
 `insertCandidate`), is here. The
 fuzzy matcher is a sub-port of the editor's port, so a command of
 config's asks which candidates a pattern matches with `Fuzzy.rank`
-(`Editor/Fuzzy.lean`), as it asks a text. The ex
-command line is here too (`Editor/Ex.lean`, with an ex line as data in
-`Editor/Ex/Line.lean`): a command of config's runs a line with `Ex.run`,
-handed the target it was called with, and `setup` binds an ex name to a command with `exCommand`
-(`Editor/Setup.lean`). The registrations of the ex line's commands and the
-ex names that ship (`Editor/Ex/Compiled.lean`) are not imported. The ex line
+(`Editor/Fuzzy.lean`), as it asks a text. An ex line as data is here
+(`Editor/Ex/Line.lean`), and `setup` binds an ex name to a command with
+`exCommand` (`Editor/Setup.lean`). The ex command line itself is not
+here: it is the default package `ex` (`packages/ex/`) since the
+features-as-packages roadmap's phase 8, and a command of config's runs a
+line with `Ex.run`, handed the target it was called with, through the
+set's base, which holds that package's entry module. The quit rule and
+its name are here (`Editor/Quit.lean`). The ex line
 reaches the file commands through `files-api` and the buffer commands
 through `buffers-api`. The file commands and the buffer commands are not
 here: they are the default packages `files` and `buffers` (`packages/files/`,

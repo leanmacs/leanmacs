@@ -16,7 +16,7 @@ package registers a command (`Editor/Loop.lean`, "Quit"):
   Command-Q to that name, and `window-quit` runs it on the last window.
 
 The command registered under the name is a package's: the ex line's
-(`Editor/Ex.lean`, "Quit"), whose `quit` is this rule and which binds the
+(`packages/ex/Ex.lean`, "Quit"), whose `quit` is this rule and which binds the
 ex name `q` to it. A set with no such package has no command `quit`: the
 system's quit then says so, and the close button still quits. This is a
 name the core itself must offer every implementation

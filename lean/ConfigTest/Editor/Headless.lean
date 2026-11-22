@@ -21,8 +21,6 @@ import Editor.Display
 import Editor.DisplayRules
 import Editor.Event
 import Editor.Event.Queue
-import Editor.Ex
-import Editor.Ex.Compiled
 import Editor.Ex.Line
 import Editor.Face
 import Editor.Ffi.Counter
@@ -2440,15 +2438,19 @@ def shippedChecks (_ : Unit) : List Check :=
             !(registry.bindings.any (·.owner == owned "frame-commands")) &&
             !(registry.ownersByKind.flatten.any (·.name == "frame-commands")) },
     { name :=
-        "the executable's hosts start with quit the ex package's command; and the ex names b, ls and bd bound to switch-buffer, list-buffers and close-buffer"
+        "the executable's hosts start with nothing of the ex package: no command ex, quit, save-and-quit or reload-config, no ex name bound, w, w!, e, e!, autoread, noautoread, q, wq, reload, b, ls and bd among them, no source ex-history or ex-names and none in the category ex-line, and no entry of an owner ex, registered by a package of the core's Lake package"
       run := do
         let registry := shippedRegistry
-        let ownedBy (package : Package) (name : String) : Bool :=
-          (registry.find? name).any (·.owner == package.owner)
-        let ex (name : String) : Option String := (registry.ex? name).map (·.command)
-        return ownedBy Ex.package Ex.quitName && ex "b" == some "switch-buffer" &&
-            ex "ls" == some "list-buffers" &&
-            ex "bd" == some "close-buffer" },
+        return ["ex", "quit", "save-and-quit", "reload-config"].all
+              (fun name => (registry.find? name).isNone) &&
+            registry.exNames == #[] &&
+            ["w", "w!", "e", "e!", "autoread", "noautoread", "q", "wq", "reload", "b", "ls",
+                  "bd"].all
+              (fun name => (registry.ex? name).isNone) &&
+            (registry.source? "ex-history").isNone &&
+            (registry.source? "ex-names").isNone &&
+            registry.sourcesIn "ex-line" == #[] &&
+            !(registry.ownersByKind.flatten.any (·.name == "ex")) },
     { name :=
         "the executable's hosts start with nothing of the window commands' package: none of its thirty-three commands, window-split to window-float, and no entry of an owner window-commands, registered by a package of the core's Lake package"
       run := do
@@ -2476,16 +2478,6 @@ def shippedChecks (_ : Unit) : List Check :=
             (registry.source? "tabs").isNone &&
             registry.sourcesIn "tab" == #[] &&
             !(registry.ownersByKind.flatten.any (·.name == "tab-commands")) },
-    { name :=
-        "the executable's hosts start with the completion sources that ship each registered by its package, so config can ask for each by name: the ex line's history and its names"
-      run := do
-        let registry := shippedRegistry
-        let ownedBy (package : String) (name : String) : Bool :=
-          registry.sources.any fun entry =>
-            entry.source.name == name && entry.owner == ({ name := package } : Config.Owner)
-        return [(Ex.package.name, Ex.historySource.name),
-                (Ex.package.name, Ex.namesSource.name)].all
-            fun (package, name) => ownedBy package name && (registry.source? name).isSome },
     { name :=
         "the executable's hosts start with nothing of the files package: no command open-file, save-buffer, edit-file, reload-buffer or auto-reload-mode, no job load-file, save-file, reload-file, check-files or follow-file, no source files, no source in the category file, and no value of files-api's Files, registered by a package of the core's Lake package"
       run := do
@@ -2597,11 +2589,6 @@ def shippedChecks (_ : Unit) : List Check :=
             (registry.styleEntry none).style.name == Completion.Style.unregistered.name &&
             display.display.name == Completion.Display.unregistered.name &&
             display.owner == .compiled },
-    { name :=
-        "the executable's hosts start with the shipped sources of each shipped prompt's category the sources in the order of that prompt's defaults"
-      run := do
-        let registry := shippedRegistry
-        return registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] },
     { name :=
         "the executable's hosts start with nothing of the compile mode: no command, ex name, job, mode or contribution of it is registered by a package of the core's Lake package, and compile as an ex name is not bound"
       run := do

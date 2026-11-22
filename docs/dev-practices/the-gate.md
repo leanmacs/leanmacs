@@ -1549,8 +1549,12 @@ each one the host reaches and exits 1.
   on every platform.
 - **The gate sees it bite.** `ffi-test` runs it another time in its
   module form (`host-imports-check.sh <root module> [<list module>]`),
-  pointed at the core's module `ConfigTest`, a root that imports the
-  packages, with the core's entry module as the list, and requires exit 1.
+  pointed at the core's module `ConfigTest`, a root that imports modules
+  that define packages, with the test kit's stand-ins for default
+  packages as the list (`host-imports-check.sh ConfigTest
+  Editor.Test.Shipped`), and requires exit 1. The core's entry module was
+  the list until its own list emptied (features-as-packages phase 8): it
+  imports nothing now, so it names nothing to forbid.
   A query Lake fails is exit 2, never 1, so a broken query cannot stand in
   for a finding; so is a root with no list module among its imports.
 - **An entry module imports package modules and nothing else**,
@@ -1635,12 +1639,13 @@ stops at the first that fails:
   written in any form. It makes six queries, one for the root and one for
   each root of the build, builds nothing and writes nothing under `lean/`
   or `packages/`: the build has written the generated root already.
-- **The gate sees each rule bite.** `ffi-test` runs it told that a feature
-  still in the core, the ex line, is moving (`core-imports-check.sh
-  Editor.Core Editor.Ex`), and requires exit 1, with `Editor.Ex` and
-  its modules found in the root's closure (the shell, named here until it
-  moved out of the core in features-as-packages phase 6, and evil, named
-  until it moved out in phase 7, are packages now); pointed at the root
+- **The gate sees each rule bite.** `ffi-test` runs it told that a module
+  of the core, the ex line's data, is moving (`core-imports-check.sh
+  Editor.Core Editor.Ex.Line`), and requires exit 1, with `Editor.Ex.Line`
+  found in the root's closure. No feature is left in the core to name: the
+  shell, named here until it moved out of the core in features-as-packages
+  phase 6, evil, named until it moved out in phase 7, and the ex line,
+  named until it moved out in phase 8, are packages now. It is pointed at the root
   `Editor.Setup`, which imports no moving
   module and is not the whole core, and requires exit 3; and told with
   `--base Editor.Core` that the config base is a module no executable's

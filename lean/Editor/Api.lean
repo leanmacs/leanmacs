@@ -486,7 +486,7 @@ by `EvilTest.evilSearchChecks`.
 what the name takes (`Ex.Binding`, `Editor/Ex/Line.lean`). The loop that
 runs the command answers from the registry as it is at that step
 (`Editor/Command/Dispatch.lean`); `none` is a name nobody bound. It is how
-the ex command (`Editor/Ex.lean`) finds what a line runs: a command is a
+the ex command (`packages/ex/Ex.lean`) finds what a line runs: a command is a
 program over the editor's port and cannot hold the registry.
 
 ## Running another command

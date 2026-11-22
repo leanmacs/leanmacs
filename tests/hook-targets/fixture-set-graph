@@ -2,6 +2,8 @@ greeting-api	interface	-
 greeting	implementation	greeting-api
 greeting-loud	implementation	greeting greeting-api
 echo	implementation	-
+ex-api	interface	-
+ex	implementation	ex-api
 frame-commands-api	interface	-
 frame-commands	implementation	frame-commands-api
 evil-api	interface	-
@@ -14,7 +16,7 @@ restore	implementation	-
 package-set	implementation	-
 minibuffer-api	interface	-
 at-point-api	interface	-
-evil	implementation	evil-api minibuffer-api at-point-api window-commands-api tab-commands-api
+evil	implementation	evil-api minibuffer-api at-point-api window-commands-api tab-commands-api ex-api
 themes-api	interface	-
 themes	implementation	themes-api
 files	implementation	-

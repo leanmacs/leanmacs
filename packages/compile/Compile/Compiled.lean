@@ -49,7 +49,7 @@ config (`Editor/Config/Packages.lean`).
   takes nothing. `next-error` and `previous-error` run the commands of
   those names and take nothing: they step through the locations of the
   focused buffer's workspace's compilation. No global key binds them. A
-  host must be handed the `ex` package (`Editor/Ex/Compiled.lean`) for a
+  host must be handed the `ex` package (`packages/ex/Ex/Compiled.lean`) for a
   line to run them; this package names it nowhere, and the `ex` package
   does not name this one.
 

@@ -1,9 +1,9 @@
 import AtPointApi
 import Editor.Clipboard
-import Editor.Ex
 import Editor.Key.Notation
 import Evil.Vim
 import EvilApi
+import ExApi
 import MinibufferApi
 import ShellApi
 import TabCommandsApi
@@ -26,8 +26,9 @@ changed in its row and in its registration together. Nothing here says what
 a name does. The motions' entries are `Evil.motions`
 (`Evil/Motions.lean`), and the commands that are built are
 registered in `Evil/Compiled.lean`,
-`packages/minibuffer/Minibuffer/Compiled.lean`, for `ex`, which `:` names and
-which opens the ex command line, `Editor/Ex/Compiled.lean`, and, for
+`packages/minibuffer/Minibuffer/Compiled.lean`, for `ex`, which `:` names by
+the constant of its interface package (`ExApi.name`, `packages/ex-api/`)
+and which opens the ex command line, `packages/ex/Ex/Compiled.lean`, and, for
 `keyboard-quit`, which `C-g` names and which cancels a running `:!`,
 `packages/shell/Shell/Compiled.lean`; a name with
 nothing registered under it says so in the echo area when its key runs.
@@ -286,7 +287,7 @@ def normalCommands : List (String × Bound) :=
     ("A", inserting "append-line-end"), ("o", inserting "open-below"),
     ("O", inserting "open-above"), ("x", changing "delete-char"), ("p", changing "put-after"),
     ("P", changing "put-before"), ("u", running EvilApi.undoName),
-    ("C-r", running EvilApi.redoName), (".", .repeat), (":", running Ex.name),
+    ("C-r", running EvilApi.redoName), (".", .repeat), (":", running ExApi.name),
     ("v", entering "visual"), ("V", entering "visual-line"), ("\"", .register),
     ("C-g", running ShellApi.interruptName), ("m", .charCommand { name := "set-mark" }),
     ("C-o", running "jump-backward"), ("C-i", running "jump-forward"),

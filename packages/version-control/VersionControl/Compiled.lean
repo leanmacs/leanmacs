@@ -98,7 +98,7 @@ The `version-control` package:
   `HEAD`: it opens the log buffer of that revision's commits. `vc-blame`
   takes text, a revision, or nothing for `HEAD`: it opens the blame of the
   focused buffer's file at that revision. A host must be handed the `ex`
-  package (`Editor/Ex/Compiled.lean`) for a line to run them; neither
+  package (`packages/ex/Ex/Compiled.lean`) for a line to run them; neither
   package names the other.
 
 It registers the git implementation as the version-control backend of the

@@ -1,11 +1,12 @@
-import Editor.Ex.Compiled
-
 /-!
 # The core's entry module: the packages of the core's Lake package
 
 `EditorCore.EditorPackage.packages` is the array of packages
 (`Editor/Package.lean`) the features still in the core's Lake package
-make, written by hand, in the order a host registers them.
+make, in the order a host registers them. **It is empty**: the last
+feature the core's Lake package held, the ex line, is the default package
+`ex` (`packages/ex/`) since the features-as-packages roadmap's phase 8,
+which removes this module next, once nothing imports it.
 
 It is **the entry module** of the Lake package `editor-core`
 (`lakefile.lean`): a Lake package named `p` lists its `Package` values as
@@ -45,8 +46,12 @@ module one imports directly.
 So **this module imports package modules and nothing else**: its direct
 imports are what that check forbids a host. A helper it needed would have
 to live in a package's module, or the check would forbid the host that
-helper too. Tests import it for the list (`ModelTest.packageSetChecks`,
-`ConfigTest.shippedChecks`).
+helper too. With no package left it imports nothing at all, not even the
+module that declares `Package` (`Editor/Package.lean`), which every host
+reaches: so the empty list is an empty array of any element type, which
+whoever appends it to an array of packages, or hands it where one is
+expected, reads as one. Tests import it for the list
+(`ModelTest.packageSetChecks`, `ConfigTest.shippedChecks`).
 
 ## No scheme
 
@@ -66,9 +71,9 @@ keeps each kind of entry in the order the hosts registered it before there
 were packages, so the command prompt, the keymaps, the mode line and the
 language table read as they did:
 
-- `ex` comes first of the packages that bind ex names: the ex names'
-  completion lists them in the order they were bound, the `ex` package's
-  first, and every Lake package's after the core's.
+- `ex` came first of the packages that bind ex names, while it was here:
+  the ex names' completion lists them in the order they were bound. It is
+  the first package the default set requires now, so it still does.
 
 Nothing in this list is ordered by what a package depends on: a command's
 name is looked up when it is run, so a package may name a command of a
@@ -146,16 +151,19 @@ key bindings still follow the frame's. The frame commands' package, which
 was last here then, is the default package `frame-commands`
 (`packages/frame-commands/`) since that phase too, and registers first,
 right before `menu`: its three bindings are still the first bound, since
-the `ex` package, the one left here, binds no key.
+the `ex` package binds no key. The ex line's package, which was the one
+left here then, is the default package `ex` (`packages/ex/`) since that
+phase too, and the first default package to register: its commands, its
+ex names and its sources are still the first registered.
 -/
 
 namespace EditorCore.EditorPackage
 
-open Editor
-
-/-- The packages of the core's Lake package, in the order a host registers
-them ("The order", in the module docs). -/
-def packages : Array Package :=
-  #[Ex.package]
+/-- The packages of the core's Lake package: none. An empty array of any
+element type, so that this module imports nothing ("This module is outside
+the host", in the module docs); where an array of packages is expected it
+is the empty one. -/
+def packages {α : Type} : Array α :=
+  #[]
 
 end EditorCore.EditorPackage

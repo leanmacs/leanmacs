@@ -1,6 +1,10 @@
 name = "config"
 
 [[require]]
+name = "ex"
+path = "@REPO@/packages/ex"
+
+[[require]]
 name = "frame-commands"
 path = "@REPO@/packages/frame-commands"
 

@@ -26,9 +26,9 @@
 #   sees each one's imports. It implements the interface package
 #   `evil-api`, and names the commands its tables run of the minibuffer and
 #   of completion at point by the constants of their interface packages,
-#   `minibuffer-api` and `at-point-api`, and of the window and the tab
-#   commands by `window-commands-api`'s and `tab-commands-api`'s; it
-#   requires each, beside the core.
+#   `minibuffer-api` and `at-point-api`, of the window and the tab
+#   commands by `window-commands-api`'s and `tab-commands-api`'s, and of
+#   the ex line by `ex-api`'s; it requires each, beside the core.
 # - `evil-test` is its test driver (`lake test`): the tests that need no
 #   Rust library, rooted at `EvilTest/Model.lean`. It is no default target,
 #   as the core's `model-test` is not: `mise run lean` links with the
@@ -90,6 +90,11 @@ path = "../window-commands-api"
 [[require]]
 name = "tab-commands-api"
 path = "../tab-commands-api"
+
+# The interface package of the ex line: the name `ex`, which `:` runs.
+[[require]]
+name = "ex-api"
+path = "../ex-api"
 
 [[require]]
 name = "editor-core"

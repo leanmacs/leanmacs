@@ -7,7 +7,6 @@ import ConfigTest.Editor.Config.Directory
 import ConfigTest.Editor.Config.Elaborate
 import ConfigTest.Editor.Config.Elaborator.Contract
 import ConfigTest.Editor.Config.Lakefile.Toml
-import ConfigTest.Editor.Ex
 import ConfigTest.Editor.Extension
 import ConfigTest.Editor.Face
 import ConfigTest.Editor.Headless
@@ -110,15 +109,14 @@ show:
   run out as working;
 - `shippedChecks`: what the executable's hosts start with, the registry the
   packages of the core's Lake package make
-  (`EditorCore.EditorPackage.packages`), each entry for the owner named
-  after its package: it binds `C-s-f` to
-  `toggle-fullscreen`, `s-m` to `minimise-window` and `s-q` to `quit`, the
-  `frame-commands` package's, binds the ex names `b`, `ls` and `bd` to the
-  buffer commands' names, and registers the completion sources that ship;
-  and it holds nothing of the compile mode, no command, ex name, job, mode
-  or contribution, that mode being a package outside the core's Lake
-  package, and nothing of the default packages that were the core's (the
-  files, the buffer commands, the workspaces among them);
+  (`EditorCore.EditorPackage.packages`), which is none: it holds nothing
+  of the compile mode, no command, ex name, job, mode or contribution,
+  that mode being a package outside the core's Lake package, and nothing
+  of the default packages that were the core's (the files, the buffer
+  commands, the workspaces, the ex line, the frame, window and tab
+  commands and the menu among them). The ex line through the host
+  (`exChecks`, `exScriptChecks`) is the package `ex`'s linked test's
+  (`ExTest.Linked`, `packages/ex/`);
 - `scriptChecks`: the headless mode's script (its `indexed` and
   `workspaces` directives among them) and its driver, and the editor
   loop through the host: a commit and the scene it prints, read from the
@@ -174,25 +172,6 @@ show:
   one category, redrawn with the default by the install's own scene once a
   reload drops the choice. The accept key and the cancel key are the test scheme's
   for the roles the minibuffer's mode fills;
-- `exChecks`: the ex command line through the host, with the test scheme
-  and the ex line's commands and the `ex` package's ex names as compiled code
-  hands them (`Ex.package.registered.commands`, `Ex.package.registered.ex`): the ex line `reload` reloads
-  the config with no restart, so a key config rebound runs the other
-  command; an ex name config binds runs config's command, and is unknown
-  after a reload without it; config's binding of a shipped name runs in
-  its place until a reload drops it; and a name nobody bound is said in
-  the scene's echo, with the editor going on. Each line is committed into
-  the minibuffer and accepted with the test scheme's key for the role the
-  minibuffer's mode fills;
-- `exScriptChecks`: scripts that a command ends, with `Headless.run` on
-  scripts built here, over the library's file service, so they share the
-  table of waits and pump of the hosts over a real service: `e` on a file in a
-  temporary directory, a commit, `w`, a join and `q`, and the same with
-  `wq` and a join after it, each leave the file holding the buffer's text
-  and end the script with no failure and the `show` line after the quit
-  not run; a `q` that is refused leaves the script running; and a wait on
-  a host whose loop a command ended answers `ended`. They are apart from
-  `scriptChecks`, which are defined before what these hosts are handed;
 - `leaderChecks`: the leader through a host of the test scheme: a
   config's `<leader> f f` binding runs on the scheme's leader and then
   `f f` while config sets no leader, and on `\ f f` once a reload sets the
@@ -343,14 +322,12 @@ def checks (context : Context) : List Check :=
     modeChecks context ++
     promptChecks context ++
     atPointChecks context ++
-    exChecks context ++
     reloadEchoChecks context ++
     faceChecks context ++
     cursorResolutionChecks () ++
     environmentHostChecks context ++
     restoreOrderChecks context ++
     journalFailureChecks context ++
-    exScriptChecks context ++
     leaderChecks context ++
     hintChecks context ++
     keyHintChecks context ++

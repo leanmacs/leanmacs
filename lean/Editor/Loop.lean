@@ -297,7 +297,7 @@ loop has little of its own to do.
   as an answered one is. So the answers a step hands back are the
   invocations to run next: a prompt's continuation with its answer, and
   what the command asked for. The ex command runs the command a line
-  names this way (`Editor/Ex.lean`), and so does the command prompt,
+  names this way (`packages/ex/Ex.lean`), and so does the command prompt,
   `execute-command`, the command accepted (`packages/execute-command/ExecuteCommand.lean`).
   A name no command is registered
   under is said by that step, `<name>: no such command`.

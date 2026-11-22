@@ -28,7 +28,6 @@ import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Minibuffer
 import Editor.Text
-import EditorCore.EditorPackage
 
 /-!
 # Config tests: support: Configs
@@ -44,14 +43,6 @@ namespace ConfigTest
 
 open Editor
 open Editor.Test.Linked
-
-/-- The package named `name` of the core's Lake package, as the executable's
-hosts are handed it (`EditorCore.EditorPackage.packages`), so that a check
-of the core whose host needs a feature's package takes it from that list,
-naming no module of the feature; one that registers nothing when the list
-has none of that name. -/
-def shippedPackage (name : String) : Package :=
-  (EditorCore.EditorPackage.packages.find? (·.name == name)).getD { name, setup := pure () }
 
 /-- What compiled code hands every host of the prompt checks: the kit's
 minibuffer's commands and its mode (`Test.Minibuffer.package`,

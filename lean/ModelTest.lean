@@ -42,8 +42,6 @@ import ModelTest.Editor.Config.Stores
 import ModelTest.Editor.Display.Contract
 import ModelTest.Editor.Display.Model
 import ModelTest.Editor.DisplayRules
-import ModelTest.Editor.Ex
-import ModelTest.Editor.Ex.Compiled
 import ModelTest.Editor.Ex.Line
 import ModelTest.Editor.ExcerptView
 import ModelTest.Editor.Executable
@@ -534,7 +532,7 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   runner over `twoBuffers` and the editor's models
   (`Editor.Test.sourceRunner`, `Editor/Test/Sources.lean`), and seen to
   report a source that writes and one that is refused. The ex line's two
-  sources are held to it by `exChecks`, the tabs' source by
+  sources are held to it by the package `ex`'s `ExTest.exChecks`, the tabs' source by
   `tabCommandChecks`, and the command prompt's and the binding search's by
   their own lists. The files package's
   file source is held to it by `FilesTest.pathsChecks` (in its package), the buffers package's
@@ -602,26 +600,6 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   once; with a save in flight it waits, and a refused save withdraws the
   quit and asks `keepRunning`; config's `quit` runs in its place; and a
   quit the system did not ask asks the frame nothing;
-- `exChecks`: the ex command line (`Editor/Ex.lean`) on that driver, with
-  the commands compiled code registers for it and for files, and the kit's
-  minibuffer's (`Editor/Test/Minibuffer.lean`), keys of the test scheme bound to the ex command and to the accept
-  and cancel commands, and ex bindings written here: the ex command opens
-  a prompt, and the accepted line runs the command its name is bound to,
-  as a step of its own, with the rest of the line as its argument; a name
-  nobody bound, an argument a name does not take, an empty line, a bound
-  command that is not registered or is refused, and a cancelled line;
-  `wq` with no files implementation said under `save-and-quit`'s name and
-  no quit asked; and a bang line, on `shell-api`'s fake: what it hands
-  `shell-command` (the command's text, then the line as typed) and
-  `shell-filter` (its range resolved against the buffer and cursor first),
-  a range that resolves to no lines refused by ex, and `:!` with nothing
-  after it said by `ShellApi.noCommand`, with a shell registered and with
-  none, handing the shell nothing. Each message is read from the function
-  that makes it. The ex package binds none of Vim's ex names for marks,
-  which evil's recorded departures type on the kit's ex line; and the
-  completion sources' contract over the ex line's two sources, its `:!`
-  history and its names, with that the names' source answers something on
-  the contract's fixture;
 - `faceVocabularyChecks`: the face vocabulary (`Editor/Face/Vocabulary.lean`)
   names each face once with its meaning, marks its cursor faces, and
   lists every face the mode line and the loop draw, layout's four and the
@@ -639,6 +617,11 @@ The palettes that ship are a package outside the core
 (`packages/shipped-themes/`), and their checks are its own
 (`ShippedThemesTest.shippedThemesChecks`, `.solarizedChecks`,
 `.fairyFlossChecks`).
+
+The ex command line is a package outside the core too (`packages/ex/`),
+since the features-as-packages roadmap's phase 8, and its checks are its
+own (`ExTest.exChecks`, `ExTest.exPackageChecks`); what an ex line is made
+of stays the core's, with its checks (`exLineChecks`).
 
 The undo tree (`Editor/UndoTree.lean`) is plain Lean over the text port, so
 its cases (`Editor/UndoTree/Cases.lean`) are properties of the same kind and
@@ -814,13 +797,6 @@ The config session's decisions are tested here too, with no elaborator:
   (`CompletionTest.completionPackageChecks`,
   `ModeLineTest.modeLinePackageChecks`,
   `LanguagesTest.languagePackageChecks`);
-- `exPackageChecks`: the `ex` package binds its own ex names, in order:
-  the files', its own and the buffers' and no other
-  (`Editor/Ex/Compiled.lean`), each to a command it registers; the
-  `version-control` package's twelve are its package's
-  (`VersionControlTest.versionControlPackageChecks`,
-  `packages/version-control/`), and the compile mode's six its package's
-  (`CompileTest.compilePackageChecks`, `packages/compile/`);
 - `packageSetFingerprintChecks`: a user's package set's fingerprint
   (`Editor/PackageSet/Fingerprint.lean`): each require's line, a path
   made absolute and normalised; the manifest's git pins, read from a
@@ -865,13 +841,14 @@ The config session's decisions are tested here too, with no elaborator:
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
-  list is the 1 package, `ex`, accepted, with no package of the
+  list is empty, with no package of the
   shipped palettes, of the compile mode, of the seven features phase 6
-  moved out, of the frame commands, of the menu, of the window or the tab commands, of session
-  restore or of the package-set commands among them, and no menu defined, in the state they
-  make every entry's owner is one of them, the ex names are bound in the
-  order the headless fixtures show, the `ex` package's first, and no theme
-  is registered; and the set keeps no store across a restart (the shell's
+  moved out, of the ex line, of the frame commands, of the menu, of the
+  window or the tab commands, of session restore or of the package-set
+  commands in it, and the state it makes holds no command, no entry of
+  any owner, no menu, no ex name (the files', the ex line's and the
+  buffers' are bound by the package `ex`, `ExTest.exPackageChecks`,
+  `packages/ex/`) and no theme; and the set keeps no store across a restart (the shell's
   history is `ShellTest.shellChecks`' and version control's reviews
   `VersionControlTest.versionControlPackageChecks`', each in its package),
   reports no job (the package-set build is reported by the package
@@ -1240,7 +1217,6 @@ def checks : List Check :=
     reloadHintChecks ++
     packageChecks ++
     extensionChecks ++
-    exPackageChecks ++
     restartChecks ++
     restartHandoverChecks ++
     restartLaunchChecks ++
@@ -1360,7 +1336,6 @@ def checks : List Check :=
     openFilesChecks ++
     dispatchQuitChecks ++
     systemQuitChecks ++
-    exChecks ++
     appearanceChecks ++
     faceVocabularyChecks ++
     searchDecorationChecks ++

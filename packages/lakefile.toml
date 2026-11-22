@@ -10,7 +10,8 @@
 # from it (`mise run app`).
 #
 # It requires the core and each default package. A default package has a
-# directory here and a `require` below: the frame commands
+# directory here and a `require` below: the ex command line (ex/, with its
+# interface package ex-api/, which it and evil/ require), the frame commands
 # (frame-commands/, with its interface package frame-commands-api/, which
 # it and menu/ require), the menu bar that ships (menu/,
 # which also requires evil-api/ for the names of Undo and Redo), the window
@@ -37,9 +38,10 @@
 # binding-search-api/), the compile mode (compile/, with its interface
 # package compile-api/, which it, workspace/ and project-api/ require),
 # completion at point
-# (at-point/, with at-point-api/), then the languages (languages/). They register in that order, after the core's. Every other
-# feature is still a package of the core's Lake package
-# (lean/EditorCore/EditorPackage.lean). This is also the lakefile a user's
+# (at-point/, with at-point-api/), then the languages (languages/). They register in that order. The core's Lake package
+# registers no package: its own list (lean/EditorCore/EditorPackage.lean)
+# is empty since the ex line, the last feature it held, moved out
+# (features-as-packages phase 8). This is also the lakefile a user's
 # package set starts from.
 #
 # After changing a `require`, run in lean/:
@@ -53,11 +55,25 @@ name = "default-set"
 name = "editor-core"
 path = "../lean"
 
+# The ex command line: the command `ex`, `quit`, `save-and-quit` and
+# `reload-config`, the ex names that ship for the files, the buffers and
+# its own commands, and the ex line's two completion sources. The first
+# default package (features-as-packages phase 8, D2: it was the last
+# package of the core's list, and the first it ever held, and the core's
+# packages registered before every default package, so moving it to the
+# front of the set keeps the order). It requires its interface package,
+# ex-api, which declares the names `ex` and `quit` and which the Vim
+# scheme's `:` names; an interface package registers nothing.
+[[require]]
+name = "ex"
+path = "ex"
+
 # The frame commands: `toggle-fullscreen` and `minimise-window`, with
-# their default key bindings and Command-Q's. The first default package
+# their default key bindings and Command-Q's. It registers right after the
+# ex line, as it did in the core's list
 # (features-as-packages phase 8, D2: it was the last package of the core's
-# list once the menu had moved, and the core's packages register before
-# every default package, so moving it to the front of the set keeps the
+# list once the menu had moved, and the core's packages registered before
+# every default package, so moving it to the front of the set kept the
 # order). It requires its interface package, frame-commands-api, which
 # declares the commands' names and which the Window menu's items name; an
 # interface package registers nothing.

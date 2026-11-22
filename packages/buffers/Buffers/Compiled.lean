@@ -27,7 +27,7 @@ any config (`Editor/Config/Packages.lean`).
     buffer of the window it was called with, unless it has unsaved changes
     (`Buffers.closeCommand`).
   - The ex names `b`, `ls` and `bd` are bound to these three, by their
-    names in `buffers-api` (the core's `lean/Editor/Ex/Compiled.lean`).
+    names in `buffers-api` (`packages/ex/Ex/Compiled.lean`).
 
 - **The source**: the buffer completion source, so config can ask for it
   by name.

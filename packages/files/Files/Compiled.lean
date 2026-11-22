@@ -34,7 +34,7 @@ starts, before any config (`Editor/Config/Packages.lean`).
     (`Files.reloadCommand`), forced when its first argument is `true`: a
     name for keys and config, as Emacs's `revert-buffer` is.
   - The ex names `e`, `e!`, `w` and `w!` are bound to these
-    (`Editor/Ex/Compiled.lean`): `e` hands `edit-file` the rest of its
+    (`packages/ex/Ex/Compiled.lean`): `e` hands `edit-file` the rest of its
     line as the path, `e!` the same after `true`, and `w` and `w!` take
     nothing, so `save-buffer` is never handed a string it would ignore.
 - **The jobs**: `load-file` and `reload-file`, under the editor's limit

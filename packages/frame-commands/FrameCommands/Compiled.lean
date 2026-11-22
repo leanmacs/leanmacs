@@ -28,13 +28,13 @@ the entry module of the Lake package `frame-commands`
   window, and the item runs the same command.
 - **`s-q`** (Command-Q) runs `quit` (`Quit.name`), so Command-Q follows
   the rule `:q` and the close button follow (`lean/Editor/Quit.lean`;
-  `lean/Editor/Ex.lean`, "A window's close request"). On macOS it is the
+  `packages/ex/Ex.lean`, "A window's close request"). On macOS it is the
   application menu's Quit, a system item AppKit runs before the key
   reaches the window: it reaches the loop as the system's quit, which runs
   the same command (`lean/Editor/Loop.lean`, "Quit"). Where no menu takes
   the chord, as headless, the key runs it. The command is the ex line's,
   so a host must be handed the `ex` package too
-  (`lean/Editor/Ex/Compiled.lean`) for the key to run anything.
+  (`packages/ex/Ex/Compiled.lean`) for the key to run anything.
 
 This module is apart from `FrameCommands.lean` because it is what a host
 is handed, not what config calls.

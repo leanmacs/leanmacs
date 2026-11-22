@@ -181,7 +181,7 @@ from the next command.
   state not read and not changed. What each asker uses its answer for:
   - an ex binding (`ex`, from `Loop.Registered.ex`): the command the name
     runs and what it takes, or `none` for a name nobody bound; the ex
-    line's rules are the asking command's (`Editor/Ex.lean`), and the ex
+    line's rules are the asking command's (`packages/ex/Ex.lean`), and the ex
     names that are bound (`exNames`), each once, are its prompt's
     candidates;
   - the themes registered (`themeNames`): the command that loads a theme

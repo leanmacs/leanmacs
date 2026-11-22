@@ -9,7 +9,6 @@ import Editor.Completion.StyleContract
 import Editor.Config.Elaborator.Contract
 import Editor.Config.Elaborator.Model
 import Editor.Display.Contract
-import Editor.Ex.Compiled
 import Editor.Indent
 import Editor.InputScheme.Contract
 import Editor.Jumps.Go

@@ -8,7 +8,7 @@ What a host registers so that `:!` runs (`Shell.lean`): the package
 `shell` (`Shell.package`, `Editor/Package.lean`). A host of a set that
 holds this Lake package registers it for the owner `shell` when its loop
 starts, before any config (`Editor/Config/Packages.lean`), after the core's
-`ex` package (`Editor/Ex/Compiled.lean`), whose commands hand a `:!` line to
+`ex` package (`packages/ex/Ex/Compiled.lean`), whose commands hand a `:!` line to
 `shell-command` by `shell-api`'s name (`ShellApi.commandName`).
 
 - **The commands**: `shell-command`, which starts a run

@@ -16,7 +16,7 @@ the theme `default`, are in `Themes/Compiled.lean`; the palettes
 that ship are a package outside the core (`packages/shipped-themes/`).
 
 - **It asks for a name when it is given none** (`loadThemeCommand`), as the
-  ex command asks for its line (`Editor/Ex.lean`). With a string as its
+  ex command asks for its line (`packages/ex/Ex.lean`). With a string as its
   first argument it loads the theme of that name. With anything else first,
   or nothing, it asks with a prompt labelled `label`, whose continuation is
   `load-theme` itself and whose candidates are the names themes are

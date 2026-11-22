@@ -8,7 +8,7 @@ import Editor.Jumps
 
 The commands over the editor's open buffers, written over the editor API
 (the core's `lean/Editor/Api.lean`): `switch-buffer`, `list-buffers` and `close-buffer`,
-which the ex names `b`, `ls` and `bd` run (`Editor/Ex/Compiled.lean`). Each
+which the ex names `b`, `ls` and `bd` run (`packages/ex/Ex/Compiled.lean`). Each
 reads the order the buffers were last used in, which the state keeps
 (`EditorState.recent`, `openBuffers`, `mostRecent`: `Editor/State.lean`,
 "Most recently used"), so none of them keeps that order by hand.
@@ -104,7 +104,7 @@ checks compare the echo area with that function, never with a sentence.
 - **A buffer with unsaved changes is not closed**: it is a buffer that
   holds a file, and nothing changes but the echo area, which says so
   (`notClosing`), in the shape `quit` says it. A buffer with no file never
-  blocks it, by `quit`'s rule (`Editor/Ex.lean`, "Quit").
+  blocks it, by `quit`'s rule (`packages/ex/Ex.lean`, "Quit").
 - **A buffer with a save in flight is not closed** either, whatever its
   text: the echo area says so (`beingSaved`), and the close can be asked
   again once the save is delivered. The save may still be refused, the

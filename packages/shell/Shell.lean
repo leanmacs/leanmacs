@@ -15,7 +15,7 @@ wait and a job may, so a run is three programs, as opening a file is
 (`packages/files/Files.lean`): the command `shell-command`, which starts the job
 `shell-run`; the job, which runs the child; and the job's command, which
 says what came of it. The ex line hands the command its line
-(`Editor/Ex.lean`, "Running a line"). The command and the job as compiled
+(`packages/ex/Ex.lean`, "Running a line"). The command and the job as compiled
 code registers them are in `Shell/Compiled.lean`.
 
 ## The scope

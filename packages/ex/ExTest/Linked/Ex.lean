@@ -1,33 +1,35 @@
-import ConfigTest.Check
 import Editor.Event
-import Editor.Ex
-import Editor.Ex.Compiled
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
 import Editor.Test.Opener
 import Editor.Text
+import Ex.Compiled
+import ExTest.Check
 import FilesApi
 import FilesApiTest.Fake
 
 /-!
-# Config tests: `Editor/Ex.lean`
+# Linked tests: `Ex.lean`
 
-The tests of `Editor/Ex.lean`: `exChecks`, through the headless host, and
+The tests of `Ex.lean`: `exChecks`, through the headless host, and
 `exScriptChecks`, scripts of ex lines run by `Headless.run`, which open and
-write a file with the files feature's commands. The root
-module `ConfigTest` runs them; its module doc says what each shows.
+write a file with `files-api`'s fake's commands. The root module
+`ExTest.Linked` runs them; its module doc says what each shows. They were
+the config test's (`ConfigTest.exChecks`, `ConfigTest.exScriptChecks`,
+`lean/ConfigTest/Editor/Ex.lean`) while the ex line was two modules of the
+core, and moved here with their sentences as they were.
 -/
 
-namespace ConfigTest
+namespace ExTest.Linked
 
 open Editor
 open Editor.Test.Linked
 
 /-- What compiled code hands every host of the ex checks: the ex line's
 commands and the `ex` package's ex names (`Ex.package.registered.commands`, `Ex.package.registered.ex`,
-`Editor/Ex/Compiled.lean`), the kit's minibuffer's commands and its mode
-(`Editor/Test/Minibuffer.lean`), `files-api`'s fake's commands
+`Ex/Compiled.lean`), the kit's minibuffer's commands and its mode
+(`lean/Editor/Test/Minibuffer.lean`), `files-api`'s fake's commands
 (`FilesApiTest.fake`), which two of the shipped names run, and `other`, written
 here, which says `other`, on `C-c o`. It is handed no job: no check here
 opens or saves a file. -/
@@ -87,15 +89,15 @@ def ownWriteText : String :=
 "
 
 /-- The checks of the ex command line through the headless host
-(`Editor/Headless.lean`), on the real queue, the real text binding and the
+(`lean/Editor/Headless.lean`), on the real queue, the real text binding and the
 real elaborator, with the test scheme: the host is handed the ex line's
 commands and the ex names that ship as compiled code registers them
-(`Editor/Ex/Compiled.lean`), registers the ex bindings config's `setup`
+(`Ex/Compiled.lean`), registers the ex bindings config's `setup`
 makes, and reloads when a command asks. Each line is committed into the
 minibuffer and accepted with the test scheme's key for the role the
 minibuffer's mode fills (`Session.exLine`), so no check names a scheme's
 key. They open and save no file. -/
-def exChecks (context : Context) : List Check :=
+def exChecks (context : HostContext) : List Check :=
   let installs (lines : Array String) : Array String :=
     lines.filter fun line => (line.splitOn ": installed").length == 2
   [{  name :=
@@ -193,9 +195,9 @@ directory, that is handed what the executable is handed for the ex line,
 the ex line's commands and the `ex` package's ex names, `files-api`'s fake
 (`FilesApiTest.fake`: its commands, its jobs and its `FilesApi.Files` value,
 which `wq` saves through), and the kit's minibuffer's commands and its mode
-(`Editor/Test/Minibuffer.lean`) where the executable has the shipped ones. What `run`
+(`lean/Editor/Test/Minibuffer.lean`) where the executable has the shipped ones. What `run`
 answered, and every line the host printed. -/
-def ranScript (context : Context) (directives : List Headless.Directive) :
+def ranScript (context : HostContext) (directives : List Headless.Directive) :
     IO (Option Headless.Failure × Array String) :=
   IO.FS.withTempDir fun directory => do
     let stage ←
@@ -208,7 +210,7 @@ def ranScript (context : Context) (directives : List Headless.Directive) :
     let failure ← Headless.run stage.collaborators (scriptOf directives) patience
     return (failure, ← stage.output.get)
 
-/-- The checks of a script that a command ends (`Editor/Headless.lean`,
+/-- The checks of a script that a command ends (`lean/Editor/Headless.lean`,
 "The driver, and the command line"), with `Headless.run` on scripts built
 here, over the real elaborator, the real queue, the real text binding and
 the library's file service, on a file each check writes in a temporary
@@ -222,7 +224,7 @@ buffer. The `wq` script has a `join` after the `wq` line too: the quit it
 asks for waits for the save, so without the wait the `show` line would be
 handled while the save runs, and the end of the script would stop the loop,
 which cancels the save. -/
-def exScriptChecks (context : Context) : List Check :=
+def exScriptChecks (context : HostContext) : List Check :=
   let listed (output : Array String) : Bool := output.any (·.startsWith "commands:")
   [{  name :=
         "criterion 1 through the host: a script that runs e on a file, joins, commits text, runs w, joins, runs q, and then has a show line: the script has no failure, the file holds the committed text before what it held, and the show line was not run"
@@ -319,4 +321,4 @@ def exScriptChecks (context : Context) : List Check :=
           discard <| host.halt patience
           throw error }]
 
-end ConfigTest
+end ExTest.Linked
