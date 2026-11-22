@@ -1084,12 +1084,23 @@ no wait to withdraw and is never held.
   `done` can be seen; a fresh count for the host is all `tracksIdle` would
   have given it.
 
+**Nothing of the job comes after this returns.** The loop's end cancels the
+job and does not wait for it: the job ends on a pool thread and then posts
+its wake-up to the editor queue, the library's, which the next check's host
+shares. So once `check` has returned this lets the loop's hold go (`letGo`)
+and waits for that post, an event; a stepped host's check that came next
+would otherwise find the event arriving on the library's queue during it.
+The post is held until this waits for it, so every run goes through the
+state a loaded machine reaches by itself: the loop ended, the job's
+wake-up not yet posted.
+
 The job's thread is let go before this returns, whatever `check` did. -/
-def withdrawingHeld {α β σ : Type} (stage : Stage β σ) (hold : BaseIO Unit) (withdrew : IO.Ref Bool)
-    (order : IO.Ref (Array Bool)) (check : Headless.Collaborators β σ TestScheme.scheme → IO α) :
-    IO α := do
+def withdrawingHeld {α β σ : Type} (stage : Stage β σ) (hold letGo : BaseIO Unit)
+    (withdrew : IO.Ref Bool) (order : IO.Ref (Array Bool))
+    (check : Headless.Collaborators β σ TestScheme.scheme → IO α) : IO α := do
   let staged := stage.collaborators
   let timers := staged.services.timers
+  let queue := staged.queue
   let count ← Job.Activity.counting
   -- Resolved to let the job's thread go on from the clock's `start`.
   let entering ← IO.Promise.new
@@ -1097,6 +1108,12 @@ def withdrawingHeld {α β σ : Type} (stage : Stage β σ) (hold : BaseIO Unit)
   let holder ← IO.mkRef (none : Option UInt64)
   -- Resolved by the job's `done`, after the count has taken it.
   let parked ← IO.Promise.new
+  -- Whether the job was spawned and is in its wait: the loop's end cancels
+  -- it, and its wake-up comes.
+  let spawned ← IO.mkRef false
+  -- Resolved to let the job's wake-up be posted, and once it has been.
+  let posting : IO.Promise Unit ← IO.Promise.new
+  let woke : IO.Promise Unit ← IO.Promise.new
   let activity : Job.Activity :=
     { count with
       done := do
@@ -1107,6 +1124,15 @@ def withdrawingHeld {α β σ : Type} (stage : Stage β σ) (hold : BaseIO Unit)
     check
         { staged with
           tracksIdle := false
+          queue :=
+            { queue with
+              post := fun posted => do
+                if posted.source == staged.jobs then
+                  discard <| IO.wait posting.result?
+                  let took ← queue.post posted
+                  woke.resolve ()
+                  return took
+                queue.post posted }
           emit := fun line => do
             if line == "spawn count: job 1" then
               unless ← clockReaches stage.clock (.waiting 1) do
@@ -1120,6 +1146,7 @@ def withdrawingHeld {α β σ : Type} (stage : Stage β σ) (hold : BaseIO Unit)
                 throw <|
                     IO.userError
                       s!"a hang: the job had not given its unit back within {hangGuard} ms of its sleep's start"
+              spawned.set true
             staged.emit line
           services :=
             { staged.services with
@@ -1139,6 +1166,17 @@ def withdrawingHeld {α β σ : Type} (stage : Stage β σ) (hold : BaseIO Unit)
             staged.dispose }
   finally
     entering.resolve ()
+    -- Whether `check` returned or threw: the loop, if it is still held, goes
+    -- on to cancel the job, which ends and posts its wake-up.
+    letGo
+    posting.resolve ()
+    if ← spawned.get then
+      -- hang guard: the cancelled job's wake-up, posted once it has ended;
+      -- only a hang reaches the bound, and the check then fails as a hang.
+      unless (← Job.awaitWithin hangGuard woke.result?).isSome do
+        throw <|
+            IO.userError
+              s!"a hang: the cancelled job's wake-up had not been posted within {hangGuard} ms of its loop's end"
 
 /-- The checks of `Headless.withHost`, the bracket a host lives in
 (`Editor/Headless.lean`), on the real queue and the real text binding: it
@@ -1306,7 +1344,7 @@ def bracketChecks (context : Context) : List Check :=
             holdingUntil fun hold letGo => do
                 let thrown ←
                   try
-                    withdrawingHeld stage hold withdrew order fun collaborators =>
+                    withdrawingHeld stage hold letGo withdrew order fun collaborators =>
                         Headless.withHost collaborators (guard := 0) (grace := some 0) (hung :=
                           fun line => said.modify (·.push line)) (abandoned := fun task =>
                           left.set (some task)) fun host => do
@@ -2985,9 +3023,18 @@ wait 2" with
           let order ← IO.mkRef #[]
           let (failure, _) ←
             holdingUntil fun hold letGo =>
-                withdrawingHeld stage hold withdrew order fun collaborators =>
+                withdrawingHeld stage hold letGo withdrew order fun collaborators =>
                   Headless.runAndDispose collaborators jobScript hangGuard (grace := some hangGuard)
                     (guard := 0) (hung := fun _ => letGo)
+          -- Nothing of the cancelled job is still to come: its wake-up is
+          -- on the editor queue by now (`withdrawingHeld`). What the queue
+          -- holds is taken off it, since no loop pulls it and no later host
+          -- is to take it; `takeQueued` never parks.
+          let mut left := #[]
+          for _ in [0:(← Ffi.queued .editor).toNat] do
+            let some event ← Ffi.takeQueued .editor | break
+            left := left.push (event.source.id, event.code)
+          let woke := left.contains (stage.collaborators.jobs, 1)
           let withdrawn ← stage.clock.withdrawn
           let disposed ← stage.disposed.get
           let output ← stage.output.get
@@ -2995,8 +3042,9 @@ wait 2" with
           saw
               (failure.isNone && withdrawn.size == 1 && order == #[true] &&
                 disposed == #[output.size] &&
-                output == #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"])
-              s!"failure={repr failure} withdrawn={withdrawn} withdrew before dispose={order} disposed={disposed} output={output}" },
+                output == #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"] &&
+                woke)
+              s!"failure={repr failure} withdrawn={withdrawn} withdrew before dispose={order} disposed={disposed} output={output} the job's wake-up on the queue={woke} of {left}" },
     { name :=
         "a headless run whose loop is held past its guard and its grace says the hang once and fails as hung, which exits 1, and hands the loop it left to `abandoned`"
       run :=
@@ -3014,7 +3062,7 @@ wait 2" with
           let failure ←
             holdingUntil fun hold letGo => do
                 let (failure, _) ←
-                  withdrawingHeld stage hold withdrew order fun collaborators =>
+                  withdrawingHeld stage hold letGo withdrew order fun collaborators =>
                       Headless.runAndDispose collaborators jobScript hangGuard (guard := 0)
                         (grace := some 0) (hung := fun line => said.modify (·.push line))
                         (abandoned := fun task => left.set (some task))
@@ -3048,7 +3096,7 @@ wait 2" with
           let left ← IO.mkRef (none : Option (Task (Except IO.Error Unit)))
           let (failure, _) ←
             holdingUntil fun hold letGo =>
-                withdrawingHeld stage hold withdrew order fun collaborators =>
+                withdrawingHeld stage hold letGo withdrew order fun collaborators =>
                   Headless.runAndDispose collaborators jobScript hangGuard (guard := 0) (grace :=
                     some hangGuard) (hung := fun line => do
                     said.modify (·.push line)
