@@ -2388,7 +2388,21 @@ for `ex-api`, whose contract names `shell-api`'s `shell-command`, and
   - the hosts and the executable's modules (`Editor.Main`,
     `Editor.Headless`, `Editor.Headless.CommandLine`, `Editor.Window`,
     `Editor.Window.Real`, `Editor.WindowCheck`, `Editor.WindowCheck.Real`,
-    `Editor.Executable`, `Editor.Version`, `Editor.ModuleLookup`);
+    `Editor.Executable`, `Editor.Version`, `Editor.ModuleLookup`), with
+    what a host is made of and driven by: the editor queue as a port
+    (`Editor.Headless.Queue`), the host stepped on its caller's thread
+    (`Editor.Headless.Stepped`), a driver's wait, judged
+    (`Editor.Headless.Wait`), and a host's activity count
+    (`Editor.Job.Activity`). The stepped host runs the loop's turn and
+    hands over raw events, as the headless host it wraps does. The other
+    three are pure, and only the hosts, the queue's binding and contract,
+    the job runner and the core's own tests import them. A package's
+    tests are stepped and waited for through the kits
+    (`Editor.Test.Linked.Host` imports the stepped host, and a wait's
+    outcome reaches a test through it), so no package names one of the
+    four in an `import` line and the rule takes nothing from a package's
+    tests. The root of a linked test, which may import the headless host,
+    is refused these too: the linked kit starts its stepped hosts;
   - the loop and its dispatch (`Editor.Loop`, `Editor.Command.Dispatch`,
     `Editor.Event.Queue`, `Editor.State.Outbox`);
   - the config session (`Editor.Config.*`, but for `Editor.Config.Packages`,
@@ -3217,7 +3231,7 @@ and the core's Lake package registers no `Package`.
 | Modules | Count | Class | A package may import it |
 |---|---|---|---|
 | The core's root: `Editor.Core` | 1 | core | no |
-| The hosts and the executable's modules: `Editor.Executable`, `Editor.Headless`, `Editor.Headless.CommandLine`, `Editor.Main`, `Editor.ModuleLookup`, `Editor.Version`, `Editor.Window`, `Editor.Window.Real`, `Editor.WindowCheck`, `Editor.WindowCheck.Real` | 10 | core | no |
+| The hosts and the executable's modules, with what a host is made of and driven by: the editor queue as a port, a host stepped on its caller's thread, a driver's wait judged, and a host's activity count, which the tests' event waits are written on (`docs/design/concurrency.md`, "Stepped hosts in tests", "The idle signal"): `Editor.Executable`, `Editor.Headless`, `Editor.Headless.CommandLine`, `Editor.Headless.Queue`, `Editor.Headless.Stepped`, `Editor.Headless.Wait`, `Editor.Job.Activity`, `Editor.Main`, `Editor.ModuleLookup`, `Editor.Version`, `Editor.Window`, `Editor.Window.Real`, `Editor.WindowCheck`, `Editor.WindowCheck.Real` | 14 | core | no |
 | The loop and its dispatch: `Editor.Command.Dispatch`, `Editor.Event.Queue`, `Editor.Loop`, `Editor.State.Outbox` | 4 | core | no |
 | The models of the ports: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Config.Elaborator.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Grep.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `Editor.SyntaxTree.Model.Json`, `Editor.SyntaxTree.Model.Query`, `Editor.Text.Model`, `Editor.Watch.Model` | 16 | core | in tests |
 | The contracts and cases: `Editor.Api.Cases`, `Editor.Clipboard.Contract`, `Editor.Completion.AtPointContract`, `Editor.Completion.Contract`, `Editor.Completion.DisplayContract`, `Editor.Completion.StyleContract`, `Editor.Config.Elaborator.Contract`, `Editor.Display.Contract`, `Editor.File.Cases`, `Editor.Fuzzy.Contract`, `Editor.Headless.Queue.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.Job.FlushContract`, `Editor.Job.HandleContract`, `Editor.SyntaxTree.Contract`, `Editor.Text.Contract`, `Editor.UndoTree.Cases`, `Editor.Watch.Contract` | 19 | core | in tests |
@@ -3229,7 +3243,6 @@ and the core's Lake package registers no `Package`.
 | The real bindings of the ports and what runs them: `Editor.Clipboard.InProcess`, `Editor.Clipboard.Real`, `Editor.Command.Real`, `Editor.Display.Real`, `Editor.Display.Recorder`, `Editor.Fuzzy.Real`, `Editor.Headless.Queue.Real`, `Editor.Job.Jobs`, `Editor.Job.Pool`, `Editor.Job.Real`, `Editor.Job.Runner`, `Editor.Job.Table`, `Editor.Restart.Real`, `Editor.SyntaxTree.Real`, `Editor.Text.Real`, `Editor.Watch.Real` | 16 | core | no |
 | The editor API and what is proved of it: `Editor.Api`, `Editor.Api.Theorems`, `Editor.UndoTree`, `Editor.UndoTree.Theorems` | 4 | core | yes |
 | The composite port and a command: `Editor.Command`, `Editor.Command.Append`, `Editor.Command.Call`, `Editor.Command.Control`, `Editor.Command.Registry`, `Editor.Program` | 6 | core | yes |
-| The editor queue as a port, a host stepped on its caller's thread, a driver's wait judged, and a host's activity count, which the tests' event waits are written on (`docs/design/concurrency.md`, "Stepped hosts in tests", "The idle signal"): `Editor.Headless.Queue`, `Editor.Headless.Stepped`, `Editor.Headless.Wait`, `Editor.Job.Activity` | 4 | core | yes |
 | The ports: `Editor.Clipboard`, `Editor.Diff`, `Editor.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Process`, `Editor.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 14 | core | yes |
 | The word under the cursor, over the text port: `Editor.Text.Word` | 1 | core | yes |
 | The setup port, packages, extension points and stores: `Editor.Extension`, `Editor.Json`, `Editor.Package`, `Editor.Setup`, `Editor.Store`, `Editor.Store.Codec`, `Editor.Value` | 7 | core | yes |

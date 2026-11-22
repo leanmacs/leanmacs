@@ -1813,8 +1813,12 @@ graph.
   core interface, `FilesApi`; a test importing a core interface's fake,
   `VcApiTest.Fake`; the linked test's root importing a core interface's
   linked support, `VcApiTest.Linked.Repositories`; a test
-  importing a model, a contract, the loop's driver beside the loop, and
+  importing a model, a contract, the loop's driver beside the loop, the
+  queue's contract (`Editor.Headless.Queue.Contract`) beside the queue's
+  port, and
   `Editor.Config.Packages` beside another module of the config session; a
+  library importing the job port (`Editor.Job`) beside a host's activity
+  count; a
   linked test importing a real binding, the headless host, the base and
   the entry module; a test importing a module of the model test kit and a
   feature's kit, `Editor.Files.Kit`; the
@@ -1825,7 +1829,12 @@ graph.
   core interface's fake (`FilesApiTest.Fake`), a library importing a
   module outside `Editor` that is no interface (`ModelTest.Check`), and a module under the linked test's
   root importing the headless host, a real binding or a raw binding,
-  which only the root may, or none may. So a change
+  which only the root may, or none may; and a library, a plain test module
+  and the linked test's root each importing what a host is made of and
+  driven by (the stepped host, `Editor.Headless.Stepped`, which a module
+  under the root is refused too; the queue's port, a driver's wait and the
+  activity count), which none may, the root that may import the headless
+  host included. So a change
   to a list that lets an internal module through, or refuses an allowed
   one, fails the gate.
 - **The sets it is run over**: the fixture set, `tests/packages/`, which

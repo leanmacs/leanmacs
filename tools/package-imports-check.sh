@@ -79,7 +79,12 @@
 #   plain test module, which the package's test driver links with no Rust
 #   library, may not, and a library module may not.
 # - An internal module (`internal_reason`): the hosts and the executable's
-#   modules, the loop and its dispatch, the config session, the raw
+#   modules, with what a host is made of and driven by (its queue as a
+#   port, `Editor.Headless.Queue`; the host stepped on its caller's
+#   thread, `Editor.Headless.Stepped`; a driver's wait, judged,
+#   `Editor.Headless.Wait`; and its activity count, `Editor.Job.Activity`),
+#   which a package's tests reach through the kits and name in no import;
+#   the loop and its dispatch, the config session, the raw
 #   bindings, the real bindings of the ports and what runs them, the
 #   core's root, everything under `Editor.Internal`, and every module of
 #   the core's Lake package that is not named `Editor.…` and is no core
@@ -93,8 +98,10 @@
 #   (`….Real`), the headless host (`Editor.Headless`) and the config
 #   base. It is an executable's root, linked as the
 #   editor is, and running a port against the library or a host over a set
-#   is what it is for. The raw bindings, the loop and the config session
-#   stay refused by name. A module under the root (`linked-test`) has none
+#   is what it is for. The raw bindings, the loop, the config session and
+#   the parts of a host (the stepped host among them, which the linked kit
+#   starts for it) stay refused by name. A module under the root
+#   (`linked-test`) has none
 #   of this: beyond the linked kit it may import what a test may.
 #
 # It prints nothing and exits 0 when every import is allowed. Otherwise it
@@ -188,7 +195,8 @@ internal_reason() {
     Editor) echo "the config base, which is not part of the API" ;;
     Editor.Internal | Editor.Internal.*) echo "internal: it is under Editor.Internal" ;;
     Editor.Core) echo "internal: the core's root" ;;
-    Editor.Main | Editor.Headless | Editor.Headless.CommandLine | Editor.Window | \
+    Editor.Main | Editor.Headless | Editor.Headless.CommandLine | Editor.Headless.Queue | \
+      Editor.Headless.Stepped | Editor.Headless.Wait | Editor.Job.Activity | Editor.Window | \
       Editor.Window.Real | Editor.WindowCheck | Editor.WindowCheck.Real | Editor.Executable | \
       Editor.Version | Editor.ModuleLookup)
       echo "internal: a host or a module of the executable"
