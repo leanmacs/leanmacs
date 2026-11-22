@@ -30,7 +30,6 @@ import Editor.Ffi.Events
 import Editor.Ffi.Interrupt
 import Editor.File
 import Editor.FileWatch
-import Editor.FrameCommands.Compiled
 import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.InputScheme
@@ -2430,25 +2429,24 @@ def shippedChecks (_ : Unit) : List Check :=
         let registry := shippedRegistry
         return registry.segments.isEmpty },
     { name :=
-        "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, the first two commands the frame-commands package's and quit the ex package's, and the three bindings the frame-commands package's; and the ex names b, ls and bd bound to switch-buffer, list-buffers and close-buffer"
+        "the executable's hosts start with nothing of the frame commands' package: no command toggle-fullscreen or minimise-window, none of the chords C-s-f, s-m and s-q bound, and no entry of an owner frame-commands, registered by a package of the core's Lake package"
       run := do
         let registry := shippedRegistry
         let bound (text : String) : Option Invocation :=
           (registry.keymap TestScheme.scheme).find? (keysOf text)
+        return ["toggle-fullscreen", "minimise-window"].all
+              (fun name => (registry.find? name).isNone) &&
+            ["C-s-f", "s-m", "s-q"].all (fun chord => (bound chord).isNone) &&
+            !(registry.bindings.any (·.owner == owned "frame-commands")) &&
+            !(registry.ownersByKind.flatten.any (·.name == "frame-commands")) },
+    { name :=
+        "the executable's hosts start with quit the ex package's command; and the ex names b, ls and bd bound to switch-buffer, list-buffers and close-buffer"
+      run := do
+        let registry := shippedRegistry
         let ownedBy (package : Package) (name : String) : Bool :=
           (registry.find? name).any (·.owner == package.owner)
-        let frameKeys :=
-          (registry.bindings.filter (·.owner == FrameCommands.package.owner)).map
-            (·.binding.command)
         let ex (name : String) : Option String := (registry.ex? name).map (·.command)
-        return bound "C-s-f" == some { command := "toggle-fullscreen" } &&
-            bound "s-m" == some { command := "minimise-window" } &&
-            bound "s-q" == some { command := Ex.quitName } &&
-            ownedBy FrameCommands.package "toggle-fullscreen" &&
-            ownedBy FrameCommands.package "minimise-window" &&
-            ownedBy Ex.package Ex.quitName &&
-            frameKeys == #["toggle-fullscreen", "minimise-window", Ex.quitName] &&
-            ex "b" == some "switch-buffer" &&
+        return ownedBy Ex.package Ex.quitName && ex "b" == some "switch-buffer" &&
             ex "ls" == some "list-buffers" &&
             ex "bd" == some "close-buffer" },
     { name :=

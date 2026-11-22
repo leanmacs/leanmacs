@@ -17,8 +17,9 @@
 #   a menu are the core's (`lean/Editor/Menu.lean`,
 #   `lean/Editor/Config/Registry.lean`). Its items name commands of other
 #   packages by the constants of the interfaces that declare them: the
-#   core's `files-api` and clipboard names, and `evil-api`'s `undo` and
-#   `redo`, which it requires.
+#   core's `files-api` and clipboard names, `evil-api`'s `undo` and
+#   `redo`, and `frame-commands-api`'s `minimise-window` and
+#   `toggle-fullscreen`, the two interface packages it requires.
 # - `menu-test` is its test driver (`lake test`): the tests that need no
 #   Rust library, rooted at `MenuTest/Model.lean`. It is no default target,
 #   as the core's `model-test` is not: `mise run lean` links with the
@@ -48,6 +49,13 @@ leanOptions = { linter.all = true, warningAsError = true }
 [[require]]
 name = "evil-api"
 path = "../evil-api"
+
+# The interface package of the frame commands: the names `minimise-window`
+# and `toggle-fullscreen`, which the Window menu's Minimise and Enter Full
+# Screen run.
+[[require]]
+name = "frame-commands-api"
+path = "../frame-commands-api"
 
 [[require]]
 name = "editor-core"

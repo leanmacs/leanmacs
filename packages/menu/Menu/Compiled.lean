@@ -1,9 +1,9 @@
 import Editor.Clipboard
-import Editor.FrameCommands
 import Editor.Menu
 import Editor.Package
 import EvilApi
 import FilesApi
+import FrameCommandsApi
 
 /-!
 # The `menu` package: the menu bar that ships
@@ -27,7 +27,10 @@ it publishes no menu bar:
   under which the input scheme's package registers its commands, as evil
   does in `packages/evil/Evil/Clipboard.lean`; Undo and Redo name
   `evil-api`'s `undo` and `redo` by its constants, `EvilApi.undoName` and
-  `EvilApi.redoName`) and Window (Minimise, Enter Full Screen). Its command items carry no key: a host
+  `EvilApi.redoName`) and Window (Minimise, Enter Full Screen, which name
+  `frame-commands-api`'s `minimise-window` and `toggle-fullscreen` by its
+  constants, `FrameCommandsApi.minimiseName` and
+  `FrameCommandsApi.toggleFullscreenName`). Its command items carry no key: a host
   fills them from the registry as it is at each step
   (`Config.Registry.menuBar?`), so a menu item and its key run the same
   command, and config's rebinding moves the shortcut. Config replaces one
@@ -95,10 +98,12 @@ def standard : Menu :=
               .item "Copy" none (.command Clipboard.copyName),
               .item "Paste" none (.command Clipboard.pasteName), .separator,
               .item "Select All" none (.command Clipboard.selectAllName)] },
+        -- Minimise and Enter Full Screen are names `frame-commands-api`
+        -- declares (`packages/frame-commands-api/FrameCommandsApi.lean`).
         { title := "Window", role := some .window
           items :=
-            #[.item "Minimise" none (.command FrameCommands.minimiseName),
-              .item "Enter Full Screen" none (.command FrameCommands.toggleFullscreenName)] }] }
+            #[.item "Minimise" none (.command FrameCommandsApi.minimiseName),
+              .item "Enter Full Screen" none (.command FrameCommandsApi.toggleFullscreenName)] }] }
 
 /-- The chord of the character `text` with the system key held. -/
 private def chord (text : String) : Key :=

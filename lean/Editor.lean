@@ -2,7 +2,6 @@ import Editor.Api.Theorems
 import Editor.Command.Append
 import Editor.Completion.Filtering
 import Editor.Ex
-import Editor.FrameCommands
 import Editor.Indent
 import Editor.Jumps.Go
 import Editor.Text.Word
@@ -99,18 +98,16 @@ here: they are the default packages `files` and `buffers` (`packages/files/`,
 `packages/buffers/`, features-as-packages phase 6), and config reaches them
 (`Files.open`, `Buffers.switchCommand` and the rest) through the set's base,
 their entry modules `Files.EditorPackage` and `Buffers.EditorPackage` among
-it. The frame's commands are here too
-(`Editor/FrameCommands.lean`): `toggle-fullscreen` and `minimise-window`,
-which ask the platform's window through the display; their registrations
-and default bindings (`Editor/FrameCommands/Compiled.lean`) are not
-imported. The window commands (`window-split`, `window-close`,
-`window-focus-left` and the rest, which split, close, focus and arrange the
-frame's windows) and the tab commands (`tab-new`, `tab-close`, `tab-next`,
-`tab-switch` and the rest) are not here: they are the default packages
-`window-commands` and `tab-commands` (`packages/window-commands/`,
-`packages/tab-commands/`) since the features-as-packages roadmap's phase
-8, and a command of config's calls them through the set's base, which
-holds each package's entry module. The
+it. The frame's commands (`toggle-fullscreen` and `minimise-window`,
+which ask the platform's window through the display), the window commands
+(`window-split`, `window-close`, `window-focus-left` and the rest, which
+split, close, focus and arrange the frame's windows) and the tab commands
+(`tab-new`, `tab-close`, `tab-next`, `tab-switch` and the rest) are not
+here: they are the default packages `frame-commands`, `window-commands`
+and `tab-commands` (`packages/frame-commands/`,
+`packages/window-commands/`, `packages/tab-commands/`) since the
+features-as-packages roadmap's phase 8, and a command of config's calls
+them through the set's base, which holds each package's entry module. The
 command that switches the theme in force, `load-theme`, is not here: it
 is the default package `themes` (`packages/themes/`) since the
 features-as-packages roadmap's phase 7, with the theme `default` it

@@ -21,7 +21,8 @@ sentences as they were.
   frame commands' package binds to the Window menu's commands, written in
   the test: the Edit menu's clipboard items and `s-x`, `s-c`, `s-v` and
   `s-a` name the core's clipboard names; its Undo and Redo, and `s-z` and
-  `s-Z`, name `evil-api`'s; the published menu is the standard one with
+  `s-Z`, name `evil-api`'s; its Window menu's Minimise and Enter Full
+  Screen name `frame-commands-api`'s; the published menu is the standard one with
   the chords bound to its commands; the Edit, Window and File menus' items;
   and what the `Package` value registers: the eight bindings, the four
   menus, and nothing else.

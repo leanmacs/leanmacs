@@ -1,6 +1,5 @@
 import Editor.Clipboard
 import Editor.Config.Packages
-import Editor.FrameCommands
 import Editor.Menu
 import Editor.Test.Config
 import Editor.Test.Driver
@@ -8,6 +7,7 @@ import Editor.Test.Frame
 import Editor.Test.Hosted
 import Editor.Test.Keys
 import EvilApi
+import FrameCommandsApi
 import Menu.Compiled
 import MenuTest.Check
 
@@ -36,10 +36,10 @@ namespace StandardMenuTest
 commands, written here as that package binds them, so the checks name no
 module of it but the names: `C-s-f` to `toggle-fullscreen` and `s-m` to
 `minimise-window`. That the package binds them is its own checks'
-(`frameCommandChecks`). -/
+(`FrameCommandsTest.frameCommandChecks`, `packages/frame-commands/`). -/
 def frameBindings : Array Config.KeyBinding :=
-  #[.ofKeys (keys "C-s-f") FrameCommands.toggleFullscreenName,
-    .ofKeys (keys "s-m") FrameCommands.minimiseName]
+  #[.ofKeys (keys "C-s-f") FrameCommandsApi.toggleFullscreenName,
+    .ofKeys (keys "s-m") FrameCommandsApi.minimiseName]
 
 /-- The registry of the standard menu's checks: the `menu` package's
 bindings and `frameBindings`, registered for the owner `compiled`, an owner
@@ -141,6 +141,17 @@ def standardMenuChecks : List Check :=
               some
                 #[.item "Open…" none (.command "open-file"),
                   .item "Save" none (.command "save-buffer")]) },
+    { name := "the Window menu's Minimise and Enter Full Screen name frame-commands-api's names"
+      run :=
+        let named :=
+          [("Minimise", FrameCommandsApi.minimiseName),
+            ("Enter Full Screen", FrameCommandsApi.toggleFullscreenName)]
+        let window := (Menu.standard.menus.find? (·.title == "Window")).map (·.items)
+        pure
+          (named.all fun (title, name) =>
+            (window.getD #[]).any fun
+              | .item shown _ (.command command) => shown == title && command == name
+              | _ => false) },
     { name := "the Edit menu's Undo and Redo, and s-z and s-Z, name evil-api's names"
       run :=
         let named := [("Undo", "s-z", EvilApi.undoName), ("Redo", "s-Z", EvilApi.redoName)]

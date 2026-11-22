@@ -1,5 +1,4 @@
 import Editor.Ex.Compiled
-import Editor.FrameCommands.Compiled
 
 /-!
 # The core's entry module: the packages of the core's Lake package
@@ -143,7 +142,11 @@ package, which was last here then, is the default package
 registers first, right before `tab-commands`. The menu's package, which
 was last here then, is the default package `menu` (`packages/menu/`) since
 that phase too, and registers first, right before `window-commands`: its
-key bindings still follow the frame's.
+key bindings still follow the frame's. The frame commands' package, which
+was last here then, is the default package `frame-commands`
+(`packages/frame-commands/`) since that phase too, and registers first,
+right before `menu`: its three bindings are still the first bound, since
+the `ex` package, the one left here, binds no key.
 -/
 
 namespace EditorCore.EditorPackage
@@ -153,6 +156,6 @@ open Editor
 /-- The packages of the core's Lake package, in the order a host registers
 them ("The order", in the module docs). -/
 def packages : Array Package :=
-  #[Ex.package, FrameCommands.package]
+  #[Ex.package]
 
 end EditorCore.EditorPackage

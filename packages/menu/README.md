@@ -12,8 +12,8 @@ Its design record is in [packages.md](../../docs/design/packages.md).
 ## Its source, in reading order
 
 1. [`lakefile.toml`](lakefile.toml): the Lake package `menu`. It requires
-   the core, `editor-core`, and the interface package `evil-api`, by path,
-   declares the library `Menu`, the test library `MenuTest` and the test
+   the core, `editor-core`, and the interface packages `evil-api` and
+   `frame-commands-api`, by path, declares the library `Menu`, the test library `MenuTest` and the test
    driver `menu-test`, and turns every Lean linter on with warnings as
    errors.
 2. [`Menu/EditorPackage.lean`](Menu/EditorPackage.lean): the entry module.
@@ -32,8 +32,8 @@ the way a chosen item runs its command are the core's
 (`lean/Editor/Menu.lean`, `lean/Editor/Config/Registry.lean`,
 `lean/Editor/Loop.lean`). The items name commands of other packages by
 constants: `files-api`'s `open-file` and `save-buffer` and the clipboard
-names, which the core holds, `evil-api`'s `undo` and `redo`, and the frame
-commands' `minimise-window` and `toggle-fullscreen`. The declarations keep
+names, which the core holds, `evil-api`'s `undo` and `redo`, and
+`frame-commands-api`'s `minimise-window` and `toggle-fullscreen`. The declarations keep
 their names (`Editor.Menu.…`) from when the package was a module of the
 core.
 

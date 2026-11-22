@@ -55,7 +55,6 @@ import ModelTest.Editor.File.Model
 import ModelTest.Editor.FileJobs
 import ModelTest.Editor.FileWatch.Model
 import ModelTest.Editor.Floating
-import ModelTest.Editor.FrameCommands
 import ModelTest.Editor.Fuzzy.Contract
 import ModelTest.Editor.Fuzzy.Model
 import ModelTest.Editor.Grep.Model
@@ -385,8 +384,9 @@ item that names no command says so, and the key equivalents a registry
 gives a menu's items, never a chord a system item shows. The menu that
 ships, its items and the chords the `menu` package binds to them are that
 package's (`MenuTest.standardMenuChecks`, `packages/menu/`), and the
-frame's commands and bindings `frameCommandChecks`', each on the kit's
-frame driver (`Editor/Test/Frame.lean`).
+frame's commands and bindings the package `frame-commands`'
+(`FrameCommandsTest.frameCommandChecks`, `packages/frame-commands/`), each
+on the kit's frame driver (`Editor/Test/Frame.lean`).
 
 The command loop (`Editor/Loop.lean`) is checked on the editor's models
 (`loopChecks`): events fed to `Loop.step` one by one, the state each leaves
@@ -861,9 +861,9 @@ The config session's decisions are tested here too, with no elaborator:
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
-  list is the 2 packages, in order, each accepted, with no package of the
+  list is the 1 package, `ex`, accepted, with no package of the
   shipped palettes, of the compile mode, of the seven features phase 6
-  moved out, of the menu, of the window or the tab commands, of session
+  moved out, of the frame commands, of the menu, of the window or the tab commands, of session
   restore or of the package-set commands among them, and no menu defined, in the state they
   make every entry's owner is one of them, the ex names are bound in the
   order the headless fixtures show, the `ex` package's first, and no theme
@@ -1363,7 +1363,6 @@ def checks : List Check :=
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++
-    frameCommandChecks ++
     titleChecks ++
     menuChecks ++
     workspaceDataChecks ++

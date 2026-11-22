@@ -1,18 +1,21 @@
-import Editor.FrameCommands
 import Editor.Package
 import Editor.Quit
+import FrameCommands
 
 /-!
 # The `frame-commands` package: the frame's commands and their bindings
 
 What a host registers so that the window can be put in fullscreen,
-minimised and quit from the keyboard (`Editor/FrameCommands.lean`): the
-package `frame-commands` (`FrameCommands.package`, `Editor/Package.lean`),
-whose `setup` registers the two frame commands and the default key
-bindings. A host registers it for the owner `frame-commands` when its loop
-starts, before any config (`Editor/Config/Packages.lean`), so they hold
-when config fails to load, and config's binding of the same keys is the one
-that runs while config binds them.
+minimised and quit from the keyboard (`FrameCommands.lean`): the
+package `frame-commands` (`FrameCommands.package`,
+`lean/Editor/Package.lean`), whose `setup` registers the two frame
+commands and the default key bindings. A host registers it for the owner
+`frame-commands` when its loop starts, before any config
+(`lean/Editor/Config/Packages.lean`), so they hold when config fails to
+load, and config's binding of the same keys is the one that runs while
+config binds them. Both of the executable's hosts are handed it, through
+the entry module of the Lake package `frame-commands`
+(`FrameCommands/EditorPackage.lean`).
 
 - **The commands**: `toggle-fullscreen` and `minimise-window`,
   in that order, each a plain command.
@@ -24,18 +27,19 @@ that runs while config binds them.
   these bindings: on macOS AppKit runs the item before the key reaches the
   window, and the item runs the same command.
 - **`s-q`** (Command-Q) runs `quit` (`Quit.name`), so Command-Q follows
-  the rule `:q` and the close button follow (`Editor/Quit.lean`; `Editor/Ex.lean`, "A window's
-  close request"). On macOS it is the application menu's Quit, a system
-  item AppKit runs before the key reaches the window: it reaches the loop
-  as the system's quit, which runs the same command (`Editor/Loop.lean`,
-  "Quit"). Where no menu takes the chord, as headless, the key runs it. The
-  command is the ex line's, so a host must be handed the `ex` package too
-  (`Editor/Ex/Compiled.lean`) for the key to run anything.
+  the rule `:q` and the close button follow (`lean/Editor/Quit.lean`;
+  `lean/Editor/Ex.lean`, "A window's close request"). On macOS it is the
+  application menu's Quit, a system item AppKit runs before the key
+  reaches the window: it reaches the loop as the system's quit, which runs
+  the same command (`lean/Editor/Loop.lean`, "Quit"). Where no menu takes
+  the chord, as headless, the key runs it. The command is the ex line's,
+  so a host must be handed the `ex` package too
+  (`lean/Editor/Ex/Compiled.lean`) for the key to run anything.
 
-This module is apart from `Editor/FrameCommands.lean` because it is what a
-host is handed, not what config calls.
+This module is apart from `FrameCommands.lean` because it is what a host
+is handed, not what config calls.
 
-Pinned by `ModelTest.frameCommandChecks`, on the models.
+Pinned by `FrameCommandsTest.frameCommandChecks`, on the models.
 -/
 
 namespace Editor.FrameCommands

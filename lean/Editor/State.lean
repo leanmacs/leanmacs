@@ -1030,7 +1030,7 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
   frame does not have it, the scene names no focused view.
 - The frame's `fullscreen` is whether the window last said it is in the
   system's fullscreen, on a resize: a command reads it
-  (`toggle-fullscreen`, `Editor/FrameCommands.lean`), and nothing but a
+  (`toggle-fullscreen`, `packages/frame-commands/FrameCommands.lean`), and nothing but a
   resize changes it.
 - The selected view (`EditorState.selectedView`) is the open prompt's asker
   while a prompt is open, and the focused view otherwise. The window's

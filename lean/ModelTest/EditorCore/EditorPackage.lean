@@ -23,7 +23,7 @@ open Editor
 /-- The names of the packages of the core's Lake package, in the order they
 register. -/
 def shippedPackageNames : Array String :=
-  #["ex", "frame-commands"]
+  #["ex"]
 
 /-- The checks of the packages of the core's Lake package
 (`EditorCore/EditorPackage.lean`): the list a host is handed is whole,
@@ -41,15 +41,16 @@ def packageSetChecks : List Check :=
             (state.registry.jobs.filter (·.registration.restarted)).map (·.registration.name) ==
               #[] },
     { name :=
-        "every package of the shipped set is accepted, and their names are the 2 of the package table, each once, in its order, with no package of the shipped palettes and none of the menu, the window commands, the tab commands, session restore, the package-set commands, evil, the themes, the file commands, the buffer commands, the workspaces, project search, the working sets, the shell, version control and its gutter, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
+        "every package of the shipped set is accepted, and their names are the 1 of the package table, each once, in its order, with no package of the shipped palettes and none of the frame commands, the menu, the window commands, the tab commands, session restore, the package-set commands, evil, the themes, the file commands, the buffer commands, the workspaces, project search, the working sets, the shell, version control and its gutter, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
       run :=
         let (state, refused) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (refused == #[] &&
             EditorCore.EditorPackage.packages.map (·.name) == shippedPackageNames &&
-            shippedPackageNames.size == 2 &&
-            shippedPackageNames.toList.eraseDups.length == 2 &&
+            shippedPackageNames.size == 1 &&
+            shippedPackageNames.toList.eraseDups.length == 1 &&
+            !shippedPackageNames.contains "frame-commands" &&
             !shippedPackageNames.contains "menu" &&
             !shippedPackageNames.contains "window-commands" &&
             !shippedPackageNames.contains "tab-commands" &&
@@ -87,7 +88,7 @@ def packageSetChecks : List Check :=
           (owners.all (fun owner => shippedPackageNames.contains owner.name) &&
             !owners.contains .config &&
             !owners.contains .compiled &&
-            state.registry.entries.size > 5 &&
+            state.registry.entries.size > 3 &&
             state.registry.menuBar? == none &&
             state.cells.cells.all fun cell => shippedPackageNames.contains cell.owner.name) },
     { name :=
