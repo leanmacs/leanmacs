@@ -19,7 +19,8 @@ the job pool warmed as the editor warms it (`warmPool`), and a headless host
 of the test scheme over the real services, its config elaborated on the
 base `Editor` by the real elaborator, in its bracket (`withBenchHost`). The config benchmarks
 (`ConfigTest.Bench`) and the workspace finder's
-(`ConfigTest.WorkspaceBench`) are written on it. It measures and asserts
+(`WorkspaceTest.Linked.WorkspaceBench`,
+`packages/workspace/WorkspaceTest/Linked/Workspace/Bench.lean`) are written on it. It measures and asserts
 nothing of its own.
 
 Published for a package's linked test: it is a module of the core's linked

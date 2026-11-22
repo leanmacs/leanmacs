@@ -676,7 +676,10 @@ a temporary directory that the task removes on exit: 100,000 files at
 `main` by a fixed author at a fixed date, git reading neither the user's
 nor the system's config, so a run can be repeated on another machine.
 `WORKSPACE_BENCH_REPO` names a checkout to measure instead. The task runs
-`config-test bench-workspace-files <sysroot> <olean dir> <repository> 120`,
+`WorkspaceTest-Linked bench-workspace-files <sysroot> <olean dir> <repository> 120`,
+the workspace package's linked test
+(`packages/workspace/WorkspaceTest/Linked.lean`), which it builds first and
+asks Lake for the path of,
 with `LEAN_NUM_THREADS` and `LEAN_STACK_SIZE_KB` removed from the
 environment.
 
@@ -685,10 +688,11 @@ and file services and its queue, its working directory the repository,
 registered with `files-api`'s fake (which opens the first file over the
 real file service and runs its hooks), the minibuffer's and the workspace
 commands, their jobs and sources. It is the workspace's
-(`ConfigTest.WorkspaceBench.workspaceFiles`,
-`lean/ConfigTest/Editor/Workspace/Bench.lean`), written on the linked
-test kit's `Editor.Test.Linked.benchHost`, so it names no other
-feature. It opens `src/m0/f0.rs` and joins, which
+(`WorkspaceTest.Linked.WorkspaceBench.workspaceFiles`,
+`packages/workspace/WorkspaceTest/Linked/Workspace/Bench.lean`), written on
+the linked test kit's `Editor.Test.Linked.withBenchHost`, the bracket the
+host runs in and is ended by, so it names no other feature. It opens
+`src/m0/f0.rs` and joins, which
 runs the git finder; runs `find-file-in-workspace` and joins, the first
 listing, and prints the prompt's status line, which names the workspace
 (`repo@main`, so git found it). A sample is one key of `m`, `1`, `2`, `f`,
