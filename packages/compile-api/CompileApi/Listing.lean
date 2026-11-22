@@ -1,12 +1,12 @@
+import CompileApi
 import Editor.Api
 import Editor.Job
-import Editor.ProjectMode
 
 /-!
 # Computed commands: a contribution's listing, run in its mode's root
 
 What gives a contribution the named commands it computes
-(`Contribution.listing`, `Editor/ProjectMode.lean`): a program run
+(`Contribution.listing`, `packages/compile-api/CompileApi.lean`): a program run
 in the mode's root, whose standard output the contribution reads into named
 commands, as `mise-mode` runs `mise tasks ls --json`
 (`packages/compile/Compile/Shipped.lean`). Written over the editor API and the job
@@ -25,7 +25,7 @@ and starts a check of its own (`refreshListings`); a set of packages
 without it still lists a contribution's commands, which nothing then
 reads. The declarations keep their names in `Editor.Compile`
 (`Compile.refreshListings`, `Compile.listJob`, the store
-`compile-listings`), as the contribution's do (`Editor/ProjectMode.lean`),
+`compile-listings`), as the contribution's do (`packages/compile-api/CompileApi.lean`),
 and the job `compile-list` is registered by the `workspace` package
 (`packages/workspace/Workspace/Compiled.lean`), beside `find-mode-markers`, which
 starts it.

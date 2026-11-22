@@ -503,7 +503,7 @@ A reload that installs replaces config's listers.
 What fits a kind of project, a minor mode's marker files, named commands
 and error formats, and one project's own commands for a mode, are no
 request of this port: `compileContribution` and `projectCommands` register
-values at two extension points (`Editor/ProjectMode.lean`,
+values at two extension points (`packages/compile-api/CompileApi.lean`,
 `Editor/Extension.lean`), so the port names nothing of the compile mode.
 
 A menu of the menu bar (`Editor/Menu.lean`) is defined with `defineMenu`,

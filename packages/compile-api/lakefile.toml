@@ -1,0 +1,72 @@
+# The interface package of the compile mode (docs/design/extension-points.md,
+# "Three layers"): what a minor mode contributes for a kind of project, as
+# data, and the two extension points it is registered at. The default
+# package `compile` reads them and registers its shipped modes there, config
+# registers there, the default package `workspace` turns a contribution's
+# mode on from its markers, and `project-api` names the listing job. It
+# registers no behaviour.
+#
+# It is an interface package: it declares the keyword `editor-interface`
+# below, so another package may import its modules, and the layer imports
+# check reads that keyword from Lake (tools/layer-imports-check.sh). Its
+# modules were the core's (`lean/Editor/ProjectMode.lean` and the two under
+# it) until features-as-packages phase 8, when the compile mode's
+# registrations became extension points and the core stopped naming them,
+# and moved here with `git mv`. Every declaration keeps its name and
+# namespace (`Editor.Compile.…`, `Editor.compileContribution`,
+# `Editor.projectCommands`, `Editor.Workspace.turnOnModes`), so config and
+# tests changed `import` lines only.
+#
+# - `CompileApi` is the package's library: `CompileApi.lean` (the
+#   contribution vocabulary, the two extension points `Compile.Contribution`
+#   and `Compile.ProjectCommands`, the operations that register at them and
+#   `Compile.hook`, which reads them), `CompileApi/Format.lean` (an error
+#   format as data) and `CompileApi/Listing.lean` (a contribution's computed
+#   commands, the listing job, turning on-modes on and
+#   `Workspace.markerSettings`). Its `globs` hold every module under
+#   `CompileApi`, not only what the root imports: the listing imports the
+#   root.
+# - `CompileApiTest` holds what it publishes for other packages' tests, as
+#   the owner of a port publishes its fake and its contract check
+#   (AGENTS.md, "Testing with hand-written mocks"): `CompileApiTest/Fake.lean`,
+#   a package that registers a sample contribution; `CompileApiTest/Contract.lean`,
+#   the check every package that registers a contribution runs; and
+#   `CompileApiTest/Listing.lean`, the kit of the listing checks (`t-mode`
+#   and its world, `toldHook`, `hookOf`), which was the core kit's
+#   `Editor.Test.Listing`. Its own tests are `CompileApiTest/CompileApi.lean`
+#   and the two under `CompileApiTest/CompileApi/`, which were the core's
+#   model tests (`ModelTest.<name>`) until it moved.
+# - `compile-api-test` is its test driver (`lake test`), rooted at
+#   `CompileApiTest/Model.lean`. It is no default target, as the core's
+#   `model-test` is not: `mise run lean` links with the system compiler,
+#   which this executable has no flags for.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/compile-api update --keep-toolchain
+# then the same for every package and set that reaches this package
+# (packages/compile, packages/workspace, packages/project-api and what
+# requires it, packages/, tests/packages, tests/user-link,
+# tests/layer-imports), and commit each lake-manifest.json.
+name = "compile-api"
+keywords = ["editor-interface"]
+testDriver = "«compile-api-test»"
+defaultTargets = ["CompileApi", "CompileApiTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "CompileApi"
+globs = ["CompileApi.*"]
+
+[[lean_lib]]
+name = "CompileApiTest"
+globs = ["CompileApiTest.+"]
+
+[[lean_exe]]
+name = "compile-api-test"
+root = "CompileApiTest.Model"

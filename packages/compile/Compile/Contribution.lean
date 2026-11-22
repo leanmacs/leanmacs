@@ -1,5 +1,5 @@
 import Compile.Errors
-import Editor.ProjectMode
+import CompileApi
 
 /-!
 # What the compile mode makes of contributions: offers and formats in use
@@ -7,7 +7,7 @@ import Editor.ProjectMode
 A contribution is what a minor mode gives the compile mode
 (`Compile.lean`), as data a package or config registers
 (`Contribution`, `ProjectCommands` and the hook the loop is told, `Hook`,
-all in `Editor/ProjectMode.lean`, a core module). This module is the
+all in `packages/compile-api/CompileApi.lean`, a core module). This module is the
 compile mode's: the rules by which it turns the registered contributions
 into the commands it offers in a buffer and the error formats it reads a
 run's output with. Pure, with no editor API.

@@ -1,22 +1,30 @@
+import CompileApi
+import CompileApi.Listing
+import CompileApiTest.Check
+import CompileApiTest.Contract
+import CompileApiTest.Fake
+import Editor.Extension
 import Editor.Package
-import Editor.ProjectMode
 import Editor.Test.Hosted
 import Editor.Value
 import Editor.Workspace
-import ModelTest.Check
 
 /-!
-# Model tests: `Editor/ProjectMode.lean`
+# Model tests: `CompileApi.lean`
 
-The model tests of `Editor/ProjectMode.lean`: `contributionChecks`. The root
-module `ModelTest` runs them; its module doc says what each shows. The
+The model tests of `packages/compile-api/CompileApi.lean`:
+`contributionChecks`, which were the core's (`ModelTest.contributionChecks`)
+while the vocabulary was, and `compileApiChecks`, of the interface
+package's fake and its contract check. The test driver's root,
+`CompileApiTest/Model.lean`, runs them; its module doc says what each
+shows. The
 checks of the two extension points and of the hook that reads them run on
-the kit's hosted registry (`Editor/Test/Hosted.lean`): packages installed as
+the core kit's hosted registry (`lean/Editor/Test/Hosted.lean`): packages installed as
 a host installs them, and a config installed as a reload installs what
 config owns.
 -/
 
-namespace ModelTest
+namespace CompileApiTest
 
 open Editor
 open Editor.Test
@@ -49,7 +57,7 @@ def hookProjects (registry : Config.Registry) : Option (Array (String × Array S
   (hostedAsked registry Compile.hook).map fun hook =>
     hook.projects.map fun entry => (entry.mode, entry.commands.map (·.line))
 
-/-- The checks of what a minor mode contributes (`Editor/ProjectMode.lean`):
+/-- The checks of what a minor mode contributes (`packages/compile-api/CompileApi.lean`):
 on values written here, and of the two extension points and the hook that
 reads them, on the kit's hosted registry. -/
 def contributionChecks : List Check :=
@@ -255,4 +263,63 @@ def contributionChecks : List Check :=
                   ("third-mode", #["third"])] &&
             hookModes dropped == hookModes packaged) }]
 
-end ModelTest
+/-- Whether every check of the contract over `package` holds. -/
+def keeps (package : Package) : Bool :=
+  (contractChecks package).all (·.2)
+
+/-- The checks of the interface package's fake and its contract check
+(`CompileApiTest/Fake.lean`, `CompileApiTest/Contract.lean`). -/
+def compileApiChecks : List Check :=
+  [{  name :=
+        "the fake keeps the contract: every check of it holds, and the hook of a host that installs it holds its contribution"
+      run :=
+        pure
+          (keeps fake &&
+            hookModes (hostedRegistry #[fake]) == some #[("fake-mode", #["fake.toml"])]) },
+    { name :=
+        "a package that registers at a point directly, past the operations, a contribution with no marker, one that names a command twice, or project commands that name a command twice fails the contract, each by its own sentence; a package that registers nothing keeps it"
+      run :=
+        let failing (package : Package) (words : String) : Bool :=
+          !keeps package &&
+            (contractChecks package).any fun (sentence, held) =>
+              !held && (sentence.splitOn words).length > 1
+        let unmarked : Package :=
+          { name := "unmarked"
+            setup := Extension.add ({ mode := "a-mode", markers := #[] } : Compile.Contribution) }
+        let twice : Package :=
+          { name := "twice"
+            setup :=
+              Extension.add
+                ({  mode := "a-mode", markers := #["a.toml"]
+                    commands :=
+                      #[{ name := "build", line := "a" }, { name := "build", line := "b" }] } :
+                  Compile.Contribution) }
+        let projects : Package :=
+          { name := "projects"
+            setup :=
+              Extension.add
+                ({  project := .remote "github.com/o/r", mode := "a-mode"
+                    commands :=
+                      #[{ name := "lint", line := "a" }, { name := "lint", line := "b" }] } :
+                  Compile.ProjectCommands) }
+        pure
+          (failing unmarked "has a marker" && failing twice "registers names a command twice" &&
+            failing projects "gives name a command twice" &&
+            keeps { name := "nothing", setup := pure () }) },
+    { name :=
+        "a package an operation refuses fails the contract by its first sentence, since nothing it registers is installed"
+      run :=
+        let refused : Package :=
+          { name := "refused", setup := compileContribution { mode := "a-mode", markers := #[] } }
+        pure
+          (!keeps refused && (contractChecks refused).head?.map (·.2) == some false &&
+            ((contractChecks refused).drop 1).all (·.2)) },
+    { name :=
+        "the two points' keys are their types' full names, Editor.Compile.Contribution and Editor.Compile.ProjectCommands, and the listing job's name is compile-list: what a check outside this package names each by as text"
+      run :=
+        pure
+          (TypeName.typeName Compile.Contribution == `Editor.Compile.Contribution &&
+            TypeName.typeName Compile.ProjectCommands == `Editor.Compile.ProjectCommands &&
+            Compile.listJob == "compile-list") }]
+
+end CompileApiTest

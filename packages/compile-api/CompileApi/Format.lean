@@ -5,7 +5,7 @@ import Editor.Value
 
 An error format: what says where a tool's output names a file, a line,
 maybe a column, and a severity. It is data a minor mode's contribution
-carries (`Contribution.formats`, `Editor/ProjectMode.lean`) and config
+carries (`Contribution.formats`, `packages/compile-api/CompileApi.lean`) and config
 names and builds, with no editor API. What reads a line with one, the
 matcher and the locations it yields, is the compile mode's
 (`packages/compile/Compile/Errors.lean`).
@@ -56,7 +56,7 @@ no severity is an error.
 `optional` and `field` are the two helpers the trees of this vocabulary
 are written with: a site's (`Site.encode`, `packages/compile/Compile/Errors.lean`)
 and a listing's entry's (`Listing.Entry`,
-`Editor/ProjectMode/Listing.lean`). They are here because this is the one
+`packages/compile-api/CompileApi/Listing.lean`). They are here because this is the one
 module both import.
 
 Pinned by `ModelTest.formatDataChecks`, as data, with no matcher. What a

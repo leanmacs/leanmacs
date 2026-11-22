@@ -26,7 +26,9 @@
 # themes (shipped-themes/), the command prompt
 # (execute-command/, with its interface package execute-command-api/,
 # which it requires), the binding search (binding-search/, with
-# binding-search-api/), the compile mode (compile/), completion at point
+# binding-search-api/), the compile mode (compile/, with its interface
+# package compile-api/, which it, workspace/ and project-api/ require),
+# completion at point
 # (at-point/, with at-point-api/), then the languages (languages/). They register in that order, after the core's. Every other
 # feature is still a package of the core's Lake package
 # (lean/EditorCore/EditorPackage.lean). This is also the lakefile a user's
@@ -165,7 +167,9 @@ name = "binding-search"
 path = "binding-search"
 
 # The compile mode, `compile` into a workspace's compilation buffer, with
-# the modes that ship (cargo, lake, mise): a default package.
+# the modes that ship (cargo, lake, mise): a default package. It requires
+# its interface package, compile-api, which the workspaces and project-api
+# require too, so it is in the set before them, and registers nothing.
 [[require]]
 name = "compile"
 path = "compile"

@@ -4,7 +4,6 @@ import Editor.Completion.Filtering
 import Editor.FrameCommands
 import Editor.Indent
 import Editor.Jumps.Go
-import Editor.ProjectMode
 import Editor.TabCommands
 import Editor.Text.Word
 import Editor.UndoTree.Theorems
@@ -232,11 +231,14 @@ base, the package's entry module `Shell.EditorPackage` among it.
 `compile` is not here: the compile mode is a package outside the core
 (`packages/compile/`), and the core requires no package, so this module
 cannot import it. What a minor mode gives the compile mode, its markers,
-named commands and error formats (`Editor/ProjectMode.lean`, with the
-formats of `Editor/ProjectMode/Format.lean`), is registered at two
-extension points with `compileContribution` and `projectCommands`, which
-that module declares and this one imports by name until the vocabulary
-moves to its interface package. Config reaches the package's own declarations, the
+named commands and error formats, is not here either: it is the interface
+package `compile-api`'s (`packages/compile-api/CompileApi.lean`, with the
+formats of `packages/compile-api/CompileApi/Format.lean`), which declares
+the two extension points and `compileContribution` and `projectCommands`,
+which register at them. Config names them where its set's base holds
+`compile-api`, through the entry module of `compile` or of `workspace`; on
+a set with neither they are unknown identifiers. Config reaches the compile
+package's own declarations, the
 shipped modes (`Compile.cargoMode`) and the matcher among them, because
 an editor elaborates config on its package set's base, which is this
 module and then the entry module of each package of the set

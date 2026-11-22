@@ -201,7 +201,7 @@ from the next command.
     `Loop.Registered.workspaceSettings`: config's workspace roots, the git
     program and config's workspace
     listers; the marker modes are filled by who reads the compile hook,
-    `Workspace.markerSettings`, `Editor/ProjectMode/Listing.lean`) and the config generation
+    `Workspace.markerSettings`, `packages/compile-api/CompileApi/Listing.lean`) and the config generation
     (`generation`): a file's open asks, for its directory's workspace
     (`packages/workspace/Workspace/Attach.lean`), and the version-control commands ask,
     for the git program; the gutter's reconciler is handed the same
@@ -564,7 +564,7 @@ structure Loop.Registered where
 /-- The workspace settings `registered` says: config's workspace roots, the
 git program, and config's workspace listers. The marker modes are not the
 loop's to say: they are filled from the compile hook by who reads it
-(`Workspace.markerSettings`, `Editor/ProjectMode/Listing.lean`). What the workspace settings are asked for answers
+(`Workspace.markerSettings`, `packages/compile-api/CompileApi/Listing.lean`). What the workspace settings are asked for answers
 (`RegistryRequest.workspaceSettings`), and what the loop hands the
 version-control gutter, so that every reader of the git program reads the
 one. -/

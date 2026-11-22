@@ -10,9 +10,10 @@ themes-api	interface	-
 themes	implementation	themes-api
 files	implementation	-
 buffers	implementation	-
-project-api	interface	-
+compile-api	interface	-
+project-api	interface	compile-api
 vc-api	interface	-
-workspace	implementation	project-api vc-api
+workspace	implementation	project-api vc-api compile-api
 project-search-api	interface	-
 project-search	implementation	project-search-api
 working-set-api	interface	-
@@ -28,7 +29,7 @@ execute-command-api	interface	-
 execute-command	implementation	execute-command-api minibuffer-api
 binding-search-api	interface	-
 binding-search	implementation	binding-search-api minibuffer-api
-compile	implementation	minibuffer-api
+compile	implementation	minibuffer-api compile-api
 at-point	implementation	at-point-api evil-api
 languages	implementation	-
 word-count	implementation	-

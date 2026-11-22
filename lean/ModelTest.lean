@@ -95,9 +95,6 @@ import ModelTest.Editor.PackageSet.Running
 import ModelTest.Editor.Process.Environment
 import ModelTest.Editor.Process.Model
 import ModelTest.Editor.Program
-import ModelTest.Editor.ProjectMode
-import ModelTest.Editor.ProjectMode.Format
-import ModelTest.Editor.ProjectMode.Listing
 import ModelTest.Editor.Restart.Handover
 import ModelTest.Editor.Restart.Launch
 import ModelTest.Editor.Restore
@@ -1042,37 +1039,14 @@ which were this driver's):
   entries; the loop's marking and the face of what was not examined are
   among `excerptDisplayChecks`, on the loop's driver.
 
-What a minor mode contributes for a kind of project is the core's, and the
-compile mode is one reader of it (`docs/design/packages.md`), so each side
-has its own checks and no check of the core's names the compile mode:
-
-- `contributionChecks`: a contribution as data (`Editor/ProjectMode.lean`),
-  pure: its defaults, its marker mode, and a hook's project commands and
-  settings by a project's identity; and the two extension points and the
-  hook that reads them, on the kit's hosted registry: config's
-  contributions before the packages', each mode once as its latest, what a
-  reload replaces, the three refusals, the later of two of one mode or of
-  one project and mode in one `setup`, a package's project commands after
-  config's, and the later of two packages' contributions of one mode;
-- `formatDataChecks`: an error format as data
-  (`Editor/ProjectMode/Format.lean`), pure, with no matcher: the
-  severities' names, a step and an optional step, a format's defaults, the
-  general format's parts, and the two tree helpers;
-- `listingChecks`: a contribution's computed commands
-  (`Editor/ProjectMode/Listing.lean`), on the loop's driver over the kit's
-  opener, with stand-ins over the core's API for a file's workspace and its
-  modes on markers: a mode that turns on runs
-  its listing once in its root, a failed listing keeps why and says it
-  once, what is kept where, no listing where commands cannot run, each end
-  of a run's words, and an order's and an entry's round trip;
-- `turnOnModesChecks`: turning a buffer's on-modes on, the core's
-  (`Workspace.turnOnModes`, `Workspace.onModesOf`,
-  `Editor/ProjectMode/Listing.lean`), on the same driver: the on-modes kept
-  nearest first and read back, each a minor mode with the nearest first,
-  the listing checked of one that has one, and none turned on leaving the
-  buffer as it was; and the marker settings (`Workspace.markerSettings`),
-  the loop's workspace settings with the marker modes of the hook's
-  contributions.
+What a minor mode contributes for a kind of project is the interface
+package `compile-api`'s (`packages/compile-api/`; `docs/design/packages.md`),
+and its test driver runs the checks of the vocabulary, of the two extension
+points and their hook, of an error format as data, of a contribution's
+computed commands and of turning on-modes on
+(`CompileApiTest.contributionChecks`, `.compileApiChecks`,
+`.formatDataChecks`, `.listingChecks` and `.turnOnModesChecks`), which were
+this driver's (`ModelTest.<name>`) while the vocabulary was the core's.
 
 What the compile mode makes of them is checked in its package
 (`packages/compile/CompileTest/`): `CompileTest.compileOfferChecks`,
@@ -1377,10 +1351,6 @@ def checks : List Check :=
     excerptDisplayChecks ++
     excerptViewedChecks ++
     jsonChecks ++
-    contributionChecks ++
-    formatDataChecks ++
-    listingChecks ++
-    turnOnModesChecks ++
     filesApiChecks ++
     buffersApiChecks ++
     shellApiChecks ++

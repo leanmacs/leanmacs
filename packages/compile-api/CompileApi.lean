@@ -1,5 +1,5 @@
+import CompileApi.Format
 import Editor.Extension
-import Editor.ProjectMode.Format
 import Editor.Workspace
 
 /-!
@@ -26,7 +26,7 @@ and keeps a package's.
   mode, after refusing ones that name a command twice. A package may give
   them as config does.
 - `Compile.hook` reads both ("The hook's order", below). The compile mode
-  (`packages/compile/`), the listing (`Editor/ProjectMode/Listing.lean`)
+  (`packages/compile/`), the listing (`packages/compile-api/CompileApi/Listing.lean`)
   and the workspace's modes on markers (`Workspace.markerSettings`, there)
   read it, and none of them reads the points themselves.
 
@@ -67,7 +67,7 @@ A contribution (`Contribution`) is registered under its minor mode's name
 in a buffer whose file is under one of them inside its workspace
 (`Editor/Workspace.lean`, "Modes on markers"); its named commands
 (`commands`, each a name such as `build` and a command line); its error
-formats (`formats`, `Editor/ProjectMode/Format.lean`); and whether its root
+formats (`formats`, `packages/compile-api/CompileApi/Format.lean`); and whether its root
 is its outermost marker in the workspace rather than its nearest
 (`outermost`). Registering a `Mode`
 record of the same name is optional: a buffer's minor modes are by name.
@@ -80,7 +80,7 @@ contribution written before stays valid.
 A contribution's `listing` is a program, run in the mode's root, whose
 standard output its `read` turns into named commands, as `mise-mode` reads
 `mise tasks ls --json`. When it runs, where what it gave is kept and how a
-failure is said are `Editor/ProjectMode/Listing.lean`'s. A named command may
+failure is said are `packages/compile-api/CompileApi/Listing.lean`'s. A named command may
 carry the directory it runs in (`NamedCommand.directory`), resolved
 against its mode's root, as a mise task runs in its own `dir`.
 

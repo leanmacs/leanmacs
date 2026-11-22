@@ -31,7 +31,7 @@ config (`Editor/Config/Packages.lean`).
   next start's restore.
   The job `compile-list`, which runs a contribution's listing, is the
   `workspace` package's (`packages/workspace/Workspace/Compiled.lean`,
-  `Editor/ProjectMode/Listing.lean`): a host handed this package and not
+  `packages/compile-api/CompileApi/Listing.lean`): a host handed this package and not
   that one offers a contribution's own commands and no listed ones.
 - **The mode**: `compilation`, the compilation buffer's major mode
   (`Compile.mode`).

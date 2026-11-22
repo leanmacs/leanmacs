@@ -70,6 +70,14 @@ path = "../project-api"
 name = "vc-api"
 path = "../vc-api"
 
+# The interface package of the compile mode: the marker modes the marker
+# search looks for are those of the contributions registered at its
+# extension point (`Workspace.markerSettings`), the on-modes it turns on
+# are its (`Workspace.turnOnModes`), and its tests run on its listing kit.
+[[require]]
+name = "compile-api"
+path = "../compile-api"
+
 [[require]]
 name = "editor-core"
 path = "../../lean"

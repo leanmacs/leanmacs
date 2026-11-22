@@ -12,8 +12,6 @@ import Editor.File
 import Editor.Language
 import Editor.Mode
 import Editor.Program
-import Editor.ProjectMode
-import Editor.ProjectMode.Format
 import Editor.Scene
 import Editor.State
 import Editor.State.Request
@@ -472,10 +470,7 @@ def modeMarkerChecks : List Check :=
             Workspace.onModes #[{ outer with outermost := false }, nearest] "/r/k/l" "/r" present ==
               #[{ mode := "o-mode", root := "/r/k/l" }, { mode := "n-mode", root := "/r/k" }] &&
             Workspace.onModes #[outer, nearest] "/r/k/l" "/r" #[("/r/k/l", "o.toml")] ==
-              #[{ mode := "o-mode", root := "/r/k/l" }] &&
-            (Compile.Contribution.markerMode
-                { mode := "o-mode", markers := #["o.toml"], outermost := true }) ==
-              outer) },
+              #[{ mode := "o-mode", root := "/r/k/l" }]) },
     { name := "an on-mode crosses as a tree and back; a tree that is no on-mode reads as none"
       run :=
         let on : Workspace.OnMode := { mode := "a-mode", root := "/a b/é" }

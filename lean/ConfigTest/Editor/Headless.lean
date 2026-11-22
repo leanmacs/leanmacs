@@ -52,8 +52,6 @@ import Editor.ModeLine
 import Editor.Package
 import Editor.Process.Environment
 import Editor.Program
-import Editor.ProjectMode
-import Editor.ProjectMode.Listing
 import Editor.Scene
 import Editor.Setup
 import Editor.State
@@ -2547,7 +2545,7 @@ def shippedChecks (_ : Unit) : List Check :=
         return ["workspace-current", "find-file-in-workspace", "find-file-in-project",
                   "find-file-in-another-workspace"].all
               (fun name => (registry.find? name).isNone) &&
-            ["find-workspace", "find-mode-markers", Compile.listJob, "workspace-files",
+            ["find-workspace", "find-mode-markers", "compile-list", "workspace-files",
                   "project-workspaces", "project-workspace-choose", "project-workspace-find"].all
               (fun name => (registry.findJob? name).isNone) &&
             (registry.source? "workspace-files").isNone &&
@@ -2610,7 +2608,7 @@ def shippedChecks (_ : Unit) : List Check :=
             names.all (fun name => (registry.ex? name).isNone) &&
             (registry.findJob? "compile-run").isNone &&
             (registry.mode? "compilation").isNone &&
-            (registry.extensionsAt (TypeName.typeName Compile.Contribution)).isEmpty },
+            (registry.extensionsAt `Editor.Compile.Contribution).isEmpty },
     { name :=
         "the executable's hosts start with nothing of the minibuffer package: no command minibuffer-accept, minibuffer-cancel, minibuffer-next, minibuffer-previous, minibuffer-insert, minibuffer-delete-backward, minibuffer-delete-to-start, minibuffer-ask or minibuffer-candidates, and no mode minibuffer, the one the minibuffer's buffer is made with, registered by a package of the core's Lake package"
       run := do

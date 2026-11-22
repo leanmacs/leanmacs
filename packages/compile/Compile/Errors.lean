@@ -1,4 +1,4 @@
-import Editor.ProjectMode.Format
+import CompileApi.Format
 
 /-!
 # Error formats, read: locations in a compilation's output
@@ -8,7 +8,7 @@ lines of a compilation's output: a file, a line, maybe a column, and a
 severity. Pure Lean with no outside world, so it is its own model and has
 no port, and free of the editor API.
 
-An error format is data (`Format`, `Editor/ProjectMode/Format.lean`), which
+An error format is data (`Format`, `packages/compile-api/CompileApi/Format.lean`), which
 a minor mode's contribution carries and config names and builds. That
 module is the core's: the setup port and the registry hold formats. This
 one is the compile mode's: it is what reads output with them, the matcher

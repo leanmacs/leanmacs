@@ -1,5 +1,9 @@
 import Compile
 import Compile.Compiled
+import CompileApi
+import CompileApi.Format
+import CompileApi.Listing
+import CompileApiTest.Listing
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
@@ -18,9 +22,6 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
-import Editor.ProjectMode
-import Editor.ProjectMode.Format
-import Editor.ProjectMode.Listing
 import Editor.Scene
 import Editor.Setup
 import Editor.State
@@ -29,7 +30,6 @@ import Editor.Test.Ex
 import Editor.Test.Files
 import Editor.Test.Hosted
 import Editor.Test.Keys
-import Editor.Test.Listing
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Models
@@ -48,7 +48,7 @@ import MinibufferApi
 The compile commands' world: their jobs, keys, bindings and driver, the error
 formats they read, the compile hook's setup, and the driver of the compile
 mode's checks of a listing, over the listing checks' world
-(`Editor/Test/Listing.lean`, the core's test kit). It names no feature but
+(`packages/compile-api/CompileApiTest/Listing.lean`, the core's test kit). It names no feature but
 the compile mode: files are opened by `files-api`'s fake
 (`FilesApiTest.fake`), a file's workspace and its modes on markers are the
 core kit's stand-ins' (`compileFound`, `hookMarkers`, `compileWorkspace`),

@@ -1,6 +1,6 @@
+import CompileApi.Listing
 import Editor.Extension
 import Editor.Package
-import Editor.ProjectMode.Listing
 import Workspace.Attach
 import Workspace.FindFile
 import Workspace.FindInProject
@@ -41,7 +41,7 @@ packages (`packages/files/`, `packages/buffers/`).
   `compile-list`, which that job's command starts for each mode it turned
   on whose contribution computes its commands: it runs the contribution's
   listing in the mode's root when its markers' stamps have changed
-  (`Compile.listWork`, `Editor/ProjectMode/Listing.lean`). It is registered
+  (`Compile.listWork`, `packages/compile-api/CompileApi/Listing.lean`). It is registered
   here, not by the `compile` package, because the listing is the core's
   and the mode marker search is what starts it. And
   `workspace-files`, the job of the finder's source, which runs the

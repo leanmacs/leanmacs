@@ -1,19 +1,22 @@
-import Editor.ProjectMode.Format
+import CompileApi.Format
+import CompileApiTest.Check
 import Editor.Value
-import ModelTest.Check
 
 /-!
-# Model tests: `Editor/ProjectMode/Format.lean`
+# Model tests: `CompileApi/Format.lean`
 
-The model tests of `Editor/ProjectMode/Format.lean`: `formatDataChecks`. The
-root module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `packages/compile-api/CompileApi/Format.lean`:
+`formatDataChecks`, which were the core's (`ModelTest.formatDataChecks`)
+while the vocabulary was. The test driver's root,
+`CompileApiTest/Model.lean`, runs them; its module doc says what each
+shows.
 -/
 
-namespace ModelTest
+namespace CompileApiTest
 
 open Editor
 
-/-- The checks of an error format as data (`Editor/ProjectMode/Format.lean`):
+/-- The checks of an error format as data (`packages/compile-api/CompileApi/Format.lean`):
 pure, with no matcher. What a format reads in a line is the compile mode's
 (`CompileTest.compileErrorChecks`). -/
 def formatDataChecks : List Check :=
@@ -66,4 +69,4 @@ def formatDataChecks : List Check :=
             Compile.optional Value.nat (some 3) == .nat 3 &&
             Compile.optional Value.nat none == .null) }]
 
-end ModelTest
+end CompileApiTest

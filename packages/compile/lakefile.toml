@@ -35,9 +35,10 @@
 #
 # It requires no feature. It reaches the shell's history through the core's
 # interface library `shell-api` (`ShellApi`), visits a location's file
-# through `files-api` (`FilesApi`), and reads a buffer's on-modes from the
-# core (`Workspace.onModesOf`, `Editor.ProjectMode.Listing`), since the
-# features-as-packages roadmap's phase 6.
+# through `files-api` (`FilesApi`), since the features-as-packages roadmap's
+# phase 6, and reads the contributions, their hook and a buffer's on-modes
+# from the interface package `compile-api` (`Compile.hook`,
+# `Workspace.onModesOf`, `CompileApi.Listing`), since its phase 8.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/compile update --keep-toolchain
@@ -56,6 +57,14 @@ leanOptions = { linter.all = true, warningAsError = true }
 [[require]]
 name = "minibuffer-api"
 path = "../minibuffer-api"
+
+# The interface package of the compile mode: the contribution vocabulary,
+# the two extension points this package registers its shipped modes at and
+# reads through `Compile.hook`, the listing, and the contract check and the
+# listing kit its tests run.
+[[require]]
+name = "compile-api"
+path = "../compile-api"
 
 [[require]]
 name = "editor-core"

@@ -23,6 +23,7 @@ import Editor.TabCommands.Compiled
 import Editor.Test.AtPoint
 import Editor.Test.Ex
 import Editor.Test.Excerpt
+import Editor.Test.Hosted
 import Editor.Test.Linked.Bench
 import Editor.Test.Linked.Frames
 import Editor.Test.Linked.Keys
@@ -31,11 +32,11 @@ import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Shipped
 import Editor.Test.Linked.Syntax
 import Editor.Test.Linked.Trees
-import Editor.Test.Listing
 import Editor.Test.Modes
 import Editor.Test.Prompts
 import Editor.Test.Sources
 import Editor.Test.Views
+import Editor.Test.Workspace
 import Editor.Text.Word
 import Editor.Theme.Check
 import Editor.Theme.Picture
@@ -81,11 +82,14 @@ vocabularies, `Editor.Vocabulary`, and the undo tree's theorems,
 (`Editor.Config.Elaborator.Model`), the executable's entry (`Editor.Main`, which brings the
 hosts, the executable's modes and `Editor.Command.Append`),
 and the test kit the core publishes for a package's tests: the model
-tests' (`Editor.Test.…`, `Editor/Test/`: `Editor.Test.Listing` and
-`Editor.Test.Prompts`, which import the rest of it, among it the kit's
+tests' (`Editor.Test.…`, `Editor/Test/`: `Editor.Test.Prompts`, which
+imports much of it, among it the kit's
 hand-written minibuffer (`Editor.Test.Minibuffer`), and
-`Editor.Test.Shipped`, `Editor.Test.Sources` and the kit's hand-written
-at-point (`Editor.Test.AtPoint`), which no other kit module imports) and the
+`Editor.Test.Shipped`, `Editor.Test.Sources`, the kit's hand-written
+at-point (`Editor.Test.AtPoint`), and `Editor.Test.Files`, `.Hosted`,
+`.Opener` and `.Workspace`, which no other kit module imports since the
+listing's kit moved to `compile-api` in phase 8, with `Editor.File.Cases`
+and `Editor.UndoTree.Cases`, which it brought) and the
 linked tests' (`Editor.Test.Linked.…`, `Editor/Test/Linked/`: its rig, its
 services, its trees, its hosts over the real elaborator, which bring
 their listings, and its shipped host, `Editor.Test.Linked.Shipped`); and the feature kits still in the core: none since phase

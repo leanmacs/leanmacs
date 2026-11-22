@@ -1,11 +1,11 @@
+import CompileApi
+import CompileApi.Listing
 import Editor.Extension
 import Editor.File.Model
 import Editor.Job.Model
 import Editor.Loop.Driver
 import Editor.Process
 import Editor.Process.Model
-import Editor.ProjectMode
-import Editor.ProjectMode.Listing
 import Editor.Test.Driver
 import Editor.Test.Hosted
 import Editor.Test.Keys
@@ -15,29 +15,33 @@ import Editor.Workspace
 import FilesApi
 
 /-!
-# The test kit: Listing
+# The kit of `compile-api`'s listing checks
 
 A contribution with a listing, `t-mode`, and its world: the repositories it
 is found in, what its listing prints in each, and what a driver is asked
 about it. The world it is found in (`listingWorld`, `listingJobModel`)
 names the workspace finder's model and is the workspace feature's kit's
-(`packages/workspace/WorkspaceTest/Kit.lean`). It names core modules only, with stand-ins
+(`packages/workspace/WorkspaceTest/Kit.lean`). It names the core's modules
+and this package's only, with stand-ins
 written over the core's API for what the workspace does once a file opens:
 a listing file's workspace and on-modes (`listingFound`, `listingOn`,
 `listingOpened`, and `kubeOpened` for a workspace that cannot run
 commands), modes on markers turned on as given (`markedPackage`), and the
 marker search over a known set of marker files (`markersBy`,
 `markersByPackage`). So the checks of the listing
-(`ModelTest/Editor/ProjectMode/Listing.lean`) build their host from it with
+(`packages/compile-api/CompileApiTest/CompileApi/Listing.lean`) build their host from it with
 no package outside the core, and the compile mode's checks of what it makes
 of a listing and of its hook, in its package
 (`packages/compile/CompileTest/`), use the same world. It holds no checks of
 its own.
 
-Published for a package's tests: it is a module of the core's test kit, a
-test double in the namespace `Editor.Test`, which a package's test modules
-may import and its library may not (`docs/design/packages.md`, "What a
-package may import"). The core's own model tests are written on it.
+Published for a package's tests, as an interface package publishes its fake
+(AGENTS.md, "Testing with hand-written mocks"): a test double in the
+namespace `Editor.Test`, which a package's test modules may import and its
+library may not (`docs/design/packages.md`, "What a package may import").
+It was the core kit's module `Editor.Test.Listing` until features-as-packages
+phase 8 moved the vocabulary it is about here; its declarations keep their
+names.
 -/
 
 namespace Editor.Test

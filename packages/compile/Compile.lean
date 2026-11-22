@@ -1,13 +1,13 @@
 import Compile.Contribution
 import Compile.Errors
+import CompileApi
+import CompileApi.Format
+import CompileApi.Listing
 import Editor.Api
 import Editor.Command.Call
 import Editor.File
 import Editor.Jumps
 import Editor.Mode
-import Editor.ProjectMode
-import Editor.ProjectMode.Format
-import Editor.ProjectMode.Listing
 import Editor.Workspace
 import FilesApi
 import ShellApi
@@ -33,10 +33,10 @@ modules are named `Compile.…` and import only modules of the core's API;
 paths written `Editor/…` here are the core's (`lean/Editor/…`). Its
 declarations keep the namespace `Editor.Compile`, which the core's own
 vocabulary for it is in already (`Compile.Contribution`, `Compile.Format`,
-in `Editor/ProjectMode.lean` and `Editor/ProjectMode/Format.lean`), so
+in `packages/compile-api/CompileApi.lean` and `packages/compile-api/CompileApi/Format.lean`), so
 config writes `Compile.cargoMode` as it did. What stays the core's: that
 vocabulary, the listing of computed commands with its job and its store
-(`Editor/ProjectMode/Listing.lean`), and the faces `compilation.*`
+(`packages/compile-api/CompileApi/Listing.lean`), and the faces `compilation.*`
 (`Editor/Face/Vocabulary.lean`).
 
 ## The scope
@@ -160,7 +160,7 @@ is still said.
 
 ## Locations
 
-The error formats (`Editor/ProjectMode/Format.lean`), read by the matcher
+The error formats (`packages/compile-api/CompileApi/Format.lean`), read by the matcher
 (`Compile/Errors.lean`), find the locations of a
 run's output as its lines arrive, not at its end: `compilation-output` and
 `finished` scan the lines they have just appended (`noteSites`, `scan`),
@@ -236,11 +236,11 @@ first. Three commands visit a location and make it the current one:
 ## The hook
 
 Minor modes give the compile mode what fits a kind of project
-(`Compile.Contribution`, `Editor/ProjectMode.lean`). A buffer's
-on-modes (`Workspace.onModesOf`, `Editor/ProjectMode/Listing.lean`), nearest
+(`Compile.Contribution`, `packages/compile-api/CompileApi.lean`). A buffer's
+on-modes (`Workspace.onModesOf`, `packages/compile-api/CompileApi/Listing.lean`), nearest
 root first, then in registration order, decide where a run goes, what
 `compile` offers and how the output is read. The contributions are read at their
-extension point through the hook (`Compile.hook`, `Editor/ProjectMode.lean`),
+extension point through the hook (`Compile.hook`, `packages/compile-api/CompileApi.lean`),
 so a reload's change holds from the next command.
 
 - **Where.** With on-modes, `compile` runs its line, typed or default, in
@@ -259,7 +259,7 @@ so a reload's change holds from the next command.
   directory the command names.
 - **Computed commands.** A use, `compile`'s prompt and every path of
   `compile-command`, first checks the on-modes' listings in the scope's
-  place (`refreshScope`, `Editor/ProjectMode/Listing.lean`), which reruns a
+  place (`refreshScope`, `packages/compile-api/CompileApi/Listing.lean`), which reruns a
   listing whose markers' stamps changed, or after a reload; that use
   offers what was last listed, and a new list is offered from the use after
   the check's job's command arrives. The commands listed are offered with
@@ -267,7 +267,7 @@ so a reload's change holds from the next command.
 - **Formats.** A run's output is read with its modes' formats, then the
   general one ("Locations").
 - **Project commands.** Project commands (`projectCommands`,
-  `Editor/ProjectMode.lean`) have one source: the hook, which
+  `packages/compile-api/CompileApi.lean`) have one source: the hook, which
   holds config's latest and then a package's, keyed by the project's identity. `compile` and
   `compile-command` take the scope's project's from it (`hookOffers`), and
   `projectSettings` reads a mode's settings from it, so a reload's change
@@ -398,7 +398,7 @@ def Scope.place : Scope → Place
   | .workspace found _ => .workspace found.location
   | .directory path => .directory path
 
-/-- The scope's listing place (`Editor/ProjectMode/Listing.lean`): its
+/-- The scope's listing place (`packages/compile-api/CompileApi/Listing.lean`): its
 workspace's location, `some none` for a directory scope, and none for a
 workspace whose location cannot run commands (`Location.can`). -/
 def Scope.listingPlace : Scope → Option (Option Location)

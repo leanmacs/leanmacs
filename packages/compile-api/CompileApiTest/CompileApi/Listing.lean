@@ -1,22 +1,21 @@
-import Editor.Config.Registry
+import CompileApi
+import CompileApi.Listing
+import CompileApiTest.Check
+import CompileApiTest.Listing
 import Editor.File
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Model
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Process
 import Editor.Process.Model
-import Editor.ProjectMode
-import Editor.ProjectMode.Listing
 import Editor.State
 import Editor.Store
 import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Hosted
 import Editor.Test.Keys
-import Editor.Test.Listing
 import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Test.Opener
@@ -25,21 +24,23 @@ import Editor.Test.Workspace
 import Editor.Workspace
 import FilesApi
 import FilesApiTest.Fake
-import ModelTest.Check
 
 /-!
-# Model tests: `Editor/ProjectMode/Listing.lean`
+# Model tests: `CompileApi/Listing.lean`
 
-The model tests of `Editor/ProjectMode/Listing.lean`: `listingChecks` and
-`turnOnModesChecks`. The root module `ModelTest` runs them; its module doc
-says what each shows.
+The model tests of `packages/compile-api/CompileApi/Listing.lean`:
+`listingChecks` and `turnOnModesChecks`, which were the core's
+(`ModelTest.<name>`) while the vocabulary was. The test driver's root,
+`CompileApiTest/Model.lean`, runs them; its module doc says what each
+shows.
 
-The listing is a core module, so these checks name core modules only: their
-host is handed the kit's opener's commands and jobs, with the job
-`compile-list`, and no package outside the core. Where the workspace finds a
+The listing is an interface package's module, so these checks name the
+core's modules and this package's only: their
+host is handed the core kit's opener's commands and jobs, with the job
+`compile-list`, and no implementation package. Where the workspace finds a
 file's workspace and its marker search turns modes on, they run the kit's
 stand-ins written over the core's API (`listingOpened`, `kubeOpened`,
-`Editor/Test/Listing.lean`: the kit's `attachAt` and
+`packages/compile-api/CompileApiTest/Listing.lean`: the kit's `attachAt` and
 `Workspace.turnOnModes`, as the kit's `markedPackage` does);
 that the workspace's marker search starts a listing after it is held by the
 workspace's `workspaceModesChecks`. What the compile mode makes of a listing, the
@@ -47,7 +48,7 @@ commands `compile-command` offers and runs, is checked with the compile mode
 (`CompileTest.compileListedChecks`, `CompileTest.compileOfferChecks`).
 -/
 
-namespace ModelTest
+namespace CompileApiTest
 
 open Editor
 open Editor.Test
@@ -103,7 +104,7 @@ def turningDriver (on : Array Workspace.OnMode) : Option TestDriver :=
 
 /-- The checks of turning a buffer's on-modes on, the core's
 (`Workspace.turnOnModes`, `Workspace.onModesOf`,
-`Editor/ProjectMode/Listing.lean`), on the listing checks' driver. -/
+`packages/compile-api/CompileApi/Listing.lean`), on the listing checks' driver. -/
 def turnOnModesChecks : List Check :=
   [{  name :=
         "turning on-modes on keeps them as the buffer's marker-modes value, nearest first, which onModesOf reads back, adds each as a minor mode so the nearest is first, and checks the listing of each that has one in the buffer's place"
@@ -175,7 +176,7 @@ def turnOnModesChecks : List Check :=
             hostedAsked plain Workspace.markerSettings == some ({ roots }, 3)) }]
 
 /-- The checks of a contribution's computed commands
-(`Editor/ProjectMode/Listing.lean`), on the loop's driver over the editor's
+(`packages/compile-api/CompileApi/Listing.lean`), on the loop's driver over the editor's
 models, the job model and the process model, with `t-mode`. -/
 def listingChecks : List Check :=
   [{  name :=
@@ -329,4 +330,4 @@ def listingChecks : List Check :=
             Compile.listingStore.name == "compile-listings" &&
             ((Compile.listWork [.nat 1] ()).runModel {}).1 matches .failed _) }]
 
-end ModelTest
+end CompileApiTest

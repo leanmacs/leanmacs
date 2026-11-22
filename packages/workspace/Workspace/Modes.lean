@@ -1,5 +1,5 @@
+import CompileApi.Listing
 import Editor.Api
-import Editor.ProjectMode.Listing
 import Workspace.Finder
 
 /-!
@@ -7,7 +7,7 @@ import Workspace.Finder
 
 How a buffer whose file opens comes to have the minor modes the registered
 compile contributions' markers turn on (`Editor/Workspace.lean`, "Modes on
-markers"; `Editor/ProjectMode.lean`). Written over the editor API
+markers"; `packages/compile-api/CompileApi.lean`). Written over the editor API
 and the marker search (`Workspace.presentMarkers`,
 `Workspace/Finder.lean`). A command may not wait and a job may, so it
 is, as finding a workspace is (`Workspace/Attach.lean`), a call that
@@ -25,7 +25,7 @@ and imports this module (`packages/compile/Compile.lean`).
   directory when it has no workspace.
 - **Only with a contribution.** The marker modes are those of the compile
   hook's contributions (`Workspace.Settings.markerModes`, filled by
-  `Workspace.markerSettings`, `Editor/ProjectMode/Listing.lean`); with
+  `Workspace.markerSettings`, `packages/compile-api/CompileApi/Listing.lean`); with
   none, no job starts, so a host that registers none sees nothing new.
 - **The job** (`find-mode-markers`, `markerJob`) is started with a marker
   order (`MarkerOrder`): the buffer, the file's directory, the bound and
@@ -35,7 +35,7 @@ and imports this module (`packages/compile/Compile.lean`).
 - **Its command** (`modesFound`) asks the loop for the marker modes now
   registered, and, while the buffer still holds a file in the order's
   directory, turns the on-modes (`Workspace.onModes`) on by the core's rule
-  (`Workspace.turnOnModes`, `Editor/ProjectMode/Listing.lean`, which this
+  (`Workspace.turnOnModes`, `packages/compile-api/CompileApi/Listing.lean`, which this
   module imports for it): kept as the buffer-local value `marker-modes`,
   nearest first, each a minor mode, and their listings checked. A buffer
   whose markers turn no mode on is left as it was. A reload's

@@ -1,6 +1,6 @@
+import CompileApi.Listing
 import Editor.Extension
 import Editor.Job
-import Editor.ProjectMode.Listing
 
 /-!
 # The interface library `project-api`
@@ -42,8 +42,9 @@ value of the name wins. With none a caller says so.
 ## Its names
 
 `find-file-in-workspace` and `find-file-in-project`, which the default
-config reaches, and the job `compile-list`, the core's
-(`Compile.listJob`), which the core starts and the workspace registers.
+config reaches, and the job `compile-list`, the interface package
+`compile-api`'s (`Compile.listJob`, `packages/compile-api/CompileApi/Listing.lean`),
+which turning on-modes on starts and the workspace registers.
 
 Its test library publishes a fake (`ProjectApiTest.fake`, a `Workspaces`
 value that hands every continuation a workspace given to it) and the
@@ -176,7 +177,7 @@ def findFileInWorkspaceName : String :=
 def findFileInProjectName : String :=
   "find-file-in-project"
 
-/-- The name of the job that lists a mode's computed commands: the core's
+/-- The name of the job that lists a mode's computed commands: `compile-api`'s
 (`Compile.listJob`). -/
 def compileListJob : String :=
   Compile.listJob

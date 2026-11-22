@@ -2,6 +2,8 @@ import Compile
 import Compile.Compiled
 import Compile.Contribution
 import Compile.Shipped
+import CompileApi.Listing
+import CompileApiTest.Listing
 import CompileTest.Check
 import Editor.Api
 import Editor.Clipboard
@@ -11,14 +13,12 @@ import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Package
 import Editor.Program
-import Editor.ProjectMode.Listing
 import Editor.State
 import Editor.SyntaxTree
 import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
-import Editor.Test.Listing
 import Editor.Test.Workspace
 import Editor.Text
 import Editor.Watch

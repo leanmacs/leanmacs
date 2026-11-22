@@ -157,7 +157,7 @@ the model tests run it with outcomes built by hand
   them.
 - **An install replaces config's values at every extension point**
   (`Registry.replaceExtensions`), config's compile contributions and
-  project commands among them (`Editor/ProjectMode.lean`): a file opened
+  project commands among them (`packages/compile-api/CompileApi.lean`): a file opened
   after it turns on the modes they give, and the compile mode uses their
   commands at its next use. A rejected outcome changes neither.
 - **A reload cancels the old config's jobs when, and only when, it

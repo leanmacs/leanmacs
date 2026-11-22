@@ -35,6 +35,13 @@ testDriver = "«project-api-test»"
 defaultTargets = ["ProjectApi", "ProjectApiTest"]
 leanOptions = { linter.all = true, warningAsError = true }
 
+# The interface package of the compile mode: the reach names its listing
+# job (`Compile.listJob`, `CompileApi.Listing`) among the jobs a caller's
+# continuation may be.
+[[require]]
+name = "compile-api"
+path = "../compile-api"
+
 [[require]]
 name = "editor-core"
 path = "../../lean"

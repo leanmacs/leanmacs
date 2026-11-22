@@ -1,3 +1,4 @@
+import CompileApiTest.Listing
 import Editor.Api
 import Editor.Command.Call
 import Editor.Extension
@@ -10,7 +11,6 @@ import Editor.Loop.Driver
 import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Keys
-import Editor.Test.Listing
 import Editor.Test.Models
 import Editor.Test.Opener
 import Editor.Test.Workspace

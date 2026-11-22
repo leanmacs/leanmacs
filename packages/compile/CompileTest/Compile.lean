@@ -2,6 +2,9 @@ import Compile
 import Compile.Contribution
 import Compile.Errors
 import Compile.Shipped
+import CompileApi
+import CompileApi.Format
+import CompileApiTest.Listing
 import CompileTest.Check
 import CompileTest.Support.Compile
 import Editor.Api
@@ -30,8 +33,6 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
-import Editor.ProjectMode
-import Editor.ProjectMode.Format
 import Editor.Role
 import Editor.Scene
 import Editor.Setup
@@ -42,7 +43,6 @@ import Editor.SyntaxTree
 import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Keys
-import Editor.Test.Listing
 import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Test.Shell

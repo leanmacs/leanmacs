@@ -1,6 +1,6 @@
+import CompileApi.Listing
 import Editor.Api
 import Editor.Command.Call
-import Editor.ProjectMode.Listing
 import ProjectApi
 import Workspace.Finder
 import Workspace.Modes
@@ -27,7 +27,7 @@ hook's value as compiled code registers them are in
   feature's `adopt` runs once the buffer
   holds the file), the workspace settings are asked of the loop
   (`RegistryRequest.workspaceSettings`, through `Workspace.markerSettings`,
-  `Editor/ProjectMode/Listing.lean`, which fills their marker modes from the
+  `packages/compile-api/CompileApi/Listing.lean`, which fills their marker modes from the
   compile hook): config's roots and the config
   generation. A cached answer for the file's directory under that
   generation (`Workspace.Table.cached?`) is the buffer's at once, and
