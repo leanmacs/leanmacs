@@ -1,9 +1,10 @@
 The fixtures of contract-test's filtering checks (filteringChecks in
-lean/ContractTest/Editor/Completion/Filtering.lean) and of its checks of the
-listers a workspace's files are listed with (workspaceListerChecks in
-lean/ContractTest/Editor/Workspace/Lister.lean), which `mise run ffi-test`
-hands contract-test as its sixth argument. They must stay executable (mode
-100755).
+lean/ContractTest/Editor/Completion/Filtering.lean), which `mise run
+ffi-test` hands contract-test as its last argument. They must stay
+executable (mode 100755). The workspace package's linked checks of the
+listers a workspace's files are listed with (workspaceListerChecks) run on
+a byte-for-byte copy of `filter` in packages/workspace/tests/completion/: a
+linked test runs in its package's directory, and reads its fixtures there.
 
 - filter: stands for `fzf --filter`, so the checks pass where fzf is not
   installed. It accepts exactly `[--read0] [--print0] --filter <text>`: any

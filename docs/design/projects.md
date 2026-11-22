@@ -7,16 +7,19 @@ shared by everything is what this design exists to prevent. The shell and
 compile features are the first that need it; every later feature that
 scopes state by codebase or by checkout reads the same values.
 
-Built in `lean/Editor/Workspace.lean` (the data and the table),
-`lean/Editor/Workspace/Finder.lean` (the finder),
-`lean/Editor/Workspace/Model.lean` and `lean/Editor/Workspace/Contract.lean`
-(its model and its contract), `lean/Editor/Workspace/Attach.lean` (a
+The workspaces are the default package `workspace` (`packages/workspace/`)
+since the features-as-packages roadmap's phase 6, and the data and the
+table stay the core's. Built in `lean/Editor/Workspace.lean` (the data and
+the table), `lean/Editor/SearchRoot.lean` (what a search covers, the
+core's), `packages/workspace/Workspace/Finder.lean` (the finder),
+`packages/workspace/WorkspaceTest/Finder/Model.lean` and `packages/workspace/WorkspaceTest/Finder/Contract.lean`
+(its model and its contract), `packages/workspace/Workspace/Attach.lean` (a
 buffer's workspace and `workspace-current`),
-`lean/Editor/Workspace/Lister.lean` (which command lists a workspace's
-files), `lean/Editor/Workspace/FindFile.lean` (`find-file-in-workspace`),
-`lean/Editor/Workspace/Projects.lean` (the project's workspaces),
-`lean/Editor/Workspace/FindInProject.lean` (`find-file-in-project`) and
-`lean/Editor/Workspace/Compiled.lean` (their registrations).
+`packages/workspace/Workspace/Lister.lean` (which command lists a workspace's
+files), `packages/workspace/Workspace/FindFile.lean` (`find-file-in-workspace`),
+`packages/workspace/Workspace/Projects.lean` (the project's workspaces),
+`packages/workspace/Workspace/FindInProject.lean` (`find-file-in-project`) and
+`packages/workspace/Workspace/Compiled.lean` (their registrations).
 
 ## Three layers
 
@@ -280,8 +283,15 @@ finder into this picker with the typed text is phase 4's (below).
 
 `vc-worktrees-visit` and `find-file-in-project` both name a worktree the
 table may not know yet and then act on its workspace. The shared part is
-the workspace layer's (`Editor/Workspace/Reach.lean`); each command
-supplies only a continuation: what it does with the workspace's location,
+the workspace layer's (`Editor/Workspace/Reach.lean`), and since the
+features-as-packages roadmap's phase 5 a caller in another feature reaches
+it through the interface package `project-api` (`packages/project-api/ProjectApi.lean`,
+staged in the core in phase 5 and a package of its own since phase 6):
+the order and the continuation are the interface's types, and the
+workspace package registers its `reach` and `work` as the
+`ProjectApi.Workspaces` value, which `vc-worktrees-visit` reaches through
+`ProjectApi.workspaces?` and registers its find job over
+(`Extension.workJob`). Each command supplies only a continuation: what it does with the workspace's location,
 the job name its find runs under, the name a refused start is said under,
 and its sentence for a directory in no repository.
 
@@ -306,7 +316,7 @@ From inside the workspace finder, a key steps out to the project's
 workspaces without losing what was typed: `ws/fin`, the key, choose the
 other worktree, and the finder there opens with `ws/fin` typed and its
 list matched against it. Built by project navigation's phase 4
-(`lean/Editor/Workspace/FindInProject.lean`).
+(`packages/workspace/Workspace/FindInProject.lean`).
 
 - **The key** is `C-x C-d`, bound by compiled code to
   `find-file-in-another-workspace` in the keymap of the prompt category
@@ -337,8 +347,10 @@ list matched against it. Built by project navigation's phase 4
 
 ## A buffer's workspace
 
-- **On open.** When a file opens into a buffer (`Files.opened`), the buffer
-  is handed to `Workspace.attach`. The finder's answer for the file's
+- **On open.** When a file opens into a buffer (`Files.opened`), the files
+  feature runs the interface library `files-api`'s hook `FilesApi.Opened`,
+  where the workspace package registers `Workspace.attach`, so the buffer is
+  handed to it and files names no workspace module. The finder's answer for the file's
   directory is cached in the editor state, stamped with the config
   generation it was found under; a cached answer under the current
   generation is the buffer's at once and starts no job, so a second file of
@@ -360,7 +372,7 @@ list matched against it. Built by project navigation's phase 4
 - **A buffer with no file** takes the workspace of the buffer it was made
   from (`BufferId.inheritWorkspace`), or none. A workspace's shell output
   buffer, `*shell output: <label>*`, is made with the workspace of the
-  buffer `:!` ran in (`lean/Editor/Shell.lean`), so a `:!` typed in it
+  buffer `:!` ran in (`packages/shell/Shell.lean`), so a `:!` typed in it
   runs in that workspace again; outside any workspace it is `*shell
   output*`, with none. A workspace's compilation buffer,
   `*compilation: <label>*` (`packages/compile/Compile.lean`, the compile
@@ -461,8 +473,9 @@ open when the table has it: found or registered this session.
   workspace root. It was not built as a phase of its own: the workspace
   finder, `find-file-in-workspace`, is it.
 - `navigation-and-windows` phase 4 (built): `project-search` searches what
-  `find-file-in-workspace` would list, by the same rule
-  (`Workspace.FindFile.searched`): the location's workspace, or the
+  `find-file-in-workspace` would list, by the same rule, the core's
+  (`Workspace.searchRoot`, `lean/Editor/SearchRoot.lean`, which
+  `Workspace.FindFile.searched` adds the lister to): the location's workspace, or the
   buffer's, or the directory a command run for the buffer would use; a
   location that cannot read files and run commands is refused. It does not
   list through the workspace's lister: the library's grep service walks the
@@ -507,8 +520,8 @@ open when the table has it: found or registered this session.
   worktree finds its own; a mode's root may be below the workspace's root,
   and `compile` runs there, its output still in the workspace's
   compilation buffer. Config's commands and settings for a project, by its
-  identity, are read from config's latest as the loop is told it
-  (`RegistryRequest.compileHook`), not copied into the project's store, so
+  identity, are read from config's latest at their extension point
+  (`Compile.hook`), not copied into the project's store, so
   every worktree of the codebase offers them, no other project does, and a
   reload's change is read at once.
   The on-modes a run started with are part of the workspace's record.

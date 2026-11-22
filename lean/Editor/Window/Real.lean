@@ -241,7 +241,8 @@ def closeOnceEnded (platform : Ffi.Platform) (loop : Task (Except IO.Error Unit)
 
 /-- Runs the editor in a window of `platform`, on `options.file` when one
 was given, drawn from `display` and with `clipboard` as its clipboard, and
-returns once the window has closed: the host is started with `packages` as
+returns once the window has closed: the host is started to run the input
+scheme `scheme`, with `packages` as
 the packages it registers (`Headless.shipped`), and what
 `options.starts` gives is posted before the first event (the file opened
 when one was given, each of `said` said in the echo area, and config
@@ -277,17 +278,18 @@ said and the status is 1. The restart hands on the options as given
 `afterRestore` is a test's requests, sent right after the restore, which
 holds them until it has finished (`ffi-test window-host-restart` runs
 `restart` so). -/
-def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Platform)
-    (options : Options) (plan : ConfigPlan) (display : Ffi.Display) (clipboard : ClipboardHandler)
-    (said : Array String) (shutdown : IO (Task Bool) → IO Unit) (processes : Process.Host)
-    (patience : Option Nat := some configPatience) (workingDirectory : System.FilePath := "/")
-    (generator : Option Config.Generator := none) (afterRestore : Array Headless.Request := #[])
+def host (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Name)
+    (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (display : Ffi.Display)
+    (clipboard : ClipboardHandler) (said : Array String) (shutdown : IO (Task Bool) → IO Unit)
+    (processes : Process.Host) (patience : Option Nat := some configPatience)
+    (workingDirectory : System.FilePath := "/") (generator : Option Config.Generator := none)
+    (afterRestore : Array Headless.Request := #[])
     (replace : Restart.Invocation → IO String := Restart.noExec)
     (say : String → IO Unit := IO.eprintln) (packageSet : PackageSet.Running := {})
     (package : Option Config.PackageFiles := none) : IO UInt32 := do
   let shipped ←
-    Headless.shipped packages base (options.sysroot.getD "") options.oleans (options.config.getD "")
-        IO.eprintln processes (stateDirectory := options.stateDirectory)
+    Headless.shipped scheme packages base (options.sysroot.getD "") options.oleans
+        (options.config.getD "") IO.eprintln processes (stateDirectory := options.stateDirectory)
   let collaborators :=
     { shipped with
       display := hostDisplay display platform
@@ -410,7 +412,7 @@ def environmentAt (appPath : String) : IO Environment := do
       home := ← IO.getEnv "HOME", appPath
       recordedOleans := ← ModuleLookup.recorded appPath readFile }
 
-/-- `editor [<file>]`, with the packages its host registers, the base
+/-- `editor [<file>]`, with the input scheme its host runs, the packages its host registers, the base
 config is elaborated on, what the build says of the editor for the files
 it generates in the config directory (`origin`) and the command line's
 `arguments`: reads the world at
@@ -420,8 +422,9 @@ and the usage on stderr, and status 2. It exits explicitly, with the status
 `host` gave. When the system's quit was let go ahead, the platform may have
 ended the process with status 0 inside the run instead (the window port's
 rule; AppKit's terminate on macOS), once `shutdown` had run. -/
-def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.LakePackage.Origin)
-    (launch : Restart.Launch) (arguments : List String) : IO UInt32 := do
+def main (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Name)
+    (origin : Config.LakePackage.Origin) (launch : Restart.Launch) (arguments : List String) :
+    IO UInt32 := do
   let appPath := (← IO.appPath).toString
   let environment := { (← environmentAt appPath) with shipped := launch.shipped.map (·.toString) }
   let options ←
@@ -481,7 +484,7 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
       pure none
   -- A restart is exec'd by `host`, through the real exec.
   let status ←
-    host packages base .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown
+    host scheme packages base .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown
         (.window home) (workingDirectory := environment.workingDirectory) (generator := generator)
         (replace := Restart.real) (packageSet := packageSet) (package := package)
   IO.Process.exit status.toUInt8

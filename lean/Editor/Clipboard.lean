@@ -36,6 +36,21 @@ Where no clipboard is handed in, every request is answered so
 (`Clipboard.unavailable`, the handler a runner of commands takes by
 default, `Editor/Command/Real.lean`).
 
+## The Edit menu's names
+
+`Clipboard.cutName` (`clipboard-cut`), `copyName` (`clipboard-copy`),
+`pasteName` (`clipboard-paste`) and `selectAllName` (`select-all`) are the
+names of the commands the Edit menu's Cut, Copy, Paste and Select All run,
+and `s-x`, `s-c`, `s-v` and `s-a` with them (`packages/menu/Menu/Compiled.lean`).
+The core names them and registers no command under them: what cutting or
+pasting does depends on the input scheme (its selection's shape, its
+registers), so the package that supplies the scheme registers the four,
+as evil does (`packages/evil/Evil/Clipboard.lean`). They are here because the
+menu, which is in the core, may not import a package's module, and
+because every scheme must answer these four items. Pinned by
+`ModelTest.menuChecks` (the menu's items and keys name them) and
+`EvilTest.clipboardCommandChecks` (evil registers them).
+
 ## Where an addition goes
 
 | Addition | Where |
@@ -99,6 +114,23 @@ def read : ClipboardM (Except ClipboardError (Option String)) :=
 nothing written, with `unavailable` when the clipboard cannot be reached. -/
 def write (text : String) : ClipboardM (Except ClipboardError Unit) :=
   Program.request (port := clipboardPort) (.write text)
+
+/-- The name of the command the Edit menu's Cut runs ("The Edit menu's
+names", in the module docs). -/
+def cutName : String :=
+  "clipboard-cut"
+
+/-- The name of the command the Edit menu's Copy runs. -/
+def copyName : String :=
+  "clipboard-copy"
+
+/-- The name of the command the Edit menu's Paste runs. -/
+def pasteName : String :=
+  "clipboard-paste"
+
+/-- The name of the command the Edit menu's Select All runs. -/
+def selectAllName : String :=
+  "select-all"
 
 /-- The handler of a host that was handed no clipboard: a read and a write
 are each answered `unavailable`, and nothing is kept. -/

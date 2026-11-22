@@ -6,7 +6,7 @@ import Editor.Restore
 /-!
 # `:restart`: the session handed to a new process
 
-The `restore` package's restart (`Editor/Restore/Compiled.lean`), over the
+The `restore` package's restart (`packages/restore/`), over the
 session's reconciler (`Editor/Restore.lean`) and the plan of
 `Editor/Restart/Handover.lean`. `:restart` re-execs the running executable;
 `:restart <exe>` and `Editor.restart (into := some exe)` exec another, as

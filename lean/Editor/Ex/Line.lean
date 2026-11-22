@@ -8,7 +8,7 @@ the *ex name* `e` and the argument `notes.txt`
 (`docs/design/keymaps-and-modes.md`, "The ex command line"). Parsing a line
 is here, and it is pure: it asks nothing of the editor. What a name runs is
 the registry's (`Editor/Config/Registry.lean`), and running a line is the
-ex command's (`Editor/Ex.lean`).
+ex command's (`packages/ex/Ex.lean`).
 
 ## The line
 
@@ -29,7 +29,7 @@ ex command's (`Editor/Ex.lean`).
   (`Line.bang`): its name is `!`, and the rest of the line, with the white
   space round it dropped, is its argument, `none` when nothing is left.
   `:!cmd` is a shell command and `:{range}!cmd` a filter
-  (`Editor/Shell.lean`). Only a leading `!` starts it: `w!` is the name
+  (`packages/shell/Shell.lean`). Only a leading `!` starts it: `w!` is the name
   `w!`, as before.
 - **Otherwise the name is everything up to the first white space.** So a
   name may hold a hyphen or a digit after its first character, as a name
@@ -48,7 +48,7 @@ ex command's (`Editor/Ex.lean`).
 name that is empty, holds white space or starts with `!`, `%`, `.`, `$`,
 `,` or a digit cannot be typed, and `exCommand` refuses it
 (`Editor/Setup.lean`). `w!` and `e!` ship as names of their own, each
-bound with a fixed argument (`Editor/Ex/Compiled.lean`).
+bound with a fixed argument (`packages/ex/Ex/Compiled.lean`).
 
 Vim's `#` and `:!!` are not built, nor any address but the four above
 (no marks, patterns or offsets).

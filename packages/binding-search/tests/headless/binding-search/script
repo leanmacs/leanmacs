@@ -1,0 +1,26 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, to list a binding of config's in the binding
+# search (`search-bindings`), to run it through the search, and to run a
+# command of config's that names a declaration of the search's module. What
+# it prints must be exactly `expected`. It touches no file.
+
+reload
+settle
+
+# `search-bindings`, called with no text, asks `Binding: ` with every
+# binding the scheme reaches as its candidates. Config's style `starts`
+# keeps those the text starts: with `SPC y` typed, config's binding, its
+# keys, its command and its description, `SPC y y  yy-said  Say it`.
+run search-bindings
+commit SPC y
+scene
+
+# Accepting runs the binding as its key would: `yy-said` says `said` in the
+# echo area.
+key <Enter> Enter -
+scene
+
+# Config's command that names `BindingSearch.label` says the search's label
+# in the echo area: config reaches the binding search's module.
+run search-label
+scene

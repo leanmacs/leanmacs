@@ -1,8 +1,8 @@
 import Editor
 import Editor.Command.Append
 import Editor.Headless
+import Editor.InputScheme.Test
 import Editor.Text.Real
-import EditorCore.EditorPackage
 import Greeting.EditorPackage
 
 /-!
@@ -57,11 +57,10 @@ def libraryCheck : IO Bool := do
     IO.eprintln s!"FAILED: the command was refused: {repr refusal}"
     return false
 
-/-- The packages a set that holds this Lake package hands its editor: the
-core's, which this package requires, then its own, the order the
-package-set build registers them in. -/
+/-- The packages this Lake package hands a set's editor: its own. The
+core's Lake package, which it requires, hands a set none. -/
 def setPackages : Array Editor.Package :=
-  EditorCore.EditorPackage.packages ++ Greeting.EditorPackage.packages
+  Greeting.EditorPackage.packages
 
 /-- The config directory `configCheck` loads, from the package's directory,
 where the gate runs this executable. -/
@@ -83,8 +82,8 @@ def configCheck (sysroot oleans : String) : IO Bool := do
   let printed ← IO.mkRef (#[] : Array String)
   let directives ← IO.ofExcept ((Editor.Headless.script configScript).mapError IO.userError)
   let shipped ←
-    Editor.Headless.shipped setPackages #[`Editor] sysroot [oleans] configDirectory
-        (fun line => printed.modify (·.push line)) .headless (fakeClock := true)
+    Editor.Headless.shipped Editor.TestScheme.scheme setPackages #[`Editor] sysroot [oleans]
+        configDirectory (fun line => printed.modify (·.push line)) .headless (fakeClock := true)
   let failure ←
     Editor.Headless.run
         { shipped with

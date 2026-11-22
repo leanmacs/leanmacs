@@ -7,7 +7,6 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Later
-import Editor.Completion.Styles
 import Editor.Config.Stores
 import Editor.Display.Model
 import Editor.DisplayRules
@@ -24,7 +23,6 @@ import Editor.Loop.Driver
 import Editor.Mode
 import Editor.Process
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.Test.Completion

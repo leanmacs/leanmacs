@@ -1,5 +1,5 @@
+import Editor.Completion.Style
 import Editor.Completion.StyleContract
-import Editor.Completion.Styles
 import Editor.Fuzzy
 import Editor.Fuzzy.Real
 import Editor.Program
@@ -17,17 +17,13 @@ namespace ContractTest
 open Editor
 
 /-- The names of the completion styles' contract properties that do not hold
-of the fuzzy style or of the path style over the real fuzzy binding: the
-contract check of the style interface's real implementation, beside
-`model-test`'s on the fuzzy model. -/
+of the core's own style (`Completion.Style.unregistered`) over the real
+fuzzy binding: the contract check of the style interface's real
+implementation, beside `model-test`'s on the fuzzy model. -/
 def styleFailures : IO (List String) := do
   let failed ←
     Completion.StyleContract.failures (Program.runM (port := fuzzyPort) Fuzzy.real)
-        Completion.Styles.fuzzy
-  let pathFailed ←
-    Completion.StyleContract.failures (Program.runM (port := fuzzyPort) Fuzzy.real)
-        Completion.Styles.path
-  return failed.map (s!"the fuzzy style over the real fuzzy binding: {·}") ++
-      pathFailed.map (s!"the path style over the real fuzzy binding: {·}")
+        Completion.Style.unregistered
+  return failed.map (s!"the core's own style over the real fuzzy binding: {·}")
 
 end ContractTest

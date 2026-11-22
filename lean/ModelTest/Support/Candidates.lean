@@ -6,10 +6,8 @@ import Editor.Command.Model
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
-import Editor.Completion.Displays
 import Editor.Completion.Fake
 import Editor.Completion.Later
-import Editor.Completion.Styles
 import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
@@ -24,13 +22,10 @@ import Editor.Layout
 import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Menu
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
@@ -38,7 +33,9 @@ import Editor.Test.Completion
 import Editor.Test.Config
 import Editor.Test.Driver
 import Editor.Test.Keys
+import Editor.Test.Listings
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Text
@@ -99,8 +96,8 @@ asked. -/
 def filteredSource : Completion.Source :=
   { Completion.Source.ofTexts "fixed" "other" #["zz", "w"] with filtered := true }
 
-/-- Fifteen candidates' texts, `c0` to `c14`: more than the minibuffer
-display shows (`Completion.Displays.rows`). -/
+/-- Fifteen candidates' texts, `c0` to `c14`: more than the display written
+for the core's tests shows (`windowedRows`). -/
 def manyTexts : Array String :=
   (Array.range 15).map (s!"c{·}")
 
@@ -132,7 +129,7 @@ def manyTexts : Array String :=
 - `still` does nothing, and `edit-then-fail` inserts `x` at its target's
   cursors and is then refused.
 - `delete-backward` is the minibuffer's command that deletes the character
-  before its cursor (`Minibuffer.deleteBackwardCommand`). -/
+  before its cursor (`Test.Minibuffer.deleteBackward`). -/
 def candidateCommands : List (String × Dispatched) :=
   let asks (initial : String) (sources : List Completion.SourceRef) : Dispatched := fun _ => do
     discard <| prompt pickLabel pickContinuation initial sources
@@ -154,8 +151,8 @@ def candidateCommands : List (String × Dispatched) :=
     ("ask-dir", asks "" [.given (.answeringLater "dir" "pick" "later-dir" (.beforeLast '/'))]),
     ("ask-dir-refusing",
       asks "" [.given (.answeringLater "dir" "pick" "later-refusing" (.beforeLast '/'))]),
-    (Minibuffer.candidatesName, fun call => do
-      Minibuffer.candidatesCommandOf call
+    (Test.Minibuffer.candidatesName, fun call => do
+      Test.Minibuffer.candidates call
       return none),
     ("ask-named", fun _ => do
       if let .error refusal← prompt pickLabel pickContinuation "" [.named pickSource.name] then
@@ -177,27 +174,30 @@ def candidateCommands : List (String × Dispatched) :=
     ("still", fun _ => return none),
     ("edit-then-fail", failingAfter fun call => call.target.insertAtSelections "x"),
     ("delete-backward", fun call => do
-      Minibuffer.deleteBackwardCommand call
+      Test.Minibuffer.deleteBackward call
       return none)]
 
 /-- What a step of the candidate checks is handed: one keymap, the same for
 every view, the minibuffer's among them, that binds a key sequence under
 `C-c` to each command of `candidateCommands` but the self-insert and
 `picked`, which no key runs. No key of it prints, so a key that prints is
-a self-insert. -/
+a self-insert. Prompts are matched and shown by the style and the display
+written for the core's tests (`marking`, `windowed`). -/
 def candidateKeys : Loop.Keys TestScheme.scheme :=
-  dispatchKeys
-    [("C-c a", invoke "ask-pick"), ("C-c w", invoke "ask-pick-w"), ("C-c p", invoke "ask-plain"),
-      ("C-c y", invoke "accept"), ("C-c n", invoke "cancel"), ("C-c s", invoke "still"),
-      ("C-c f", invoke "edit-then-fail"), ("C-c 2", invoke "ask-two"),
-      ("C-c g", invoke "ask-grouped"), ("C-c r", invoke "ask-refusing"),
-      ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named"), ("C-c 5", invoke "ask-filtered"),
-      ("C-c 7", invoke "ask-category"), ("C-c 6", invoke "ask-other"),
-      ("C-c 8", invoke "ask-only-filtered"), ("C-c l", invoke "ask-later"),
-      ("C-c t", invoke "ask-echo-later"), ("C-c b", invoke "delete-backward"),
-      ("C-c 9", invoke "ask-many"), ("C-c d", invoke "ask-dir"),
-      ("C-c x", invoke "ask-dir-refusing")]
-    candidateCommands
+  {
+    dispatchKeys
+      [("C-c a", invoke "ask-pick"), ("C-c w", invoke "ask-pick-w"), ("C-c p", invoke "ask-plain"),
+        ("C-c y", invoke "accept"), ("C-c n", invoke "cancel"), ("C-c s", invoke "still"),
+        ("C-c f", invoke "edit-then-fail"), ("C-c 2", invoke "ask-two"),
+        ("C-c g", invoke "ask-grouped"), ("C-c r", invoke "ask-refusing"),
+        ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named"),
+        ("C-c 5", invoke "ask-filtered"), ("C-c 7", invoke "ask-category"),
+        ("C-c 6", invoke "ask-other"), ("C-c 8", invoke "ask-only-filtered"),
+        ("C-c l", invoke "ask-later"), ("C-c t", invoke "ask-echo-later"),
+        ("C-c b", invoke "delete-backward"), ("C-c 9", invoke "ask-many"),
+        ("C-c d", invoke "ask-dir"), ("C-c x", invoke "ask-dir-refusing")]
+      candidateCommands with
+    matching := markingMatching, displaying := windowedDisplaying }
 
 /-- A driver over the initial state, with the commands of the candidate
 checks and the jobs of the driver checks, on the models `model`; `none` if
@@ -206,16 +206,18 @@ def candidateDriver (model : EditorModel := editorModel) : Option TestDriver :=
   (Loop.Driver.over candidateKeys driverJobs (EditorState.initial ⟨640, 480⟩) model).toOption
 
 /-- The registry of the candidate checks that press the minibuffer's keys:
-the minibuffer's commands and its mode registered for the owner `compiled`,
+the kit's minibuffer's commands and its mode (`Editor/Test/Minibuffer.lean`)
+registered for the owner `compiled`,
 an owner that is not config, as a host registers a package's, and as config's bindings two that ask and two
 that run the commands that move through the list by their names, from any
 view. -/
 def pickRegistry : Config.Registry :=
-  ((({} : Config.Registry).replace .compiled Minibuffer.package.registered.commands).replaceModes
-        .compiled Minibuffer.package.registered.modes).replaceBindings
+  ((({} : Config.Registry).replace .compiled
+            Test.Minibuffer.package.registered.commands).replaceModes
+        .compiled Test.Minibuffer.package.registered.modes).replaceBindings
     .config
-    ([("C-c a", "ask-pick"), ("C-c p", "ask-plain"), ("C-c 3", Minibuffer.nextName),
-          ("C-c 4", Minibuffer.previousName)].toArray.map
+    ([("C-c a", "ask-pick"), ("C-c p", "ask-plain"), ("C-c 3", Test.Minibuffer.nextName),
+          ("C-c 4", Test.Minibuffer.previousName)].toArray.map
       fun (text, command) => .ofKeys (keys text) command)
 
 /-- What a step of those checks is handed: the active keymaps `pickRegistry`
@@ -231,7 +233,8 @@ def pickKeys : Loop.Keys TestScheme.scheme :=
         some fun call => do
           run call
           return none
-      | _ => (candidateCommands.find? (·.1 == name)).map (·.2) }
+      | _ => (candidateCommands.find? (·.1 == name)).map (·.2)
+    matching := markingMatching, displaying := windowedDisplaying }
 
 /-- A driver of those checks over the initial state, with the jobs of the
 driver checks; `none` if making the state was refused. -/
@@ -240,15 +243,15 @@ def pickDriver : Option TestDriver :=
 
 /-- What a prompt asked with `pickCandidates` holds once they are listed
 for `pattern`, with `chosen` as its choice: its category is `pick`, and the
-listing is what the fuzzy model answers for the pattern, each with its
-in-order spans, so no order is written out here. -/
+listing is what the fuzzy model answers for the pattern, each with the
+ranges `marking` gives it, so no order is written out here. -/
 def pickListed (pattern : String) (chosen : Option Nat := none) : Candidates :=
   { all := pickOffered, category := some pickSource.category, listedFor := some pattern
     place := rootPlace
     listed :=
       (FuzzyModel.rank pattern pickCandidates).filterMap fun index =>
         (pickOffered[index]?).map fun candidate =>
-          .of candidate (Completion.Styles.inOrderSpans pattern candidate.text)
+          .of candidate (markedSpans pattern candidate.text)
     chosen }
 
 /-- What a source's job is started with in the checks of sources that

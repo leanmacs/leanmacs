@@ -10,8 +10,20 @@ imports check (`tools/layer-imports-check.sh`, over the facet
 elaborated at runtime registers at a compiled package's extension point
 (`config-test`); and the decision on reaches by name ("Reaches by name",
 below), with its first contract check in the fixture interface package
-`greeting-api`. No feature is on the mechanism yet: the roadmap's later
-phases move them out on it.
+`greeting-api`. The roadmap's later phases move features out on it. Its
+phase 5 added the jobs over an extension point ("To a job") and the first
+four interfaces staged in the core's Lake package (`files-api`,
+`buffers-api`, `project-api`, `vc-api`; [packages.md](packages.md), "The
+interface libraries of the features-as-packages roadmap's phase 5"), with
+the first hooks a feature then still in the core ran: `FilesApi.Opened`,
+`FilesApi.Saved` and `BuffersApi.Closing`. Its phase 8 moved the last
+features out and emptied the core's own package list: the compile mode's
+contributions became values at extension points of an interface package,
+`compile-api`, so no constructor of `SetupRequest` names a feature; the
+ex line and the frame, window and tab commands got names-only interface
+packages; and `buffers-api` and `shell-api` moved out of the core, which
+keeps `files-api` alone ([packages.md](packages.md), "The default packages
+of the features-as-packages roadmap's phase 8", "The module map").
 
 This document says how one package uses what another provides without
 importing it, so that any feature moved out of the core can be written again
@@ -25,9 +37,11 @@ The packages roadmap moved two features out of the core, the shipped
 palettes and the compile mode. The other features are still in the core's
 Lake package, and they import one another: files, workspaces, version
 control, working sets and buffers import each other in a cycle, the ex line
-imports buffers, files and shell, and the core imports evil for the input
-scheme ([packages.md](packages.md), "What each feature would have to
-cross").
+imports buffers, files and shell, and the core imported evil for the input
+scheme until evil became a package, which supplies the scheme
+([packages.md](packages.md), "Where each feature went", "Input
+schemes"). That was the start; the features-as-packages roadmap moved
+every one of them out, and the core's Lake package lists no package.
 
 Moving a feature is not enough. If the files feature imports the git
 package's modules, nobody can replace the git package without also changing
@@ -40,7 +54,11 @@ depend on and neither owns. Today the only place such an interface can live
 is the core. Every registration a package can make is a constructor of the
 core's closed `SetupRequest` (`lean/Editor/Setup.lean`), and the compile
 mode's own registrations (`compileContribution`, `projectCommands`) are
-among them. If every interface had to live in the core, the core would grow
+among them. (They were when this was written. The features-as-packages
+roadmap's phase 8 made them values at the extension points
+`Compile.Contribution` and `Compile.ProjectCommands`, which the interface
+package `compile-api` declares, and `SetupRequest` has no constructor
+that names a feature.) If every interface had to live in the core, the core would grow
 by one protocol for each feature that moves (project roots, a repository's
 status, a file's ranges in a working set) and would end up holding the
 shape of every feature.
@@ -189,13 +207,15 @@ def projectRoot (path : System.FilePath) : EditorM (Option System.FilePath) := d
   return none
 ```
 
-The core's whole API for it is three functions:
+The core's whole API for it is five functions:
 
 | Function | What it does |
 |---|---|
 | `Extension.add (value : α) : SetupM Unit` | Registers `value` at the extension point `α`, for whoever runs this `setup`: a package or config |
 | `Extension.values (α) : EditorM (Array α)` | Every value registered at `α`, in registration order |
+| `Extension.configValues (α) : EditorM (Array α)` | The values config registered at `α`, in order: the tail of `values`, for a hook's reader that ranks config's first ("A hook, or a choice", below) |
 | `Extension.named (α) (name : α → String) (wanted : String) : EditorM (Option α)` | The latest value registered at `α` whose name is `wanted` |
+| `Extension.workJob (α) (name) (work : Array α → List Argument → Work) (reported restarted) : SetupM Unit` | Registers the job `name` over `α`: each time it is started, its work is `work` applied to every value registered at `α` then, in registration order ("To a job", below) |
 
 ### A hook, or a choice
 
@@ -206,6 +226,9 @@ extension points is:
   `completion-at-point-functions`. A package's values come before config's,
   and packages in the order they register (by dependency,
   [packages.md](packages.md), "The order packages register in").
+  A reader that ranks config's values before the packages' asks for
+  config's apart (`configValues`): they are the tail of `values`, so the
+  packages' are the values before it.
 - **A choice** uses one value, by name (`named`), as Emacs uses
   `completing-read-function` and as the editor uses `useStyle`. The latest
   registration of a name wins, so config's value replaces a package's value
@@ -227,6 +250,9 @@ place of a constructor per kind:
 - A command asks for the values at a key with a question to the registry
   (`RegistryRequest.extensions key`), answered by the loop from what it was
   told of the registry, and gets them back typed by `Dynamic.get? α`.
+  Config's values alone are a second question (`RegistryRequest.configExtensions key`),
+  answered from the registry's entries whose owner is config
+  (`Config.Registry.configExtensionsAt`).
 
 A registry reply cannot otherwise hold a program over the editor's port: a
 reply type that held `EditorM` would refer to itself, which is why an
@@ -234,6 +260,33 @@ at-point source is run through a control request and not handed to the
 command (`Editor/Command/Registry.lean`, "The rules"). `Dynamic` is an
 opaque `Type`, so a record of `EditorM` functions travels in it, and the
 command that reads it runs those functions itself.
+
+#### To a job
+
+A job's work is fixed when it is registered (`workJob`,
+`Editor/Setup.lean`), its arguments are plain values, and a running job
+(`JobM`) cannot ask the registry. So a job that needs a point's values, such
+as a job that asks the version-control backend for a commit, is registered
+over the point:
+
+- `Extension.workJob α name work` makes one generic request,
+  `SetupRequest.jobOver key name work`, keyed as `extend` is, with the work
+  taking the point's values as `Dynamic`s.
+- The registry keeps the job as any other, with the point and the function
+  beside it (`JobRegistration.over`). Its plain `work` fails at once,
+  saying the job is started through `Config.State.work?`, so code that took
+  it without the values would fail loudly rather than run with none.
+- The work is made where every job's work is made, `Config.State.work?`,
+  by one function (`JobRegistration.workWith`): the function applied to the
+  values registered at the key when the job starts, in registration order.
+  So the job sees config's value once a reload installs it, and the
+  package's alone after a reload that drops it.
+
+A source answered later is a job too (`sourceJob` registers
+`Completion.answering answer`), so a source's job is registered over a
+point the same way. Pinned by `ModelTest.extensionChecks` and
+`ModelTest.registryChecks` on the models, and by `ConfigTest.extensionChecks`
+with config elaborated at runtime.
 
 ### What is checked when the code is built
 
@@ -322,6 +375,8 @@ package, two implementation packages and a consumer, and show:
   does not come back from `Finder`'s, and does from its own;
 - a reload replaces config's values and keeps a package's, which come
   first;
+- `configValues` gives config's values alone, in order, and none before
+  config registers, after a reload without them, or run bare;
 - `named` finds config's value of a package's name, the package's again
   after a reload without it, and nothing of a name nobody registered.
 
@@ -365,34 +420,109 @@ and it is not routed through an extension point.**
     package, or an interface package's consumer. A misspelt name is then an
     unknown identifier at build time, the property extension points are
     keyed by type for.
-  - **A reacher still inside the core keeps naming the reached command as
-    text**: the Vim scheme's default tables
-    (`lean/Editor/InputScheme/Vim/Default.lean`), the menu, the ex names and
-    the core's default config (`config/default`). It cannot import the
-    interface package, because the core imports no package. **The core →
-    interface refusal of the layer imports check stays**: no exception is
-    made for name constants.
+  - **A reacher inside the core names the reached command as text**, as
+    the menu and the ex names did until they moved out (phase 8) and the
+    Vim scheme's default tables until evil did (phase 7). It cannot import
+    the interface package, because the core imports no package. **The core
+    → interface refusal of the layer imports check stays**: no exception
+    is made for name constants. No feature's reacher is left in the core;
+    the core's test kit, whose stand-ins register under a package's names,
+    names them as text (`lean/Editor/Test/Ex.lean`,
+    `lean/Editor/Test/AtPoint.lean`).
+  - **The default config keeps naming commands as text** (decided in
+    phase 8, which phase 1 had expected to switch it to constants). It is
+    a config, elaborated at run time on whatever set the editor has, and a
+    user's config names commands as text; it is no core module and imports
+    only `Editor`. `ConfigTest.defaultConfigChecks` holds every name it
+    binds to a command the default set registers.
   - **When a reacher moves out of the core** (evil and the Vim tables in
-    phase 7; the ex line, the menu and the default config's reaches in
-    phase 8), it switches from text to the constant in the same move. It
+    phase 7; the ex line and the menu in phase 8), it switches from text
+    to the constant in the same move. It
     then requires and imports the interface package, which the rule
-    allows.
+    allows. Evil did so (`packages/evil/Evil/Vim/Default.lean`): its tables
+    name the minibuffer's commands by `MinibufferApi`'s constants,
+    completion at point's by `AtPointApi`'s, `keyboard-quit` by
+    `ShellApi`'s, and, since phase 8 moved them out, the ex line by
+    `ExApi.name` and the window and tab commands by `WindowCommandsApi`'s
+    and `TabCommandsApi`'s constants. The menu did so in phase 8
+    (`packages/menu/Menu/Compiled.lean`): its Undo and Redo name
+    `EvilApi.undoName` and `EvilApi.redoName`, and its Window menu's items
+    `FrameCommandsApi`'s two. The ex line's ex names name the files', the
+    buffers' and the shell's commands by `FilesApi`'s, `BuffersApi`'s and
+    `ShellApi`'s constants.
+  - **A name the core itself must offer every implementation** is the
+    core's: the Edit menu's Cut, Copy, Paste and Select All are what any
+    input scheme must answer, so the core declares their names
+    (`Editor.Clipboard.cutName` and the rest, `lean/Editor/Clipboard.lean`),
+    the menu and evil both name those, and no interface package is
+    involved. So is the quit name (`Editor.Quit.name`,
+    `lean/Editor/Quit.lean`, phase 8): the loop runs the quit rule for a
+    window's close request whether or not any command is registered, and
+    the command named `quit` for the system's quit, so the rule and the
+    name are the core's; the package `ex` registers the command under it,
+    the frame commands' `s-q` and `window-quit` name it, and `ex-api`
+    declares it again as a name an implementation of the ex line must
+    register. And the names of the jobs the hosts, the loop and the config
+    session start: session restore's and the package-set build's
+    (`lean/Editor/Restore.lean`, `lean/Editor/PackageSet/Build.lean`),
+    which the default packages `restore` and `package-set` register under.
 - **How it is enforced.** The interface package publishes a contract check
   (`AGENTS.md`: the owner of a port publishes its fake and its contract
   check), which every implementation runs. It collects the
   implementation's `setup` with the pure collector (`Package.registered`,
   `lean/Editor/Config/Packages.lean`) and checks that the implementation's
   registered names include every name the interface package declares.
-  Until the core's reachers move out, this check is what catches a missing
-  or renamed command: a command a core table names by text is declared by
-  the interface package, so an implementation that drops or renames it
-  fails its contract check, though the core's text is not checked at build
-  time.
+  For a reacher that names text, as the default config and the core's
+  test kit do, this check is what catches a missing or renamed command: a
+  command named by text is declared by the interface package, so an
+  implementation that drops or renames it fails its contract check, though
+  the text is not checked at build time.
 - **A name no interface package declares** is the implementation's own. A
   replacement need not keep it.
 - **A user's config** is unaffected, and still names commands as text.
-- **Today.** No core module reaches `shipped-themes` or `compile` by name
-  (the default config binds `load-theme`, a core command). The fixture
+- **Today.** No core module reaches `shipped-themes`, `compile`,
+  `mode-line` or `languages` by name (the mode line's listing and the `code`
+  mode are names the core declares). Phase 7 built two more names-only
+  interface packages with the moves of evil and the themes
+  ([packages.md](packages.md), "The interface packages `evil-api` and
+  `themes-api`"): `themes-api` declares `load-theme`
+  (`ThemesApi.loadName`), which the default config binds, and `evil-api`
+  declares `insert-newline`, `insert-tab`, `undo` and `redo`
+  (`EvilApi.insertNewlineName` and the rest), which completion at point
+  runs with no session open, by the constants, and the Edit menu runs, by
+  the constants since phase 8. The default config does reach two
+  default packages' commands, `execute-command` (`SPC :`) and
+  `search-bindings` (`SPC ?`), so the features-as-packages roadmap's
+  phase 3 built the first two feature interface packages with those
+  features' moves: `execute-command-api`
+  (`ExecuteCommandApi.executeCommandName`) and `binding-search-api`
+  (`BindingSearchApi.searchBindingsName`), each with a fake and a contract
+  check its implementation runs (`packages/execute-command-api/`,
+  `packages/binding-search-api/`; [packages.md](packages.md), "The
+  interface packages `execute-command-api` and `binding-search-api`").
+  Phase 6 did the same for project search and the working sets
+  (`project-search-api`, `working-set-api`), and moved `project-api` and
+  `vc-api`, which phase 5 staged in the core, out to `packages/`.
+  The default config and its test name the two as text ("The default
+  config keeps naming commands as text", above). Phase 4 built three more with the moves of completion,
+  completion at point and the minibuffer, which the core reaches by name
+  (the Vim scheme's insert and minibuffer tables, the command every batch
+  of a source's job is posted as, the commands the loop runs at a trigger
+  and a pause, and the files package's `path` style):
+  `completion-api` (`CompletionApi.pathStyleName`), `at-point-api` (the
+  nine `AtPointApi.…Name`) and `minibuffer-api` (the nine
+  `MinibufferApi.…Name` and the mode's name `MinibufferApi.modeName`;
+  `packages/completion-api/`, `packages/at-point-api/`,
+  `packages/minibuffer-api/`; [packages.md](packages.md), "The interface
+  packages `completion-api`, `at-point-api` and `minibuffer-api`"). The
+  fakes behind the last two are no names-only packages: they are the core
+  test kit's own hand-written minibuffer and at-point
+  (`Editor.Test.Minibuffer`, `Editor.Test.AtPoint`), which the core's tests
+  run on, since the core cannot import an interface package; the
+  interfaces' tests hold them to the contract, and the core's tests hold
+  the Vim tables' text to the kit's names. The core's reachers name the
+  names as text; `compile`, `execute-command` and `binding-search`
+  require `minibuffer-api` and name its constants. The fixture
   interface package `greeting-api` (`tests/packages/greeting-api/`) is the
   first to declare a reached name, `greeting-reply`
   (`GreetingApi.replyName`, and every declared name in `GreetingApi.names`),
@@ -403,21 +533,97 @@ and it is not routed through an extension point.**
   reaches the name through the constant and tests against the fake; and
   greeting-api's own tests pin the check's failure case, a package that
   lacks the name or misspells it. Each feature's interface package builds
-  its own as the feature moves (phases 3 to 8).
+  its own as the feature moves (phases 3 to 8). Phase 5 staged four more,
+  as libraries of the core's Lake package, for the five features of the
+  files cluster, which stay in the core until phase 6: `files-api`
+  (`FilesApi.openFileName`, the core's `FileJobs.openFileCommand`,
+  `saveName`, `editName`, `reloadName`, `autoReloadName`, and the jobs
+  `checkJob` and `followJob`, the core's), `buffers-api`
+  (`BuffersApi.switchName`, `listName`, `closeName`), `project-api`
+  (`ProjectApi.findFileInWorkspaceName`, `findFileInProjectName`, and the
+  job `compileListJob`, the core's `Compile.listJob`) and `vc-api`
+  (`VcApi.gutterJobs`, the core's gutter job names, and
+  `reviewSegmentName`). Each publishes a fake and a contract check that
+  holds the implementation to the names and to what its extension points
+  do. Phase 6 moved the seven features of the files cluster out, and with
+  them `project-api` and `vc-api`, whose last users left the core, into
+  interface packages of their own (`packages/project-api/`,
+  `packages/vc-api/`); `files-api` stays a core interface for good, and
+  `buffers-api` and the third staged library phase 6 added, `shell-api`
+  (`ShellApi.commandName`, `filterName`, `interruptName`, the names ex binds
+  `:!` and the scheme's `C-g` to, and the shell's history), stayed staged
+  until ex moved, in phase 8, and are interface packages since
+  (`packages/buffers-api/`, `packages/shell-api/`). Phase 8 also built
+  four names-only interface packages with its moves: `ex-api`
+  (`ExApi.name`, `ExApi.quitName`, with a contract that also holds the
+  command `ex` to running a bound line, handing a bang line to the shell
+  and asking for a line), `frame-commands-api`
+  (`FrameCommandsApi.toggleFullscreenName`, `minimiseName`),
+  `window-commands-api` (the thirty-three `WindowCommandsApi.…Name`) and
+  `tab-commands-api` (the eight `TabCommandsApi.…Name` and `selectName`)
+  ([packages.md](packages.md), "The interface packages `ex-api`, …").
+  Phase 6 also built two names-only interface packages
+  for the names the default config reaches: `working-set-api`
+  (`WorkingSetApi.addName`, `openName`: `SPC k a`, `SPC k o`, `SPC RET`)
+  and `project-search-api` (`ProjectSearchApi.searchName`, `symbolName`:
+  `SPC /`, `SPC s p`, `SPC *`), each with a fake and a contract check its
+  implementation runs ([packages.md](packages.md), "The interface packages
+  `project-search-api` and `working-set-api`").
 
 ## Open questions
 
+- **A second version-control backend's program and selection.**
+  `VcApi.Backend` is a choice by the name `git` (`VcApi.connect?`): a
+  backend of another name, such as `jj`, is never used, so choosing one
+  for a workspace needs a setting that names it. `VcApi.Backend.connect`
+  is handed the workspace settings' `git`: a jj backend would need a
+  setting of its own. And the workspace finder runs git itself
+  (`Workspace.Finder`, through the core's `Workspace.Git`), so a jj
+  checkout is found only by config's roots or by markers. Neither is
+  changed by phase 5 ([version-control.md](version-control.md)).
+
 - **Order within a hook.** Values come in registration order, which is
-  dependency order between Lake packages. Emacs lets a hook function ask to
-  run early or late (`add-hook`'s depth). Whether a hook needs that is
-  decided when a hook first needs it.
+  dependency order between Lake packages, and config's last. **A reader
+  that ranks config's values first asks for config's apart**
+  (`Extension.configValues`, decided in features-as-packages phase 8 for
+  the first hook that needed it, the compile mode's): the order is the
+  reader's rule, written once in the interface package, and a value
+  carries no rank. Emacs lets a hook function ask to run early or late
+  (`add-hook`'s depth). Whether a value needs to say that for itself is
+  still open, and is decided when a hook first needs it.
 - **The registrations the core already has.** Completion sources, styles,
-  displays and at-point sources, and the compile mode's contributions, are
-  constructors of `SetupRequest` today. Whether each becomes an extension
-  point of an interface package is decided as its feature moves.
+  displays and at-point sources are constructors of `SetupRequest`, and
+  the compile mode's contributions were until phase 8. **Styles, displays and at-point
+  sources stay registrations of the core's interfaces** (decided in
+  features-as-packages phase 4, when completion and at-point moved out):
+  they are records any package registers already, the core's loop and
+  registry read them, and the roadmap keeps the core's completion
+  interfaces in the core. What the loop needs of at-point beyond its
+  sources is to run a command at a trigger and at a pause, and the
+  registry resolves a command by its name when it runs ("Reaches by
+  name"), so the core declares those two names
+  (`Completion.AtPoint.triggeredCommand`, `.pausedCommand`) and no
+  extension point was added. **The compile mode's contributions are
+  values at extension points** (decided in features-as-packages phase 8):
+  `Compile.Contribution` and `Compile.ProjectCommands`, declared by the
+  interface package `compile-api` with the setup operations that register
+  at them (`compileContribution`, `projectCommands`, which keep their
+  names and refuse what one value can show: a contribution with no
+  marker, a command named twice) and the reader (`Compile.hook`). An
+  extension point's values are registered one at a time, so two of the
+  core's refusals went: of two contributions of one mode in one `setup`,
+  or two sets of project commands for one project and mode, the later is
+  used, as at every choice point; and a package may give project
+  commands, which only config could, since an extension point holds them
+  by owner.
 - **A required extension point.** Running a package's `setup` registers
   nothing in the editor: the handler that collects is pure
   (`Config.Registrations.collect`). So the build of a package set could run
   every package's `setup` and fail when an extension point marked as
   required, such as the input scheme, has no value. The input scheme is
-  refused at start-up for now ([packages.md](packages.md), "Input schemes").
+  no extension point: it is a registration of the core's, a declaration
+  `scheme` of the entry module of a package whose lakefile declares the
+  keyword `editor-input-scheme`, since a scheme is in `Type 1` and an
+  extension point's values are in `Type`. A set that supplies none is
+  refused at start-up, and by the probe a restart runs, and not at the
+  set's build, for now ([packages.md](packages.md), "Input schemes").

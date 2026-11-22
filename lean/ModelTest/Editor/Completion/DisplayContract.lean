@@ -1,7 +1,6 @@
 import Editor.Completion.Candidate
 import Editor.Completion.Display
 import Editor.Completion.DisplayContract
-import Editor.Completion.Displays
 import Editor.Scene
 import ModelTest.Check
 
@@ -19,18 +18,16 @@ open Editor
 
 /-- The checks of the completion displays' contract
 (`Editor/Completion/DisplayContract.lean`): it holds of the model and of
-the shipped minibuffer display at 0, 1, 3 and 10 rows, and bites on a
-display written here with a decoration past its row's end. -/
+the core's own display, and bites on a display written here with a
+decoration past its row's end. The shipped display's are
+`minibufferDisplayChecks`. -/
 def displayContractChecks : List Check :=
   [{  name :=
-        "every property of the display contract holds of the plain display, and of the minibuffer display at 0, 1, 3 and 10 rows, over every showing of its table"
+        "every property of the display contract holds of the plain display and of the core's own display, over every showing of its table"
       run :=
         pure <|
           (Completion.DisplayContract.failures (Completion.Display.plain "plain")).isEmpty &&
-            [0, 1, 3, 10].all
-              (fun rows =>
-                (Completion.DisplayContract.failures
-                    (Completion.Displays.minibuffer rows)).isEmpty) &&
+            (Completion.DisplayContract.failures Completion.Display.unregistered).isEmpty &&
             !Completion.DisplayContract.properties.isEmpty &&
             Completion.DisplayContract.showings.any (·.listed.size == 30) },
     { name :=

@@ -1,0 +1,48 @@
+[package]
+name = "editor-raster-coretext"
+version = "0.1.0"
+description = "The rasteriser port's macOS adapter: glyph masks drawn by Core Text, as macOS draws text, and the font-smoothing preference behind a port of its own"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The port this crate implements, with its fake and its contract, and the
+# font and colour types it re-exports from layout. `deny.toml` lists this
+# crate among editor-raster's wrappers.
+editor-raster = { path = "../editor-raster" }
+
+# Core Text, Core Graphics and CoreFoundation, for the adapter itself
+# (`src/coretext.rs`) and the preference it reads (`src/defaults.rs`): a
+# face loaded from the frame's bytes (`CTFontManagerCreateFontDescriptors
+# FromData`, `CTFontCreateWithFontDescriptor`), its glyphs' bounds and
+# drawing (`CTFontGetBoundingRectsForGlyphs`, `CTFontDrawGlyphs`) and its
+# tables (`CTFontCopyAvailableTables`), drawn into an alpha-only bitmap
+# (`CGBitmapContextCreate` with `kCGImageAlphaOnly`), and
+# `AppleFontSmoothing` read through `CFPreferencesCopyAppValue`.
+#
+# Pinned exactly: all three were already in `Cargo.lock` at 0.3.2 on
+# 2026-11-20, through fontique, objc2-app-kit and editor-launch-std, so the
+# lock gains no crate. Servo's `core-text` and `core-graphics` are not in
+# the lock and would add a second family of Apple bindings. Default
+# features off, with only what is named:
+# - core-text: `std`, `CTFont`, `CTFontDescriptor`, `CTFontManager`, and
+#   `objc2-core-graphics` for the drawing call that takes a context;
+# - core-graphics: `std`, `CGContext`, `CGBitmapContext`, `CGColorSpace`,
+#   `CGImage`;
+# - core-foundation: `std`, `CFData`, `CFArray`, `CFString`, `CFNumber`,
+#   `CFPreferences`, `CFCGTypes`.
+# Their types are private to this crate, and `deny.toml` keeps every other
+# crate of the workspace from naming them. Only macOS builds them: on any
+# other platform the crate is its pure modules alone.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-text = { version = "=0.3.2", default-features = false, features = ["std", "CTFont", "CTFontDescriptor", "CTFontManager", "objc2-core-graphics"] }
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "CGContext", "CGBitmapContext", "CGColorSpace", "CGImage"] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFData", "CFArray", "CFString", "CFNumber", "CFPreferences", "CFCGTypes"] }
+
+[dev-dependencies]
+# Decodes the captures the example `check` compares the adapter's masks
+# with (`tests/coretext/*.png`), compiled in. Pinned exactly, as
+# `editor-render-wgpu` pins it; `deny.toml` lists this crate among its
+# wrappers.
+png = "=0.18.1"

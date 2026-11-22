@@ -1,0 +1,48 @@
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "alpha one\nthe needle in a\ncharlie three\n", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "a.txt" +4, mode-line.secondary "@DIR@/tree" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
+run project-search: ok
+scene 0x0, focused 3, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "alpha one\nthe needle in a\ncharlie three\n", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "a.txt" +4, mode-line.secondary "@DIR@/tree" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
+view 3 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 3: minibuffer.prompt "Search tree@tree: "
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "project-search: 2 matches in 2 files", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "alpha one\nthe needle in a\ncharlie three\n\nbravo two\ndelta four\nthe needle in b\necho five\n", scroll 0, selections 0..0, padding 8 8
+decorations 0: search-match 14..20
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "*search: needle in tree@tree*" +4 | mode-line.secondary "project-search" +4, mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
+key arrived: j KeyJ -
+key arrived: j KeyJ -
+key arrived: j KeyJ -
+key arrived: j KeyJ -
+key arrived: j KeyJ -
+key arrived: j KeyJ -
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "alpha one\nthe needle in a\ncharlie three\n\nbravo two\ndelta four\nthe needle in b\necho five\n", scroll 0, selections 62..62, padding 8 8
+decorations 0: search-match 14..20
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "*search: needle in tree@tree*" +4 | mode-line.secondary "project-search" +4, mode-line.secondary "7:1" +4, mode-line.secondary "87%" +4
+run working-set-add: ok
+scene 0x0, focused 4, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "alpha one\nthe needle in a\ncharlie three\n\nbravo two\ndelta four\nthe needle in b\necho five\n", scroll 0, selections 62..62, padding 8 8
+decorations 0: search-match 14..20
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "*search: needle in tree@tree*" +4 | mode-line.secondary "project-search" +4, mode-line.secondary "7:1" +4, mode-line.secondary "87%" +4
+view 4 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 4: minibuffer.prompt "Add to working set (tree@tree): "
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "found: added b.txt:3; working sets are not kept across restarts: no state directory", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "alpha one\nthe needle in a\ncharlie three\n\nbravo two\ndelta four\nthe needle in b\necho five\n", scroll 0, selections 62..62, padding 8 8
+decorations 0: search-match 14..20
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "*search: needle in tree@tree*" +4 | mode-line.secondary "project-search" +4, mode-line.secondary "7:1" +4, mode-line.secondary "87%" +4
+run working-set-open: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "found: 1 ranges, 0 drifted", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "the needle in b\n", scroll 0, selections 0..0, padding 8 8
+decorations 0: search-match 4..10
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "*working-set: found in tree@tree*" +4 | mode-line.secondary "working-set" +4, mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "bravo two\ndelta four\nthe needle in b\necho five\n", scroll 0, selections 21..21, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "b.txt" +4, mode-line.secondary "@DIR@/tree" +4 | mode-line.secondary "3:1" +4, mode-line.secondary "75%" +4

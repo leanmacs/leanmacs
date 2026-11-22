@@ -350,7 +350,7 @@ the job interface's file requests, which a job awaits
 snapshot). Lean's own interface for small reads and writes is not built;
 watching is ("Watching, as built", below). The editor's commands over
 loading and saving are built
-(`lean/Editor/Files.lean`, the command loop's phase 9;
+(`packages/files/Files.lean`, the command loop's phase 9;
 [concurrency.md](concurrency.md), "Getting results back"): the open command
 loads under a limit of 1 GiB, which is the editor's policy and a round
 number with no measurement behind it, and the save command expects the
@@ -1198,7 +1198,7 @@ built"):
   composition steps out when composition is not allowed. Everything above
   the port is tested on it, on both sides of the Lean boundary. It records
   what each run is asked, with the close in its place among the requests
-  (`asked_with_close`; tag 8 in `editor_ffi_window_asked`'s words), and
+  (`asked_with_close`; tag 9 in `editor_ffi_window_asked`'s words), and
   `wait_parked(bound)` (`editor_ffi_window_await_parked`) is a test readout
   that returns once the run has reported all it has to and waits for its
   close: notified as the run parks, never a poll, the bound only a hang
@@ -1852,7 +1852,7 @@ never crosses; the bindings are `lean/Editor/Ffi/Grep.lean`.
 
 **Limits and the deliveries** are the caller's: `project-search` asks for
 200 files with a match or 2,000 matches, whichever comes first, and 200
-matches a delivery (`lean/Editor/ProjectSearch.lean`). The walk is
+matches a delivery (`packages/project-search/ProjectSearch.lean`). The walk is
 single-threaded and sorted, so the results come in a stable order; it is
 slower than `rg` on a large tree, and the parallel walker is a later
 optimisation, made only on a measurement. A row of a file that is not
@@ -2490,7 +2490,7 @@ crosses as a tag, 0 to 3. In Lean, entering a major mode with a syntax tree
 injects, gives a language for each grammar, and keeps the text objects and
 indents queries (`lean/Editor/Highlight.lean`); the indent rule
 (`lean/Editor/Indent.lean`) and the text-object rule
-(`lean/Editor/Evil/TreeObjects.lean`) are Lean's, over plain rows.
+(`packages/evil/Evil/TreeObjects.lean`) are Lean's, over plain rows.
 
 **Open questions:**
 

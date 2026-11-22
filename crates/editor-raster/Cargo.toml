@@ -1,0 +1,16 @@
+[package]
+name = "editor-raster"
+version = "0.1.0"
+description = "The rasteriser port: what makes a glyph's image, with its fake, its contract, the luminance bucket and the fallback"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The font a glyph is drawn in and the colour its run is painted with, as
+# plain data: `ResolvedFont`, `ResolvedFontId` and `Color`, which this
+# crate re-exports so that an adapter needs no edge of its own to layout.
+# There is no other dependency and no dev-dependency: the port names no
+# rasterising library, and its tests run on the fake published here.
+# `deny.toml` lists this crate among editor-layout's wrappers.
+editor-layout = { path = "../editor-layout" }

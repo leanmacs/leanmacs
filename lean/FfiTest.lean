@@ -27,7 +27,7 @@ import FfiTest.Editor.Ffi.Transaction
 import FfiTest.Editor.Ffi.Watches
 import FfiTest.Editor.Ffi.Window
 import FfiTest.Editor.State
-import FfiTest.Editor.Themes.Picture
+import FfiTest.Editor.Theme.Picture
 import FfiTest.Editor.Window.Real
 import FfiTest.Editor.WindowCheck.Real
 
@@ -62,7 +62,7 @@ argument (see `main`): `exit <code>` for the exit status, `shutdown` and
 because it ends in an abort. `theme-pictures <dir> <font>` compares the
 picture of the theme `default`, of a fixture file, with its reference image
 (`themePictures`, which runs the core's theme picture check,
-`Editor/Themes/Picture.lean`), and with `--write` makes it again. `mise run ffi-test` runs the checks and every
+`Editor/Theme/Picture.lean`), and with `--write` makes it again. `mise run ffi-test` runs the checks and every
 scenario but `overflow`, under a time limit, and is part of the gate.
 `mise run ffi-overflow` runs `overflow`, on demand only: on macOS every abort
 leaves a crash report on the machine.

@@ -10,7 +10,7 @@ A view shows its text at its own revision, so before the marks are drawn
 they are carried there through the text's log (`marksOf`), by a pure
 function of the patch (`carry`). The marks follow every edit at once, and
 their owner replaces them when it has computed them again (the
-version-control gutter, `Editor/VersionControl/Gutter.lean`, does that off
+version-control gutter, `packages/version-control/VersionControl/Gutter.lean`, does that off
 the editor thread).
 
 ## The rules

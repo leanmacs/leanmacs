@@ -5,8 +5,6 @@ import Editor.Command.Dispatch
 import Editor.Command.Real
 import Editor.Completion
 import Editor.Completion.AtPoint
-import Editor.Completion.Displays
-import Editor.Completion.Styles
 import Editor.Config.Stores
 import Editor.Display.Real
 import Editor.DisplayRules
@@ -27,7 +25,6 @@ import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.SyntaxTree

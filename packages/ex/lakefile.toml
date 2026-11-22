@@ -1,0 +1,88 @@
+# The ex command line: the command `ex`, which asks for a line and runs it
+# as the command its name is bound to, `quit`, `save-and-quit` and
+# `reload-config`, the ex names that ship for the files, the buffers and
+# its own commands, and the ex line's two completion sources: a default
+# package, a Lake package outside the core that the default package set
+# requires (../lakefile.toml; docs/design/packages.md, "The package set and
+# its build"). It was two modules of the core, `Editor.Ex` and
+# `Editor.Ex.Compiled`, until the features-as-packages roadmap's phase 8,
+# and the last feature the core's own package list held. The gate's package
+# steps build, test, lint and format-check it through the fixture set,
+# which requires the default set (tools/package-set.sh), and the package
+# imports check holds what it imports of the core
+# (tools/package-imports-check.sh).
+#
+# - `Ex` is the package's library: `Ex.lean`, the commands,
+#   `Ex/Compiled.lean`, the `Package` value, and its entry module
+#   `Ex/EditorPackage.lean`, which the package-set build reads. Its `globs`
+#   hold every module under `Ex`, so the package imports check sees each
+#   one's imports. It implements the interface package `ex-api` (`ExApi`),
+#   which declares the names `ex` and `quit` and which it requires, beside
+#   the core. An ex line's parts, its ranges and its bindings stay the
+#   core's (`lean/Editor/Ex/Line.lean`), and so do the quit rule and its
+#   name (`lean/Editor/Quit.lean`). It reaches the file commands through
+#   the core's interface library `files-api`, and the buffer commands and
+#   the shell through the interface packages `buffers-api` and
+#   `shell-api`, which it requires too.
+# - `ex-test` is its test driver (`lake test`): the tests that need no Rust
+#   library, rooted at `ExTest/Model.lean`. It is no default target, as the
+#   core's `model-test` is not: `mise run lean` links with the system
+#   compiler, which this executable has no flags for.
+# - `ExTest` holds the test modules, `ExTest/Linked.lean` among them: the
+#   root of the executable the core's `editorLinked` facet links as the
+#   editor is linked, with the Rust library. It runs the ex line through
+#   the headless host over the real elaborator and the library's file
+#   service.
+#
+# It has no headless fixture of its own: the core's fixtures
+# tests/headless/ex and the rest that type an ex line, which run on the
+# default set's editor, do so through it.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its modules,
+# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/ex update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages,
+# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+name = "ex"
+testDriver = "«ex-test»"
+defaultTargets = ["Ex", "ExTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+# The interface package of the ex line: the names `ex` and `quit`, its fake
+# and the contract check this package's tests run.
+[[require]]
+name = "ex-api"
+path = "../ex-api"
+
+# The interface package of the buffer commands: the names the ex names
+# `b`, `ls` and `bd` run.
+[[require]]
+name = "buffers-api"
+path = "../buffers-api"
+
+# The interface package of the shell: the names a `:!` line is handed to,
+# and the history of the lines run, which the ex prompt offers.
+[[require]]
+name = "shell-api"
+path = "../shell-api"
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "Ex"
+globs = ["Ex.*"]
+
+[[lean_lib]]
+name = "ExTest"
+globs = ["ExTest.+"]
+
+[[lean_exe]]
+name = "ex-test"
+root = "ExTest.Model"

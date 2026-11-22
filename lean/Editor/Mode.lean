@@ -118,7 +118,7 @@ structure Mode.SyntaxTree where
   language in the mode's text; `none` for the one the grammar ships. An
   empty source captures nothing, which turns injections off. -/
   injections : Option String := none
-  /-- The source of the text objects query (`Editor/Evil/TreeObjects.lean`);
+  /-- The source of the text objects query (`packages/evil/Evil/TreeObjects.lean`);
   `none` for the one the grammar ships. -/
   textObjects : Option String := none
   /-- The source of the indents query (`Editor/Indent.lean`); `none` for the

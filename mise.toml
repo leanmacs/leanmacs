@@ -24,7 +24,7 @@ opentofu = "1.13.2"
 "aqua:zizmorcore/zizmor" = "1.32.0"
 "aqua:mikefarah/yq" = "4.54.1"
 # fzf, the default filter of `find-file-in-workspace`'s source
-# (lean/Editor/Workspace/FindFile.lean): for the workspace finder's benchmark
+# (packages/workspace/Workspace/FindFile.lean): for the workspace finder's benchmark
 # (`mise run find-file-bench`), never part of `ci`, whose checks stand in a
 # fixture for it (tests/completion), and on the PATH of an editor started
 # inside this project when dogfooding. Like cargo-deny, a prebuilt release
@@ -135,6 +135,13 @@ dir = "lean"
 run = [
   "sh ../tools/toolchain-check.sh",
   "status=0; out=$(sh ../tools/toolchain-check.sh lake-manifest.json 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF tools/lean-fmt/lean-toolchain; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # The stand-in for CI's elan that `user-sets-test` and `user-sets-check`
+  # run under (tools/home-bound-toolchain.sh; docs/dev-practices/the-gate.md,
+  # "The user sets test") cannot pass silently: its `lake` run with another
+  # HOME must exit 1 with its message, and run with the HOME it was made
+  # under must exit 0. Its output is shown only when it does not.
+  "status=0; out=$(sh ../tools/home-bound-toolchain.sh sh -c 'HOME=/nonexistent lake --version' 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qF 'home-bound-toolchain: lake run with HOME=/nonexistent'; } || { printf '%s\\n' \"$out\"; echo \"lean-test: home-bound-toolchain exited $status on a moved HOME\"; exit 1; }",
+  "out=$(sh ../tools/home-bound-toolchain.sh lake --version 2>&1) || { printf '%s\\n' \"$out\"; echo 'lean-test: home-bound-toolchain failed under its own HOME'; exit 1; }",
   # The decision both pre-commit hooks share (tools/graph-targets.sh;
   # docs/dev-practices/the-gate.md, "The pre-commit hook"): which nodes of
   # a graph the staged paths reach, over a graph written by hand
@@ -183,6 +190,54 @@ run = [
   "for case in impl-only interface core docs-only; do out=$(cd .. && sh tools/lean-hook.sh --dry-run --lines tests/hook-targets/graph --root /repo $(cat \"tests/hook-targets/cases/$case/paths\")) && printf '%s\\n' \"$out\" | diff \"../tests/hook-targets/cases/$case/hook-expected\" - || { echo \"lean-test: lean-hook would run otherwise on the case $case\"; exit 1; }; done",
   "for names in 'compile greeting' greeting; do out=$(sh ../tools/lean-packages.sh --dry-run $names) && printf '%s\\n' \"$out\" | diff \"../tests/hook-targets/lean-packages/${names%% *}-expected\" - || { echo \"lean-test: lean-packages would run otherwise for $names\"; exit 1; }; done",
   "status=0; out=$(sh ../tools/lean-packages.sh --dry-run 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'names no package'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # The leave-out check's edit of a set's lakefile (tools/leave-out-check.sh;
+  # docs/dev-practices/the-gate.md, "The leave-out check"), held on a
+  # lakefile written by hand (tests/leave-out/lakefile.toml): its dry run,
+  # which builds nothing and asks Lake nothing, prints the lakefile without
+  # the named package's `[[require]]`, the comment directly above it and one
+  # blank line, every relative `path` made absolute against the root it is
+  # given, exactly `without-beta` for a package in the middle and
+  # `without-gamma` for the last. A package the lakefile does not require
+  # is exit 2, and so is a command line it does not take. The builds
+  # themselves, one editor a package, are opt-in (`mise run leave-out`).
+  "for package in beta gamma; do out=$(sh ../tools/leave-out-check.sh --dry-run $package --root /repo/set ../tests/leave-out) && printf '%s\\n' \"$out\" | diff ../tests/leave-out/without-$package - || { echo \"lean-test: leave-out-check's dry run printed another lakefile without $package\"; exit 1; }; done",
+  "status=0; out=$(sh ../tools/leave-out-check.sh --dry-run delta --root /repo/set ../tests/leave-out 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'has no [[require]] of delta'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  "status=0; out=$(sh ../tools/leave-out-check.sh 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'usage:'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # The module map check's reading of the packages' sources
+  # (tools/module-map-check.sh; docs/dev-practices/the-gate.md, "The module
+  # map check"), held on packages and maps written by hand
+  # (tests/module-map/). With `--points` it asks Lake nothing: it compares
+  # the registrations and reads the library modules under
+  # tests/module-map/packages hold with the rows of a map. Those sources
+  # are seven packages. `sample` holds one line for each of the four ways
+  # the reader counts a registration (an `Extension.add` with its type on
+  # the same line, one with it on a later line, `compileContribution`,
+  # `projectCommands`), one for each of the four operations it counts as
+  # a read (`Extension.values`, `.named`, `.configValues`, `.workJob`),
+  # and one for each of the five texts it skips (prose in backticks, a
+  # `def`'s first line, a test library's root, a test library's module, a
+  # fixture's config). `buffers-api` is an interface package: its own two
+  # points are not counted in it, and one of another namespace is.
+  # `readers` holds one call of each of the seven readers an interface
+  # declares over one point (`FilesApi.runOpened`, `.runSaved`, `.files?`,
+  # `BuffersApi.runClosing`, `.buffers?`, `ProjectApi.workspaces?`,
+  # `VcApi.connect?`), each on a line of its own. And `compile-hook`,
+  # `compile-listings`, `compile-markers` and `compile-work` hold one each
+  # of the four readers of both of the compile mode's points
+  # (`Compile.hook`, `refreshListings`, `markerSettings`,
+  # `Compile.listWork`) and nothing else: the four count the same two
+  # reads of a package, so in one package three would hide the fourth.
+  # `map.md` names exactly what the seven hold, so over it the check must
+  # print nothing and exit 0, and each of those rules, dropped by itself,
+  # fails here. What the fixture does not hold is listed in the-gate.md,
+  # under "What it does not claim". Over `stale-map.md`, the same map
+  # with one registration dropped and one read added, it must exit 1 and
+  # print exactly `stale-expected`, the two lines that differ. A command
+  # line it does not take is exit 2. The real map is held to the tree and
+  # to Lake in ffi-test.
+  "sh ../tools/module-map-check.sh --points ../tests/module-map/packages ../tests/module-map/map.md",
+  "status=0; out=$(sh ../tools/module-map-check.sh --points ../tests/module-map/packages ../tests/module-map/stale-map.md 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/module-map/stale-expected -; } || { echo \"lean-test: module-map-check passed a stale map (exit $status), or printed another difference\"; printf '%s\\n' \"$out\"; exit 1; }",
+  "status=0; out=$(sh ../tools/module-map-check.sh --points ../tests/module-map/packages 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'usage:'; } || { echo \"lean-test: module-map-check took a command line with no map (exit $status)\"; printf '%s\\n' \"$out\"; exit 1; }",
   'PATH="$PWD/no-cargo:$PATH" lake test --wfail',
   # The same for each package of the fixture set (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps"): its Lake test
@@ -190,17 +245,25 @@ run = [
   # reach no `rustlib` either. The fixture set requires the default set, so
   # the default packages are among them, and the step's output is kept to
   # require that: it must hold the line the step prints as it reaches each
-  # default package, `package-set: test shipped-themes (<its directory>)`
-  # and `package-set: test compile (<its directory>)`, and the line for the
-  # writing guide's example package, `package-set: test word-count (<its
-  # directory>)` (docs/packages/word-count/), matched on what comes before
-  # the directory. The step stops at the first package whose
+  # default package and each interface package of the default set,
+  # `package-set: test <name> (<its directory>)` for `completion-api`,
+  # `completion`, `mode-line`, `minibuffer-api`, `minibuffer`,
+  # `shipped-themes`, `execute-command-api`, `execute-command`,
+  # `binding-search-api`, `binding-search`, `compile`, `at-point-api`,
+  # `at-point` and `languages`, and
+  # the line for the writing guide's example package, `package-set: test
+  # word-count (<its directory>)` (docs/packages/word-count/), matched on
+  # what comes before the directory. The step stops at the first package whose
   # driver fails, so those lines and exit 0 say each package's tests ran
   # and passed: the themes hold under the core's completeness check
   # (packages/shipped-themes/ShippedThemesTest/ShippedThemes.lean), and the
   # compile mode's model checks, which were the core's until it moved out,
-  # hold on the core's test kit (packages/compile/CompileTest/Model.lean).
-  "out=$(PATH=\"$PWD/no-cargo:$PATH\" sh ../tools/package-set.sh test ../tests/packages 2>&1) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for name in shipped-themes compile word-count; do printf '%s\\n' \"$out\" | grep -qF \"package-set: test $name (\" || { echo \"lean-test: the package steps did not test $name\"; exit 1; }; done",
+  # hold on the core's test kit (packages/compile/CompileTest/Model.lean),
+  # as the shipped completion styles' and display's do
+  # (packages/completion/CompletionTest/Model.lean), completion at
+  # point's (packages/at-point/AtPointTest/Model.lean) and the
+  # minibuffer's (packages/minibuffer/MinibufferTest/Model.lean).
+  "out=$(PATH=\"$PWD/no-cargo:$PATH\" sh ../tools/package-set.sh test ../tests/packages 2>&1) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for name in shell-api ex-api buffers-api ex frame-commands-api frame-commands menu window-commands-api window-commands tab-commands-api tab-commands restore package-set evil-api minibuffer-api at-point-api evil themes-api themes files buffers compile-api project-api vc-api workspace project-search-api project-search working-set-api working-set shell version-control completion-api completion mode-line minibuffer shipped-themes execute-command-api execute-command binding-search-api binding-search compile at-point languages word-count; do printf '%s\\n' \"$out\" | grep -qF \"package-set: test $name (\" || { echo \"lean-test: the package steps did not test $name\"; exit 1; }; done",
   # And a step refuses a set it would run over nothing of: the fixture set
   # tests/empty-set requires the core alone, so it holds no package and the
   # step must exit 2, saying so. Its output is shown only when it does not.
@@ -248,11 +311,10 @@ run = [
   # docs/dev-practices/the-gate.md, "The package steps").
   "sh ../tools/package-set.sh build ../tests/packages",
   # The editor of the set that holds no package, tests/empty-set, which
-  # requires the core alone: the default set with its packages, the
-  # shipped themes and the compile mode, dropped. `ffi-test` runs two
-  # fixtures on it (tests/headless/core-themes and
-  # tests/headless/core-ex-names) to show what an editor without those
-  # packages has.
+  # requires the core alone: the default set with its packages dropped,
+  # evil, which supplies the input scheme, among them. `ffi-test` runs it
+  # (tests/headless/no-input-scheme) to show that an editor of a set with
+  # no input-scheme package refuses to start.
   "lake -d ../tests/empty-set build --wfail :editor",
 ]
 
@@ -341,7 +403,7 @@ description = "Build the app's launcher and its test helper, release (crates/edi
 run = "cargo build --quiet --locked --release -p editor-launch-std --bins"
 
 [tasks.ffi-test]
-description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh), that a package imports only the core's API (tools/package-imports-check.sh) and that the core imports no package and no package imports an implementation package (tools/layer-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, its restart through the launcher (tests/headless/restart), and the linked test and headless fixtures of each package of the fixture set and of the default set (tools/package-set.sh)"
+description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh), that a package imports only the core's API (tools/package-imports-check.sh) that the core imports no package and no package imports an implementation package (tools/layer-imports-check.sh) and that the module map of docs/design/packages.md agrees with the tree and with Lake (tools/module-map-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, its restart through the launcher (tests/headless/restart), and the linked test and headless fixtures of each package of the fixture set and of the default set (tools/package-set.sh)"
 depends = ["lean", "launcher"]
 dir = "lean"
 # Measured at 130 to 210 s on 2026-11-20 (Apple M5 Max), with
@@ -352,22 +414,26 @@ run = [
   # (tools/host-imports-check.sh; docs/dev-practices/the-gate.md, "The host
   # imports check"), checked on the root the package-set build generates for
   # the default set (packages/): the modules that root imports, other than
-  # the entry modules that list the packages (`EditorCore.EditorPackage`
-  # and the default packages', `ShippedThemes.EditorPackage` and
-  # `Compile.EditorPackage`), reach neither an entry module nor a module one
+  # the entry modules that list the packages (the default packages',
+  # `Ex.EditorPackage` to `Languages.EditorPackage`; the core's Lake
+  # package has none), reach neither an entry module nor a module one
   # imports. Three `lake query` calls, about half a second each.
   "sh ../tools/host-imports-check.sh",
   # And the check bites: pointed at the core's module `ConfigTest`, a root
-  # that imports the packages, it must find them and exit 1. Its output is
-  # shown only when it does not.
-  "status=0; out=$(sh ../tools/host-imports-check.sh ConfigTest 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
+  # that imports modules that define packages, with the test kit's
+  # stand-ins for default packages (`Editor.Test.Shipped`) as the list
+  # module, it must find them and exit 1. The core has no entry module to
+  # name: its Lake package registers no package. Its output is shown only
+  # when it does not.
+  "status=0; out=$(sh ../tools/host-imports-check.sh ConfigTest Editor.Test.Shipped 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
   # The same check on the root generated for the fixture set
-  # (tests/packages/), with `--set`: that root imports seven entry modules,
-  # the core's, the three fixture packages', the shipped themes', the
-  # compile mode's and the writing guide's example package's, and the
-  # host's modules must reach none of them, nor `Greeting`, `GreetingLoud`,
-  # `Echo.Packages`, `ShippedThemes`, `Compile.Compiled` or `WordCount`,
-  # which they import.
+  # (tests/packages/), with `--set`: that root imports twenty-nine entry
+  # modules, the three fixture packages', the twenty-five default
+  # packages' and the writing guide's example package's (the core's Lake
+  # package has none), and the host's
+  # modules must reach none of them, nor what they import (`Greeting`,
+  # `GreetingLoud`, `Echo.Packages`, `ShippedThemes`, `Compile.Compiled`,
+  # `ExecuteCommand.Compiled` and the rest).
   "sh ../tools/host-imports-check.sh --set ../tests/packages",
   # The root of the user-side link's fixture set (tests/user-link/): the
   # check that links an editor as a user's Mac would (`mise run
@@ -375,11 +441,11 @@ run = [
   # generates for that set, written by the facet `editorRoot`, which writes
   # a set's root and links nothing. Here the facet must give a file, and
   # the root's imports, as Lake resolves them, must be the config base, the
-  # executable's entry, the core's entry module, the default packages' and
-  # then the fixture package's: the root the check compiles is generated,
-  # lists the fixture package after the core and the default set's
-  # packages, and its modules are found.
-  "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ShippedThemes.EditorPackage Compile.EditorPackage UserLink.EditorPackage '",
+  # executable's entry, the default packages' entry modules and then the
+  # fixture package's (the core's Lake package has none): the root the
+  # check compiles is generated, lists the fixture package after the
+  # default set's packages, and its modules are found.
+  "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main Ex.EditorPackage FrameCommands.EditorPackage Menu.EditorPackage WindowCommands.EditorPackage TabCommands.EditorPackage Restore.EditorPackage PackageSet.EditorPackage Evil.EditorPackage Themes.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage ProjectSearch.EditorPackage WorkingSet.EditorPackage Shell.EditorPackage VersionControl.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage UserLink.EditorPackage '",
   # The core's lakefile is elaborated against the toolchain of the `lake`
   # that runs it, never a `lean` found on the PATH (`leanSystemLibDir` in
   # lean/lakefile.lean; docs/design/lean-runtime.md, "Build"): an app
@@ -390,19 +456,21 @@ run = [
   # `lean` that exits 1 first on the PATH. Everything it writes is in its
   # temporary directory.
   "t=$(mktemp -d) && trap 'rm -rf \"$t\"' EXIT && mkdir \"$t/no-lean\" && printf '#!/bin/sh\\nexit 1\\n' >\"$t/no-lean/lean\" && chmod +x \"$t/no-lean/lean\" && cp lean-toolchain \"$t/lean-toolchain\" && printf 'name = \"probe\"\\n\\n[[require]]\\nname = \"default-set\"\\npath = \"%s/packages\"\\n' \"$(cd .. && pwd -P)\" >\"$t/lakefile.toml\" && { root=$(PATH=\"$t/no-lean:$PATH\" lake -d \"$t\" query :editorRoot 2>\"$t/err\") && test -f \"$root\"; } || { cat \"$t/err\"; exit 1; }",
-  # The shipped themes and the compile mode are Lake packages in the
-  # default set, and no packages of the core: the root generated for the
-  # default set (packages/) imports the config base, the executable's
-  # entry, the core's entry module and then `ShippedThemes.EditorPackage`
-  # and `Compile.EditorPackage`, in the order the set's lakefile requires
-  # them, and nothing else; and the record beside the default set's editor
-  # names three `.olean` directories and no more, the core's and then each
-  # package's, which is under packages/ and holds the package's entry
-  # module. That the core's own list holds no palette and no package of the
-  # compile mode is `ModelTest.packageSetChecks`', and that the core's hosts
-  # start with nothing of the compile mode `ConfigTest.shippedChecks`'.
-  "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ShippedThemes.EditorPackage Compile.EditorPackage '",
-  "{ IFS= read -r core && IFS= read -r themes && IFS= read -r compile && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans && test -f \"$core/Editor.olean\" && test -f \"$themes/ShippedThemes/EditorPackage.olean\" && test \"$themes\" = \"$(cd ../packages/shipped-themes && pwd)/.lake/build/lib/lean\" && test -f \"$compile/Compile/EditorPackage.olean\" && test \"$compile\" = \"$(cd ../packages/compile && pwd)/.lake/build/lib/lean\"",
+  # The twenty-five default packages are Lake packages in the default set,
+  # and no packages of the core, whose Lake package lists none: the root
+  # generated for the default set (packages/) imports the config base, the
+  # executable's entry and then each default package's entry module, in the order
+  # the set's lakefile requires them, and nothing else; and the record
+  # beside the default set's editor names the core's `.olean` directory and
+  # then, one a line and no more, each package's, which is under packages/
+  # and holds the package's entry module, or for an interface package,
+  # which has none, its library's root (the loop over `<dir>:<module>`
+  # pairs, which a later move adds a pair to). That a host handed no
+  # package registers nothing is `ModelTest.packageChecks`' and
+  # `ConfigTest.hostChecks`', and that the core hands its hosts none is
+  # the pin of tests/empty-set's root imports in ffi-test.
+  "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main Ex.EditorPackage FrameCommands.EditorPackage Menu.EditorPackage WindowCommands.EditorPackage TabCommands.EditorPackage Restore.EditorPackage PackageSet.EditorPackage Evil.EditorPackage Themes.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage ProjectSearch.EditorPackage WorkingSet.EditorPackage Shell.EditorPackage VersionControl.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage '",
+  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../packages/shell-api:ShellApi ../packages/ex-api:ExApi ../packages/buffers-api:BuffersApi ../packages/ex:Ex/EditorPackage ../packages/frame-commands-api:FrameCommandsApi ../packages/frame-commands:FrameCommands/EditorPackage ../packages/evil-api:EvilApi ../packages/menu:Menu/EditorPackage ../packages/window-commands-api:WindowCommandsApi ../packages/window-commands:WindowCommands/EditorPackage ../packages/tab-commands-api:TabCommandsApi ../packages/tab-commands:TabCommands/EditorPackage ../packages/restore:Restore/EditorPackage ../packages/package-set:PackageSet/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/at-point-api:AtPointApi ../packages/evil:Evil/EditorPackage ../packages/themes-api:ThemesApi ../packages/themes:Themes/EditorPackage ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/compile-api:CompileApi ../packages/project-api:ProjectApi ../packages/vc-api:VcApi ../packages/workspace:Workspace/EditorPackage ../packages/project-search-api:ProjectSearchApi ../packages/project-search:ProjectSearch/EditorPackage ../packages/working-set-api:WorkingSetApi ../packages/working-set:WorkingSet/EditorPackage ../packages/shell:Shell/EditorPackage ../packages/version-control:VersionControl/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the default set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans",
   # The two records the package-set build writes beside a set's editor for
   # a user's set build (docs/design/packages.md, "User package sets"):
   # `editor.core`, the core's identity, one line of hex, which is the same
@@ -464,8 +532,12 @@ run = [
   # `Editor`, the shipped themes' entry module and the compile mode's, and
   # that of the set with no package (tests/empty-set) `Editor` alone: an
   # editor without the packages still loads config.
-  "test \"$(lake -d ../packages query :editorBase | tr '\\n' ' ')\" = 'Editor ShippedThemes.EditorPackage Compile.EditorPackage '",
+  "test \"$(lake -d ../packages query :editorBase | tr '\\n' ' ')\" = 'Editor Ex.EditorPackage FrameCommands.EditorPackage Menu.EditorPackage WindowCommands.EditorPackage TabCommands.EditorPackage Restore.EditorPackage PackageSet.EditorPackage Evil.EditorPackage Themes.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage ProjectSearch.EditorPackage WorkingSet.EditorPackage Shell.EditorPackage VersionControl.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage '",
   "test \"$(lake -d ../tests/empty-set query :editorBase | tr '\\n' ' ')\" = 'Editor '",
+  # And the root of that set imports the config base and the executable's
+  # entry alone: the core's Lake package has no entry module, so an editor
+  # of the core alone hands its hosts no package.
+  "test \"$(lake -d ../tests/empty-set query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main '",
   # The Rust crates of a set (the facet `editorRustCrates`;
   # docs/design/packages.md, "Rust in a package"): the package-set build
   # finds a package's crate through the target `editorRustCrate` its
@@ -514,10 +586,11 @@ run = [
   # and the root generated for the default set. Six `lake query` calls,
   # about half a second each.
   "sh ../tools/core-imports-check.sh",
-  # And each rule of the check bites. Told that a feature still in the
-  # core, the shell (`Editor.Shell`), is moving, it must find its modules
-  # in the core's root's closure and exit 1: the first rule is ready for
-  # the next feature whose edges are cut before it moves.
+  # And each rule of the check bites. Told that a module of the core, the
+  # ex line's data (`Editor.Ex.Line`), is moving, it must find it in the
+  # core's root's closure and exit 1: no feature is left in the core to
+  # name since the ex line moved out, and the first rule is ready for
+  # whatever module's edges are cut before it moves.
   # Pointed at the root `Editor.Setup`, which imports no moving module and
   # not the whole core, it must find the core modules outside it and exit 3.
   # Told the config base is `Editor.Core`, which no executable's root
@@ -525,7 +598,7 @@ run = [
   # exit 4. And told the elaborator adapter is `Editor.Core`, which no root
   # reaches, so that the third rule would hold of nothing, it must say so
   # and exit 2. The output of each is shown only when it is not that.
-  "status=0; out=$(sh ../tools/core-imports-check.sh Editor.Core Editor.Shell 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
+  "status=0; out=$(sh ../tools/core-imports-check.sh Editor.Core Editor.Ex.Line 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh Editor.Setup 2>&1) || status=$?; test \"$status\" -eq 3 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --base Editor.Core 2>&1) || status=$?; test \"$status\" -eq 4 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --elaborator Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 2 && test \"${out#core-imports-check: no root of the build}\" != \"$out\"; } || { printf '%s\\n' \"$out\"; exit 1; }",
@@ -600,6 +673,19 @@ run = [
   # would miss the test module's import and fail here, and refuses on
   # Lake's graph.
   "status=0; out=$(sh ../tools/layer-imports-check.sh ../tests/layer-imports 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/layer-imports/graph-expected -; } || { echo \"ffi-test: the layer imports check exited $status on tests/layer-imports\"; exit 1; }",
+  # The module map of docs/design/packages.md, held to the tree and to
+  # Lake (tools/module-map-check.sh; docs/dev-practices/the-gate.md, "The
+  # module map check"): every module under lean/Editor/ is named in the
+  # map's first table, and no other; every package of the default set has
+  # a row with the layer Lake gives it (`lake -d ../packages query
+  # :editorPackageGraph`); and the extension points the library modules of
+  # each package under packages/ register at and read are the ones its row
+  # names. It prints nothing when they agree, and otherwise what differs,
+  # and exits 1. One `lake query`, which builds nothing, and a pass over
+  # the packages' sources: under two seconds on a developer's Mac. Its
+  # reading of the sources is held by the fixture tests/module-map/ in
+  # lean-test.
+  "sh ../tools/module-map-check.sh",
   # The package graph the pre-commit hook decides over
   # (tools/hook-targets.sh; the facet `editorPackageGraph`;
   # docs/dev-practices/the-gate.md, "The pre-commit hook"). On the fixture
@@ -635,22 +721,23 @@ run = [
   # The same properties `lean-test` runs against the pure models, here against
   # the Rust library: the text port's, and the job port's over the timer
   # service. Its check of Lean's task pool pins no size, so LEAN_NUM_THREADS
-  # in the developer's shell does it no harm. Its first two arguments are the
+  # in the developer's shell does it no harm. Its first argument is the
   # directory of the fixtures that stand in for mise in the checks of a
-  # child's environment (tests/process-environment), and the directory of
-  # the fixture that stands in for git in the workspace finder's checks,
-  # whose properties `lean-test` runs against the finder's model
-  # (tests/workspaces). Its third is the directory of the fixture `:!` runs
-  # over the real process service, which is also the editor's working
-  # directory in those checks (tests/shell). Its fourth is the directory of
-  # the syntax fixtures, whose Rust fixtures the indent and text-object
-  # checks read (tests/syntax). Its fifth is the directory of the fixture
-  # that stands in for fzf in the checks of a source a command filters
-  # (tests/completion). A compile over the real process service is no check
-  # of this executable any more: it is the compile package's linked test's
-  # (packages/compile/CompileTest/Linked.lean), which the package steps run
-  # below on that package's own fixtures (packages/compile/tests/compile).
-  ".lake/build/bin/contract-test ../tests/process-environment ../tests/workspaces ../tests/shell ../tests/syntax ../tests/completion",
+  # child's environment (tests/process-environment). Its second is the
+  # directory of the syntax fixtures, whose Rust fixtures the indent and
+  # text-object checks read (tests/syntax). Its third is the directory of
+  # the fixture that stands in for fzf in the checks of a source a command
+  # filters (tests/completion). A compile over the real process service is
+  # no check of this executable any more, and nor are the workspace finder,
+  # the listers and `:!`: they are the compile package's, the workspace
+  # package's and the shell package's linked tests'
+  # (packages/compile/CompileTest/Linked.lean,
+  # packages/workspace/WorkspaceTest/Linked.lean,
+  # packages/shell/ShellTest/Linked.lean), which the package steps run below
+  # on those packages' own fixtures (packages/compile/tests/compile,
+  # packages/workspace/tests/workspaces and tests/completion,
+  # packages/shell/tests/shell).
+  ".lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment; its third argument is the directory of the syntax
@@ -751,60 +838,37 @@ run = [
   # refused by the library before it asks the file system, so the run
   # touches no file (`files/expected`).
   "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/files/config ../tests/headless/files/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/files/expected -",
-  # A prompt, on a config of its own (tests/headless/prompt), under the
-  # editor's input scheme: a command of config's asks for a prompt, a
-  # key that prints is typed into the minibuffer, whose view the scene
-  # shows with the prompt text as its status line; `<Enter>` accepts with
-  # the compiled command `minibuffer-accept`, and config's command that
-  # receives the answer says it in the echo area; `<Escape>` cancels with
-  # `minibuffer-cancel`, and that command does not run (`prompt/expected`).
-  # It touches no file.
-  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/prompt/config ../tests/headless/prompt/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/prompt/expected -",
-  # A prompt with candidates, on a config of its own (tests/headless/
-  # candidates), under the editor's input scheme and with the library's
-  # fuzzy matcher: a command of config's asks with three candidates, a key
-  # is typed, and the scene lists the candidates the text matches after
-  # the prompt's label, in the minibuffer's status line, the one that is
-  # the text first; `C-n`, pressed twice, chooses the second with the
-  # compiled command `minibuffer-next`, and the scene shows it in the
-  # chosen face; `<Enter>` accepts, and config's command that receives the
-  # answer says the chosen candidate in the echo area; with a text no
-  # candidate matches the scene lists none, `<Tab>` puts nothing in the
-  # input, and the command receives the typed text; and `<Tab>`, the
-  # compiled command `minibuffer-insert`, puts the first listed candidate
-  # in the input, the prompt still open (`candidates/expected`). It touches
-  # no file.
-  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/candidates/expected -",
-  # The themes of an editor with no package but the core's
-  # (tests/headless/core-themes), run on the editor built from the set
-  # tests/empty-set, which is the default set with its packages, the
-  # shipped themes' among them, dropped: on a config that defines one
-  # theme, `first`, and names
-  # none, the first scene is drawn in `default`; `load-theme`'s prompt
-  # lists `default` and `first` and no palette; `first` is loaded; and
-  # `solarized-dark`, answered, is said in the echo area to be no
-  # registered theme (`core-themes/expected`). The default set's editor
-  # prints other lines for the same script: it lists the palettes and loads
-  # `solarized-dark`. It touches no file.
-  "out=$(../tests/empty-set/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/core-themes/config ../tests/headless/core-themes/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/core-themes/expected -",
-  # The ex names of the same editor (tests/headless/core-ex-names): the
-  # compile mode is a default package too (packages/compile/), so the
-  # editor of tests/empty-set does not hold it. It starts and loads config,
-  # on the base `Editor` alone, and `compile` typed on its ex line is
-  # reported as `bogus` is, an ex name nobody bound: `compile: not an ex
-  # command`, then `bogus: not an ex command`
-  # (`core-ex-names/expected`). The default set's editor opens the prompt
-  # `Compile command: ` for the first. It touches no file and starts no
-  # process.
-  "out=$(../tests/empty-set/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/core-ex-names/config ../tests/headless/core-ex-names/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/core-ex-names/expected -",
-  # The segmented mode line, on a config of its own (tests/headless/
-  # mode-line) that defines a segment and lists the mode line for each side,
-  # one name nobody registered among them: the reload says that name, on a
-  # line of its own and in the echo area, and each scene's status line has
-  # its left fields, ` | ` and its right ones, in the listing's order, with
-  # their paddings, in insert state, in normal state and with the ex prompt
-  # open (`mode-line/expected`). It touches no file.
-  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/mode-line/config ../tests/headless/mode-line/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/mode-line/expected -",
+  # The default config `mise run install` ships (config/default), on the
+  # editor of the default set (tests/headless/default-config): the binding
+  # search lists its `SPC f f  open-file`, and `SPC :` and `SPC ?`, run
+  # from the search as their keys would run, open the command prompt and
+  # the binding search; its file, buffer, workspace, search and working-set
+  # keys are listed, and each run from the search opens its prompt or says
+  # why it cannot (`default-config/expected`). The config is copied into a
+  # temporary directory, which a trap removes, so nothing is written into
+  # the checkout, and the editor runs in an empty directory beside it, so
+  # the prompts that start at the working directory, or search it, are the
+  # same everywhere once the directory's path, taken physically, is written
+  # `@DIR@`.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && root=$(pwd) && prefix=$(lean --print-prefix) && cp -R ../config/default \"$dir/config\" && mkdir \"$dir/cwd\" && out=$(cd \"$dir/cwd\" && \"$root/../packages/.lake/build/bin/editor\" headless \"$prefix\" \"$root/.lake/build/lib/lean\" \"$dir/config\" \"$root/../tests/headless/default-config/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/default-config/expected -",
+  # An editor of a set with no input-scheme package refuses to start
+  # (tests/headless/no-input-scheme), run on the editor built from the set
+  # tests/empty-set, which is the default set with its packages dropped:
+  # the Vim scheme is the default package evil's (packages/evil/), so no
+  # package of that set supplies a scheme (`Editor.Main.run`,
+  # docs/design/packages.md, "Input schemes"). The headless mode must exit
+  # 1 having printed exactly `no-input-scheme/expected`, the one line
+  # `editor: no input scheme is installed: no package of this editor's
+  # package set supplies one`, before it reads the script or loads the
+  # config; and so must `--probe`, which a restart runs before it hands
+  # the session over, so that a restart into such a set is given up. Any
+  # other status or text fails. It touches no file. The two fixtures that
+  # ran on this editor while the core supplied the scheme, core-themes and
+  # core-ex-names, are retired: where what they showed of an editor
+  # without the default packages is held is in docs/design/packages.md,
+  # "Dropping evil or themes leaves…".
+  "status=0; out=$(../tests/empty-set/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/no-input-scheme/config ../tests/headless/no-input-scheme/script 2>&1) || status=$?; test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/headless/no-input-scheme/expected -",
+  "status=0; out=$(../tests/empty-set/.lake/build/bin/editor --probe 2>&1) || status=$?; test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/headless/no-input-scheme/expected -",
   # The frame padding (tests/headless/padding): a config that sets it to 12
   # points; each scene prints the window's view padded 12 across and down,
   # the echo padded 12, and with the ex prompt open the minibuffer's view
@@ -852,12 +916,6 @@ run = [
   # before the bar and the `l` after it is text (`insert-word-delete/expected`).
   # It touches no file.
   "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/insert-word-delete/config ../tests/headless/insert-word-delete/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/insert-word-delete/expected -",
-  # Completion at point's auto popup (tests/headless/at-point), on the shared
-  # config: two characters typed in insert state, then `advance 240` on the
-  # headless mode's fake clock fires the pause of the shipped `words` source,
-  # whose session lists the words that match; `C-n` previews the first and
-  # `RET` accepts it (`at-point/expected`). It touches no file.
-  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/at-point/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/at-point/expected -",
   # Display rules (tests/headless/display-rules): a config whose one rule
   # names the right edge the default layout lacks is installed with the
   # rule left out, and says so in its report's `rule:` line and in the
@@ -1037,6 +1095,28 @@ run = [
   # rewrite, so the directory is made from a template under `/tmp`, not
   # under `$TMPDIR`: its path is always 23 bytes, on every machine.
   "dir=$(mktemp -d /tmp/open-file.XXXXXXXX) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/open-file/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/open-file/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/open-file/expected -",
+  # A working set's range held again when its file is reopened, as a
+  # process, with no config (tests/headless/working-set-reopen): `:e` opens a
+  # file of a tree whose marker `.project` makes it a workspace,
+  # `working-set-add` adds the cursor's line to a new set `todo`,
+  # `close-buffer` closes the file's buffer and `:e` opens it again, and
+  # `working-set-open` shows the set with the line as an excerpt and nothing
+  # drifted. It pins what the open and the close hand the working set. It is
+  # made as `open-file`'s entry is, from a template under `/tmp`; the
+  # headless mode has no state directory, so no file is written.
+  "dir=$(mktemp -d /tmp/working-set.XXXXXXXX) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/working-set-reopen/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/working-set-reopen/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/working-set-reopen/expected -",
+  # A working set's range added from project search's results, as a
+  # process, with no config (tests/headless/working-set-from-search): `:e`
+  # opens a file of a tree whose marker `.project` makes it a workspace,
+  # `project-search` searches a word in two of its files, `working-set-add`
+  # adds the results' row of the second file's match to a new set `found`,
+  # and `working-set-open` shows that row of the file as the set's one
+  # excerpt, nothing drifted, which `RET` visits. It pins what project search
+  # and the working set do together. It is made as `working-set-reopen`'s
+  # entry is; the job lines are left out, because how many deliveries a
+  # search makes is the library's timing, and a scene line carries no count
+  # of the scenes published.
+  "dir=$(mktemp -d /tmp/working-set-search.XXXXXXXX) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/working-set-from-search/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/working-set-from-search/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job ' | diff ../tests/headless/working-set-from-search/expected -",
   # A view that follows its cursor, as a process, with no config
   # (tests/headless/view): the script sizes the frame, opens a file of 120
   # lines with `:e`, and moves the cursor 100 lines down, with a scene
@@ -1097,7 +1177,7 @@ run = [
   # move asked through the binding must land on the frame's next row.
   ".lake/build/bin/ffi-test display ../tests/display/frame.expected",
   # The picture of the theme `default` (the core's theme picture check,
-  # lean/Editor/Themes/Picture.lean): the fixture file tests/render/themes/
+  # lean/Editor/Theme/Picture.lean): the fixture file tests/render/themes/
   # source.lean, published from Lean through the display's real binding in
   # the built-in theme, over a display of the one fixture font given here,
   # and drawn by the CPU renderer, must match
@@ -1182,15 +1262,16 @@ run = [
   ".lake/build/bin/ffi-test window-host-direct ../tests/packages/.lake/build/bin/editor \"$(lean --print-prefix)\" ../tests/window/title-bar/config",
   # And the record of the fixture set's editor names the `.olean` directory
   # of each of the set's Lake packages that holds a library, one a line,
-  # the core's first and each package after the ones it requires: eight
-  # directories and no more, each holding its package's modules, the
-  # second the interface package `greeting-api`'s, which has no entry
+  # the core's first and each package after the ones it requires:
+  # forty-nine directories and no more, each holding its package's modules,
+  # the second the interface package `greeting-api`'s, which has no entry
   # module but whose modules `greeting` and `greeting-loud` import, the
-  # fifth `echo`'s, the next two the shipped themes' and the compile
-  # mode's, which the set reaches through the default set, and last the
-  # writing guide's example package `word-count`'s, which the set requires
-  # after the default set.
-  "{ IFS= read -r core && IFS= read -r api && IFS= read -r first && IFS= read -r second && IFS= read -r echo && IFS= read -r third && IFS= read -r fourth && IFS= read -r example && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans && test -f \"$core/Editor.olean\" && test -f \"$api/GreetingApi.olean\" && test -f \"$first/Greeting/EditorPackage.olean\" && test -f \"$second/GreetingLoud/EditorPackage.olean\" && test -f \"$echo/Echo/EditorPackage.olean\" && test -f \"$third/ShippedThemes/EditorPackage.olean\" && test -f \"$fourth/Compile/EditorPackage.olean\" && test -f \"$example/WordCount/EditorPackage.olean\" && test \"$example\" = \"$(cd ../docs/packages/word-count && pwd)/.lake/build/lib/lean\"",
+  # fifth `echo`'s, the next forty-three the default set's, which the set
+  # reaches through it (its eighteen interface packages each before the
+  # first
+  # package that requires it), and last the writing guide's example package
+  # `word-count`'s, which the set requires after the default set.
+  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../tests/packages/greeting-api:GreetingApi ../tests/packages/greeting:Greeting/EditorPackage ../tests/packages/greeting-loud:GreetingLoud/EditorPackage ../tests/packages/echo:Echo/EditorPackage ../packages/shell-api:ShellApi ../packages/ex-api:ExApi ../packages/buffers-api:BuffersApi ../packages/ex:Ex/EditorPackage ../packages/frame-commands-api:FrameCommandsApi ../packages/frame-commands:FrameCommands/EditorPackage ../packages/evil-api:EvilApi ../packages/menu:Menu/EditorPackage ../packages/window-commands-api:WindowCommandsApi ../packages/window-commands:WindowCommands/EditorPackage ../packages/tab-commands-api:TabCommandsApi ../packages/tab-commands:TabCommands/EditorPackage ../packages/restore:Restore/EditorPackage ../packages/package-set:PackageSet/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/at-point-api:AtPointApi ../packages/evil:Evil/EditorPackage ../packages/themes-api:ThemesApi ../packages/themes:Themes/EditorPackage ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/compile-api:CompileApi ../packages/project-api:ProjectApi ../packages/vc-api:VcApi ../packages/workspace:Workspace/EditorPackage ../packages/project-search-api:ProjectSearchApi ../packages/project-search:ProjectSearch/EditorPackage ../packages/working-set-api:WorkingSetApi ../packages/working-set:WorkingSet/EditorPackage ../packages/shell:Shell/EditorPackage ../packages/version-control:VersionControl/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage ../docs/packages/word-count:WordCount/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the fixture set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans",
   # The same wiring on the library's scripted platform whose renderer cannot
   # be made, as a machine with no usable GPU gives: the window runs with
   # nothing drawing in it. The scenario must exit 0, which it does only when
@@ -1263,7 +1344,7 @@ run = [
   # turns a canned task list into commands, with no process and no path of
   # the machine; what it prints was compared with what an editor built at
   # the commit before the move prints for it.
-  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test EchoTest.Linked of echo' \"echo linked test: the contract's 7 properties hold on the Rust-backed binding, each request completed through the completion queue\" 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture as-config of word-count' 'package-set: headless fixture count of word-count' 'package-set: headless fixture from-config of word-count' 'package-set: ran 4 linked tests and 12 headless fixtures over 7 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
+  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test ExTest.Linked of ex' 'ex linked test: 9 checks passed' 'package-set: linked test EvilTest.Linked of evil' 'evil linked test: 20 checks passed' 'package-set: linked test ThemesTest.Linked of themes' 'themes linked test: 3 checks passed' 'package-set: linked test FilesTest.Linked of files' 'files linked test: 25 checks passed' 'package-set: linked test WorkspaceTest.Linked of workspace' 'workspace linked test: 21 checks passed' 'package-set: linked test ProjectSearchTest.Linked of project-search' 'project-search linked test: 1 checks passed' 'package-set: linked test WorkingSetTest.Linked of working-set' 'working-set linked test: 1 checks passed' 'package-set: linked test ShellTest.Linked of shell' 'shell linked test: 2 checks passed' 'package-set: linked test VersionControlTest.Linked of version-control' 'version-control linked test: 89 checks passed' 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test EchoTest.Linked of echo' \"echo linked test: the contract's 7 properties hold on the Rust-backed binding, each request completed through the completion queue\" 'package-set: linked test CompletionTest.Linked of completion' 'completion linked test: 6 checks passed' 'package-set: headless fixture completion-choices of completion' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture candidates of minibuffer' 'package-set: headless fixture prompt of minibuffer' 'package-set: headless fixture command-prompt of execute-command' 'package-set: headless fixture binding-search of binding-search' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture at-point of at-point' 'package-set: headless fixture at-point-tuned of at-point' 'package-set: headless fixture as-config of word-count' 'package-set: headless fixture count of word-count' 'package-set: headless fixture from-config of word-count' 'package-set: ran 14 linked tests and 20 headless fixtures over 48 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
   # With `--only`, `run` runs over the named packages alone, and still
   # refuses to run nothing: the interface package `greeting-api` has no
   # linked test and no headless fixture, so `--only greeting-api` is exit
@@ -1286,7 +1367,7 @@ run = [
   # lines do not give, is found through the record the build wrote beside
   # the editor. The lines of what it is here to run are required, as
   # above.
-  "out=$(sh ../tools/package-set.sh run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture shipped-formats of compile' 'package-set: ran 2 linked tests and 7 headless fixtures over 2 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps over the default set did not print: $line\"; exit 1; }; done",
+  "out=$(sh ../tools/package-set.sh run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test ExTest.Linked of ex' 'ex linked test: 9 checks passed' 'package-set: linked test EvilTest.Linked of evil' 'evil linked test: 20 checks passed' 'package-set: linked test ThemesTest.Linked of themes' 'themes linked test: 3 checks passed' 'package-set: linked test FilesTest.Linked of files' 'files linked test: 25 checks passed' 'package-set: linked test WorkspaceTest.Linked of workspace' 'workspace linked test: 21 checks passed' 'package-set: linked test ProjectSearchTest.Linked of project-search' 'project-search linked test: 1 checks passed' 'package-set: linked test WorkingSetTest.Linked of working-set' 'working-set linked test: 1 checks passed' 'package-set: linked test ShellTest.Linked of shell' 'shell linked test: 2 checks passed' 'package-set: linked test VersionControlTest.Linked of version-control' 'version-control linked test: 89 checks passed' 'package-set: linked test CompletionTest.Linked of completion' 'completion linked test: 6 checks passed' 'package-set: headless fixture completion-choices of completion' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture candidates of minibuffer' 'package-set: headless fixture prompt of minibuffer' 'package-set: headless fixture command-prompt of execute-command' 'package-set: headless fixture binding-search of binding-search' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture at-point of at-point' 'package-set: headless fixture at-point-tuned of at-point' 'package-set: ran 12 linked tests and 15 headless fixtures over 43 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps over the default set did not print: $line\"; exit 1; }; done",
   # And the editor of the default set, which does not hold the fixture
   # package, has no such command: on the same config and script its
   # headless mode must print `run greeting-hello: no such command`. So the
@@ -1330,13 +1411,35 @@ run = "sh ../tools/bundle-test.sh"
 # set's packages build in place. Its Lake builds read what `lean` built
 # and write nothing it shares: it ends by requiring the default set's
 # editor to read as up to date. It has a task and a time limit of its own,
-# as the builds take longer than `ffi-test`'s commands.
+# as the builds take longer than `ffi-test`'s commands. It runs under
+# tools/home-bound-toolchain.sh, whose `lean` and `lake` fail once HOME
+# moves, as elan's do on CI, so a bare `lake` run after it moves HOME
+# fails here too, not only on CI.
 [tasks.user-sets-test]
 description = "A user's package set end to end through the launcher: install a package and restart into the per-user build with the session restored, a failing link that keeps the editor running, a default package dropped, a set that fails to elaborate, and git missing (tools/user-sets-test.sh, tests/user-sets)"
 depends = ["lean", "launcher"]
 dir = "lean"
 timeout = "600s"
-run = "sh ../tools/user-sets-test.sh"
+run = "sh ../tools/home-bound-toolchain.sh sh ../tools/user-sets-test.sh"
+
+# Opt-in, never part of `ci` or hk.pkl: the leave-out check
+# (tools/leave-out-check.sh; docs/dev-practices/the-gate.md, "The leave-out
+# check"). For each implementation package of the default set, it builds
+# an editor from the set without that package, in a temporary directory,
+# requires that editor's generated root to import every other entry module
+# and not that one, and prints `leave-out: <package>: built, …` with the
+# first line of the editor's `--probe`. It links one editor a package,
+# twenty-five of them, which is why it is not in the gate; the gate keeps
+# what makes it true, the layer imports check (no package imports an
+# implementation package's module), and the check's own edit of a
+# lakefile, by dry runs (`lean-test`). It builds the packages where they
+# are, so never run it while `ci` or another build of this checkout runs.
+[tasks.leave-out]
+description = "Opt-in, never part of ci: build an editor from the default package set without each implementation package, one at a time, and say what each one's --probe answers (tools/leave-out-check.sh)"
+depends = ["lean"]
+dir = "lean"
+env = { LEAN_CC = "/usr/bin/cc" }
+run = "sh ../tools/leave-out-check.sh ../packages"
 
 # Opt-in, never part of `ci`: the user package sets checks that need git,
 # Cargo or more builds than the gate's (tools/user-sets-check.sh;
@@ -1345,12 +1448,13 @@ run = "sh ../tools/user-sets-test.sh"
 # git repository, a set holding a Rust crate built with Cargo, and a probe
 # failure. Everything it writes is in a temporary directory, but the
 # fixture packages' own .lake/ and, for the Rust set, the checkout's
-# target/.
+# target/. It runs under tools/home-bound-toolchain.sh, as `user-sets-test`
+# does, so a bare `lake` run after it moves HOME fails here too.
 [tasks.user-sets-check]
 description = "Opt-in, never part of ci: a user's package set after an editor update, updated from git, holding a Rust crate, and failing its probe (tools/user-sets-check.sh)"
 depends = ["lean", "launcher"]
 dir = "lean"
-run = "sh ../tools/user-sets-check.sh"
+run = "sh ../tools/home-bound-toolchain.sh sh ../tools/user-sets-check.sh"
 
 # The build ID (crates/editor-release, `build_id`): LEANMACS_BUILD_ID when
 # it is set, else HEAD's committer time in UTC, the time landing sets. CI's
@@ -1593,7 +1697,7 @@ run = '''status=0; out=$( (ulimit -c 0; exec env -u LEAN_STACK_SIZE_KB .lake/bui
 # else is read but the `.olean` files, whose directories are passed in. LEAN_STACK_SIZE_KB is removed from the
 # environment, so the threads have the stack the editor gives them.
 [tasks.config-bench]
-description = "Opt-in, never part of ci: measure start-up, reload time and memory across reloads of the config session (lean/ConfigTest/Bench.lean). It asserts nothing"
+description = "Opt-in, never part of ci: measure start-up, reload time and memory across reloads of the config session (lean/ConfigTest/Bench.lean), and auto-reload's rewrite-to-shown latency (packages/files/FilesTest/Linked/Files/Bench.lean). It asserts nothing"
 depends = ["lean"]
 dir = "lean"
 run = [
@@ -1608,8 +1712,15 @@ run = [
   # library's real watch service: the latency from another process's
   # rewrite of an open buffer's file to the rewrite shown, printed with its
   # budget beside it. Real time is what it measures, so it is here, never a
-  # pass or fail of `config-test` (`ConfigTest.autoReloadChecks`).
-  ".lake/build/bin/config-test bench-auto-reload \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default 10",
+  # pass or fail of the files package's linked test
+  # (`FilesTest.Linked.autoReloadChecks`). It is `bench-auto-reload`, an
+  # opt-in argument of that linked test
+  # (packages/files/FilesTest/Linked.lean), since auto-reload is the files
+  # package's: the line builds the linked test's executable as the package
+  # steps do, with the system compiler, as `lean` links, asks Lake for its
+  # path and runs it in the package's directory, as the package steps run
+  # a linked test (tools/package-set.sh).
+  "LEAN_CC=/usr/bin/cc lake -d ../packages/files build --wfail +FilesTest.Linked:editorLinked && bench=$(lake -d ../packages query :editorPackages | awk -F '\\t' '$1 == \"files\" { print $4 }') && oleans=$(cd .lake/build/lib/lean && pwd) && (cd ../packages/files && \"$bench\" bench-auto-reload \"$(lean --print-prefix)\" \"$oleans\" 10)",
 ]
 
 # Opt-in: run it by hand on a quiet machine, on macOS, and do not add it to
@@ -1772,8 +1883,10 @@ run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test
 # Opt-in: do not add it to `ci` or to hk.pkl. It runs real git and the fzf
 # `[tools]` pins over a repository of 100,000 files.
 #
-# `bench-workspace-files` measures `find-file-in-workspace`
-# (lean/Editor/Workspace/FindFile.lean) over a real repository, 120 keys a
+# `bench-workspace-files`, an opt-in argument of the workspace package's
+# linked test (packages/workspace/WorkspaceTest/Linked.lean), measures
+# `find-file-in-workspace` (packages/workspace/Workspace/FindFile.lean) over
+# a real repository, 120 keys a
 # row, each of `m`, `1`, `2`, `f`, `3` and `4` committed into the open
 # prompt. Rows: a key in a prompt with no candidates, the floor; a key in the
 # finder's prompt, each joined, from sending it to the editor thread having
@@ -1789,20 +1902,27 @@ run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test
 #
 # The repository is made by tools/workspace-bench-repo.sh in a temporary
 # directory, removed on exit; WORKSPACE_BENCH_REPO names a checkout to
-# measure instead. The host is a headless host on the real queue and the
-# library's process and file services; LEAN_NUM_THREADS and
-# LEAN_STACK_SIZE_KB are removed from the environment, as for `job-bench`.
+# measure instead. The task builds the linked test's executable as the
+# package steps do (`lake -d ../packages/workspace build
+# +WorkspaceTest.Linked:editorLinked`) and asks Lake for its path. The host
+# is a headless host on the real queue and the library's process and file
+# services; LEAN_NUM_THREADS and LEAN_STACK_SIZE_KB are removed from the
+# environment, as for `job-bench`, and LEAN_CC is the system compiler, as
+# for `lean`, which links the executable.
 [tasks.find-file-bench]
-description = "Opt-in, never part of ci: measure what a key costs in find-file-in-workspace's prompt over a repository of 100,000 files, and the time from a key to its updated list (lean/ConfigTest/Bench.lean). It asserts nothing"
+description = "Opt-in, never part of ci: measure what a key costs in find-file-in-workspace's prompt over a repository of 100,000 files, and the time from a key to its updated list (packages/workspace/WorkspaceTest/Linked/Workspace/Bench.lean). It asserts nothing"
 depends = ["lean"]
 dir = "lean"
+env = { LEAN_CC = "/usr/bin/cc" }
 run = '''
 if [ -n "${WORKSPACE_BENCH_REPO:-}" ]; then
   repo=$WORKSPACE_BENCH_REPO
 else
   dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && repo=$dir/repo && sh ../tools/workspace-bench-repo.sh "$repo" || exit 1
 fi
-env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-workspace-files "$(lean --print-prefix)" .lake/build/lib/lean "$repo" 120
+lake -d ../packages/workspace build --wfail +WorkspaceTest.Linked:editorLinked || exit 1
+bench=$(lake -d ../packages query :editorPackages | awk -F '\t' '$1 == "workspace" { print $4 }')
+env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB "$bench" bench-workspace-files "$(lean --print-prefix)" "$(cd .lake/build/lib/lean && pwd)" "$repo" 120
 '''
 
 # Opt-in: do not add it to `ci` or to hk.pkl. It opens a window on this
@@ -2003,22 +2123,111 @@ dir = "lean"
 run = ".lake/build/bin/ffi-test excerpt-picture ../tests/render/excerpts ../tests/fonts/NotoSansMono-Regular.subset.ttf --write"
 
 # Opt-in: run it by hand, on macOS, and do not add it to `ci` or to hk.pkl.
-# It needs the system's `swift`, and it writes a file of the repository,
+# It needs the system's `swift`, and it writes files of the repository,
 # which no gate may do.
 #
 # It runs `tools/coretext/capture.swift`: Core Text draws the sentence "the
-# window draws this" from the fixture font at 14 pt on a bitmap of scale 2,
-# black on white, with font smoothing on, and the drawing is written to
-# `tests/coretext/sentence.png`. That file is the macOS weight's target: the
-# renderer's test draws the same sentence through its CPU path and holds its
-# weight to the file's (`crates/editor-render-wgpu/src/weight_tests.rs`).
+# window draws this" from the fixture font at 14 pt, as one line, and the
+# drawings and the glyphs' places are written under `tests/coretext/`:
 #
-# Run it on a new major version of macOS, or when the fixture font changes.
-# Then look at the file, enlarged, before committing it, and record the
-# capture in `tests/coretext/README.md`.
+# - `sentence.png`, at scale 2, black on white, the context's subpixel
+#   flags left at their defaults: the macOS weight's target. The renderer's
+#   test draws the same sentence through its CPU path and holds its weight
+#   to the file's (`crates/editor-render-wgpu/src/weight_tests.rs`). It is
+#   drawn exactly as it was on 2026-11-14.
+# - `sentence-dark.png`, at scale 2, the default theme's `#d8dee9` on
+#   `#2e3440`; `sentence-14.png` and `sentence-14-dark.png`, at scale 1,
+#   black on white and light on dark; `sentence-grey.png`, at scale 2,
+#   `#808080` on white. Each is the coverage, and is what the Core Text
+#   adapter's masks are compared with (`mise run coretext-check`).
+# - `positions.txt`, each glyph's place on the line at scale 1 and 2, which
+#   the shaper's and the painter's placement tests hold to
+#   (`crates/editor-shape-parley/tests/core_text.rs`,
+#   `crates/editor-render-wgpu/src/placement_tests.rs`).
+# - `composited/<drawing>.png`, for each of the five drawings: the
+#   bitmap's own pixels as 8-bit RGB, what macOS composited, which the
+#   renderer's composite of the sentence is compared with on demand
+#   (`mise run coretext-check`, its second half).
+# - `blend.txt`, Core Graphics' own result for uniform fills of four text
+#   colours over three grounds at five alphas, which the renderer's encoded
+#   blending is held to in the gate (`crates/editor-render-wgpu/src/
+#   blend.rs`).
+#
+# Every drawing is made with the context's default subpixel flags, as
+# native apps draw text: Core Text floors each glyph's place to its own
+# grid (thirds of a pixel at scale 1, halves at scale 2), the grid the
+# renderer's painter places glyphs on.
+#
+# The script checks each drawing itself (nothing on the border, the three
+# channels one coverage) and fails rather than write one that is not. Run
+# it on a new major version of macOS, or when the fixture font changes, and
+# record the capture in `tests/coretext/README.md`. If `sentence.png`
+# changes, the weight's fit is out of date: `tests/coretext/README.md` says
+# what to do.
 [tasks.coretext-reference]
-description = "Opt-in, never part of ci; macOS only: draw the weight sentence with Core Text from the fixture font and write it to tests/coretext/sentence.png, the macOS weight's target. Look at the file before committing it"
-run = "swift tools/coretext/capture.swift tests/fonts/NotoSansMono-Regular.subset.ttf tests/coretext/sentence.png"
+description = "Opt-in, never part of ci; macOS only: draw the weight sentence with Core Text from the fixture font and write the drawings and the glyphs' places under tests/coretext/, the macOS weight's target and the Core Text adapter's comparison"
+run = "swift tools/coretext/capture.swift tests/fonts/NotoSansMono-Regular.subset.ttf tests/coretext"
+
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to
+# hk.pkl. What Core Text draws is the system's: it changes between macOS
+# releases, and the gate's macOS runner is not the machine the captures
+# were made on, so it is no part of a gate that must give the same answer
+# everywhere.
+#
+# It runs two examples, and each must exit 0.
+#
+# First the Core Text adapter's (`crates/editor-raster-coretext/examples/
+# check/`): the adapter held to the rasteriser port's contract, smoothed
+# and not, at 14 and 28 pixels; what `AppleFontSmoothing` holds and what
+# was decided from it; and the adapter's masks, laid at the painter's bins
+# of Core Text's own positions, against Core Text's drawings under
+# `tests/coretext/`, each within its thresholds, with the controls that
+# must miss them.
+#
+# Then the blending's (`crates/editor-ffi/examples/coretext/`): the
+# sentence drawn through the real renderers, the headless one and the wgpu
+# one on this machine's GPU, with `Settings::core_text()` and the Core Text
+# rasteriser, against what macOS composited (`tests/coretext/composited/`),
+# each within its thresholds and the GPU within 3 of 255 of the CPU, with
+# the controls that must miss: linear light, in the direction that is why
+# macOS blends encoded, and the old contrast of 0.1. It opens no window.
+#
+# A pass is exit 0 from both: every property holds, every capture is
+# within the thresholds of its scale and every control is outside them.
+# The gate builds both examples and never runs them.
+#
+# Run it when macOS's major version changes, when a binding's pin or the
+# wgpu pin moves, when the adapter changes, and when the blend, the shader
+# or the surface changes, and record its figures, dated, in
+# `docs/dev-practices/on-demand-checks.md`.
+[tasks.coretext-check]
+description = "Opt-in, never part of ci; macOS only: hold the Core Text rasteriser to the rasteriser port's contract and compare its masks with Core Text's own drawings, then the renderers' composite of the sentence with what macOS composited, under tests/coretext/. Needs a GPU, opens no window"
+run = [
+  "cargo run --locked -p editor-raster-coretext --example check",
+  "cargo run --locked -p editor-ffi --example coretext",
+]
+
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to
+# hk.pkl. It reads a font of the machine, Menlo, whose licence keeps it out
+# of the repository, and it needs the system's `swift`.
+#
+# It writes Core Text's places of the glyphs of "the window draws this" in
+# Menlo at 14 pt, at scale 1 and 2 (`tools/coretext/capture.swift
+# --positions`), into a temporary directory that is removed when it ends,
+# and runs the shaper's example (`crates/editor-shape-parley/examples/
+# core_text/`): the same sentence laid out through Parley over Menlo
+# alone, each glyph's error against Core Text's printed, and its exit
+# status non-zero when a glyph is not Core Text's or a place is more than
+# an eighth of a pixel off. The gate holds the fixture font to the same
+# bound (`crates/editor-shape-parley/tests/core_text.rs`); this is the
+# font the owner reads. The gate builds the example and never runs it.
+#
+# Run it when macOS's major version changes, when the pin of Parley or
+# fontique moves, and when the shaper changes, and record its result,
+# dated, in `docs/dev-practices/on-demand-checks.md`.
+[tasks.coretext-menlo]
+description = "Opt-in, never part of ci; macOS only: hold the shaper's places of a sentence in Menlo to Core Text's"
+run = "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && swift tools/coretext/capture.swift --positions /System/Library/Fonts/Menlo.ttc \"$dir/menlo.txt\" && cargo run --locked -p editor-shape-parley --example core_text -- /System/Library/Fonts/Menlo.ttc \"$dir/menlo.txt\" Menlo"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. What it
 # finds depends on this machine's GPU and its driver, so it is no part of
@@ -2028,16 +2237,35 @@ run = "swift tools/coretext/capture.swift tests/fonts/NotoSansMono-Regular.subse
 # It runs the renderer's example (`crates/editor-render-wgpu/examples/
 # gpu.rs`): the wgpu adapter on this machine's adapter, held to the
 # renderer port's contract; then the fixture frame drawn on the GPU, read
-# back, and compared with the reference image (within 3 of 255 a channel);
-# then how long a first frame, an edited frame and a cursor-only frame
-# took, which nothing is asserted of. Its exit status is whether the
-# contract and the comparison held.
+# back, and compared with the reference image and with the CPU's picture
+# (within 3 of 255 a channel), in linear light and, at the macOS setting,
+# in sRGB-encoded values, with a control that must miss (the GPU encoded
+# against the CPU in linear light); then how long a first frame, an
+# edited frame and a cursor-only frame took, which nothing is asserted
+# of. Its exit status is whether the contract, the comparisons and the
+# control held.
 #
 # The gate runs the wgpu adapter on wgpu's no-op back end only, which
 # checks its calls and draws nothing. This is where its picture is
 # checked. Run it after a change to the shader, the device, the painter or
 # `blend`, and when the pin of wgpu moves; `linux-render` runs the same in
 # the container, on Mesa's software Vulkan.
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to
+# hk.pkl. It opens the window, so it needs a desktop session, but it draws
+# nothing it waits on and presents nothing it judges, so it passes with the
+# screen locked. Its first half is `editor-platform-winit`'s example
+# `settings`, whose pure module's tests run in the gate; its second is
+# `editor-ffi`'s example `layer`, whose rules (`editor-render-wgpu`'s
+# `layer::misses`) are tested in the gate on readings built in code.
+# `docs/dev-practices/on-demand-checks.md`, "The window's settings and its
+# Metal layer, on demand", says when to run it and what it read.
+[tasks.window-layer]
+description = "Opt-in, never part of ci; macOS only: open the window, ask it for a paper and the dark appearance and read back its settings, then read the Metal layer the renderer draws on and hold it to the surface's configuration. Presents nothing, so it passes with the screen locked"
+run = [
+  "cargo run --locked --package editor-platform-winit --example settings",
+  "cargo run --locked --package editor-ffi --example layer",
+]
+
 [tasks.render-gpu]
 description = "Opt-in, never part of ci: hold the wgpu renderer on this machine's GPU to the renderer port's contract, and compare the frame it draws with the reference image. Opens no window; needs a GPU"
 run = "cargo run --locked --package editor-render-wgpu --example gpu"

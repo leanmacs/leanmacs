@@ -1,0 +1,55 @@
+# A template of a script: `mise run ffi-test` copies `tree/` into a
+# temporary directory, writes this file there with `@DIR@` replaced by that
+# directory's absolute path, and has the editor's headless mode run it
+# against the config in `../config/`, of which it loads nothing: there is
+# no `reload`, so every command its keys run is one the editor ships. The
+# run must exit with status 0 and print exactly `expected` once the
+# temporary directory's path is written `@DIR@`. It writes no file: the
+# headless mode has no state directory here, so the working set is kept in
+# memory alone. The directory has a fixed-length path under `/tmp`, as
+# `open-file`'s has.
+#
+# It is a working set's range held again when its file is reopened: the
+# tree is a workspace by its marker `.project`, so the file opened in it
+# is attached to that workspace; a line added to a working set is a range
+# held in the file's buffer; closing the buffer detaches the range, and
+# opening the file again attaches it, so the set opened shows the line, not
+# a drifted quote. It pins what the files feature's open and the buffers
+# feature's close hand the working set, whatever carries it.
+
+# `:e` opens the file; the load and the workspace's find are waited for.
+key : Semicolon shift
+commit e @DIR@/tree/notes.txt
+key <Enter> Enter -
+join
+key j KeyJ -
+scene
+
+# `working-set-add` with no name asks for one; `todo` is a new set, and the
+# cursor's row, the second, is its range. The echo area says what was
+# added; the first add also says the sets are kept in memory alone.
+run working-set-add
+join
+commit todo
+key <Enter> Enter -
+join
+scene
+
+# `close-buffer` closes the file's buffer, and `:e` opens the file again.
+run close-buffer
+join
+key : Semicolon shift
+commit e @DIR@/tree/notes.txt
+key <Enter> Enter -
+join
+scene
+
+# `working-set-open` asks for the set, and shows its buffer: the range is
+# held in the reopened file, so its line is an excerpt, and none is
+# drifted.
+run working-set-open
+join
+commit todo
+key <Enter> Enter -
+join
+scene

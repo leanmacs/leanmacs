@@ -1,0 +1,25 @@
+reload 1: installed, 1 files, 0 commands
+key arrived: i KeyI -
+key arrived: <Enter> Enter -
+key arrived: a KeyA -
+key arrived: l KeyL -
+job 1 words: started
+job 1 words: ok
+job 1 words: ok
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 640x432: "alpha alpine beta\nal", scroll 0, selections 20..20, padding 8 8
+status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "2:3" +4, mode-line.secondary "Bot" +4
+view 1 0,432 640x32: "alpha\nalpine", scroll 0, selections , padding 8 0
+decorations 1: minibuffer.candidate 0..5 minibuffer.match 0..2 minibuffer.candidate 6..12 minibuffer.match 6..8
+status 1: -
+key arrived: n KeyN control
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 640x432: "alpha alpine beta\nalpha", scroll 0, selections 23..23, padding 8 8
+status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "2:6" +4, mode-line.secondary "Bot" +4
+view 1 0,432 640x32: "alpha\nalpine", scroll 0, selections , padding 8 0
+decorations 1: minibuffer.chosen 0..5 minibuffer.match 0..2 minibuffer.candidate 6..12 minibuffer.match 6..8
+status 1: -
+key arrived: <Enter> Enter -
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 640x464: "alpha alpine beta\nalpha", scroll 0, selections 23..23, padding 8 8
+status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "2:6" +4, mode-line.secondary "Bot" +4

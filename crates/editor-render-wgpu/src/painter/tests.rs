@@ -21,7 +21,8 @@ use editor_layout::shaper::{Glyph, ResolvedFontId, VisualLine};
 use editor_render::port::Target;
 
 use super::{Painter, thickness};
-use crate::glyphs::fake::{FakeRasterizer, font};
+use editor_raster::fake::{FakeRasterizer, font};
+
 use crate::glyphs::{GlyphKey, bin_of};
 use crate::quads::{Quad, QuadKind};
 use crate::{Antialiasing, Masks, Settings, SubpixelOrder};
@@ -163,6 +164,7 @@ fn view(rows: Vec<FrameRow>) -> ViewFrame {
 /// The frame of `views`, of generation 0, whose font 0 is 16 pixels.
 fn frame(views: Vec<ViewFrame>) -> Frame {
     Frame {
+        ground: WHITE,
         views,
         generation: 0,
         fonts: Arc::from(vec![font(16.0)]),
@@ -243,9 +245,9 @@ fn a_glyphs_quad_is_at_the_frames_own_x_plus_dx_and_baseline_plus_dy() {
         vec![
             (20 + 13, top(10), GLYPH.0, GLYPH.1),
             (20 + 20, top(12), GLYPH.0, GLYPH.1),
-            // 25.5 across: the pixel 25, and the image of its second
-            // quarter.
-            (20 + 25, top(17), GLYPH.0, GLYPH.1),
+            // 25.5 across: the pixel 25, and the image of its first
+            // third, which the fake draws a column wider.
+            (20 + 25, top(17), GLYPH.0 + 1, GLYPH.1),
         ]
     );
     let bins: Vec<u8> = painter
@@ -254,13 +256,47 @@ fn a_glyphs_quad_is_at_the_frames_own_x_plus_dx_and_baseline_plus_dy() {
         .iter()
         .map(|(key, _, _)| key.bin)
         .collect();
-    assert_eq!(bins, vec![0, 0, 2]);
+    assert_eq!(bins, vec![0, 0, 4]);
+}
+
+#[test]
+fn a_glyph_is_floored_to_core_texts_grid_of_the_targets_scale() {
+    // At 10.9, 20.3 and 30.6 across. At scale 1 the grid is a third of a
+    // pixel: 10 2/3, 20 and 30 1/3, bins 8, 0 and 4 of twelve. At scale 2
+    // it is a half: 10.5, 20 and 30.5. At scale 3 it is a whole pixel.
+    // Each is floored, never rounded up into the next: rounded, 10.9
+    // would be the pixel 11.
+    let glyphs = vec![glyph(7, 0, 10.9), glyph(8, 1, 20.3), glyph(9, 2, 30.6)];
+    let shown = || view(vec![row(16.0, glyphs.clone(), vec![(0..3, ink(RED))], 1)]);
+    for (scale, expected) in [
+        (1.0, vec![(10, 8), (20, 0), (30, 4)]),
+        (2.0, vec![(10, 6), (20, 0), (30, 6)]),
+        (3.0, vec![(10, 0), (20, 0), (30, 0)]),
+    ] {
+        let mut painter = painter();
+        painter.paint(&frame(vec![shown()]), target(scale));
+        let bins: Vec<u8> = painter
+            .rasterizer()
+            .asked
+            .iter()
+            .map(|(key, _, _)| key.bin)
+            .collect();
+        let lefts: Vec<i32> = quads_of(&painter, QuadKind::Mask, RED)
+            .iter()
+            .map(|quad| quad.x)
+            .collect();
+        let wanted_bins: Vec<u8> = expected.iter().map(|(_, bin)| *bin).collect();
+        let wanted_lefts: Vec<i32> = expected.iter().map(|(whole, _)| *whole).collect();
+        assert_eq!(bins, wanted_bins, "at scale {scale}");
+        assert_eq!(lefts, wanted_lefts, "at scale {scale}");
+    }
 }
 
 #[test]
 fn a_glyph_is_drawn_from_the_image_of_its_fractions_bin() {
     // Cells 10.25 pixels across: each glyph is a quarter of a pixel
-    // further into its pixel than the one before.
+    // further into its pixel than the one before, so they fall in
+    // different thirds.
     let rect = Rect {
         x: 0,
         y: 0,
@@ -271,7 +307,7 @@ fn a_glyph_is_drawn_from_the_image_of_its_fractions_bin() {
     let glyphs = &laid.views[0].rows[0].line.glyphs;
     let places: Vec<(i32, u8)> = glyphs
         .iter()
-        .map(|glyph| bin_of(glyph.x + glyph.dx))
+        .map(|glyph| bin_of(glyph.x + glyph.dx, 1.0))
         .collect();
     assert!(places.iter().any(|(_, bin)| *bin != 0), "{places:?}");
     let mut painter = painter();
@@ -1042,6 +1078,7 @@ fn mask_key(glyph: u32) -> GlyphKey {
         glyph,
         bin: 0,
         subpixel: false,
+        bucket: 0,
     }
 }
 
@@ -1259,6 +1296,49 @@ fn glyphs_are_asked_for_fitted_to_the_pixel_grid_or_not_as_the_settings_say() {
     assert_eq!(asked(true), vec![true, true]);
 }
 
+/// A row of the glyph 7 twice, the first in a black run and the second
+/// in a white one, on a grey ground.
+fn black_and_white() -> Frame {
+    let glyphs = vec![glyph(7, 0, 0.0), glyph(7, 1, 10.0)];
+    let on_grey = |foreground: Color| Paint {
+        foreground,
+        background: GREY,
+        ..Paint::default()
+    };
+    let runs = vec![(0..1, on_grey(BLACK)), (1..2, on_grey(WHITE))];
+    frame_of(vec![row(0.0, glyphs, runs, 1)])
+}
+
+/// The keys `painter` asked its rasteriser for, in order.
+fn asked_keys(painter: &Painter<FakeRasterizer>) -> Vec<GlyphKey> {
+    let asked = &painter.rasterizer().asked;
+    asked.iter().map(|(key, _, _)| *key).collect()
+}
+
+#[test]
+fn a_glyph_in_two_luminance_buckets_is_two_images_for_a_rasteriser_that_reads_luminance() {
+    let mut painter = painter_over(FakeRasterizer {
+        tinted: true,
+        ..FakeRasterizer::new()
+    });
+    painter.paint(&black_and_white(), target(1.0));
+    let buckets: Vec<u8> = asked_keys(&painter).iter().map(|key| key.bucket).collect();
+    assert_eq!(buckets, vec![0, 4]);
+    // And each is drawn from its own image.
+    let black = quads_of(&painter, QuadKind::Mask, BLACK);
+    let white = quads_of(&painter, QuadKind::Mask, WHITE);
+    assert_eq!((black.len(), white.len()), (1, 1));
+    assert_ne!(read(&painter, &black[0]), read(&painter, &white[0]));
+}
+
+#[test]
+fn a_rasteriser_that_does_not_read_luminance_keeps_one_image_whatever_the_colour() {
+    let mut painter = painter();
+    let drawn = painter.paint(&black_and_white(), target(1.0));
+    assert_eq!(asked_keys(&painter), vec![mask_key(7)]);
+    assert_eq!((drawn.glyphs_rasterised, drawn.glyphs_reused), (1, 1));
+}
+
 #[test]
 fn a_subpixel_mask_is_kept_in_the_order_of_the_displays_stripes() {
     let shown = frame_of(vec![plain_row(0.0, &[1], 1)]);
@@ -1385,8 +1465,14 @@ fn composited(frame: &Frame) -> crate::Image {
     let mut painter = painter();
     let target = target(1.0);
     painter.paint(frame, target);
-    let mut image = crate::cpu::cleared(target.width, target.height);
-    crate::cpu::composite(&mut image, painter.quads(), painter.atlas(), 0.0);
+    let mut image = crate::cpu::cleared(target.width, target.height, frame.ground);
+    crate::cpu::composite(
+        &mut image,
+        painter.quads(),
+        painter.atlas(),
+        0.0,
+        crate::Blending::Linear,
+    );
     image
 }
 
@@ -1429,8 +1515,9 @@ fn a_divider_between_two_views_is_filled_in_its_colour_and_the_views_are_as_they
     assert_eq!(pixel_at(&image, 199, 99), red);
     assert_eq!(pixel_at(&image, 197, 50), [0xff, 0xff, 0xff, 0xff]);
     assert_eq!(pixel_at(&image, 200, 50), [0, 0xff, 0, 0xff]);
-    // Below the views and the divider the target is as it was cleared.
-    assert_eq!(pixel_at(&image, 198, 100), crate::cpu::CLEAR);
+    // Below the views and the divider the target is as it was cleared:
+    // the frame's ground.
+    assert_eq!(pixel_at(&image, 198, 100), [0xff, 0xff, 0xff, 0xff]);
     // Every pixel of the views is what it is with no divider.
     let plain = composited(&frame(views));
     for y in 0..100 {
@@ -1471,4 +1558,33 @@ fn the_dividers_are_filled_first_so_a_view_over_one_covers_it_and_the_target_cli
     );
     let image = composited(&covered);
     assert_eq!(pixel_at(&image, 15, 15), [0xff, 0xff, 0xff, 0xff]);
+}
+
+#[test]
+fn a_rasteriser_swapped_in_after_a_draw_is_asked_for_every_glyph_again() {
+    let shown = frame_of(vec![plain_row(0.0, &[1, 2, 3], 1)]);
+    let mut painter = painter();
+    painter.paint(&shown, target(1.0));
+    // Another fake, whose images are another size: what is drawn from it
+    // is told from what the first drew.
+    painter.set_rasterizer(FakeRasterizer {
+        size: Some((3, 4)),
+        ..FakeRasterizer::new()
+    });
+    let drawn = painter.paint(&shown, target(1.0));
+    // The row is built again, and every glyph is asked of the new one.
+    assert_eq!((drawn.rows_rebuilt, drawn.rows_reused), (1, 0));
+    assert_eq!((drawn.glyphs_rasterised, drawn.glyphs_reused), (3, 0));
+    assert_eq!(
+        asked_keys(&painter),
+        vec![mask_key(1), mask_key(2), mask_key(3)]
+    );
+    // And the picture is the new one's.
+    let glyphs = quads_of(&painter, QuadKind::Mask, BLACK);
+    assert_eq!(glyphs.len(), 3);
+    for (quad, id) in glyphs.iter().zip([1, 2, 3]) {
+        assert_eq!((quad.width, quad.height), (3, 4));
+        let made = painter.rasterizer().image(mask_key(id)).expect("an image");
+        assert_eq!(read(&painter, quad), made.data, "glyph {id}");
+    }
 }

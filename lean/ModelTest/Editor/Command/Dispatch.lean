@@ -15,7 +15,6 @@ import Editor.DisplayRules
 import Editor.Event
 import Editor.Ex.Line
 import Editor.File
-import Editor.Files
 import Editor.Fuzzy
 import Editor.Fuzzy.Model
 import Editor.InputScheme
@@ -29,7 +28,6 @@ import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Role
 import Editor.Scene
 import Editor.State
@@ -423,7 +421,8 @@ def dispatchRegistryChecks : List Check :=
       run :=
         let asks (choice : Option Bool) (config : Bool) : Option (Bool × Bool) :=
           let asking : EditorM (Bool × Bool) := do
-            return (← Files.autoReloadOn, ← RegistryRequest.ask .autoReload)
+            return ((← editorState).autoReload.getD (← RegistryRequest.ask .autoReload),
+                ← RegistryRequest.ask .autoReload)
           let program : EditorM (Guarded (Bool × Bool) × EditorState) :=
             asking.dispatched { autoReload := config }
               { EditorState.none with autoReload := choice }

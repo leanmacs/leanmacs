@@ -3,7 +3,6 @@ import Editor.Completion.AtPoint
 import Editor.Completion.AtPointContract
 import Editor.Completion.Candidate
 import Editor.Completion.Fake
-import Editor.Completion.Words
 import Editor.Program
 import Editor.Text
 import ModelTest.Check
@@ -28,16 +27,16 @@ def atPointModel : Completion.AtPoint :=
   .fixed "fixed" fun spot =>
     some { start := spot.offset, stop := spot.offset, sources := [.source "say"] }
 
-/-- The at-point sources the contract is run on. -/
+/-- The at-point sources the contract is run on: the model and one that
+never answers. The shipped ones are run on it by their own checks, the
+default package `at-point`'s (`AtPointTest.wordsChecks`). -/
 def atPointSubjects : List Completion.AtPoint :=
-  [atPointModel, Completion.AtPoint.silent "silent"] ++ Completion.AtPoint.shipped.toList ++
-    [Completion.AtPoint.words (least := 1), Completion.AtPoint.words (pause := 100)]
+  [atPointModel, Completion.AtPoint.silent "silent"]
 
 /-- The checks of the at-point sources' contract
-(`Editor/Completion/AtPointContract.lean`): it holds of the model, of one
-that never answers and of every shipped at-point source, and it reports one
-whose region ends past the text, one that makes a text and one that is
-refused. -/
+(`Editor/Completion/AtPointContract.lean`): it holds of the model and of one
+that never answers, and it reports one whose region ends past the text, one
+that makes a text and one that is refused. -/
 def atPointContractChecks : List Check :=
   let broken : Completion.AtPoint :=
     .fixed "broken" fun spot =>

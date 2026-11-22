@@ -1,8 +1,5 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Hosts
-import ConfigTest.Support.Keys
-import ConfigTest.Support.Lines
 import Editor.Command
 import Editor.Completion
 import Editor.Config.Elaborate
@@ -13,7 +10,6 @@ import Editor.Ex.Line
 import Editor.Face
 import Editor.Ffi.Events
 import Editor.Ffi.Interrupt
-import Editor.Files
 import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.InputScheme.Test
@@ -24,6 +20,9 @@ import Editor.Mode
 import Editor.Program
 import Editor.Role
 import Editor.Scene
+import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
+import Editor.Test.Linked.Lines
 import Editor.Text
 import Editor.Watch
 
@@ -38,6 +37,7 @@ them; its module doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- A compiled command called `name` that makes a text holding `text`. -/
 def making (name text : String) : Config.Registration :=
@@ -373,61 +373,5 @@ def modeChecks (context : Context) : List Check :=
                 made second "mode" == 2 &&
                 made second "compiled" == 0)
           compiledListing }]
-
-/-- The checks of auto-reload through the headless host on real files, with
-the library's watch service (`Editor/Loop.lean`, "Auto-reload"): criteria 9
-and 10, that the rewrite is shown and the edited buffer marked, each seen on
-the scene asked at each job line the follow job and the reload it starts
-print (`Session.shownOn`), with `hangGuard` against a hang only. How soon
-they are shown, the criteria's "within a second", is real time and is
-measured, not pass or fail here: `config-bench`'s auto-reload row prints
-the rewrite-to-shown latency over real watches with its budget beside it.
-Measured on 2026-11-16 on macOS (FSEvents), over six runs: the rewrite was
-shown 66 to 83 ms after the other process exited, a median of about 80 ms,
-and the edited buffer marked in 78 to 84 ms; the 50 ms coalescing window is
-most of it. -/
-def autoReloadChecks (context : Context) : List Check :=
-  [{  name :=
-        "criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown; once the buffer is edited, another rewrite leaves its text and marks its status line"
-      run :=
-        withFiles context (targets := [.files, .fileWatches]) fun files => do
-          let path := files / "note.txt"
-          let (old, new, again) := ("one\ntwo\n", "one\ntwo\nthree\n", "rewritten again\n")
-          IO.FS.writeBinFile path old.toUTF8
-          withRealFileHost context [("open-note", path)] fun session => do
-              unless ← session.ran "open-note" do
-                return false
-              -- With no argument the command toggles: off, so on.
-              session.ask [.run Files.autoReloadName]
-              -- The command starts the follow job, which says so as it starts:
-              -- read once the ask has waited for the command.
-              let armed :=
-                (← session.output.get).any fun line =>
-                  line.startsWith "job " && line.endsWith s!" {Files.followJob}: started"
-              unless armed do
-                return false
-              unless ← rewriteFromOutside path new do
-                return false
-              -- The watch's delivery wakes the follow job, whose command starts
-              -- the reload: the scene is asked again at each of their lines,
-              -- never after a time. How soon is `config-bench`'s to measure.
-              let jobLine (line : String) : Bool := line.startsWith "job "
-              let (shown, saw) ← session.shownOn jobLine (·.contains (viewLine new 0))
-              unless shown do
-                throw (IO.userError s!"the rewrite was not shown: {saw}")
-              unless ← Event.post (.commit "x") do
-                return false
-              unless ← rewriteFromOutside path again do
-                return false
-              let edited := "x" ++ new
-              let (marked, last) ←
-                session.shownOn jobLine fun lines =>
-                    lines ==
-                      #[viewLine edited 1,
-                        statusOf (name := "note.txt") (modified := true) (cursor := ⟨0, 1⟩)
-                          (lines := 3) (file := some path) (changed := true)]
-              unless marked do
-                throw (IO.userError s!"the edited buffer was not marked: {last}")
-              return (← IO.FS.readBinFile path) == again.toUTF8 }]
 
 end ConfigTest

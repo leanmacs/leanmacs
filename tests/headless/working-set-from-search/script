@@ -1,0 +1,74 @@
+# A template of a script: `mise run ffi-test` copies `tree/` into a
+# temporary directory, writes this file there with `@DIR@` replaced by that
+# directory's absolute path, and has the editor's headless mode run it
+# against the config in `../config/`, of which it loads nothing: there is
+# no `reload`, so every command its keys run is one the editor ships. The
+# run must exit with status 0 and print exactly `expected` once the
+# temporary directory's path is written `@DIR@` and the job lines are left
+# out: a search's deliveries are what the library has found when the job
+# reads it, so how many there are, and so how many job lines come of them,
+# differs from run to run. A scene line carries no count of the scenes
+# published, so the scenes that come of them change nothing here. It
+# writes no file: the headless mode has no state directory here,
+# so the working set is kept in memory alone. The directory has a
+# fixed-length path under `/tmp`, as `open-file`'s has.
+#
+# It is a working set's range added from project search's results: the
+# tree is a workspace by its marker `.project`; `needle` is in two of its
+# files, `a.txt` and `b.txt`, and not in `c.txt`. A row of the results
+# added to a working set is the file's range, not the results', so the set
+# opened shows that row of `b.txt`, and visiting it shows `b.txt` at the
+# row. It pins what project search and the working set do together,
+# whatever carries each.
+
+# `:e` opens `a.txt`; the load and the workspace's find are waited for.
+key : Semicolon shift
+commit e @DIR@/tree/a.txt
+key <Enter> Enter -
+join
+scene
+
+# `project-search` with no pattern asks for one, labelled with the
+# workspace of the buffer it was called from; `needle` is searched, and the
+# results show the excerpts of `a.txt` and `b.txt` in walk order, the
+# search's matches drawn in `search-match`. `b.txt`, open in no buffer, is
+# loaded by the search.
+run project-search
+join
+scene
+commit needle
+key <Enter> Enter -
+join
+scene
+
+# The cursor goes down to the results' row of `b.txt`'s match, the
+# seventh, and `working-set-add` asks for a set; `found` is a new set, and
+# the range it adds is `b.txt`'s third row, not the results' seventh.
+key j KeyJ -
+key j KeyJ -
+key j KeyJ -
+key j KeyJ -
+key j KeyJ -
+key j KeyJ -
+scene
+run working-set-add
+join
+scene
+commit found
+key <Enter> Enter -
+join
+scene
+
+# `working-set-open` asks for the set and shows its buffer: the range is
+# held in `b.txt`, so its row is the one excerpt, and none is drifted.
+run working-set-open
+join
+commit found
+key <Enter> Enter -
+join
+scene
+
+# `RET` in the set's buffer visits the range: `b.txt` at its third row.
+key <Enter> Enter -
+join
+scene

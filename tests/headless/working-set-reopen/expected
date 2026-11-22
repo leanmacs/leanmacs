@@ -1,0 +1,32 @@
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+job 1 load-file: started
+job 1 load-file: ok
+job 2 find-workspace: started
+job 2 find-workspace: ok
+job 3 find-mode-markers: started
+job 3 find-mode-markers: ok
+key arrived: j KeyJ -
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "one\ntwo: the line the set holds\nthree\n", scroll 0, selections 4..4, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes.txt" +4, mode-line.secondary "@DIR@/tree" +4 | mode-line.secondary "2:1" +4, mode-line.secondary "66%" +4
+run working-set-add: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "todo: added notes.txt:2; working sets are not kept across restarts: no state directory", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "one\ntwo: the line the set holds\nthree\n", scroll 0, selections 4..4, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes.txt" +4, mode-line.secondary "@DIR@/tree" +4 | mode-line.secondary "2:1" +4, mode-line.secondary "66%" +4
+run close-buffer: ok
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+job 4 load-file: started
+job 4 load-file: ok
+job 5 find-mode-markers: started
+job 5 find-mode-markers: ok
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "one\ntwo: the line the set holds\nthree\n", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes.txt" +4, mode-line.secondary "@DIR@/tree" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
+run working-set-open: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "todo: 1 ranges, 0 drifted", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "two: the line the set holds\n", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "*working-set: todo in tree@tree*" +4 | mode-line.secondary "working-set" +4, mode-line.secondary "1:1" +4, mode-line.secondary "All" +4

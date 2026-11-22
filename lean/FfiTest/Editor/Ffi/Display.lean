@@ -10,7 +10,7 @@ import FfiTest.Check
 The tests of `Editor/Ffi/Display.lean`: `displayChecks`. The root module
 `FfiTest` runs them, and the list's own doc says what it checks. The checks of
 the pictures a display draws are `pictureChecks`, in
-`FfiTest/Editor/Themes/Picture.lean`.
+`FfiTest/Editor/Theme/Picture.lean`.
 -/
 
 namespace FfiTest

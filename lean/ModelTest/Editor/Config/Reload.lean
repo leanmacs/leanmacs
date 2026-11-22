@@ -5,10 +5,7 @@ import Editor.Command.Dispatch
 import Editor.Command.Model
 import Editor.Completion.AtPoint
 import Editor.Completion.Display
-import Editor.Completion.Displays
 import Editor.Completion.Style
-import Editor.Completion.Styles
-import Editor.Completion.Words
 import Editor.Config.Diagnostic
 import Editor.Config.Display
 import Editor.Config.Owner
@@ -20,6 +17,7 @@ import Editor.Config.Stores
 import Editor.DisplayRules
 import Editor.Event
 import Editor.Ex.Line
+import Editor.Extension
 import Editor.Face
 import Editor.Floating
 import Editor.InputScheme
@@ -34,8 +32,6 @@ import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
-import Editor.ProjectMode
-import Editor.ProjectMode.Format
 import Editor.Role
 import Editor.Scene
 import Editor.Setup
@@ -45,6 +41,7 @@ import Editor.TabBar
 import Editor.Test.Config
 import Editor.Test.Keys
 import Editor.Test.Models
+import Editor.Test.PackageSet
 import Editor.Text
 import Editor.Text.Model
 import Editor.Value
@@ -52,7 +49,6 @@ import Editor.Window
 import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.Elaborator
-import ModelTest.Support.PackageSet
 
 /-!
 # Model tests: `Editor/Config/Reload.lean`
@@ -168,6 +164,12 @@ def themed : ModelState :=
 def reportFrom (state : ModelState) (outcome : ModelOutcome) : Config.Report :=
   (state.install outcome).2
 
+/-- A value of an extension point of the reload's checks: a name. -/
+structure ReloadValue where
+  /-- The name. -/
+  name : String
+  deriving TypeName
+
 /-- The checks of the reload reducer (`Editor/Config/Reload.lean`), with
 outcomes built by hand. -/
 def reloadChecks : List Check :=
@@ -246,7 +248,8 @@ def reloadChecks : List Check :=
       run :=
         let shown : ModelState :=
           { themed with
-            registry := themed.registry.replaceAtPoints .compiled Completion.AtPoint.shipped }
+            registry :=
+              themed.registry.replaceAtPoints .compiled #[Completion.AtPoint.silent "words"] }
         let uses : SetupM Unit := do
           defineAtPoint (Completion.AtPoint.silent "mine")
           useAtPoint "mine"
@@ -397,7 +400,9 @@ def reloadChecks : List Check :=
       run :=
         let styled : ModelState :=
           { themed with
-            registry := themed.registry.replaceStyles .compiled Completion.Styles.shipped }
+            registry :=
+              themed.registry.replaceStyles .compiled
+                #[.keeping "fuzzy" fun _ _ => true, .keeping "orderless" fun _ _ => true] }
         let choosing : SetupM Unit := do
           useStyleFor "pick" "orderless"
           useStyle "nope"
@@ -429,7 +434,8 @@ def reloadChecks : List Check :=
       run :=
         let shown : ModelState :=
           { themed with
-            registry := themed.registry.replaceDisplays .compiled Completion.Displays.shipped }
+            registry :=
+              themed.registry.replaceDisplays .compiled #[Completion.Display.plain "minibuffer"] }
         let choosing : SetupM Unit := do
           useDisplayFor "pick" "minibuffer"
           useDisplay "nope"
@@ -769,27 +775,29 @@ def reloadChecks : List Check :=
           (told (reduce []).1 == none && told loaded == some 250 && told kept == some 250 &&
             told bare == none) },
     { name :=
-        "an installed reload puts config's compile contributions and project commands in the registry, which tells the loop of them; a rejected reload leaves them, and a config that registers none leaves the compiled ones alone"
+        "an installed reload puts config's values at an extension point in the registry after a package's, and the registry tells the loop of them and of config's apart; a rejected reload leaves them, and a config that registers none leaves the package's alone"
       run :=
+        let key := TypeName.typeName ReloadValue
         let start : ModelState :=
           {
             registry :=
-              ({} : Config.Registry).replaceContributions .compiled
-                #[{ mode := "a-mode", markers := #["a.toml"] }] }
+              ({} : Config.Registry).replaceExtensions { name := "shipping" }
+                #[(key, .mk ({ name := "a" } : ReloadValue))] }
         let setup : SetupM Unit := do
-          compileContribution { mode := "b-mode", markers := #["b.toml"] }
-          projectCommands (.remote "github.com/o/r") "b-mode" [("lint", "b-lint")]
+          Extension.add ({ name := "b" } : ReloadValue)
+          Extension.add ({ name := "c" } : ReloadValue)
         let (loaded, _) := reduceFrom start [.requested, .finished (accepted ["a"] setup)]
         let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
         let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let names (values : Array Dynamic) : Array String :=
+          values.filterMap fun value => (value.get? ReloadValue).map (·.name)
         let told (state : ModelState) : Array String × Array String :=
-          let hook := state.registry.registered.compile
-          (hook.contributions.map (·.mode), hook.projects.map (·.mode))
+          (names (state.registry.registered.extensions key),
+            names (state.registry.registered.configExtensions key))
         pure
-          (told start == (#["a-mode"], #[]) &&
-            told loaded == (#["b-mode", "a-mode"], #["b-mode"]) &&
+          (told start == (#["a"], #[]) && told loaded == (#["a", "b", "c"], #["b", "c"]) &&
             told kept == told loaded &&
-            told bare == (#["a-mode"], #[])) },
+            told bare == (#["a"], #[])) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=
@@ -1150,9 +1158,9 @@ def reloadChecks : List Check :=
     { name :=
         "a reload whose package set differs from the running editor's starts one build after its report, keeping what it read; none while that build is in flight, one again once it ended, and none for a reload that matches"
       run :=
-        let facts := PackageSetTest.lakefileWith #[PackageSetTest.hello]
-        let generated := PackageSetTest.lakefileWith
-        let start : ModelState := { packageSet := PackageSetTest.runningWith {} }
+        let facts := Test.PackageSet.lakefileWith #[Test.PackageSet.hello]
+        let generated := Test.PackageSet.lakefileWith
+        let start : ModelState := { packageSet := Test.PackageSet.runningWith {} }
         let differing : ModelOutcome := { accepted ["a"] (pure ()) with facts }
         let matching : ModelOutcome := { accepted ["a"] (pure ()) with facts := generated }
         let builds (effects : Array Seen) : Array PackageSet.Order :=
@@ -1160,7 +1168,7 @@ def reloadChecks : List Check :=
             | .buildPackages order => some order
             | _ => none
         let order :=
-          match PackageSet.decide (PackageSetTest.runningWith facts) facts false with
+          match PackageSet.decide (Test.PackageSet.runningWith facts) facts false with
           | .build order => some order
           | _ => none
         let (first, firstEffects) := reduceFrom start [.requested, .finished differing]
@@ -1188,8 +1196,8 @@ def reloadChecks : List Check :=
     { name :=
         "what a reload has to say of the package set instead of building it is said once, and starts no build"
       run :=
-        let facts := PackageSetTest.lakefileWith #[PackageSetTest.hello]
-        let start : ModelState := { packageSet := PackageSetTest.runningWith {} (lake := none) }
+        let facts := Test.PackageSet.lakefileWith #[Test.PackageSet.hello]
+        let start : ModelState := { packageSet := Test.PackageSet.runningWith {} (lake := none) }
         let differing : ModelOutcome := { accepted ["a"] (pure ()) with facts }
         let said (effects : Array Seen) : Array String :=
           effects.filterMap fun

@@ -7,23 +7,18 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Display
-import Editor.Completion.Displays
-import Editor.Completion.Styles
-import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Display
 import Editor.Display.Model
 import Editor.DisplayRules
 import Editor.Event
-import Editor.Evil.Undo
 import Editor.Ex.Line
 import Editor.File
-import Editor.Files
+import Editor.FileJobs
 import Editor.Floating
 import Editor.GeneratedView
 import Editor.InputScheme
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
 import Editor.Keymap
@@ -35,20 +30,23 @@ import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Scene
 import Editor.Scroll
 import Editor.State
 import Editor.TabBar
 import Editor.Test.Completion
 import Editor.Test.Driver
-import Editor.Test.Files
+import Editor.Test.Editing
+import Editor.Test.Frame
 import Editor.Test.Geometry
 import Editor.Test.Keys
+import Editor.Test.Listings
 import Editor.Test.Loop
 import Editor.Test.Models
+import Editor.Test.Opener
 import Editor.Test.Prompts
 import Editor.Test.States
+import Editor.Test.Views
 import Editor.Test.Workspace
 import Editor.Text
 import Editor.Text.Contract
@@ -57,10 +55,7 @@ import Editor.UndoTree
 import Editor.Value
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
-import ModelTest.Support.Frame
-import ModelTest.Support.Views
 
 /-!
 # Model tests: `Editor/State.lean`
@@ -387,7 +382,7 @@ def spoilings : List (String × (EditorState → EditorState)) :=
 /-- `state` with its open prompt's choice moved by each of `steps`, and the
 display asked after each, as the loop's publishes would. -/
 def choseShown (state : EditorState) (steps : List Candidates.Step)
-    (displaying : Completion.Displaying := .standard) : EditorState :=
+    (displaying : Completion.Displaying := windowedDisplaying) : EditorState :=
   steps.foldl (fun state step => (state.chooseCandidate step).2.displayed displaying) state
 
 /-- The texts of the rows of the sheet the open prompt of `state` keeps. -/
@@ -410,7 +405,8 @@ def displayStateChecks : List Check :=
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
           | none => false
           | some state =>
-            let listing := (listingIn (prompted state).2 texts (Array.range 15)).displayed .standard
+            let listing :=
+              (listingIn (prompted state).2 texts (Array.range 15)).displayed windowedDisplaying
             let down := choseShown listing (List.replicate 11 .next)
             let up := choseShown down (List.replicate 10 .previous)
             let last := choseShown listing [.previous]
@@ -419,7 +415,7 @@ def displayStateChecks : List Check :=
               first down == some 1 &&
               sheetTexts down == texts.extract 1 11 &&
               (down.prompt.bind (·.sheet.rows.back?)).bind (·.decorations[0]?) ==
-                some { start := 0, stop := 3, face := Completion.Displays.chosenFace } &&
+                some { start := 0, stop := 3, face := windowedChosen } &&
               first up == some 0 &&
               sheetTexts up == texts.extract 0 10 &&
               last.prompt.bind (·.candidates.chosen) == some 14 &&
@@ -430,12 +426,16 @@ def displayStateChecks : List Check :=
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
           | none => false
           | some state =>
-            let five := (listingIn (prompted state).2 texts (Array.range 5)).displayed .standard
-            let two := ((five.listCandidates "c1" #[.ofIndex 1, .ofIndex 10]).2).displayed .standard
+            let five :=
+              (listingIn (prompted state).2 texts (Array.range 5)).displayed windowedDisplaying
+            let two :=
+              ((five.listCandidates "c1" #[.ofIndex 1, .ofIndex 10]).2).displayed windowedDisplaying
             let seven :=
-              ((two.listCandidates "c" ((Array.range 7).map .ofIndex)).2).displayed .standard
+              ((two.listCandidates "c" ((Array.range 7).map .ofIndex)).2).displayed
+                windowedDisplaying
             let twelve :=
-              ((seven.listCandidates "" ((Array.range 12).map .ofIndex)).2).displayed .standard
+              ((seven.listCandidates "" ((Array.range 12).map .ofIndex)).2).displayed
+                windowedDisplaying
             let (_, closed) := twelve.closePrompt none
             let (_, again) := prompted closed 8
             let tallest (state : EditorState) : Option Nat := state.prompt.map (·.tallest)
@@ -448,7 +448,7 @@ def displayStateChecks : List Check :=
               two.candidateListRect? == five.candidateListRect? &&
               two.tiled == five.tiled &&
               tallest seven == some 7 &&
-              tallest twelve == some Completion.Displays.rows &&
+              tallest twelve == some windowedRows &&
               closed.minibufferPlace == heights.message &&
               closed.candidateListRect? == none &&
               tallest again == some 0 &&
@@ -462,7 +462,7 @@ def displayStateChecks : List Check :=
           | some state =>
             let (_, asking) := prompted state
             let three :=
-              { (listingIn asking texts (Array.range 3)).displayed .standard with
+              { (listingIn asking texts (Array.range 3)).displayed windowedDisplaying with
                 candidateList := some drawn }
             let heights := three.heights
             let strip := 3 * heights.text + heights.text + heights.message
@@ -489,7 +489,7 @@ def displayStateChecks : List Check :=
             onTextModel (EditorState.initial ⟨640, 20⟩) with
           | some tall, some short =>
             let listed (state : EditorState) : EditorState :=
-              (listingIn (prompted state).2 texts (Array.range 5)).displayed .standard
+              (listingIn (prompted state).2 texts (Array.range 5)).displayed windowedDisplaying
             let tall := listed tall
             let short := listed short
             let below := tall.heights.text + tall.heights.message
@@ -519,7 +519,8 @@ def displayStateChecks : List Check :=
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
           | none => false
           | some state =>
-            let listing := (listingIn (prompted state).2 texts (Array.range 3)).displayed .standard
+            let listing :=
+              (listingIn (prompted state).2 texts (Array.range 3)).displayed windowedDisplaying
             { listing with candidateList := some drawn }.wellFormed &&
               !{ listing with candidateList := some { drawn with view := ⟨0⟩ } }.wellFormed },
     { name := "displaying with no prompt open leaves the state as it was"
@@ -527,7 +528,7 @@ def displayStateChecks : List Check :=
         pure <|
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
           | none => false
-          | some state => state.displayed .standard == state }]
+          | some state => state.displayed windowedDisplaying == state }]
 
 /-- States of the quit checks, each `twoBuffers` with its histories set by
 hand. -/
@@ -2275,7 +2276,7 @@ def stateChecks : List Check :=
                       | _ => false
                   | _ => false },
           { name :=
-              "a minor mode added is first and added once, and removing one takes it away; removing one not there changes nothing"
+              "a minor mode added is first and added once, changing nothing else of the state, its major mode among it, and removing one takes it away; removing one not there changes nothing"
             run :=
               pure <|
                 match onTextModel twoBuffers with
@@ -2288,7 +2289,13 @@ def stateChecks : List Check :=
                   let (added, again) := two.addMinorMode ⟨0⟩ "one"
                   let (removed, without) := two.removeMinorMode ⟨0⟩ "one"
                   let (absent, unchanged) := two.removeMinorMode ⟨0⟩ "three"
+                  let coded := (state.setMajorMode ⟨0⟩ "code").2
                   minors state == #[] && minors one == #["one"] && minors two == #["two", "one"] &&
+                    one ==
+                      { state with
+                        buffers :=
+                          state.buffers.modify 0 (·.map ({ · with minors := #["one"] })) } &&
+                    ((coded.addMinorMode ⟨0⟩ "one").2.buffer? ⟨0⟩).bind (·.major) == some "code" &&
                     added matches .ok () &&
                     again == two &&
                     removed matches .ok () &&
@@ -3389,7 +3396,7 @@ def heightChecks : List Check :=
     { name := "a publish keeps the heights the display answered, for the commands until the next"
       run :=
         pure <|
-          match evilDriver "|abc" with
+          match editingDriver "|abc" with
           | none => false
           | some driver =>
             -- The display model's cells are 1 by 1, so its heights are 1.
@@ -3420,7 +3427,7 @@ def titleChecks : List Check :=
         "the scene's title is the selected buffer's name: scratch on the initial state, the file's name once one is opened, and the asking window's buffer's while a prompt is open, not the minibuffer's"
       run :=
         pure <|
-          match newDriver, noteOpen, minibufferDriver with
+          match newDriver, Opener.noteOpened, minibufferDriver with
           | some driver, some opened, some asking =>
             let started := (fedTo driver [resizedTo false]).1
             let prompting := (fedTo asking (presses "C-c a")).1
@@ -3537,7 +3544,12 @@ def readOnlyChecks : List Check :=
 /-- The checks of excerpt buffers (`Editor/State.lean`, "Excerpt buffers";
 `Editor/Command/Dispatch.lean`, "Read-only buffers and excerpt sources";
 `Editor/Api.lean`, "Undo"), on the loop's driver over the editor's
-models, with evil's keys. -/
+models, under the scheme written for the core's checks and the kit's
+editing keys (`excerptDriver`, `ModelTest/Support/Excerpt.lean`): a session
+is typed between `C-b` and `C-e`, `C-z` and `C-Z` undo and redo, and `C-u`
+and `C-r` make one move in the history and say what it answered
+(`historyTold`). What a scheme's own undo and redo say of a refusal is the
+scheme package's (`evilUndoChecks`, `packages/evil/EvilTest/Evil/Undo.lean`). -/
 def excerptBufferChecks : List Check :=
   [{  name :=
         "an edit typed in an excerpt buffer changes the source buffer's text at the mapped position, as one revision of the source traced to the user, and the excerpt buffer shows it"
@@ -3546,7 +3558,7 @@ def excerptBufferChecks : List Check :=
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
             let traced := do
               let one ← excerptBufferNamed typed "one"
               (one.text.trace 5 6 |>.runModel typed.model.texts).1.toOption
@@ -3556,16 +3568,15 @@ def excerptBufferChecks : List Check :=
               excerptRead typed "two" == some "alpha\nbeta\n" &&
               traced == some #[⟨5, 6, .entry 1 Origin.user⟩] },
     { name :=
-        "u in the excerpt buffer after a typed session restores the source buffer and the excerpt buffer, one step for the whole session, and C-r redoes it"
+        "an undo in the excerpt buffer after a typed session restores the source buffer and the excerpt buffer, one step for the whole session, and a redo redoes it"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed :=
-              evilFed (excerptFed (evilFed driver "l i") [.commit "X", .commit "Y"]) "<Escape>"
-            let undone := evilFed typed "u"
-            let redone := evilFed undone "C-r"
+            let typed := sessionTyped driver "<ArrowRight>" ["X", "Y"]
+            let undone := keysFed typed "C-z"
+            let redone := keysFed undone "C-Z"
             excerptRead typed "one" == some "one\ntXYwo\nthree\n" &&
               excerptRead undone "one" == some "one\ntwo\nthree\n" &&
               excerptRead undone "ex" == some "two\n\nalpha\n" &&
@@ -3574,116 +3585,118 @@ def excerptBufferChecks : List Check :=
               excerptRead redone "ex" == some "tXYwo\n\nalpha\n" &&
               redone.loop.state.echo.isEmpty },
     { name :=
-        "u in the excerpt buffer after the source was edited in its own buffer since is refused, saying so, and changes nothing"
+        "an undo in the excerpt buffer after the source was edited in its own buffer since is refused, naming the source that moved, and changes nothing"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
             let moved := excerptInvoked typed "edit-one"
-            let undone := evilFed moved "u"
+            let undone := keysFed moved "C-u"
             excerptRead moved "one" == some "Zone\ntXwo\nthree\n" &&
-              undone.loop.state.echo == Evil.sourceMovedSays "one" &&
+              (moved.loop.state.findBuffer "one").any
+                (fun one => undone.loop.state.echo == historyTold (.error (.sourceMoved one))) &&
               excerptRead undone "one" == some "Zone\ntXwo\nthree\n" &&
               excerptRead undone "ex" == some "tXwo\n\nalpha\n" },
     { name :=
-        "C-r in the excerpt buffer after the source was edited in its own buffer since the undo is refused, saying so, and changes nothing"
+        "a redo in the excerpt buffer after the source was edited in its own buffer since the undo is refused, naming the source that moved, and changes nothing"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
-            let moved := excerptInvoked (evilFed typed "u") "edit-one"
-            let redone := evilFed moved "C-r"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
+            let moved := excerptInvoked (keysFed typed "C-z") "edit-one"
+            let redone := keysFed moved "C-r"
             excerptRead moved "one" == some "Zone\ntwo\nthree\n" &&
-              redone.loop.state.echo == Evil.sourceMovedSays "one" &&
+              (moved.loop.state.findBuffer "one").any
+                (fun one => redone.loop.state.echo == historyTold (.error (.sourceMoved one))) &&
               excerptRead redone "one" == some "Zone\ntwo\nthree\n" &&
               excerptRead redone "ex" == some "two\n\nalpha\n" },
     { name :=
-        "a redo in the excerpt buffer while an edit through it is pending answers nothing and keeps the edit, which the next u takes back"
+        "a redo in the excerpt buffer while an edit through it is pending answers nothing and keeps the edit, which the next undo takes back"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
-            let pending := excerptInvoked (evilFed typed "u") "edit-redo"
-            let undone := evilFed pending "u"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
+            let pending := excerptInvoked (keysFed typed "C-z") "insert-redo"
+            let undone := keysFed pending "C-z"
             pending.loop.state.echo.isEmpty &&
               excerptRead pending "one" == some "one\nxtwo\nthree\n" &&
               excerptRead pending "ex" == some "xtwo\n\nalpha\n" &&
               excerptRead undone "one" == some "one\ntwo\nthree\n" &&
               excerptRead undone "ex" == some "two\n\nalpha\n" },
     { name :=
-        "u in the excerpt buffer once a source buffer of its last step was removed says so, under the name the step recorded, and drops that step, so the next u undoes the older step over a live source"
+        "an undo in the excerpt buffer once a source buffer of its last step was removed is refused, with the name the step recorded, and drops that step, so the next undo undoes the older step over a live source and the one after has nothing to undo"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let older := evilFed (excerptFed (evilFed driver "j j i") [.commit "Q"]) "<Escape>"
-            let newer := evilFed (excerptFed (evilFed older "k k i") [.commit "X"]) "<Escape>"
+            let older := sessionTyped driver "<ArrowDown> <ArrowDown>" ["Q"]
+            let newer := sessionTyped older "C-<Home>" ["X"]
             let removed := excerptInvoked newer "remove-one"
-            let refused := evilFed removed "u"
-            let undone := evilFed refused "u"
-            let emptied := evilFed undone "u"
+            let refused := keysFed removed "C-u"
+            let undone := keysFed refused "C-u"
+            let emptied := keysFed undone "C-u"
             excerptRead older "two" == some "Qalpha\nbeta\n" &&
               excerptRead newer "one" == some "one\nXtwo\nthree\n" &&
               (excerptBufferNamed removed "one").isNone &&
-              refused.loop.state.echo == Evil.sourceRemovedSays "one" &&
+              refused.loop.state.echo == historyTold (.error (.sourceRemoved "one")) &&
               excerptRead refused "two" == some "Qalpha\nbeta\n" &&
-              undone.loop.state.echo.isEmpty &&
+              undone.loop.state.echo == historyMoved &&
               excerptRead undone "two" == some "alpha\nbeta\n" &&
-              emptied.loop.state.echo == Evil.nothingToUndo },
+              emptied.loop.state.echo == historyNothing },
     { name :=
-        "u in the excerpt buffer once one of the two sources of its last step was removed says so and drops that source from the step, so the next u undoes the step in the source left"
+        "an undo in the excerpt buffer once one of the two sources of its last step was removed is refused, with its name, and drops that source from the step, so the next undo undoes the step in the source left"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
             let removed := excerptInvoked (excerptInvoked driver "edit-both") "remove-one"
-            let refused := evilFed removed "u"
-            let undone := evilFed refused "u"
+            let refused := keysFed removed "C-u"
+            let undone := keysFed refused "C-u"
             excerptRead removed "two" == some "Alpha\nbeta\n" &&
-              refused.loop.state.echo == Evil.sourceRemovedSays "one" &&
+              refused.loop.state.echo == historyTold (.error (.sourceRemoved "one")) &&
               excerptRead refused "two" == some "Alpha\nbeta\n" &&
-              undone.loop.state.echo.isEmpty &&
+              undone.loop.state.echo == historyMoved &&
               excerptRead undone "two" == some "alpha\nbeta\n" },
     { name :=
-        "C-r in the excerpt buffer once the source buffer of the step to redo was removed says so and drops the step, so the next C-r has nothing to redo"
+        "a redo in the excerpt buffer once the source buffer of the step to redo was removed is refused, with its name, and drops the step, so the next redo has nothing to redo"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
-            let removed := excerptInvoked (evilFed typed "u") "remove-one"
-            let refused := evilFed removed "C-r"
-            let emptied := evilFed refused "C-r"
-            refused.loop.state.echo == Evil.sourceRemovedSays "one" &&
-              emptied.loop.state.echo == Evil.nothingToRedo },
-    { name := "u in the source buffer takes back an edit made through the excerpt buffer"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
+            let removed := excerptInvoked (keysFed typed "C-z") "remove-one"
+            let refused := keysFed removed "C-r"
+            let emptied := keysFed refused "C-r"
+            refused.loop.state.echo == historyTold (.error (.sourceRemoved "one")) &&
+              emptied.loop.state.echo == historyNothing },
+    { name := "an undo in the source buffer takes back an edit made through the excerpt buffer"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
-            let undone := evilFed (excerptInvoked typed "show-one") "u"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
+            let undone := keysFed (excerptInvoked typed "show-one") "C-z"
             excerptRead undone "one" == some "one\ntwo\nthree\n" &&
               excerptRead undone "ex" == some "two\n\nalpha\n" },
     { name :=
-        "a command applying one transaction with an edit in each excerpt changes both source buffers, and one u restores both"
+        "a command applying one transaction with an edit in each excerpt changes both source buffers, and one undo restores both"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
             let edited := excerptInvoked driver "edit-both"
-            let undone := evilFed edited "u"
+            let undone := keysFed edited "C-z"
             excerptRead edited "one" == some "one\ntXwo\nthree\n" &&
               excerptRead edited "two" == some "Alpha\nbeta\n" &&
               excerptRead undone "one" == some "one\ntwo\nthree\n" &&
@@ -3691,19 +3704,19 @@ def excerptBufferChecks : List Check :=
               excerptRead undone "ex" == some "two\n\nalpha\n" &&
               undone.loop.state.echo.isEmpty },
     { name :=
-        "a command that edits both sources through the excerpt buffer and then fails is rolled back in both, the echo area says the refusal and nothing more, and u then has nothing to undo"
+        "a command that edits both sources through the excerpt buffer and then fails is rolled back in both, the echo area says the refusal and nothing more, and an undo then has nothing to undo"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
             let failed := excerptInvoked driver "edit-both-fails"
-            let undone := evilFed failed "u"
+            let undone := keysFed failed "C-u"
             excerptRead failed "one" == some "one\ntwo\nthree\n" &&
               excerptRead failed "two" == some "alpha\nbeta\n" &&
               excerptRead failed "ex" == some "two\n\nalpha\n" &&
               failed.loop.state.echo == "edit-both-fails: refused: bad range" &&
-              undone.loop.state.echo == Evil.nothingToUndo },
+              undone.loop.state.echo == historyNothing },
     { name :=
         "with source two read-only, a command editing both gives up saying so and neither source changes; a commit into the second excerpt is dropped saying so, and one into the first is inserted"
       run :=
@@ -3713,8 +3726,8 @@ def excerptBufferChecks : List Check :=
           | some driver =>
             let readOnly := excerptInvoked driver "two-ro"
             let edited := excerptInvoked readOnly "edit-both"
-            let second := excerptFed (evilFed readOnly "j j i") [.commit "Q"]
-            let first := excerptFed (evilFed readOnly "i") [.commit "Q"]
+            let second := excerptFed (keysFed readOnly "<ArrowDown> <ArrowDown> C-b") [.commit "Q"]
+            let first := excerptFed (keysFed readOnly "C-b") [.commit "Q"]
             edited.loop.state.echo == "edit-both: two is read-only" &&
               excerptRead edited "one" == some "one\ntwo\nthree\n" &&
               excerptRead edited "two" == some "alpha\nbeta\n" &&
@@ -3740,7 +3753,7 @@ def excerptBufferChecks : List Check :=
           | none => false
           | some driver =>
             let made := excerptInvoked driver "make-unheld"
-            let committed := excerptFed (evilFed made "i") [.commit "Q"]
+            let committed := excerptFed (keysFed made "C-b") [.commit "Q"]
             committed.loop.state.echo == EditorState.unheldReason "ex2" &&
               excerptRead committed "ex2" == some "free\n" },
     { name :=
@@ -3753,7 +3766,7 @@ def excerptBufferChecks : List Check :=
             let changed := excerptInvoked driver "one-changed"
             let refused := excerptInvoked changed "edit-both"
             let landed := excerptInvoked refused "edit-both"
-            refused.loop.state.echo == Files.changedOnDisk "one.txt" &&
+            refused.loop.state.echo == FileJobs.changedOnDisk "one.txt" &&
               excerptRead refused "one" == some "one\ntwo\nthree\n" &&
               excerptRead refused "two" == some "alpha\nbeta\n" &&
               excerptRead refused "ex" == some "two\n\nalpha\n" &&
@@ -3767,9 +3780,9 @@ def excerptBufferChecks : List Check :=
           | none => false
           | some driver =>
             let changed := excerptInvoked driver "one-changed"
-            let refused := excerptFed (evilFed changed "i") [.commit "Q"]
+            let refused := excerptFed (keysFed changed "C-b") [.commit "Q"]
             let landed := excerptFed refused [.commit "R"]
-            refused.loop.state.echo == Files.changedOnDisk "one.txt" &&
+            refused.loop.state.echo == FileJobs.changedOnDisk "one.txt" &&
               excerptRead refused "one" == some "one\ntwo\nthree\n" &&
               excerptRead refused "ex" == some "two\n\nalpha\n" &&
               excerptRead landed "one" == some "one\nRtwo\nthree\n" &&
@@ -3910,12 +3923,12 @@ def atPointStateChecks : List Check :=
           | none => false
           | some state =>
             let texts := (Array.range 8).map (s!"a{·}")
-            let five := (sessionListing state texts (Array.range 5)).displayed .standard
+            let five := (sessionListing state texts (Array.range 5)).displayed windowedDisplaying
             let two :=
               (five.replaceCandidatesIn ⟨0⟩
                     (((five.candidatesIn? ⟨0⟩).getD {}).list "a1"
                       #[.ofIndex 1, .ofIndex 2])).displayed
-                .standard
+                windowedDisplaying
             let (_, closed) := two.closeAtPoint
             let heights := five.heights
             let rows (state : EditorState) := state.atPoint.map (·.sheet.rows.size)
@@ -3968,8 +3981,9 @@ def keyHintStateChecks : List Check :=
           match atPointBase with
           | none => false
           | some state =>
-            let due := (hintsOver state #["f", "s", "w"]).displayed .standard
-            let waiting := (hintsOver state #["f", "s", "w"] (due := false)).displayed .standard
+            let due := (hintsOver state #["f", "s", "w"]).displayed windowedDisplaying
+            let waiting :=
+              (hintsOver state #["f", "s", "w"] (due := false)).displayed windowedDisplaying
             let heights := due.heights
             due.hinting?.isSome && due.listRows == 3 &&
               due.minibufferPlace == 3 * heights.text + heights.message &&
@@ -3992,7 +4006,7 @@ def keyHintStateChecks : List Check :=
           | none => false
           | some state =>
             let (_, asking) := prompted (hintsOver state #["f", "s", "w"])
-            let shown := (picking asking).displayed .standard
+            let shown := (picking asking).displayed windowedDisplaying
             shown.hinting?.isNone &&
               shown.candidateSheet?.map (·.1) == shown.prompt.map (·.sheet) &&
               shown.listRows == 3 &&
@@ -4015,8 +4029,9 @@ def keyHintStateChecks : List Check :=
           match atPointBase with
           | none => false
           | some state =>
-            let three := (hintsOver state #["f", "s", "w"]).displayed .standard
-            let one := (three.listKeyHints #[Completion.Candidate.ofText "t"]).displayed .standard
+            let three := (hintsOver state #["f", "s", "w"]).displayed windowedDisplaying
+            let one :=
+              (three.listKeyHints #[Completion.Candidate.ofText "t"]).displayed windowedDisplaying
             let closed := { one with keyHints := none }
             one.keyHints.map (·.sheet.rows.size) == some 1 && one.listRows == 3 &&
               one.minibufferPlace == three.minibufferPlace &&

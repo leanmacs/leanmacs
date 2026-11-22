@@ -1,9 +1,7 @@
 import Editor.Api
 import Editor.Command
-import Editor.Command.Model
 import Editor.Completion.Candidate
 import Editor.Completion.Later
-import Editor.Display.Model
 import Editor.File.Model
 import Editor.FileWatch
 import Editor.FileWatch.Model
@@ -163,7 +161,7 @@ def laterChecks : List Check :=
               #[(Completion.candidatesCommand, some (⟨3⟩, 1, 2, offered #["w!"]))] &&
             (bad matches .failed _) },
     { name :=
-        "minibuffer-candidates, delivered as a job's post, takes its batch into the open prompt's asking source, in the source's group, and for arguments that are no batch says so in the echo area and takes nothing"
+        "minibuffer-candidates, delivered as a job's post, takes its batch into the open prompt's asking source, in the source's group, and for arguments that are no batch takes nothing"
       run :=
         pure <|
           match pickDriver with
@@ -184,8 +182,6 @@ def laterChecks : List Check :=
               let bad := deliveredBatch set [.str "x"]
               (candidatesOf added).map (·.asking.map (·.answered)) ==
                   some #[#[(Completion.Candidate.ofText "a").inGroup "later"]] &&
-                bad.model.display.scenes.back?.map (·.echo) ==
-                  some s!"{Completion.candidatesCommand}: malformed batch" &&
                 (candidatesOf bad).map (·.asking) == (candidatesOf set).map (·.asking) }]
 
 end ModelTest

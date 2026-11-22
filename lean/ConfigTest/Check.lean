@@ -2,8 +2,8 @@ import ConfigFixture
 import Editor
 import Editor.Config.Elaborate
 import Editor.Config.Session
-import Editor.Job.Real
 import Editor.Job.Runner
+import Editor.Test.Linked.Host
 import ExtensionFixture
 
 /-!
@@ -37,51 +37,22 @@ structure Check where
   /-- Observes the behaviour; `true` when it holds. -/
   run : IO Bool
 
-/-- What every check is given. -/
-structure Context where
-  /-- The real elaborator, whose `base` hands back, and grows, the one base
-  the checks share (`sharing`): `Editor`, `ConfigFixture` and
-  `ExtensionFixture` to start with. -/
-  elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle
+/-- What every check is given: what a host harness is handed
+(`Editor.Test.Linked.HostContext`), and the config tests' own. -/
+structure Context extends Editor.Test.Linked.HostContext where
   /-- What `ConfigFixture.bump` returned to compiled code before the base was
   imported. -/
   bumped : Nat
-  /-- The next source id no host of this process has posted under. -/
-  ids : IO.Ref UInt64
-  /-- The table of waits the hosts over the library's file service share,
-  once the first of them has asked for it (`Context.fileWaits`); none until
-  then. -/
-  waits : IO.Ref (Option Job.Completions)
-  /-- The Lean toolchain's directory, as the executable was handed it. -/
-  sysroot : String
-  /-- The directories of the `.olean` files the base was imported from, as
-  the executable was handed them (`oleanDirs`). -/
-  oleanDirs : List System.FilePath
   /-- The directory of the syntax fixtures (`tests/syntax`), whose Rust
   fixtures the indent checks read. -/
   syntaxFixtures : System.FilePath
   /-- The directory of the default config `mise run install` ships
   (`config/default`), which `defaultConfigChecks` read. -/
   defaultConfig : System.FilePath
-  /-- How many real editor loop threads the checks' hosts have started: a
-  stage's host bumps it on its loop's own thread
-  (`Headless.Collaborators.loopStarted`), so `inventory` names the checks
-  that ran one. -/
-  realLoops : IO.Ref Nat
 
-/-- The table of waits every host over the library's file service is staged
-over, with the process's one completion pump running over it. It is made,
-and the pump started on a dedicated task, the first time it is asked for,
-and handed back as it is afterwards: a second pump would take the first
-one's completions, so the checks of files share one table and one pump.
-The executable exits explicitly, which a pump parked in its pull needs. -/
-def Context.fileWaits (context : Context) : IO Job.Completions := do
-  if let some completions← context.waits.get then
-    return completions
-  let completions ← Job.Completions.new
-  discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
-  context.waits.set (some completions)
-  return completions
+/-- A check's context as a host harness takes it. -/
+instance : Coe Context Editor.Test.Linked.HostContext :=
+  ⟨Context.toHostContext⟩
 
 /-- How a check ends that says what it saw when it fails: `true` when `holds`,
 and otherwise it throws `observed`, which `failures` reports after the
@@ -146,21 +117,6 @@ several joined with `:`, as the editor reads its own
 def oleanDirs (argument : String) : List System.FilePath :=
   (ModuleLookup.searchPath argument).map System.FilePath.mk
 
-/-- `real` with one base shared by every caller, kept in `latest`: whatever
-base a caller hands in, `base` grows the one in `latest` to hold the
-modules asked for, keeps it and returns it. A module of the toolchain is
-then read once in the process, whichever check first imports it: a second
-read of a module file about doubles its memory. A base holds at least what
-was asked for, which is all the port says of it. -/
-def sharing (latest : IO.Ref (Option Config.Elaborate.Base))
-    (real : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle) :
-    Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle :=
-  { real with
-    base := fun _ modules => do
-      let base ← real.base (← latest.get) modules
-      latest.set (some base)
-      return base }
-
 /-- Makes the base once and runs every check: names on stderr the ones that
 failed, and returns the exit status, 0 when all hold and 1 otherwise.
 
@@ -169,7 +125,7 @@ holding the package's `.olean` files, or several joined with `:`
 (`oleanDirs`). With `realThreads`, it writes there the names of the checks
 that ran a real editor loop thread (`inventory`), sorted, one per line. -/
 def run (checks : Context → List Check) (sysroot oleanDir : String)
-    (syntaxFixtures defaultConfig : System.FilePath)
+    (syntaxFixtures defaultConfig : System.FilePath) (packages : Array Package)
     (realThreads : Option System.FilePath := none) : IO UInt8 := do
   -- Compiled code writes to the fixture's cell before the base is imported.
   let bumped ← ConfigFixture.bump
@@ -178,7 +134,7 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
   IO.FS.withTempDir fun scratch => do
       let files ← Config.Elaborate.ModuleFiles.over (pure scratch)
       let elaborator :=
-        sharing (← IO.mkRef none)
+        Editor.Test.Linked.sharing (← IO.mkRef none)
           (Config.Elaborate.elaborator
             { sysroot, oleanDirs := oleanDirs oleanDir,
               imports := #[`Editor, `ConfigFixture, `ExtensionFixture] }
@@ -188,7 +144,7 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
       let realLoops ← IO.mkRef 0
       let context : Context :=
         { elaborator, bumped, ids := ← IO.mkRef 100, waits := ← IO.mkRef none, sysroot
-          oleanDirs := oleanDirs oleanDir, syntaxFixtures, defaultConfig, realLoops }
+          oleanDirs := oleanDirs oleanDir, packages, realLoops, syntaxFixtures, defaultConfig }
       let checks := checks context
       let (failed, real) ← inventory realLoops checks
       if let some file := realThreads then
@@ -203,7 +159,7 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: config-test <sysroot> <olean dir> <syntax fixtures> <default config> [--real-threads <file>] | config-test lsp <sysroot> <config dir> <line> <column> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-reload-directory <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-soak-modules <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples> | config-test bench-workspace-files <sysroot> <olean dir> <repository> <samples> | config-test bench-auto-reload <sysroot> <olean dir> <syntax fixtures> <default config> <samples>"
+      "usage: config-test <sysroot> <olean dir> <syntax fixtures> <default config> [--real-threads <file>] | config-test lsp <sysroot> <config dir> <line> <column> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-reload-directory <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-soak-modules <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples>"
   return 2
 
 end ConfigTest

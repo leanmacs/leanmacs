@@ -1,6 +1,5 @@
 import ConfigFixture
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
 import Editor.Clipboard
 import Editor.Command
 import Editor.Command.Call
@@ -14,6 +13,7 @@ import Editor.Ffi.Document
 import Editor.Ffi.Snapshot
 import Editor.Headless
 import Editor.SyntaxTree
+import Editor.Test.Linked.Host
 import Editor.Text
 import Editor.Text.Real
 import Editor.Value
@@ -31,6 +31,7 @@ them; its module doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- Evaluates the constant `name` of `environment` as an `IO Nat`. It is
 `unsafe` because evaluating a constant trusts the type it is given. -/

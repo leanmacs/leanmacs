@@ -34,7 +34,7 @@ open Editor
 /-- hang guard: an event a check waits for that must come (a job's end, a
 start reaching the library, a pump's end); only a hang reaches the bound,
 and the check then fails as a hang. In milliseconds: ten times the slowest
-such event seen under the stress load and more, as `ConfigTest.hangGuard` is
+such event seen under the stress load and more, as `Editor.Test.Linked.hangGuard` is
 set. -/
 def patience : Nat :=
   120000

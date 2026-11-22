@@ -1,0 +1,141 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# a copy of the default config `mise run install` ships (config/default, a
+# starter SPC map), to reach the command prompt and the binding search
+# through the keys it binds. What it prints must be exactly `expected`. The
+# gate copies the config into a fresh temporary directory, so nothing is
+# written into the checkout, and runs the editor in an empty directory
+# beside it, `@DIR@/cwd` once the temporary directory's path is written
+# `@DIR@`: the prompts that start at the working directory, or search it,
+# show and list the same on every machine.
+#
+# A script's `key` cannot press the space bar, so the keys are pressed
+# through the binding search, which runs a binding it accepts as its key
+# would: the scheme is fed the binding's keys from rest.
+
+reload
+settle
+
+# `search-bindings` lists the default config's bindings: with `open`
+# typed, those whose text holds it, `SPC f f  open-file` among them.
+# `<Escape>` cancels.
+run search-bindings
+commit open
+scene
+key <Escape> Escape -
+
+# `SPC :`, accepted from the search, opens the command prompt: the
+# minibuffer's status line is `Command: `. `<Escape>` cancels.
+run search-bindings
+commit SPC :  execute-command
+key <Enter> Enter -
+scene
+key <Escape> Escape -
+
+# `SPC ?`, accepted from the search, opens the binding search again: the
+# minibuffer's status line is `Binding: `.
+run search-bindings
+commit SPC ?  search-bindings
+key <Enter> Enter -
+scene
+key <Escape> Escape -
+
+# The file, buffer, workspace, search and working-set keys, as the binding
+# search lists them: `workspace` lists the two keys of the workspace
+# finder, `project-search` the three of project search, `working-set` the
+# three of the working sets, and `SPC b` the buffer keys.
+run search-bindings
+commit workspace
+scene
+key <Escape> Escape -
+
+run search-bindings
+commit project-search
+scene
+key <Escape> Escape -
+
+run search-bindings
+commit working-set
+scene
+key <Escape> Escape -
+
+run search-bindings
+commit SPC b
+scene
+key <Escape> Escape -
+
+# `SPC f f` runs `open-file`, which asks for a path: the minibuffer's
+# status line is `Open file: `. Its text starts as the working directory,
+# whose length differs from machine to machine, so `C-u` deletes it before
+# the scene. `<Escape>` cancels.
+run search-bindings
+commit SPC f f  open-file
+key <Enter> Enter -
+join
+key u KeyU control
+join
+scene
+key <Escape> Escape -
+
+# `SPC p f` and `SPC SPC` open the workspace finder, labelled with what it
+# searches: the scratch buffer is in no workspace, so the working
+# directory, which holds no file. `<Escape>` cancels each.
+run search-bindings
+commit SPC p f  find-file-in-workspace
+key <Enter> Enter -
+join
+scene
+key <Escape> Escape -
+
+run search-bindings
+commit SPC SPC  find-file-in-workspace
+key <Enter> Enter -
+join
+scene
+key <Escape> Escape -
+
+# `SPC p p` runs `find-file-in-project`, which says the scratch buffer is
+# in no project.
+run search-bindings
+commit SPC p p  find-file-in-project
+key <Enter> Enter -
+join
+scene
+
+# `SPC s p` and `SPC /` run `project-search`, which asks for a pattern,
+# labelled with what it searches, as the finder's is. `<Escape>` cancels
+# each. `SPC *` runs `project-search-symbol`, which says there is no word
+# under the cursor.
+run search-bindings
+commit SPC s p  project-search
+key <Enter> Enter -
+join
+scene
+key <Escape> Escape -
+
+run search-bindings
+commit SPC /  project-search
+key <Enter> Enter -
+join
+scene
+key <Escape> Escape -
+
+run search-bindings
+commit SPC *  project-search-symbol
+key <Enter> Enter -
+join
+scene
+
+# `SPC k a` runs `working-set-add`, which says the scratch buffer has no
+# file, and `SPC k o` runs `working-set-open`, which says it has no
+# workspace.
+run search-bindings
+commit SPC k a  working-set-add
+key <Enter> Enter -
+join
+scene
+
+run search-bindings
+commit SPC k o  working-set-open
+key <Enter> Enter -
+join
+scene

@@ -17,13 +17,18 @@ adapters a stepped check uses stay real and keep their own threads: the
 elaborator, the library's file, diff and grep services and the completion
 pump, and the display binding. Only the editor loop thread goes.
 
-A check that says `Real` in its helper (`withRealHost`, `withRealVimHost`,
-`withRealFileHost`, `withRealHostOver`, `onRealStage`, `stagedReal`,
-`hostedReal`, `withRealRestoreHost`, `withRealRestoreFiles`,
-`withRealJournalHost`, `withRealEnvironments`, `withRealLanguageHost`,
-`withRealRecordedSyntaxTree`), or calls `Headless.withHost`,
+A check that says `Real` in its helper, or calls `Headless.withHost`,
 `Headless.run` or `Headless.runAndDispose` itself, runs a loop thread; the
-plain names are the stepped helpers (`lean/ConfigTest/Support/Hosts.lean`).
+plain names are the stepped helpers. The helpers are the linked test kit's
+(`withRealHost`, `withRealHostOver`, `onRealStage`, `stagedReal`,
+`hostingReal`, `lean/Editor/Test/Linked/Host.lean`; `withRealShippedHost`,
+`lean/Editor/Test/Linked/Shipped.lean`), the config tests' own
+(`withRealTestHost`, `lean/ConfigTest/Support/Shipped.lean`;
+`withRealRestoreHost`, `withRealRestoreFiles`, `withRealJournalHost`,
+`withRealEnvironments`, `withRealRecordedSyntaxTree`, `hostedReal`,
+`lean/ConfigTest/Editor/Headless.lean`), and a package's linked test's
+(`withRealVimHost`, evil's; `withRealFileHost` and `withRealLanguageHost`,
+the files package's).
 
 | Code | Adapter the check covers | Why it needs the loop thread |
 |---|---|---|
@@ -33,11 +38,11 @@ plain names are the stepped helpers (`lean/ConfigTest/Support/Hosts.lean`).
 | A4 | The library's editor queue: a Rust poster (`Ffi.feedScript`), the interrupt key's mark, and the flag raised as a key arrives while a command runs | Needs the library queue and a command running concurrently |
 | A5 | The library's syntax service, whose parses come back over the library's editor queue (`Event.parsed`) and are waited for with `Ffi.syntaxSettle` | A stepped host never pulls the library queue, and a stray `parsed` would reach the next real host |
 | A6 | The window mode's wiring (`Editor.Window.host` and its start-up wait) | It is the window mode's edge |
-| A7 | The library's watch service on real files (`Session.shownOn`, the scene asked at each job line) | Background deliveries on the library's clock |
+| A7 | The library's watch service on real files (`Session.shownOn`, the scene asked at each job line); no check of `config-test` since the features that watch files moved into packages, whose linked tests cover it (below) | Background deliveries on the library's clock |
 
-## config-test: 72 checks
+## config-test: 52 checks
 
-By adapter: A1 8, A2 11, A3 28, A4 5, A5 17, A6 1, A7 2. Each name is a
+By adapter: A1 8, A2 10, A3 25, A4 5, A5 3, A6 1. Each name is a
 check's name exactly, one a line, inside a `checks` block, which is what
 the gate reads (below).
 
@@ -58,14 +63,13 @@ a host's bracket throws the error its loop ended with when its body returned
 a stage's real host calls its loopStarted once, on its loop's own thread, not the check's, and a check's own run of the loop's handler never calls it
 ```
 
-### A2: 11 checks
+### A2: 10 checks
 
 The driver's waits over the loop thread (`Host.waitWhile`: markers and rounds, the idle signal read across the thread, an editor thread held inside an event), and the scene-count parity check that compares a stepped host with a real one.
 
-Lists: `exScriptChecks`, `idleChecks`, `moduleHostChecks`, `scriptChecks`, `steppedChecks`.
+Lists: `idleChecks`, `moduleHostChecks`, `scriptChecks`, `steppedChecks`.
 
 ```checks
-a wait on a host whose loop a command ended answers that the loop has ended, a settle and a join alike, which is no failure of a script, and halting the host then answers that it stopped
 a join does not answer working while a job is about to start its sleep: with the job's start held, the join blocks on it, and answers working once the job is in its sleep
 a join does not answer working while a job's result is on its way: with the job's reading of the clock held after its sleep, the join blocks on it, and answers settled once the job's line is printed
 a pause of completion at point armed on the fake clock holds no unit, and its event holds one from the clock's move until the editor thread has handled it
@@ -78,17 +82,14 @@ a wait that runs out says why: a reload is still running, or the editor thread h
 a stepped host publishes the scenes a real host does: a settle one, and a join's later rounds none
 ```
 
-### A3: 28 checks
+### A3: 25 checks
 
 The headless mode's script runner (`Headless.run`, `runAndDispose`, `runFrom`): the CLI's driver, defined over `Host`, which the headless fixtures share.
 
-Lists: `exScriptChecks`, `jobChecks`, `scriptChecks`.
+Lists: `jobChecks`, `scriptChecks`.
 
 ```checks
 an idle answers only once the render loop is at rest: with a frame in flight as it begins, it waits for the frame's end, on the loop's rest and never for a time, and counts from that rest, so a loop then left alone has drawn and been handed nothing
-a script whose q is refused, for a file's buffer that was edited, runs its later lines: the show line prints the commands, the script has no failure, and the file is as it was
-criterion 1 through the host: a script that runs e on a file, joins, commits text, runs w, joins, runs q, and then has a show line: the script has no failure, the file holds the committed text before what it held, and the show line was not run
-criterion 2 through the host: the same script with wq in place of w, the join and q, and a join after it: the script has no failure, the file holds the buffer's text, and the show line was not run
 a join that cannot finish fails at idle, it does not hang: the failure names the join's line, nothing is said as a hang, and the loop cancels its jobs when it ends
 an indexed that cannot finish, a background job asleep on the fake clock no advance moves, fails at idle, it does not hang: the failure names the indexed's line as the editor idle with a job still running, and nothing is said as a hang
 an editor thread held inside an event when a join asks for its answer still makes the join answer working, at idle: the hold is let go when the join blocks on the answer, and nothing is said as a hang
@@ -129,30 +130,16 @@ the driver's run of a command is guarded: with the interrupt key arrived the com
 the editor answers events while a slow file elaborates: 100 events from a Rust thread and a command of the old config
 ```
 
-### A5: 17 checks
+### A5: 3 checks
 
 The library's syntax service, whose parses come back over the library's editor queue (`Event.parsed`) and are waited for with `Ffi.syntaxSettle`: a stepped host never pulls that queue, and a stray `parsed` would reach the next real host.
 
-Lists: `indentChecks`, `jobChecks`, `languageChecks`, `treeObjectChecks`.
+Lists: `indentChecks`, `jobChecks`.
 
 ```checks
-= keeps the leading whitespace of a row inside a multi-line string and inside a block comment, and re-indents the rows around them
-in a Rust buffer whose indentation was mangled, g g = G gives text equal to the rustfmt-formatted fixture it came from, with the cursor on the first row's first non-blank, through the host's loop and the library's syntax tree; the rows inside its multi-line string and block comment, which the rule would indent by four spaces, keep theirs
-in a Rust buffer, = a f inside the second of two mangled functions re-indents exactly that function's rows: the first function and the struct above keep their mangled indentation byte for byte
-in a Rust buffer, A RET after an opening brace starts the new line one indent unit deeper than the brace's line: above a closing brace, at the text's end with none, and two deep in a method of an impl at the text's end
-in a Rust buffer, one = a f is undone by one u, which gives back the whole mangled text, and . then re-indents the other function, leaving the first as u left it
-in a Rust function body, o opens a row at the body's level, and typing if a { and RET there starts the next row a level deeper, though the if is not closed
-in a Rust method's body, o and O on a statement start the new row at the body's level, and O on the method's closing brace does too
-in a buffer with no language = = leaves the text and says the buffer has no syntax tree, and A RET, o and O insert bare line breaks as before; in a JSON buffer, whose language has no indents query, = = says so and A RET inserts a bare line break
 a parse of a highlighted text the library delivers makes the real host publish a scene, with no key pressed
-a major mode with no syntax tree set over the code mode of an opened .rs file detaches its text
-config's language rust, over the shipped one, with its own highlights query, is the one an opened .rs file is highlighted with: its query is compiled in place of the shipped one, and its one capture drawn in its default face
-opening a .json file and a .md file gives each buffer that language and the major mode code, and highlights its text with that grammar's shipped query; Markdown's inline grammar is injected
-opening a .lean file and a file named lakefile.lean gives each buffer the language lean and the major mode code, and asks the syntax tree port to highlight its text with Lean's shipped query and the lean entry's captures, the faces asked for including the keyword, string, comment, constant and module faces, with no refusal said
-opening a .rs file gives its buffer the language rust and the major mode code, and its text is attached with rust and highlighted with Rust's shipped query in the default faces, with no refusal said
-opening a .toml file and a file named Cargo.lock gives each buffer the language toml and the major mode code, and highlights its text with TOML's shipped query, keys and table headers in the type face, strings in the string face, brackets in the punctuation face and booleans in the constant face, with no refusal said
-in a Rust buffer v a f selects the enclosing function, from its fn through its closing brace, through the host's loop and the library's syntax tree; and <Escape> d a f then deletes it, its lines whole
-in a Rust buffer v i f from a method's fn line, in the function and outside its body, selects inside the body's braces, its lines whole, through the host's loop and the library's syntax tree
+in a Rust buffer whose indentation was mangled, a command of config's that applies the edits TextId.reindentEdits answers of every row gives text equal to the rustfmt-formatted fixture it came from, through the host's loop and the library's syntax tree, the rows inside its multi-line string and block comment kept; in a buffer with no language it is refused as a text with no syntax tree and the text is left, and in a JSON buffer, whose language has no indents query, as one with no query
+in a Rust buffer, TextId.openingLevel asked by a command of config's answers one level after an opening brace, above a closing brace and at the text's end with none, and two in a method of an impl at the text's end; in a buffer with no language it is refused as a text with no syntax tree, and in a JSON buffer as one with no indents query
 ```
 
 ### A6: 1 checks
@@ -165,16 +152,6 @@ Lists: `scriptChecks`.
 the window mode's wait for its start-up config, past its patience with the reload still running, says nothing on stderr: its patience is a bound of the window's, not a hang
 ```
 
-### A7: 2 checks
-
-The library's watch service on real files (`Session.shownOn`: the scene asked again at each job line, never after a time).
-
-Lists: `autoReloadChecks`, `gutterChecks`.
-
-```checks
-criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown; once the buffer is edited, another rewrite leaves its text and marks its status line
-criterion 6 through the host over real git: a tracked file with a line changed shows a changed mark, and after git commit -a run by another process its gutter has no mark
-```
 ## FfiTest
 
 No check in `FfiTest.checks` runs an editor loop. Seven scenarios that
@@ -196,21 +173,39 @@ parked pulls run in `queueChecks` and `shutdownChecks`
 
 None. Its loop checks step `Loop.start` and `Loop.step` on the check's
 thread (`ContractTest/Editor/Restore/Run.lean`,
-`ContractTest/Editor/WorkingSet/Run.lean`, `ContractTest/Editor/Shell.lean`,
 `ContractTest/Editor/Watch/Real.lean`), and the editor queue port's real
 binding is run there as a contract (`ContractTest.queueContractChecks`), on
 the check's thread.
 
 ## The package linked tests
 
-Both run `Headless.run` (A3): `tests/packages/greeting/GreetingTest/Linked.lean`
-and `packages/compile/CompileTest/Linked.lean`.
+The checks that were `config-test`'s while their features were modules of
+the core moved into those packages' linked tests with the features-as-packages
+roadmap, and the ones that ran a real loop thread still do, by the same
+rule. No gate lists them by name: a package's linked test keeps no
+inventory, and each says `Real` in its helper or calls the runner itself.
+
+| Linked test | Checks | Adapter |
+|---|---|---|
+| `tests/packages/greeting/GreetingTest/Linked.lean` | its one script | A3: `Headless.run` |
+| `packages/compile/CompileTest/Linked.lean` | its one script | A3: `Headless.run` |
+| `packages/ex/ExTest/Linked/Ex.lean` | `exScriptChecks`: the three scripts of ex lines (`ranScript`) | A3: `Headless.run` |
+| `packages/ex/ExTest/Linked/Ex.lean` | `exScriptChecks`: a wait on a host whose loop a command ended | A2: `Headless.withHost` |
+| `packages/evil/EvilTest/Linked/Evil/Operators.lean` | the eight indent checks through the Vim scheme's keys (`withEvilIndentHost`) | A5: `withRealVimHost` |
+| `packages/evil/EvilTest/Linked/Evil/TreeObjects.lean` | `treeObjectChecks`, both | A5: `withRealVimHost` |
+| `packages/files/FilesTest/Linked/Files.lean` | `languageChecks`, all but the buffer with no language | A5: `withRealLanguageHost` |
+| `packages/files/FilesTest/Linked/Files.lean` | `autoReloadChecks`, and the auto-reload row of `config-bench` (`FilesTest/Linked/Files/Bench.lean`) | A7: `withRealFileHost` |
+| `packages/version-control/VersionControlTest/Linked/VersionControl/Gutter.lean` | `gutterChecks`: criterion 6 over real git | A7: `onRealStage` |
+
+Every other host check of a package's linked test runs on a stepped host,
+through the kit's plain helpers, and fails if it grew the library's editor
+queue, as a check of `config-test` does.
 
 ## How the list is checked
 
 A real loop calls its collaborators' `loopStarted` on its own thread before
 its first event, and a stage's host counts itself there
-(`Context.realLoops`); a stepped host never calls it. `config-test ...
+(`HostContext.realLoops`); a stepped host never calls it. `config-test ...
 --real-threads <file>` writes the sorted names of the checks during which a
 loop thread started (`ConfigTest.inventory`). `mise run ffi-test` runs
 config-test so, extracts the `checks` blocks of this page with `awk`, sorts

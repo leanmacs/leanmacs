@@ -10,10 +10,8 @@ import Editor.Layout
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Setup
 import Editor.TabBar
-import Editor.Themes.Compiled
 import Editor.Window
 import Editor.Workspace
 import ModelTest.Check
@@ -52,7 +50,8 @@ nothing loaded. -/
 def themedState : ModelState :=
   {
     registry :=
-      ({} : Config.Registry).replaceThemes .compiled (#[Themes.defaultTheme] ++ appearanceThemes) }
+      ({} : Config.Registry).replaceThemes .compiled
+        (#[{ name := Theme.defaultName, theme := Theme.builtin }] ++ appearanceThemes) }
 
 /-- The effects of each of `events` from `state`, one array an event, and the
 state reached. -/

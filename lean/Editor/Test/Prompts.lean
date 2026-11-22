@@ -6,8 +6,6 @@ import Editor.Command.Model
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
-import Editor.Completion.Displays
-import Editor.Completion.Styles
 import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
@@ -24,13 +22,10 @@ import Editor.Layout
 import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Menu
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Role
 import Editor.Scene
 import Editor.State
@@ -39,6 +34,7 @@ import Editor.Test.Config
 import Editor.Test.Driver
 import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.States
 import Editor.Text
@@ -161,29 +157,33 @@ def minibufferCommands : List (String × Dispatched) :=
 
 /-- The global bindings of the minibuffer checks: a key sequence under `C-c`
 and the name of the command it runs. The last two run the minibuffer's own
-commands by their names, from any view. -/
+commands by their names, from any view: the kit's names
+(`Editor/Test/Minibuffer.lean`), which are the ones a minibuffer package
+registers them under. -/
 def minibufferBindings : List (String × String) :=
   [("C-c a", "ask"), ("C-c i", "ask-ada"), ("C-c s", "start"), ("C-c w", "to-window"),
     ("C-c v", "to-minibuffer"), ("C-c k", "close-asker"), ("C-c 1", Minibuffer.acceptName),
     ("C-c 2", Minibuffer.cancelName)]
 
-/-- The registry of the minibuffer checks: the minibuffer's commands and its
-mode registered for the owner `compiled`, an owner that is not config, as a
-host registers a package's, and the checks' bindings as config's. -/
-def minibufferRegistry : Config.Registry :=
-  ((({} : Config.Registry).replace .compiled Minibuffer.package.registered.commands).replaceModes
-        .compiled Minibuffer.package.registered.modes).replaceBindings
+/-- The registry of the minibuffer checks: the commands and the modes of
+`package`, by default the kit's minibuffer (`Minibuffer.package`,
+`Editor/Test/Minibuffer.lean`), registered for the owner `compiled`, an
+owner that is not config, as a host registers a package's, and the checks'
+bindings as config's. A package's own tests hand their package. -/
+def minibufferRegistry (package : Package := Minibuffer.package) : Config.Registry :=
+  ((({} : Config.Registry).replace .compiled package.registered.commands).replaceModes .compiled
+        package.registered.modes).replaceBindings
     .config (minibufferBindings.toArray.map fun (text, command) => .ofKeys (keys text) command)
 
 /-- What a step of the minibuffer checks is handed: the active keymaps the
-registry makes for the test scheme from the loop's state, so the
-minibuffer's mode holds in the minibuffer's view and nowhere else; the
+registry of `package` makes for the test scheme from the loop's state, so
+the minibuffer's mode holds in the minibuffer's view and nowhere else; the
 registry's commands, each given its call; and, for any other name, the
 commands of the prompt checks and of these. -/
-def minibufferKeys : Loop.Keys TestScheme.scheme :=
-  { maps := minibufferRegistry.activeMaps TestScheme.scheme
+def minibufferKeys (package : Package := Minibuffer.package) : Loop.Keys TestScheme.scheme :=
+  { maps := (minibufferRegistry package).activeMaps TestScheme.scheme
     command? := fun name =>
-      match minibufferRegistry.find? name with
+      match (minibufferRegistry package).find? name with
       | some { registration := { action := .call run, .. }, .. } =>
         some fun call => do
           run call
@@ -191,10 +191,11 @@ def minibufferKeys : Loop.Keys TestScheme.scheme :=
       | _ => ((promptCommands ++ minibufferCommands).find? (·.1 == name)).map (·.2) }
 
 /-- A driver of the minibuffer checks over the state `start` makes, with the
-jobs of the driver checks; `none` if making the state was refused. -/
-def minibufferDriver (start : TextM EditorState := EditorState.initial ⟨640, 480⟩) :
-    Option TestDriver :=
-  (Loop.Driver.over minibufferKeys driverJobs start editorModel).toOption
+registry of `package` and the jobs of the driver checks; `none` if making
+the state was refused. -/
+def minibufferDriver (start : TextM EditorState := EditorState.initial ⟨640, 480⟩)
+    (package : Package := Minibuffer.package) : Option TestDriver :=
+  (Loop.Driver.over (minibufferKeys package) driverJobs start editorModel).toOption
 
 /-- A press of each key the test scheme has `role` on. -/
 def rolePresses (role : Role) : List Event :=

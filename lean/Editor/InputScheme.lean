@@ -54,7 +54,7 @@ it: a binding is of its own type, so the core cannot tell what command it
 runs, and only the scheme knows which keys it would take as something else
 (the Vim scheme's count digits). It defaults to none. The binding search
 lists them, and the command prompt shows each command's keys from them
-(`Editor/BindingSearch.lean`, `Editor/ExecuteCommand.lean`). The contract's
+(`packages/binding-search/BindingSearch.lean`, `packages/execute-command/ExecuteCommand.lean`). The contract's
 `keyBindingsWalk` holds every listed sequence to the walk.
 
 Which keys print text is the same for every scheme (`Key.printed?`): a
@@ -118,7 +118,7 @@ A scheme is told when a menu item names an invocation for a view
 (`invoked`): the state, and the invocation to run in its place. A menu
 item is chosen with no key, so `step` never sees it, and a scheme whose
 keys can make a command name run as something else in a state, as the Vim
-scheme's run tables do (`Editor/InputScheme/Vim.lean`, "Vim states"),
+scheme's run tables do (`packages/evil/Evil/Vim.lean`, "Vim states"),
 does the same for the item. It defaults to both as they were. Whoever runs
 the scheme tells it once for each menu item chosen (the command loop), and
 runs what comes back with the report of the state that comes back. An
@@ -145,6 +145,20 @@ The defaults are what a scheme that says nothing of a view reports, so a
 scheme with no states of its own, as the test scheme is, leaves the field
 out. The report is data: a new fact every scheme can say of a view is a
 field of it, with a default.
+
+## The faces a scheme draws a cursor in
+
+`cursorFaces` lists the faces the scheme's reports draw a cursor in, other
+than `cursor`, the face of a report that names none. It is the scheme's
+answer to whoever must know those faces without running the scheme: the
+completeness check of a theme (`Themes.cursorFaces`,
+`Editor/Theme/Check.lean`) reads it, so that check names no scheme's
+states. The contract holds the answer to `report`
+(`cursorFacesReported`, `Editor/InputScheme/Contract.lean`): no report
+over the contract's runs draws a cursor in a face that is neither `cursor`
+nor listed. The faces themselves are the core's, declared in the
+vocabulary with their mark (`Face.cursorNames`,
+`Editor/Face/Vocabulary.lean`).
 
 ## What a scheme reports for modes
 
@@ -187,9 +201,29 @@ reset must keep, so the contract speaks of `pending` and of what the scheme
 then yields.
 
 The scheme that ships is not here: it is the Vim scheme
-(`Editor/InputScheme/Vim.lean`), over its default states and bindings
-(`Editor/InputScheme/Vim/Default.lean`). `Editor/InputScheme/Test.lean` is
+(`packages/evil/Evil/Vim.lean`), over its default states and bindings
+(`packages/evil/Evil/Vim/Default.lean`). `Editor/InputScheme/Test.lean` is
 the test scheme, published for other modules' tests.
+
+## The scheme a package supplies
+
+The scheme an editor runs comes from its package set
+(`docs/design/packages.md`, "Input schemes"): a Lake package whose lakefile
+declares the keyword `editor-input-scheme` declares `scheme :
+SchemePackage` in its entry module, beside `packages`, and the generated
+root hands the executable every such value, in the order the packages
+register (`Editor.Main.run`). The one run is the last (`SchemePackage.chosen?`),
+and an editor handed none refuses to start, saying
+`SchemePackage.noneInstalled`.
+
+It is a declaration of the entry module and not an extension point or a
+setup request, because a scheme is in `Type 1` (it carries its `State` and
+`Binding` types): an extension point's values travel as `Dynamic`, which
+holds values of types in `Type`, and a `Package` is plain data in `Type`.
+And the host's loop is typed by its scheme (`Loop scheme`), so the scheme is
+chosen before any package's `setup` runs. Pinned by
+`ModelTest.schemePackageChecks`, the third of which drives the loop with a
+scheme written in the test.
 
 ## Where an addition goes
 
@@ -199,6 +233,7 @@ the test scheme, published for other modules' tests.
 | Something every scheme must report to the core | A field of `InputScheme`, and a property of the contract, as `continuations` and `continuationsWalk` are |
 | Which key sequences run a command, for the binding search and the command prompt | `keyBindings`, which `keyBindingsWalk` in the contract holds to the walk |
 | What a scheme makes of an invocation no key yielded, such as a menu item's | `invoked`, which `invokedKeepsUnknown` in the contract holds to its default for a name the scheme does not know |
+| A face a scheme draws a cursor in | The scheme's `cursorFaces`, which `cursorFacesReported` in the contract holds to its reports, and an entry of the vocabulary marked `cursor` (`Editor/Face/Vocabulary.lean`) |
 | Something a scheme says of one view, for the scene, the loop or a command | A field of `InputScheme.Report`, with the default a scheme that says nothing reports |
 | Something one scheme remembers between keys | That scheme's `State`; nothing here |
 | A fact about a key that more than one scheme reads | A function of `Key` here, as `Key.printed?` is |
@@ -315,6 +350,11 @@ structure InputScheme where
   loop and a command act on. A scheme that says nothing of a view reports
   the default. -/
   report : State → ViewId → InputScheme.Report := fun _ _ => {}
+  /-- The faces the scheme draws a view's cursor in, other than `cursor`:
+  every face `report` gives a cursor is `cursor` or one of these ("The
+  faces a scheme draws a cursor in", in the module docs). A scheme that
+  draws every cursor in `cursor` lists none. -/
+  cursorFaces : List FaceName := []
   /-- The scheme's hand-tuned keys: each a mode's name, a key sequence as
   chords, and its binding, consulted with that mode ahead of its roles and
   suffixes. -/
@@ -376,7 +416,7 @@ def InputScheme.leaders (scheme : InputScheme) (leader : Option (List Key) := no
 
 /-- A state of a scheme, by its name, as config names one for a binding
 that holds only there (`bindKey`'s `states`). The scheme says which states
-it has: the Vim scheme's are constants of `Editor/InputScheme/Vim/Default.lean`
+it has: the Vim scheme's are constants of `packages/evil/Evil/Vim/Default.lean`
 (`SchemeState.insert`). -/
 structure SchemeState where
   /-- The state's name, as the scheme registers it. -/
@@ -418,5 +458,25 @@ def InputScheme.feed (scheme : InputScheme) (maps : ViewId → List (Keymap sche
       let (next, yielded) := scheme.step maps view state key
       (next, yields ++ [yielded]))
     (state, [])
+
+/-- The input scheme a package supplies, with the name it is known by
+("The scheme a package supplies", in the module docs). It is in `Type 1`,
+as a scheme is. -/
+structure SchemePackage where
+  /-- The scheme's name, for what an editor says of it. -/
+  name : String
+  /-- The scheme. -/
+  scheme : InputScheme
+
+/-- The scheme an editor runs, of those its package set supplies, in the
+order their packages register: the last one, as the latest value of a
+choice is the one in force; none when none is supplied. -/
+def SchemePackage.chosen? (supplied : Array SchemePackage) : Option SchemePackage :=
+  supplied.back?
+
+/-- What an editor whose package set supplies no input scheme says when it
+refuses to start. -/
+def SchemePackage.noneInstalled : String :=
+  "no input scheme is installed: no package of this editor's package set supplies one"
 
 end Editor

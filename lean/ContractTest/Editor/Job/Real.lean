@@ -324,7 +324,7 @@ def sleepers (services : Job.Services) (count : Nat) : IO (Array Job.Handle) := 
 /-- hang guard: each pool task's start, which `Pool.holdAll` waits for; only
 a pool with fewer free threads than it is asked to hold reaches it, and the
 check then fails as a hang. A task starts on a free thread in microseconds;
-the guard is `ConfigTest.hangGuard`'s measured 120 000 ms. -/
+the guard is `Editor.Test.Linked.hangGuard`'s measured 120 000 ms. -/
 def warmPatience : Nat :=
   120000
 

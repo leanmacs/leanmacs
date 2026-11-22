@@ -1,0 +1,87 @@
+# The working sets: named sets of ranges of files, `working-set-add`,
+# `working-set-open` and the set's buffer's commands, mode and jobs, kept
+# under the state directory: a default package, a Lake package outside the
+# core that the default package set requires (../lakefile.toml;
+# docs/design/packages.md, "The package set and its build"). It was six
+# modules of the core, `Editor.WorkingSet` and `Editor.WorkingSet.Compiled`,
+# `.Disk`, `.Places`, `.Refind` and `.Run`, until the features-as-packages
+# roadmap's phase 6. The gate's package steps build, test, lint and
+# format-check it through the fixture set, which requires the default set
+# (tools/package-set.sh), and the package imports check holds what it
+# imports of the core (tools/package-imports-check.sh).
+#
+# - `WorkingSet` is the package's library: `WorkingSet.lean`, a set's stored
+#   form, and the modules under `WorkingSet/`, with its entry module
+#   `WorkingSet/EditorPackage.lean`, which the package-set build reads. Its
+#   `globs` hold every module under `WorkingSet`, so the package imports
+#   check sees each one's imports. It implements the interface package
+#   `working-set-api`, which it requires, and reaches the files and the buffers
+#   through the core's interface library `files-api` and the interface
+#   package `buffers-api`, and version control through the interface
+#   package `vc-api`, each of which it requires.
+# - `working-set-test` is its test driver (`lake test`): the tests that need
+#   no Rust library, rooted at `WorkingSetTest/Model.lean`. It is no default
+#   target, as the core's `model-test` is not: `mise run lean` links with the
+#   system compiler, which this executable has no flags for.
+# - `WorkingSetTest` holds the test modules, the working sets' driver
+#   (`WorkingSetTest/Support/WorkingSet.lean`), and `WorkingSetTest/Linked.lean`:
+#   the root of the executable the core's `editorLinked` facet links as the
+#   editor is linked, with the Rust library. It runs the working sets over
+#   the library's file service, fuzzy matcher and real git, through a
+#   restart.
+#
+# It has no headless fixture of its own: the core's fixtures
+# tests/headless/working-set-reopen and tests/headless/working-set-from-search,
+# which run on the default set's editor, add, write and open sets through
+# it.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its modules,
+# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/working-set update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages,
+# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+name = "working-set"
+testDriver = "«working-set-test»"
+defaultTargets = ["WorkingSet", "WorkingSetTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+# The interface package this one implements: it declares the names of
+# `working-set-add` and `working-set-open`, which the default config binds,
+# and publishes the contract check this package's tests run.
+[[require]]
+name = "working-set-api"
+path = "../working-set-api"
+
+# The interface package of version control: the backend a set's write asks
+# for the commit `HEAD` is at, and the model its tests run on.
+[[require]]
+name = "vc-api"
+path = "../vc-api"
+
+# The interface package of the buffer commands: the hook before a buffer
+# closes, which the working sets register at, and its fake, which this
+# package's tests close buffers with.
+[[require]]
+name = "buffers-api"
+path = "../buffers-api"
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "WorkingSet"
+globs = ["WorkingSet.*"]
+
+[[lean_lib]]
+name = "WorkingSetTest"
+globs = ["WorkingSetTest.+"]
+
+[[lean_exe]]
+name = "working-set-test"
+root = "WorkingSetTest.Model"

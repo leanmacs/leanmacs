@@ -9,11 +9,11 @@ The decisions about a window's jump list and the places it holds
 over the editor API: the list's rules are `Editor/JumpList.lean`'s, run on
 places of the editor state (`Editor/State.lean`, "The jump list and
 marks") whose lines are read from their markers. It names no scheme and no
-key: evil's commands (`Editor/Evil/Jumps.lean`, `Editor/Evil/Marks.lean`)
+key: evil's commands (`packages/evil/Evil/Jumps.lean`, `packages/evil/Evil/Marks.lean`)
 call it, and so do the file commands, since opening a file is a jump.
 
 This is the lower of two modules. It imports the editor API only, so the
-file commands (`Editor/Files.lean`) can record a jump; what needs the file
+file commands (`packages/files/Files.lean`) can record a jump; what needs the file
 commands, going to a place in a closed file, is the upper module's
 (`Editor/Jumps/Go.lean`).
 
@@ -43,7 +43,7 @@ commands, going to a place in a closed file, is the upper module's
 - **Placing the cursor** (`placeCursor`, `offsetOn`): one bar at an
   offset, with the selection's shape kept, or at the first non-blank of
   the offset's line. Going to a held place places it so, and so does a
-  visit of a file (`Files.placeAt`, `Editor/Files.lean`), at its point.
+  visit of a file (`Files.placeAt`, `packages/files/Files.lean`), at its point.
 - **Detach** (`detach`): before a buffer is closed, every place held in it,
   in every window's jumps and in the global marks, becomes a place in its
   file, with its row and its column in characters; a buffer with no file
@@ -62,10 +62,16 @@ commands, going to a place in a closed file, is the upper module's
   do: their markers go to where the deletion left them, the line's start,
   where Vim keeps their column (a recorded departure, task
   `global-mark-keeps-column-on-line-delete`). The linewise delete and
-  change call it (`Editor/Evil/Operators.lean`).
+  change call it (`packages/evil/Evil/Operators.lean`).
 - **Attach** (`attach`): once a buffer holds a file, the places of that
   file become places held by markers of its text again, at their row and
   column, clamped as a visit clamps (`Marks.offsetAt`).
+- **Visiting the source of an excerpt buffer's place** (`visitLocated`, the
+  activate key of project search's results and of a working set's
+  buffer): the place of an excerpt text is located in its source
+  (`TextId.locate`), the jump is recorded, the source's buffer is shown
+  and the cursor put at the place; what was not located is said. It needs
+  only the editor API, so it is here, below the file commands.
 
 Pinned by `ModelTest.jumpChecks`; the moves that go to another buffer or a
 file by `ModelTest.jumpGoChecks`.
@@ -268,5 +274,17 @@ def attach (id : BufferId) (path : System.FilePath) : EditorM Unit := do
   for (char, place) in state.remembered.globalMarks do
     if (inFile place).isSome then
       discard <| setGlobalMark char (change place)
+
+/-- Visits the place in its source of the offset `head` of the excerpt text
+`text` in `view` ("Visiting the source of an excerpt buffer's place", in
+the module docs): says `nothing` when it is in no excerpt, or no buffer
+holds its source. -/
+def visitLocated (view : ViewId) (text : TextId) (head : Nat) (nothing : String) : EditorM Unit :=
+  do
+  let some located ← (text.locate head : TextM (Option Located)) | message nothing
+  let some source := (← editorState).bufferOver? located.source | message nothing
+  record view
+  let .ok () ← view.show source | message nothing
+  placeCursor view located.offset
 
 end Editor.Jumps

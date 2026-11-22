@@ -1,12 +1,13 @@
 import Editor.Api
-import Editor.Files
 import Editor.Job
+import Editor.Jumps
 import Editor.Restore
+import FilesApi
 
 /-!
 # Restoring a session, and writing its index
 
-The jobs and commands of the `restore` package (`Editor/Restore/Compiled.lean`)
+The jobs and commands of the `restore` package (`packages/restore/`)
 over the core of `Editor/Restore.lean`.
 
 ## Restoring
@@ -20,7 +21,7 @@ its command, since only a command can read what a job loaded.
 - **The job `restore`** (`restoreWork`) makes `session/journals/` with its
   parents, so the journal's orders always have a directory to write in;
   lists `session/` and `journals/`; and loads every index and every journal
-  file there (`File.load`, under `Files.limit`).
+  file there (`File.load`, under `files-api`'s `FilesApi.loadLimit`).
 - **Its command** (`read`) reads the indexes by the version rule and
   chooses the one restored (`Document.choose`), gives this run its number
   (`nextRun`), and reads each log. Before any buffer is made it restores
@@ -41,8 +42,10 @@ its command, since only a command can read what a job loaded.
   stamp. A no-file text called `scratch` goes into the scratch buffer when
   that is untouched. Each buffer it makes is marked as having no history
   before the restore (`markRestored`), and one that holds a file is
-  attached to its workspace (`Workspace.attach`), as an open does. Its modes are set by name, language before major, as
-  `Files.adopt` orders them; a major mode no one has registered yet is
+  run through `files-api`'s `Opened` hook (`FilesApi.runOpened`), as an
+  open does: the workspace attaches it to its workspace and the working
+  sets place their ranges in it. Its modes are set by name, language
+  before major, as the files feature's adopt orders them; a major mode no one has registered yet is
   deferred (`Kept.deferred`, `Editor/Restore.lean`, "Modes a restore
   deferred"). Then it starts `restore-files` for the second half, keeping
   what it is to finish (`Kept.pending`).
@@ -52,8 +55,10 @@ its command, since only a command can read what a job loaded.
   from its header's stamp, or is gone, as changed and untold
   (`BufferId.markChanged … false`), so the first edit is refused, as is a
   save, until `:w!` or `:e!`: a file is never silently overwritten. It
-  reopens each unmodified file (`Files.adopt`) with its modes; one that is
-  gone is said and not restored. It shows the buffer the focused view
+  reopens each unmodified file through the files implementation's `adopt`
+  (`FilesApi.files?`) with its modes; one that is gone is said and not
+  restored, and with no files implementation each is said
+  (`FilesApi.noImplementation "restore"`) and not restored. It shows the buffer the focused view
   showed in the window focused now, with its recorded selection and scroll
   top, clamped to the text, in bytes as they were recorded
   (`Restore.offsetOf`). Each buffer it reopens is marked as having no
@@ -388,7 +393,8 @@ def read (loaded : Loaded) : EditorM Unit := do
     if let (some path, some first) := (path, header) then
       if let some stamp := first.stamp then
         discard <| id.attachFile path stamp first.lineEnding
-        Workspace.attach id path
+        -- As an open does: the workspace's attach, the working sets' ranges.
+        FilesApi.runOpened id path
         statArguments := statArguments ++ [.nat id.index, .str path]
     if let some entry := entry then
       pending :=
@@ -464,18 +470,18 @@ def restoreWork (arguments : List Argument) : Work := fun _ => do
   for name in sessionNames do
     if let some run := runOfIndex? name then
       indexes :=
-        indexes.push (run, name, ← File.load (sessionDirectory directory / name) Files.limit)
+        indexes.push (run, name, ← File.load (sessionDirectory directory / name) FilesApi.loadLimit)
   let mut journals := #[]
   for name in journalNames do
     if let some (run, buffer, generation, base) := journalOf? name then
       journals :=
         journals.push
           (run, buffer, generation, base,
-            ← File.load (journalsDirectory directory / name) Files.limit)
+            ← File.load (journalsDirectory directory / name) FilesApi.loadLimit)
   -- A record the launcher gave up on is read once, for the report, and gone.
   let failedRecord ←
     if sessionNames.contains (failedRecordPath directory).fileName.get! then
-      let reply ← File.load (failedRecordPath directory) Files.limit
+      let reply ← File.load (failedRecordPath directory) FilesApi.loadLimit
       discard <| File.remove (failedRecordPath directory)
       pure (some reply)
     else
@@ -736,11 +742,17 @@ def restored (stats : Array (Nat × Except FileError File.Stamp))
   let mut places := pending.places
   let mut keys := pending.keys
   let mut reopened : Array (Option BufferId) := #[]
+  let files ← FilesApi.files?
   for entry in pending.reopen do
     let reply := ((loads.find? (·.1 == entry.path)).map (·.2)).getD (.error .notFound)
     match reply with
     | .ok loaded =>
-      let id ← Files.adopt entry.path loaded
+      let some files := files |
+        reopened := reopened.push none
+        report :=
+          report.push s!"{entry.path}: {FilesApi.noImplementation restoreJob}: it is not restored"
+        continue
+      let id ← files.adopt entry.path loaded none
       reopened := reopened.push id
       if let some id := id then
         discard <| id.markRestored
@@ -851,7 +863,7 @@ def filesWork (arguments : List Argument) : Work := fun _ => do
   let mut loads := #[]
   for argument in remaining do
     let .str path := argument | continue
-    loads := loads.push (System.FilePath.mk path, ← File.load path Files.limit)
+    loads := loads.push (System.FilePath.mk path, ← File.load path FilesApi.loadLimit)
   return restored stats loads
 
 /-- What a save of this run's index came to: the snapshot released, a

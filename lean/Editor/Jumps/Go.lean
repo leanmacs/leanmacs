@@ -1,15 +1,19 @@
-import Editor.Files
+import Editor.Jumps
+import FilesApi
 
 /-!
 # Jumps: going to a place, in an open buffer or a closed file
 
 The upper of the two jump modules (`Editor/Jumps.lean` has the decisions):
-what needs the file commands, so that the lower one can be imported by
-them. It decides nothing of its own.
+what needs a file opened, which it asks of the files through the interface
+library `files-api` (`FilesApi.lean`), so that the lower one can be
+imported by the files feature. It decides nothing of its own.
 
 - **Going to a place** (`go`): a held place by `Jumps.goHeld`, and a place
   in a closed file by a visit of the file at its row and column, at the
-  row's first non-blank with `line` (`Files.visit`). The visit passes
+  row's first non-blank with `line`, through the files implementation's
+  `visit` (`FilesApi.files?`). With no files implementation it says
+  `FilesApi.noImplementation "jump"` and goes nowhere. The visit passes
   `record := false`: the jump was recorded, or the step was planned, before
   it, and the visit's own record when the load lands would append an entry
   and move the index (Vim's `movemark` opens the file with
@@ -19,24 +23,27 @@ them. It decides nothing of its own.
   as Vim's does.
 - **Going to a place as a jump** (`goTo`, a mark in another buffer): the
   jump is recorded once, then the place is gone to.
-- **Visiting the source of an excerpt buffer's place** (`visitLocated`, the
-  activate key of project search's results and of a working set's
-  buffer): the place of an excerpt text is located in its source
-  (`TextId.locate`), the jump is recorded, the source's buffer is shown
-  and the cursor put at the place; what was not located is said.
 
 Pinned by `ModelTest.jumpGoChecks`.
 -/
 
 namespace Editor.Jumps
 
+/-- The name a jump says a refusal under. -/
+def jumpName : String :=
+  "jump"
+
 /-- Goes to `place` in `view` ("Going to a place", in the module docs); with
 `line`, to the first non-blank of its line. -/
 def go (view : ViewId) (place : Place) (line : Bool) : EditorM Unit :=
   match place with
   | .held buffer marker => goHeld view buffer marker line
-  | .file path row column =>
-    Files.visit view path { row, column, firstNonBlank := line } false (record := false)
+  | .file path row column => do
+    match ← FilesApi.files? with
+    | some files =>
+      files.visit view path { row, column, firstNonBlank := line } false false
+    | none =>
+      message (FilesApi.noImplementation jumpName)
 
 /-- Moves `view` by `n` through its jump list ("Moving by `n`", in the
 module docs): whether the step was taken. -/
@@ -51,17 +58,5 @@ the module docs): the jump is recorded, then the place is gone to, with
 def goTo (view : ViewId) (place : Place) (line : Bool) : EditorM Unit := do
   record view
   go view place line
-
-/-- Visits the place in its source of the offset `head` of the excerpt text
-`text` in `view` ("Visiting the source of an excerpt buffer's place", in
-the module docs): says `nothing` when it is in no excerpt, or no buffer
-holds its source. -/
-def visitLocated (view : ViewId) (text : TextId) (head : Nat) (nothing : String) : EditorM Unit :=
-  do
-  let some located ← (text.locate head : TextM (Option Located)) | message nothing
-  let some source := (← editorState).bufferOver? located.source | message nothing
-  record view
-  let .ok () ← view.show source | message nothing
-  placeCursor view located.offset
 
 end Editor.Jumps

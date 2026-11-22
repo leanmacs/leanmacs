@@ -64,7 +64,7 @@ structure Running where
   /-- What the last reload read of the config directory as a package set:
   the one field the host sets again, after each reload, so the package
   commands edit the lakefile as it was read
-  (`Editor/PackageSet/Compiled.lean`). -/
+  (the package `package-set`, `packages/package-set/`). -/
   facts : Facts := {}
   deriving DecidableEq, Repr, BEq, Inhabited
 

@@ -4,9 +4,10 @@ import Editor.Completion.Candidate
 # Completion displays
 
 What draws a listing of candidates: a display. It is an interface like the
-editor's ports, with a pure model (`Display.plain`), the displays that ship
-(`Editor/Completion/Displays.lean`) and a contract every display is held to
-(`Editor/Completion/DisplayContract.lean`). The loop asks the prompt's
+editor's ports, with a pure model (`Display.plain`), the core's own display
+(`Display.unregistered`), the displays that ship, which the `completion`
+package registers (`packages/completion/Completion/Displays.lean`), and a contract every
+display is held to (`Editor/Completion/DisplayContract.lean`). The loop asks the prompt's
 display at each publish (`EditorState.displayed`, `Editor/State.lean`;
 `Loop.candidateListView`, `Editor/Loop.lean`), chosen by the prompt's
 category (`Displaying`).
@@ -45,19 +46,29 @@ display and, for a category, the display config chose for it.
 `displayFor` answers a category's display, or the default for a category
 with none and for a prompt with no category.
 
+With no choice made, the default display is the one **registered first**,
+by the rule of styles (`Editor/Completion/Style.lean`, "Choosing one"): in
+the default set `minibuffer`, the `completion` package's. With no display
+registered at all the core uses its own, `Display.unregistered`: the
+interface's model, `Display.plain "plain"`, registered by no package and
+answered as the owner `compiled`'s (`Config.Registry.displayEntry`). A host
+that is told of no registry hands `Displaying.unregistered`. A name no
+display is registered under is said in the install report
+(`Display.unknown`).
+
 ## Where an addition goes
 
 | Addition | Where |
 |---|---|
 | Something more a display is handed | A field of `Showing` |
 | Something more a row says | A field of `Row` |
-| A new display | A value in `Editor/Completion/Displays.lean`, in `Displays.shipped` if compiled, and run by `ModelTest.displayContractChecks` |
+| A new display that ships | A value in the `completion` package (`packages/completion/Completion/Displays.lean`), in `Displays.shipped`, and run by `CompletionTest.minibufferDisplayChecks` |
 | A rule every display keeps | A property of `Editor/Completion/DisplayContract.lean` |
 | A placement other than the minibuffer's place | A later phase's (`rdm:task/completion-float-displays`) |
 
 Pinned by `ModelTest.displayContractChecks` (the contract, on the model and
-the shipped display) and `completionDisplayChecks` (the model and the
-choice).
+the core's own display) and `completionDisplayChecks` (the model and the
+choice). The shipped display is pinned by `CompletionTest.minibufferDisplayChecks`.
 -/
 
 namespace Editor.Completion
@@ -160,5 +171,22 @@ def Display.plain (name : String) : Display :=
             {
               text :=
                 (if showing.chosen == some index then "> " else "  ") ++ oneLine listed.text } } }
+
+/-- The core's own display, for a registry where no display is registered:
+the interface's own model, `Display.plain "plain"`. It is registered by no
+package; the registry answers it as the owner `compiled`'s
+(`Config.Registry.displayEntry`). -/
+def Display.unregistered : Display :=
+  Display.plain "plain"
+
+/-- What the report says of a display chosen under `name` that no display
+is registered under. -/
+def Display.unknown (name : String) : String :=
+  s!"no completion display is registered under `{name}`"
+
+/-- The displaying a host hands when it is told of no display: the core's
+own display (`Display.unregistered`) for every listing. -/
+def Displaying.unregistered : Displaying :=
+  { default := Display.unregistered }
 
 end Editor.Completion

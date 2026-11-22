@@ -1,7 +1,7 @@
 import Editor.Command
 import Editor.Completion
 import Editor.Completion.AtPoint
-import Editor.Completion.Styles
+import Editor.Completion.Style
 import Editor.Highlight
 import Editor.Language
 import Editor.Mode
@@ -109,7 +109,7 @@ A command also ends itself, with a reason, by a second control request
 that what its key stands for cannot be done, and what it did so far is to
 stay. Evil's operate command breaks off when its motion failed after it
 moved the cursor, as Vim cancels the operator and leaves the cursor where
-the motion got to (`Editor/Evil/Operators.lean`).
+the motion got to (`packages/evil/Evil/Operators.lean`).
 
 - **The program is finished at that request**, with `Guarded.brokeOff` of
   the reason and the state the command had reached, as one that gives up
@@ -181,47 +181,46 @@ from the next command.
   state not read and not changed. What each asker uses its answer for:
   - an ex binding (`ex`, from `Loop.Registered.ex`): the command the name
     runs and what it takes, or `none` for a name nobody bound; the ex
-    line's rules are the asking command's (`Editor/Ex.lean`), and the ex
+    line's rules are the asking command's (`packages/ex/Ex.lean`), and the ex
     names that are bound (`exNames`), each once, are its prompt's
     candidates;
   - the themes registered (`themeNames`): the command that loads a theme
     asks, for the candidates of its prompt;
   - the commands registered (`commandNames`, from
     `Loop.Registered.commandNames`), each once, in their order: the
-    command prompt asks, for its candidates (`Editor/ExecuteCommand.lean`);
+    command prompt asks, for its candidates (`packages/execute-command/ExecuteCommand.lean`);
   - the key sequences that reach a command in a view (`keyBindings`, from
     `Loop.Registered.keyBindings`), which the loop fills per step from the
     input scheme, in the scheme's state of that step, not from the
     registry: the binding search and the command prompt ask
-    (`Editor/BindingSearch.lean`, `Editor/ExecuteCommand.lean`);
+    (`packages/binding-search/BindingSearch.lean`, `packages/execute-command/ExecuteCommand.lean`);
   - config's auto-reload setting (`autoReload`): whether auto-reload is in
     effect where no command chose (`Files.autoReloadOn`,
-    `Editor/Files.lean`), a command's choice being the state's;
+    `packages/files/Files.lean`), a command's choice being the state's;
   - the workspace settings (`workspaceSettings`, from
     `Loop.Registered.workspaceSettings`: config's workspace roots, the git
-    program, the contributions' marker modes and config's workspace
-    listers) and the config generation
+    program and config's workspace
+    listers; the marker modes are filled by who reads the compile hook,
+    `Workspace.markerSettings`, `packages/compile-api/CompileApi/Listing.lean`) and the config generation
     (`generation`): a file's open asks, for its directory's workspace
-    (`Editor/Workspace/Attach.lean`), and the version-control commands ask,
+    (`packages/workspace/Workspace/Attach.lean`), and the version-control commands ask,
     for the git program; the gutter's reconciler is handed the same
     (`Editor/Loop.lean`, `Stepped.published`);
   - config's display rules (`displayRules`), in order: `BufferId.display`
     asks, to decide where a buffer a command made goes
     (`Editor/DisplayRules.lean`, `EditorState.displaying`);
   - config's shell time limit (`shellTimeLimit`), or `none`: `:!` asks, for
-    its run's limit (`Editor/Shell.lean`); and its syntax refresh delay
+    its run's limit (`packages/shell/Shell.lean`); and its syntax refresh delay
     (`syntaxRefreshDelay`): a mode's entry asks, for the interval it hands
     the syntax service (`Editor/Highlight.lean`);
   - a path's language (`languageOf`): the name of the language the loop's
     table chooses (`Language.forPath` over `Loop.Registered.languages`), or
     `none`; a file's open asks, for the language its buffer records
-    (`Editor/Files.lean`);
+    (`packages/files/Files.lean`);
   - a language's indent unit (`indentUnitOf`): the unit of the first entry
     of that name in the table (config's entries first), or `none`; `=` and
     the commands that open a line ask (`Target.indentUnit`,
     `Editor/Api.lean`);
-  - the compile hook (`compileHook`, from `Loop.Registered.compile`): the
-    compile mode asks (`packages/compile/Compile.lean`, "The hook");
   - whether a job is registered (`hasJob`, from `Loop.Registered.jobs`, as
     a start is checked): `prompt` asks it of a source that answers later;
   - which sources a category has (`categorySources`, filled from
@@ -257,7 +256,7 @@ from the next command.
     goes through (`Editor/Loop.lean`, "A command run inside another"), so
     a name is one command however it comes to run. It is how evil's dot
     repeat replays a change with the command the change's own keys ran
-    (`Editor/Evil/Repeat.lean`).
+    (`packages/evil/Evil/Repeat.lean`).
 - **Asking a completion source inside the asking command**
   (`ControlRequest.askSource`) is answered `none` for a name no source is
   registered under (`Loop.Registered.sources`), with nothing run.
@@ -362,7 +361,7 @@ state request), `ModelTest.dispatchStateChecks`, for the questions to the
 registry and where the registry's and the control's arms stand towards the
 guard, `ModelTest.dispatchRegistryChecks`,
 `ModelTest.modeEnterChecks`, for the first edit after a change on disk,
-`ModelTest.stalenessChecks`, for read-only buffers,
+`FilesTest.stalenessChecks`, for read-only buffers,
 `ModelTest.readOnlyChecks`, and for excerpt sources,
 `ModelTest.excerptBufferChecks`.
 -/
@@ -474,7 +473,7 @@ structure Loop.Registered where
   that loads a theme: its candidates, and the names it may load. -/
   themeNames : Array String := #[]
   /-- The names commands are registered under, each once, for the command
-  prompt (`Editor/ExecuteCommand.lean`). Whoever fills this and `command`
+  prompt (`packages/execute-command/ExecuteCommand.lean`). Whoever fills this and `command`
   fills them from one registry. -/
   commandNames : Array String := #[]
   /-- The key sequences that reach a command in each view, as the input
@@ -495,7 +494,7 @@ structure Loop.Registered where
   workspaceRoots : Array Workspace.ConfigRoot := #[]
   /-- The workspace listers config declares (`workspaceLister`,
   `projectLister`, `Editor/Setup.lean`), which choose what lists a
-  workspace's files (`Editor/Workspace/Lister.lean`). -/
+  workspace's files (`packages/workspace/Workspace/Lister.lean`). -/
   workspaceListers : Array Workspace.DeclaredLister := #[]
   /-- The git program (`Workspace.Settings.git`): a bare name, looked up on
   the `PATH`, or an absolute path. -/
@@ -519,9 +518,6 @@ structure Loop.Registered where
   /-- The language table, in precedence order (`Language.forPath`): config's
   entries, then the compiled ones it did not replace by name. -/
   languages : List Language := []
-  /-- The compile contributions, in registration order, and config's
-  project commands (`Config.Registry.compileHook`). -/
-  compile : Compile.Hook := {}
   /-- The completion source registered under a name, for a prompt that asks
   for it by name (`ControlRequest.askSource`). `none` for a name no source is
   registered under. -/
@@ -535,7 +531,7 @@ structure Loop.Registered where
   a text as a prompt of a category lists it
   (`ControlRequest.matchCandidates`). The loop fills it from the styles it
   lists prompts with (`Loop.Keys.matching`). -/
-  matching : Completion.Matching := Completion.Matching.standard
+  matching : Completion.Matching := Completion.Matching.unregistered
   /-- The at-point source registered under a name
   (`Editor/Completion/AtPoint.lean`), for a command that asks it
   (`ControlRequest.askAtPoint`). `none` for a name none is registered
@@ -559,16 +555,21 @@ structure Loop.Registered where
   in registration order (`Config.Registry.extensionsAt`), for a command that
   asks (`RegistryRequest.extensions`, `Editor/Extension.lean`). -/
   extensions : Lean.Name → Array Dynamic := fun _ => #[]
+  /-- The values config registered at an extension point, by the name of its
+  type, in registration order (`Config.Registry.configExtensionsAt`): the
+  tail of `extensions`' answer, for a command that asks for config's apart
+  (`RegistryRequest.configExtensions`, `Extension.configValues`). -/
+  configExtensions : Lean.Name → Array Dynamic := fun _ => #[]
 
 /-- The workspace settings `registered` says: config's workspace roots, the
-git program, the marker modes of the compile contributions, and config's
-workspace listers. What the workspace settings are asked for answers
+git program, and config's workspace listers. The marker modes are not the
+loop's to say: they are filled from the compile hook by who reads it
+(`Workspace.markerSettings`, `packages/compile-api/CompileApi/Listing.lean`). What the workspace settings are asked for answers
 (`RegistryRequest.workspaceSettings`), and what the loop hands the
 version-control gutter, so that every reader of the git program reads the
 one. -/
 def Loop.Registered.workspaceSettings (registered : Loop.Registered) : Workspace.Settings :=
   { roots := registered.workspaceRoots, git := registered.git
-    markerModes := registered.compile.contributions.map (·.markerMode)
     listers := registered.workspaceListers }
 
 /-- The answer to `request`, a question to the registry or config, from what
@@ -588,7 +589,6 @@ def Loop.Registered.answer (registered : Loop.Registered) :
   | .syntaxRefreshDelay => registered.syntaxRefreshDelay
   | .languageOf path => (Language.forPath registered.languages path).map (·.name)
   | .indentUnitOf language => (registered.languages.find? (·.name == language)).map (·.indentUnit)
-  | .compileHook => registered.compile
   | .hasJob name => registered.jobs name
   | .categorySources category => registered.categorySources category
   | .atPointSources major minors occasion =>
@@ -596,6 +596,7 @@ def Loop.Registered.answer (registered : Loop.Registered) :
       (registered.atPoint name).any (·.asksOn occasion)
   | .storeCodec name => registered.codec? name
   | .extensions key => registered.extensions key
+  | .configExtensions key => registered.configExtensions key
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/

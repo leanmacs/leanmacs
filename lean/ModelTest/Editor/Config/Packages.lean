@@ -3,7 +3,6 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Display
 import Editor.Completion.Style
-import Editor.Completion.Styles
 import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
@@ -17,7 +16,6 @@ import Editor.Menu
 import Editor.Mode
 import Editor.Package
 import Editor.Process.Environment
-import Editor.ProjectMode
 import Editor.Setup
 import Editor.TabBar
 import Editor.Test.Config
@@ -56,7 +54,7 @@ holds, each named after `name`, and a style default for the category
 command given its call, a store with a command over it and its codec
 across a restart, a job, a key
 binding of `keys` to the plain command, a name for the prefix `C-c`, a mode, an ex name, a
-face, a theme, a segment, a language, a compile contribution, a completion
+face, a theme, a segment, a language, a completion
 source, style and display, an at-point source and a use of it, a menu,
 and a value at an extension point (`Tagged`). -/
 def everyKind (name : String) (keys : String := "C-c p") : Package :=
@@ -78,7 +76,6 @@ def everyKind (name : String) (keys : String := "C-c p") : Package :=
       defineLanguage
           { name := s!"{name}-language", patterns := [.extension name]
             syntaxTree := { grammar := name } }
-      compileContribution { mode := s!"{name}-make", markers := #["Makefile"] }
       defineSource (.ofTexts s!"{name}-source" s!"{name}-pick" #["a"])
       defineStyle (.keeping s!"{name}-style" fun _ _ => true)
       defineDisplay (Completion.Display.plain s!"{name}-display")
@@ -121,11 +118,8 @@ def configOnlySettings : List (SetupM Unit × String) :=
     (projectLister (.remote "github.com/o/r") "fd", "projectLister"),
     (displayRule { target := .newTab }, "displayRule"), (shellTimeLimit 5, "shellTimeLimit"),
     (syntaxRefreshDelay 5, "syntaxRefreshDelay"), (leaderKey "SPC", "leaderKey"),
-    (localLeaderKey "<leader> m", "localLeaderKey"),
-    (projectCommands (.remote "github.com/o/r") "make-mode" [("lint", "make lint")],
-      "projectCommands"),
-    (useStyle "fuzzy", "useStyle"), (useDisplay "minibuffer", "useDisplay"),
-    (useDisplayFor "file" "minibuffer", "useDisplayFor")]
+    (localLeaderKey "<leader> m", "localLeaderKey"), (useStyle "fuzzy", "useStyle"),
+    (useDisplay "minibuffer", "useDisplay"), (useDisplayFor "file" "minibuffer", "useDisplayFor")]
 
 /-- The checks of packages (`Editor/Package.lean`) and of registering them
 (`Editor/Config/Packages.lean`): the owner of a package's registrations, the
@@ -150,7 +144,7 @@ def packageChecks : List Check :=
         let (state, refused) := packaged #[one, two]
         pure
           (refused.isEmpty && one.owner == { name := "one" } && two.owner == { name := "two" } &&
-            state.registry.ownersByKind.size == 19 &&
+            state.registry.ownersByKind.size == 18 &&
             state.registry.ownersByKind.all
               (fun owners => owners.toList.eraseDups == [one.owner, two.owner]) &&
             state.registry.entries.map (·.owner.name) ==
@@ -257,43 +251,11 @@ def packageChecks : List Check :=
             state.registry.styleDefaults == #[("pick", "one-style"), ("pick", "two-style")] &&
             state.registry.styleChoices.isEmpty &&
             styleOf state "pick" == ("two-style", "two") &&
-            (styleOf state "other").1 == Completion.Styles.fuzzy.name &&
+            styleOf state "other" == ("one-style", "one") &&
             styleOf defaulted "pick" == ("two-style", "two") &&
             styleOf defaulted "other" == ("mine", "config") &&
             styleOf overridden "pick" == ("mine", "config") &&
             (chooses (pure ())).registry.styleDefaults == state.registry.styleDefaults) },
-    { name :=
-        "two packages contributing one compile mode resolve to the later package's contribution, listed once, at the place the mode was first registered; config's contribution of that mode replaces both, in config's place"
-      run :=
-        let contributing (name : String) (modes : List (String × String)) : Package :=
-          { name
-            setup :=
-              for (mode, marker) in modes do
-                compileContribution { mode, markers := #[marker] } }
-        let (state, refused) :=
-          packaged
-            #[contributing "first" [("make-mode", "Makefile"), ("other-mode", "other")],
-              contributing "second" [("third-mode", "third"), ("make-mode", "GNUmakefile")]]
-        let listed (state : ModelState) : Array (String × Array String) :=
-          state.registry.compileContributions.map fun contribution =>
-            (contribution.mode, contribution.markers)
-        let config : SetupM Unit :=
-          compileContribution { mode := "make-mode", markers := #["config.mk"] }
-        let (installed, _) := reduceFrom state [.requested, .finished (accepted ["a"] config)]
-        let (dropped, _) := reduceFrom installed [.requested, .finished (accepted ["a"] (pure ()))]
-        pure
-          (refused.isEmpty &&
-            listed state ==
-              #[("make-mode", #["GNUmakefile"]), ("other-mode", #["other"]),
-                ("third-mode", #["third"])] &&
-            state.registry.compileHook.contributions.map (·.mode) ==
-              #["make-mode", "other-mode", "third-mode"] &&
-            state.registry.registered.compile.contributions.map (·.mode) ==
-              #["make-mode", "other-mode", "third-mode"] &&
-            listed installed ==
-              #[("make-mode", #["config.mk"]), ("other-mode", #["other"]),
-                ("third-mode", #["third"])] &&
-            listed dropped == listed state) },
     { name :=
         "a package that sets something only config may choose is refused, for each such setting, and the message names the package and the setting"
       run :=
@@ -349,6 +311,26 @@ def packageChecks : List Check :=
             refused.isEmpty && model.texts.contents == #["was 0"] &&
               (once.cells.find? counting.owner "counter").map (·.value) == some (.nat 5) &&
               stored once "counter" == none &&
-              (runs once "bump").map (·.2.texts.contents) == some #["was 5"] }]
+              (runs once "bump").map (·.2.texts.contents) == some #["was 5"] },
+    { name :=
+        "a host handed no package starts from a registry that holds no command, binding, mode, ex name, job, source, menu or extension value: no entry of any of the eighteen kinds a package of every kind fills, no menu bar, no theme, no store's cell, no package's name, and nothing refused"
+      run :=
+        let (state, refused) := packaged #[]
+        let (full, _) := packaged #[everyKind "one"]
+        pure
+          (refused.isEmpty && state.packages == #[] && state.registry.ownersByKind.size == 18 &&
+            state.registry.ownersByKind.all (·.isEmpty) &&
+            full.registry.ownersByKind.all (!·.isEmpty) &&
+            state.registry.entries.isEmpty &&
+            state.registry.bindings.isEmpty &&
+            state.registry.modes.isEmpty &&
+            state.registry.exNames == #[] &&
+            state.registry.jobs.isEmpty &&
+            state.registry.sources.isEmpty &&
+            state.registry.menus.isEmpty &&
+            state.registry.menuBar? == none &&
+            state.registry.extensions.isEmpty &&
+            state.registry.themeNames == #[] &&
+            state.cells.cells.isEmpty) }]
 
 end ModelTest

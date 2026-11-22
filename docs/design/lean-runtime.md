@@ -117,7 +117,7 @@ headers and no Cargo). Under `Contents/Resources`:
 editor.core, editor.oleans, editor.build   the records (below)
 lean/toolchain/                            the Lean toolchain, whole, but mise's exposed/
 lean/lean/                                 the core: lakefile.lean, lean-toolchain, lake-manifest.json,
-                                           ffi/glue.c, the sources of the Editor and EditorCore libraries,
+                                           ffi/glue.c, the sources of the Editor library and FilesApi,
                                            and their .lake/build output with every trace and hash
 lean/set/                                  the default set: lakefile.toml, lake-manifest.json, lean-toolchain
 lean/set/shipped-themes/, lean/set/compile/  each default package: its lakefile, sources and build output
@@ -132,8 +132,8 @@ lean/link-stubs/                           macOS: the system libraries' link stu
   core's directory's parent, is `lean/`, so a user's set outside it
   reuses the archive in `lean/target` with no Cargo (`prebuiltRust`).
 - **What ships is Lake's list.** `lake -d <set> query :editorShipped`
-  builds and lists every module of the core's `Editor` and `EditorCore`
-  libraries, which a package may import, and of each other library of the
+  builds and lists every module of the core's `Editor` library and its
+  interface library `FilesApi`, which a package may import, and of each other library of the
   set's packages but its tests, with the files Lake wrote for each, the
   lakefiles and the core's glue; `tools/stage-bundle.sh` copies the list
   and decides nothing. Each package's modules ship once, in that package's
@@ -1139,7 +1139,6 @@ TOML loader.
 | Owners: who registered or started something | `lean/Editor/Config/Owner.lean` |
 | A package: a name and a `setup`, how a feature registers | `lean/Editor/Package.lean` |
 | Registering packages: a package's owner, what its `setup` means and what is refused, and the config state a host starts from | `lean/Editor/Config/Packages.lean` |
-| The packages of the core's Lake package: its entry module, whose list the generated root passes to the hosts | `lean/EditorCore/EditorPackage.lean` |
 | The executable's entry: the dispatch on the command line's mode, handed the packages | `lean/Editor/Main.lean` |
 | Faces: what a face looks like, as data, the built-in theme and a theme with its name | `lean/Editor/Face.lean` |
 | The registry of commands, of jobs, of key bindings, of modes, of ex bindings, of faces, of themes, of mode-line segments and of menus, replaced by owner, the keymap of the bindings, a mode line resolved from a listing, the menu bar, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
@@ -1327,7 +1326,9 @@ TOML loader.
 - **Completion styles are named, and config chooses them by category**:
   the `completion` package registers the shipped styles, `fuzzy`,
   `orderless` and `path` (`Completion.Styles.shipped`,
-  `lean/Editor/Completion/Compiled.lean`), and
+  `packages/completion/Completion/Compiled.lean`, a default package since
+  the features-as-packages roadmap's phase 4; a set without it matches
+  with the core's own style, `Completion.Style.unregistered`), and
   `setup` registers more with `defineStyle`, chooses the default with
   `useStyle "name"` and a category's with `useStyleFor "buffer" "name"`;
   the registry holds the styles by owner and an install replaces config's
@@ -1436,9 +1437,9 @@ host registers features only from the packages it is handed. Built by the
 packages roadmap's phase 2. How the executable finds its packages without
 anyone listing the Lake packages (a package set, a generated root, an
 entry-module convention, dependency order), what the core is, what a
-package may import of it and what each feature would have to cross to move
-out are in [packages.md](packages.md), from that roadmap's phases 3 and
-4. Beside the registrations of the kinds the core names, `Extension.add`
+package may import of it and which package each feature that was the
+core's is are in [packages.md](packages.md), from that roadmap's phases 3
+and 4 and the features-as-packages roadmap's. Beside the registrations of the kinds the core names, `Extension.add`
 (`lean/Editor/Extension.lean`) is one generic registration: it registers a
 value at the extension point of its type, which any package can declare,
 and `Extension.values` and `Extension.named` read the values back typed
@@ -1514,41 +1515,29 @@ def package : Package :=
   scheme is not registered: it is the host's type parameter
   (`Headless.Collaborators σ scheme`), an `InputScheme` is in `Type 1`, and
   a setup request is plain data in `Type`.
-- **The packages still in the core's Lake package are listed in its
-  entry module**, `lean/EditorCore/EditorPackage.lean`
-  (`EditorCore.EditorPackage.packages`), which is no module of the editor:
-  it is outside `lean/Editor/` and the namespace `Editor`, in a library of
-  its own (`lean_lib EditorCore`). It
-  lists 24 packages, each
-  defined in its feature's `Compiled.lean`: `completion`, `mode-line`,
-  `files`, `minibuffer`, `evil`, `ex`, `buffers`, `frame-commands`, `menu`,
-  `window-commands`, `tab-commands`, `themes`,
-  `execute-command`, `binding-search`, `workspace`, `project-search`,
-  `working-set`, `restore`, `package-set`, `shell`,
-  `at-point`, `version-control`, `version-control-gutter` and `languages`,
-  in that order, which keeps each kind of entry where the hosts registered
-  it before there were packages. `themes` keeps
-  `load-theme`, the theme `default` and the theme source, which are the
-  core's. The palettes that ship, `solarized-dark`, `solarized-light` and
-  `fairy-floss`, are the package `shipped-themes`, which is no package of
-  the core's Lake package: it is a Lake package of its own, a default
-  package (`packages/shipped-themes/`; [packages.md](packages.md), "The
-  first default package"), and registers after the core's 23, so the theme
-  names read `default`, then the three. The compile mode is the package
-  `compile`, the second default package (`packages/compile/`;
-  [packages.md](packages.md), "The default package `compile`"): it was
-  seventeenth in this list, between `shell` and `at-point`, until the
-  packages roadmap's phase 6 moved it out, and registers after the shipped
-  themes now. Each package binds its own ex names: `ex` the files', its own
-  and the buffers', `version-control` its twelve and `compile` its six, and
-  the order those three register in is the order the ex names'
-  completion lists them in ([packages.md](packages.md), "Registration
-  order is visible"). The executable's root, which the package-set build
-  generates, imports that module and each other entry module of the set
+- **The core's Lake package lists no package.** Every feature is a Lake
+  package of the default set (`packages/`), each with an entry module that
+  lists its `Package` values, defined in its `Compiled.lean`
+  ([packages.md](packages.md), "A package's entry module", "The module
+  map"). The core had an entry module of its own,
+  `EditorCore.EditorPackage`, a library outside `lean/Editor/`, until the
+  features-as-packages roadmap's phase 8 moved the last seven packages it
+  listed out (`ex`, `frame-commands`, `menu`, `window-commands`,
+  `tab-commands`, `restore` and `package-set`) and removed it. The
+  default set registers its twenty-five packages in the order its lakefile
+  requires them, those seven first, which keeps each kind of entry where
+  the hosts registered it before there were packages
+  ([packages.md](packages.md), "The order packages register in",
+  "Registration order is visible"). Each package binds its own ex names:
+  `ex` the files', its own and the buffers', `version-control` its twelve
+  and `compile` its six, and the order those register in is the order the
+  ex names' completion lists them in. The executable's root, which the
+  package-set build generates, imports each entry module of the set
   and passes their arrays, appended, to `Editor.Main.run`
   (`lean/Editor/Main.lean`), with the names of the modules config is
   elaborated on, the set's base; `run` hands both to the headless mode and
-  to the window mode (`Headless.main`, `Window.main`).
+  to the window mode (`Headless.main`, `Window.main`). An editor of the
+  core alone is handed no package.
 - **The lists are outside the host.** No module of a host imports an
   entry module or a module that defines a package: the host's modules are
   every module the generated root imports other than the entry modules,
@@ -1557,12 +1546,9 @@ def package : Package :=
   one imports directly (`tools/host-imports-check.sh`,
   in `mise run ffi-test`; [the-gate.md](../dev-practices/the-gate.md),
   "The host imports check"). The check is of the modules that define
-  packages: the core loop still imports feature code that defines none,
-  such as `Editor.Files` and `Editor.Ex`. Which features those are, and
-  what each would have to cross to move out of the core, is the module map
-  of [packages.md](packages.md); the two features that have moved, the
-  shipped palettes and the compile mode, are Lake packages the core does
-  not require, so no core module can import them, and a second check
+  packages. No core module can import one: every feature is a Lake
+  package the core does not require, so Lake itself refuses the import,
+  and a second check
   holds that the core's root reaches every core module
   (`tools/core-imports-check.sh`; [packages.md](packages.md), "The core
   imports check").
@@ -1570,9 +1556,11 @@ def package : Package :=
   owner of what the core falls back to when no package registered it: the
   fuzzy style and the minibuffer display of a registry that holds none.
 
-Pinned by `ModelTest.packageChecks` and `ModelTest.packageSetChecks`, on
-the models, and by `ConfigTest.hostChecks`, `ConfigTest.hostLoopChecks` and
-`ConfigTest.shippedChecks`, through the headless host.
+Pinned by `ModelTest.packageChecks` and `ModelTest.registryChecks` (what
+the core falls back to with no style or display registered), on the
+models, with each default package's own checks of what it registers, and
+by `ConfigTest.hostChecks` and `ConfigTest.hostLoopChecks`, through the
+headless host.
 
 ### One shared state
 
@@ -2150,7 +2138,7 @@ text requests. Config sees it through
 | Say something in the echo area | `message` | No |
 | Start a job, with arguments | `startJob`, for a job registered with `jobWith` or `job` | No: the host starts it once the command has ended |
 | Break a line with the buffer's line ending, and ask whether a buffer is modified | `ViewId.insertLineBreak`, `Target.insertLineBreak`; `BufferId.isModified` | Yes: `apply`, and the text's revision |
-| Open a file into a buffer and save a buffer to its file | `Files.open`, `Files.save` (`lean/Editor/Files.lean`), each of which starts a compiled job | For the snapshot a save writes; the file is the job's to load or save |
+| Open a file into a buffer and save a buffer to its file | `Files.open`, `Files.save` (`packages/files/Files.lean`), each of which starts a compiled job | For the snapshot a save writes; the file is the job's to load or save |
 | Ask for a string, without waiting for it, and accept or cancel the open prompt | `prompt label continuation initial`, which names the command that receives the answer as an invocation; `acceptPrompt`, `cancelPrompt` | To make the minibuffer's text and its markers, and to read the answer; a cancel reaches nothing |
 | Ask with candidates the answer may be chosen from, replace an open prompt's, and move a choice through the ones it has listed | `prompt … (sources := …)`, where each source (`lean/Editor/Completion.lean`) is given as a value or named, and is a program over the editor's port that `prompt` asks once, a named one run by the loop; `setCandidates`; `chooseCandidate step`; config registers a source with `defineSource`. Accepting gives the continuation the chosen candidate, and the typed text when nothing is chosen ([concurrency.md](concurrency.md), "Prompts") | Whatever the sources ask; `setCandidates` and `chooseCandidate` reach nothing. The listing is the loop's, made before each scene |
 | Which candidates a pattern matches, best first | `Fuzzy.rank pattern candidates`, the fuzzy port's own, lifted | Yes: one call, which keeps nothing in the library |
@@ -2193,14 +2181,14 @@ text requests. Config sees it through
   `TextModel.applyChanges_replacing` (`lean/Editor/Text/Model.lean`). The
   theorems are in a module of their own so that the API imports no model.
 - **Files are commands over the API, not requests of the port**
-  (`lean/Editor/Files.lean`, built by the command loop's phase 9). A
+  (`packages/files/Files.lean`, built by the command loop's phase 9). A
   command cannot wait, so opening and saving are each a command that
   starts a job and the command the job finishes with
   ([concurrency.md](concurrency.md), "Getting results back"). What they
   needed of the state is three requests: one that attaches a file to a
   buffer, and two that begin and end a save in flight. The jobs are
   compiled, registered beside the commands
-  (`lean/Editor/Files/Compiled.lean`), which is the one module of the two
+  (`packages/files/Files/Compiled.lean`), which is the one module of the two
   that names the registry: config sees the commands through `Editor.lean`
   and not the registrations.
 - **A prompt is a request and a named command, not a wait** (built by the
@@ -2220,10 +2208,12 @@ text requests. Config sees it through
   (completion's phase 6),
   `minibuffer-delete-backward`, which deletes the character before the
   minibuffer's bar and cancels the prompt when the minibuffer is empty,
-  and the minibuffer's mode are compiled (`lean/Editor/Minibuffer.lean`),
-  registered by `lean/Editor/Minibuffer/Compiled.lean`, the one module of
-  the two that names the registry.
-- **Evil is commands over the API** (`lean/Editor/Evil.lean`, built by the
+  and the minibuffer's mode are compiled (`packages/minibuffer/Minibuffer.lean`),
+  registered by `packages/minibuffer/Minibuffer/Compiled.lean`, the one module of
+  the two that names the registry: the default package `minibuffer`
+  since the features-as-packages roadmap's phase 4, with its names in the
+  interface package `minibuffer-api`.
+- **Evil is commands over the API** (`packages/evil/Evil.lean`, built by the
   command loop's phase 11; [keymaps-and-modes.md](keymaps-and-modes.md),
   "The Vim scheme"): the move command, the commands that enter a Vim state
   and begin an insert, and the one typed text runs. Each is given its
@@ -2232,18 +2222,21 @@ text requests. Config sees it through
   request to a port, so there is no new model and no new contract. A
   motion is a vocabulary entry (`lean/Editor/Vocabulary.lean`), a program
   over the text port alone. Config sees the commands, the motions and
-  their table through `Editor.lean`, which imports `lean/Editor/Evil.lean`
-  and `lean/Editor/Evil/Motions.lean`: the move command is a function of
+  their table through the set's config base, whose module
+  `Evil.EditorPackage`, the entry module of the default package `evil`,
+  brings `packages/evil/Evil.lean`
+  and `packages/evil/Evil/Motions.lean` (they were imports of `Editor.lean`
+  while evil was in the core): the move command is a function of
   the table it looks a name up in, so a command of config's hands it the
   vocabulary that ships (`Evil.motions`), or that vocabulary with motions
-  of its own added. The registrations (`lean/Editor/Evil/Compiled.lean`)
-  name the registry and are the one module of evil's that is not imported.
-  Pinned by `ConfigTest.evilChecks`, on a config the real elaborator
+  of its own added. The registrations (`packages/evil/Evil/Compiled.lean`)
+  name the registry, and are what the entry module lists as the package.
+  Pinned by `EvilTest.Linked.evilChecks`, on a config the real elaborator
   loads.
 - **Evil's editing commands** (the command loop's phase 13): the operators
   and the operate command, `x`, the registers and the two puts, the two
   commands that open a line, undo and redo, and dot repeat, each in a
-  module of its own beside `lean/Editor/Evil.lean`. They needed four state
+  module of its own beside `packages/evil/Evil.lean`. They needed four state
   requests (`giveUp`, `breakOff`, `setRegister`, `runCommand`), one operation of the API
   (`replaceCarrying`, with a case in `lean/Editor/Api/Cases.lean`), and
   one new sub-port, the clipboard's, with its model and its contract
@@ -2252,7 +2245,7 @@ text requests. Config sees it through
   `Editor.lean` imports them, so config calls the operate command with
   the tables that ship or with tables of its own, and the repeat and undo
   commands.
-- **The ex line is commands over the API** (`lean/Editor/Ex.lean`, built
+- **The ex line is commands over the API** (`packages/ex/Ex.lean`, built
   by the command loop's phase 12;
   [keymaps-and-modes.md](keymaps-and-modes.md), "The ex command line"):
   `ex`, which asks for a line and runs it, and `quit`, `save-and-quit` and
@@ -2268,7 +2261,7 @@ text requests. Config sees it through
   another port, so there is no new model and no new contract; `quit` asks
   the text port for revisions, and has a case in
   `lean/Editor/Api/Cases.lean`. The registrations and the ex names the
-  `ex` package binds (`lean/Editor/Ex/Compiled.lean`) name the registry and
+  `ex` package binds (`packages/ex/Ex/Compiled.lean`) name the registry and
   are not imported by `Editor.lean`.
 - **A command asks layout a question through its view's area** (built by
   the command loop's phase 15;
@@ -2286,7 +2279,7 @@ text requests. Config sees it through
     the lowest module that has a command's type, which the API and the
     evil vocabulary both import. `Target.onArea` is the rectangle's lookup
     and that helper, and a motion that asks the display calls it with the
-    text it is handed (`j` and `k`, `lean/Editor/Evil/Motions.lean`). So
+    text it is handed (`j` and `k`, `packages/evil/Evil/Motions.lean`). So
     the release rule, and what an interrupted command leaves, is in one
     place.
   - The policy that says where a scroll anchor goes is
@@ -2298,8 +2291,8 @@ text requests. Config sees it through
     which asks the display about the scene's own snapshots. No request
     was added to a port: the display's two queries were there, and the
     margin is one state request (`setScrollMargin`).
-  - Evil's scroll commands are in `lean/Editor/Evil/Scroll.lean`, which
-    `Editor.lean` imports, so a command of config's calls `Evil.scroll`
+  - Evil's scroll commands are in `packages/evil/Evil/Scroll.lean`, which
+    the set's config base brings, so a command of config's calls `Evil.scroll`
     and `Evil.scrollLineTo`, or the API's operations.
 
 | Piece | Where |
@@ -2307,28 +2300,28 @@ text requests. Config sees it through
 | The operations | `lean/Editor/Api.lean` |
 | Their cases, played on the models and on the real binding | `lean/Editor/Api/Cases.lean` |
 | What is proved of them on the text model | `lean/Editor/Api/Theorems.lean` |
-| The file commands, their jobs' work, their orders and what they say in the echo area | `lean/Editor/Files.lean` |
-| The package `files`: the file commands and their jobs | `lean/Editor/Files/Compiled.lean` |
-| The commands that accept and cancel a prompt, and the minibuffer's mode | `lean/Editor/Minibuffer.lean` |
-| The package `minibuffer`: the minibuffer's commands and its mode | `lean/Editor/Minibuffer/Compiled.lean` |
+| The file commands, their jobs' work, their orders and what they say in the echo area | `packages/files/Files.lean` |
+| The package `files`: the file commands and their jobs | `packages/files/Files/Compiled.lean` |
+| The commands that accept and cancel a prompt, and the minibuffer's mode | `packages/minibuffer/Minibuffer.lean` |
+| The package `minibuffer`: the minibuffer's commands and its mode | `packages/minibuffer/Minibuffer/Compiled.lean` |
 | The vocabulary: the motion record and the operator record | `lean/Editor/Vocabulary.lean` |
-| Evil: where a cursor rests, and the commands the Vim scheme's invocations run that are not below | `lean/Editor/Evil.lean` |
-| Evil's motions, as vocabulary entries, and their table | `lean/Editor/Evil/Motions.lean` |
-| Evil's operators, as vocabulary entries, their table, what an operator takes, the operate command and `x` | `lean/Editor/Evil/Operators.lean` |
-| Evil's registers, storing and fetching, and the two puts | `lean/Editor/Evil/Registers.lean` |
-| Evil's undo and redo, which place the selection a step hands back | `lean/Editor/Evil/Undo.lean` |
-| Evil's dot repeat: the repeat command | `lean/Editor/Evil/Repeat.lean` |
+| Evil: where a cursor rests, and the commands the Vim scheme's invocations run that are not below | `packages/evil/Evil.lean` |
+| Evil's motions, as vocabulary entries, and their table | `packages/evil/Evil/Motions.lean` |
+| Evil's operators, as vocabulary entries, their table, what an operator takes, the operate command and `x` | `packages/evil/Evil/Operators.lean` |
+| Evil's registers, storing and fetching, and the two puts | `packages/evil/Evil/Registers.lean` |
+| Evil's undo and redo, which place the selection a step hands back | `packages/evil/Evil/Undo.lean` |
+| Evil's dot repeat: the repeat command | `packages/evil/Evil/Repeat.lean` |
 | The scroll policy: how a view follows its cursor, the margin, and the anchors a scroll places | `lean/Editor/Scroll.lean` |
-| Evil's scroll commands: by half a view, by a view, and to the cursor's row | `lean/Editor/Evil/Scroll.lean` |
-| What is proved of evil on the text model, and of the undo tree | `lean/Editor/Evil/Theorems.lean`, `lean/Editor/UndoTree/Theorems.lean` |
-| The package `evil`: evil's commands | `lean/Editor/Evil/Compiled.lean` |
+| Evil's scroll commands: by half a view, by a view, and to the cursor's row | `packages/evil/Evil/Scroll.lean` |
+| What is proved of evil on the text model, and of the undo tree | `packages/evil/Evil/Theorems.lean`, `lean/Editor/UndoTree/Theorems.lean` |
+| The package `evil`: evil's commands | `packages/evil/Evil/Compiled.lean` |
 | An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |
-| The ex command, and the commands `quit`, `save-and-quit` and `reload-config`, with what they say in the echo area | `lean/Editor/Ex.lean` |
-| The package `ex`: the ex line's commands and the files', its own and the buffers' ex names | `lean/Editor/Ex/Compiled.lean` |
-| The command `load-theme`, which switches the theme in force with no reload, with what it says in the echo area | `lean/Editor/Themes.lean` |
-| The package `themes`: the command that loads a theme and the theme `default` | `lean/Editor/Themes/Compiled.lean` |
+| The ex command, and the commands `quit`, `save-and-quit` and `reload-config`, with what they say in the echo area | `packages/ex/Ex.lean` |
+| The package `ex`: the ex line's commands and the files', its own and the buffers' ex names | `packages/ex/Ex/Compiled.lean` |
+| The command `load-theme`, which switches the theme in force with no reload, with what it says in the echo area | `packages/themes/Themes.lean` |
+| The package `themes`: the command that loads a theme and the theme `default` | `packages/themes/Themes/Compiled.lean` |
 | The package `shipped-themes`: the palettes that ship, a default package outside the core | `packages/shipped-themes/ShippedThemes.lean` |
-| The theme picture check, a test double: a theme drawn, held to its palette's colours and to a reference image | `lean/Editor/Themes/Picture.lean` |
+| The theme picture check, a test double: a theme drawn, held to its palette's colours and to a reference image | `lean/Editor/Theme/Picture.lean` |
 | The command prompt, `execute-command`, which lists every registered command's name and runs the one accepted, with its completion source `commands` and what it says in the echo area | `lean/Editor/ExecuteCommand.lean` |
 | The package `execute-command`: the command prompt and its source | `lean/Editor/ExecuteCommand/Compiled.lean` |
 | The binding search, `search-bindings`, which lists every key binding the input scheme reaches in the asking view and runs the one accepted as its key would, with its completion source `bindings` and what it says in the echo area | `lean/Editor/BindingSearch.lean` |
@@ -2351,7 +2344,7 @@ text requests. Config sees it through
 | The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change, and the text typed in the insert session that change began) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
 | The registers: a text and whether it is line-wise, by name. Evil keeps the unnamed one, which every yank and deletion sets | Compiled Lean, a field of the editor state (`EditorState.Remembered.registers`, `lean/Editor/State.lean`), set by a command (`setRegister`), so it is rolled back with a command that does not run to its end | Untouched | Lost |
 | The system clipboard | Outside the editor: reached through the clipboard port. A host with no window keeps one of its own in the process (`lean/Editor/Clipboard/InProcess.lean`) | Untouched | The window system's is the system's; the in-process one is lost |
-| Packages' commands, jobs, key bindings, modes, ex bindings and themes | Compiled Lean, in the registry, each for the owner named after its package ("Packages", under "Config and reload"). The executable ships the command `load-theme` and the theme `default` (`lean/Editor/Themes/Compiled.lean`), the command prompt `execute-command` with its source `commands` (`lean/Editor/ExecuteCommand/Compiled.lean`), the binding search `search-bindings` with its source `bindings` (`lean/Editor/BindingSearch/Compiled.lean`), the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `w!`, `e`, `e!`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file`, `save-buffer`, `edit-file` and `reload-buffer`, and their jobs, `load-file`, `save-file` and `reload-file`, with the file prompt's source `files`, its job `files` and the style `path` as the category `file`'s compiled default (`lean/Editor/Files/Compiled.lean`, `lean/Editor/Completion/Paths.lean`), the minibuffer's commands, `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward` and `minibuffer-delete-to-start`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's thirty-seven commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end`, `self-insert`, `operate`, `select-object`, `delete-char`, `put-after`, `put-before`, `open-below`, `open-above`, `undo`, `redo` and `repeat`, over its compiled tables of motions, operators, text objects and changes, and the seven that scroll a view, `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`, `scroll-line-to-top`, `scroll-line-to-center` and `scroll-line-to-bottom`, the seven editing keys of insert state, `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up` and `insert-down`, and the four of the Edit menu, `clipboard-cut`, `clipboard-copy`, `clipboard-paste` and `select-all` (`lean/Editor/Evil/Clipboard.lean`) (`lean/Editor/Evil/Compiled.lean`), and `workspace-current` with the job `find-workspace`, and `find-file-in-workspace` with its source `workspace-files`, of the category `workspace-file`, and its job `workspace-files` (`lean/Editor/Workspace/Compiled.lean`), and the `project-search` package's `project-search`, `project-search-found` (which its job posts each delivery as), `project-search-symbol` and `project-search-visit`, its results buffer's mode `project-search`, and its jobs `project-search` and `project-search-load` (`lean/Editor/ProjectSearch/Compiled.lean`), and the `working-set` package's six commands, a set's buffer's mode `working-set` and its four jobs (`lean/Editor/WorkingSet/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
+| Packages' commands, jobs, key bindings, modes, ex bindings and themes | Compiled Lean, in the registry, each for the owner named after its package ("Packages", under "Config and reload"). The executable ships the command `load-theme` and the theme `default` (`packages/themes/Themes/Compiled.lean`), the command prompt `execute-command` with its source `commands` (`lean/Editor/ExecuteCommand/Compiled.lean`), the binding search `search-bindings` with its source `bindings` (`lean/Editor/BindingSearch/Compiled.lean`), the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `w!`, `e`, `e!`, `q`, `wq` and `reload` (`packages/ex/Ex/Compiled.lean`), the file commands, `open-file`, `save-buffer`, `edit-file` and `reload-buffer`, and their jobs, `load-file`, `save-file` and `reload-file`, with the file prompt's source `files`, its job `files` and the style `path` as the category `file`'s compiled default (`packages/files/Files/Compiled.lean`, `lean/Editor/Completion/Paths.lean`), the minibuffer's commands, `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward` and `minibuffer-delete-to-start`, and its mode, `minibuffer` (`packages/minibuffer/Minibuffer/Compiled.lean`), and evil's thirty-seven commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end`, `self-insert`, `operate`, `select-object`, `delete-char`, `put-after`, `put-before`, `open-below`, `open-above`, `undo`, `redo` and `repeat`, over its compiled tables of motions, operators, text objects and changes, and the seven that scroll a view, `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`, `scroll-line-to-top`, `scroll-line-to-center` and `scroll-line-to-bottom`, the seven editing keys of insert state, `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up` and `insert-down`, and the four of the Edit menu, `clipboard-cut`, `clipboard-copy`, `clipboard-paste` and `select-all` (`packages/evil/Evil/Clipboard.lean`) (`packages/evil/Evil/Compiled.lean`), and `workspace-current` with the job `find-workspace`, and `find-file-in-workspace` with its source `workspace-files`, of the category `workspace-file`, and its job `workspace-files` (`packages/workspace/Workspace/Compiled.lean`), and the `project-search` package's `project-search`, `project-search-found` (which its job posts each delivery as), `project-search-symbol` and `project-search-visit`, its results buffer's mode `project-search`, and its jobs `project-search` and `project-search-load` (`packages/project-search/ProjectSearch/Compiled.lean`), and the `working-set` package's six commands, a set's buffer's mode `working-set` and its four jobs (`packages/working-set/WorkingSet/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
 | An open prompt: its label, the minibuffer's view, the asking view and the continuation, its candidates with what it has listed of them and the choice, all plain data, with the minibuffer's buffer and window | Compiled Lean, a field of the editor state (`EditorState.prompt`, `lean/Editor/State.lean`) and a buffer and a window of it, from the command that asks until the one that accepts or cancels | Untouched: the prompt stays open, and its continuation is a name, looked up in the registry as it is when the answer arrives | Lost |
 | A save in flight: the snapshot a save writes and the state its text was in | Compiled Lean, with the buffer's file in the editor state, from the save command until the save's result is delivered | Untouched | Lost with the buffer |
 | Asked to quit: whether a command asked the editor to quit | Compiled Lean, a field of the editor state (`EditorState.quitting`), from the command that asks until the step that says stop, or until the scene that withdraws it because a buffer has unsaved changes | Untouched: a quit that is waiting for a save still waits | Not kept: the process has ended |
@@ -2372,7 +2365,7 @@ text requests. Config sees it through
 | The snapshots a job's loads made | The job runner, off the editor thread, until the job's command adopts one or the job is settled | A reload that installs cancels the old config's jobs, which releases them | Lost |
 | Processes, terminals | Rust, behind handles | Untouched | Lost |
 | Closures registered by config | Compiled Lean, tagged with their owner | Replaced by the new config's | Re-registered by `setup` |
-| A workspace's working sets: each range's stored form and where it is held, what is known of the file on disk, the last set used | Compiled Lean, the workspace's store `working-sets` (`lean/Editor/WorkingSet/Places.lean`), its ranges held by anchor markers of their files' buffers | Untouched | Kept: written by jobs to `<state>/workspaces/<key>/working-sets.json` under the state directory, read lazily the first time a working-set command needs them, each range found again in its file's text or shown drifted (`lean/Editor/WorkingSet/Disk.lean`) |
+| A workspace's working sets: each range's stored form and where it is held, what is known of the file on disk, the last set used | Compiled Lean, the workspace's store `working-sets` (`packages/working-set/WorkingSet/Places.lean`), its ranges held by anchor markers of their files' buffers | Untouched | Kept: written by jobs to `<state>/workspaces/<key>/working-sets.json` under the state directory, read lazily the first time a working-set command needs them, each range found again in its file's text or shown drifted (`packages/working-set/WorkingSet/Disk.lean`) |
 | A user's package-set editors: `<data>/editors/<core>/<n>/`, each an executable with its records and its modules, and `<data>/editors/staging-<k>/` while a build installs ([packages.md](packages.md), "User package sets") | Files under the data directory (`--data`, else `$XDG_DATA_HOME/leanmacs` or `~/.local/share/leanmacs`), written by the job `package-build` and pruned after each publish to two versions of the current core and the running editor's | Untouched; a reload whose set differs starts a build | Kept: the launcher starts the newest of the shipped default's core at a cold start |
 | A cold start's record: `<data>/launch/cold-<pid>`, the hand-over record with no session | Written by the launcher before it starts a per-user editor, read and rewritten by its watcher, removed by the editor at its hand-shake | Untouched | Removed by the run it started; when every candidate failed, renamed `.failed` |
 | Values of types that config defines | See below | Converted or dropped | As for a reload |

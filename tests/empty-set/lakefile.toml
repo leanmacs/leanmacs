@@ -9,12 +9,18 @@
 #   check cannot pass by running over nothing.
 # - `mise run lean` links an editor from it
 #   (`lake -d ../tests/empty-set build :editor`, in lean/), and `mise run
-#   ffi-test` runs two fixtures on that editor: tests/headless/core-themes,
-#   an editor with no package but the core's starts in the theme `default`
-#   and offers no shipped palette; and tests/headless/core-ex-names, it
-#   starts, loads config, and answers `compile` on its ex line as it
-#   answers any ex name nobody bound, the compile mode being a default
-#   package (packages/compile/). Its config base is `Editor` alone.
+#   ffi-test` runs that editor: it refuses to start. No package of this
+#   set supplies an input scheme, since the Vim scheme is the default
+#   package evil's (packages/evil/, features-as-packages phase 7), so the
+#   headless mode and `--probe` each print `editor: no input scheme is
+#   installed: no package of this editor's package set supplies one` on
+#   stderr and exit 1 (tests/headless/no-input-scheme; docs/design/packages.md,
+#   "Input schemes"). While the core supplied the scheme, two fixtures ran
+#   on this editor, tests/headless/core-themes and
+#   tests/headless/core-ex-names; they are retired, and what they showed
+#   of an editor without the default packages is held by the core's
+#   checks of its own list (docs/design/packages.md, "Dropping evil or
+#   themes leaves…"). Its config base is `Editor` alone.
 name = "empty-set"
 
 [[require]]

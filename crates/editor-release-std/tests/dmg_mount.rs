@@ -24,12 +24,12 @@
 //!    (`docs/design/lean-runtime.md`, "The app ships the toolchain"): the
 //!    image's `leanmacs headless --generate`, on a temporary config of
 //!    `tests/headless/generate`'s `init.lean`, writes a lakefile naming the
-//!    volume's set; the volume's own `lake -d <config> build :editorInstall`,
-//!    with an empty environment but `PATH=/usr/bin:/bin`, `HOME` in the
-//!    temporary directory and the app's `editor.build`, exits 0, installing
-//!    an editor whose core is the app's and whose `--probe` prints
-//!    `probe: ok`. The volume is read-only, so the build compiled nothing
-//!    of the app.
+//!    volume's set and core (`Contents/Resources/lean/lean`); the volume's
+//!    own `lake -d <config> build :editorInstall`, with an empty environment
+//!    but `PATH=/usr/bin:/bin`, `HOME` in the temporary directory and the
+//!    app's `editor.build`, exits 0, installing an editor whose core is the
+//!    app's and whose `--probe` prints `probe: ok`. The volume is read-only,
+//!    so the build compiled nothing of the app.
 //!
 //! It writes nothing but the mount point and step 6's config, home and
 //! install, which go with the temporary directory.
@@ -253,13 +253,15 @@ fn the_packed_image_holds_the_app_the_link_the_licence_and_the_readme() {
     let resources = app.join("Contents").join("Resources");
     // As the editor names it: its own path with its links resolved.
     let set = fs::canonicalize(resources.join("lean").join("set")).expect("the volume's set");
+    let core = fs::canonicalize(resources.join("lean").join("lean")).expect("the volume's core");
     let lakefile = fs::read_to_string(config.join("lakefile.toml")).expect("a generated lakefile");
     assert_eq!(
         lakefile,
         fs::read_to_string(generate.join("expected-lakefile-bundle"))
             .expect("expected-lakefile-bundle")
-            .replace("@SET@", set.to_str().expect("UTF-8")),
-        "the generated lakefile names the volume's set"
+            .replace("@SET@", set.to_str().expect("UTF-8"))
+            .replace("@CORE@", core.to_str().expect("UTF-8")),
+        "the generated lakefile names the volume's set and core"
     );
     let install = dir.path().join("install");
     let record = fs::read_to_string(resources.join("editor.build")).expect("editor.build");

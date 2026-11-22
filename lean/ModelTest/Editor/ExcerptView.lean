@@ -1,21 +1,17 @@
-import Editor.Command
 import Editor.Command.Model
 import Editor.Display
 import Editor.Display.Model
-import Editor.Event
 import Editor.ExcerptView
-import Editor.InputScheme.Vim.Default
 import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Program
 import Editor.Scene
-import Editor.Scroll
 import Editor.State
+import Editor.Test.Editing
+import Editor.Test.Excerpt
+import Editor.Test.Views
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
-import ModelTest.Support.Views
 
 /-!
 # Model tests: `Editor/ExcerptView.lean`
@@ -27,6 +23,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The header blocks `ex` of `excerptRegistrations` has, its headers `one`
 and `two` before its excerpts' starts `first` and `second`. -/
@@ -34,28 +31,9 @@ def exHeaders (first second : Nat) : Array Block :=
   #[{ before := first, text := "one", decorations := #[⟨0, 3, ExcerptView.headerFace⟩] },
     { before := second, text := "two", decorations := #[⟨0, 3, ExcerptView.headerFace⟩] }]
 
-/-- Of the window's view in the last scene of `driver`: its scroll anchor's
-offset, the head of its selection's primary range, and whether the rows the
-display model answers from its anchor, asked with its blocks, hold the
-row of that head, also asked with them. -/
-def blockedSeen (driver : EvilDriver) : Option (Nat × Nat × Bool) := do
-  let shown ← lastView driver
-  let #[marker] := shown.selections | none
-  let program : EditorM (Nat × Nat × Bool) := do
-    let .anchor anchor ← shown.scroll.text.marker shown.scroll | throw .noSuchMarker
-    let .selection selection ← marker.text.marker marker | throw .noSuchMarker
-    let some range := selection.ranges[selection.primary]? | throw .badSelection
-    let area :=
-      Scroll.Area.ofRect shown.snapshot shown.rect driver.model.display.cells.heights.status
-        shown.padding shown.blocks
-    let rows ← area.rows anchor.offset
-    let own := (← area.rows range.head)[0]?
-    return (anchor.offset, range.head, own.any rows.contains)
-  (program.runModel driver.model).1.toOption
-
 /-- The rectangle's top of the first view of the last scene of `driver`
 that is not the window's: the float `float-five` opened. -/
-def floatTop (driver : EvilDriver) : Option Nat := do
+def floatTop (driver : ExcerptDriver) : Option Nat := do
   let scene ← driver.model.display.scenes.back?
   return (← scene.views.find? (·.id != ⟨0⟩)).rect.y
 
@@ -108,7 +86,7 @@ def excerptDisplayChecks : List Check :=
           | none => false
           | some driver =>
             let edited := excerptInvoked driver "edit-one"
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
             (lastView driver).map (·.blocks) == some (exHeaders 0 5) &&
               (lastView edited).map (·.blocks) == some (exHeaders 0 5) &&
               (lastView typed).map (·.blocks) == some (exHeaders 0 6) &&
@@ -128,7 +106,7 @@ def excerptDisplayChecks : List Check :=
                 #[⟨4, 7, error⟩, ⟨9, 12, error⟩, ⟨0, 1, ⟨"own"⟩⟩, ⟨5, 6, Loop.searchMatchFace⟩,
                   ⟨10, 11, Loop.searchMatchFace⟩] },
     { name :=
-        "in a window four rows tall over six headed excerpts, after each of G, k and j across the headers, gg, C-f, C-b, C-d, C-u, z t, z z and z b, the rows the published view shows from its anchor, asked with its blocks, hold the cursor's row"
+        "in a window four rows tall over six headed excerpts, after each move of the cursor to the end, up and down across the headers and back to the start, the rows the published view shows from its anchor, asked with its blocks, hold the cursor's row"
       run :=
         pure <|
           match excerptDriver with
@@ -136,29 +114,19 @@ def excerptDisplayChecks : List Check :=
           | some driver =>
             let six := viewResized (excerptInvoked driver "make-six") ⟨20, 4⟩
             let keys :=
-              ["G", "k", "k", "k", "k", "k", "k", "j", "j", "j", "g g", "C-f", "C-f", "C-b", "C-d",
-                "C-d", "C-u", "G", "z t", "z z", "z b", "g g", "z b", "j", "j", "z z"]
+              ["C-<End>", "<ArrowUp>", "<ArrowUp>", "<ArrowUp>", "<ArrowUp>", "<ArrowUp>",
+                "<ArrowUp>", "<ArrowDown>", "<ArrowDown>", "<ArrowDown>", "C-<Home>", "C-<End>",
+                "C-<Home>", "<ArrowDown>", "<ArrowDown>"]
             let (_, held) :=
               keys.foldl
                 (fun (driver, held) key =>
-                  let fed := evilFed driver key
+                  let fed := keysFed driver key
                   (fed, held && (blockedSeen fed).any (·.2.2)))
                 (six, true)
-            (lastView six).any (·.blocks.size == 6) && held },
-    { name :=
-        "the scroll commands ask the rows a view fits with its blocks: C-f from the start of six headed excerpts in four rows moves the anchor and the cursor two rows, the rows that fit with the headers, not four"
-      run :=
-        pure <|
-          match excerptDriver with
-          | none => false
-          | some driver =>
-            let six := viewResized (excerptInvoked driver "make-six") ⟨20, 4⟩
-            -- `one` and the separator fit with the first header; `two`, at
-            -- 5, is two rows down; without the headers `three`, at 10, is
-            -- four rows down.
-            (blockedSeen six).map (fun (anchor, head, _) => (anchor, head)) == some (0, 0) &&
-              (blockedSeen (evilFed six "C-f")).map (fun (anchor, head, _) => (anchor, head)) ==
-                some (5, 5) },
+            -- The move to the end scrolls the view, so the rows are not held
+            -- by a view that never moved.
+            (lastView six).any (·.blocks.size == 6) && held &&
+              (blockedSeen (keysFed six "C-<End>")).any (·.1 > 0) },
     { name :=
         "a float anchored at a position of an excerpt buffer's view sits lower by the header rows above the position than one over the same text with no header"
       run :=
@@ -188,16 +156,16 @@ def excerptDisplayChecks : List Check :=
             (lastView made).map (·.decorations) == some unexamined &&
               (lastView next).map (·.decorations) == some #[] },
     { name :=
-        "in a window four rows tall, an excerpt below the rows shown is never marked and stays drawn unexamined, and G shows it: it is marked by one scene and drawn unexamined in that scene only"
+        "in a window four rows tall, an excerpt below the rows shown is never marked and stays drawn unexamined, and a move to the end shows it: it is marked by one scene and drawn unexamined in that scene only"
       run :=
         pure <|
           match excerptDriver with
           | none => false
           | some driver =>
             let made := excerptInvoked (viewResized driver ⟨20, 4⟩) "make-tracked"
-            let moved := evilFed made "G"
+            let moved := keysFed made "C-<End>"
             let after := excerptInvoked moved "noop"
-            let scenesOf (driver : EvilDriver) : Option (Array Nat) := do
+            let scenesOf (driver : ExcerptDriver) : Option (Array Nat) := do
               let id ← driver.loop.state.findBuffer "tracked"
               let entries ← entriesOf driver.loop.state id
               return entries.map fun entry => (entry.viewed.map (·.scenes)).getD 0
@@ -213,11 +181,11 @@ def excerptDisplayChecks : List Check :=
           match excerptDriver with
           | none => false
           | some driver =>
-            let clocked (driver : EvilDriver) (now : Nat) : EvilDriver :=
+            let clocked (driver : ExcerptDriver) (now : Nat) : ExcerptDriver :=
               { driver with keys := { driver.keys with now } }
             let made := excerptInvoked (clocked driver 1000) "make-tracked"
             let later := excerptInvoked (clocked made 1500) "noop"
-            let first (driver : EvilDriver) : Option (Option Buffer.Viewed) := do
+            let first (driver : ExcerptDriver) : Option (Option Buffer.Viewed) := do
               let id ← driver.loop.state.findBuffer "tracked"
               return (← entriesOf driver.loop.state id)[0]?.bind (·.viewed)
             first made == some (some { scenes := 1, firstAt := some 1000, shownFor := 0 }) &&

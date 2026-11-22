@@ -1,0 +1,58 @@
+# The interface package of the workspaces (docs/design/extension-points.md,
+# "Three layers"): the contract between the default package `workspace`,
+# which implements it, and what others ask of the project and workspace a
+# path is in: reaching the workspace at a path (`ProjectApi.Workspaces`,
+# answered by `workspaces?`), what a caller hands the reach, and the names
+# others reach. It registers no behaviour.
+#
+# It is an interface package: it declares the keyword `editor-interface`
+# below, so another package may import its modules, and the layer imports
+# check reads that keyword from Lake (tools/layer-imports-check.sh). It was
+# staged in the core's Lake package as its own `lean_lib` with this layout
+# and these names until features-as-packages phase 6, when its last user in
+# the core moved out, and moved here with `git mv`, no import line changed.
+#
+# - `ProjectApi` is the package's library: `ProjectApi.lean`.
+# - `ProjectApiTest` holds what it publishes for other packages' tests, as the
+#   owner of a port publishes its fake and its contract check (AGENTS.md,
+#   "Testing with hand-written mocks"), and its own tests, which were the
+#   core's model tests (`ModelTest.<name>`) until it moved.
+# - `project-api-test` is its test driver (`lake test`), rooted at
+#   `ProjectApiTest/Model.lean`. It is no default target, as the core's
+#   `model-test` is not: `mise run lean` links with the system compiler,
+#   which this executable has no flags for.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/project-api update --keep-toolchain
+# then the same for every package and set that reaches this package
+# (packages/workspace, packages/version-control, packages/, tests/packages, tests/user-link,
+# tests/layer-imports), and commit each lake-manifest.json.
+name = "project-api"
+keywords = ["editor-interface"]
+testDriver = "«project-api-test»"
+defaultTargets = ["ProjectApi", "ProjectApiTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+# The interface package of the compile mode: the reach names its listing
+# job (`Compile.listJob`, `CompileApi.Listing`) among the jobs a caller's
+# continuation may be.
+[[require]]
+name = "compile-api"
+path = "../compile-api"
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "ProjectApi"
+
+[[lean_lib]]
+name = "ProjectApiTest"
+globs = ["ProjectApiTest.+"]
+
+[[lean_exe]]
+name = "project-api-test"
+root = "ProjectApiTest.Model"

@@ -66,6 +66,14 @@ editor-render = { path = "../editor-render" }
 # them. It is also the example `window`'s. `deny.toml` lists this crate
 # among its wrappers.
 editor-render-wgpu = { path = "../editor-render-wgpu" }
+# The rasteriser port's Core Text adapter: on macOS the process's window,
+# and the example `window`, hand it to the wgpu renderer (and the example
+# to the headless renderer it compares with), so their glyphs are Core
+# Text's own (`src/window.rs`, `window_rasteriser`). It builds on every
+# platform, its macOS parts behind `cfg`. Its one reading of the user's
+# preferences is marked in `clippy.toml`; `deny.toml` lists this crate as
+# its one wrapper.
+editor-raster-coretext = { path = "../editor-raster-coretext" }
 # The real file system, for the process's file service. This is the crate
 # that wires the library together, so it is the one that links the adapter;
 # `clippy.toml` here keeps the adapter out of everything but that one static
@@ -169,6 +177,15 @@ rustix = { version = "=1.1.6", default-features = false, features = ["std", "pro
 # binary links what the example links, and they name none of it.
 [[example]]
 name = "window"
+test = true
+
+# The composited sentence against Core Text's, run on demand on macOS
+# (`mise run coretext-check`, its second half): the real renderers with the
+# Core Text rasteriser, on the CPU and this machine's GPU. `cargo test` runs
+# its pure module's tests (`measure`), which make no renderer and read no
+# file.
+[[example]]
+name = "coretext"
 test = true
 
 # No harness: its `main` must be the process's main thread.

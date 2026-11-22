@@ -42,22 +42,28 @@ It imports only the plain trees and the pure part of a child's environment
   `name@<the root's last component>` when it is detached or has no branch,
   so two workspaces of one project are told apart. The rule is
   `Workspace.labelOf`, which a worktree the table does not know yet is
-  labelled by too (`Editor/Workspace/Projects.lean`).
+  labelled by too (`packages/workspace/Workspace/Projects.lean`).
 - **The finder's shared rules** are here too, pure, so the model and the
-  real finder (`Editor/Workspace/Model.lean`, `Editor/Workspace/Finder.lean`)
+  real finder (`packages/workspace/WorkspaceTest/Finder/Model.lean`, `packages/workspace/Workspace/Finder.lean`)
   take them from one place: the config adapter (`fromConfig?`, the deepest
   config root that holds the directory), the git command lines and the
   reading of what they print (`Git`), and the order the marker adapter looks
   in (`markerPaths`, nearest directory first, then the markers in order).
+- **What a search of a workspace is handed and says** (`typedOf`,
+  `noSuchWorkspace`, `cannotList`): the text typed after a location given
+  as a command's arguments, and the two refusals of what a search covers,
+  each naming the command that searched. The rule of what a search covers
+  is `Workspace.searchRoot` (`Editor/SearchRoot.lean`), which needs the
+  editor state and the call, which this module sits below.
 - **Which adapter found a workspace** is read from its branch
   (`foundByGit`): only the git adapter gives one, so a local workspace with
   a branch is one git found. A workspace does not record its adapter.
 - **Config's listers** (`DeclaredLister`, `Settings.listers`) are declared
   for a root or for a project (`ListerScope`); which command lists a
-  workspace's files is chosen in `Editor/Workspace/Lister.lean`.
+  workspace's files is chosen in `packages/workspace/Workspace/Lister.lean`.
 - **Modes on markers** (`searchedFrom`, `markerSearchPaths`, `onModes`): a
   minor mode's markers (`MarkerMode`, a compile contribution's,
-  `Editor/ProjectMode.lean`) are looked for from a file's
+  `packages/compile-api/CompileApi.lean`) are looked for from a file's
   directory up to and including its workspace root, and never above it,
   so one worktree's modes are found within that worktree; a file with no
   workspace looks in its own directory alone. A mode is on at the nearest
@@ -68,9 +74,9 @@ It imports only the plain trees and the pure part of a child's environment
   on-modes are ordered, once their roots are chosen, nearest root first
   and, at one root, in registration order. A marker is there by the
   finder's rule.
-  The search is `Workspace.presentMarkers` (`Editor/Workspace/Finder.lean`),
+  The search is `Workspace.presentMarkers` (`packages/workspace/Workspace/Finder.lean`),
   its model `World.presentMarkers`, and both are held to
-  `Workspace.MarkerContract` (`Editor/Workspace/Contract.lean`).
+  `Workspace.MarkerContract` (`packages/workspace/WorkspaceTest/Finder/Contract.lean`).
 - **The table** (`Workspace.Table`) is the editor state's
   (`EditorState.workspaces`): the workspaces, each with its store of values
   by name, keyed by its location; the projects, each with its store, keyed
@@ -84,7 +90,7 @@ It imports only the plain trees and the pure part of a child's environment
   outside any workspace, which have no project either: one store, by name,
   in place of both, as long as the session.
   `:!` keeps the history and the output buffer of such buffers there
-  (`Editor/Shell.lean`).
+  (`packages/shell/Shell.lean`).
 
 ## Adding to this
 
@@ -356,6 +362,23 @@ def labelOf (name : String) (branch : Option Branch) (location : Location) : Str
 def label (workspace : Workspace) : String :=
   labelOf workspace.project.name workspace.branch workspace.location
 
+/-- The typed text the arguments after a location carry: the first text, or
+the empty text. What a search of a workspace types into its prompt
+(`Editor/SearchRoot.lean`). -/
+def typedOf : List Argument → String
+  | .str typed :: _ => typed
+  | _ => ""
+
+/-- What the command `command` says when no workspace is known at
+`location`. -/
+def noSuchWorkspace (location : Location) (command : String) : String :=
+  s!"{command}: no workspace is known at {location.describe}"
+
+/-- What the command `command` says of `workspace`, whose location cannot
+read files and run commands, so its files cannot be listed. -/
+def cannotList (workspace : Workspace) (command : String) : String :=
+  s!"{command}: {workspace.label} is {workspace.location.describe}, where files cannot be listed"
+
 /-- The name a buffer keeps its workspace's location under, as a
 buffer-local value (`Location.encode`). -/
 def bufferLocal : String :=
@@ -394,7 +417,7 @@ def ListerScope.trimmed : ListerScope → ListerScope
 
 /-- A command config declares to list the files of a workspace root, or of
 every workspace of a project, in place of git's or the fallback's
-(`Editor/Workspace/Lister.lean`): run at the workspace's root, its standard
+(`packages/workspace/Workspace/Lister.lean`): run at the workspace's root, its standard
 output the root-relative paths, one a record. -/
 structure DeclaredLister where
   /-- Which workspaces it lists. -/
@@ -461,11 +484,14 @@ structure Settings where
   git : String := "git"
   /-- The marker files, in order. -/
   markers : Array String := defaultMarkers
-  /-- The minor modes markers turn on, in registration order: what the loop
-  says of the registered compile contributions. -/
+  /-- The minor modes markers turn on, in the compile hook's order. The loop
+  leaves it empty: who reads the settings for the marker search fills it
+  from the hook (`Workspace.markerSettings`,
+  `packages/compile-api/CompileApi/Listing.lean`), since the core's registry holds no
+  compile contribution. -/
   markerModes : Array MarkerMode := #[]
   /-- The listers config declares, in the order it declared them
-  (`Editor/Workspace/Lister.lean`). -/
+  (`packages/workspace/Workspace/Lister.lean`). -/
   listers : Array DeclaredLister := #[]
   deriving DecidableEq, Repr
 

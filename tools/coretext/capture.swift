@@ -1,31 +1,85 @@
 // Draws the sentence "the window draws this" with Core Text, as macOS draws
-// it, and writes the drawing as a fixture.
+// it, and writes the drawings and the glyphs' positions as fixtures.
 //
-//   swift tools/coretext/capture.swift <font file> <PNG file to write>
+//   swift tools/coretext/capture.swift <font file> <directory to write in>
+//   swift tools/coretext/capture.swift --positions <font file> <file to write>
 //
-// Run by hand, on macOS, through `mise run coretext-reference`; never by the
-// gate, which needs only the file checked in. tests/coretext/README.md says
-// what the file is, how it was last captured and when to capture it again.
+// Run by hand, on macOS, through `mise run coretext-reference` (and, the
+// second form, `mise run coretext-menlo`); never by the gate, which needs
+// only the files checked in. tests/coretext/README.md says what each file
+// is, how it was last captured and when to capture it again.
 //
 // The font is loaded from the bytes of the file given: nothing is installed
-// or registered on the system. The sentence is drawn at 14 points on a
-// bitmap scaled by 2, as TextEdit draws 14 pt on a display of scale 2, in
-// black on a white ground, with font smoothing on and the baseline on a
-// whole pixel. The bitmap is 8-bit RGB in the sRGB colour space: Core Text
-// smooths only in an RGB context. Subpixel positioning and quantisation are
-// left at the context's defaults, which CoreGraphics gives no way to read.
+// or registered on the system. The sentence is one CTLine at 14 points.
 //
-// Before it writes, it checks that no glyph reaches the bitmap's border and
-// that red, green and blue agree within 1 at every pixel: smoothing on
-// macOS is not by colour stripes, and if it were the script would refuse
-// rather than pick a channel. It then writes the red channel as it is, as
-// an 8-bit grayscale PNG file.
+// The first form writes, into the directory:
 //
-// It prints the bitmap's size and, for the drawing written and for a second
-// drawing with smoothing off, the two counts the renderer's test makes:
-// how many pixels are darker than mid-grey (below 128), and the ink, how
-// far below the white ground the pixels are, summed. The second drawing is
-// for a person, to show what smoothing does, and is not written.
+// - `sentence.png`: drawn on a bitmap scaled by 2, as TextEdit draws 14 pt
+//   on a display of scale 2, in black on a white ground, with font
+//   smoothing on, subpixel positioning and quantisation left at the
+//   context's defaults. Its values are the drawing's red channel as it is
+//   (255 is the white ground). This is the drawing the renderer's weight
+//   was fitted to, and it is made exactly as it was on 2026-11-14.
+// - `sentence-dark.png`: the same at scale 2, `#d8dee9` on `#2e3440`, the
+//   default theme's text on its ground.
+// - `sentence-14.png`: 14 pt at scale 1, black on white.
+// - `sentence-14-dark.png`: 14 pt at scale 1, `#d8dee9` on `#2e3440`.
+// - `sentence-grey.png`: at scale 2, `#808080` on white, which tells a
+//   luminance bucket of the encoded value (1) from one of linear light (0).
+// - `positions.txt`: each glyph's place on the line, at scale 1 and 2.
+// - `composited/<name>.png`, for each of the five drawings above: the
+//   bitmap's own pixels, what macOS put there, as 8-bit RGB, ground and
+//   text blended as Core Graphics blends them. The ground is opaque, so
+//   the bitmap's premultiplied values are its straight values. Before it
+//   writes one, the script checks that the alpha is 255 at every pixel and
+//   that every pixel of the border is the ground exactly.
+// - `blend.txt`: Core Graphics' own result for uniform fills at known
+//   alphas, one line per case:
+//
+//     <text #rrggbb> <ground #rrggbb> <alpha 0..255> <r> <g> <b>
+//
+//   Each case is a bitmap of the same kind filled with the ground, with a
+//   4 by 4 rectangle of the text colour filled over it at the colour's
+//   alpha / 255; the line holds the middle pixel. Texts `#000000`,
+//   `#ffffff`, `#d8dee9`, `#808080`; grounds `#ffffff`, `#000000`,
+//   `#2e3440`; alphas 32, 64, 128, 192, 224; a text equal to its ground is
+//   left out. The script prints, for a person reading the log, how far
+//   the encoded and the linear-light predictions are from what Core
+//   Graphics gave, and asserts nothing about either: the renderer's gate
+//   does that (`crates/editor-render-wgpu/src/blend.rs`).
+//
+// Every drawing is made as native apps draw text (`CTLineDraw` with the
+// context's default subpixel flags), so that Core Text places each glyph
+// on its own grid, x floored to a third of a pixel at scale 1 and a half
+// at scale 2 (measured on macOS 27.2.1). The renderer's painter places glyphs
+// on the same grid, so the Core Text adapter's masks are compared with
+// these drawings as they are. Smoothing is on. The values of each of the
+// four drawings after `sentence.png` are the coverage, 255 being full
+// ink: each channel's value mapped back through its ground and its text
+// colour, `(value - ground) / (text - ground)`.
+//
+// Before it writes a drawing, it checks that no glyph reaches the bitmap's
+// border, and that red, green and blue agree: within 1 for `sentence.png`,
+// and within 2 of 255 as one coverage for the others. Smoothing on macOS is
+// not by colour stripes, and if it were the script would refuse rather
+// than pick a channel.
+//
+// `positions.txt` has one line per glyph per scale:
+//
+//   <scale> <glyph id> <x px> <y px> <advance px>
+//
+// in device pixels from the line's origin: x and y from the line's run
+// (CTRunGetGlyphs, CTRunGetPositions), and the advance from the font's own
+// metrics (CTFontGetAdvancesForGlyphs, which no tracking or kerning
+// changes). Comment lines start with `#`. The second form writes only this
+// file, for a font such as Menlo that is not checked in: for a collection
+// (`.ttc`) its first face.
+//
+// It prints each bitmap's size, its baseline and, for `sentence.png` and a
+// second drawing with smoothing off, the two counts the renderer's test
+// makes: how many pixels are darker than mid-grey (below 128), and the ink,
+// how far below the white ground the pixels are, summed. The second
+// drawing is for a person, to show what smoothing does, and is not written.
 
 import CoreGraphics
 import CoreText
@@ -35,7 +89,6 @@ import UniformTypeIdentifiers
 
 let sentence = "the window draws this"
 let points: CGFloat = 14
-let scale: CGFloat = 2
 // The margin around the line, in pixels.
 let margin = 16
 
@@ -44,40 +97,86 @@ func fail(_ message: String) -> Never {
     exit(1)
 }
 
-let arguments = CommandLine.arguments
-guard arguments.count == 3 else {
-    fail("usage: capture.swift <font file> <PNG file to write>")
+/// A colour as 8-bit sRGB values.
+struct RGB {
+    let red: Int
+    let green: Int
+    let blue: Int
+
+    var cgColor: CGColor {
+        CGColor(
+            srgbRed: CGFloat(red) / 255, green: CGFloat(green) / 255, blue: CGFloat(blue) / 255,
+            alpha: 1)
+    }
 }
-let (fontPath, outputPath) = (arguments[1], arguments[2])
 
-guard let provider = CGDataProvider(url: URL(fileURLWithPath: fontPath) as CFURL),
-    let cgFont = CGFont(provider)
-else {
-    fail("cannot read a font from \(fontPath)")
+let black = RGB(red: 0, green: 0, blue: 0)
+let white = RGB(red: 255, green: 255, blue: 255)
+let light = RGB(red: 0xd8, green: 0xde, blue: 0xe9)
+let dark = RGB(red: 0x2e, green: 0x34, blue: 0x40)
+let grey = RGB(red: 0x80, green: 0x80, blue: 0x80)
+
+/// The sentence as one line in `font`, its text in `color`.
+func makeLine(_ font: CTFont, _ color: RGB) -> CTLine {
+    let attributes: [NSAttributedString.Key: Any] = [
+        NSAttributedString.Key(kCTFontAttributeName as String): font,
+        NSAttributedString.Key(kCTForegroundColorAttributeName as String): color.cgColor,
+    ]
+    return CTLineCreateWithAttributedString(
+        NSAttributedString(string: sentence, attributes: attributes))
 }
-let font = CTFontCreateWithGraphicsFont(cgFont, points, nil, nil)
-let attributes: [NSAttributedString.Key: Any] = [
-    NSAttributedString.Key(kCTFontAttributeName as String): font,
-    NSAttributedString.Key(kCTForegroundColorAttributeName as String):
-        CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1),
-]
-let line = CTLineCreateWithAttributedString(
-    NSAttributedString(string: sentence, attributes: attributes))
 
-var ascent: CGFloat = 0
-var descent: CGFloat = 0
-var leading: CGFloat = 0
-let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
-let pixelsWide = Int((width * scale).rounded(.up)) + 2 * margin
-let above = Int((ascent * scale).rounded(.up))
-let below = Int((descent * scale).rounded(.up))
-let pixelsHigh = above + below + 2 * margin
-// The baseline, in pixels from the bottom: a whole pixel.
-let baseline = margin + below
+/// Where a line is drawn on a bitmap of one scale.
+struct Layout {
+    let scale: CGFloat
+    let pixelsWide: Int
+    let pixelsHigh: Int
+    // The baseline, in pixels from the bottom: a whole pixel.
+    let baseline: Int
+    let width: CGFloat
+    let ascent: CGFloat
+    let descent: CGFloat
 
-/// The bitmap of the sentence drawn with font smoothing on or off, as
-/// bytes in memory order blue, green, red, alpha.
-func draw(smoothed: Bool) -> [UInt8] {
+    init(_ line: CTLine, scale: CGFloat) {
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        var leading: CGFloat = 0
+        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+        let above = Int((ascent * scale).rounded(.up))
+        let below = Int((descent * scale).rounded(.up))
+        self.scale = scale
+        self.pixelsWide = Int((width * scale).rounded(.up)) + 2 * margin
+        self.pixelsHigh = above + below + 2 * margin
+        self.baseline = margin + below
+        self.width = width
+        self.ascent = ascent
+        self.descent = descent
+    }
+}
+
+/// The bitmap of `line` drawn on `layout` over `ground`, with font smoothing
+/// on or off, as bytes in memory order blue, green, red, alpha. Subpixel
+/// positioning and quantisation are left at the context's defaults, as
+/// native apps leave them.
+func draw(_ line: CTLine, _ layout: Layout, ground: RGB, smoothed: Bool) -> [UInt8] {
+    let (pixelsWide, pixelsHigh, scale) = (layout.pixelsWide, layout.pixelsHigh, layout.scale)
+    let context = bitmap(pixelsWide, pixelsHigh, ground: ground)
+    context.setAllowsAntialiasing(true)
+    context.setShouldAntialias(true)
+    context.setAllowsFontSmoothing(true)
+    context.setShouldSmoothFonts(smoothed)
+    context.scaleBy(x: scale, y: scale)
+    context.textPosition = CGPoint(
+        x: CGFloat(margin) / scale, y: CGFloat(layout.baseline) / scale)
+    CTLineDraw(line, context)
+    let bytes = context.data!.bindMemory(to: UInt8.self, capacity: pixelsWide * pixelsHigh * 4)
+    return Array(UnsafeBufferPointer(start: bytes, count: pixelsWide * pixelsHigh * 4))
+}
+
+/// A bitmap of `pixelsWide` by `pixelsHigh` of the kind every drawing is
+/// made on: 8-bit RGB with alpha, premultiplied first, little-endian, in
+/// the sRGB colour space, filled with `ground`.
+func bitmap(_ pixelsWide: Int, _ pixelsHigh: Int, ground: RGB) -> CGContext {
     let space = CGColorSpace(name: CGColorSpace.sRGB)!
     let info =
         CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
@@ -88,22 +187,15 @@ func draw(smoothed: Bool) -> [UInt8] {
     else {
         fail("cannot make a bitmap of \(pixelsWide) by \(pixelsHigh)")
     }
-    context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+    context.setFillColor(ground.cgColor)
     context.fill(CGRect(x: 0, y: 0, width: pixelsWide, height: pixelsHigh))
-    context.setAllowsAntialiasing(true)
-    context.setShouldAntialias(true)
-    context.setAllowsFontSmoothing(true)
-    context.setShouldSmoothFonts(smoothed)
-    context.scaleBy(x: scale, y: scale)
-    context.textPosition = CGPoint(x: CGFloat(margin) / scale, y: CGFloat(baseline) / scale)
-    CTLineDraw(line, context)
-    let bytes = context.data!.bindMemory(to: UInt8.self, capacity: pixelsWide * pixelsHigh * 4)
-    return Array(UnsafeBufferPointer(start: bytes, count: pixelsWide * pixelsHigh * 4))
+    return context
 }
 
 /// The red channel of `bgra`, row by row from the top, checked: nothing
-/// drawn on the border, and the three channels alike.
-func gray(_ bgra: [UInt8]) -> [UInt8] {
+/// drawn on the border, and the three channels alike within 1.
+func gray(_ bgra: [UInt8], _ layout: Layout) -> [UInt8] {
+    let (pixelsWide, pixelsHigh) = (layout.pixelsWide, layout.pixelsHigh)
     var values = [UInt8](repeating: 0, count: pixelsWide * pixelsHigh)
     for y in 0..<pixelsHigh {
         for x in 0..<pixelsWide {
@@ -122,35 +214,334 @@ func gray(_ bgra: [UInt8]) -> [UInt8] {
     return values
 }
 
+/// The coverage of `bgra`, drawn in `text` over `ground`, row by row from
+/// the top, 255 being full ink, checked: nothing drawn on the border, and
+/// the three channels one coverage within 2 of 255.
+func coverage(_ bgra: [UInt8], _ layout: Layout, text: RGB, ground: RGB, name: String)
+    -> [UInt8]
+{
+    let (pixelsWide, pixelsHigh) = (layout.pixelsWide, layout.pixelsHigh)
+    var values = [UInt8](repeating: 0, count: pixelsWide * pixelsHigh)
+    let pairs = [(2, ground.red, text.red), (1, ground.green, text.green), (0, ground.blue, text.blue)]
+    for y in 0..<pixelsHigh {
+        for x in 0..<pixelsWide {
+            let at = (y * pixelsWide + x) * 4
+            let each = pairs.map { (channel, under, over) -> Double in
+                Double(Int(bgra[at + channel]) - under) / Double(over - under) * 255
+            }
+            let (least, most) = (each.min()!, each.max()!)
+            if most - least > 2 {
+                fail("\(name): the pixel \(x), \(y) is \(each) as coverages: smoothed by stripes")
+            }
+            let value = max(0, min(255, (each.reduce(0, +) / 3).rounded()))
+            let border = x == 0 || y == 0 || x == pixelsWide - 1 || y == pixelsHigh - 1
+            if border && value != 0 {
+                fail("\(name): the pixel \(x), \(y) on the border is \(value): a glyph is clipped")
+            }
+            values[y * pixelsWide + x] = UInt8(value)
+        }
+    }
+    return values
+}
+
+/// The pixels of `bgra` as red, green, blue, row by row from the top,
+/// checked: the alpha 255 everywhere, so the premultiplied values are the
+/// straight ones, and every pixel of the border the ground exactly.
+func composited(_ bgra: [UInt8], _ layout: Layout, ground: RGB, name: String) -> [UInt8] {
+    let (pixelsWide, pixelsHigh) = (layout.pixelsWide, layout.pixelsHigh)
+    var values = [UInt8](repeating: 0, count: pixelsWide * pixelsHigh * 3)
+    for y in 0..<pixelsHigh {
+        for x in 0..<pixelsWide {
+            let at = (y * pixelsWide + x) * 4
+            let (blue, green, red, alpha) = (
+                Int(bgra[at]), Int(bgra[at + 1]), Int(bgra[at + 2]), Int(bgra[at + 3])
+            )
+            if alpha != 255 {
+                fail("\(name): the pixel \(x), \(y) has the alpha \(alpha), not 255")
+            }
+            let border = x == 0 || y == 0 || x == pixelsWide - 1 || y == pixelsHigh - 1
+            if border && (red, green, blue) != (ground.red, ground.green, ground.blue) {
+                fail("\(name): the pixel \(x), \(y) on the border is \(red), \(green), \(blue), not the ground")
+            }
+            let to = (y * pixelsWide + x) * 3
+            values[to] = UInt8(red)
+            values[to + 1] = UInt8(green)
+            values[to + 2] = UInt8(blue)
+        }
+    }
+    return values
+}
+
+/// Writes `values`, red, green and blue a pixel, as an 8-bit RGB PNG file
+/// tagged sRGB.
+func writeRGB(_ values: [UInt8], _ layout: Layout, to path: String) {
+    let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue)
+    guard let data = CFDataCreate(nil, values, values.count),
+        let source = CGDataProvider(data: data),
+        let image = CGImage(
+            width: layout.pixelsWide, height: layout.pixelsHigh, bitsPerComponent: 8,
+            bitsPerPixel: 24, bytesPerRow: layout.pixelsWide * 3,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: info, provider: source,
+            decode: nil, shouldInterpolate: false, intent: .defaultIntent),
+        let destination = CGImageDestinationCreateWithURL(
+            URL(fileURLWithPath: path) as CFURL, UTType.png.identifier as CFString, 1, nil)
+    else {
+        fail("cannot make the PNG file \(path)")
+    }
+    CGImageDestinationAddImage(destination, image, nil)
+    guard CGImageDestinationFinalize(destination) else {
+        fail("cannot write \(path)")
+    }
+}
+
+/// `color` as `#rrggbb`.
+func hex(_ color: RGB) -> String {
+    String(format: "#%02x%02x%02x", color.red, color.green, color.blue)
+}
+
+/// The linear-light value of the sRGB value `value`, from 0 to 1.
+func linear(_ value: Int) -> Double {
+    let unit = Double(value) / 255
+    return unit <= 0.04045 ? unit / 12.92 : pow((unit + 0.055) / 1.055, 2.4)
+}
+
+/// The sRGB value, from 0 to 255, of the linear-light value `value`.
+func encoded(_ value: Double) -> Int {
+    let value = max(0, min(1, value))
+    let unit = value <= 0.003_130_8 ? value * 12.92 : 1.055 * pow(value, 1 / 2.4) - 0.055
+    return Int((unit * 255).rounded())
+}
+
+/// Core Graphics' blend of `text` at `alpha` / 255 over `ground`, in a
+/// bitmap of the drawings' kind: the middle pixel of a 4 by 4 rectangle
+/// filled over the ground, as red, green, blue.
+func blendCase(text: RGB, ground: RGB, alpha: Int) -> (Int, Int, Int) {
+    let side = 8
+    let context = bitmap(side, side, ground: ground)
+    context.setFillColor(
+        CGColor(
+            srgbRed: CGFloat(text.red) / 255, green: CGFloat(text.green) / 255,
+            blue: CGFloat(text.blue) / 255, alpha: CGFloat(alpha) / 255))
+    context.fill(CGRect(x: 2, y: 2, width: 4, height: 4))
+    let bytes = context.data!.bindMemory(to: UInt8.self, capacity: side * side * 4)
+    let at = (4 * side + 4) * 4
+    if bytes[at + 3] != 255 {
+        fail("blend.txt: the pixel over an opaque ground has the alpha \(bytes[at + 3])")
+    }
+    return (Int(bytes[at + 2]), Int(bytes[at + 1]), Int(bytes[at]))
+}
+
+/// Writes `blend.txt` into `directory`, and prints how far the encoded
+/// and the linear-light predictions are from Core Graphics' results.
+func writeBlendTable(to path: String) {
+    let texts = [black, white, light, grey]
+    let grounds = [white, black, dark]
+    let alphas = [32, 64, 128, 192, 224]
+    var lines = [
+        "# Core Graphics' blend of a uniform fill over a ground, from tools/coretext/capture.swift.",
+        "# Each case: a bitmap, 8-bit RGB with alpha, premultiplied first, little-endian, in",
+        "# the sRGB colour space, filled with the ground, then a 4 by 4 rectangle filled over",
+        "# it in the text colour at the alpha / 255; the line holds its middle pixel.",
+        "# <text #rrggbb> <ground #rrggbb> <alpha 0..255> <r> <g> <b>",
+    ]
+    var (worstEncoded, worstLinear) = (0, 0)
+    for text in texts {
+        for ground in grounds {
+            if (text.red, text.green, text.blue) == (ground.red, ground.green, ground.blue) {
+                continue
+            }
+            for alpha in alphas {
+                let (red, green, blue) = blendCase(text: text, ground: ground, alpha: alpha)
+                lines.append("\(hex(text)) \(hex(ground)) \(alpha) \(red) \(green) \(blue)")
+                let a = Double(alpha) / 255
+                let pairs = [(text.red, ground.red, red), (text.green, ground.green, green), (text.blue, ground.blue, blue)]
+                for (over, under, got) in pairs {
+                    let byEncoded = Int((Double(under) + a * Double(over - under)).rounded())
+                    let byLinear = encoded(linear(under) + a * (linear(over) - linear(under)))
+                    worstEncoded = max(worstEncoded, abs(byEncoded - got))
+                    worstLinear = max(worstLinear, abs(byLinear - got))
+                }
+            }
+        }
+    }
+    let text = lines.joined(separator: "\n") + "\n"
+    do {
+        try text.write(toFile: path, atomically: true, encoding: .utf8)
+    } catch {
+        fail("cannot write \(path): \(error)")
+    }
+    print("capture: wrote blend.txt: \(lines.count - 5) cases")
+    print("capture: blend.txt against encoded blending: worst \(worstEncoded) of 255")
+    print("capture: blend.txt against linear-light blending: worst \(worstLinear) of 255")
+}
+
+/// Writes `values`, one byte a pixel, as an 8-bit grayscale PNG file.
+func write(_ values: [UInt8], _ layout: Layout, to path: String) {
+    let grayInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue)
+    guard let data = CFDataCreate(nil, values, values.count),
+        let source = CGDataProvider(data: data),
+        let image = CGImage(
+            width: layout.pixelsWide, height: layout.pixelsHigh, bitsPerComponent: 8,
+            bitsPerPixel: 8, bytesPerRow: layout.pixelsWide, space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: grayInfo, provider: source, decode: nil, shouldInterpolate: false,
+            intent: .defaultIntent),
+        let destination = CGImageDestinationCreateWithURL(
+            URL(fileURLWithPath: path) as CFURL, UTType.png.identifier as CFString, 1, nil)
+    else {
+        fail("cannot make the PNG file \(path)")
+    }
+    CGImageDestinationAddImage(destination, image, nil)
+    guard CGImageDestinationFinalize(destination) else {
+        fail("cannot write \(path)")
+    }
+}
+
+/// The lines of `positions.txt` for `line` in `font` at `scale`, with what
+/// is printed of Core Text's advances beside the line's positions.
+func positions(_ line: CTLine, _ font: CTFont, scale: CGFloat) -> [String] {
+    var lines: [String] = []
+    let runs = CTLineGetGlyphRuns(line) as! [CTRun]
+    for run in runs {
+        let count = CTRunGetGlyphCount(run)
+        var glyphs = [CGGlyph](repeating: 0, count: count)
+        var places = [CGPoint](repeating: .zero, count: count)
+        var advances = [CGSize](repeating: .zero, count: count)
+        CTRunGetGlyphs(run, CFRange(location: 0, length: count), &glyphs)
+        CTRunGetPositions(run, CFRange(location: 0, length: count), &places)
+        CTFontGetAdvancesForGlyphs(font, .horizontal, glyphs, &advances, count)
+        for index in 0..<count {
+            let x = places[index].x * scale
+            let y = places[index].y * scale
+            let advance = advances[index].width * scale
+            lines.append("\(Int(scale)) \(glyphs[index]) \(x) \(y) \(advance)")
+            if index + 1 < count {
+                let step = (places[index + 1].x - places[index].x) * scale
+                if abs(step - advance) > 1e-9 {
+                    print(
+                        "capture: at scale \(Int(scale)) glyph \(index) moves the pen \(step) px; its advance is \(advance) px"
+                    )
+                }
+            }
+        }
+    }
+    return lines
+}
+
+/// Writes `lines` to `path`, under a header naming `font`.
+func writePositions(_ lines: [String], font: String, to path: String) {
+    let header = [
+        "# Core Text's positions of \"\(sentence)\" in \(font) at \(Int(points)) pt",
+        "# <scale> <glyph id> <x px> <y px> <advance px>, from the line's origin",
+    ]
+    let text = (header + lines).joined(separator: "\n") + "\n"
+    do {
+        try text.write(toFile: path, atomically: true, encoding: .utf8)
+    } catch {
+        fail("cannot write \(path): \(error)")
+    }
+}
+
+/// The first face of the font file at `path`, from its bytes, at 14 points.
+func firstFace(_ path: String) -> CTFont {
+    guard let data = FileManager.default.contents(atPath: path) else {
+        fail("cannot read \(path)")
+    }
+    guard
+        let descriptors = CTFontManagerCreateFontDescriptorsFromData(data as CFData)
+            as? [CTFontDescriptor],
+        let first = descriptors.first
+    else {
+        fail("no face in \(path)")
+    }
+    return CTFontCreateWithFontDescriptor(first, points, nil)
+}
+
+let arguments = CommandLine.arguments
+if arguments.count == 4 && arguments[1] == "--positions" {
+    let (fontPath, outputPath) = (arguments[2], arguments[3])
+    let font = firstFace(fontPath)
+    let line = makeLine(font, black)
+    let lines = positions(line, font, scale: 1) + positions(line, font, scale: 2)
+    writePositions(lines, font: (fontPath as NSString).lastPathComponent, to: outputPath)
+    print("capture: wrote \(outputPath): \(lines.count) glyph positions")
+    exit(0)
+}
+guard arguments.count == 3 else {
+    fail(
+        "usage: capture.swift <font file> <directory to write in>, or capture.swift --positions <font file> <file to write>"
+    )
+}
+let (fontPath, directory) = (arguments[1], arguments[2])
+
+guard let provider = CGDataProvider(url: URL(fileURLWithPath: fontPath) as CFURL),
+    let cgFont = CGFont(provider)
+else {
+    fail("cannot read a font from \(fontPath)")
+}
+let font = CTFontCreateWithGraphicsFont(cgFont, points, nil, nil)
+func path(_ name: String) -> String { (directory as NSString).appendingPathComponent(name) }
+
+// The weight sentence, as it was captured on 2026-11-14.
+let line = makeLine(font, black)
+let large = Layout(line, scale: 2)
+let drawnLarge = draw(line, large, ground: white, smoothed: true)
+let smoothed = gray(drawnLarge, large)
+let unsmoothed = gray(draw(line, large, ground: white, smoothed: false), large)
+write(smoothed, large, to: path("sentence.png"))
+
 /// How many values are below 128, and how far below 255 they are, summed.
 func weigh(_ values: [UInt8]) -> (dark: Int, ink: Int) {
     (values.filter { $0 < 128 }.count, values.reduce(0) { $0 + 255 - Int($1) })
 }
 
-let smoothed = gray(draw(smoothed: true))
-let unsmoothed = gray(draw(smoothed: false))
-
-let grayInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue)
-guard let data = CFDataCreate(nil, smoothed, smoothed.count),
-    let source = CGDataProvider(data: data),
-    let image = CGImage(
-        width: pixelsWide, height: pixelsHigh, bitsPerComponent: 8, bitsPerPixel: 8,
-        bytesPerRow: pixelsWide, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: grayInfo,
-        provider: source, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
-    let destination = CGImageDestinationCreateWithURL(
-        URL(fileURLWithPath: outputPath) as CFURL, UTType.png.identifier as CFString, 1, nil)
-else {
-    fail("cannot make the PNG file \(outputPath)")
-}
-CGImageDestinationAddImage(destination, image, nil)
-guard CGImageDestinationFinalize(destination) else {
-    fail("cannot write \(outputPath)")
-}
-
-let (dark, ink) = weigh(smoothed)
+let (darkCount, ink) = weigh(smoothed)
 let (plainDark, plainInk) = weigh(unsmoothed)
-print("capture: wrote \(outputPath): \(pixelsWide) by \(pixelsHigh) pixels, baseline \(baseline) up from the bottom")
-print("capture: line \(width) pt wide, ascent \(ascent), descent \(descent)")
-print("capture: smoothed: \(dark) dark pixels, ink \(ink)")
+print("capture: wrote sentence.png: \(large.pixelsWide) by \(large.pixelsHigh) pixels, baseline \(large.baseline) up from the bottom")
+print("capture: line \(large.width) pt wide, ascent \(large.ascent), descent \(large.descent)")
+print("capture: smoothed: \(darkCount) dark pixels, ink \(ink)")
 print("capture: not smoothed: \(plainDark) dark pixels, ink \(plainInk)")
 print("capture: smoothing changes the drawing: \(smoothed != unsmoothed)")
+
+// The drawings the rasteriser is also compared with.
+let small = Layout(line, scale: 1)
+for (name, layout, text, ground) in [
+    ("sentence-dark.png", large, light, dark),
+    ("sentence-14.png", small, black, white),
+    ("sentence-14-dark.png", small, light, dark),
+    ("sentence-grey.png", large, grey, white),
+] {
+    let drawn = draw(makeLine(font, text), layout, ground: ground, smoothed: true)
+    let values = coverage(drawn, layout, text: text, ground: ground, name: name)
+    write(values, layout, to: path(name))
+    let total = values.reduce(0) { $0 + Int($1) }
+    print("capture: wrote \(name): \(layout.pixelsWide) by \(layout.pixelsHigh) pixels, baseline \(layout.baseline) up from the bottom, coverage \(total)")
+}
+
+let lines = positions(line, font, scale: 1) + positions(line, font, scale: 2)
+writePositions(lines, font: (fontPath as NSString).lastPathComponent, to: path("positions.txt"))
+print("capture: wrote positions.txt: \(lines.count) glyph positions")
+
+// What macOS put in each bitmap, ground and text composited.
+let compositedDirectory = path("composited")
+do {
+    try FileManager.default.createDirectory(
+        atPath: compositedDirectory, withIntermediateDirectories: true)
+} catch {
+    fail("cannot make \(compositedDirectory): \(error)")
+}
+for (name, layout, text, ground) in [
+    ("sentence.png", large, black, white),
+    ("sentence-dark.png", large, light, dark),
+    ("sentence-14.png", small, black, white),
+    ("sentence-14-dark.png", small, light, dark),
+    ("sentence-grey.png", large, grey, white),
+] {
+    let drawn =
+        name == "sentence.png"
+        ? drawnLarge : draw(makeLine(font, text), layout, ground: ground, smoothed: true)
+    let values = composited(drawn, layout, ground: ground, name: "composited/\(name)")
+    writeRGB(values, layout, to: (compositedDirectory as NSString).appendingPathComponent(name))
+    print("capture: wrote composited/\(name): \(layout.pixelsWide) by \(layout.pixelsHigh) pixels")
+}
+
+writeBlendTable(to: path("blend.txt"))

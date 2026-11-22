@@ -33,9 +33,12 @@
 # layers"): it declares no `keywords`, so no package may import its modules,
 # and the layer imports check holds it to that (tools/layer-imports-check.sh).
 #
-# It imports two features that are still core modules, the shell
-# (`Editor.Shell`) and the workspace's modes (`Editor.Workspace.Modes`).
-# When either moves into a package, this one requires that package.
+# It requires no feature. It reaches the shell's history through the
+# interface package `shell-api` (`ShellApi`), visits a location's file
+# through `files-api` (`FilesApi`), since the features-as-packages roadmap's
+# phase 6, and reads the contributions, their hook and a buffer's on-modes
+# from the interface package `compile-api` (`Compile.hook`,
+# `Workspace.onModesOf`, `CompileApi.Listing`), since its phase 8.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/compile update --keep-toolchain
@@ -45,6 +48,29 @@ name = "compile"
 testDriver = "«compile-test»"
 defaultTargets = ["Compile", "CompileTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+
+# The minibuffer's interface package: its tests bind its names
+# (`MinibufferApi.cancelName`) and its linked test hands its host the
+# fake (`MinibufferApiTest.fake`, the core's test kit's minibuffer) where
+# the default set has the minibuffer, so they import no implementation of
+# the minibuffer.
+[[require]]
+name = "minibuffer-api"
+path = "../minibuffer-api"
+
+# The interface package of the compile mode: the contribution vocabulary,
+# the two extension points this package registers its shipped modes at and
+# reads through `Compile.hook`, the listing, and the contract check and the
+# listing kit its tests run.
+[[require]]
+name = "compile-api"
+path = "../compile-api"
+
+# The interface package of the shell: the history of the lines run, whose
+# store and rule the compile prompt's history copies.
+[[require]]
+name = "shell-api"
+path = "../shell-api"
 
 [[require]]
 name = "editor-core"

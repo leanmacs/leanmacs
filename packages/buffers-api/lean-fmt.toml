@@ -1,0 +1,3 @@
+# lean-fmt's config for this package (`mise run lean-fmt`, through
+# tools/package-set.sh fmt). Every file is checked with the defaults, as
+# the core is: this package holds no headless fixture.

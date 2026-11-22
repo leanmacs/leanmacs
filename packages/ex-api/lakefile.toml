@@ -1,0 +1,51 @@
+# The interface package of the ex command line: the names of the command
+# that asks for an ex line and runs it, which the Vim scheme binds `:` to,
+# and of the command the ex name `q` runs, which is the core's quit name
+# (docs/design/extension-points.md, "Three layers"; docs/design/packages.md).
+# It declares the keyword `editor-interface`, so a package may import its
+# modules, and the layer imports check holds an implementation package to
+# importing interface packages and the core alone
+# (tools/layer-imports-check.sh). It registers nothing and has no entry
+# module, so a set that holds it gains no package from it.
+#
+# - `ExApi` is its library: `ExApi.lean`, the names.
+# - `ExApiTest` holds its fake (`ExApiTest/Fake.lean`, the core's test
+#   kit's ex line), the contract check every implementation runs
+#   (`ExApiTest/Contract.lean`) and its own tests. The contract names
+#   `shell-api`'s `shell-command`, which a bang line is handed to, so
+#   this package requires that interface package, beside the core.
+# - `ex-api-test` is its test driver (`lake test`), rooted at
+#   `ExApiTest/Model.lean`.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/ex-api update --keep-toolchain
+# then the same for every set that reaches this package, and commit each
+# lake-manifest.json.
+name = "ex-api"
+keywords = ["editor-interface"]
+testDriver = "«ex-api-test»"
+defaultTargets = ["ExApi", "ExApiTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+# The interface package of the shell: the name `shell-command`, which the
+# contract holds a bang line to be handed to.
+[[require]]
+name = "shell-api"
+path = "../shell-api"
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "ExApi"
+
+[[lean_lib]]
+name = "ExApiTest"
+globs = ["ExApiTest.+"]
+
+[[lean_exe]]
+name = "ex-api-test"
+root = "ExApiTest.Model"

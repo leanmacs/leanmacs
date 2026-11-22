@@ -1,26 +1,13 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
 import ConfigTest.Support.Gate
-import ConfigTest.Support.Hosts
-import ConfigTest.Support.Keys
-import ConfigTest.Support.Lines
-import ConfigTest.Support.Syntax
+import ConfigTest.Support.Shipped
 import Editor.Api
 import Editor.Appearance
-import Editor.AtPoint.Compiled
-import Editor.Buffers
-import Editor.Buffers.Compiled
 import Editor.Clipboard.InProcess
 import Editor.Command
 import Editor.Command.Call
 import Editor.Completion
-import Editor.Completion.AtPoint
-import Editor.Completion.Compiled
-import Editor.Completion.Display
-import Editor.Completion.Displays
-import Editor.Completion.Paths
-import Editor.Completion.Style
-import Editor.Completion.Words
 import Editor.Config.Diagnostic
 import Editor.Config.Directory
 import Editor.Config.Elaborate
@@ -34,72 +21,50 @@ import Editor.Display
 import Editor.DisplayRules
 import Editor.Event
 import Editor.Event.Queue
-import Editor.Evil.Compiled
-import Editor.Ex
-import Editor.Ex.Compiled
 import Editor.Ex.Line
-import Editor.ExecuteCommand.Compiled
 import Editor.Face
 import Editor.Ffi.Counter
 import Editor.Ffi.Events
 import Editor.Ffi.Interrupt
 import Editor.File
 import Editor.FileWatch
-import Editor.Files
-import Editor.Files.Compiled
-import Editor.FrameCommands.Compiled
 import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.InputScheme
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Runner
 import Editor.Job.Table
-import Editor.Keymap
 import Editor.Language
-import Editor.Language.Compiled
 import Editor.Layout
 import Editor.Loop
 import Editor.Menu
-import Editor.Menu.Compiled
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Package
 import Editor.Process.Environment
 import Editor.Program
-import Editor.ProjectMode
-import Editor.ProjectMode.Listing
-import Editor.ProjectSearch.Compiled
 import Editor.Scene
 import Editor.Setup
 import Editor.State
 import Editor.SyntaxTree
 import Editor.TabBar
-import Editor.TabCommands
-import Editor.TabCommands.Compiled
+import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
+import Editor.Test.Linked.Lines
+import Editor.Test.Linked.Shipped
+import Editor.Test.Restore
 import Editor.Text
 import Editor.Text.Model
 import Editor.Text.Real
-import Editor.Themes
-import Editor.Themes.Compiled
 import Editor.Watch
 import Editor.Window
 import Editor.Window.Real
-import Editor.WindowCommands.Compiled
-import Editor.WorkingSet.Compiled
 import Editor.Workspace
-import Editor.Workspace.Attach
-import Editor.Workspace.Compiled
-import Editor.Workspace.FindFile
-import Editor.Workspace.FindInProject
-import Editor.Workspace.Modes
-import EditorCore.EditorPackage
+import FilesApiTest.Fake
 
 /-!
 # Config tests: `Editor/Headless.lean`
@@ -114,6 +79,7 @@ root module `ConfigTest` runs them; its module doc says what each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- Runs `check` against a stepped host started over `elaborator` and
 `source` (`staged`), with its output in a buffer `check` is handed. `false`
@@ -357,7 +323,7 @@ def hostChecks (context : Context) : List Check :=
         let collaborators := { stage.collaborators with packages := #[] }
         let running ← Headless.Running.new collaborators
         let registry := running.config.registry
-        return registry.ownersByKind.size == 19 && registry.ownersByKind.all (·.isEmpty) &&
+        return registry.ownersByKind.size == 18 && registry.ownersByKind.all (·.isEmpty) &&
             registry.styleDefaults.isEmpty &&
             registry.menuBar? == none &&
             (Headless.Running.keys collaborators running 0).menu == none &&
@@ -995,7 +961,8 @@ def withRealRecordedSyntaxTree (context : Context)
 
 /-- The thread that emitted the first line of the host's output that is
 `line`, if there is one. -/
-def Session.threadOf (session : Session) (line : String) : IO (Option UInt64) := do
+def _root_.Editor.Test.Linked.Session.threadOf (session : Session) (line : String) :
+    IO (Option UInt64) := do
   let lines ← session.output.get
   let threads ← session.threads.get
   return (lines.idxOf? line).bind fun index => threads[index]?
@@ -1695,6 +1662,16 @@ def readingJob : Config.JobRegistration :=
           now)
         fun n => discard <| createText s!"read {n}" }
 
+/-- A config whose `setup` defines the at-point source `paused`, asked by
+itself after a pause of 240 ms and answering nothing, and uses it in every
+buffer: a typed key arms its pause on the host's clock, and no session
+opens. -/
+def pausedAtPointText : String :=
+  "def setup : SetupM Unit := do
+  defineAtPoint { name := \"paused\", pause := some 240, ask := fun _ => pure none }
+  useAtPoint \"paused\"
+"
+
 /-- The checks of a host's idle signal (`Editor/Headless.lean`, "The idle
 signal"; `docs/design/concurrency.md`): what holds a unit of a host's
 activity count, read through the host (`Host.activitySeen`) and waited for
@@ -1757,14 +1734,15 @@ def idleChecks (context : Context) : List Check :=
       run := do
         let entered ← IO.Promise.new
         holdingUntil fun hold letGo =>
-            withRealVimHost context [] (emitting := fun emit line => do
+            withRealTestHost context [("init.lean", pausedAtPointText)] (emitting :=
+              fun emit line => do
               if line.startsWith "commands:" then
                 entered.resolve ()
                 hold
               emit line) fun session => do
               try
                 session.ask [.reload]
-                session.typed "i a b"
+                session.typed "a b"
                 let armed ← session.host.activitySeen
                 let waiting ← session.clock.waiting
                 -- The editor thread is held inside a show, and the pause
@@ -3004,8 +2982,8 @@ wait 2" with
                 removed.modify (·.push made)
           let staged := stage.collaborators
           let shipped :=
-            Headless.shippedOver #[] #[`Editor] "" [] directory.toString staged.emit staged.services
-              staged.published staged.held files
+            Headless.shippedOver TestScheme.scheme #[] #[`Editor] "" [] directory.toString
+              staged.emit staged.services staged.published staged.held files
           shipped.dispose
           let before ← removed.get
           discard <| files.directory
@@ -3366,140 +3344,6 @@ def hostLoopChecks (context : Context) : List Check :=
                 (← session.scene) == ("".quote, #[viewLine "napped" 6]))
           nappingCompiled }]
 
-/-- The directives of one ex line of a script: the ex command run by its
-name, which asks, `line` committed into the minibuffer, and the accept
-key. -/
-def exLineDirectives (line : String) : List Headless.Directive :=
-  [.request (.run Ex.name), .commit line] ++ acceptKeys.map .key
-
-/-- A script of `directives`, one a line, numbered from 1. -/
-def scriptOf (directives : List Headless.Directive) : Array Headless.Line :=
-  (directives.zipIdx.map fun (directive, index) => ⟨index + 1, directive⟩).toArray
-
-/-- Runs `directives` as a script (`Headless.run`) against a host of its own
-over the library's file service (`Stage.overFiles`), with an empty config
-directory, that is handed what the executable is handed for the ex line:
-the ex line's commands and the `ex` package's ex names, the minibuffer's
-commands and its mode, and the file commands with their jobs. What `run`
-answered, and every line the host printed. -/
-def ranScript (context : Context) (directives : List Headless.Directive) :
-    IO (Option Headless.Failure × Array String) :=
-  IO.FS.withTempDir fun directory => do
-    let stage ←
-      Stage.overFiles context (Config.Directory.source directory)
-          { commands :=
-              Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
-                Files.package.registered.commands
-            jobs := Files.package.registered.jobs
-            modes := Minibuffer.package.registered.modes
-            ex := Ex.package.registered.ex }
-    let failure ←
-      Headless.run stage.collaborators (scriptOf directives) hangGuard (grace := some hangGuard)
-    return (failure, ← stage.output.get)
-
-/-- The checks of a script that a command ends (`Editor/Headless.lean`,
-"The driver, and the command line"), with `Headless.run` on scripts built
-here, over the real elaborator, the real queue, the real text binding and
-the library's file service, on a file each check writes in a temporary
-directory of its own: the phase's first two acceptance criteria through the
-host. They share the file checks' table of waits and completion pump, so
-they run after them.
-
-Each script that opens a file has a `join` after the `e` line: the open is
-a job, and without the wait the text would be committed into the scratch
-buffer. The `wq` script has a `join` after the `wq` line too: the quit it
-asks for waits for the save, so without the wait the `show` line would be
-handled while the save runs, and the end of the script would stop the loop,
-which cancels the save. -/
-def exScriptChecks (context : Context) : List Check :=
-  let listed (output : Array String) : Bool := output.any (·.startsWith "commands:")
-  [{  name :=
-        "criterion 1 through the host: a script that runs e on a file, joins, commits text, runs w, joins, runs q, and then has a show line: the script has no failure, the file holds the committed text before what it held, and the show line was not run"
-      run :=
-        withFiles context fun files => do
-          let path := files / "note.txt"
-          IO.FS.writeBinFile path noteText.toUTF8
-          let (failure, output) ←
-            ranScript context
-                (exLineDirectives s!"e {path}" ++ [.join, .commit "x"] ++ exLineDirectives "w" ++
-                  [.join] ++
-                  exLineDirectives "q" ++
-                  [.request .show])
-          return failure == none && (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
-              endedOk output Files.saveJob &&
-              !listed output },
-    { name :=
-        "criterion 2 through the host: the same script with wq in place of w, the join and q, and a join after it: the script has no failure, the file holds the buffer's text, and the show line was not run"
-      run :=
-        withFiles context fun files => do
-          let path := files / "note.txt"
-          IO.FS.writeBinFile path noteText.toUTF8
-          let (failure, output) ←
-            ranScript context
-                (exLineDirectives s!"e {path}" ++ [.join, .commit "x"] ++ exLineDirectives "wq" ++
-                  [.join, .request .show])
-          return failure == none && (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
-              endedOk output Files.saveJob &&
-              !listed output },
-    { name :=
-        "a script whose q is refused, for a file's buffer that was edited, runs its later lines: the show line prints the commands, the script has no failure, and the file is as it was"
-      run :=
-        withFiles context fun files => do
-          let path := files / "note.txt"
-          IO.FS.writeBinFile path noteText.toUTF8
-          let (failure, output) ←
-            ranScript context
-                (exLineDirectives s!"e {path}" ++ [.join, .commit "x"] ++ exLineDirectives "q" ++
-                  [.request .show])
-          return failure == none && listed output &&
-              (← IO.FS.readBinFile path) == noteText.toUTF8 },
-    { name :=
-        "once a step said stop the host runs no further invocation: a command that asks for quit and then for the open command, with a path, to be run after it ends the loop at quit, and the open command never runs: the host prints the run alone and starts no job; with a command that says other in place of quit, the load job is started"
-      run :=
-        withFiles context fun files => do
-          let path := files / "note.txt"
-          IO.FS.writeBinFile path noteText.toUTF8
-          let handing (first : String) : Config.Registration :=
-            { name := s!"hand-{first}"
-              action :=
-                .plain do
-                  Editor.invoke { command := first }
-                  Editor.invoke { command := Files.openName, arguments := [.str path.toString] } }
-          let compiled : Compiled :=
-            { exCompiled with
-              commands := exCompiled.commands ++ #[handing Ex.quitName, handing "other"]
-              jobs := Files.package.registered.jobs }
-          let started := s!"job 1 {Files.loadJob}: started"
-          let ran (name : String) : IO (Option (Headless.Wait × Array String)) := do
-            let stage ← Stage.new context context.elaborator (memorySource []) compiled
-            leavingLibraryQueue <|
-                Headless.withStepped stage.collaborators stage.memory (guard := hangGuard) (grace :=
-                  some hangGuard) fun stepped => do
-                  stepped.send (.run name)
-                  let joined ← stepped.join hangGuard
-                  let output ← stage.output.get
-                  return some (joined, output)
-          let left ← ran s!"hand-{Ex.quitName}"
-          let went ← ran "hand-other"
-          return left == some (.ended, #[s!"run hand-{Ex.quitName}: ok"]) &&
-              (went.map fun (joined, output) =>
-                  joined == .settled && output.contains "run hand-other: ok" &&
-                    output.contains started) ==
-                some true },
-    { name :=
-        "a wait on a host whose loop a command ended answers that the loop has ended, a settle and a join alike, which is no failure of a script, and halting the host then answers that it stopped"
-      run := do
-        let stage ← Stage.new context context.elaborator (memorySource []) exCompiled
-        Headless.withHost stage.collaborators (guard := hangGuard) fun host => do
-            host.send (.run Ex.quitName)
-            let ended := (← Job.awaitWithin hangGuard host.thread).isSome
-            let awaited ← host.await hangGuard
-            let joined ← host.join hangGuard
-            return ended && awaited == .ended && joined == .ended &&
-                Headless.Wait.ended.failure (some 3) == none &&
-                (← host.halt hangGuard) &&
-                (← stage.output.get) == #[s!"run {Ex.quitName}: ok"] }]
-
 /-- A config whose `greet` does not elaborate: a number where `message` takes
 a string, on its first line. -/
 def brokenGreetText : String :=
@@ -3557,86 +3401,15 @@ def reloadEchoChecks (context : Context) : List Check :=
           let made ← session.echo
           return before == ("", #[]) && isGreetError made }]
 
-/-- The registry a host of the executable starts with: the one the packages
-of the core's Lake package make (`Config.State.ofPackages` of
-`EditorCore.EditorPackage.packages`), which is what `Headless.Running.new`
-starts from for a host handed them. -/
-def shippedRegistry : Config.Registry :=
-  let (state, _) : Config.State Config.Elaborate.Base Config.Elaborate.Handle × Array String :=
-    Config.State.ofPackages EditorCore.EditorPackage.packages
-  state.registry
-
-/-- The checks of what the executable's hosts start with: the registry the
-packages that ship make (`shippedRegistry`), each entry for the owner named
-after its package, and the test scheme's keymap of its bindings. Nothing
-here starts a host or a job. -/
+/-- The checks of what the executable's host (`Headless.shippedOver`) starts
+its loop with: the state directory it is handed. What its registry holds is
+not this list's. The core's Lake package registers no package, so a host
+starts from what `Config.State.ofPackages` makes of the packages its set
+hands it: that it makes nothing of none is `hostChecks`' here and
+`ModelTest.packageChecks`', and what a package registers is that package's
+own tests'. Nothing here starts a host or a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
-        "the executable's hosts start with the source files registered by the files package in the category file, its job files, the style path, and the file category matched with path, the completion package's"
-      run := do
-        let registry := shippedRegistry
-        return registry.sources.any
-              (fun entry => entry.source.name == "files" && entry.owner == Files.package.owner) &&
-            registry.sourcesIn Completion.Paths.category == #["files"] &&
-            registry.jobs.any
-              (fun entry =>
-                entry.registration.name == Completion.Paths.job &&
-                  entry.owner == Files.package.owner) &&
-            (registry.style? "path").isSome &&
-            (registry.matching.styleFor (some Completion.Paths.category)).name == "path" &&
-            registry.matching.ownerFor (some Completion.Paths.category) ==
-              Completion.package.owner &&
-            registry.styleDefaults == #[(Completion.Paths.category, "path")] },
-    { name :=
-        "the executable's hosts start with find-file-in-workspace registered by the workspace package, the source workspace-files registered by it in the category workspace-file, which it alone is in, filtered and answered later by its job workspace-files, registered by it"
-      run := do
-        let registry := shippedRegistry
-        return (registry.find? Workspace.FindFile.name).any (·.owner == Workspace.package.owner) &&
-            registry.sources.any
-              (fun entry =>
-                entry.source.name == Workspace.FindFile.sourceName &&
-                  entry.owner == Workspace.package.owner &&
-                  entry.source.filtered &&
-                  entry.source.later.map (·.job) == some Workspace.FindFile.job) &&
-            registry.sourcesIn Workspace.FindFile.category == #[Workspace.FindFile.sourceName] &&
-            registry.jobs.any
-              (fun entry =>
-                entry.registration.name == Workspace.FindFile.job &&
-                  entry.owner == Workspace.package.owner) },
-    { name :=
-        "the executable's hosts start with find-file-in-project registered by the workspace package, the source project-workspaces registered by it in the category project-workspace, which it alone is in, answered later by its job project-workspaces, and that job, project-workspace-choose and project-workspace-find registered by it"
-      run := do
-        let registry := shippedRegistry
-        let jobs :=
-          [Workspace.FindInProject.job, Workspace.FindInProject.chooseJob,
-            Workspace.FindInProject.findJob]
-        return (registry.find? Workspace.FindInProject.name).any
-              (·.owner == Workspace.package.owner) &&
-            registry.sources.any
-              (fun entry =>
-                entry.source.name == Workspace.FindInProject.sourceName &&
-                  entry.owner == Workspace.package.owner &&
-                  entry.source.later.map (·.job) == some Workspace.FindInProject.job) &&
-            registry.sourcesIn Workspace.FindInProject.category ==
-              #[Workspace.FindInProject.sourceName] &&
-            jobs.all fun name =>
-              registry.jobs.any
-                (fun entry =>
-                  entry.registration.name == name && entry.owner == Workspace.package.owner) },
-    { name :=
-        "the executable's hosts start with project-search, project-search-found, project-search-symbol and project-search-visit registered by the project-search package, the mode project-search, and the jobs project-search and project-search-load, registered by it"
-      run := do
-        let registry := shippedRegistry
-        let owner := ProjectSearch.package.owner
-        return [ProjectSearch.name, ProjectSearch.foundName, ProjectSearch.symbolName,
-                  ProjectSearch.visitName].all
-              (fun name => (registry.find? name).any (·.owner == owner)) &&
-            registry.modes.any
-              (fun entry => entry.mode.name == ProjectSearch.modeName && entry.owner == owner) &&
-            [ProjectSearch.job, ProjectSearch.loadJob].all fun name =>
-              registry.jobs.any fun entry =>
-                entry.registration.name == name && entry.owner == owner },
-    { name :=
         "the headless host handed a state directory starts its loop with it, as its working directory and home, and one handed none starts with none"
       run := do
         let completions ← Job.Completions.new
@@ -3648,204 +3421,15 @@ def shippedChecks (_ : Unit) : List Check :=
         -- written, and no config is loaded here.
         let files ← Config.Elaborate.ModuleFiles.temporary
         let over (stateDirectory : Option System.FilePath) :=
-          (Headless.shippedOver #[] #[`Editor] "" [] "" (fun _ => pure ()) services published held
-              files stateDirectory).hosting
+          (Headless.shippedOver TestScheme.scheme #[] #[`Editor] "" [] "" (fun _ => pure ())
+              services published held files stateDirectory).hosting
         let given := ((over (some "/state")).start.runModel {}).1
         let none_ := ((over none).start.runModel {}).1
         return (match given, none_ with
           | .ok given, .ok none_ =>
             given.state.stateDirectory == some "/state" && none_.state.stateDirectory == none &&
               given.state.workingDirectory == "/"
-          | _, _ => false) },
-    { name :=
-        "the executable's hosts start with working-set-add, working-set-open, working-set-visit, working-set-remove, working-set-note and working-set-refresh registered by the working-set package, the mode working-set, and the jobs working-set-files, working-set-load, working-set-write and working-set-save, registered by it"
-      run := do
-        let registry := shippedRegistry
-        let owner := WorkingSet.package.owner
-        return [WorkingSet.addName, WorkingSet.openName, WorkingSet.visitName,
-                  WorkingSet.removeName, WorkingSet.noteName, WorkingSet.refreshName].all
-              (fun name => (registry.find? name).any (·.owner == owner)) &&
-            registry.modes.any
-              (fun entry => entry.mode.name == WorkingSet.modeName && entry.owner == owner) &&
-            [WorkingSet.filesJob, WorkingSet.loadJob, WorkingSet.writeJob, WorkingSet.saveJob].all
-              fun name =>
-              registry.jobs.any fun entry =>
-                entry.registration.name == name && entry.owner == owner },
-    { name :=
-        "the executable's hosts start with find-file-in-another-workspace registered by the workspace package and one binding of it, the package's, C-x C-d in the prompt category workspace-file, described Find in another workspace; the global keymap does not bind C-x"
-      run := do
-        let registry := shippedRegistry
-        let escapes :=
-          registry.bindings.filter (·.binding.command == Workspace.FindInProject.escapeName)
-        let global : Keymap Invocation := registry.keymap TestScheme.scheme
-        return (registry.find? Workspace.FindInProject.escapeName).any
-              (·.owner == Workspace.package.owner) &&
-            escapes.map (fun entry => (entry.owner, entry.binding)) ==
-              #[(Workspace.package.owner,
-                  { keys := (keysOf "C-x C-d").map .key
-                    command := Workspace.FindInProject.escapeName
-                    category := some Workspace.FindFile.category
-                    desc := some "Find in another workspace" })] &&
-            global.find? (keysOf "C-x") == none &&
-            !global.continues (keysOf "C-x") },
-    { name :=
-        "the executable's hosts start with the source words registered by the at-point package in the category word, its job words registered by it, the at-point source words registered by it, and a modeless buffer's at-point chain is words"
-      run := do
-        let registry := shippedRegistry
-        return registry.sources.any
-              (fun entry => entry.source.name == "words" && entry.owner == AtPoint.package.owner) &&
-            registry.sourcesIn Completion.Words.category == #["words"] &&
-            registry.jobs.any
-              (fun entry =>
-                entry.registration.name == Completion.Words.job &&
-                  entry.owner == AtPoint.package.owner) &&
-            registry.atPoints.any
-              (fun entry =>
-                entry.atPoint.name == "words" && entry.owner == AtPoint.package.owner) &&
-            registry.atPointNames none #[] == #["words"] &&
-            registry.unknownAtPoints == #[] },
-    { name :=
-        "the executable's hosts start with the code mode and the languages rust, json, markdown, toml and lean, in that order, registered by the languages package"
-      run := do
-        let registry := shippedRegistry
-        return registry.modes.any
-              (fun entry =>
-                entry.mode.name == Language.codeName && entry.owner == Language.package.owner) &&
-            (registry.mode? Language.codeName).any (·.syntaxTreeOfLanguage) &&
-            registry.languages.map
-                (fun entry => (entry.language.name, entry.owner == Language.package.owner)) ==
-              #[("rust", true), ("json", true), ("markdown", true), ("toml", true),
-                ("lean", true)] },
-    { name :=
-        "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, the first two commands the frame-commands package's and quit the ex package's, and the three bindings the frame-commands package's; with switch-buffer, list-buffers and close-buffer registered by the buffers package, and the ex names b, ls and bd bound to them"
-      run := do
-        let registry := shippedRegistry
-        let bound (text : String) : Option Invocation :=
-          (registry.keymap TestScheme.scheme).find? (keysOf text)
-        let ownedBy (package : Package) (name : String) : Bool :=
-          (registry.find? name).any (·.owner == package.owner)
-        let frameKeys :=
-          (registry.bindings.filter (·.owner == FrameCommands.package.owner)).map
-            (·.binding.command)
-        let ex (name : String) : Option String := (registry.ex? name).map (·.command)
-        return bound "C-s-f" == some { command := "toggle-fullscreen" } &&
-            bound "s-m" == some { command := "minimise-window" } &&
-            bound "s-q" == some { command := Ex.quitName } &&
-            ownedBy FrameCommands.package "toggle-fullscreen" &&
-            ownedBy FrameCommands.package "minimise-window" &&
-            ownedBy Ex.package Ex.quitName &&
-            frameKeys == #["toggle-fullscreen", "minimise-window", Ex.quitName] &&
-            [Buffers.switchName, Buffers.listName, Buffers.closeName].all
-              (ownedBy Buffers.package) &&
-            ex "b" == some Buffers.switchName &&
-            ex "ls" == some Buffers.listName &&
-            ex "bd" == some Buffers.closeName },
-    { name :=
-        "the executable's hosts start with every window command registered by the window-commands package, every command the Vim scheme's C-w table names among them"
-      run := do
-        let registry := shippedRegistry
-        let compiled (name : String) : Bool :=
-          (registry.find? name).any (·.owner == WindowCommands.package.owner)
-        return !WindowCommands.package.registered.commands.isEmpty &&
-            WindowCommands.package.registered.commands.all (compiled ·.name) &&
-            Vim.Default.windowKeys.all (compiled ·.2) },
-    { name :=
-        "the executable's hosts start with every tab command registered by the tab-commands package, every command the Vim scheme's tab table names among them"
-      run := do
-        let registry := shippedRegistry
-        let compiled (name : String) : Bool :=
-          (registry.find? name).any (·.owner == TabCommands.package.owner)
-        return !TabCommands.package.registered.commands.isEmpty &&
-            TabCommands.package.registered.commands.all (compiled ·.name) &&
-            Vim.Default.tabKeys.all (compiled ·.2) },
-    { name :=
-        "the executable's hosts start with the completion sources that ship each registered by its package, so config can ask for each by name: the ex line's history and its names, the buffers, the tabs, the themes and the commands; and with the command prompt, execute-command, registered by the execute-command package"
-      run := do
-        let registry := shippedRegistry
-        let ownedBy (package : Package) (name : String) : Bool :=
-          registry.sources.any fun entry =>
-            entry.source.name == name && entry.owner == package.owner
-        return [(Ex.package, Ex.historySource.name), (Ex.package, Ex.namesSource.name),
-                  (Buffers.package, Buffers.source.name),
-                  (TabCommands.package, TabCommands.source.name),
-                  (Themes.package, Themes.source.name),
-                  (ExecuteCommand.package, ExecuteCommand.source.name)].all
-              (fun (package, name) => ownedBy package name && (registry.source? name).isSome) &&
-            (registry.find? ExecuteCommand.name).any (·.owner == ExecuteCommand.package.owner) },
-    { name :=
-        "the executable's hosts start with the shipped completion styles, fuzzy and orderless, and the shipped completion display, minibuffer, registered by the completion package, and with the shipped sources of each shipped prompt's category the sources in the order of that prompt's defaults"
-      run := do
-        let registry := shippedRegistry
-        let compiled (name : String) : Bool :=
-          registry.styles.any fun entry =>
-            entry.style.name == name && entry.owner == Completion.package.owner
-        return ["fuzzy", "orderless"].all compiled &&
-            Completion.Displays.shipped.all
-              (fun display =>
-                registry.displays.any fun entry =>
-                  entry.display.name == display.name && entry.owner == Completion.package.owner) &&
-            registry.displays.any (·.display.name == "minibuffer") &&
-            registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] &&
-            registry.sourcesIn "buffer" == #[Buffers.source.name] &&
-            registry.sourcesIn "tab" == #[TabCommands.source.name] &&
-            registry.sourcesIn "theme" == #[Themes.source.name] &&
-            registry.sourcesIn ExecuteCommand.category == #[ExecuteCommand.source.name] },
-    { name :=
-        "the executable's hosts start with nothing of the compile mode: no command, ex name, job, mode or contribution of it is registered by a package of the core's Lake package, and compile as an ex name is not bound; the minibuffer's mode is"
-      run := do
-        let registry := shippedRegistry
-        let names :=
-          ["compile", "compile-command", "recompile", "compile-confirm", "kill-compilation",
-            "compilation-output", "next-error", "previous-error", "compile-goto-error"]
-        return names.all (fun name => (registry.find? name).isNone) &&
-            names.all (fun name => (registry.ex? name).isNone) &&
-            (registry.findJob? "compile-run").isNone &&
-            (registry.mode? "compilation").isNone &&
-            (registry.mode? Minibuffer.mode.name).isSome &&
-            registry.contributions.isEmpty },
-    { name :=
-        "the executable's hosts start with the jobs find-mode-markers and compile-list registered by the workspace package, beside find-workspace, and compile-list by no other package: the listing is the core's, whichever package gives the contributions it lists"
-      run := do
-        let registry := shippedRegistry
-        return (registry.findJob? Workspace.markerJob).any (·.owner == Workspace.package.owner) &&
-            (registry.findJob? Workspace.findJob).any (·.owner == Workspace.package.owner) &&
-            (registry.jobs.filter (·.registration.name == Compile.listJob)).map (·.owner) ==
-              #[Workspace.package.owner] },
-    { name :=
-        "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered by the themes package, and no other theme: the packages of the core's Lake package ship no palette"
-      run := do
-        let registry := shippedRegistry
-        return (registry.find? Themes.loadName).any (·.owner == Themes.package.owner) &&
-            registry.theme? Theme.defaultName ==
-              some { name := "default", theme := Theme.builtin } &&
-            registry.themes.map (fun entry => (entry.named.name, entry.owner.name)) ==
-              #[("default", "themes")] },
-    { name :=
-        "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a to open-file, save-buffer, undo, redo, clipboard-cut, clipboard-copy, clipboard-paste and select-all for the menu package, the commands the files package's and the evil package's"
-      run := do
-        let registry := shippedRegistry
-        let bound (text : String) : Option Invocation :=
-          (registry.keymap TestScheme.scheme).find? (keysOf text)
-        let ownedBy (package : Package) (name : String) : Bool :=
-          (registry.find? name).any (·.owner == package.owner)
-        let menuKeys :=
-          (registry.bindings.filter (·.owner == Menu.package.owner)).map (·.binding.command)
-        return registry.menuBar? == some (registry.menuOf Menu.standard) &&
-            registry.menus.all (·.owner == Menu.package.owner) &&
-            menuKeys ==
-              #["open-file", "save-buffer", "undo", "redo", "clipboard-cut", "clipboard-copy",
-                "clipboard-paste", "select-all"] &&
-            bound "s-o" == some { command := "open-file" } &&
-            bound "s-s" == some { command := "save-buffer" } &&
-            bound "s-z" == some { command := "undo" } &&
-            bound "s-Z" == some { command := "redo" } &&
-            bound "s-x" == some { command := "clipboard-cut" } &&
-            bound "s-c" == some { command := "clipboard-copy" } &&
-            bound "s-v" == some { command := "clipboard-paste" } &&
-            bound "s-a" == some { command := "select-all" } &&
-            ["open-file", "save-buffer"].all (ownedBy Files.package) &&
-            ["undo", "redo", "clipboard-cut", "clipboard-copy", "clipboard-paste", "select-all"].all
-              (ownedBy Evil.package) }]
+          | _, _ => false) }]
 
 /-- A config whose `setup` registers `greet` and the job `follow`, which
 watches the made-up file `/watched/f`, waits for its next delivery, and
@@ -4034,7 +3618,7 @@ def restoreStage (context : Context) (directory : System.FilePath)
   writeConfig directory files
   let stage ←
     Stage.new context context.elaborator (Config.Directory.source directory)
-        { packages := #[Files.package, Restore.package] }
+        { packages := #[FilesApiTest.fake, Test.Restore.package] }
   let fake ← Job.FakeFiles.new stage.collaborators.services.completions journalledModel
   let stage :=
     { stage with
@@ -4073,7 +3657,7 @@ def restoreFilesStage (context : Context) (directory state : System.FilePath)
   IO.FS.writeBinFile (Restore.logPath state 1 0 1) journalledLog
   let stage ←
     Stage.overFiles context (Config.Directory.source directory)
-        { packages := #[Files.package, restore] }
+        { packages := #[FilesApiTest.fake, restore] }
   return { stage with
       collaborators :=
         { stage.collaborators with
@@ -4086,18 +3670,18 @@ def restoreFilesStage (context : Context) (directory state : System.FilePath)
 with its output and the state directory. -/
 def withRestoreFiles (context : Context) (files : List (String × String))
     (check : Driven → IO.Ref (Array String) → System.FilePath → IO Bool)
-    (restore : Package := Restore.package) : IO Bool :=
+    (restore : Package := Test.Restore.package) : IO Bool :=
   IO.FS.withTempDir fun directory =>
-    withFiles context fun state => do
+    context.withFiles fun state => do
       let stage ← restoreFilesStage context directory state files restore
       onStage stage fun drive stage => check drive stage.output state
 
 /-- `withRestoreFiles` with a real host (`onRealStage`). -/
 def withRealRestoreFiles (context : Context) (files : List (String × String))
     (check : Headless.Host → IO.Ref (Array String) → System.FilePath → IO Bool)
-    (restore : Package := Restore.package) : IO Bool :=
+    (restore : Package := Test.Restore.package) : IO Bool :=
   IO.FS.withTempDir fun directory =>
-    withFiles context fun state => do
+    context.withFiles fun state => do
       let stage ← restoreFilesStage context directory state files restore
       onRealStage stage fun host stage => check host stage.output state
 
@@ -4152,7 +3736,7 @@ def withStateHost (context : Context) (state : System.FilePath) (files : List (S
     writeConfig directory files
     let stage ←
       Stage.overFiles context (Config.Directory.source directory)
-          { packages := #[Files.package, Restore.package] ++ packages }
+          { packages := #[FilesApiTest.fake, Test.Restore.package] ++ packages }
     let stage :=
       { stage with
         collaborators :=
@@ -4211,11 +3795,11 @@ the flag; and the host is stopped. -/
 def withFailingJournal (context : Context) (files : List (String × String))
     (check : Driven → IO.Ref (Array String) → IO.Ref Bool → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory =>
-    withFiles context fun state => do
+    context.withFiles fun state => do
       writeConfig directory files
       let stage ←
         Stage.overFiles context (Config.Directory.source directory)
-            { packages := #[Files.package, Restore.package] }
+            { packages := #[FilesApiTest.fake, Test.Restore.package] }
       let running : System.FilePath := "/A.app/Contents/MacOS/editor"
       let processes ←
         Job.FakeProcesses.new stage.collaborators.services.completions
@@ -4371,14 +3955,14 @@ def restoreOrderChecks (context : Context) : List Check :=
         -- Seen to bite: on the wait's old 300 ms guards the held save
         -- outlasts the guard, the wait answers busy, and the check fails
         -- every run, as the store checks below did under load.
-        withFiles context fun state =>
+        context.withFiles fun state =>
           IO.FS.withTempDir fun directory => do
             writeConfig directory []
             let gate ← IO.Promise.new
             let held ← IO.mkRef 0
             let stage ←
               Stage.overFiles context (Config.Directory.source directory)
-                  { packages := #[Files.package, Restore.package, countedPackage 1] }
+                  { packages := #[FilesApiTest.fake, Test.Restore.package, countedPackage 1] }
             let services := stage.collaborators.services
             let files := services.files
             -- The index's save, a session file's, is held until the gate
@@ -4414,7 +3998,7 @@ def restoreOrderChecks (context : Context) : List Check :=
     { name :=
         "a package's declared store kept across a restart, end to end: bumped twice and left uncleanly, the next host shows it before any reload, since packages register before the restore; a host handed the package at version 2 shows it migrated"
       run :=
-        withFiles context fun state => do
+        context.withFiles fun state => do
           let first ←
             withStateHost context state [] #[countedPackage 1] fun host stage => do
                 host.send (.restore none)
@@ -4436,7 +4020,7 @@ def restoreOrderChecks (context : Context) : List Check :=
     { name :=
         "a config's store kept across a restart: the start-up reload restores it; a config whose setup throws keeps it parked, and the index written after still lists it; a later good reload claims it"
       run :=
-        withFiles context fun state => do
+        context.withFiles fun state => do
           let first ←
             withStateHost context state keptConfig #[] fun host stage => do
                 host.send (.restore none)

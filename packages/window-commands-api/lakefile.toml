@@ -1,0 +1,42 @@
+# The interface package of the window commands: the names of the
+# commands that split, close, focus and arrange the frame's windows, which
+# the Vim scheme's window table binds
+# (docs/design/extension-points.md, "Three layers"; docs/design/packages.md).
+# It declares the keyword `editor-interface`, so a package may import its
+# modules, and the layer imports check holds an implementation package to
+# importing interface packages and the core alone
+# (tools/layer-imports-check.sh). It registers nothing and has no entry
+# module, so a set that holds it gains no package from it.
+#
+# - `WindowCommandsApi` is its library: `WindowCommandsApi.lean`, the names.
+# - `WindowCommandsApiTest` holds its fake (`WindowCommandsApiTest/Fake.lean`), the contract check every
+#   implementation runs (`WindowCommandsApiTest/Contract.lean`) and its own tests.
+# - `window-commands-api-test` is its test driver (`lake test`), rooted at
+#   `WindowCommandsApiTest/Model.lean`.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/window-commands-api update --keep-toolchain
+# then the same for every set that reaches this package, and commit each
+# lake-manifest.json.
+name = "window-commands-api"
+keywords = ["editor-interface"]
+testDriver = "«window-commands-api-test»"
+defaultTargets = ["WindowCommandsApi", "WindowCommandsApiTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "WindowCommandsApi"
+
+[[lean_lib]]
+name = "WindowCommandsApiTest"
+globs = ["WindowCommandsApiTest.+"]
+
+[[lean_exe]]
+name = "window-commands-api-test"
+root = "WindowCommandsApiTest.Model"

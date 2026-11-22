@@ -9,17 +9,31 @@
 //! out = text × coverage + under × (1 − coverage)
 //! ```
 //!
-//! in linear light: the target holds sRGB values, which are converted on
-//! the way in and on the way out, so half coverage of white on black is
-//! 188 of 255 and not 128. A plain mask has one coverage for the three
-//! channels; a subpixel mask has one for each, which is what makes text
-//! sharper on a display whose pixels are stripes of red, green and blue.
+//! in one of two spaces, a renderer's setting (`Blending`), for the whole
+//! frame alike:
+//!
+//! - **Linear light** (`Blending::Linear`, the default): the target holds
+//!   sRGB values, which are converted on the way in and on the way out, so
+//!   half coverage of white on black is 188 of 255 and not 128.
+//! - **sRGB-encoded values** (`Blending::Encoded`): the values / 255 are
+//!   blended as they are, with no conversion either way, so half coverage
+//!   of white on black is 128. This is how Core Graphics composites in an
+//!   8-bit sRGB bitmap, which is how macOS draws text, and what macOS's
+//!   glyph masks are made for: `tests/coretext/blend.txt` is its result
+//!   for uniform fills, and this module's tests hold the encoded
+//!   arithmetic to it within 1 of 255. Linear light misses it by up to 73.
+//!
+//! A plain mask has one coverage for the three channels; a subpixel mask
+//! has one for each, which is what makes text sharper on a display whose
+//! pixels are stripes of red, green and blue.
 //!
 //! [`blend`] and [`source_with`] are that arithmetic, stated once. The
 //! CPU compositor calls them for every pixel, and the GPU's shader states
 //! the same expressions: on a GPU, blending a colour by a coverage for
 //! each channel is dual-source blending, the colour as one output and the
-//! coverages as the other.
+//! coverages as the other. The GPU blends in linear light through an sRGB
+//! view of its target, and in encoded values through a view that is not
+//! sRGB (the module `gpu`).
 //!
 //! # Which antialiasing
 //!
@@ -35,14 +49,15 @@
 //! otherwise looks thin once blending is in linear light. Its amount is a
 //! renderer's setting (`Weight::contrast`), passed to [`source_with`] and
 //! to the shader alike. The default weight's, [`CONTRAST`], is 0, which
-//! leaves every coverage as it is.
+//! leaves every coverage as it is. The luminance it is reckoned from is
+//! the colour's in linear light, in either space.
 
 use std::sync::LazyLock;
 
 use editor_layout::face::Color;
 
 use crate::quads::QuadKind;
-use crate::{Antialiasing, SubpixelOrder};
+use crate::{Antialiasing, Blending, SubpixelOrder};
 
 /// How much the coverage of dark text is raised ([`adjusted`]) by the
 /// default weight (`Weight::LINEAR`): 0, which raises nothing.
@@ -115,7 +130,8 @@ fn unit(byte: u8) -> f32 {
 /// channel of the pixel it covers.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Source {
-    /// Red, green and blue, in linear light.
+    /// Red, green and blue, each from 0 to 1, in the space of the
+    /// blending it was made for: linear light, or sRGB values / 255.
     pub rgb: [f32; 3],
     /// How much of the pixel's red, green, blue and alpha it covers, each
     /// from 0 to 1.
@@ -126,25 +142,39 @@ pub struct Source {
 /// atlas page reads `texel`: for a fill, which reads no page, `texel` is
 /// not looked at; for a mask only its first byte is.
 ///
-/// It is [`source_with`] at the default weight's [`CONTRAST`], and only
-/// the tests ask for it.
+/// It is [`source_with`] at the default weight's [`CONTRAST`], in linear
+/// light, and only the tests ask for it.
 #[cfg(test)]
 pub fn source(kind: QuadKind, color: Color, texel: [u8; 4]) -> Source {
-    source_with(kind, color, texel, CONTRAST)
+    source_with(kind, color, texel, CONTRAST, Blending::Linear)
 }
 
 /// What a quad of `kind` and `color` lays over a pixel at which its
-/// atlas page reads `texel`, with the coverage of text raised by
-/// `contrast` ([`adjusted`]): a renderer's setting (`Weight::contrast`).
-/// For a fill, which reads no page, `texel` is not looked at; for a mask
-/// only its first byte is.
-pub fn source_with(kind: QuadKind, color: Color, texel: [u8; 4], contrast: f32) -> Source {
+/// atlas page reads `texel`, for blending in `blending`'s space, with the
+/// coverage of text raised by `contrast` ([`adjusted`]): a renderer's
+/// setting (`Weight::contrast`). For a fill, which reads no page, `texel`
+/// is not looked at; for a mask only its first byte is.
+///
+/// The contrast is reckoned from the colour's luminance in linear light
+/// in either space: how light the text is does not change with the space
+/// it is blended in.
+pub fn source_with(
+    kind: QuadKind,
+    color: Color,
+    texel: [u8; 4],
+    contrast: f32,
+    blending: Blending,
+) -> Source {
     let [red, green, blue, alpha] = color.0.to_be_bytes();
-    let rgb = [to_linear(red), to_linear(green), to_linear(blue)];
+    let light = [to_linear(red), to_linear(green), to_linear(blue)];
+    let rgb = match blending {
+        Blending::Linear => light,
+        Blending::Encoded => [unit(red), unit(green), unit(blue)],
+    };
     let alpha = unit(alpha);
     // The coverage of text, adjusted for its colour and held back by the
     // colour's alpha.
-    let text = |mask: u8| adjusted(unit(mask), luminance(rgb), contrast) * alpha;
+    let text = |mask: u8| adjusted(unit(mask), luminance(light), contrast) * alpha;
     match kind {
         QuadKind::Fill => Source {
             rgb,
@@ -164,13 +194,17 @@ pub fn source_with(kind: QuadKind, color: Color, texel: [u8; 4], contrast: f32) 
         }
         QuadKind::Color => {
             // The image's colours are multiplied by its alpha, as sRGB
-            // values: divided out before they are made linear.
+            // values: divided out, then made linear for linear light.
             let cover = unit(texel[3]);
             let own = |channel: u8| {
-                if cover > 0.0 {
-                    to_linear((unit(channel) / cover * 255.0).round().min(255.0) as u8)
-                } else {
-                    0.0
+                if cover <= 0.0 {
+                    return 0.0;
+                }
+                match blending {
+                    Blending::Linear => {
+                        to_linear((unit(channel) / cover * 255.0).round().min(255.0) as u8)
+                    }
+                    Blending::Encoded => (unit(channel) / cover).min(1.0),
                 }
             };
             Source {
@@ -182,11 +216,20 @@ pub fn source_with(kind: QuadKind, color: Color, texel: [u8; 4], contrast: f32) 
 }
 
 /// The pixel `under`, red, green, blue and alpha as the target holds
-/// them, with `source` laid over it.
-pub fn blend(under: [u8; 4], source: &Source) -> [u8; 4] {
+/// them, with `source` laid over it in `blending`'s space, the space
+/// `source` was made for.
+pub fn blend(under: [u8; 4], source: &Source, blending: Blending) -> [u8; 4] {
     let channel = |index: usize| {
         let cover = source.coverage[index];
-        to_srgb(source.rgb[index] * cover + to_linear(under[index]) * (1.0 - cover))
+        match blending {
+            Blending::Linear => {
+                to_srgb(source.rgb[index] * cover + to_linear(under[index]) * (1.0 - cover))
+            }
+            Blending::Encoded => {
+                let value = source.rgb[index] * cover + unit(under[index]) * (1.0 - cover);
+                (value.clamp(0.0, 1.0) * 255.0).round() as u8
+            }
+        }
     };
     let cover = source.coverage[3];
     let alpha = cover + unit(under[3]) * (1.0 - cover);
@@ -205,7 +248,7 @@ mod tests {
     use super::{CONTRAST, adjusted, blend, source, stripes, to_linear, to_srgb};
     use super::{Source, source_with};
     use crate::quads::QuadKind;
-    use crate::{Antialiasing, SubpixelOrder};
+    use crate::{Antialiasing, Blending, SubpixelOrder};
 
     const WHITE: Color = Color::rgb(0xff, 0xff, 0xff);
     const BLACK: Color = Color::rgb(0, 0, 0);
@@ -218,7 +261,14 @@ mod tests {
     /// `under` with a quad of `kind` and `color` laid over it, where its
     /// page reads `texel`.
     fn over(under: [u8; 4], kind: QuadKind, color: Color, texel: [u8; 4]) -> [u8; 4] {
-        blend(under, &source(kind, color, texel))
+        blend(under, &source(kind, color, texel), Blending::Linear)
+    }
+
+    /// `under` with a quad of `kind` and `color` laid over it, where its
+    /// page reads `texel`, blended in sRGB-encoded values.
+    fn encoded(under: [u8; 4], kind: QuadKind, color: Color, texel: [u8; 4]) -> [u8; 4] {
+        let source = source_with(kind, color, texel, CONTRAST, Blending::Encoded);
+        blend(under, &source, Blending::Encoded)
     }
 
     #[test]
@@ -416,7 +466,7 @@ mod tests {
             for color in colours {
                 for texel in TEXELS {
                     assert_eq!(
-                        source_with(kind, color, texel, CONTRAST),
+                        source_with(kind, color, texel, CONTRAST, Blending::Linear),
                         source(kind, color, texel),
                         "{kind:?} {color:?} {texel:?}"
                     );
@@ -431,7 +481,7 @@ mod tests {
         let raised = adjusted(128.0 / 255.0, 0.0, 1.0);
         assert!(raised > 128.0 / 255.0);
         assert_eq!(
-            source_with(QuadKind::Mask, BLACK, half, 1.0),
+            source_with(QuadKind::Mask, BLACK, half, 1.0, Blending::Linear),
             Source {
                 rgb: [0.0; 3],
                 coverage: [raised; 4],
@@ -439,7 +489,11 @@ mod tests {
         );
         // So the pixel it lays over white is darker than at none.
         let white = opaque(255, 255, 255);
-        let darker = blend(white, &source_with(QuadKind::Mask, BLACK, half, 1.0));
+        let darker = blend(
+            white,
+            &source_with(QuadKind::Mask, BLACK, half, 1.0, Blending::Linear),
+            Blending::Linear,
+        );
         assert!(darker[0] < over(white, QuadKind::Mask, BLACK, half)[0]);
     }
 
@@ -449,11 +503,211 @@ mod tests {
             for texel in TEXELS {
                 for kind in [QuadKind::Mask, QuadKind::Subpixel] {
                     assert_eq!(
-                        source_with(kind, WHITE, texel, contrast),
+                        source_with(kind, WHITE, texel, contrast, Blending::Linear),
                         source(kind, WHITE, texel),
                         "{contrast} {kind:?} {texel:?}"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn half_coverage_of_white_on_black_is_128_when_blended_encoded() {
+        // Half of the sRGB value, not half of the light.
+        let half = [128, 0, 0, 0];
+        assert_eq!(
+            encoded(opaque(0, 0, 0), QuadKind::Mask, WHITE, half),
+            opaque(128, 128, 128)
+        );
+        // And black on white at the same coverage is its mirror in
+        // values: 255 less 128.
+        assert_eq!(
+            encoded(opaque(255, 255, 255), QuadKind::Mask, BLACK, half),
+            opaque(127, 127, 127)
+        );
+    }
+
+    #[test]
+    fn an_encoded_subpixel_mask_blends_each_channel_by_its_own_coverage() {
+        let texel = [255, 128, 0, 128];
+        assert_eq!(
+            encoded(opaque(0, 0, 0), QuadKind::Subpixel, WHITE, texel),
+            opaque(255, 128, 0)
+        );
+    }
+
+    #[test]
+    fn an_encoded_fill_and_colour_image_cover_by_their_alpha() {
+        let black = opaque(0, 0, 0);
+        let white = opaque(255, 255, 255);
+        let texel = [9, 9, 9, 9];
+        assert_eq!(
+            encoded(
+                black,
+                QuadKind::Fill,
+                Color::rgba(255, 255, 255, 128),
+                texel
+            ),
+            opaque(128, 128, 128)
+        );
+        // A colour image's own colours, multiplied by its alpha, are
+        // divided by it with no conversion; the quad's colour is not used.
+        let red = [128, 0, 0, 128];
+        let any = Color::rgb(0, 255, 0);
+        assert_eq!(encoded(black, QuadKind::Color, any, red), opaque(128, 0, 0));
+        assert_eq!(
+            encoded(white, QuadKind::Color, any, red),
+            opaque(255, 127, 127)
+        );
+    }
+
+    /// A sample of grounds, colours and coverages for the encoded rule.
+    const GROUNDS: [[u8; 4]; 5] = [
+        [0, 0, 0, 255],
+        [255, 255, 255, 255],
+        [0x2e, 0x34, 0x40, 255],
+        [12, 200, 99, 255],
+        [250, 3, 128, 255],
+    ];
+    const COLOURS: [Color; 5] = [
+        WHITE,
+        BLACK,
+        Color::rgb(0xd8, 0xde, 0xe9),
+        Color::rgb(0x80, 0x80, 0x80),
+        Color::rgb(7, 160, 231),
+    ];
+
+    #[test]
+    fn encoded_blending_is_the_straight_line_between_under_and_text() {
+        for under in GROUNDS {
+            for color in COLOURS {
+                let text = color.0.to_be_bytes();
+                for coverage in [0u8, 1, 31, 64, 127, 128, 200, 254, 255] {
+                    let got = encoded(under, QuadKind::Mask, color, [coverage, 0, 0, 0]);
+                    let c = f32::from(coverage) / 255.0;
+                    for channel in 0..3 {
+                        let (u, t) = (f32::from(under[channel]), f32::from(text[channel]));
+                        let line = (u + c * (t - u)).round() as u8;
+                        assert_eq!(
+                            got[channel], line,
+                            "{color:?} at {coverage} over {under:?}, channel {channel}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_targets_alpha_is_covered_alike_in_either_space() {
+        let half_white = Color::rgba(255, 255, 255, 128);
+        for under in [[0, 0, 0, 0], [10, 20, 30, 64], [0, 0, 0, 255]] {
+            for (kind, color, texel) in [
+                (QuadKind::Fill, half_white, [0; 4]),
+                (QuadKind::Mask, WHITE, [64, 0, 0, 0]),
+                (QuadKind::Subpixel, WHITE, [255, 128, 0, 128]),
+                (QuadKind::Color, WHITE, [128, 0, 0, 128]),
+            ] {
+                assert_eq!(
+                    encoded(under, kind, color, texel)[3],
+                    over(under, kind, color, texel)[3],
+                    "{kind:?} over {under:?}"
+                );
+            }
+        }
+    }
+
+    /// Core Graphics' blend of uniform fills, from
+    /// `tools/coretext/capture.swift` (`tests/coretext/README.md`).
+    const BLEND_TABLE: &str = include_str!("../../../tests/coretext/blend.txt");
+
+    /// One line of the table: the text, the ground, the alpha and Core
+    /// Graphics' red, green and blue.
+    fn case(line: &str) -> ([u8; 3], [u8; 3], u8, [u8; 3]) {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let hex = |word: &str| -> [u8; 3] {
+            let word = word.strip_prefix('#').expect("a #rrggbb");
+            std::array::from_fn(|at| {
+                u8::from_str_radix(&word[at * 2..at * 2 + 2], 16).expect("hex digits")
+            })
+        };
+        let byte = |word: &str| word.parse::<u8>().expect("a byte");
+        let [text, ground, alpha, red, green, blue] = words[..] else {
+            panic!("a line of six words: {line}");
+        };
+        (
+            hex(text),
+            hex(ground),
+            byte(alpha),
+            [byte(red), byte(green), byte(blue)],
+        )
+    }
+
+    /// Measured against `blend.txt` of 2026-11-20 (macOS 27.2.1), its 50
+    /// cases: encoded blending is at worst 1 of 255 from Core Graphics in
+    /// any channel (`#d8dee9` at 64 over `#2e3440`: red 89, Core Graphics
+    /// 88), and linear-light blending at worst 73 (black at 192 over
+    /// white: 136, Core Graphics 63). The
+    /// control is that linear light misses every case at alpha 128 whose
+    /// text and ground differ by more than 64 in some channel.
+    #[test]
+    fn encoded_blending_is_core_graphics_on_every_line_of_its_blend_table() {
+        let cases: Vec<_> = BLEND_TABLE
+            .lines()
+            // A comment is a line whose first word is `#`; a case's
+            // first word is a colour, `#rrggbb`.
+            .filter(|line| !matches!(line.split_whitespace().next(), None | Some("#")))
+            .map(case)
+            .collect();
+        assert_eq!(cases.len(), 50);
+        let mut controls = 0;
+        for (text, ground, alpha, theirs) in cases {
+            let color = Color::rgba(text[0], text[1], text[2], alpha);
+            let under = [ground[0], ground[1], ground[2], 255];
+            let laid = |blending| {
+                let source = source_with(QuadKind::Fill, color, [0; 4], CONTRAST, blending);
+                blend(under, &source, blending)
+            };
+            let miss = |ours: [u8; 4]| {
+                (0..3)
+                    .map(|channel| ours[channel].abs_diff(theirs[channel]))
+                    .max()
+                    .expect("three channels")
+            };
+            let ours = laid(Blending::Encoded);
+            assert!(
+                miss(ours) <= 1,
+                "{text:?} at {alpha} over {ground:?}: {ours:?}, Core Graphics {theirs:?}"
+            );
+            let apart = (0..3).any(|channel| text[channel].abs_diff(ground[channel]) > 64);
+            if alpha == 128 && apart {
+                controls += 1;
+                let linear = laid(Blending::Linear);
+                assert!(
+                    miss(linear) > 1,
+                    "linear light is Core Graphics for {text:?} at {alpha} over {ground:?}"
+                );
+            }
+        }
+        assert!(controls > 0, "no case is a control");
+    }
+
+    #[test]
+    fn an_encoded_source_reckons_its_contrast_from_the_colours_linear_light() {
+        // Grey, whose linear light (0.216) is far from its encoded value
+        // (0.502): at a contrast of 1 and half coverage the two would
+        // raise the coverage by 0.196 and by 0.125.
+        let grey = Color::rgb(0x80, 0x80, 0x80);
+        let half = [128, 0, 0, 0];
+        let coverage = 128.0 / 255.0;
+        let by_light = adjusted(coverage, to_linear(0x80), 1.0);
+        let by_value = adjusted(coverage, coverage, 1.0);
+        assert!(by_light - by_value > 0.05);
+        for blending in [Blending::Linear, Blending::Encoded] {
+            let laid = source_with(QuadKind::Mask, grey, half, 1.0, blending);
+            for each in laid.coverage {
+                assert!((each - by_light).abs() < 1e-6, "{blending:?}: {each}");
             }
         }
     }

@@ -21,12 +21,12 @@ the model tests run it with outcomes built by hand
 - **Installing is the only place config changes anything.** An accepted
   outcome replaces the files, replaces the config's entries in the registry,
   commands, jobs, key bindings, modes, ex bindings, faces, themes,
-  segments, languages, compile contributions, completion sources,
+  segments, languages, completion sources,
   completion styles and completion displays
   (`Registry.replace`, `Registry.replaceJobs`, `Registry.replaceBindings`,
   `Registry.replaceModes`, `Registry.replaceEx`, `Registry.replaceFaces`,
   `Registry.replaceThemes`, `Registry.replaceSegments`,
-  `Registry.replaceLanguages`, `Registry.replaceContributions`,
+  `Registry.replaceLanguages`,
   `Registry.replaceSources`, `Registry.replaceStyles`, never an append),
   and its prefix names (`Registry.replacePrefixNames`; a binding's
   description is on the binding, so it is replaced with it),
@@ -153,12 +153,13 @@ the model tests run it with outcomes built by hand
   changes neither.
 - **An install replaces config's workspace listers**
   (`Registry.workspaceListers`): the next `find-file-in-workspace` lists
-  with them (`Editor/Workspace/Lister.lean`). A rejected outcome keeps
+  with them (`packages/workspace/Workspace/Lister.lean`). A rejected outcome keeps
   them.
-- **An install replaces config's compile contributions and project
-  commands** (`Registry.replaceContributions`, `Registry.projectCommands`):
-  a file opened after it turns on the modes they give, and the compile mode
-  uses their commands at its next use. A rejected outcome changes neither.
+- **An install replaces config's values at every extension point**
+  (`Registry.replaceExtensions`), config's compile contributions and
+  project commands among them (`packages/compile-api/CompileApi.lean`): a file opened
+  after it turns on the modes they give, and the compile mode uses their
+  commands at its next use. A rejected outcome changes neither.
 - **A reload cancels the old config's jobs when, and only when, it
   installs.** An accepted outcome's effects begin with `cancelJobs config`,
   before its report and before a follow-up job starts; a rejected outcome has
@@ -248,8 +249,8 @@ nothing, so a working config does not cover what a command said, unless its
 config named a theme, listed segments or chose completion styles or
 displays nobody registered, or made display rules whose targets do not
 exist: then `reload: ` and the sentences, `Theme.unknown`'s, then each
-`ModeLine.unknown`, then each `Completion.Styles.unknown`, then each
-`Completion.Displays.unknown`, then each `Completion.AtPoint.unknown` and
+`ModeLine.unknown`, then each `Completion.Style.unknown`, then each
+`Completion.Display.unknown`, then each `Completion.AtPoint.unknown` and
 then each rule left out
 (`unusableRules`), joined by `; `. The whole report is the host's to
 print. -/
@@ -258,8 +259,8 @@ def Report.echo (report : Report) : Option String :=
     let sentences :=
       report.unknownTheme.toArray.map Theme.unknown ++
         report.unknownSegments.map ModeLine.unknown ++
-        report.unknownStyles.map Completion.Styles.unknown ++
-        report.unknownDisplays.map Completion.Displays.unknown ++
+        report.unknownStyles.map Completion.Style.unknown ++
+        report.unknownDisplays.map Completion.Display.unknown ++
         report.unknownAtPoints.map Completion.AtPoint.unknown ++
         report.unusableRules
     if sentences.isEmpty then none else some s!"reload: {"; ".intercalate sentences.toList}"
@@ -459,8 +460,7 @@ def install (state : State β σ) (outcome : Outcome β σ) : State β σ × Rep
             shellTimeLimit := built.registrations.shellTimeLimit
             leader := built.registrations.leader
             localLeader := built.registrations.localLeader
-            syntaxRefreshDelay := built.registrations.syntaxRefreshDelay
-            projectCommands := built.registrations.projectCommands },
+            syntaxRefreshDelay := built.registrations.syntaxRefreshDelay },
         cells, parked := #[], cellsRevision := state.cellsRevision + 1 }
     let (themeName, unknownTheme) :=
       chooseAt state.registry state.themeName built.registrations.theme
@@ -647,10 +647,13 @@ def keptCells (state : State β σ) : Array KeptCell :=
   kept ++ state.parked
 
 /-- The job registered under `name`, to be started with `arguments`, and the
-owner the runtime is to start it for; `none` if there is no such job. -/
+owner the runtime is to start it for; `none` if there is no such job. A job
+registered over an extension point is made from the values registered there
+now (`JobRegistration.workWith`, `Editor/Extension.lean`, "To a job"). -/
 def work? (state : State β σ) (name : String) (arguments : List Argument := []) :
     Option (Owner × Work) :=
-  (state.registry.findJob? name).map fun entry => (entry.owner, entry.registration.work arguments)
+  (state.registry.findJob? name).map fun entry =>
+    (entry.owner, entry.registration.workWith state.registry.extensionsAt arguments)
 
 end State
 

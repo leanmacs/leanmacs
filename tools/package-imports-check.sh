@@ -40,32 +40,58 @@
 # them: a core module that is neither internal nor a test double is part of
 # the API.
 #
+# - A core interface (`is_core_interface`): the interface library the
+#   core's Lake package holds outside `Editor`, which is part of the API
+#   and may be imported by any module of a package, library or test.
+#   `FilesApi` is a core interface for good: session restore, a core
+#   module, adopts files and reads the load limit through it. `ProjectApi`
+#   and `VcApi`, staged here until no core module imported them, left this
+#   list when they moved into interface packages of their own
+#   (`packages/project-api/`, `packages/vc-api/`), in the
+#   features-as-packages roadmap's phase 6, and `BuffersApi` and
+#   `ShellApi`, staged until ex, which reached them, moved out, in its
+#   phase 8 (`packages/buffers-api/`, `packages/shell-api/`): an
+#   interface package's modules are no modules of the core's Lake package,
+#   so the query names no import of them.
+#   Its test library (`FilesApiTest`, `FilesApiTest.Fake` and the like) is
+#   test doubles (`is_double`), and linked support under it
+#   (`FilesApiTest.Linked…`) is of the linked test kit (`is_linked_kit`).
 # - A test double (`is_double`): the pure models of the ports, the
 #   contracts and cases, the fakes, the test scheme, the loop's driver, the
 #   reading of what a package registers (`Editor.Config.Packages`), the
-#   theme picture check (`Editor.Themes.Picture`) and the core's model test
+#   theme picture check (`Editor.Theme.Picture`), the core's model test
 #   kit, `Editor.Test` and everything under it but `Editor.Test.Linked`:
-#   the support its own model tests are written on. A test module, of any
-#   of the three test kinds, may import one; a library module may not.
+#   the support its own model tests are written on, and a feature's test
+#   kit still in the core (`Editor.*.Kit`, such as `Editor.Files.Kit`, the
+#   drivers of the real file commands), which moves into that feature's
+#   test library when it moves out; and the test library of the core
+#   interface (`FilesApiTest`: its fake, contract check and support) but
+#   what is under `FilesApiTest.Linked`. A test module, of any of
+#   the three test kinds, may import one; a library module may not.
 # - The linked test kit (`is_linked_kit`): `Editor.Test.Linked` and
 #   everything under it, the rig of the core's checks over the real
-#   services. It runs over the Rust library and hands over the loop, the
-#   real bindings and the raw bindings, so only the linked test may import
-#   it: its root (`linked`) and the modules under it (`linked-test`). A
+#   services, and a core interface's linked support (`<I>Test.Linked` and
+#   everything under it; none has one since `vc-api`, whose
+#   `VcApiTest.Linked.Repositories` was one, moved out of the core). It runs
+#   over the Rust library and hands over the loop, the real bindings and
+#   the raw bindings, so only the linked test may import it: its root
+#   (`linked`) and the modules under it (`linked-test`). A
 #   plain test module, which the package's test driver links with no Rust
 #   library, may not, and a library module may not.
 # - An internal module (`internal_reason`): the hosts and the executable's
 #   modules, the loop and its dispatch, the config session, the raw
 #   bindings, the real bindings of the ports and what runs them, the
-#   modules that define the packages still in the core, the core's root,
-#   everything under `Editor.Internal`, and every module of the core's Lake
-#   package that is not named `Editor.…`: the config base, `Editor`, the
-#   core's entry module and the core's own test modules. No library module
-#   and no test module may import one.
+#   core's root, everything under `Editor.Internal`, and every module of
+#   the core's Lake package that is not named `Editor.…` and is no core
+#   interface nor of one's test library: the config base, `Editor`, and
+#   the core's own test modules. No library module and no test module may
+#   import one. (No module of the core defines a package: the core's Lake
+#   package registers none and has no entry module, since the
+#   features-as-packages roadmap's phase 8.)
 # - What the root of the linked test may import beyond the test doubles
 #   and the linked kit (`linked_may`): the real bindings of the ports
-#   (`….Real`), the headless host (`Editor.Headless`), the config base and
-#   the core's entry module. It is an executable's root, linked as the
+#   (`….Real`), the headless host (`Editor.Headless`) and the config
+#   base. It is an executable's root, linked as the
 #   editor is, and running a port against the library or a host over a set
 #   is what it is for. The raw bindings, the loop and the config session
 #   stay refused by name. A module under the root (`linked-test`) has none
@@ -122,19 +148,34 @@ is_double() {
   case $1 in
     Editor.Completion.Fake | Editor.Job.Fake) return 0 ;;
     Editor.InputScheme.Test | Editor.Loop.Driver) return 0 ;;
-    Editor.Config.Packages | Editor.Themes.Picture) return 0 ;;
+    Editor.Config.Packages | Editor.Theme.Picture) return 0 ;;
     Editor.Test | Editor.Test.*) return 0 ;;
+    Editor.*.Kit) return 0 ;;
     Editor.*.Model | Editor.*.Model.*) return 0 ;;
     Editor.*Contract | Editor.*.Cases) return 0 ;;
+    FilesApiTest.*) return 0 ;;
+  esac
+  return 1
+}
+
+# Whether the module `$1` is a core interface: part of the API, though the
+# core's Lake package holds it outside `Editor`. It is asked about before
+# `internal_reason`, which would refuse it as no module of the editor.
+is_core_interface() {
+  case $1 in
+    FilesApi) return 0 ;;
   esac
   return 1
 }
 
 # Whether the module `$1` is of the core's linked test kit. It is asked
-# about before `is_double`, whose pattern for the kit would take it.
+# about before `is_double`, whose patterns for the kit and for the core
+# interfaces' test libraries would take it. The query names only modules of
+# the core's Lake package, so `*ApiTest.Linked…` is a core interface's.
 is_linked_kit() {
   case $1 in
     Editor.Test.Linked | Editor.Test.Linked.*) return 0 ;;
+    *ApiTest.Linked | *ApiTest.Linked.*) return 0 ;;
   esac
   return 1
 }
@@ -145,7 +186,6 @@ is_linked_kit() {
 internal_reason() {
   case $1 in
     Editor) echo "the config base, which is not part of the API" ;;
-    EditorCore.EditorPackage) echo "the core's entry module, which no package imports" ;;
     Editor.Internal | Editor.Internal.*) echo "internal: it is under Editor.Internal" ;;
     Editor.Core) echo "internal: the core's root" ;;
     Editor.Main | Editor.Headless | Editor.Headless.CommandLine | Editor.Window | \
@@ -162,7 +202,6 @@ internal_reason() {
       Editor.Job.Jobs | Editor.Job.Table | Editor.Job.Pool)
       echo "internal: a real binding of a port, or what runs one"
       ;;
-    Editor.*.Compiled) echo "internal: it defines a package still in the core" ;;
     Editor.*) return 1 ;;
     *) echo "no module of the editor: the core's Lake package holds it outside Editor" ;;
   esac
@@ -171,7 +210,7 @@ internal_reason() {
 # Whether the root of a linked test may import the internal module `$1`.
 linked_may() {
   case $1 in
-    Editor | EditorCore.EditorPackage | Editor.Headless) return 0 ;;
+    Editor | Editor.Headless) return 0 ;;
     Editor.Window.Real | Editor.WindowCheck.Real) return 1 ;;
     Editor.*.Real) return 0 ;;
   esac
@@ -204,6 +243,8 @@ while IFS=$tab read -r package module kind imported rest <&3; do
     if [ "$kind" = library ]; then
       reason="a test double, which only a package's tests may import"
     fi
+  elif is_core_interface "$imported"; then
+    :
   elif why=$(internal_reason "$imported"); then
     if [ "$kind" != linked ] || ! linked_may "$imported"; then
       reason=$why

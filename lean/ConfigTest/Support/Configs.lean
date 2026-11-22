@@ -1,6 +1,4 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
-import ConfigTest.Support.Keys
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
@@ -11,12 +9,9 @@ import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Event
 import Editor.Event.Queue
-import Editor.Ex.Compiled
 import Editor.Ex.Line
 import Editor.Face
 import Editor.Ffi.Interrupt
-import Editor.Files
-import Editor.Files.Compiled
 import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.InputScheme.Test
@@ -25,13 +20,14 @@ import Editor.Job
 import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
+import Editor.Test.Minibuffer
 import Editor.Text
-import Editor.Value
 
 /-!
 # Config tests: support: Configs
@@ -46,13 +42,15 @@ several test modules; it holds no checks of its own.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
-/-- What compiled code hands every host of the prompt checks: the
-minibuffer's commands and its mode, as the executable is handed them
-(`Editor/Minibuffer/Compiled.lean`). -/
+/-- What compiled code hands every host of the prompt checks: the kit's
+minibuffer's commands and its mode (`Test.Minibuffer.package`,
+`Editor/Test/Minibuffer.lean`), where the executable is handed the
+package that ships. -/
 def minibufferCompiled : Compiled :=
-  { commands := Minibuffer.package.registered.commands,
-    modes := Minibuffer.package.registered.modes }
+  { commands := Test.Minibuffer.package.registered.commands,
+    modes := Test.Minibuffer.package.registered.modes }
 
 /-- Whether `message` is one line and names `path`. A message that will be
 printed as one diagnostic line must hold the path on its first line. -/
@@ -156,90 +154,5 @@ def nappingCompiled : Compiled :=
           work := fun _ =>
             Work.of (fun _ => sleep 10) fun _ =>
               discard <| (⟨0⟩ : ViewId).insertAtSelections "napped" }] }
-
-/-- What compiled code hands every host of the ex checks: the ex line's
-commands and the `ex` package's ex names (`Ex.package.registered.commands`, `Ex.package.registered.ex`,
-`Editor/Ex/Compiled.lean`), the minibuffer's commands and its mode, the
-file commands, which two of the shipped names run, and `other`, written
-here, which says `other`, on `C-c o`. It is handed no job: no check here
-opens or saves a file. -/
-def exCompiled : Compiled :=
-  { commands :=
-      Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
-        Files.package.registered.commands ++
-        #[{ name := "other", action := .plain (message "other") }]
-    modes := Minibuffer.package.registered.modes
-    ex := Ex.package.registered.ex
-    bindings := #[bound "C-c o" "other"] }
-
-/-- A compiled command called `name`, written for the file checks, that runs
-the compiled open command with `path` as its argument: the driver's `run`
-hands a command no argument, so a check that opens a file hands its host a
-command of this kind for each path. It looks the open command up among the
-commands compiled code registers (`Files.package.registered.commands`), so what runs is that
-registration. -/
-def opening (name : String) (path : System.FilePath) : Config.Registration :=
-  { name
-    action :=
-      .call fun call => do
-        let registered : Option Config.Action :=
-          (Files.package.registered.commands.find? (·.name == Files.openName)).map (·.action)
-        match registered with
-        | some (.call run) =>
-          run { call with arguments := [.str path.toString] }
-        | _ =>
-          message "the open command is not a compiled command that is given its call" }
-
-/-- The stage of the file checks' hosts: over the library's file service
-(`Stage.overFiles`), with the config directory `directory`, handed the file
-commands and their jobs as compiled code registers them
-(`Files.package.registered.commands`, `Files.package.registered.jobs`), the
-minibuffer's commands and its mode (`Minibuffer.package.registered.commands`,
-`Minibuffer.package.registered.modes`), as the executable is, and, for each
-name and path of `opens`, a command of that name that opens that path
-(`opening`), and `extra`. -/
-def fileStage (context : Context) (directory : System.FilePath)
-    (opens : List (String × System.FilePath)) (extra : Array Config.Registration) :
-    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle) :=
-  Stage.overFiles context (Config.Directory.source directory)
-    { commands :=
-        Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
-          (opens.map fun (name, path) => opening name path).toArray ++
-          extra
-      jobs := Files.package.registered.jobs
-      modes := Minibuffer.package.registered.modes }
-
-/-- Runs `check` against a stepped host over the file checks' stage
-(`fileStage`), with an empty config directory of its own. `false` if the
-check did not hold or the host did not settle. -/
-def withFileHost (context : Context) (opens : List (String × System.FilePath))
-    (check : Session → IO Bool) (extra : Array Config.Registration := #[]) : IO Bool :=
-  IO.FS.withTempDir fun directory => do
-    let stage ← fileStage context directory opens extra
-    onStage stage fun drive stage => check (Session.ofStage drive directory stage)
-
-/-- `withFileHost` with a real host (`onRealStage`). -/
-def withRealFileHost (context : Context) (opens : List (String × System.FilePath))
-    (check : RealSession → IO Bool) (extra : Array Config.Registration := #[]) : IO Bool :=
-  IO.FS.withTempDir fun directory => do
-    let stage ← fileStage context directory opens extra
-    onRealStage stage fun host stage => check (RealSession.ofStage host directory stage)
-
-/-- Rewrites the file at `path` with `text` from another process, as agents
-and editors write: a temporary file beside it, renamed over it. Waits for
-the process to exit; whether it exited with 0. -/
-def rewriteFromOutside (path : System.FilePath) (text : String) : IO Bool := do
-  let child ←
-    IO.Process.output
-        { cmd := "/bin/sh"
-          args :=
-            #["-c", "printf '%s' \"$2\" > \"$1.tmp\" && mv \"$1.tmp\" \"$1\"", "sh", path.toString,
-              text] }
-  return child.exitCode == 0
-
-/-- The text of the file `note.txt` of the file checks: two lines, with
-two-byte characters. -/
-def noteText : String :=
-  "héllo\nwörld\n"
 
 end ConfigTest

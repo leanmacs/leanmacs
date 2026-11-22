@@ -1,8 +1,8 @@
 import Compile
 import Compile.Errors
+import CompileApi.Format
 import CompileTest.Check
 import CompileTest.Support.Compile
-import Editor.ProjectMode.Format
 import Editor.Store
 import Editor.Value
 import Editor.Workspace

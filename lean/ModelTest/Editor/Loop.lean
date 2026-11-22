@@ -1,5 +1,4 @@
 import Editor.Api
-import Editor.AtPoint
 import Editor.Clipboard
 import Editor.Command
 import Editor.Command.Call
@@ -9,14 +8,10 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Display
-import Editor.Completion.Displays
 import Editor.Completion.Fake
 import Editor.Completion.Later
 import Editor.Completion.Style
-import Editor.Completion.Styles
-import Editor.Completion.Words
 import Editor.Config.Owner
-import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Diff.Script
@@ -24,24 +19,20 @@ import Editor.Display
 import Editor.Display.Model
 import Editor.DisplayRules
 import Editor.Event
-import Editor.Evil.Motions
-import Editor.Ex
 import Editor.Ex.Line
 import Editor.Face
 import Editor.File
 import Editor.File.Cases
 import Editor.File.Model
+import Editor.FileJobs
 import Editor.FileWatch
 import Editor.FileWatch.Model
-import Editor.Files
 import Editor.Floating
 import Editor.Fuzzy
 import Editor.Fuzzy.Model
 import Editor.GeneratedView
 import Editor.InputScheme
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim
-import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Contract
@@ -53,37 +44,39 @@ import Editor.Layout
 import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Menu
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
-import Editor.ProjectMode
+import Editor.Quit
 import Editor.Role
 import Editor.Scene
-import Editor.Scroll
 import Editor.State
 import Editor.State.Request
 import Editor.SyntaxTree
 import Editor.TabBar
+import Editor.Test.AtPoint
 import Editor.Test.Completion
 import Editor.Test.Driver
+import Editor.Test.Editing
 import Editor.Test.Files
 import Editor.Test.Geometry
-import Editor.Test.Jobs
 import Editor.Test.Keys
+import Editor.Test.Listings
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
+import Editor.Test.Opener
 import Editor.Test.Prompts
 import Editor.Test.States
+import Editor.Test.Views
 import Editor.Text
 import Editor.Text.Model
+import Editor.Text.Word
 import Editor.UndoTree
 import Editor.Value
-import Editor.Vocabulary
 import Editor.Watch
 import Editor.Watch.Model
 import Editor.Workspace
@@ -91,10 +84,8 @@ import ModelTest.Check
 import ModelTest.Support.AtPoint
 import ModelTest.Support.Candidates
 import ModelTest.Support.Display
-import ModelTest.Support.Evil
 import ModelTest.Support.Modes
-import ModelTest.Support.Views
-import ModelTest.Support.Vim
+import ModelTest.Support.Switching
 
 /-!
 # Model tests: `Editor/Loop.lean`
@@ -107,88 +98,31 @@ The model tests of `Editor/Loop.lean`: `loopChecks`, `commitChecks`,
 `dispatchCommandGivesUpChecks`, `dispatchCommandBreaksOffChecks`,
 `dispatchRunCommandChecks`, `dispatchChecks`, `modeDispatchChecks`,
 `candidateChecks`, `completionJobChecks`, `directoryChecks`,
-`laterLoopChecks`, `openFilesChecks`, `dispatchQuitChecks`,
-`systemQuitChecks`, `stalenessChecks`, `autoReloadChecks`,
+`laterLoopChecks`, `loopFileJobChecks`, `openFilesChecks`,
+`dispatchQuitChecks`, `systemQuitChecks`,
 `searchDecorationChecks`, `viewChecks`, `floatViewChecks`,
-`atPointRepeatChecks`, `atPointLoopChecks`, `atPointAskChecks`,
+`atPointLoopChecks`, `atPointAskChecks`,
 `atPointByItselfChecks` and `pressedChecks`. `searchDecorationChecks` are of the loop's
-decorations under the Vim scheme, and `modeDispatchChecks` of modes in the
+decorations under the test scheme, and `modeDispatchChecks` of modes in the
 loop. `directoryChecks` also cover the reasking of a source
 (`Editor/Completion/Candidate.lean`) and what the state lists while it is
 asked again (`Editor/State.lean`), through the loop's reconciler of a
-prompt's jobs. The checks of completion at point in the loop run on the
-evil driver (`ModelTest/Support/AtPoint.lean`). The root module `ModelTest`
-runs them; its module doc says what each shows.
+prompt's jobs. The checks of completion at point in the loop run under
+`switching`, a scheme written for the core's checks that reports a session
+(`ModelTest/Support/Switching.lean`)
+(`atPointDriver`, `ModelTest/Support/AtPoint.lean`), through the kit's at-point
+package (`Editor/Test/AtPoint.lean`) and at-point sources written for them,
+so nothing of the package that ships is asked. `loopFileJobChecks` are of
+when the loop starts the file jobs, under the core's names, on stand-in
+works; what those jobs do through the loop is the files feature's
+(`stalenessChecks` and `autoReloadChecks`, `ModelTest/Editor/Files.lean`).
+The root module `ModelTest` runs them; its module doc says what each shows.
 -/
 
 namespace ModelTest
 
 open Editor
 open Editor.Test
-
-/-- A report of the scheme `switching`, unlike the default in every field
-the scene shows: a block in a face of its own, one status field, an
-inclusive selection, and selecting. -/
-def markedReport : InputScheme.Report :=
-  { cursor := { shape := .block, face := ⟨"cursor.marked"⟩ }
-    status := #[{ text := "marked", face := ⟨"mode-line.state.marked"⟩ }]
-    shape := .inclusive
-    selecting := true }
-
-/-- What the scheme `switching` reports of a view it was told is the
-minibuffer's: an underline in a face of its own, and one status field. -/
-def askedReport : InputScheme.Report :=
-  { cursor := { shape := .underline, face := ⟨"cursor.asked"⟩ }
-    status := #[{ text := "asked", face := ⟨"mode-line.state.asked"⟩ }] }
-
-/-- The reports the scheme `switching` switches a view between: a command's
-name, the key string a loop over it binds to that command, and what the
-scheme reports of a view once a key for the view has yielded an invocation
-of the command. The keys print nothing. -/
-def switchingTable : List (String × String × InputScheme.Report) :=
-  [("mark", "C-m", markedReport), ("plain", "C-p", {}), ("begin", "C-b", { session := true }),
-    ("end", "C-e", {}), ("deafen", "C-d", { takesText := false })]
-
-/-- A scheme written for the loop's checks, so that none of them names a
-shipped scheme's states or keys: the test scheme, with a report of each
-view that an invocation it yields switches (`switchingTable`). A view
-starts with the default report, a view told to be the minibuffer's has
-`askedReport`, and a closed view's is forgotten. Its state is the test
-scheme's, and the report of each view that has one. -/
-def switching : InputScheme :=
-  { State := TestScheme.State × List (ViewId × InputScheme.Report)
-    Binding := Invocation
-    init := ({}, [])
-    step := fun maps view state key =>
-      let (next, yielded) := TestScheme.step maps view state.1 key
-      match yielded.bind fun invocation => switchingTable.find? (·.1 == invocation.command) with
-      | some (_, _, report) => ((next, (view, report) :: state.2.filter (·.1 != view)), yielded)
-      | none => ((next, state.2), yielded)
-    pending := (·.1.pending)
-    command := fun name => { command := name }
-    roles := TestScheme.roles
-    leader := TestScheme.leader
-    localLeader := TestScheme.localLeader
-    closeView := fun view state => (state.1, state.2.filter (·.1 != view))
-    openMinibuffer := fun view state => (state.1, (view, askedReport) :: state.2)
-    report := fun state view => ((state.2.find? (·.1 == view)).map (·.2)).getD {} }
-
-/-- What a step of a loop over `switching` is handed: one keymap, the same
-for every view, that binds each key of `switchingTable` to its command and
-each key string of `bindings` to the invocation beside it; and commands,
-one that does nothing under each name of `switchingTable`, and
-`commands`. -/
-def switchingKeys (bindings : List (String × Invocation) := [])
-    (commands : List (String × (Call → EditorM (Option Config.Write))) := []) :
-    Loop.Keys switching :=
-  { maps := fun _ _ =>
-      [Keymap.ofList
-          ((switchingTable.map fun (name, text, _) => (keys text, invoke name)) ++
-            bindings.map fun (text, invocation) => (keys text, invocation))]
-    command? := fun name =>
-      match commands.find? (·.1 == name) with
-      | some (_, command) => some command
-      | none => if switchingTable.any (·.1 == name) then some fun _ => pure none else none }
 
 /-- A loop over `switching` started from the state `start` makes and fed the
 presses of the keys `text` names and then `events`, each step handed
@@ -213,7 +147,7 @@ def loopChecks : List Check :=
         "while a restart hands the session over, a key and a committed text change no text and say the hand-over again; a resize is handled"
       run :=
         pure <|
-          match evilDriver "a|b" with
+          match editingDriver "a|b" with
           | none => false
           | some driver =>
             let plan : Restart.Plan := { record := "/s/session/handover", handover := default }
@@ -222,12 +156,15 @@ def loopChecks : List Check :=
                 loop :=
                   { driver.loop with
                     state := { driver.loop.state with restore := { handing := some { plan } } } } }
-            let fed (driver : EvilDriver) (event : Event) : EvilDriver :=
+            let fed (driver : TestDriver) (event : Event) : TestDriver :=
               (driver.feed { event, stamp := 0 }).1
-            let keyed := evilFed handing "i x"
+            -- A key that types under the test scheme: with no hand-over it
+            -- inserts, as the first conjunct shows.
+            let keyed := keysFed handing "x"
             let committed := fed handing (.commit "y")
             let resized := fed handing (.resize { width := 641, height := 479, scale := 2.0 })
-            evilText keyed == some "ab" && evilText committed == some "ab" &&
+            driverText (keysFed driver "x") == some "axb" && driverText keyed == some "ab" &&
+              driverText committed == some "ab" &&
               keyed.loop.state.echo == Restart.handingLine false &&
               committed.loop.state.echo == Restart.handingLine false &&
               resized.loop.state.frame.size == ⟨641, 479⟩ },
@@ -235,7 +172,7 @@ def loopChecks : List Check :=
         "while a restart hands the session over, a pointer press and a preedit leave the selection, the focus and the preedit as they were and say the hand-over again"
       run :=
         pure <|
-          match evilDriver "a|b" with
+          match editingDriver "a|b" with
           | none => false
           | some driver =>
             let plan : Restart.Plan := { record := "/s/session/handover", handover := default }
@@ -246,10 +183,10 @@ def loopChecks : List Check :=
                     state :=
                       { driver.loop.state with
                         echo := "", restore := { handing := some { plan } } } } }
-            let fed (driver : EvilDriver) (event : Event) : EvilDriver :=
+            let fed (driver : TestDriver) (event : Event) : TestDriver :=
               (driver.feed { event, stamp := 0 }).1
-            let unchanged (after : EvilDriver) : Bool :=
-              evilSelection after == evilSelection handing &&
+            let unchanged (after : TestDriver) : Bool :=
+              selectionOf after == selectionOf handing &&
                 after.loop.state.frame.focused == handing.loop.state.frame.focused &&
                 after.loop.state.preedit == none &&
                 after.loop.state.echo == Restart.handingLine false
@@ -264,11 +201,10 @@ def loopChecks : List Check :=
         pure <|
           let program : EditorM (Layout × Layout × Layout) := do
             let state ← windowsUnder 2 Layout.default
-            let held : Loop Vim.Default.scheme :=
-              { state := { state with restore := { heldLayout := some 0 } } }
+            let held : TestLoop := { state := { state with restore := { heldLayout := some 0 } } }
             let same ← held.publish (layout := some .monocle) (generation := 0)
             let after ← held.publish (layout := some .monocle) (generation := 1)
-            let unheld ← ({ state } : Loop Vim.Default.scheme).publish (layout := some .monocle)
+            let unheld ← ({ state } : TestLoop).publish (layout := some .monocle)
             return (same.state.frame.layout, after.state.frame.layout, unheld.state.frame.layout)
           (program.runModel editorModel).1.toOption ==
             some (Layout.default.fits 2, .monocle, .monocle) },
@@ -287,6 +223,23 @@ def loopChecks : List Check :=
                   tiles (frameRect ⟨641, 478⟩)
                     (scene.views.map (·.rect) ++ scene.dividers.map (·.rect))
               | _ => false
+          | none => false },
+    { name :=
+        "a burst of resizes, a key between the last two, publishes a scene for each event and ends in a scene of the last size, its views and dividers tiling it above its bottom row"
+      run :=
+        pure <|
+          let resize (width height : Nat) : Event := .resize { width, height, scale := 2.0 }
+          let events := [resize 641 479, resize 800 600, pressF5, resize 643 481]
+          match looped threeWindows events with
+          | some ((loop, _), scenes, _) =>
+            scenes.size == events.length && loop.state.frame.size == ⟨643, 481⟩ &&
+              match scenes.back? with
+              | some scene =>
+                -- The display model's bottom row is a pixel tall.
+                scene.size == ⟨643, 481⟩ &&
+                  tiles (frameRect ⟨643, 480⟩)
+                    (scene.views.map (·.rect) ++ scene.dividers.map (·.rect))
+              | none => false
           | none => false },
     { name :=
         "the scene of two tiled windows side by side has one divider, in window-divider, between the two views; of two stacked windows one divider between them"
@@ -425,15 +378,20 @@ def loopChecks : List Check :=
                 #[some ModeLine.activeFace, some ModeLine.inactiveFace, some ModeLine.inactiveFace]
           | _ => false },
     { name :=
-        "two windows on one buffer under the Vim scheme: the focused one's mode line has the NORMAL badge and its row in mode-line.active, and the other's has no badge, every field and its row in mode-line.inactive"
+        "three windows under a scheme that reports a badge of every view: the focused one's mode line has the badge and its row in mode-line.active, and the others' have no badge, every field and its row in mode-line.inactive"
       run :=
         pure <|
-          let program : EditorM (Loop Vim.Default.scheme) := do
-            let loop : Loop Vim.Default.scheme := { state := ← threeWindows }
+          let badge : Array StatusField :=
+            #[{ text := "NORMAL", face := ⟨"mode-line.state.normal"⟩ }]
+          -- A scheme written here: the test scheme, reporting the badge of
+          -- every view, as a scheme with states reports its state's.
+          let badged : InputScheme :=
+            { TestScheme.scheme with report := fun _ _ => { status := badge } }
+          let program : EditorM (Loop badged) := do
+            let loop : Loop badged := { state := ← threeWindows }
             return (← loop.step {} pressF5).loop
           match program.runModel editorModel with
           | (.ok _, model) =>
-            let badge := #[{ text := "NORMAL", face := Vim.stateFace "normal" }]
             match model.display.scenes with
             | #[scene] =>
               scene.views.map (·.status) ==
@@ -923,7 +881,36 @@ def commitChecks : List Check :=
           told true == some ([(⟨0⟩, "c"), (⟨0⟩, "ab")], [(⟨0⟩, "c"), (⟨0⟩, "ab")], #["abc"]) &&
             told false == some ([], [], #[""]) &&
             (TestScheme.scheme.pending
-                (TestScheme.scheme.committed ⟨0⟩ "x" TestScheme.scheme.init)).isEmpty }]
+                (TestScheme.scheme.committed ⟨0⟩ "x" TestScheme.scheme.init)).isEmpty },
+    { name :=
+        "what a command says it typed is told to the scheme as committed text once the command has run to its end, and a command that is refused tells the scheme nothing"
+      run :=
+        pure <|
+          let handed : Loop.Keys (telling true) :=
+            {
+              command? := fun name =>
+                if name == "retyping" then
+                  some fun call => do
+                    retype call.target.window.id "zz"
+                    return none
+                else
+                  if name == "refusing" then
+                    some fun call => do
+                      retype call.target.window.id "yy"
+                      throw .badRange
+                  else none }
+          match
+            (Loop.Driver.over handed (fun _ => none) (EditorState.initial ⟨640, 480⟩)
+                editorModel).toOption with
+          | none => false
+          | some driver =>
+            let told :=
+              (driver.stepped (driver.loop.invoke driver.handed { command := "retyping" })).1
+            let refused := (told.stepped (told.loop.invoke told.handed { command := "refusing" })).1
+            told.loop.input.2 == [(⟨0⟩, "zz")] && refused.loop.input.2 == [(⟨0⟩, "zz")] &&
+              told.loop.state.retyped.isEmpty &&
+              refused.loop.state.retyped.isEmpty &&
+              refused.loop.state.echo.startsWith "refusing: refused: " }]
 
 /-- The pending keys each scene of a run showed; none of them when the run
 was refused. -/
@@ -1031,11 +1018,13 @@ def keyHintLoopChecks : List Check :=
               #[afterPrefix, #[{ key := "t", leads := .binding (some "Rectangle") }], #[]] &&
             listsShown hintedKeys (presses "C-x r t") ==
               some
-                #[#[some (hintRows afterPrefix)],
-                  #[some (hintRows #[{ key := "t", leads := .binding (some "Rectangle") }])],
+                #[#[some (hintRows afterPrefix .unregistered)],
+                  #[some
+                      (hintRows #[{ key := "t", leads := .binding (some "Rectangle") }]
+                        .unregistered)],
                   #[]] &&
             listsShown hintedKeys (presses "C-x C-s") ==
-              some #[#[some (hintRows afterPrefix)], #[]]) },
+              some #[#[some (hintRows afterPrefix .unregistered)], #[]]) },
     { name :=
         "with a delay of 500 the step after a prefix hands the delay to arm for generation 1 and its scene shows no hints; the step that completes the sequence hands its withdrawal"
       run :=
@@ -1047,18 +1036,20 @@ def keyHintLoopChecks : List Check :=
               scenes.map (·.views.size) == #[1, 1]
           | none => false },
     { name :=
-        "the hints are drawn by the display chosen for the key category: a fake display's rows, not the minibuffer display's"
+        "the hints are drawn by the display chosen for the key category: a fake display's rows, not the default display's"
       run :=
+        let starred : Completion.Display :=
+          { name := "fake"
+            sheet := fun showing =>
+              { rows := showing.listed.map fun listed => { text := s!"* {listed.text}" } } }
         let fake : Loop.Keys TestScheme.scheme :=
           { hintedKeys with
             displaying :=
-              { default := Completion.Displays.minibuffer
-                byCategory := fun category =>
-                  if category == "key" then some (Completion.Display.plain "fake") else none } }
+              { default := .unregistered
+                byCategory := fun category => if category == "key" then some starred else none } }
         pure
-          (listsShown fake (presses "C-x") ==
-              some #[#[some (hintRows afterPrefix (Completion.Display.plain "fake"))]] &&
-            hintRows afterPrefix (Completion.Display.plain "fake") != hintRows afterPrefix) },
+          (listsShown fake (presses "C-x") == some #[#[some (hintRows afterPrefix starred)]] &&
+            hintRows afterPrefix starred != hintRows afterPrefix .unregistered) },
     { name :=
         "the selected window's status line holds the keys pending in mode-line.secondary while a sequence is pending, and none once it completes; no other window's holds them"
       run :=
@@ -2404,9 +2395,9 @@ def dispatchStateChecks : List Check :=
           let registered : Loop.Registered :=
             {
               matching :=
-                { default := Completion.Styles.fuzzy
+                { default := .unregistered
                   byCategory := fun category =>
-                    if category == "buffer" then some Completion.Styles.orderless else none } }
+                    if category == "buffer" then some containing else none } }
           let candidates := #["wq", "edit", "rewrite", "w"]
           let asks (category : Option String) : Option (Guarded (Array Completion.Hit) × Bool) :=
             let program : EditorM (Guarded (Array Completion.Hit) × Bool) := do
@@ -2417,8 +2408,8 @@ def dispatchStateChecks : List Check :=
                     registered start
               return (outcome, state == start)
             (program.runModel editorModel).1.toOption
-          let orderless := styled Completion.Styles.orderless "w" candidates
-          let fuzzy := styled Completion.Styles.fuzzy "w" candidates
+          let orderless := styled containing "w" candidates
+          let fuzzy := styled Completion.Style.unregistered "w" candidates
           orderless != fuzzy && asks (some "buffer") == some (.finished orderless, true) &&
             asks (some "other") == some (.finished fuzzy, true) &&
             asks none == some (.finished fuzzy, true) },
@@ -3664,7 +3655,7 @@ candidate list is drawn: for the checks that count what the listing alone
 costs. -/
 def unshownDriver (model : EditorModel := editorModel) : Option TestDriver :=
   (Loop.Driver.over
-      { candidateKeys with displaying := { default := Completion.Displays.minibuffer 0 } }
+      { candidateKeys with displaying := { default := { windowed with sheet := fun _ => {} } } }
       driverJobs (EditorState.initial ⟨640, 480⟩) model).toOption
 
 /-- `candidateDriver` whose prompts are matched by a job over more than
@@ -3681,7 +3672,7 @@ face. -/
 def laterFields (pattern : String) (texts : Array String) : Array StatusField :=
   #[{ text := pickLabel, face := Loop.promptFace }] ++
     (FuzzyModel.rank pattern texts).filterMap fun index =>
-      (texts[index]?).map fun text => { text, face := Completion.Displays.candidateFace }
+      (texts[index]?).map fun text => { text, face := windowedRow }
 
 /-- The ids of the jobs `driver` holds, at a post or finished and not
 delivered, each with its name. -/
@@ -3735,9 +3726,7 @@ def pickFields (pattern : String) (chosen : Option Nat := none) : Array StatusFi
   #[{ text := pickLabel, face := Loop.promptFace }] ++
     (pickListed pattern).listed.mapIdx fun index candidate =>
       { text := candidate.text
-        face :=
-          if chosen == some index then Completion.Displays.chosenFace
-          else Completion.Displays.candidateFace }
+        face := if chosen == some index then windowedChosen else windowedRow }
 
 /-- The editor's models, but that every read of a whole text is refused
 with `noSuchText` and changes nothing: a fake written for the one check
@@ -3756,14 +3745,67 @@ loop does when the listing's read is refused. What is listed is compared
 with what the fuzzy model answers for the same pattern and candidates. -/
 def candidateChecks : List Check :=
   [{  name :=
+        "a prompt matched by a style and drawn by a display written here, neither shipped, lists the candidates the style keeps in its order, draws the display's rows in the candidate list's view, and accepting takes the chosen one"
+      run :=
+        pure <|
+          let reversing : Completion.Style :=
+            { name := "reversing"
+              hits := fun text candidates =>
+                pure <|
+                  ((Array.range candidates.size).filter fun index =>
+                        (candidates[index]?).any (·.startsWith text)).reverse.map
+                    Completion.Hit.ofIndex }
+          let bracketed : Completion.Display :=
+            { name := "bracketed"
+              sheet := fun showing =>
+                {
+                  rows :=
+                    showing.listed.mapIdx fun index listed =>
+                      {
+                        text :=
+                          if showing.chosen == some index then s!"[{listed.text}]"
+                          else listed.text } } }
+          let written : Config.Owner := { name := "written" }
+          let registry : Config.Registry :=
+            ((minibufferRegistry.replaceStyles written #[reversing]).replaceDisplays written
+                  #[bracketed]).replaceBindings
+              .config
+              ((minibufferBindings ++ [("C-c l", "ask-letters")]).toArray.map fun (text, command) =>
+                .ofKeys (keys text) command)
+          let asking : Dispatched := fun _ => do
+            discard <|
+                prompt "Letter: " asked "" [.given (.ofTexts "letters" "letter" #["ab", "b", "ac"])]
+            return none
+          let keys : Loop.Keys TestScheme.scheme :=
+            { minibufferKeys with
+              maps := registry.activeMaps TestScheme.scheme
+              matching := registry.matching
+              displaying := registry.displaying
+              command? := fun name =>
+                if name == "ask-letters" then some asking else minibufferKeys.command? name }
+          match
+            (Loop.Driver.over keys driverJobs (EditorState.initial ⟨640, 480⟩)
+                editorModel).toOption with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c l a")
+            let (chosen, _) := fedTo typed (rolePresses Role.nextItem)
+            let (accepted, _) := fedTo chosen (presses "C-c 1")
+            (registry.matching.styleFor (some "letter")).name == "reversing" &&
+              (registry.displaying.displayFor (some "letter")).name == "bracketed" &&
+              (candidatesOf typed).map (·.listed.map (·.text)) == some #["ac", "ab"] &&
+              listText typed == some "ac\nab" &&
+              listText chosen == some "[ac]\nab" &&
+              promptEcho accepted == greeted [.str "ac", .nat 7] &&
+              accepted.loop.state.prompt.isNone },
+    { name :=
         "a filtered source's candidates are listed in the order it gave, none dropped, each with the style's ranges where it matches: passed c, ab and xyz for b list c, ab and xyz, with ranges on ab alone; for the empty text no style marks them"
       run :=
         pure <|
           let passed := offered #["c", "ab", "xyz"]
           let candidates : Candidates := { passed }
-          let listing (pattern : String) :=
-            ranked (candidates.listing pattern Completion.Styles.fuzzy)
-          let hitRanges := ((styled Completion.Styles.fuzzy "b" #["ab"])[0]?).map (·.ranges)
+          let listing (pattern : String) := ranked (candidates.listing pattern marking)
+          let hitRanges := ((styled marking "b" #["ab"])[0]?).map (·.ranges)
           let marked := listing "b"
           marked.map (·.text) == #["c", "ab", "xyz"] &&
             marked.map (·.ranges) == #[#[], hitRanges.getD #[], #[]] &&
@@ -3807,8 +3849,7 @@ def candidateChecks : List Check :=
                 driver
             let order := (FuzzyModel.rank "" manyTexts).filterMap (manyTexts[·]?)
             let window (first : Nat) : Option String :=
-              some
-                ("\n".intercalate (order.extract first (first + Completion.Displays.rows)).toList)
+              some ("\n".intercalate (order.extract first (first + windowedRows)).toList)
             let down := stepped asking (List.replicate 11 .next)
             let up := stepped down (List.replicate 10 .previous)
             let last := stepped asking [.previous]
@@ -3836,15 +3877,15 @@ def candidateChecks : List Check :=
               (viewRect cancelled ⟨0⟩).map (·.height) ==
                 some (480 - cancelled.loop.state.heights.message) },
     { name :=
-        "with the loop handed orderless for the category pick and the fuzzy style for the rest, after w is typed a pick prompt lists the orderless style's hits, in the candidates' order with w last, and a prompt of another category lists the fuzzy model's, with w first"
+        "with the loop handed a style that keeps the candidates holding the text for the category pick and marking for the rest, after w is typed a pick prompt lists the first's hits, in the candidates' order with w last, and a prompt of another category lists the fuzzy model's, with w first"
       run :=
         pure <|
           let keys : Loop.Keys TestScheme.scheme :=
             { candidateKeys with
               matching :=
-                { default := Completion.Styles.fuzzy
+                { default := marking
                   byCategory := fun category =>
-                    if category == "pick" then some Completion.Styles.orderless else none } }
+                    if category == "pick" then some containing else none } }
           match
             (Loop.Driver.over keys driverJobs (EditorState.initial ⟨640, 480⟩)
                 editorModel).toOption with
@@ -3857,8 +3898,7 @@ def candidateChecks : List Check :=
                 ((pickCandidates[hit.index]?).getD "", hit.ranges)
             let listed (driver : TestDriver) : Option (Array (String × Array Completion.Span)) :=
               (candidatesOf driver).map (·.listed.map fun listed => (listed.text, listed.ranges))
-            listed pick == some (listing Completion.Styles.orderless) &&
-              listed other == some (listing Completion.Styles.fuzzy) &&
+            listed pick == some (listing containing) && listed other == some (listing marking) &&
               (listed pick).bind (·.back?.map (·.1)) == some "w" &&
               (listed other).bind (·[0]?.map (·.1)) == some "w" },
     { name :=
@@ -3885,7 +3925,7 @@ def candidateChecks : List Check :=
                 some #[(Completion.Candidate.ofText "only").inGroup "pick", xw]
           | _, _, _ => false },
     { name :=
-        "a prompt asked with a source and one that has filtered already keeps the first's candidates to match and the filtered one's apart, in its group, and the first source's category; after a text is typed it lists the matches in the fuzzy model's order, each with its in-order spans, then the filtered source's candidates in the order it gave them, though one does not match, the one that matches with its in-order spans"
+        "a prompt asked with a source and one that has filtered already keeps the first's candidates to match and the filtered one's apart, in its group, and the first source's category; after a text is typed it lists the matches in the fuzzy model's order, each with the style's ranges, then the filtered source's candidates in the order it gave them, though one does not match, the one that matches with the style's ranges"
       run :=
         pure <|
           match candidateDriver with
@@ -3900,7 +3940,7 @@ def candidateChecks : List Check :=
               passed.map fun candidate =>
                 .of candidate
                   (if pattern.isEmpty || candidate.text == "zz" then #[]
-                  else Completion.Styles.inOrderSpans pattern candidate.text)
+                  else markedSpans pattern candidate.text)
             let withPassed (listed : Candidates) : Candidates :=
               let pattern := listed.listedFor.getD ""
               { listed with
@@ -3910,11 +3950,11 @@ def candidateChecks : List Check :=
               (candidatesOf asking).map (·.all) == some pickOffered &&
               (candidatesOf asking).map (·.category) == some (some "pick") &&
               candidatesOf typed == some (withPassed (pickListed "w")) &&
-              (Completion.Styles.inOrderSpans "w" "w").size == 1 &&
+              (markedSpans "w" "w").size == 1 &&
               (candidatesOf typed).map (fun listed => (listed.listed.map (·.text)).toList.drop 3) ==
                 some ["zz", "w"] },
     { name :=
-        "a prompt asked with only a source that has filtered already holds no candidate to match, the filtered one's apart in its group, and that source's category; after a text is typed it lists them in the order the source gave, the one the style matches with its in-order spans, and the listing asks the style once, for its ranges: its step costs the read of the minibuffer and one ranking, as a prompt with candidates to match does, shown by a display of no rows"
+        "a prompt asked with only a source that has filtered already holds no candidate to match, the filtered one's apart in its group, and that source's category; after a text is typed it lists them in the order the source gave, the one the style matches with the style's ranges, and the listing asks the style once, for its ranges: its step costs the read of the minibuffer and one ranking, as a prompt with candidates to match does, shown by a display of no rows"
       run :=
         pure <|
           match unshownDriver countingModel with
@@ -3935,7 +3975,7 @@ def candidateChecks : List Check :=
                   passed.map fun candidate =>
                     .of candidate
                       (if pattern.isEmpty || candidate.text == "zz" then #[]
-                      else Completion.Styles.inOrderSpans pattern candidate.text)
+                      else markedSpans pattern candidate.text)
                 place := rootPlace }
             candidatesOf asking == some (listing "") &&
               (candidatesOf asking).map (·.all) == some #[] &&
@@ -4037,8 +4077,7 @@ def candidateChecks : List Check :=
               (pickShown asking).map (·.size) == some (1 + pickCandidates.size) &&
               pickShown typed == some (pickFields "e") &&
               (pickShown typed).map (·.size) == some 3 &&
-              (statusIn typed ⟨0⟩).map (·.any (·.face == Completion.Displays.candidateFace)) ==
-                some false },
+              (statusIn typed ⟨0⟩).map (·.any (·.face == windowedRow)) == some false },
     { name :=
         "where a candidate is the typed text and others match it too, its row is the first of the list, though it is the last of the candidates"
       run :=
@@ -4075,10 +4114,9 @@ def candidateChecks : List Check :=
             let (second, _) := fedTo (chose typed [.next, .next]) (presses "C-c s")
             let (unchosen, _) := fedTo (chose second [.next, .next]) (presses "C-c s")
             pickShown second == some (pickFields "w" (some 1)) &&
-              ((pickShown second).map fun fields =>
-                  fields.map (·.face == Completion.Displays.chosenFace)) ==
+              ((pickShown second).map fun fields => fields.map (·.face == windowedChosen)) ==
                 some #[false, false, true, false] &&
-              Completion.Displays.chosenFace != Completion.Displays.candidateFace &&
+              windowedChosen != windowedRow &&
               candidatesOf unchosen == some (pickListed "w") &&
               pickShown unchosen == some (pickFields "w") },
     { name :=
@@ -4194,8 +4232,9 @@ def candidateChecks : List Check :=
           | some driver =>
             let (next, _) := fedTo driver (presses "C-c 3")
             let (previous, _) := fedTo driver (presses "C-c 4")
-            !Minibuffer.notOpen.isEmpty && promptEcho next == Minibuffer.notOpen &&
-              promptEcho previous == Minibuffer.notOpen &&
+            !PromptRefusal.notOpen.describe.isEmpty &&
+              promptEcho next == PromptRefusal.notOpen.describe &&
+              promptEcho previous == PromptRefusal.notOpen.describe &&
               next.loop.state.prompt == none &&
               { next.loop.state with echo := "" } == driver.loop.state },
     { name :=
@@ -4323,9 +4362,8 @@ def promptLoop (candidates : Candidates) (typed : Option String := none)
 one job registered, the config generation is `generation`, a prompt over
 more than `inline` candidates is matched by a job, and the style is
 `style`, which config owns when `owned`. -/
-def jobKeys (generation : Nat := 0) (inline : Nat := 2)
-    (style : Completion.Style := Completion.Styles.fuzzy) (owned : Bool := false) :
-    Loop.Keys TestScheme.scheme :=
+def jobKeys (generation : Nat := 0) (inline : Nat := 2) (style : Completion.Style := marking)
+    (owned : Bool := false) : Loop.Keys TestScheme.scheme :=
   { registered := { jobs := (· == "later-pick"), generation }, inlineMatches := inline
     matching :=
       { default := style
@@ -4548,7 +4586,7 @@ def completionJobChecks : List Check :=
           | none => false
           | some (loop, view) =>
             let key := Loop.matchKey view
-            let keys := jobKeys (generation := 2) (style := Completion.Styles.orderless)
+            let keys := jobKeys (generation := 2) (style := containing)
             let (after, _, cancels, spawns) :=
               { loop with state := { loop.state with completionKeys := #[key] } }.completionJobs
                 keys
@@ -4558,7 +4596,7 @@ def completionJobChecks : List Check :=
               (spawns[0]?.bind (matchedBy after ·)).map (·.listed.map (·.text)) ==
                 some #["wq", "rewrite", "w"] },
     { name :=
-        "a listing of 15 shows 10 rows, the first of the listing, the chosen one among them in the chosen face, and one of 4 shows 4; the minibuffer's status line is the label alone"
+        "a listing of 15 drawn by the core's own display shows every row, in the listing's order, the chosen one marked, and one of 4 shows 4; the minibuffer's status line is the label alone"
       run :=
         pure <|
           let texts := (Array.range 15).map (s!"c{·}")
@@ -4569,12 +4607,11 @@ def completionJobChecks : List Check :=
                   chosen := some 2 } }
           let sheet (count : Nat) : Completion.Sheet :=
             let candidates := (prompt count).candidates
-            (Completion.Displaying.standard.displayFor none).sheet
+            (Completion.Displaying.unregistered.displayFor none).sheet
               { listed := candidates.listed, chosen := candidates.chosen }
           let rows := (sheet 15).rows
-          rows.map (·.text) == texts.extract 0 10 &&
-            rows.map (fun row => row.decorations.any (·.face == Completion.Displays.chosenFace)) ==
-              #[false, false, true] ++ Array.replicate 7 false &&
+          rows.map (·.text) ==
+              texts.mapIdx (fun index text => (if index == 2 then "> " else "  ") ++ text) &&
             (sheet 4).rows.size == 4 &&
             (Loop.promptStatus (prompt 15)).map (·.text) == #["L: "] }]
 
@@ -4980,6 +5017,70 @@ def laterLoopChecks : List Check :=
                   (lastStep steps).map (·.spawns.size) == some 1 &&
                   (candidatesOf listed).map (·.listed) == some (pickListed "w").listed }]
 
+/-- Stand-in works under the core's names of the file jobs (`FileJobs`), for
+`jobs` of them: each finishes with nothing, and none is run here. They
+stand in for the files feature, which registers the real ones, so the
+checks below are of when the loop starts the jobs, not what they do. -/
+def standInFileJobs (jobs : List String := [FileJobs.checkJob, FileJobs.followJob])
+    (name : String) : Option (List Argument → Work) :=
+  if jobs.contains name then some fun _ _ => pure (pure ()) else none
+
+/-- The initial state at 640 by 480 with a file buffer, `note.txt`, the
+buffer 1, holding `notePath` at `noteStamp`, shown by no view, and
+auto-reload's choice `autoReload`. -/
+def fileBufferState (autoReload : Option Bool := none) : TextM EditorState := do
+  let state ← EditorState.initial ⟨640, 480⟩
+  let text ← createText "note\n"
+  let history ← UndoTree.over text
+  let (.ok id, state) := state.addBuffer "note.txt" text history | return state
+  return { (state.attachFile id notePath noteStamp .lf).2 with autoReload }
+
+/-- The loop's driver over `fileBufferState autoReload`, with no keys and the
+stand-in works of `jobs`. -/
+def fileJobDriver (jobs : List String := [FileJobs.checkJob, FileJobs.followJob])
+    (autoReload : Option Bool := none) : Option TestDriver :=
+  (Loop.Driver.over (dispatchKeys []) (standInFileJobs jobs) (fileBufferState autoReload)
+      editorModel).toOption
+
+/-- The jobs `events` start on `driver`, every step's, in order. -/
+def startsOn (driver : TestDriver) (events : List Event) : Array JobStart :=
+  (fedTo driver events).2.flatMap fun step => (step.map (·.starts)).getD #[]
+
+/-- The checks of when the loop starts the file jobs (`Loop.fileJobs`,
+`Editor/Loop.lean`, "Files that changed on disk" and "Auto-reload"), under
+the core's names (`Editor/FileJobs.lean`), on the loop's driver with
+stand-in works and no files feature. -/
+def loopFileJobChecks : List Check :=
+  [{  name :=
+        "where `check-files` is registered, the frame gaining the keyboard focus starts one check of every file buffer, with the core's order of the buffer, its path and its stamp; with no such job registered it starts none"
+      run :=
+        pure <|
+          let focus := [Event.focus false, .focus true]
+          match fileJobDriver, fileJobDriver (jobs := [FileJobs.followJob]) with
+          | some driver, some unchecked =>
+            let checks := (startsOn driver focus).filter (·.name == FileJobs.checkJob)
+            checks.map (·.arguments) ==
+                #[FileJobs.checkArguments
+                    #[{ buffer := ⟨1⟩, path := notePath, stamp := noteStamp }]] &&
+              (startsOn unchecked focus).isEmpty
+          | _, _ => false },
+    { name :=
+        "with auto-reload on and `follow-file` registered, each open file buffer gets one follow keyed by the buffer, with the core's order, its own stamp expected; with it off, or the job not registered, none"
+      run :=
+        pure <|
+          let step := [Event.focus true]
+          let order : FileJobs.FollowOrder :=
+            { buffer := ⟨1⟩, path := notePath, stamp := noteStamp, expected := some noteStamp }
+          match fileJobDriver (autoReload := some true), fileJobDriver (autoReload := some false),
+            fileJobDriver (jobs := [FileJobs.checkJob]) (autoReload := some true) with
+          | some on, some off, some unregistered =>
+            (startsOn on step).filter (·.name == FileJobs.followJob) ==
+                #[{ name := FileJobs.followJob, arguments := order.arguments
+                    key := some (Following.keyOf ⟨1⟩) }] &&
+              ((startsOn off step).filter (·.name == FileJobs.followJob)).isEmpty &&
+              ((startsOn unregistered step).filter (·.name == FileJobs.followJob)).isEmpty
+          | _, _, _ => false }]
+
 /-- The checks of the files a window asks to open (`Event.openFiles`): the
 loop runs the open command with them (`Editor/Loop.lean`, "What each event
 does"), on the driver of the file command checks. No file is touched. -/
@@ -4987,7 +5088,7 @@ def openFilesChecks : List Check :=
   let note := inFiles "note.txt"
   let crlf := inFiles "crlf.txt"
   let asked (paths : List System.FilePath) : Option TestDriver :=
-    filesDriver.map fun driver => (fedTo driver [.openFiles (paths.map (·.toString))]).1
+    Opener.driver.map fun driver => (fedTo driver [.openFiles (paths.map (·.toString))]).1
   [{  name :=
         "an open-files input of two paths, once both loads are finished, leaves two new buffers holding those files"
       run :=
@@ -5003,22 +5104,6 @@ def openFilesChecks : List Check :=
               (state.buffer? ⟨2⟩).map (·.name) == some "crlf.txt" &&
               both.model.texts.contents[1]? == some FileCases.noteText &&
               state.wellFormed },
-    { name :=
-        "after an open-files input the focused view shows the buffer of its last path, whichever order its loads would finish in: only one is in flight at a time"
-      run :=
-        pure <|
-          match asked [note, crlf] with
-          | none => false
-          | some asked =>
-            let (first, _) := asked.finish 1
-            let (both, _) := first.finish 2
-            -- Only the first path's load is in flight after the event: the
-            -- second cannot finish before it, since it has not started.
-            asked.pending.map (·.name) == #[Files.loadJob] && (asked.finish 2).2.isNone &&
-              first.pending.map (·.id) == #[2] &&
-              (showing both both.loop.state.frame.focused).map (·.id) ==
-                both.loop.state.findFile crlf &&
-              (both.loop.state.findFile crlf).isSome },
     { name := "an open-files input of one path selects that path's buffer once its load is finished"
       run :=
         pure <|
@@ -5031,7 +5116,7 @@ def openFilesChecks : List Check :=
     { name := "an open-files input with no path starts nothing and publishes a scene"
       run :=
         pure <|
-          match filesDriver with
+          match Opener.driver with
           | none => false
           | some driver =>
             let (after, steps) := fedTo driver [.openFiles []]
@@ -5044,11 +5129,11 @@ def openFilesChecks : List Check :=
         pure <|
           let keys : Loop.Keys TestScheme.scheme :=
             dispatchKeys []
-              [(Files.openName, fun call => do
+              [(FileJobs.openFileCommand, fun call => do
                   message s!"mine: {call.arguments.length}"
                   return none)]
           match
-            (Loop.Driver.over keys fileJobs (EditorState.initial ⟨640, 480⟩)
+            (Loop.Driver.over keys Opener.jobs (EditorState.initial ⟨640, 480⟩)
                 editorModel).toOption with
           | none => false
           | some driver =>
@@ -5088,18 +5173,18 @@ be run after it, a reload and the theme `second`: `ask-all` (`a`), and
 def quitKeys : Loop.Keys TestScheme.scheme :=
   {
     dispatchKeys
-      [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
+      [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Opener.saveName),
         ("C-l l", invoke "leave"), ("C-l f", invoke "leave-then-fail"), ("C-l s", invoke "stamp"),
         ("C-l o", invoke "other"), ("C-l h", invoke "hand-leave"),
         ("C-l t", invoke "hand-leave-other"), ("C-l r", invoke "again"),
         ("C-l g", invoke "again-then-fail"), ("C-l p", invoke "pick"),
         ("C-l k", invoke "pick-then-fail"), ("C-l a", invoke "ask-all"),
         ("C-l b", invoke "ask-all-then-fail")]
-      [(Files.openName, fun call => do
-          Files.openCommand call
+      [(FileJobs.openFileCommand, fun call => do
+          Opener.openCommand call
           return none),
-        (Files.saveName, fun call => do
-          Files.saveCommand call
+        (Opener.saveName, fun call => do
+          Opener.saveCommand call
           return none),
         ("leave", fun _ => do
           if let .error (.unsaved name)← quit then
@@ -5134,7 +5219,7 @@ def quitKeys : Loop.Keys TestScheme.scheme :=
 `note.txt` open in view 0: the open command, and its job finished. The load
 is job 1. -/
 def quitDriver (files : FileModel := commandFiles) : Option TestDriver :=
-  (Loop.Driver.over quitKeys fileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+  (Loop.Driver.over quitKeys Opener.jobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => ((fedTo { driver with jobs := { files } } (presses "C-o n")).1.finish 1).1
 
 /-- The checks of quitting in the loop (`Editor/Loop.lean`, "Quit"), on the
@@ -5207,7 +5292,7 @@ def dispatchQuitChecks : List Check :=
             asked.loop.state.quitting && delivered.map (·.next) == some .continue &&
               !refused.stopped &&
               !refused.loop.state.quitting &&
-              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) &&
+              echoOf refused == some (Opener.notSaved path (.changed (stampOf changed path))) &&
               (showing refused).map (·.buffer.isModified) == some true &&
               bytesOf refused path == some JobContract.otherFile },
     { name :=
@@ -5225,7 +5310,7 @@ def dispatchQuitChecks : List Check :=
               delivered.map (·.next) == some .continue &&
               !refused.stopped &&
               !refused.loop.state.quitting &&
-              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) &&
+              echoOf refused == some (Opener.notSaved path (.changed (stampOf changed path))) &&
               bytesOf refused path == some JobContract.otherFile },
     { name :=
         "an edit made while a quit waits for a save withdraws it: the state is no longer asked to quit after the edit's step, and the delivery of the save's result says continue, with the file written and the buffer still modified"
@@ -5272,7 +5357,7 @@ def dispatchQuitChecks : List Check :=
             let (after, _) := fedTo refused (presses "C-l o")
             next steps == #[some .continue] &&
               refused.model.display.scenes.size == edited.model.display.scenes.size + 1 &&
-              echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+              echoOf refused == some (Quit.notQuitting (.unsaved "note.txt")) &&
               !refused.loop.state.quitting &&
               !refused.stopped &&
               promptEcho after == "other" },
@@ -5316,7 +5401,7 @@ def dispatchQuitChecks : List Check :=
               delivered.map (·.next) == some .continue &&
               !refused.stopped &&
               !refused.loop.state.quitting &&
-              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) },
+              echoOf refused == some (Opener.notSaved path (.changed (stampOf changed path))) },
     { name :=
         "the driver records that a step said stop when the step was one it ran for an invocation a command asked for: the fed step says continue and the driver has stopped"
       run :=
@@ -5411,33 +5496,34 @@ def dispatchQuitChecks : List Check :=
               failed.reloads == 0 &&
               failed.themes == #[] }]
 
-/-- The compiled quit command (`Ex.quitCommand`), as the system quit checks
+/-- The quit command as a package registers it over the core's rule
+(`Quit.closeRequested`, `Editor/Quit.lean`), as the system quit checks
 register it. -/
-def compiledQuit : Dispatched := fun call => do
-  Ex.quitCommand call
+def compiledQuit : Dispatched := fun _ => do
+  Quit.closeRequested
   return none
 
 /-- What a step of the system quit checks is handed: the open command with
 the path of `note.txt` (`C-o n`) and the save command (`C-o w`), as the
-quit checks have them, and `quit` (`Ex.quitName`), bound to `C-l q`, as
+quit checks have them, and `quit` (`Quit.name`), bound to `C-l q`, as
 `command` does it: the compiled one, or one config registered in its
 place. -/
 def systemQuitKeys (command : Dispatched := compiledQuit) : Loop.Keys TestScheme.scheme :=
   dispatchKeys
-    [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
-      ("C-l q", invoke Ex.quitName)]
-    [(Files.openName, fun call => do
-        Files.openCommand call
+    [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Opener.saveName),
+      ("C-l q", invoke Quit.name)]
+    [(FileJobs.openFileCommand, fun call => do
+        Opener.openCommand call
         return none),
-      (Files.saveName, fun call => do
-        Files.saveCommand call
+      (Opener.saveName, fun call => do
+        Opener.saveCommand call
         return none),
-      (Ex.quitName, command)]
+      (Quit.name, command)]
 
 /-- A driver of the system quit checks, with `quit` as `command` does it
 and the file `note.txt` open in view 0, as `quitDriver` opens it. -/
 def systemQuitDriver (command : Dispatched := compiledQuit) : Option TestDriver :=
-  (Loop.Driver.over (systemQuitKeys command) fileJobs (EditorState.initial ⟨640, 480⟩)
+  (Loop.Driver.over (systemQuitKeys command) Opener.jobs (EditorState.initial ⟨640, 480⟩)
         editorModel).toOption.map
     fun driver =>
     ((fedTo { driver with jobs := { files := commandFiles } } (presses "C-o n")).1.finish 1).1
@@ -5474,7 +5560,7 @@ def systemQuitChecks : List Check :=
             let (refused, steps) := fedTo driver [.commit "x", .quitRequested]
             let (edited, _) := fedTo refused [.commit "y"]
             next steps == #[some .continue, some .continue] && !refused.stopped &&
-              echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+              echoOf refused == some (Quit.notQuitting (.unsaved "note.txt")) &&
               echoOf refused == some "quit: note.txt has unsaved changes" &&
               keptRunning refused == 1 &&
               !refused.loop.state.systemQuit &&
@@ -5502,7 +5588,7 @@ def systemQuitChecks : List Check :=
               !refused.stopped &&
               keptRunning refused == 1 &&
               !refused.loop.state.systemQuit &&
-              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) },
+              echoOf refused == some (Opener.notSaved path (.changed (stampOf changed path))) },
     { name :=
         "config's command named quit runs in place of the compiled one on the system's quit: its message is the echo, and since nothing asked to quit the frame is asked to keep running once"
       run :=
@@ -5526,331 +5612,8 @@ def systemQuitChecks : List Check :=
           | none => false
           | some driver =>
             let (refused, _) := fedTo driver ([.commit "x"] ++ presses "C-l q")
-            !refused.stopped && echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+            !refused.stopped && echoOf refused == some (Quit.notQuitting (.unsaved "note.txt")) &&
               keptRunning refused == 0 }]
-
-/-- The mode line's field that says a buffer's file changed on disk: the
-`changed` segment's (`ModeLine.changed`). -/
-def changedField : StatusField :=
-  ModeLine.field ModeLine.changedMark ModeLine.changedFace
-
-/-- `driver` once the file at `path` is gone. -/
-def removed (driver : TestDriver) (path : System.FilePath) : TestDriver :=
-  { driver with
-    jobs :=
-      { driver.jobs with
-        files :=
-          { driver.jobs.files with files := driver.jobs.files.files.filter (·.path != path) } } }
-
-/-- `driver` after the frame lost the keyboard focus and gained it again, and
-the check that started finished. -/
-def focusChecked (driver : TestDriver) : TestDriver :=
-  finishNamed (fedTo driver [.focus false, .focus true]).1 Files.checkJob
-
-/-- The checks of the staleness check (`Files.checkWork`, `Loop.fileJobs`,
-`Editor/Loop.lean`, "Files that changed on disk"), with auto-reload off, on
-the loop's driver over the editor's models and the model of files, with the
-commands and the jobs compiled code registers. -/
-def stalenessChecks : List Check :=
-  let textOf (driver : TestDriver) : Option String := (showing driver).bind (·.text)
-  let note := inFiles "note.txt"
-  [{  name :=
-        "criterion 5: the first edit to a buffer whose file changed is refused and the next lands: after a check started by the focus coming back, the first edit leaves the text, says the file changed and names :e, with no modified field, and the second edit lands"
-      run :=
-        pure <|
-          match noteRewritten with
-          | none => false
-          | some rewritten =>
-            let checked := focusChecked rewritten
-            let (refused, _) := fedTo checked (presses "C-o x")
-            let (landed, _) := fedTo refused (presses "C-o x")
-            textOf refused == some FileCases.noteText &&
-              echoOf refused == some (Files.changedOnDisk note) &&
-              statusOf refused == some (named "note.txt" ++ #[changedField]) &&
-              textOf landed == some ("x" ++ FileCases.noteText) &&
-              statusOf landed == some (namedModified "note.txt" ++ #[changedField]) },
-    { name :=
-        "a committed text after a change on disk is dropped the same way, and the next commit lands"
-      run :=
-        pure <|
-          match noteRewritten with
-          | none => false
-          | some rewritten =>
-            let (refused, _) := fedTo (focusChecked rewritten) [.commit "a"]
-            let (landed, _) := fedTo refused [.commit "b"]
-            textOf refused == some FileCases.noteText &&
-              echoOf refused == some (Files.changedOnDisk note) &&
-              textOf landed == some ("b" ++ FileCases.noteText) },
-    { name :=
-        "the first edit of an unmodified file buffer starts a check: the edit lands, and once the check is finished the buffer is marked and the echo area gives both resolutions"
-      run :=
-        pure <|
-          match noteRewritten with
-          | none => false
-          | some rewritten =>
-            let (edited, _) := fedTo rewritten (presses "C-o x")
-            let checked := finishNamed edited Files.checkJob
-            textOf edited == some ("x" ++ FileCases.noteText) &&
-              (pendingOf edited Files.checkJob).isSome &&
-              statusOf checked == some (namedModified "note.txt" ++ #[changedField]) &&
-              echoOf checked == some (Files.changedUnderEdits note) },
-    { name :=
-        "a file that is gone is marked: the first edit is refused saying :w! writes it again, and the next lands"
-      run :=
-        pure <|
-          match noteRewritten with
-          | none => false
-          | some rewritten =>
-            let checked := focusChecked (removed rewritten note)
-            let (refused, _) := fedTo checked (presses "C-o x")
-            let (landed, _) := fedTo refused (presses "C-o x")
-            ((heldFile checked).bind (·.changed)).map (·.found) == some none &&
-              echoOf refused == some (Files.goneFromDisk note) &&
-              textOf refused == some FileCases.noteText &&
-              textOf landed == some ("x" ++ FileCases.noteText) },
-    { name :=
-        "criterion 6: switching to a buffer whose file changed marks its status line and leaves its text; switching to one whose file did not change adds no field; and the focus coming back marks every changed buffer"
-      run :=
-        pure <|
-          match noteRewritten with
-          | none => false
-          | some rewritten =>
-            let (both, _) := fedTo rewritten (presses "C-o l")
-            let both := finishNamed both Files.loadJob
-            let (switched, _) := fedTo both (exLine "b note.txt")
-            let switched := finishNamed switched Files.checkJob
-            let (back, _) := fedTo switched (exLine "b lf.txt")
-            let back := finishNamed back Files.checkJob
-            let focused := focusChecked both
-            let noteOf (driver : TestDriver) : Option Bool :=
-              (driver.loop.state.buffer? ⟨1⟩).bind (·.file.map (·.changed.isSome))
-            let lfOf (driver : TestDriver) : Option Bool :=
-              (driver.loop.state.buffer? ⟨2⟩).bind (·.file.map (·.changed.isSome))
-            (showing switched).map (·.buffer.name) == some "note.txt" &&
-              statusOf switched == some (named "note.txt" ++ #[changedField]) &&
-              textOf switched == some FileCases.noteText &&
-              statusOf back == some (named "lf.txt") &&
-              noteOf focused == some true &&
-              lfOf focused == some false },
-    { name :=
-        "with no check job registered nothing is checked: the focus coming back and a first edit start nothing"
-      run :=
-        pure <|
-          match noteOpen with
-          | none => false
-          | some opened =>
-            let rewritten := rewritten opened (inFiles "note.txt") reloadedBytes
-            let (stepped, steps) := fedTo rewritten [.focus false, .focus true, .commit "x"]
-            (steps.all fun step => (step.map (·.starts.isEmpty)).getD false) &&
-              stepped.pending.isEmpty },
-    { name :=
-        "the save criterion, with no check run: a save of a buffer whose file changed on disk writes nothing and says so, both with no check job registered and with the check the first edit started still unfinished; the file keeps the other program's bytes"
-      run :=
-        pure <|
-          match noteOpen, noteRewritten with
-          | some unchecked, some behind =>
-            -- No check job is registered here: the first edit starts none.
-            let changed := rewritten unchecked note reloadedBytes
-            let (saving, _) := fedTo changed ([.commit "x"] ++ presses "C-o w")
-            let refused := finishNamed saving Files.saveJob
-            -- The check the first edit starts is left unfinished.
-            let (pending, _) := fedTo behind [.commit "x"]
-            let (asked, _) := fedTo pending (exLine "w")
-            let held := finishNamed asked Files.saveJob
-            (pendingOf saving Files.checkJob).isNone && (pendingOf saving Files.saveJob).isSome &&
-              bytesOf refused note == some reloadedBytes &&
-              echoOf refused == some (Files.notSaved note (.changed (stampOf changed note))) &&
-              (pendingOf pending Files.checkJob).isSome &&
-              (pendingOf held Files.checkJob).isSome &&
-              (heldFile held).bind (·.changed) == none &&
-              (pendingOf asked Files.saveJob).isSome &&
-              bytesOf held note == some reloadedBytes &&
-              echoOf held == some (Files.notSaved note (.changed (stampOf behind note))) &&
-              textOf held == some ("x" ++ FileCases.noteText)
-          | _, _ => false },
-    { name :=
-        "the mark's state requests: a result for another stamp changes nothing, one for the buffer's stamp marks it, one that finds that stamp clears it, telling sets told, and a save that wrote the file clears it"
-      run :=
-        pure <|
-          match noteRewritten with
-          | none => false
-          | some rewritten =>
-            let state := rewritten.loop.state
-            match (heldFile rewritten) with
-            | none => false
-            | some file =>
-              let other : File.Stamp := { file.stamp with size := file.stamp.size + 1 }
-              let changedOf (state : EditorState) :=
-                (state.buffer? ⟨1⟩).bind (·.file.bind (·.changed))
-              let (_, stale) := state.markChanged ⟨1⟩ other (some other) false
-              let (_, marked) := state.markChanged ⟨1⟩ file.stamp (some other) false
-              let (_, cleared) := marked.markChanged ⟨1⟩ file.stamp (some file.stamp) false
-              let (_, told) := marked.tellChanged ⟨1⟩
-              let (_, began) := told.beginSave ⟨1⟩ ⟨0⟩ ⟨0⟩
-              let (_, saved) := began.endSave ⟨1⟩ ⟨0⟩ (some other)
-              let text := ((state.buffer? ⟨1⟩).map (·.text)).getD ⟨0⟩
-              changedOf stale == none &&
-                changedOf marked == some { found := some other, told := false } &&
-                changedOf cleared == none &&
-                changedOf told == some { found := some other, told := true } &&
-                (marked.untold? text).isSome &&
-                (told.untold? text).isNone &&
-                changedOf saved == none }]
-
-/-- `reloadDriver` whose watches may be made in `fileRoot`, with `note.txt`
-open in view 0 and its load finished. -/
-def watchedNote : Option TestDriver :=
-  reloadDriver.map fun driver =>
-    let driver :=
-      { driver with
-        jobs :=
-          { driver.jobs with
-            fileWatches := { driver.jobs.fileWatches with directories := #[fileRoot] } } }
-    finishNamed (fedTo driver (presses "C-o n")).1 Files.loadJob
-
-/-- The checks of auto-reload (`Editor/Loop.lean`, "Auto-reload"), on the
-loop's driver over the editor's models, the model of files and the model of
-watches, whose waiting jobs it holds parked (`Loop.Driver.touch`). -/
-def autoReloadChecks : List Check :=
-  let textOf (driver : TestDriver) : Option String := (showing driver).bind (·.text)
-  let note := inFiles "note.txt"
-  [{  name :=
-        "criterion 7: with auto-reload off no file buffer has a watch open: through opening two files, switching, the focus going and coming, an edit, a reload, closing one and a change on disk, no follow job is started, none is parked, and the watch model started none; with autoread two are open, bd ends one and noautoread the other"
-      run :=
-        pure <|
-          match watchedNote with
-          | none => false
-          | some opened =>
-            let (two, s1) := fedTo opened (presses "C-o l")
-            let two := finishNamed two Files.loadJob
-            let (switched, s2) := fedTo two (exLine "b note.txt")
-            let (focused, s3) :=
-              fedTo (finishNamed switched Files.checkJob) [.focus false, .focus true]
-            let (edited, s4) := fedTo (finishNamed focused Files.checkJob) (presses "C-o x")
-            let (reloading, s5) := fedTo (finishNamed edited Files.checkJob) (presses "C-o R")
-            let (closed, s6) := fedTo (finishNamed reloading Files.reloadJob) (exLine "bd lf.txt")
-            let touched := (rewritten closed note reloadedBytes).touch #[(note, .written)]
-            let steps := s1 ++ s2 ++ s3 ++ s4 ++ s5 ++ s6
-            let (on, _) := fedTo two (exLine "autoread")
-            let (one, _) := fedTo on (exLine "bd lf.txt")
-            let (off, _) := fedTo one (exLine "noautoread")
-            !(startNames steps).contains Files.followJob &&
-              [two, switched, focused, edited, reloading, closed, touched].all
-                (fun driver =>
-                  driver.openWatches == 0 && driver.jobs.fileWatches.next == 1 &&
-                    driver.jobs.fileWatches.ended.isEmpty) &&
-              on.openWatches == 2 &&
-              one.openWatches == 1 &&
-              off.openWatches == 0 &&
-              off.jobs.fileWatches.ended.size == 2 },
-    { name :=
-        "criterion 8: with auto-reload on, an injected change shows the file's new text: one watch is parked, the change resumes it, its follow finishes and reloads, and the buffer then holds the new text with no modified or changed field, and a watch parked again"
-      run :=
-        pure <|
-          match watchedNote with
-          | none => false
-          | some opened =>
-            let (on, _) := fedTo opened (exLine "autoread")
-            let changed := (rewritten on note reloadedBytes).touch #[(note, .written)]
-            let followed := finishNamed changed Files.followJob
-            let reloaded := finishNamed followed Files.reloadJob
-            -- After the reload the follow is on the new stamp: a later
-            -- change to the buffer, now edited, marks it.
-            let (edited, _) := fedTo reloaded (presses "C-o x")
-            let edited := finishNamed edited Files.checkJob
-            let again := rewritten edited note ("again\n".toUTF8 ++ reloadedBytes)
-            let marked := finishNamed (again.touch #[(note, .written)]) Files.followJob
-            on.openWatches == 1 && (pendingOf changed Files.followJob).isSome &&
-              (pendingOf followed Files.reloadJob).isSome &&
-              textOf reloaded == some reloadedText &&
-              statusOf reloaded == some (named "note.txt") &&
-              reloaded.openWatches == 1 &&
-              statusOf marked == some (namedModified "note.txt" ++ #[changedField]) &&
-              marked.openWatches == 1 },
-    { name :=
-        "a deleted file is marked and waited on: no reload, the text kept, the changed field with nothing found, one watch parked and a further step starts no follow; the file put back is reloaded"
-      run :=
-        pure <|
-          match watchedNote with
-          | none => false
-          | some opened =>
-            let (on, _) := fedTo opened (exLine "autoread")
-            let gone := finishNamed ((removed on note).touch #[(note, .removed)]) Files.followJob
-            let (later, steps) := fedTo gone [.preedit ""]
-            let back :=
-              finishNamed ((rewritten later note reloadedBytes).touch #[(note, .created)])
-                Files.followJob
-            let reloaded := finishNamed back Files.reloadJob
-            (pendingOf gone Files.reloadJob).isNone && textOf gone == some FileCases.noteText &&
-              statusOf gone == some (named "note.txt" ++ #[changedField]) &&
-              ((heldFile gone).bind (·.changed)).map (·.found) == some none &&
-              gone.openWatches == 1 &&
-              !(startNames steps).contains Files.followJob &&
-              textOf reloaded == some reloadedText &&
-              statusOf reloaded == some (named "note.txt") },
-    { name :=
-        "criterion 10 on the model: a modified buffer keeps its text and is marked, the follow armed again on what was found, so a touch with no further change starts nothing; two changes leave one parked watch, the mark on the second stamp"
-      run :=
-        pure <|
-          match watchedNote with
-          | none => false
-          | some opened =>
-            let (on, _) := fedTo opened (exLine "autoread")
-            let (edited, _) := fedTo on (presses "C-o x")
-            let edited := finishNamed edited Files.checkJob
-            let first := rewritten edited note reloadedBytes
-            let marked := finishNamed (first.touch #[(note, .written)]) Files.followJob
-            let quiet := marked.touch #[(note, .written)]
-            let second := rewritten quiet note ("again\n".toUTF8 ++ reloadedBytes)
-            let twice := finishNamed (second.touch #[(note, .written)]) Files.followJob
-            let (later, steps) := fedTo twice [.preedit ""]
-            textOf marked == some ("x" ++ FileCases.noteText) &&
-              (pendingOf marked Files.reloadJob).isNone &&
-              statusOf marked == some (namedModified "note.txt" ++ #[changedField]) &&
-              (pendingOf quiet Files.followJob).isNone &&
-              quiet.openWatches == 1 &&
-              ((heldFile twice).bind (·.changed)).map (·.found) == some (stampOf twice note) &&
-              twice.openWatches == 1 &&
-              (pendingOf twice Files.followJob).isNone &&
-              !(startNames steps).contains Files.followJob &&
-              later.openWatches == 1 },
-    { name :=
-        "a refused watch is said in words and says how to retry: the echo area has the refusal's sentence, not its constructor, and that auto-reload is off for the buffer until noautoread then autoread, which starts a follow again"
-      run :=
-        pure <|
-          -- No directory may be watched here, so the follow's watch is
-          -- refused.
-          match reloadDriver with
-          | none => false
-          | some fresh =>
-            let opened := finishNamed (fedTo fresh (presses "C-o n")).1 Files.loadJob
-            let (on, _) := fedTo opened (exLine "autoread")
-            let refused := finishNamed on Files.followJob
-            let (later, steps) := fedTo refused [.preedit ""]
-            let (off, _) := fedTo later (exLine "noautoread")
-            let (retried, _) := fedTo off (exLine "autoread")
-            let error : FileWatchError := .notFound s!"cannot watch {note}: {fileRoot} is not there"
-            (pendingOf on Files.followJob).isSome &&
-              echoOf refused == some (Files.notFollowing note error.describe) &&
-              (echoOf refused).map (·.endsWith Files.followRetry) == some true &&
-              !((echoOf refused).getD "").contains "FileWatchError" &&
-              !(startNames steps).contains Files.followJob &&
-              (pendingOf retried Files.followJob).isSome },
-    { name :=
-        "config's setting decides while no command has: under it the next step arms the watches, and noautoread then wins over it"
-      run :=
-        pure <|
-          match watchedNote with
-          | none => false
-          | some opened =>
-            let configured :=
-              { opened with
-                keys :=
-                  { opened.keys with
-                    registered := { opened.keys.registered with autoReload := true } } }
-            let (armed, _) := fedTo configured [.preedit ""]
-            let (off, _) := fedTo armed (exLine "noautoread")
-            armed.openWatches == 1 && off.openWatches == 0 }]
 
 /-- The text of the decoration checks: a hundred rows of `foo` and the row's
 number, more than a view of the decoration checks' frame shows
@@ -5868,16 +5631,44 @@ def wrappingText : String :=
   String.join
     ((List.range 60).map fun _ => String.join ((List.range 50).map fun _ => "foo ") ++ "\n")
 
-/-- A state of the decoration checks: `evilState` of `contents`, with the
+/-- A state of the decoration checks: `barState` of `contents`, with the
 cursor at 0, in a frame of 80 by 40, where a row of the display model is
 one high and a cell one wide, so a view shows a few dozen rows. -/
 def decorationState (contents : String) : TextM EditorState := do
-  let state ← evilState contents 0
+  let state ← barState contents 0
   return { state with frame := { state.frame with size := ⟨80, 40⟩ } }
 
-/-- A driver of the decoration checks over `decorationState`. -/
-def decorationDriver (contents : String) : Option EvilDriver :=
-  (Loop.Driver.over evilHanded (fun _ => none) (decorationState contents) editorModel).toOption
+/-- What a step of the decoration checks is handed, under the test scheme:
+the kit's editing keys and commands (`Editor/Test/Editing.lean`), and two
+commands of the checks' own, on keys that print nothing. `search` keeps its
+argument, a text, as the last search, going forward, as a scheme's search
+command does once its pattern is typed (`setLastSearch`): `C-s f` searches
+for `foo`, `C-s w` for `foo` as a whole word (`Text.Word.wholePattern`),
+`C-s x` for `xyz` and `C-s r` for a pattern the syntax refuses. `ask`
+(`C-s a`) opens a prompt, so the next keys type in the minibuffer's
+view. -/
+def decorationKeys : Loop.Keys TestScheme.scheme :=
+  let search (pattern : String) : Invocation := { command := "search", arguments := [.str pattern] }
+  dispatchKeys
+    (editingBindings ++
+      [("C-s f", search "foo"), ("C-s w", search (Text.Word.wholePattern "foo")),
+        ("C-s x", search "xyz"), ("C-s r", search "\\("), ("C-s a", invoke "ask")])
+    (editingDispatched ++
+      [("search", fun call => do
+          if let [.str pattern] := call.arguments then
+            setLastSearch { pattern, forward := true }
+          return none),
+        ("ask", fun _ => do
+          discard <| prompt "/" asked
+          return none)])
+
+/-- A driver of the decoration checks over the state `start` makes, by
+default `decorationState` of `contents`, each step handed
+`decorationKeys`. -/
+def decorationDriver (contents : String) (start : Option (TextM EditorState) := none) :
+    Option TestDriver :=
+  (Loop.Driver.over decorationKeys (fun _ => none) (start.getD (decorationState contents))
+      editorModel).toOption
 
 /-- The matches of `needle` in `contents`, found by hand, row by row: from
 each row's start, each occurrence, and the walk goes on from its end. With
@@ -5921,7 +5712,7 @@ the last scene `driver` published, for the matches of `needle` in
 through `height / heights.text` rows on is decorated, and every
 decoration is in `search-match` and is a match that starts in a row
 through one more, which is what the loop reads (`Loop.decorationsOf`). -/
-def decorationsWrong (driver : EvilDriver) (contents needle : String) (whole : Bool := false)
+def decorationsWrong (driver : TestDriver) (contents needle : String) (whole : Bool := false)
     (view : ViewId := ⟨0⟩) : Option String := do
   let some scene := driver.model.display.scenes.back? | some "no scene"
   let some shown := scene.views.find? (·.id == view) | some "no view"
@@ -5957,11 +5748,11 @@ def decorationsWrong (driver : EvilDriver) (contents needle : String) (whole : B
 
 /-- The decorations of the view `view` in the last scene `driver`
 published. -/
-def decorationsOfScene (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option (Array Decoration) :=
+def decorationsOfScene (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option (Array Decoration) :=
   driver.model.display.scenes.back?.bind fun scene =>
     (scene.views.find? (·.id == view)).map (·.decorations)
 
-/-- A state of the decoration checks: `evilState` of `contents`, with a
+/-- A state of the decoration checks: `decorationState` of `contents`, with a
 second window on the same buffer below the first, whose anchor is at the
 byte offset `second`. -/
 def twoViewState (contents : String) (second : Nat) : TextM EditorState := do
@@ -5969,7 +5760,7 @@ def twoViewState (contents : String) (second : Nat) : TextM EditorState := do
   let some buffer := state.buffers[0]?.join | throw .noSuchText
   let scroll ← buffer.text.mark (.anchor { offset := second, bias := .before })
   let selection ←
-    buffer.text.mark (.selection { ranges := #[⟨second, second⟩], shape := .inclusive })
+    buffer.text.mark (.selection { ranges := #[⟨second, second⟩], shape := .exclusive })
   return {
       state with
       windows := state.windows.push { id := ⟨1⟩, buffer := ⟨0⟩, scroll, selection }
@@ -5981,50 +5772,51 @@ def twoViewState (contents : String) (second : Nat) : TextM EditorState := do
 /-- The checks of the decorations of a view (`Editor/Loop.lean`,
 "Decorations"): the matches of the last search, in `search-match`, on the
 loop's driver over the editor's models and the display recorder, under the
-Vim scheme that ships. -/
+test scheme, the last search kept by a command of the checks'
+(`decorationKeys`). That a scheme's own search keys keep the last search is
+the scheme's: evil's `/`, `?`, `*` and `#` are pinned by
+`EvilTest.evilSearchChecks`. -/
 def searchDecorationChecks : List Check :=
-  let fed (fixture typed : String) : Option EvilDriver :=
-    (decorationDriver (barred fixture).1).map (evilFed · typed)
+  let fed (contents typed : String) : Option TestDriver :=
+    (decorationDriver contents).map (keysFed · typed)
   [{  name :=
-        "after / f o o RET every match in the rows the view shows is drawn in search-match, and every decoration is a match of the rows the loop reads, food among none"
+        "once a command keeps foo as the last search, every match in the rows the view shows is drawn in search-match, and every decoration is a match of the rows the loop reads, food among none"
       run :=
         pure <|
-          match fed ("|" ++ decoratedText) "/ f o o RET" with
+          match fed decoratedText "C-s f" with
           | none => false
           | some driver => decorationsWrong driver decoratedText "foo" == none },
-    { name := "after C-f the decorations follow the rows the view shows from its new anchor"
+    { name :=
+        "once the cursor goes to the text's end the decorations follow the rows the view shows from its new anchor"
       run :=
         pure <|
-          match fed ("|" ++ decoratedText) "/ f o o RET C-f",
-            fed ("|" ++ decoratedText) "/ f o o RET" with
-          | some paged, some first =>
-            decorationsWrong paged decoratedText "foo" == none &&
-              decorationsOfScene paged != decorationsOfScene first
+          match fed decoratedText "C-s f C-<End>", fed decoratedText "C-s f" with
+          | some moved, some first =>
+            decorationsWrong moved decoratedText "foo" == none &&
+              decorationsOfScene moved != decorationsOfScene first
           | _, _ => false },
     { name :=
         "in rows that wrap, every match the view shows is decorated, and every decoration is a match"
       run :=
         pure <|
-          match fed ("|" ++ wrappingText) "/ f o o RET" with
+          match fed wrappingText "C-s f" with
           | none => false
           | some driver => decorationsWrong driver wrappingText "foo" == none },
     { name := "a second view of the buffer has the decorations of its own rows by the same rule"
       run :=
         pure <|
-          match
-            (Loop.Driver.over evilHanded (fun _ => none) (twoViewState decoratedText 300)
-                editorModel).toOption with
+          match decorationDriver decoratedText (some (twoViewState decoratedText 300)) with
           | none => false
           | some driver =>
-            let driver := evilFed driver "/ f o o RET"
+            let driver := keysFed driver "C-s f"
             decorationsWrong driver decoratedText "foo" == none &&
               decorationsWrong driver decoratedText "foo" (view := ⟨1⟩) == none &&
               decorationsOfScene driver ⟨1⟩ != decorationsOfScene driver ⟨0⟩ },
     { name :=
-        "the minibuffer's view has no decorations while the prompt is open, and with no search no view has any"
+        "the minibuffer's view has no decorations while the prompt is open, though its text holds a match, and with no search no view has any"
       run :=
         pure <|
-          match fed ("|" ++ decoratedText) "/ f o o RET / f", fed ("|" ++ decoratedText) "l" with
+          match fed decoratedText "C-s f C-s a f o o", fed decoratedText "<ArrowRight>" with
           | some asking, some unsearched =>
             let minibuffer := asking.loop.state.prompt.map (·.view)
             (asking.model.display.scenes.back?.map fun scene =>
@@ -6032,23 +5824,28 @@ def searchDecorationChecks : List Check :=
                     some view.id != minibuffer || view.decorations.isEmpty) ==
                 some true &&
               minibuffer.isSome &&
+              minibufferText asking == some "foo" &&
+              decorationsWrong asking decoratedText "foo" == none &&
               (unsearched.model.display.scenes.back?.map fun scene =>
                   scene.views.all (·.decorations.isEmpty)) ==
                 some true
           | _, _ => false },
-    { name := "after * on foo, food is not decorated: the pattern is the whole word"
+    { name :=
+        "once the last search is foo as a whole word, food is not decorated: the pattern's matches are what is drawn"
       run :=
         pure <|
-          match fed ("|" ++ decoratedText) "*" with
+          match fed decoratedText "C-s w" with
           | none => false
           | some driver => decorationsWrong driver decoratedText "foo" (whole := true) == none },
     { name := "a pattern with no match, and one the syntax refuses, draws nothing"
       run :=
         pure <|
-          match fed ("|" ++ decoratedText) "/ x y z RET",
-            fed ("|" ++ decoratedText) "/ \\ ( RET" with
+          match fed decoratedText "C-s x", fed decoratedText "C-s r" with
           | some missing, some refused =>
-            decorationsOfScene missing == some #[] && decorationsOfScene refused == some #[]
+            missing.loop.state.lastSearch == some { pattern := "xyz", forward := true } &&
+              refused.loop.state.lastSearch == some { pattern := "\\(", forward := true } &&
+              decorationsOfScene missing == some #[] &&
+              decorationsOfScene refused == some #[]
           | _, _ => false },
     { name :=
         "a buffer's spans within a covered range are kept, clipped to it, in order, and those outside it and those left empty are dropped"
@@ -6066,9 +5863,9 @@ def searchDecorationChecks : List Check :=
         let spanned : TextM EditorState := do
           let state ← decorationState decoratedText
           return { state with buffers := state.buffers.modify 0 (·.map ({ · with spans })) }
-        let driver := (Loop.Driver.over evilHanded (fun _ => none) spanned editorModel).toOption
+        let driver := decorationDriver decoratedText (some spanned)
         pure <|
-          match driver.map (evilFed · "l"), driver.map (evilFed · "/ f o o RET") with
+          match driver.map (keysFed · "<ArrowRight>"), driver.map (keysFed · "C-s f") with
           | some unsearched, some searched =>
             let found := (decorationsOfScene searched).map (·.extract 1 1000)
             decorationsOfScene unsearched == some #[{ start := 0, stop := 3, face }] &&
@@ -6077,100 +5874,51 @@ def searchDecorationChecks : List Check :=
                 some true
           | _, _ => false }]
 
-/-- A driver of the view checks over `viewState`, under the Vim scheme that
-ships, each step handed `handed`, on `model`; `none` if making the state was
-refused. `size` is the window's text area (`frameAround`). -/
+/-- A driver of the view checks over `viewState`, under the test scheme,
+each step handed the kit's editing keys and commands
+(`Editor/Test/Editing.lean`) and then `commands`, on `model`; `none` if
+making the state was refused. `size` is the window's text area
+(`frameAround`). -/
 def viewDriver (contents : String) (size : Size) (margin : Nat := 0) (head : Nat := 0)
-    (handed : Loop.Keys Vim.Default.scheme := evilHanded) (model : EditorModel := editorModel) :
-    Option EvilDriver :=
+    (commands : List (String × Dispatched) := []) (model : EditorModel := editorModel) :
+    Option TestDriver :=
   let frame := frameAround size model.display.cells
-  (Loop.Driver.over handed (fun _ => none) (viewState contents frame margin head) model).toOption
+  (Loop.Driver.over (dispatchKeys editingBindings (editingDispatched ++ commands)) (fun _ => none)
+      (viewState contents frame margin head) model).toOption
 
-/-- What a scene shows of one view, as the view checks read it: where its
-markers are, and what the display model answers for it. -/
-structure ViewSeen where
-  /-- The marker the scene names as the view's scroll anchor. -/
-  scroll : MarkerId
-  /-- Where that anchor is. -/
-  anchor : Nat
-  /-- The view's selection. -/
-  selection : Selection
-  /-- The head of its primary range: the cursor. -/
-  head : Nat
-  /-- The rows the display model answers for the scene's view, from its
-  anchor. -/
-  shown : Array Display.Row
-  /-- The cursor's row: the first row the display model answers for the
-  scene's view from the cursor; none in a view that shows no row. -/
-  row : Option Display.Row
-  deriving DecidableEq, Repr
-
-/-- Where the cursor's row is among the rows the view shows, if it is one
-of them. -/
-def ViewSeen.index (seen : ViewSeen) : Option Nat :=
-  seen.row.bind fun row => seen.shown.findIdx? (· == row)
-
-/-- What the last scene `model`'s display recorded shows of the view `view`
-(`ViewSeen`), asked of `model`: its markers of the text model, and the rows
-of the display model for the scene's snapshot and rectangle. `none` when no
-scene has the view, or a marker of it refuses. -/
-def seenIn (model : EditorModel) (view : ViewId := ⟨0⟩) : Option ViewSeen := do
-  let scene ← model.display.scenes.back?
-  let shown ← scene.views.find? (·.id == view)
-  let #[marker] := shown.selections | none
-  let program : EditorM ViewSeen := do
-    let .anchor anchor ← shown.scroll.text.marker shown.scroll | throw .noSuchMarker
-    let .selection selection ← marker.text.marker marker | throw .noSuchMarker
-    let some range := selection.ranges[selection.primary]? | throw .badSelection
-    -- A window's view, asked with its height less its status row, which
-    -- is the display model's cell.
-    let area := Scroll.Area.ofRect shown.snapshot shown.rect model.display.cells.heights.status
-    return {
-        scroll := shown.scroll, anchor := anchor.offset, selection, head := range.head
-        shown := ← area.rows anchor.offset, row := (← area.rows range.head)[0]? }
-  (program.runModel model).1.toOption
-
-/-- What the last scene of `driver` shows of the view `view` (`seenIn`). -/
-def viewSeen (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option ViewSeen :=
-  seenIn driver.model view
-
-/-- `driver` after the command called `name` has run as an invocation no key
-yielded, with no arguments. -/
-def viewRan (driver : EvilDriver) (name : String) : EvilDriver :=
-  (driver.stepped (driver.loop.invoke driver.handed { command := name })).1
-
-/-- What the scene shows of view 0 after `invocation` has run, as a step no
-key yielded, from the state `start` makes, under the Vim scheme that ships
-with evil's commands, on models of their own. -/
-def viewInvoked (start : TextM EditorState) (invocation : Invocation) : Option ViewSeen :=
-  let program : EditorM Unit := do
-    let loop : EvilLoop := { state := ← start }
-    discard <| loop.invoke evilHanded invocation
-  match program.runModel editorModel with
-  | (.ok (), model) => seenIn model
-  | (.error _, _) => none
+/-- The kit's editing keys that move the cursor and change no text: the
+arrows, `<Home>`, `<End>`, `C-<Home>` and `C-<End>`, and the arrows with
+shift, which keep the anchor. -/
+def moveKeys : List String :=
+  (editingKeys.filter fun (_, name) =>
+        !["edit-newline", "edit-delete-backward", "edit-delete-forward", "edit-undo",
+                "edit-redo"].contains
+            name).map
+    (·.1)
 
 /-- The cases in which the scroll margin `margin` does not hold after a
-motion, in a view of `contents` in a frame of `size`: each motion of evil's
-vocabulary, with no count and with a count of 3, from each of `heads` as
-the cursor, with the anchor at the text's start. The margin holds when the
+move, in a view of `contents` whose text area is `size`: each of
+`moveKeys`, pressed once and three times, from each of `heads` as the
+cursor, with the anchor at the text's start. The margin holds when the
 cursor's row is among the rows the display model answers for the next
 scene's view, `margin` rows from the first and from the last, except where
-the first is the text's first row or the last its last (`marginHolds`). -/
+the first is the text's first row or the last its last (`marginHolds`).
+That it holds after each motion of a scheme's own vocabulary is the
+scheme's package's to check: evil's is `EvilTest.evilScrollChecks`. -/
 def marginFailures (contents : String) (size : Size) (margin : Nat) (heads : List Nat) :
     List String :=
   let rows := allRows contents size.width
   heads.flatMap fun head =>
-    Evil.motions.toList.flatMap fun motion =>
-      [0, 3].filterMap fun count =>
+    moveKeys.flatMap fun key =>
+      [1, 3].filterMap fun count =>
         let seen :=
-          viewInvoked (viewState contents size margin head)
-            { command := Vim.moveCommand, arguments := [.str motion.name, .nat count] }
+          (viewDriver contents size margin head).bind fun driver =>
+            viewSeen (keysFed driver (keyTimes key count))
         let held :=
           match seen with
           | some seen => seen.row.any fun row => marginHolds rows seen.shown row margin
           | none => false
-        if held then none else some s!"{motion.name} with {count} from {head} of {repr contents}"
+        if held then none else some s!"{key} {count} times from {head} of {repr contents}"
 
 /-- `viewState` with a second window on the same buffer, view 1, below view
 0, with markers of its own: its scroll anchor at the text's start and its
@@ -6196,7 +5944,8 @@ def viewCost (size : Size) (typed : String)
     (cells : Display.Cells := { advance := 1, lineHeight := 1 }) : Option Nat := do
   let model := { countingModel with display := { cells } }
   let driver ←
-    (Loop.Driver.over evilHanded (fun _ => none) (viewState (numbered 20) size) model).toOption
+    (Loop.Driver.over (dispatchKeys editingBindings editingDispatched) (fun _ => none)
+          (viewState (numbered 20) size) model).toOption
   let pressed := keys typed
   let before :=
     (pressed.dropLast).foldl (fun driver key => (driver.feed { event := press key, stamp := 0 }).1)
@@ -6205,56 +5954,9 @@ def viewCost (size : Size) (typed : String)
   let after := (before.feed { event := press last, stamp := 0 }).1
   return after.model.watch.clock - before.model.watch.clock
 
-/-- Where a view is in its text, by the rows `rows` of the text as the
-display model answers them: the index of the first row the view shows, and
-of the cursor's row. -/
-def ViewSeen.place (seen : ViewSeen) (rows : Array Display.Row) : Option (Nat × Nat) := do
-  let top ← rows.findIdx? (some · == seen.shown[0]?)
-  let cursor ← rows.findIdx? (some · == seen.row)
-  return (top, cursor)
-
-/-- Where view 0 of `driver` is in its text once the keys `typed` are
-pressed (`ViewSeen.place`). -/
-def viewPlaced (driver : EvilDriver) (typed : String) (rows : Array Display.Row) :
-    Option (Nat × Nat) :=
-  (viewSeen (evilFed driver typed)).bind (·.place rows)
-
-/-- The key string that names `key` `count` times. -/
-def keyTimes (key : String) (count : Nat) : String :=
-  " ".intercalate (List.replicate count key)
-
-/-- The invocation the default key `key` yields in the Vim scheme's initial
-state: what the loop runs for it. -/
-def viewInvocation (key : String) : Option Invocation :=
-  (vimDefaultEdit key).map (·.compile)
-
-/-- The cases in which the cursor's row is not among the rows the next
-scene's view shows after the command of one of `keys`, run as the
-invocation its key yields, in a view of `contents` in a frame of `size`:
-from each of `anchors` as the scroll anchor and each of `heads` as the
-cursor. A key that yields no command is a case. -/
-def scrollFailures (keys : List String) (contents : String) (size : Size)
-    (anchors heads : List Nat) : List String :=
-  keys.flatMap fun key =>
-    match viewInvocation key with
-    | none => [s!"{key} runs no command"]
-    | some invocation =>
-      anchors.flatMap fun anchor =>
-        heads.filterMap fun head =>
-          let start : TextM EditorState := do
-            let state ← viewState contents size 0 head
-            let some target := state.focusedTarget? | throw .noSuchText
-            target.scrollTo anchor
-            return state
-          match viewInvoked start invocation with
-          | some seen =>
-            if seen.index.isSome then none
-            else some s!"{key} from anchor {anchor} and cursor {head} of {repr contents}"
-          | none => some s!"{key} from anchor {anchor} and cursor {head}: no scene"
-
 /-- The checks of a view that follows its cursor (`Editor/Loop.lean`,
 "Following the cursor"), on the loop's driver over the editor's models,
-under the Vim scheme that ships with evil's commands: keys are pressed, and
+under the test scheme with the kit's editing keys: keys are pressed, and
 what the next scene shows of a view is asked of the driver's models
 (`viewSeen`): where its scroll anchor is, the rows the display model
 answers from it for the scene's view, and the row it answers for the
@@ -6262,14 +5964,14 @@ cursor. No check says where a text wraps: the texts are lines shorter than
 their view, and the text the display contract's own cases wrap. -/
 def viewChecks : List Check :=
   [{  name :=
-        "a motion that puts the cursor below the last row a view shows moves the view's anchor in the next scene, and the rows the display answers from it include the cursor's row: j from the last row shown scrolls one row, with the cursor's row the last row shown"
+        "a motion that puts the cursor below the last row a view shows moves the view's anchor in the next scene, and the rows the display answers from it include the cursor's row: a move down from the last row shown scrolls one row, with the cursor's row the last row shown"
       run :=
         pure <|
           match viewDriver (numbered 20) ⟨10, 5⟩ with
           | none => false
           | some driver =>
-            let onLast := evilFed driver "4 j"
-            match viewSeen onLast, viewSeen (evilFed onLast "j") with
+            let onLast := keysFed driver (keyTimes "<ArrowDown>" 4)
+            match viewSeen onLast, viewSeen (keysFed onLast "<ArrowDown>") with
             | some was, some now =>
               was.anchor == 0 && was.shown.size == 5 && was.index == some 4 &&
                 now.head != was.head &&
@@ -6278,16 +5980,16 @@ def viewChecks : List Check :=
                 now.shown[0]? == was.shown[1]?
             | _, _ => false },
     { name :=
-        "a motion that puts the cursor above the first row a view shows moves the view's anchor in the next scene, and the rows the display answers from it include the cursor's row: k from the first row shown scrolls one row, and g g from far below shows the text's start, each with the cursor's row the first row shown"
+        "a motion that puts the cursor above the first row a view shows moves the view's anchor in the next scene, and the rows the display answers from it include the cursor's row: a move up from the first row shown scrolls one row, and a move to the text's start from far below shows the text's start, each with the cursor's row the first row shown"
       run :=
         pure <|
           match viewDriver (numbered 20) ⟨10, 5⟩ with
           | none => false
           | some driver =>
-            let far := evilFed driver "G"
-            let onFirst := evilFed far "4 k"
-            match viewSeen far, viewSeen onFirst, viewSeen (evilFed onFirst "k"),
-              viewSeen (evilFed far "g g") with
+            let far := keysFed driver "C-<End>"
+            let onFirst := keysFed far (keyTimes "<ArrowUp>" 4)
+            match viewSeen far, viewSeen onFirst, viewSeen (keysFed onFirst "<ArrowUp>"),
+              viewSeen (keysFed far "C-<Home>") with
             | some low, some was, some now, some start =>
               low.anchor != 0 && low.index == some 4 && was.anchor == low.anchor &&
                 was.index == some 0 &&
@@ -6300,33 +6002,33 @@ def viewChecks : List Check :=
                 start.index == some 0
             | _, _, _, _ => false },
     { name :=
-        "a motion that leaves the cursor among the rows a view shows leaves the view's anchor where it was: j, k, l, w, b and $, in a view that has scrolled"
+        "a motion that leaves the cursor among the rows a view shows leaves the view's anchor where it was: a move down, up, right, left and to the line's end, in a view that has scrolled"
       run :=
         pure <|
           match viewDriver (numbered 20) ⟨10, 5⟩ with
           | none => false
           | some driver =>
-            let inside := evilFed driver "9 j k k"
+            let inside := keysFed driver (keyTimes "<ArrowDown>" 9 ++ " <ArrowUp> <ArrowUp>")
             match viewSeen inside with
             | none => false
             | some was =>
               was.anchor != 0 && was.index == some 2 &&
-                ["j", "k", "l", "w", "b", "$"].all fun key =>
-                  match viewSeen (evilFed inside key) with
+                ["<ArrowDown>", "<ArrowUp>", "<ArrowRight>", "<ArrowLeft>", "<End>"].all fun key =>
+                  match viewSeen (keysFed inside key) with
                   | some now =>
                     now.head != was.head && now.anchor == was.anchor && now.index.isSome &&
                       now.shown == was.shown
                   | none => false },
     { name :=
-        "a cursor that moves onto the last visual row of a line wrapped over three rows, below the view, has that row among the rows shown in the next scene: $ from the line's first row, which was the last row shown"
+        "a cursor that moves onto the last visual row of a line wrapped over three rows, below the view, has that row among the rows shown in the next scene: a move to the line's end from the line's first row, which was the last row shown"
       run :=
         pure <|
           match viewDriver wrapping ⟨4, 4⟩ with
           | none => false
           | some driver =>
-            let onLine := evilFed driver "2 j"
+            let onLine := keysFed driver "<ArrowDown> <ArrowDown>"
             let rows := allRows wrapping 4
-            match viewSeen onLine, viewSeen (evilFed onLine "$") with
+            match viewSeen onLine, viewSeen (keysFed onLine "<End>") with
             | some was, some now =>
               -- The cursor's row was the first of three rows of one line,
               -- and is now the last of them: no line break is between them,
@@ -6346,7 +6048,7 @@ def viewChecks : List Check :=
           match viewDriver (numbered 20) ⟨10, 8⟩ with
           | none => false
           | some driver =>
-            let low := evilFed driver "7 j"
+            let low := keysFed driver (keyTimes "<ArrowDown>" 7)
             let shrunk := viewResized low ⟨10, 3⟩
             match viewSeen low, viewSeen shrunk, viewSeen (viewResized shrunk ⟨10, 12⟩) with
             | some was, some now, some grown =>
@@ -6359,26 +6061,23 @@ def viewChecks : List Check :=
                 grown.index == some 2
             | _, _, _ => false },
     { name :=
-        "with the scroll margin set to two, after every motion of the vocabulary, with no count and with a count of 3, from a spread of cursors of forty short lines and of a text with wrapped lines, in a view of seven rows, the cursor's row is at least two rows from the first and from the last row the next scene's view shows, except where the first is the text's first row or the last its last"
+        "with the scroll margin set to two, after every move of the kit's editing keys, pressed once and three times, from a spread of cursors of forty short lines and of a text with wrapped lines, in a view of seven rows, the cursor's row is at least two rows from the first and from the last row the next scene's view shows, except where the first is the text's first row or the last its last"
       run := do
-        let resting (contents : String) (every : Nat) : List Nat :=
-          (List.range (contents.utf8ByteSize + 1)).filter fun head =>
-            head % every == 0 && restsWell contents head
+        let spread (contents : String) (every : Nat) : List Nat :=
+          (List.range (contents.utf8ByteSize + 1)).filter (· % every == 0)
         let forty := numbered 40
         let wrong :=
-          marginFailures forty ⟨10, 7⟩ 2 (resting forty 7) ++
-            marginFailures ragged ⟨4, 7⟩ 2 (resting ragged 1)
+          marginFailures forty ⟨10, 7⟩ 2 (spread forty 7) ++
+            marginFailures ragged ⟨4, 7⟩ 2 (spread ragged 1)
         unless wrong.isEmpty do
           throw (IO.userError ("; ".intercalate (wrong.take 12)))
-        return !Evil.motions.isEmpty && (resting forty 7).length > 10 &&
-            (resting ragged 1).length > 20 },
+        return moveKeys.length > 8 && (spread forty 7).length > 10 &&
+            (spread ragged 1).length > 20 },
     { name :=
-        "with no margin set the same sweep finds the cursor's row among the rows the next scene's view shows after every motion"
+        "with no margin set the same sweep finds the cursor's row among the rows the next scene's view shows after every move"
       run := do
         let forty := numbered 40
-        let heads :=
-          (List.range (forty.utf8ByteSize + 1)).filter fun head =>
-            head % 11 == 0 && restsWell forty head
+        let heads := (List.range (forty.utf8ByteSize + 1)).filter (· % 11 == 0)
         let wrong := marginFailures forty ⟨10, 7⟩ 0 heads
         unless wrong.isEmpty do
           throw (IO.userError ("; ".intercalate (wrong.take 12)))
@@ -6393,7 +6092,8 @@ def viewChecks : List Check :=
             call.target.buffer.text.insert 0 "x\nx\nx\n"
             return none
           let idle : Dispatched := fun _ => pure none
-          let handed := evilHanded (commands := [("grow", grow), ("idle", idle)])
+          let handed :=
+            dispatchKeys editingBindings (editingDispatched ++ [("grow", grow), ("idle", idle)])
           -- Rows of a pixel: a frame of fifteen is fourteen above its bottom
           -- row, a window of seven less the divider's two below it, and one
           -- of seven, whose texts have four rows and six above their status
@@ -6424,20 +6124,19 @@ def viewChecks : List Check :=
           let cells : Display.Cells := { advance := 8, lineHeight := 16 }
           let answer := "abcdefghijklm"
           let typed := " ".intercalate (answer.toList.map (·.toString))
-          let handed := evilHanded Minibuffer.package.registered.commands [("ask", ask)]
           let model : EditorModel := { editorModel with display := { cells } }
-          match viewDriver (numbered 20) ⟨32, 64⟩ (handed := handed) (model := model) with
+          match viewDriver (numbered 20) ⟨32, 64⟩ (commands := [("ask", ask)]) (model := model) with
           | none => false
           | some driver =>
             let asking := viewRan driver "ask"
-            let typing := evilFed asking typed
+            let typing := keysFed asking typed
             let rows := allRows answer 32 cells
             match asking.loop.state.minibufferView? with
             | none => false
             | some view =>
               match viewSeen asking view, viewSeen typing view, viewSeen typing with
               | some was, some now, some asker =>
-                was.anchor == 0 && was.index == some 0 && evilShown typing view == answer ++ "|" &&
+                was.anchor == 0 && was.index == some 0 && shownOf typing view == answer ++ "|" &&
                   now.head == answer.utf8ByteSize &&
                   -- The answer has more rows than the strip shows, and the
                   -- cursor is on the last of them.
@@ -6459,11 +6158,10 @@ def viewChecks : List Check :=
               let selection ← call.target.selection
               let last := contents.utf8ByteSize - 1
               call.target.select { selection with ranges := #[⟨last, last⟩] }
-          match
-            viewDriver contents ⟨10, 5⟩ (handed := evilHanded (commands := [("fall", fall)])) with
+          match viewDriver contents ⟨10, 5⟩ (commands := [("fall", fall)]) with
           | none => false
           | some driver =>
-            let moved := evilFed driver "2 j"
+            let moved := keysFed driver "<ArrowDown> <ArrowDown>"
             let failed := viewRan moved "fall"
             match viewSeen moved, viewSeen failed with
             | some was, some now =>
@@ -6482,11 +6180,10 @@ def viewChecks : List Check :=
             call.target.select { selection with ranges := #[⟨last, last⟩] }
             call.target.buffer.text.unmark call.target.window.selection
             return none
-          let anchorOf (driver : EvilDriver) : Option Nat := do
+          let anchorOf (driver : TestDriver) : Option Nat := do
             let target ← driver.loop.state.target? ⟨0⟩
             return (← (target.anchor.runModel driver.model.texts).1.toOption).offset
-          match
-            viewDriver contents ⟨10, 5⟩ (handed := evilHanded (commands := [("drop", drop)])) with
+          match viewDriver contents ⟨10, 5⟩ (commands := [("drop", drop)]) with
           | none => false
           | some driver =>
             let dropped := viewRan driver "drop"
@@ -6500,7 +6197,7 @@ def viewChecks : List Check :=
           match viewDriver (numbered 20) ⟨10, 0⟩ with
           | none => false
           | some driver =>
-            match viewSeen (evilFed driver "G") with
+            match viewSeen (keysFed driver "C-<End>") with
             | some now => now.anchor == 0 && now.head != 0 && now.shown.isEmpty
             | none => false },
     { name :=
@@ -6510,8 +6207,8 @@ def viewChecks : List Check :=
           match viewDriver (numbered 20) ⟨10, 5⟩ with
           | none => false
           | some driver =>
-            let onLast := evilFed driver "4 j"
-            match viewSeen onLast, viewSeen (evilFed onLast "j") with
+            let onLast := keysFed driver (keyTimes "<ArrowDown>" 4)
+            match viewSeen onLast, viewSeen (keysFed onLast "<ArrowDown>") with
             | some was, some now => now.scroll == was.scroll && now.anchor != was.anchor
             | _, _ => false },
     { name :=
@@ -6522,308 +6219,11 @@ def viewChecks : List Check :=
           -- In cells of a pixel a frame of three is a window of two above
           -- the bottom row, whose text has one row above its status row; in
           -- cells of 16 a frame of 40 is a window of 24 and a text area of 8.
-          match viewCost ⟨10, 0⟩ "l", viewCost ⟨10, 3⟩ "l", viewCost ⟨80, 0⟩ "l" cells,
-            viewCost ⟨80, 40⟩ "l" cells with
+          match viewCost ⟨10, 0⟩ "<ArrowRight>", viewCost ⟨10, 3⟩ "<ArrowRight>",
+            viewCost ⟨80, 0⟩ "<ArrowRight>" cells, viewCost ⟨80, 40⟩ "<ArrowRight>" cells with
           | some bare, some one, some flat, some short =>
             bare > 0 && one == bare + 4 && flat == bare && short == flat + 2
-          | _, _, _, _ => false },
-    { name :=
-        "C-d moves a view's anchor and its cursor down by half the rows the view fits, and C-u up by the same; C-f and C-b by the rows it fits: in a view of six rows over forty lines, three rows and six, with the cursor keeping its row of the view; a count before C-d is the rows of that one command, and the next C-d is half a view again; a count before C-f is so many views"
-      run :=
-        pure <|
-          let contents := numbered 40
-          let rows := allRows contents 10
-          match viewDriver contents ⟨10, 6⟩ with
-          | none => false
-          | some driver =>
-            let placed (typed : String) : Option (Nat × Nat) := viewPlaced driver typed rows
-            placed "l h" == some (0, 0) && placed "C-d" == some (3, 3) &&
-              placed "C-d C-u" == some (0, 0) &&
-              placed "2 j C-d" == some (3, 5) &&
-              placed "2 j C-d C-d C-u" == some (3, 5) &&
-              placed "C-f" == some (6, 6) &&
-              placed "C-f C-f C-b" == some (6, 6) &&
-              placed "2 j C-f" == some (6, 8) &&
-              placed "5 C-d" == some (5, 5) &&
-              placed "5 C-d C-d" == some (8, 8) &&
-              placed "2 C-f" == some (12, 12) &&
-              placed "2 C-f 2 C-b" == some (0, 0) &&
-              placed "1 0 C-d 4 C-u" == some (6, 6) },
-    { name :=
-        "at the text's end C-d and C-f, repeated, leave the text's last row as the last row shown, in a full view, with the cursor on the last line, and one more changes nothing and says nothing; and back at its start C-u and C-b leave the text's first row as the first row shown with the cursor on it, and one more changes nothing and says nothing"
-      run :=
-        pure <|
-          let contents := numbered 20
-          let rows := allRows contents 10
-          match viewDriver contents ⟨10, 5⟩ with
-          | none => false
-          | some driver =>
-            (["C-d", "C-f"].all fun key =>
-                let ended := evilFed driver (keyTimes key 12)
-                let again := evilFed ended key
-                match viewSeen ended, viewSeen again with
-                | some now, some more =>
-                  now.shown.size == 5 && now.shown.back? == rows.back? && now.row == rows.back? &&
-                    more == now &&
-                    ended.loop.state.echo == "" &&
-                    again.loop.state.echo == ""
-                | _, _ => false) &&
-              [("C-d", "C-u"), ("C-f", "C-b")].all fun (down, up) =>
-                let started := evilFed driver s!"{keyTimes down 12} {keyTimes up 12}"
-                let again := evilFed started up
-                match viewSeen started, viewSeen again with
-                | some now, some more =>
-                  now.anchor == 0 && now.head == 0 && now.row == rows[0]? && more == now &&
-                    again.loop.state.echo == ""
-                | _, _ => false },
-    { name :=
-        "in a text that ends in a line feed C-d and C-f, repeated, leave the empty row after the last line as the last row shown, and the cursor on the last line, in the column it was in, and not in the empty row; one more changes nothing"
-      run :=
-        pure <|
-          let contents := numbered 20 "\n"
-          let rows := allRows contents 10
-          match viewDriver contents ⟨10, 5⟩ with
-          | none => false
-          | some driver =>
-            -- The text's last row is the empty one after its last line feed.
-            (rows.back?.map fun row => row.start == row.stop) == some true &&
-              ["C-d", "C-f"].all fun key =>
-                let ended := evilFed driver s!"l {keyTimes key 12}"
-                match viewSeen ended, viewSeen (evilFed ended key) with
-                | some now, some more =>
-                  now.shown.size == 5 && now.shown.back? == rows.back? &&
-                    now.row == rows[rows.size - 2]? &&
-                    now.row.map (·.start + 1) == some now.head &&
-                    more == now &&
-                    ended.loop.state.echo == ""
-                | _, _ => false },
-    { name :=
-        "after each of C-d, C-u, C-f and C-b, from a spread of scroll anchors and of cursors, of forty short lines, of a text that ends in a line feed and of a text with wrapped lines, the cursor's row is among the rows the next scene's view shows"
-      run := do
-        let scrollKeys := ["C-d", "C-u", "C-f", "C-b"]
-        let every (contents : String) (step : Nat) : List Nat :=
-          (List.range (contents.utf8ByteSize + 1)).filter fun offset =>
-            offset % step == 0 && restsWell contents offset
-        let forty := numbered 40
-        let ended := numbered 12 "\n"
-        let wrong :=
-          scrollFailures scrollKeys forty ⟨10, 6⟩ (every forty 21) (every forty 13) ++
-            scrollFailures scrollKeys ended ⟨10, 5⟩ (every ended 9) (every ended 4) ++
-            scrollFailures scrollKeys ragged ⟨4, 3⟩ (every ragged 5) (every ragged 3)
-        unless wrong.isEmpty do
-          throw (IO.userError ("; ".intercalate (wrong.take 12)))
-        return (every forty 21).length > 3 && (every ragged 3).length > 8 },
-    { name :=
-        "C-d keeps the cursor's x across the row of a shorter line; in a visual state it moves the selection's head and leaves its other end; and the window keeps no wanted column after it"
-      run :=
-        pure <|
-          let contents := "abcdef\nab\nabcdef\nab\nabcdef\nabcdef\nabcdef\nabcdef"
-          let wanted (driver : EvilDriver) : Option (Option Window.Wanted) :=
-            (driver.loop.state.window? ⟨0⟩).map (·.wanted)
-          -- Where the display model moves the cursor from offset 4, two rows
-          -- down, aiming for its own x.
-          let moved :=
-            onDisplay contents
-              (Display.linesFrom
-                { snapshot := ⟨0⟩, width := 10, position := 4, lines := 2, goal := none })
-          match viewDriver contents ⟨10, 4⟩ (head := 4), moved with
-          | some driver, some moved =>
-            let down := evilFed driver "C-d"
-            let visual := evilFed driver "v C-d"
-            (rowAt contents 10 moved.position).map (·.start + 4) == some moved.position &&
-              (viewSeen down).map (·.head) == some moved.position &&
-              ((viewSeen visual).map fun seen => (seen.selection.ranges, seen.selection.shape)) ==
-                some (#[⟨4, moved.position⟩], .inclusive) &&
-              (wanted (evilFed driver "j k")).map (·.isSome) == some true &&
-              wanted (evilFed driver "j k C-d") == some none
-          | _, _ => false },
-    { name :=
-        "in a text with wrapped lines C-d moves the cursor by visual rows, into the middle of a line: one row down from the first row of a line wrapped over two is the line's second row"
-      run :=
-        pure <|
-          let rows := allRows wrapping 4
-          match viewDriver wrapping ⟨4, 2⟩ with
-          | none => false
-          | some driver =>
-            match viewSeen (evilFed driver "C-d") with
-            | some now =>
-              -- No line break is between the first row and the second.
-              (rows[0]?.map (·.stop)) == (rows[1]?.map (·.start)) && now.row == rows[1]? &&
-                some now.head == rows[1]?.map (·.start) &&
-                now.place rows == some (1, 1)
-            | none => false },
-    { name := "in a frame of no height C-d, C-u, C-f and C-b move nothing and say nothing"
-      run :=
-        pure <|
-          match viewDriver (numbered 20) ⟨10, 0⟩ (head := 9) with
-          | none => false
-          | some driver =>
-            ["C-d", "C-u", "C-f", "C-b"].all fun key =>
-              let after := evilFed driver key
-              match viewSeen after with
-              | some now => now.anchor == 0 && now.head == 9 && after.loop.state.echo == ""
-              | none => false },
-    { name :=
-        "C-d stopped by the interrupt before any one of its requests leaves the view's anchor and its selection as they were, and says it was interrupted; run to its end it moves both, and leaves the text model holding as many snapshots as it held"
-      run :=
-        pure <|
-          let contents := numbered 40
-          let rows := allRows contents 10
-          let held (driver : EvilDriver) : Nat :=
-            (driver.model.texts.snapshots.filter (·.isSome)).size
-          match viewDriver contents ⟨10, 6⟩, vimDefaultCommand "C-d" with
-          | some driver, some command =>
-            let before := evilFed driver "2 j"
-            -- `C-d` with an interrupt key that arrives once it has made `asks`
-            -- of its requests, or with none.
-            let ran (asks : Option Nat) : EvilDriver :=
-              evilFed
-                { before with
-                  model :=
-                    { before.model with
-                      watch := { before.model.watch with arrivesAfter := asks } } }
-                "C-d"
-            let left (driver : EvilDriver) : Option (Nat × Selection × String) :=
-              (viewSeen driver).map fun seen =>
-                (seen.anchor, seen.selection, driver.loop.state.echo)
-            let was := (viewSeen before).map fun seen => (seen.anchor, seen.selection)
-            let stopped :=
-              was.map fun (anchor, selection) =>
-                (anchor, selection, s!"{command.name}: interrupted")
-            let whole := left (ran none)
-            let runs := (List.range 40).map fun asks => left (ran (some asks))
-            viewPlaced before "" rows == some (0, 2) &&
-              (viewSeen (ran none)).bind (·.place rows) == some (3, 5) &&
-              whole.isSome &&
-              stopped.isSome &&
-              whole != stopped &&
-              runs.all (fun run => run == stopped || run == whole) &&
-              (runs.filter (· == stopped)).length > 5 &&
-              runs.getLast? == some whole &&
-              held (ran none) == held before
-          | _, _ => false },
-    { name :=
-        "after z t, z z and z b the cursor's row is the first, the middle and the last of the rows the next scene's view shows, the third of five rows and the third of six for the middle; and the text, the selection and the wanted column the window keeps are what they were; a count before one changes nothing of it, and in a visual state the selection stays as it is"
-      run :=
-        pure <|
-          let contents := numbered 40
-          [5, 6].all fun height =>
-            match viewDriver contents ⟨10, height⟩ with
-            | none => false
-            | some driver =>
-              let before := evilFed driver "2 0 j l j k"
-              let kept (driver : EvilDriver) :=
-                (evilText driver, (viewSeen driver).map (·.selection),
-                  (driver.loop.state.window? ⟨0⟩).map (·.wanted), evilHistory driver)
-              let index (typed : String) : Option Nat :=
-                (viewSeen (evilFed before typed)).bind (·.index)
-              let unchanged (typed : String) : Bool :=
-                kept (evilFed before typed) == kept before &&
-                  (evilFed before typed).loop.state.echo == ""
-              evilText before == some contents &&
-                ((driver.loop.state.window? ⟨0⟩).map (·.wanted)) == some none &&
-                ((before.loop.state.window? ⟨0⟩).map (·.wanted.isSome)) == some true &&
-                index "z t" == some 0 &&
-                index "z z" == some 2 &&
-                index "z b" == some (height - 1) &&
-                index "7 z t" == some 0 &&
-                ["z t", "z z", "z b", "7 z t"].all unchanged &&
-                (["z t", "z z", "z b"].all fun typed =>
-                  let visual := evilFed before "v j"
-                  (viewSeen (evilFed visual typed)).map (·.selection) ==
-                      (viewSeen visual).map (·.selection) &&
-                    ((viewSeen visual).map
-                        (·.selection.ranges.all fun range => range.anchor != range.head)) ==
-                      some true) },
-    { name :=
-        "on the text's last line z t leaves the view showing one row, and z b from there shows the rows G showed; and near the text's start z z and z b leave the text's first row as the first row shown"
-      run :=
-        pure <|
-          match viewDriver (numbered 20) ⟨10, 5⟩ with
-          | none => false
-          | some driver =>
-            let last := evilFed driver "G"
-            let top := evilFed last "z t"
-            match viewSeen last, viewSeen top, viewSeen (evilFed top "z b"),
-              viewSeen (evilFed driver "j z z"), viewSeen (evilFed driver "j z b") with
-            | some was, some one, some back, some middle, some bottom =>
-              was.shown.size == 5 && one.shown.size == 1 && one.index == some 0 &&
-                back.shown == was.shown &&
-                back.index == some 4 &&
-                middle.anchor == 0 &&
-                middle.index == some 1 &&
-                bottom.anchor == 0 &&
-                bottom.index == some 1
-            | _, _, _, _, _ => false },
-    { name :=
-        "in a view taller than its text z z hides no row: with the cursor on the last line of three lines and a line feed, in a view of ten rows, the anchor stays at the text's first row and every row of the text is shown; and after z t, which shows from the cursor's row, z z shows every row again"
-      run :=
-        pure <|
-          let contents := numbered 3 "\n"
-          let rows := allRows contents 10
-          match viewDriver contents ⟨10, 10⟩ with
-          | none => false
-          | some driver =>
-            let last := evilFed driver "G"
-            let top := evilFed last "z t"
-            match viewSeen last, viewSeen (evilFed last "z z"), viewSeen top,
-              viewSeen (evilFed top "z z") with
-            | some was, some now, some one, some back =>
-              rows.size == 4 && was.anchor == 0 && was.shown == rows && was.index == some 2 &&
-                now.anchor == 0 &&
-                now.shown == rows &&
-                now.index == some 2 &&
-                now.head == was.head &&
-                one.shown == rows.extract 2 4 &&
-                one.index == some 0 &&
-                back.anchor == 0 &&
-                back.shown == rows &&
-                back.index == some 2
-            | _, _, _, _ => false },
-    { name :=
-        "in a view taller than its text z b, C-d, C-u, C-f and C-b leave the anchor at the text's first row with every row shown: C-d moves the cursor half the text's rows and C-f to its last line, C-u and C-b to its first; and with the scroll margin set to two, z t on the last line leaves the two rows the text has above it shown"
-      run :=
-        pure <|
-          let contents := numbered 3 "\n"
-          let rows := allRows contents 10
-          match viewDriver contents ⟨10, 10⟩, viewDriver contents ⟨10, 10⟩ (margin := 2) with
-          | some driver, some margined =>
-            let second := evilFed driver "j"
-            let whole (typed : String) (cursor : Nat) : Bool :=
-              match viewSeen (evilFed second typed) with
-              | some now =>
-                now.anchor == 0 && now.shown == rows && now.place rows == some (0, cursor)
-              | none => false
-            viewPlaced second "" rows == some (0, 1) && whole "z b" 1 && whole "C-d" 2 &&
-              whole "C-u" 0 &&
-              whole "C-f" 2 &&
-              whole "C-b" 0 &&
-              whole "G C-d" 2 &&
-              viewPlaced driver "G z t" rows == some (2, 2) &&
-              viewPlaced margined "G z t" rows == some (0, 2)
-          | _, _ => false },
-    { name :=
-        "with the scroll margin set to two, after z t two rows are above the cursor's row, and after z b two rows are below it: the scroll puts the row at the edge, and the view then follows with the margin"
-      run :=
-        pure <|
-          match viewDriver (numbered 40) ⟨10, 7⟩ (margin := 2) with
-          | none => false
-          | some driver =>
-            let before := evilFed driver "2 0 j"
-            let index (typed : String) : Option Nat :=
-              (viewSeen (evilFed before typed)).bind (·.index)
-            index "z t" == some 2 && index "z b" == some 4 && index "z z" == some 3 },
-    { name := "in a frame of no height z t, z z and z b move nothing and say nothing"
-      run :=
-        pure <|
-          match viewDriver (numbered 20) ⟨10, 0⟩ (head := 9) with
-          | none => false
-          | some driver =>
-            ["z t", "z z", "z b"].all fun typed =>
-              let after := evilFed driver typed
-              match viewSeen after with
-              | some now => now.anchor == 0 && now.head == 9 && after.loop.state.echo == ""
-              | none => false }]
+          | _, _, _, _ => false }]
 
 /-- Forty lines of seven bytes with their breaks, `line00` to `line39`: the
 text of the float checks of the loop, in which row `r`, column `c` is at
@@ -6854,28 +6254,28 @@ def floatModel : EditorModel :=
   .over { advance := 8, lineHeight := 16 }
 
 /-- A driver of the float checks of the loop over `hinted`, with the cursor
-at `head` and the float anchored at `offset`, under the Vim scheme that
-ships, with the frame padding 8, in a frame of 640 by 480, whose one
+at `head` and the float anchored at `offset`, under the test scheme with
+the kit's editing keys, with the frame padding 8, in a frame of 640 by 480, whose one
 window's text area is 640 by 448; none if making the state was refused.
 Nothing is published until a step is fed. -/
-def floatDriver (head offset : Nat) (pinned : Bool := false) : Option EvilDriver :=
+def floatDriver (head offset : Nat) (pinned : Bool := false) : Option TestDriver :=
   let frame := frameAround ⟨640, 448⟩ floatModel.display.cells
-  (Loop.Driver.over { evilHanded with padding := 8 } (fun _ => none)
-      (hinted frame head offset pinned) floatModel).toOption
+  (Loop.Driver.over { dispatchKeys editingBindings editingDispatched with padding := 8 }
+      (fun _ => none) (hinted frame head offset pinned) floatModel).toOption
 
 /-- The views of the last scene `driver`'s display recorded, with their
 rectangles, and the focused view. -/
-def sceneViews (driver : EvilDriver) : Option (Array (ViewId × Rect) × Option ViewId) :=
+def sceneViews (driver : TestDriver) : Option (Array (ViewId × Rect) × Option ViewId) :=
   driver.model.display.scenes.back?.map fun scene =>
     (scene.views.map fun view => (view.id, view.rect), scene.focused)
 
 /-- Whether the text model of `driver` holds the marker `id`. -/
-def holdsMarker (driver : EvilDriver) (id : MarkerId) : Bool :=
+def holdsMarker (driver : TestDriver) (id : MarkerId) : Bool :=
   ((id.text.marker id : TextM Marker).runModel driver.model.texts).1.toOption.isSome
 
 /-- The snapshot the last scene `driver`'s display recorded names for the
 view `view`. -/
-def sceneSnapshot (driver : EvilDriver) (view : ViewId) : Option SnapshotId :=
+def sceneSnapshot (driver : TestDriver) (view : ViewId) : Option SnapshotId :=
   driver.model.display.scenes.back?.bind fun scene =>
     (scene.views.find? (·.id == view)).map (·.snapshot)
 
@@ -6885,7 +6285,7 @@ the editor's models. -/
 def floatViewChecks : List Check :=
   let rect (x y width height : Nat) : Rect := { x, y, width, height }
   -- The first publish: a resize to the size the frame has.
-  let published (driver : EvilDriver) : EvilDriver := viewResized driver ⟨640, 448⟩
+  let published (driver : TestDriver) : TestDriver := viewResized driver ⟨640, 448⟩
   [{  name :=
         "a pinned float anchored at a position keeps its anchor marker while another tab is in view and when its tab comes back; closing a tab gives up the markers of its windows, the float's anchor among them, and the loop counts its views as closed"
       run :=
@@ -6894,7 +6294,7 @@ def floatViewChecks : List Check :=
           | none => false
           | some driver =>
             let shown := published driver
-            let delivered (driver : EvilDriver) (command : EditorM Unit) : EvilDriver :=
+            let delivered (driver : TestDriver) (command : EditorM Unit) : TestDriver :=
               (driver.stepped (driver.loop.deliver driver.handed "tab" command)).1
             let held : Array MarkerId :=
               ((shown.loop.state.window? ⟨1⟩).map
@@ -6931,7 +6331,7 @@ def floatViewChecks : List Check :=
                 some (#[(⟨0⟩, rect 0 0 640 464), (⟨1⟩, rect 40 308 320 116)], some ⟨0⟩)
           | _, _ => false },
     { name :=
-        "a transient float whose anchor scrolled away is closed at the publish: once the cursor moves thirty rows down it is in neither the scene nor the state, and its window's markers and its anchor marker are given up; a pinned one stays where it last was"
+        "a transient float whose anchor scrolled away is closed at the publish: once the cursor goes to the text's end it is in neither the scene nor the state, and its window's markers and its anchor marker are given up; a pinned one stays where it last was"
       run :=
         pure <|
           match floatDriver 18 18, floatDriver 18 18 (pinned := true) with
@@ -6942,8 +6342,8 @@ def floatViewChecks : List Check :=
                       (fun window => #[window.scroll, window.selection])).getD
                   #[] ++
                 (shown.loop.state.frame.floats.filterMap (·.anchor.marker?))
-            let moved := evilFed shown "3 0 j"
-            let kept := evilFed (published pinned) "3 0 j"
+            let moved := keysFed shown "C-<End>"
+            let kept := keysFed (published pinned) "C-<End>"
             held.size == 3 && held.all (holdsMarker shown) &&
               (sceneViews moved).map (·.1.map (·.1)) == some #[⟨0⟩] &&
               (moved.loop.state.window? ⟨1⟩).isNone &&
@@ -6963,8 +6363,8 @@ def floatViewChecks : List Check :=
           match floatDriver 18 18, floatDriver 0 (7 * 35) with
           | some driver, some away =>
             let shown := published driver
-            let moved := evilFed shown "3 0 j"
-            let unlisted (driver : EvilDriver) (id : SnapshotId) : Bool :=
+            let moved := keysFed shown "C-<End>"
+            let unlisted (driver : TestDriver) (id : SnapshotId) : Bool :=
               !driver.loop.shown.any (·.snapshot == id)
             let before := away.model.texts.snapshots.size
             let closed := published away
@@ -7006,7 +6406,7 @@ def floatViewChecks : List Check :=
           let spotsAsked (start : TextM EditorState) : Option Nat :=
             let program : EditorM Unit := do
               let state ← start
-              let loop : Loop Vim.Default.scheme :=
+              let loop : TestLoop :=
                 { state := { state with heights := floatModel.display.cells.heights } }
               discard <| loop.publish (padding := 8)
             let count (request : EditorRequest) : Nat :=
@@ -7024,57 +6424,68 @@ def floatViewChecks : List Check :=
           spotsAsked (hinted frame 18 18 false) == some 1 &&
             spotsAsked (viewState floatLines frame 0 18) == some 0 }]
 
-/-- The checks of what a repeat replays after completion at point
-(`EditorState.retyped`, `Loop.ranInto`): what a command typed in place of
-typed text reaches the last change's recording, only when the command ran to
-its end; and `.` after an insert that accepted a preview inserts what that
-insert left. -/
-def atPointRepeatChecks : List Check :=
-  let retyping : Config.Registration :=
-    { name := "retyping", action := .call fun call => retype call.target.window.id "zz" }
-  let refusing : Config.Registration :=
-    { name := "refusing"
-      action :=
-        .call fun call => do
-          retype call.target.window.id "yy"
-          throw .badRange }
-  [{  name :=
-        "what a command says it typed reaches the insert session's recording once it has run to its end, and a command that is refused tells the scheme nothing"
-      run :=
-        pure <|
-          match evilDriver "ab|c" (evilHanded #[retyping, refusing]) with
-          | none => false
-          | some driver =>
-            let inserting := evilFed driver "i x"
-            let told :=
-              (inserting.stepped
-                  (inserting.loop.invoke inserting.handed { command := "retyping" })).1
-            let refused := (told.stepped (told.loop.invoke told.handed { command := "refusing" })).1
-            told.loop.input.inserted == some "xzz" && told.loop.atRest.inserted == some "xzz" &&
-              refused.loop.input.inserted == some "xzz" &&
-              told.loop.state.retyped.isEmpty },
-    { name :=
-        "after a C-n C-n RET <Escape>, a move and . insert at the new bar what the insert left, the previewed text included"
-      run :=
-        pure <|
-          match atPointDriver "say he\nsay h|e" #["line"] [lineAtPoint] with
-          | none => false
-          | some driver =>
-            let done := evilFed driver "a C-n C-n RET <Escape>"
-            let repeated := evilFed done "k ."
-            evilText done == some "say he\nsay hello" &&
-              evilText repeated == some "say hello\nsay hello" }]
+/-- What a step of the at-point checks of the loop is handed, under
+`switching`, the scheme written for the loop's checks: a printable key
+types, as the test scheme's does; `C-b` begins a session the scheme reports
+(`InputScheme.Report.session`), as a scheme's insert state is, `C-e` ends
+it, and after `C-d` the view takes no text; the kit's editing keys but
+`RET`; and the keys of completion at point, each on the kit's at-point
+command a scheme's insert table binds it to (`Editor/Test/AtPoint.lean`):
+`C-SPC`, `C-n`, `C-p`, `TAB`, `S-TAB`, `RET` and `C-g`. The commands are the
+kit's at-point package's, the kit's minibuffer package's (a source that
+answers later posts its batches through `minibuffer-candidates`), the
+kit's editing commands, and stand-ins for the
+three a scheme's package registers that the kit's at-point runs by name:
+`insert-newline`, `insert-tab` and `keyboard-quit`. -/
+def atPointKeys : Loop.Keys switching :=
+  let ran (run : Call → EditorM Unit) : Dispatched := fun call => do
+    run call
+    return none
+  let commands : List (String × Dispatched) :=
+    editingDispatched ++
+      [("insert-newline", ran fun call => call.target.insertLineBreak),
+        ("insert-tab", ran fun call => call.target.insertAtSelections "\t"),
+        ("keyboard-quit", ran fun _ => pure ())]
+  { maps := fun _ _ =>
+      [Keymap.ofList
+          ((editingBindings.filter (·.1 != "RET") ++
+                [("C-b", invoke "begin"), ("C-e", invoke "end"), ("C-d", invoke "deafen"),
+                  ("C-SPC", invoke Test.AtPoint.completeName),
+                  ("C-n", invoke Test.AtPoint.nextName), ("C-p", invoke Test.AtPoint.previousName),
+                  ("TAB", invoke Test.AtPoint.tabName), ("S-TAB", invoke Test.AtPoint.backtabName),
+                  ("RET", invoke Test.AtPoint.returnName),
+                  ("C-g", invoke Test.AtPoint.quitName)]).map
+            fun (text, invocation) => (keys text, invocation))]
+    command? := fun name =>
+      match
+        (Test.Minibuffer.package.registered.commands ++
+              Test.AtPoint.package.registered.commands).findRev?
+          (·.name == name) with
+      | some { action := .call run, .. } => some (ran run)
+      | _ =>
+        match commands.find? (·.1 == name) with
+        | some (_, command) => some command
+        | none => if switchingTable.any (·.1 == name) then some fun _ => pure none else none }
+
+/-- A driver of the at-point checks of the loop over the fixture `fixture`,
+under `switching`, handed `atPointKeys` with the chain `chain` and the
+at-point sources `atPoints` (`atPointDriverUnder`,
+`ModelTest/Support/AtPoint.lean`). -/
+def atPointDriver (fixture : String) (chain : Array String) (atPoints : List Completion.AtPoint) :
+    Option (Loop.Driver switching) :=
+  atPointDriverUnder atPointKeys fixture chain atPoints
 
 /-- The checks of completion at point through the loop (`Editor/Loop.lean`,
-"Completion at point"), on the evil driver over the models. -/
+"Completion at point"), on the driver of `atPointDriver` over the models:
+under `switching`, in a session it reports (`C-b`). -/
 def atPointLoopChecks : List Check :=
   [{  name := "a session at point is asked with the place of its view, which its candidates keep"
       run :=
         pure <|
-          match atPointDriver "say h|e" #["line"] [lineAtPoint] with
+          match atPointDriver "say he|" #["line"] [lineAtPoint] with
           | none => false
           | some driver =>
-            let opened := evilFed driver "a C-n"
+            let opened := keysFed driver "C-b C-n"
             match opened.loop.state.atPoint with
             | none => false
             | some session =>
@@ -7084,35 +6495,35 @@ def atPointLoopChecks : List Check :=
         "a previewed candidate accepted with RET is what the region the source named now holds, and one undo restores the text from before the first preview"
       run :=
         pure <|
-          match atPointDriver "say h|e" #["line"] [lineAtPoint] with
+          match atPointDriver "say he|" #["line"] [lineAtPoint] with
           | none => false
           | some driver =>
-            let opened := evilFed driver "a C-n"
-            let previewed := evilFed opened "C-n"
-            let accepted := evilFed previewed "RET"
-            let undone := evilUndone (evilFed accepted "<Escape>")
-            let typedOn := evilFed driver "a C-n C-n x <Escape>"
+            let opened := keysFed driver "C-b C-n"
+            let previewed := keysFed opened "C-n"
+            let accepted := keysFed previewed "RET"
+            let undone := atPointUndone (keysFed accepted "C-e")
+            let typedOn := keysFed driver "C-b C-n C-n x C-e"
             opened.loop.state.atPoint.isSome && sessionChosen opened == none &&
-              evilText opened == some "say he" &&
+              atPointText opened == some "say he" &&
               sessionRows opened == #["say hello"] &&
-              evilText previewed == some "say hello" &&
+              atPointText previewed == some "say hello" &&
               sessionChosen previewed == some 0 &&
-              evilText accepted == some "say hello" &&
+              atPointText accepted == some "say hello" &&
               accepted.loop.state.atPoint.isNone &&
-              evilText undone == some "say he" &&
-              evilText typedOn == some "say hellox" },
+              atPointText undone == some "say he" &&
+              atPointText typedOn == some "say hellox" },
     { name :=
-        "moving the cursor out of the region closes the session and gives the windows back their rows; moving inside it keeps it; <Escape> closes it with the preview left, and so does typing on to a text nothing matches"
+        "moving the cursor out of the region closes the session and gives the windows back their rows; moving inside it keeps it; a view that stops taking text closes it with the preview left, and so does typing on to a text nothing matches"
       run :=
         pure <|
-          match atPointDriver "alpha a|l" #["last2"] [lastTwoAtPoint] with
+          match atPointDriver "alpha al|" #["last2"] [lastTwoAtPoint] with
           | none => false
           | some driver =>
-            let opened := evilFed driver "a C-n"
-            let inside := evilFed opened "<ArrowLeft> <ArrowLeft>"
-            let outside := evilFed inside "<ArrowLeft>"
-            let escaped := evilFed opened "C-n <Escape>"
-            let unmatched := evilFed opened "z"
+            let opened := keysFed driver "C-b C-n"
+            let inside := keysFed opened "<ArrowLeft> <ArrowLeft>"
+            let outside := keysFed inside "<ArrowLeft>"
+            let escaped := keysFed opened "C-n C-d"
+            let unmatched := keysFed opened "z"
             let heights := outside.loop.state.heights
             match opened.loop.state.atPoint with
             | none => false
@@ -7127,10 +6538,10 @@ def atPointLoopChecks : List Check :=
                 markerGone outside session.start &&
                 markerGone outside session.stop &&
                 escaped.loop.state.atPoint.isNone &&
-                evilText escaped == some "alpha alpha" &&
+                atPointText escaped == some "alpha alpha" &&
                 markerGone escaped session.start &&
                 unmatched.loop.state.atPoint.isNone &&
-                evilText unmatched == some "alpha alz" &&
+                atPointText unmatched == some "alpha alz" &&
                 markerGone unmatched session.stop },
     { name :=
         "with a session open, C-n/TAB and C-p/S-TAB move the choice down and up, previewing it in the region, and RET accepts only a chosen candidate"
@@ -7138,112 +6549,131 @@ def atPointLoopChecks : List Check :=
         pure <|
           let threes : Completion.AtPoint :=
             { lineAtPoint [.source "threes"] with name := "threes" }
-          match atPointDriver "|a" #["threes"] [threes] with
+          match atPointDriver "a|" #["threes"] [threes] with
           | none => false
           | some driver =>
-            let opened := evilFed driver "a C-SPC"
-            let one := evilFed opened "C-n"
-            let two := evilFed one "TAB"
-            let back := evilFed two "C-p"
-            let none' := evilFed back "S-TAB"
-            let wrapped := evilFed none' "S-TAB"
-            let accepted := evilFed wrapped "RET"
-            let broken := evilFed driver "a C-n RET"
-            sessionChosen opened == none && evilText opened == some "a" &&
-              evilText one == some "a1" &&
-              evilText two == some "a2" &&
-              evilText back == some "a1" &&
-              evilText none' == some "a" &&
+            let opened := keysFed driver "C-b C-SPC"
+            let one := keysFed opened "C-n"
+            let two := keysFed one "TAB"
+            let back := keysFed two "C-p"
+            let none' := keysFed back "S-TAB"
+            let wrapped := keysFed none' "S-TAB"
+            let accepted := keysFed wrapped "RET"
+            let broken := keysFed driver "C-b C-n RET"
+            sessionChosen opened == none && atPointText opened == some "a" &&
+              atPointText one == some "a1" &&
+              atPointText two == some "a2" &&
+              atPointText back == some "a1" &&
+              atPointText none' == some "a" &&
               sessionChosen none' == none &&
-              evilText wrapped == some "a3" &&
-              evilText accepted == some "a3" &&
+              atPointText wrapped == some "a3" &&
+              atPointText accepted == some "a3" &&
               accepted.loop.state.atPoint.isNone &&
               broken.loop.state.atPoint.isNone &&
-              evilText broken == some "a\n" },
+              atPointText broken == some "a\n" },
     { name :=
         "a previewed session closed because its text stopped matching closes its buffer's group: what is typed after it is a step of its own, and one more undo restores the text from before the preview"
       run :=
         pure <|
-          match atPointDriver "say h|e" #["line"] [lineAtPoint] with
+          match atPointDriver "say he|" #["line"] [lineAtPoint] with
           | none => false
           | some driver =>
-            let typed := evilFed driver "a C-n C-n x"
-            let after := evilFed typed "y <Escape>"
-            let once := evilUndone after
-            let twice := evilUndone once
-            typed.loop.state.atPoint.isNone && evilText after == some "say helloxy" &&
-              evilText once == some "say hellox" &&
-              evilText twice == some "say he" },
+            let typed := keysFed driver "C-b C-n C-n x"
+            let after := keysFed typed "y C-e"
+            let once := atPointUndone after
+            let twice := atPointUndone once
+            typed.loop.state.atPoint.isNone && atPointText after == some "say helloxy" &&
+              atPointText once == some "say hellox" &&
+              atPointText twice == some "say he" },
     { name :=
         "a session over more candidates than are matched inline has its listing matched by a job under completion-match <view>, and closing the session cancels it"
       run :=
         pure <|
           let threes : Completion.AtPoint :=
             { lineAtPoint [.source "threes"] with name := "threes" }
-          match atPointDriver "|a" #["threes"] [threes] with
+          match atPointDriver "a|" #["threes"] [threes] with
           | none => false
           | some driver =>
             let driver := { driver with keys := { driver.keys with inlineMatches := 1 } }
-            let (opened, steps) := evilSteps driver "a C-SPC"
-            let (_, quitSteps) := evilSteps opened "C-g"
+            let (opened, steps) := atPointSteps driver "C-b C-SPC"
+            let (_, quitSteps) := atPointSteps opened "C-g"
             let spawned : Array String := steps.flatMap (·.spawns.map (·.key))
             let cancelled : Array String := quitSteps.flatMap (·.cancels)
             spawned == #[Loop.matchKey ⟨0⟩] && cancelled.contains (Loop.matchKey ⟨0⟩) },
     { name :=
-        "C-n with words starts its job under completion 0 words, with an order whose texts are snapshots of the open buffers; its batches list the words that match, and closing the session cancels the key and releases the snapshots"
+        "C-n with a source that answers later and reads the open buffers' texts starts its job under completion 0 later, with an order whose texts are snapshots of the open buffers; its batches list the candidates that match, and closing the session cancels the key and releases the snapshots"
       run :=
         pure <|
-          match atPointDriver "alpha alpine al|p" #["words"] [] with
+          match atPointDriver "alpha alpine alp|" #["later"] [] with
           | none => false
           | some driver =>
-            let (asked, steps) := evilSteps driver "a C-n"
+            let (asked, steps) := atPointSteps driver "C-b C-n"
             let started : Array JobStart := steps.flatMap (·.starts)
             let order :=
-              (started.find? (·.name == Completion.Words.job)).bind fun start =>
+              (started.find? (·.name == laterJob)).bind fun start =>
                 Completion.Order.ofArguments? start.arguments
-            let listed := evilDrained asked
-            let closed := evilFed listed "<Escape>"
+            let listed := atPointDrained asked
+            let closed := keysFed listed "C-d"
             let texts := (order.map (·.query.texts)).getD #[]
-            let contents (driver : EvilDriver) (id : SnapshotId) : Option String :=
+            let contents (driver : Loop.Driver switching) (id : SnapshotId) : Option String :=
               (driver.model.texts.snapshots[id.index]?).join.map (·.contents)
-            (started.find? (·.name == Completion.Words.job)).bind (·.key) ==
-                some (Loop.sourceKey ⟨0⟩ "words") &&
+            (started.find? (·.name == laterJob)).bind (·.key) ==
+                some (Loop.sourceKey ⟨0⟩ "later") &&
               texts.toList.map (contents asked) == [some "alpha alpine alp"] &&
               (order.bind (·.query.region)) == some { start := 13, stop := 16 } &&
               sessionRows listed == #["alpha", "alpine"] &&
               closed.loop.state.atPoint.isNone &&
               texts.all (contents closed · |>.isNone) &&
-              !closed.loop.state.completionKeys.contains (Loop.sourceKey ⟨0⟩ "words") },
+              !closed.loop.state.completionKeys.contains (Loop.sourceKey ⟨0⟩ "later") },
     { name :=
-        "C-n on a word that appears nowhere else opens a session of words, and when its job lists nothing the session closes and the echo area says no completions"
+        "C-n on a word no batch of a source that answers later holds opens a session of it, and when its job lists nothing that matches the session closes and the echo area says no completions"
       run :=
         pure <|
-          match atPointDriver "xyz |" #["words"] [] with
+          match atPointDriver "xyz |" #["later"] [] with
           | none => false
           | some driver =>
-            let asked := evilFed driver "a q w C-n"
-            let drained := evilDrained asked
-            asked.loop.state.atPoint.map (·.source) == some "words" &&
+            let asked := keysFed driver "C-b q w C-n"
+            let drained := atPointDrained asked
+            asked.loop.state.atPoint.map (·.source) == some "later" &&
               drained.loop.state.atPoint.isNone &&
-              drained.loop.state.echo == AtPoint.noCompletions }]
+              drained.loop.state.echo == Completion.AtPoint.noCompletions }]
 
 /-- The checks of what a key asks of completion at point (`Loop.atPointAsks`),
 pure: a trigger's command, the pause armed, kept or withdrawn. -/
 def atPointAskChecks : List Check :=
   let paused : Completion.AtPoint := { Completion.AtPoint.silent "paused" with pause := some 100 }
-  let atPoints := [dotsAtPoint, paused, Completion.AtPoint.words]
+  let atPoints := [dotsAtPoint, paused, laterAtPoint]
   [{  name :=
+        "completion at point through an implementation written here: the kit's at-point package and an at-point source over the job model's later source, neither shipped, open a session on a trigger, list what the job answered, preview the chosen one in the region and accept it"
+      run :=
+        pure <|
+          match atPointDriver "|" #["dotted"] [{ laterAtPoint ['.'] with name := "dotted" }] with
+          | none => false
+          | some driver =>
+            let typed := keysFed driver "C-b a x"
+            let dotted := atPointDrained (keysFed typed ".")
+            let previewed := keysFed dotted "C-n"
+            let accepted := keysFed previewed "RET"
+            typed.loop.state.atPoint.isNone &&
+              dotted.loop.state.atPoint.map (·.source) == some "dotted" &&
+              sessionChosen dotted == none &&
+              sessionRows dotted == #["alpha", "beta", "alpine"] &&
+              atPointText previewed == some "ax.alpha" &&
+              sessionChosen previewed == some 0 &&
+              atPointText accepted == some "ax.alpha" &&
+              accepted.loop.state.atPoint.isNone },
+    { name :=
         "a typed . with a trigger source hands back at-point-triggered with it, and a typed a none; a typed key with pause sources arms each distinct pause, and a chain with no pause keeps what is armed"
       run :=
         pure <|
-          match atPointDriver "|" #["dots", "paused", "words"] atPoints,
+          match atPointDriver "|" #["dots", "paused", "later"] atPoints,
             atPointDriver "|" #["dots"] atPoints with
           | some driver, some noPause =>
             let loop := driver.loop
             let triggered := loop.atPointAsks driver.handed (some (⟨0⟩, some "x."))
             let plain := loop.atPointAsks driver.handed (some (⟨0⟩, some "a"))
             triggered ==
-                (#[{ command := AtPoint.triggeredName, arguments := [.str "."] }],
+                (#[{ command := Completion.AtPoint.triggeredCommand, arguments := [.str "."] }],
                   .arm ⟨0⟩ #[100, 240]) &&
               plain == (#[], .arm ⟨0⟩ #[100, 240]) &&
               noPause.loop.atPointAsks noPause.handed (some (⟨0⟩, some "a")) == (#[], .keep) &&
@@ -7271,7 +6701,7 @@ def atPointAskChecks : List Check :=
                 (#[], .disarm) }]
 
 /-- The checks of completion at point asked by itself, through the loop on
-the evil driver over the models: a trigger, and a pause. -/
+the driver of `atPointDriver` over the models: a trigger, and a pause. -/
 def atPointByItselfChecks : List Check :=
   [{  name :=
         "a source that declares a trigger character opens a session when that character is typed, with nothing chosen, and no other character does"
@@ -7280,45 +6710,45 @@ def atPointByItselfChecks : List Check :=
           match atPointDriver "|" #["dots"] [dotsAtPoint] with
           | none => false
           | some driver =>
-            let typed := evilFed driver "i a x"
-            let dotted := evilFed typed "."
+            let typed := keysFed driver "C-b a x"
+            let dotted := keysFed typed "."
             typed.loop.state.atPoint.isNone && !listShown typed &&
               dotted.loop.state.atPoint.map (·.source) == some "dots" &&
               sessionChosen dotted == none &&
               listShown dotted &&
               sessionRows dotted == #["wq", "w"] &&
-              evilText dotted == some "ax." },
+              atPointText dotted == some "ax." },
     { name :=
-        "typing a then b in insert state leaves the driver with one pause armed and no job; 239 ms open nothing, and one more opens a session of words, with nothing chosen; a move before the pause withdraws it, and nothing opens"
+        "typing a then l in a session leaves the driver with one pause armed and no job; 239 ms open nothing, and one more opens a session of a source that pauses 240 ms, with nothing chosen; a move before the pause withdraws it, and nothing opens"
       run :=
         pure <|
-          match atPointDriver "alpha |" #["words"] [] with
+          match atPointDriver "alpha |" #["later"] [] with
           | none => false
           | some driver =>
-            let typed := evilFed driver "a a l"
+            let typed := keysFed driver "C-b a l"
             let early := typed.pass 239
             let due := early.pass 1
-            let moved := (evilFed typed "<ArrowLeft>").pass 240
+            let moved := (keysFed typed "<ArrowLeft>").pass 240
             typed.armed.size == 1 && typed.pending.isEmpty && typed.posting.isEmpty &&
               early.loop.state.atPoint.isNone &&
-              due.loop.state.atPoint.map (·.source) == some "words" &&
+              due.loop.state.atPoint.map (·.source) == some "later" &&
               sessionChosen due == none &&
               due.armed.isEmpty &&
               moved.armed.isEmpty &&
               moved.loop.state.atPoint.isNone },
     { name :=
-        "a pause on a word that appears nowhere else opens a session of words, and when its job lists nothing the session closes and the echo area is left as it was"
+        "a pause on a word no batch of a source that answers later holds opens a session of it, and when its job lists nothing that matches the session closes and the echo area is left as it was"
       run :=
         pure <|
-          match atPointDriver "xyz |" #["words"] [] with
+          match atPointDriver "xyz |" #["later"] [] with
           | none => false
           | some driver =>
-            let typed := evilFed driver "a q w"
+            let typed := keysFed driver "C-b q w"
             let due := typed.pass 240
-            let drained := evilDrained due
-            due.loop.state.atPoint.map (·.source) == some "words" &&
+            let drained := atPointDrained due
+            due.loop.state.atPoint.map (·.source) == some "later" &&
               drained.loop.state.atPoint.isNone &&
-              drained.loop.state.echo != AtPoint.noCompletions &&
+              drained.loop.state.echo != Completion.AtPoint.noCompletions &&
               drained.loop.state.echo == typed.loop.state.echo }]
 
 /-- The command `marked` of the pressed-keys checks: it says `marked`, then
@@ -7375,20 +6805,22 @@ def pressedChecks : List Check :=
             TestScheme.scheme.pending waiting.loop.input == keys "C-c" &&
               promptEcho (pressing waiting "C-c m") == "marked C-c m" },
     { name :=
-        "under the Vim scheme the reserved keys invocation runs a key as pressing it does: i enters insert state, and x deletes the character under the cursor"
+        "under a scheme with a report of its own the reserved keys invocation runs a key as pressing it does: a key that switches what the scheme reports of the view switches it, and a printable key types"
       run :=
         pure <|
-          match evilDriver "|x foo" with
+          match
+            (Loop.Driver.over (switchingKeys [] editingDispatched) (fun _ => none)
+                (barState "x foo" 0) editorModel).toOption with
           | none => false
           | some driver =>
-            let report (driver : EvilDriver) := Vim.Default.scheme.report driver.loop.input ⟨0⟩
-            let pressedI := pressing driver "i"
-            let typedI := evilFed driver "i"
+            let report (driver : Loop.Driver switching) := switching.report driver.loop.input ⟨0⟩
+            let pressedMark := pressing driver "C-m"
+            let typedMark := keysFed driver "C-m"
             let pressedX := pressing driver "x"
-            let typedX := evilFed driver "x"
-            report pressedI == report typedI && report pressedI != report driver &&
-              evilShown pressedI == evilShown typedI &&
-              evilText pressedX == some " foo" &&
-              evilShown pressedX == evilShown typedX }]
+            let typedX := keysFed driver "x"
+            report pressedMark == report typedMark && report pressedMark != report driver &&
+              report pressedMark == markedReport &&
+              shownOf pressedX == "x|x foo" &&
+              shownOf pressedX == shownOf typedX }]
 
 end ModelTest

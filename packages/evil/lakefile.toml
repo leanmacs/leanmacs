@@ -1,0 +1,126 @@
+# Evil and the Vim scheme: Vim's states, motions, operators, text objects,
+# registers, marks, undo, dot repeat, scroll and clipboard commands written
+# on the editor API, the scheme that turns keys into their invocations, and
+# its default states and bindings: a default package, a Lake package
+# outside the core that the default package set requires (../lakefile.toml;
+# docs/design/packages.md, "The package set and its build"). It was sixteen
+# modules of the core, `Editor.Evil`, the thirteen under `Editor.Evil.` and
+# `Editor.InputScheme.Vim` with `.Vim.Default`, until the
+# features-as-packages roadmap's phase 7. The gate's package steps build,
+# test, lint and format-check it through the fixture set, which requires
+# the default set (tools/package-set.sh), and the package imports check
+# holds what it imports of the core (tools/package-imports-check.sh).
+#
+# It supplies the editor's input scheme: it declares the keyword
+# `editor-input-scheme`, so the package-set build reads `scheme` beside
+# `packages` from its entry module and hands it to the hosts
+# (docs/design/packages.md, "Input schemes"). An editor built from a set
+# with no such package refuses to start.
+#
+# - `Evil` is the package's library: `Evil.lean`, the states and commands,
+#   the modules under `Evil/`, the scheme in `Evil/Vim.lean` with its
+#   defaults in `Evil/Vim/Default.lean`, `Evil/Compiled.lean`, the
+#   `Package` value and the scheme it supplies, and its entry module
+#   `Evil/EditorPackage.lean`, which the package-set build reads. Its
+#   `globs` hold every module under `Evil`, so the package imports check
+#   sees each one's imports. It implements the interface package
+#   `evil-api`, and names the commands its tables run of the minibuffer and
+#   of completion at point by the constants of their interface packages,
+#   `minibuffer-api` and `at-point-api`, of the window and the tab
+#   commands by `window-commands-api`'s and `tab-commands-api`'s, and of
+#   the ex line and the shell by `ex-api`'s and `shell-api`'s; it requires
+#   each, beside the core, and `buffers-api` for its tests' fake.
+# - `evil-test` is its test driver (`lake test`): the tests that need no
+#   Rust library, rooted at `EvilTest/Model.lean`. It is no default target,
+#   as the core's `model-test` is not: `mise run lean` links with the
+#   system compiler, which this executable has no flags for.
+# - `EvilTest` holds the test modules, evil's test kit (`EvilTest/Kit.lean`)
+#   and the drivers its checks share (`EvilTest/Support/`),
+#   `EvilTest/Linked.lean` among them: the root of the executable the
+#   core's `editorLinked` facet links as the editor is linked, with the
+#   Rust library. It runs evil through the headless host of the Vim scheme
+#   over the real elaborator and the library's syntax service.
+#
+# It has no headless fixture of its own: the core's fixtures under
+# tests/headless, which run on the default set's editor, press its keys.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): `editor-input-scheme` is no layer keyword, so no package may
+# import its modules, and the layer imports check holds it to that
+# (tools/layer-imports-check.sh).
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/evil update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages,
+# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+name = "evil"
+keywords = ["editor-input-scheme"]
+testDriver = "«evil-test»"
+defaultTargets = ["Evil", "EvilTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+# The interface package of evil: the names `insert-newline`, `insert-tab`,
+# `undo` and `redo`, which completion at point and the Edit menu reach, its
+# fake and the contract check this package's tests run.
+[[require]]
+name = "evil-api"
+path = "../evil-api"
+
+# The interface package of the minibuffer: the names the minibuffer state's
+# table runs, and the one the scheme yields to ask for a text.
+[[require]]
+name = "minibuffer-api"
+path = "../minibuffer-api"
+
+# The interface package of completion at point: the names insert state's
+# table runs.
+[[require]]
+name = "at-point-api"
+path = "../at-point-api"
+
+# The interface package of the window commands: the names the window
+# table runs under `C-w`.
+[[require]]
+name = "window-commands-api"
+path = "../window-commands-api"
+
+# The interface package of the tab commands: the names the tab table runs
+# under `C-w`.
+[[require]]
+name = "tab-commands-api"
+path = "../tab-commands-api"
+
+# The interface package of the ex line: the name `ex`, which `:` runs.
+[[require]]
+name = "ex-api"
+path = "../ex-api"
+
+# The interface package of the buffer commands: its fake, which this
+# package's tests close a buffer with.
+[[require]]
+name = "buffers-api"
+path = "../buffers-api"
+
+# The interface package of the shell: the name `keyboard-quit`, which
+# `C-g` runs.
+[[require]]
+name = "shell-api"
+path = "../shell-api"
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "Evil"
+globs = ["Evil.*"]
+
+[[lean_lib]]
+name = "EvilTest"
+globs = ["EvilTest.+"]
+
+[[lean_exe]]
+name = "evil-test"
+root = "EvilTest.Model"

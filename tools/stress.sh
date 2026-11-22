@@ -121,7 +121,7 @@ run_suite() {
   config)
     (cd "$root/lean" && low .lake/build/bin/config-test "$prefix" .lake/build/lib/lean ../tests/syntax ../config/default) >"$log" 2>&1 ;;
   contract)
-    (cd "$root/lean" && low .lake/build/bin/contract-test ../tests/process-environment ../tests/workspaces ../tests/shell ../tests/syntax ../tests/completion) >"$log" 2>&1 ;;
+    (cd "$root/lean" && low .lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion) >"$log" 2>&1 ;;
   rust)
     (cd "$root" && low cargo test --workspace --locked) >"$log" 2>&1 ;;
   open-file)

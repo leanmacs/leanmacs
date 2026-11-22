@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use crate::TitleBar;
 use crate::{
     Appearance, Button, CannotOpen, Canvas, Composition, Drawer, Input, Key, LogicalKey, Menu,
-    Modifiers, PhysicalKey, Platform, Pointer, PointerAction, Report, Request, Resize,
+    Modifiers, PhysicalKey, Platform, Pointer, PointerAction, Report, Request, Resize, Rgb,
     WindowOptions,
 };
 
@@ -30,6 +30,8 @@ pub struct Shown {
     pub appearance: Option<Appearance>,
     /// The menu bar asked last; `None` until one is.
     pub menu: Option<Menu>,
+    /// The background asked last; `None` until one is.
+    pub background: Option<Rgb>,
 }
 
 impl Shown {
@@ -37,8 +39,8 @@ impl Shown {
     ///
     /// Entering and leaving fullscreen set it, and are not toggles; a
     /// minimise minimises; a title replaces the title, a menu the menu
-    /// bar, and an appearance the appearance; keeping running changes
-    /// nothing shown.
+    /// bar, an appearance the appearance and a background the background;
+    /// keeping running changes nothing shown.
     ///
     /// The match is exhaustive: this is the model every request is held
     /// to, so a new request must say here what it does.
@@ -51,6 +53,7 @@ impl Shown {
             Request::KeepRunning => {}
             Request::Menu(menu) => self.menu = Some(menu.clone()),
             Request::Appearance(appearance) => self.appearance = Some(*appearance),
+            Request::Background(rgb) => self.background = Some(*rgb),
         }
     }
 }
@@ -510,6 +513,13 @@ mod tests {
     use std::sync::mpsc::{self, Receiver};
     use std::thread;
     use std::time::Duration;
+
+    /// A paper, as a background is asked.
+    const PAPER: Rgb = Rgb {
+        red: 0x2e,
+        green: 0x34,
+        blue: 0x40,
+    };
 
     /// hang guard: the next thing the run reports or says, or its return;
     /// only a hang reaches the bound, and the test then fails as a hang
@@ -1310,6 +1320,8 @@ mod tests {
             Request::LeaveFullscreen,
             Request::KeepRunning,
             Request::Title("notes.txt".into()),
+            Request::Background(PAPER),
+            Request::Minimise,
         ];
         for request in asked.clone() {
             platform.request(request);
@@ -1543,6 +1555,21 @@ mod tests {
     }
 
     #[test]
+    fn a_background_request_is_recorded_shown_and_reports_nothing() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(1), [opened()]);
+
+        platform.request(Request::Background(PAPER));
+        assert!(run.parked(), "a background reports nothing");
+        assert_eq!(platform.asked(), [Request::Background(PAPER)]);
+        assert_eq!(platform.shown().background, Some(PAPER));
+
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
+    }
+
+    #[test]
     fn a_fullscreen_request_that_changes_nothing_a_minimise_a_title_keep_running_and_a_menu_report_nothing()
      {
         let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
@@ -1633,6 +1660,7 @@ mod tests {
                 title: None,
                 appearance: None,
                 menu: None,
+                background: None,
             }
         );
         shown.carry_out(&Request::Menu(menu("File")));
@@ -1651,6 +1679,12 @@ mod tests {
         shown.carry_out(&Request::Minimise);
         shown.carry_out(&Request::Appearance(Appearance::Dark));
         shown.carry_out(&Request::Appearance(Appearance::Light));
+        shown.carry_out(&Request::Background(Rgb {
+            red: 0,
+            green: 0,
+            blue: 0,
+        }));
+        shown.carry_out(&Request::Background(PAPER));
         let before = shown.clone();
         shown.carry_out(&Request::KeepRunning);
         assert_eq!(shown, before, "keeping running changes nothing shown");
@@ -1662,6 +1696,7 @@ mod tests {
                 title: Some("b".into()),
                 appearance: Some(Appearance::Light),
                 menu: None,
+                background: Some(PAPER),
             }
         );
     }

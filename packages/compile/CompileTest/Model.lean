@@ -24,8 +24,11 @@ are the linked test's (`CompileTest/Linked.lean`), in test modules under
 The checks run on the core's test kit (`Editor.Test.…`, a test double the
 core publishes; `docs/design/packages.md`, "What a package may import"):
 the loop's driver over the editor's models, the job model and the process
-model, with the worlds of files, workspaces and the shell the core's own
-tests use. They were the core's (`ModelTest.<name>`) while the compile
+model, with `files-api`'s fake (`FilesApiTest.fake`) for the files and
+the kit's stand-ins for the workspace (`attachByPackage`, a directory's
+workspace; `markersByPackage`, its modes on markers by the core's rules
+over a known set of marker files; `listingOpened`, `kubeOpened`), so they
+name no feature but the compile mode. They were the core's (`ModelTest.<name>`) while the compile
 mode was a module of the core, and moved here with their sentences as they
 were.
 
@@ -36,8 +39,8 @@ were.
 - `compileLocationChecks`: the locations the compile mode finds in its
   output and the steps over them (`Compile.lean`, "Locations"), on that
   driver;
-- `compileHookChecks`: the compile hook (`Editor/Workspace/Modes.lean`,
-  `Compile.lean`, "The hook"), on that driver, with contributions
+- `compileHookChecks`: the compile hook (`Compile.lean`, "The hook"), on
+  that driver, with contributions
   registered as config registers them; and what the hook makes of a
   `setup` written as compiled code: a shipped contribution with one field
   overridden, and a contribution with a format of its own and project

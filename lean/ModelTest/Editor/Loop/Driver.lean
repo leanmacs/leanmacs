@@ -40,7 +40,6 @@ import Editor.Text
 import Editor.Text.Model
 import Editor.Watch.Model
 import ModelTest.Check
-import ModelTest.Editor.Minibuffer
 
 /-!
 # Model tests: `Editor/Loop/Driver.lean`
@@ -771,10 +770,11 @@ def echoPromptChecks : List Check :=
               sceneEcho closed == some "loaded" }]
 
 /-- The checks of prompts on the loop's driver: the loop's part and its
-host's (`promptLoopChecks`), the echo an open prompt clears
-(`echoPromptChecks`), then the minibuffer's commands and its mode
-(`promptModeChecks`). -/
+host's (`promptLoopChecks`), then the echo an open prompt clears
+(`echoPromptChecks`). The checks of the minibuffer's commands and its mode
+(`MinibufferTest.promptModeChecks`) are the package `minibuffer`'s own
+(`packages/minibuffer/`). -/
 def promptChecks : List Check :=
-  promptLoopChecks ++ echoPromptChecks ++ promptModeChecks
+  promptLoopChecks ++ echoPromptChecks
 
 end ModelTest

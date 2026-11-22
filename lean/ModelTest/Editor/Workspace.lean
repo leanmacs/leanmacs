@@ -6,15 +6,12 @@ import Editor.Command.Model
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
-import Editor.Completion.Styles
 import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.File
 import Editor.Language
 import Editor.Mode
 import Editor.Program
-import Editor.ProjectMode
-import Editor.ProjectMode.Format
 import Editor.Scene
 import Editor.State
 import Editor.State.Request
@@ -43,7 +40,9 @@ open Editor.Test
 /-- The checks of projects, workspaces and locations as data
 (`Editor/Workspace.lean`): how an `origin` URL is normalised, how a project
 is identified and named, how a workspace is labelled, what each location can
-do, and a location's round trip through a buffer-local value. -/
+do, a location's round trip through a buffer-local value, the text typed
+after a location, and what a search that finds no workspace, or one that
+cannot list its files, says. -/
 def workspaceDataChecks : List Check :=
   let origin := "git@github.com:o/r.git"
   [{  name :=
@@ -116,7 +115,24 @@ def workspaceDataChecks : List Check :=
         pure
           (locations.all (fun location => Location.decode? location.encode == some location) &&
             [Value.null, .str "/r", .record [("local", .nat 1)], .record []].all
-              (Location.decode? · == none)) }]
+              (Location.decode? · == none)) },
+    { name :=
+        "the text typed after a location is its first text argument, or the empty text: typedOf reads what a location's arguments carry on"
+      run :=
+        pure <|
+          Workspace.typedOf [.str "ab", .str "cd"] == "ab" && Workspace.typedOf [] == "" &&
+            Workspace.typedOf [.nat 1, .str "ab"] == "" },
+    { name :=
+        "a command that finds no workspace at a location says so, naming itself and the location; one handed a workspace that cannot list its files names itself, the workspace's label and its location"
+      run :=
+        let project := Project.of "/r" (some "/r/.git") (some origin) none
+        let remote : Workspace :=
+          { location := .reachable "kube" "pod/dev" "/src", branch := some (.named "main"),
+            project }
+        pure <|
+          Workspace.noSuchWorkspace (.local "/z") "c" == "c: no workspace is known at local /z" &&
+            Workspace.cannotList remote "c" ==
+              "c: r@main is reachable through kube pod/dev at /src, where files cannot be listed" }]
 
 /-- The checks of how the git adapter reads what git prints
 (`Editor/Workspace.lean`, "The git adapter's command lines"). -/
@@ -320,27 +336,6 @@ def workspaceStateChecks : List Check :=
           | .ok (.finished answer, _) => answer == some 250
           | _ => false },
     { name :=
-        "a dispatched command that asks for the compile hook is answered what the loop was told, and the workspace settings carry the contributions' marker modes in registration order"
-      run :=
-        let hook : Compile.Hook :=
-          { contributions :=
-              #[{ mode := "b-mode", markers := #["b.toml"] },
-                { mode := "a-mode", markers := #["a.toml", "a2.toml"] }]
-            projects := #[{ project := .remote "github.com/o/r", mode := "b-mode" }] }
-        let asking : EditorM (Compile.Hook × Workspace.Settings) := do
-          return (← RegistryRequest.ask .compileHook, (← RegistryRequest.ask .workspaceSettings).1)
-        let program : EditorM (Guarded (Compile.Hook × Workspace.Settings) × EditorState) := do
-          asking.dispatched { compile := hook } (← twoBuffers)
-        pure <|
-          match (program.runModel editorModel).1 with
-          | .ok (.finished (told, settings), _) =>
-            told.contributions.map (·.mode) == #["b-mode", "a-mode"] &&
-              told.projects == hook.projects &&
-              settings.markerModes ==
-                #[{ mode := "b-mode", markers := #["b.toml"] },
-                  { mode := "a-mode", markers := #["a.toml", "a2.toml"] }]
-          | _ => false },
-    { name :=
         "a dispatched command that asks for the workspace settings is answered config's roots and the config generation the loop was told of"
       run :=
         let roots : Array Workspace.ConfigRoot := #[{ root := "/r/tools", project := some "tools" }]
@@ -475,10 +470,7 @@ def modeMarkerChecks : List Check :=
             Workspace.onModes #[{ outer with outermost := false }, nearest] "/r/k/l" "/r" present ==
               #[{ mode := "o-mode", root := "/r/k/l" }, { mode := "n-mode", root := "/r/k" }] &&
             Workspace.onModes #[outer, nearest] "/r/k/l" "/r" #[("/r/k/l", "o.toml")] ==
-              #[{ mode := "o-mode", root := "/r/k/l" }] &&
-            (Compile.Contribution.markerMode
-                { mode := "o-mode", markers := #["o.toml"], outermost := true }) ==
-              outer) },
+              #[{ mode := "o-mode", root := "/r/k/l" }]) },
     { name := "an on-mode crosses as a tree and back; a tree that is no on-mode reads as none"
       run :=
         let on : Workspace.OnMode := { mode := "a-mode", root := "/a b/é" }

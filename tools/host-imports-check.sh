@@ -5,7 +5,7 @@
 # none of them.
 #
 #   tools/host-imports-check.sh [--set <set dir>]
-#   tools/host-imports-check.sh <root module> [<list module>]
+#   tools/host-imports-check.sh <root module> <list module>
 #
 # Run it in `lean/`.
 #
@@ -19,9 +19,11 @@
 # of the set's Lake packages, and its other imports are the host's.
 #
 # With a root module, it checks that module of the core in the same way,
-# with one list module, which defaults to `EditorCore.EditorPackage`, the
-# core's entry module (`lean/EditorCore/EditorPackage.lean`, outside
-# `Editor/`). The gate uses this form to see the check fail.
+# with the one list module it is given: a module of the core that defines
+# packages, as the test kit's stand-ins for default packages do
+# (`Editor.Test.Shipped`). The core has no entry module to default to: its
+# Lake package registers no package. The gate uses this form to see the
+# check fail.
 #
 # - The host's modules are the modules the root imports, other than the
 #   list modules, with everything they import inside the workspace.
@@ -41,18 +43,17 @@
 # builds anything. So the check follows a module that is renamed or moved,
 # and an import written in any form.
 #
-# What it does not claim: the core loop still imports feature code that
-# defines no package, such as `Editor.Files` and `Editor.Ex`
-# (`lean/Editor/Loop.lean`). This check is of the modules that define
-# packages. That the core imports no module of a feature that moves out of
-# it is `tools/core-imports-check.sh`'s, and what each feature still in the
-# core would have to cross to move out is the module map of
-# docs/design/packages.md.
+# What it does not claim: this check is of the modules that define
+# packages. That the core imports no module of a package is Lake's own
+# rule, since the core requires none, and `tools/core-imports-check.sh`'s
+# for a module still in the core that is moving out; which package each
+# feature that was the core's is, is the module map's
+# (docs/design/packages.md).
 set -eu
 
 usage() {
   echo "usage: tools/host-imports-check.sh [--set <set dir>]" >&2
-  echo "       tools/host-imports-check.sh <root module> [<list module>]" >&2
+  echo "       tools/host-imports-check.sh <root module> <list module>" >&2
   exit 2
 }
 
@@ -67,10 +68,10 @@ case ${1:-} in
     ;;
   -*) usage ;;
   *)
-    [ "$#" -le 2 ] || usage
+    [ "$#" -eq 2 ] || usage
     set_dir=
     root=$1
-    list=${2:-EditorCore.EditorPackage}
+    list=$2
     ;;
 esac
 

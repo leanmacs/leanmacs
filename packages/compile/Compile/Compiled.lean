@@ -30,8 +30,8 @@ config (`Editor/Config/Packages.lean`).
   It is reported: one running when the process ends is said stopped by the
   next start's restore.
   The job `compile-list`, which runs a contribution's listing, is the
-  `workspace` package's (`Editor/Workspace/Compiled.lean`,
-  `Editor/ProjectMode/Listing.lean`): a host handed this package and not
+  `workspace` package's (`packages/workspace/Workspace/Compiled.lean`,
+  `packages/compile-api/CompileApi/Listing.lean`): a host handed this package and not
   that one offers a contribution's own commands and no listed ones.
 - **The mode**: `compilation`, the compilation buffer's major mode
   (`Compile.mode`).
@@ -49,7 +49,7 @@ config (`Editor/Config/Packages.lean`).
   takes nothing. `next-error` and `previous-error` run the commands of
   those names and take nothing: they step through the locations of the
   focused buffer's workspace's compilation. No global key binds them. A
-  host must be handed the `ex` package (`Editor/Ex/Compiled.lean`) for a
+  host must be handed the `ex` package (`packages/ex/Ex/Compiled.lean`) for a
   line to run them; this package names it nowhere, and the `ex` package
   does not name this one.
 

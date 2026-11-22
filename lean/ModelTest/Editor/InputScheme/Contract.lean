@@ -2,8 +2,6 @@ import Editor.Event
 import Editor.InputScheme
 import Editor.InputScheme.Contract
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim
-import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Keymap
 import Editor.Role
@@ -11,20 +9,22 @@ import Editor.Scene
 import Editor.Test.Keys
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Vim
 
 /-!
 # Model tests: `Editor/InputScheme/Contract.lean`
 
-The model tests of `Editor/InputScheme/Contract.lean`: `schemeContractChecks`
-and `vimContractChecks`. The root module `ModelTest` runs them; its module doc
-says what each shows.
+The model tests of `Editor/InputScheme/Contract.lean`: `schemeContractChecks`,
+`continuationsContractChecks` and `keyBindingsContractChecks`, on the test
+scheme and on schemes written here. The root module `ModelTest` runs them;
+its module doc says what each shows. That the Vim scheme keeps the contract
+is `vimContractChecks`, in `packages/evil/EvilTest/Vim/Contract.lean`.
 -/
 
 namespace ModelTest
 
 open Editor
 open Editor.Test
+open Editor.SchemeContract (failsOnly)
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/
@@ -222,6 +222,15 @@ def menuStartled : InputScheme :=
     report := fun state _ => { session := state.2 }
     invoked := fun _ state invocation => ((state.1, true), invocation) }
 
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that it draws its cursor in `cursor.odd` while keys are pending, a
+face it does not list. -/
+def miscoloured : InputScheme :=
+  { TestScheme.scheme with
+    report := fun state _ =>
+      if state.pending.isEmpty then {}
+      else { cursor := { shape := .bar, face := ⟨"cursor.odd"⟩ } } }
+
 /-- The subject the scheme contract is run on: `scheme` over the scheme
 checks' keymaps for view 0, the sequences those bind, a key none of them
 goes on with, and that same key as the one that prints and that nothing
@@ -234,13 +243,6 @@ def subjectOf (scheme : InputScheme) (maps : ViewId → List (Keymap scheme.Bind
     sequences := [keys "C-x C-s", keys "C-x C-f", keys "C-x r t", keys "C-q"]
     unbound := charKey "z"
     printable := charKey "z" }
-
-/-- Whether exactly the properties `expected` of the scheme contract do not
-hold of `subject`. -/
-def failsOnly (subject : SchemeContract.Subject) (expected : List SchemeContract.Property) : Bool :=
-  SchemeContract.failures subject == expected.map (·.name) &&
-    SchemeContract.properties.all fun property =>
-      property.holds subject != expected.any (·.name == property.name)
 
 /-- The checks of the scheme contract (`Editor/InputScheme/Contract.lean`):
 it holds of the test scheme, and it reports schemes written here that each
@@ -397,7 +399,15 @@ def schemeContractChecks : List Check :=
       run :=
         pure
           (failsOnly (subjectOf meddling schemeMaps) [SchemeContract.invokedKeepsUnknown] &&
-            failsOnly (subjectOf menuStartled schemeMaps) [SchemeContract.invokedKeepsUnknown]) }]
+            failsOnly (subjectOf menuStartled schemeMaps) [SchemeContract.invokedKeepsUnknown]) },
+    { name :=
+        "the scheme contract reports a scheme that draws a cursor in a face it does not list, for that property and the quiet key's alone, and keeps it once the scheme lists the face"
+      run :=
+        let listing : InputScheme := { miscoloured with cursorFaces := [⟨"cursor.odd"⟩] }
+        pure
+          (failsOnly (subjectOf miscoloured schemeMaps)
+              [SchemeContract.quietKeyKeepsReport, SchemeContract.cursorFacesReported] &&
+            failsOnly (subjectOf listing schemeMaps) [SchemeContract.quietKeyKeepsReport]) }]
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that after a pending prefix it also lists `z`, which the walk does
@@ -459,57 +469,5 @@ def keyBindingsContractChecks : List Check :=
               (fun b => (b.keys, b.command)) ==
             [(keys "C-x C-s", "save"), (keys "C-x C-f", "find-file"),
               (keys "C-x r t", "string-rectangle"), (keys "C-q", "quit")]) }]
-
-/-- The key the Vim checks give the scheme contract as unbound: a named
-key. A key that prints goes on with one strict prefix whatever is bound,
-the register prefix, by naming the register. -/
-def vimUnbound : Key :=
-  namedKey ⟨"F12"⟩
-
-/-- The subject the scheme contract is run on for the Vim scheme over
-`states`: the scheme with the checks' role table and leader and no active
-keymaps, for view 0, and `z`, which no keymap of the checks' states binds,
-as the key that prints. -/
-def vimSubjectOver (states : Vim.States) : SchemeContract.Subject :=
-  { scheme := Vim.scheme states vimModeKeys
-    maps := vimNoMaps
-    view := ⟨0⟩
-    sequences := vimSequences.map keys
-    unbound := vimUnbound
-    printable := charKey "z" }
-
-/-- The subject the scheme contract is run on for the Vim scheme: the
-scheme over `vimStates`. -/
-def vimSubject : SchemeContract.Subject :=
-  vimSubjectOver vimStates
-
-/-- The subject the scheme contract is run on for the Vim scheme that
-ships: the default scheme, with no active keymaps, for view 0. -/
-def vimDefaultSubject : SchemeContract.Subject :=
-  { scheme := Vim.Default.scheme
-    maps := vimNoMaps
-    view := ⟨0⟩
-    sequences := ["d 2 w", "2 d 3 w", "d d", "g g", "\" + y w", "i"].map keys
-    unbound := vimUnbound
-    printable := charKey "z" }
-
-/-- The checks that the Vim scheme keeps the scheme contract
-(`Editor/InputScheme/Contract.lean`). -/
-def vimContractChecks : List Check :=
-  [{  name := "the scheme contract holds of the Vim scheme over the registry written for the checks"
-      run := pure (SchemeContract.failures vimSubject == []) },
-    { name := "the scheme contract holds of the Vim scheme that ships, over its default states"
-      run := pure (SchemeContract.failures vimDefaultSubject == []) },
-    { name :=
-        "a key that prints is not unbound after the register prefix, where it names the register: given one as its unbound key, the scheme contract reports that it does not reset"
-      run :=
-        pure
-          (failsOnly { vimSubject with unbound := charKey "z" } [SchemeContract.unboundResets]) },
-    { name :=
-        "the Vim scheme over a registry that names no state for the minibuffer leaves the minibuffer's view where a key that prints is no text: the scheme contract reports it, for that property alone"
-      run :=
-        pure
-          (failsOnly (vimSubjectOver { vimStates with minibuffer := none })
-            [SchemeContract.minibufferTakesText]) }]
 
 end ModelTest

@@ -6,7 +6,8 @@
 #
 # The config registers nothing, so every ex name typed is one a package
 # compiled into the editor bound. The working directory holds no
-# `src/a.rs`.
+# `src/a.rs`. The host runs the test scheme, which has no key for the ex
+# line, so each line is opened by the command `ex`, run by name.
 
 reload
 settle
@@ -16,7 +17,7 @@ settle
 # past the job's pause after its first post, and the scene shows the
 # compilation buffer with the header line and the child's line, whose
 # location is a span in the face `compilation.error`.
-key : Semicolon shift
+run ex
 commit compile
 key <Enter> Enter -
 commit printf 'src/a.rs:3:5: error: boom\n'; exec sleep 600
@@ -27,7 +28,7 @@ scene
 
 # `kill-compilation` cancels the job, which kills the child, and the last
 # line says so.
-key : Semicolon shift
+run ex
 commit kill-compilation
 key <Enter> Enter -
 join
@@ -39,14 +40,14 @@ scene
 # run killed it is the only job, so the scene is the one after the load's
 # refusal, every time. (Before the kill, the run's child is still running,
 # and no wait could end at the load alone.)
-key : Semicolon shift
+run ex
 commit next-error
 key <Enter> Enter -
 join
 scene
 
 # `previous-error` from the first location has none before it.
-key : Semicolon shift
+run ex
 commit previous-error
 key <Enter> Enter -
 scene
@@ -54,13 +55,13 @@ scene
 # `recompile` runs the line again with no prompt, in the same buffer,
 # emptied: the scene shows the header and the one line again. It is killed
 # as the first was, so the script leaves no child.
-key : Semicolon shift
+run ex
 commit recompile
 key <Enter> Enter -
 advance 50
 settle
 scene
-key : Semicolon shift
+run ex
 commit kill-compilation
 key <Enter> Enter -
 join

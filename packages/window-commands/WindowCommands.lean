@@ -1,0 +1,334 @@
+import Editor.Api
+import Editor.Quit
+import WindowCommandsApi
+
+/-!
+# The window commands
+
+The commands that split, close, focus and arrange the frame's windows, each
+over the window operations of the editor API (`ViewId.split`,
+`ViewId.close`, `ViewId.focus`, `ViewId.arrange`, `lean/Editor/Api.lean`)
+and the state's readers (`EditorState.toward?`, `EditorState.cycled`,
+`lean/Editor/State.lean`). A module of the Lake package `window-commands`
+(`packages/window-commands/`) since the features-as-packages roadmap's
+phase 8; its declarations keep their names (`Editor.WindowCommands.…`).
+The commands' names are the interface package's (`WindowCommandsApi`,
+`packages/window-commands-api/`), which whoever reaches a window command
+by name imports in this module's place. Vim 9.1's behaviour is pinned on the commands, so
+which key reaches a command is the bindings' business alone: the Vim
+scheme binds them under `C-w` (`Vim.Default.windowKeys`,
+`packages/evil/Evil/Vim/Default.lean`).
+
+- **Each acts on its call's window** (`call.target.window.id`), never on
+  the frame's focus, so a command a config runs on another window acts
+  there.
+- **Each reads a count from its call's first `.nat` argument**, as the Vim
+  scheme lays one out, 0 for none.
+- **Each gives up with the refusal's sentence** (`LayoutRefusal.describe`),
+  so the echo area says, for the last window,
+  `window-close: the last window cannot be closed`, and for a split of a
+  float `window-split: a floating window is not in the layout`.
+
+| Command | Name | What it does |
+|---|---|---|
+| `split` | `window-split` | Splits the window, the new one above it (`{ before := true }`, Vim's `nosplitbelow`), and focuses the new one: Vim's `CTRL-W s` |
+| `splitVertically` | `window-split-vertically` | The same side by side, the new one on the left (`nosplitright`): `CTRL-W v` |
+| `new` | `window-new` | Splits as `split` does, then shows a new empty buffer with no file in the new window, named `scratch` or the next free name, and focuses it: Vim's `:new` and `CTRL-W n` |
+| `close` | `window-close` | Closes the window (`ViewId.close`): `CTRL-W c` |
+| `quit` | `window-quit` | Closes the window, or on the last window runs `quit` (`Quit.name`), which asks the editor to quit: Vim's `:quit` and `CTRL-W q` |
+| `only` | `window-only` | Closes every other window of the frame, the docked ones and the floats too, the floats first, and says `already only one window` when there is none, as Vim does: `CTRL-W o`. From a window docked at an edge it gives up with `atEdge`, as Emacs refuses a side window as the only window, and from a float with `floating` |
+| `focusToward side` | `window-focus-left`, `-down`, `-up`, `-right` | Focuses the window `count` steps that way (`EditorState.toward?`), and does nothing when none is there, as Vim is silent at an edge: `CTRL-W h j k l` |
+| `focusCycled forward` | `window-focus-next`, `window-focus-previous` | Focuses the next or the previous window of the frame, the tiles, the docked windows, then the floats, wrapping, or the Nth with a count (`EditorState.cycled`): `CTRL-W w` and `W` |
+| `focusEnd last` | `window-focus-top`, `window-focus-bottom` | Focuses the first or the last window of the frame (`Frame.all`), so `CTRL-W b` reaches the top float: `CTRL-W t` and `b` |
+| `focusLast` | `window-focus-last` | Focuses the window of the frame focused before this one (`Frame.lastFocused`) while it is another window of the frame, and otherwise gives up with `noPreviousWindow`, where Vim beeps: `CTRL-W p` |
+| `arranging change` | `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer` | `ViewId.arrange` with its change (`Arrange`). Exchange takes the count as the Nth window, and resize and main's count take it as the steps, 1 when there is none |
+| `arranging fun _ => .float` | `window-float` | Floats a tile or a docked window, pinned, centred in the tiled area, on top, and puts a float back at the end of the tiled list, the stack (`Arrange.float`): `C-w F`, which displaces Vim's `CTRL-W F` (split and edit the file under the cursor), not built here. The last tile is refused with `lastTile` |
+| `arranging fun _ => .edge side` | `window-edge-left`, `-bottom`, `-top`, `-right` | Docks the window at that edge, moves a window docked at another edge there, or moves a window docked there back to the end of the tiled list (`Arrange.edge`): Vim's `CTRL-W H J K L`, which move a window to the far side at the full extent. Recorded departures: under a layout with no such edge it gives up with `noSuchEdge`, where Vim restructures its frames under any layout, and on a window already at that edge it moves it back into the tiles, where Vim does nothing |
+
+They are a package's: a host registers them for the owner
+`window-commands` (`WindowCommands/Compiled.lean`), so config can call
+them and bind keys to them. The package's entry module brings this module
+into the set's config base (`WindowCommands/EditorPackage.lean`).
+
+Pinned by `WindowCommandsTest.windowCommandChecks`.
+-/
+
+namespace Editor.WindowCommands
+
+/-- The name `split` is registered under. -/
+def splitName : String :=
+  WindowCommandsApi.splitName
+
+/-- The name `splitVertically` is registered under. -/
+def splitVerticallyName : String :=
+  WindowCommandsApi.splitVerticallyName
+
+/-- The name `new` is registered under. -/
+def newName : String :=
+  WindowCommandsApi.newName
+
+/-- The name `close` is registered under. -/
+def closeName : String :=
+  WindowCommandsApi.closeName
+
+/-- The name `quit` is registered under. -/
+def quitName : String :=
+  WindowCommandsApi.quitName
+
+/-- The name `only` is registered under. -/
+def onlyName : String :=
+  WindowCommandsApi.onlyName
+
+/-- The name `focusToward .left` is registered under. -/
+def leftName : String :=
+  WindowCommandsApi.leftName
+
+/-- The name `focusToward .bottom` is registered under. -/
+def downName : String :=
+  WindowCommandsApi.downName
+
+/-- The name `focusToward .top` is registered under. -/
+def upName : String :=
+  WindowCommandsApi.upName
+
+/-- The name `focusToward .right` is registered under. -/
+def rightName : String :=
+  WindowCommandsApi.rightName
+
+/-- The name `focusCycled true` is registered under. -/
+def nextName : String :=
+  WindowCommandsApi.nextName
+
+/-- The name `focusCycled false` is registered under. -/
+def previousName : String :=
+  WindowCommandsApi.previousName
+
+/-- The name `focusEnd false` is registered under. -/
+def topName : String :=
+  WindowCommandsApi.topName
+
+/-- The name `focusEnd true` is registered under. -/
+def bottomName : String :=
+  WindowCommandsApi.bottomName
+
+/-- The name `focusLast` is registered under. -/
+def lastName : String :=
+  WindowCommandsApi.lastName
+
+/-- The name the exchange is registered under. -/
+def exchangeName : String :=
+  WindowCommandsApi.exchangeName
+
+/-- The name the forward rotation is registered under. -/
+def rotateName : String :=
+  WindowCommandsApi.rotateName
+
+/-- The name the backward rotation is registered under. -/
+def rotateBackName : String :=
+  WindowCommandsApi.rotateBackName
+
+/-- The name the balance is registered under. -/
+def balanceName : String :=
+  WindowCommandsApi.balanceName
+
+/-- The name growing along rows is registered under. -/
+def tallerName : String :=
+  WindowCommandsApi.tallerName
+
+/-- The name shrinking along rows is registered under. -/
+def shorterName : String :=
+  WindowCommandsApi.shorterName
+
+/-- The name growing along columns is registered under. -/
+def widerName : String :=
+  WindowCommandsApi.widerName
+
+/-- The name shrinking along columns is registered under. -/
+def narrowerName : String :=
+  WindowCommandsApi.narrowerName
+
+/-- The name the zoom is registered under. -/
+def zoomName : String :=
+  WindowCommandsApi.zoomName
+
+/-- The name the promotion to main is registered under. -/
+def promoteName : String :=
+  WindowCommandsApi.promoteName
+
+/-- The name the demotion is registered under. -/
+def demoteName : String :=
+  WindowCommandsApi.demoteName
+
+/-- The name one more main window is registered under. -/
+def mainMoreName : String :=
+  WindowCommandsApi.mainMoreName
+
+/-- The name one fewer main window is registered under. -/
+def mainFewerName : String :=
+  WindowCommandsApi.mainFewerName
+
+/-- The name `arranging fun _ => .edge .left` is registered under. -/
+def edgeLeftName : String :=
+  WindowCommandsApi.edgeLeftName
+
+/-- The name `arranging fun _ => .edge .bottom` is registered under. -/
+def edgeBottomName : String :=
+  WindowCommandsApi.edgeBottomName
+
+/-- The name `arranging fun _ => .edge .top` is registered under. -/
+def edgeTopName : String :=
+  WindowCommandsApi.edgeTopName
+
+/-- The name `arranging fun _ => .edge .right` is registered under. -/
+def edgeRightName : String :=
+  WindowCommandsApi.edgeRightName
+
+/-- The name `arranging fun _ => .float` is registered under. -/
+def floatName : String :=
+  WindowCommandsApi.floatName
+
+/-- What `only` says when the window is the only one of the frame. -/
+def alreadyOnly : String :=
+  "already only one window"
+
+/-- The count the call carries: the core's (`Call.count`,
+`Editor/Command/Call.lean`), its first argument when that is a natural
+number, as the Vim scheme lays a count out, and 0 for none. -/
+def countOf (call : Call) : Nat :=
+  call.count
+
+/-- The value of `result`, or the command given up with what its refusal
+says: the core's (`Editor.orGiveUp`, `Editor/Api.lean`). -/
+def orGiveUp {α : Type} (result : Except LayoutRefusal α) : EditorM α :=
+  Editor.orGiveUp result
+
+/-- Splits the call's window by `placement` and focuses the new window,
+which is handed back. -/
+def splitFocused (placement : Placement) (call : Call) : EditorM ViewId := do
+  let made ← orGiveUp (← call.target.window.id.split placement)
+  orGiveUp (← made.focus)
+  return made
+
+/-- `window-split`: the new window above the call's window, focused. -/
+def split (call : Call) : EditorM Unit :=
+  discard <| splitFocused { before := true } call
+
+/-- `window-split-vertically`: the new window left of the call's window,
+focused. -/
+def splitVertically (call : Call) : EditorM Unit :=
+  discard <| splitFocused { axis := .columns, before := true } call
+
+/-- `window-new`: a split as `window-split` makes, showing a new empty
+buffer with no file, named `scratch` or the next free name, focused. -/
+def new (call : Call) : EditorM Unit := do
+  let made ← splitFocused { before := true } call
+  let name := (← editorState).freeName EditorState.scratchName
+  let .ok buffer ← createBuffer name | giveUp "making the empty buffer was refused"
+  orGiveUp (← made.show buffer)
+
+/-- `window-close`: the call's window is closed. -/
+def close (call : Call) : EditorM Unit := do
+  orGiveUp (← call.target.window.id.close)
+
+/-- `window-quit`: the call's window is closed, or, when it is the last of
+the list, the command `quit` runs, which asks the editor to quit. -/
+def quit (call : Call) : EditorM Unit := do
+  match ← call.target.window.id.close with
+  | .ok () =>
+    pure ()
+  | .error .onlyWindow =>
+    discard <| runCommand Quit.name call
+  | .error refusal =>
+    giveUp refusal.describe
+
+/-- `window-only`: every other window of the frame, tiled, docked or
+floating, is closed, or, when there is none, `alreadyOnly` is said. The
+floats are closed first: closing a tile closes the transient floats
+anchored to it, which are then gone, and a window that is no longer in the
+frame when its turn comes is passed over. From a window docked at an edge
+it gives up with `atEdge`, since the tiles would be gone, and from a float
+with `floating`. -/
+def only (call : Call) : EditorM Unit := do
+  let view := call.target.window.id
+  let state ← editorState
+  if state.minibufferView? == some view then
+    giveUp (LayoutRefusal.ofMinibuffer view).describe
+  if (state.frame.sideOf? view).isSome then
+    giveUp (LayoutRefusal.atEdge view).describe
+  if (state.frame.floating? view).isSome then
+    giveUp (LayoutRefusal.floating view).describe
+  unless state.frame.windows.contains view do
+    giveUp (LayoutRefusal.noSuchWindow view).describe
+  let others := state.frame.all.filter (· != view)
+  if others.isEmpty then
+    message alreadyOnly
+  let floats := state.frame.floats.map (·.view)
+  for other in floats ++ others.filter (!floats.contains ·) do
+    if (← editorState).frame.contains other then
+      orGiveUp (← other.close)
+
+/-- Focuses `view`, unless it is none: nothing happens then. -/
+def focusing (view : Option ViewId) : EditorM Unit := do
+  if let some view := view then
+    orGiveUp (← view.focus)
+
+/-- `window-focus-left`, `-down`, `-up` and `-right`: the window the count
+of steps towards `side`, once for none, is focused; nothing happens when
+none is there. -/
+def focusToward (side : Side) (call : Call) : EditorM Unit := do
+  focusing ((← editorState).toward? call.target.window.id side (countOf call))
+
+/-- `window-focus-next` and `window-focus-previous`: the next or the
+previous window of the list, wrapping, or the Nth with a count, is
+focused. -/
+def focusCycled (forward : Bool) (call : Call) : EditorM Unit := do
+  focusing ((← editorState).cycled call.target.window.id forward (countOf call))
+
+/-- `window-focus-top` and `window-focus-bottom`: the first window of the
+frame, or the last when `last`, is focused, in `Frame.all`'s order: the
+tiles, the docked windows, then the floats, so the last is the top
+float. -/
+def focusEnd (last : Bool) (_ : Call) : EditorM Unit := do
+  let windows := (← editorState).frame.all
+  focusing (if last then windows.back? else windows[0]?)
+
+/-- `window-focus-last`: the window of the frame focused before the call's
+window is focused, while it is another window of the frame; otherwise the
+command gives up with `noPreviousWindow`. -/
+def focusLast (call : Call) : EditorM Unit := do
+  let frame := (← editorState).frame
+  match frame.lastFocused with
+  | some view =>
+    if view != call.target.window.id && frame.contains view then
+      orGiveUp (← view.focus)
+    else
+      giveUp LayoutRefusal.noPreviousWindow.describe
+  | none =>
+    giveUp LayoutRefusal.noPreviousWindow.describe
+
+/-- The command that makes the change `change` of the count on the call's
+window (`ViewId.arrange`). -/
+def arranging (change : Nat → Arrange) (call : Call) : EditorM Unit := do
+  orGiveUp (← call.target.window.id.arrange (change (countOf call)))
+
+/-- The count as a number of steps: 1 for none. The core says the same of a
+call (`Call.steps`, `Editor/Command/Call.lean`), which the tab commands
+use. -/
+def steps (count : Nat) : Nat :=
+  max 1 count
+
+/-- The change `window-exchange` makes: with the window the count names, or
+with the next when there is no count. -/
+def exchange (count : Nat) : Arrange :=
+  .exchange (if count == 0 then none else some count)
+
+/-- The names of the commands the `window-commands` package registers
+(`WindowCommands/Compiled.lean`), in the order it registers them: the
+interface package's (`WindowCommandsApi.names`), which whoever binds keys
+to the window commands, as the Vim scheme's `C-w` table does, holds its
+table to. `WindowCommandsTest.windowCommandChecks` holds the package to
+it. -/
+def names : List String :=
+  WindowCommandsApi.names.toList
+
+end Editor.WindowCommands

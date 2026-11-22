@@ -1,32 +1,26 @@
 import ConfigTest.Support.Candidates
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Hosts
-import ConfigTest.Support.Keys
-import ConfigTest.Support.Lines
+import ConfigTest.Support.Shipped
 import Editor.Api
-import Editor.AtPoint.Compiled
 import Editor.Clipboard
 import Editor.Clipboard.InProcess
 import Editor.Command
 import Editor.Completion
 import Editor.Completion.AtPoint
-import Editor.Completion.Compiled
+import Editor.Completion.Later
 import Editor.Config.Directory
 import Editor.Config.Elaborate
-import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Session
 import Editor.Event
 import Editor.Ex.Line
 import Editor.Face
 import Editor.File.Model
-import Editor.Files
-import Editor.Files.Compiled
+import Editor.FileJobs
 import Editor.Fuzzy
 import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Fake
@@ -35,10 +29,7 @@ import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
-import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.Mode
-import Editor.ModeLine.Compiled
 import Editor.Package
 import Editor.Program
 import Editor.Scene
@@ -46,13 +37,18 @@ import Editor.Setup
 import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
+import Editor.Test.Linked.Bench
+import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
+import Editor.Test.Linked.Lines
+import Editor.Test.Linked.Listings
+import Editor.Test.Minibuffer
+import Editor.Test.Shipped
 import Editor.Text
 import Editor.Text.Model
 import Editor.Text.Real
 import Editor.Watch
-import Editor.Workspace.Compiled
-import Editor.Workspace.FindFile
-import EditorCore.EditorPackage
+import FilesApiTest.Fake
 
 /-!
 # Config tests: the benchmark
@@ -66,6 +62,7 @@ say what each command measures.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-! ## The benchmark
 
@@ -403,49 +400,6 @@ def setup : SetupM Unit := do
   job \"spin\" (fun _ => spin 1) fun _ => pure ()
 ")]
 
-/-- What the samples of one row came to, in nanoseconds. -/
-structure Row where
-  /-- What ran while the row was measured. -/
-  name : String
-  /-- The median latency. -/
-  median : Nat
-  /-- The 99th percentile. -/
-  high : Nat
-  /-- The largest sample. -/
-  maximum : Nat
-  /-- What to say after the numbers, if anything. -/
-  note : String := ""
-
-/-- The row of `times`, which need not be sorted. -/
-def Row.of (name : String) (times : Array Nat) (note : String := "") : Row :=
-  let sorted := times.qsort (· < ·)
-  { name, median := (sorted.getD ((sorted.size - 1) / 2) 0 + sorted.getD (sorted.size / 2) 0) / 2,
-    high := sorted.getD (min (sorted.size * 99 / 100) (sorted.size - 1)) 0,
-    maximum := sorted.back?.getD 0, note }
-
-/-- Nanoseconds as microseconds with one decimal. -/
-def microseconds (nanoseconds : Nat) : String :=
-  let tenths := (nanoseconds + 50) / 100
-  s!"{tenths / 10}.{tenths % 10}"
-
-/-- A row as a line of the report: its name, padded, then the median, the
-99th percentile and the maximum. -/
-def Row.line (row : Row) : String :=
-  let label := row.name ++ ":"
-  s!"  {label.pushn ' ' (36 - label.length)}{microseconds row.median} / {microseconds row.high} / {microseconds row.maximum}{row.note}"
-
-/-- What the 99th percentile of a loaded row must stay under, in nanoseconds:
-100 µs. -/
-def highBound : Nat :=
-  100000
-
-/-- Whether a loaded row is within the bound the job system was accepted
-against, as an observation about one run: its median is at most twice the
-larger of the two idle medians, and its 99th percentile is under 100 µs. The
-maximum is not judged: one scheduling delay sets it. -/
-def Row.withinBound (row before after : Row) : Bool :=
-  row.median ≤ 2 * max before.median after.median && row.high < highBound
-
 /-- A compiled job that reads the clock `count` times and finishes. -/
 def readings (count : Nat) : Work := fun _ => do
   for _ in [0:count] do
@@ -619,7 +573,15 @@ are. It is judged by the same bound.
 The row at typing cadence joins nothing: the keys are sent `cadence` ms
 apart whatever the match is doing, so a key arrives while a match runs or
 while its delivery is handled, which a key typed fast meets. The bound is
-judged on it and on the joined worker row. -/
+judged on it and on the joined worker row.
+
+The insert rows complete at point through the core's test kit's at-point
+package (`withKitAtPoint`, `Editor/Test/AtPoint.lean`) and a source written
+here (`benchAtPoint`), which answers later from a job of the job model's
+(`Completion.Later.batches`) over the words the open buffers hold, and
+reads the open buffers' texts, so the snapshots are still taken. The cost of
+the shipped `words`' own gathering is not measured here: it left this bench
+with the `at-point` package. -/
 
 /-- The command of a host of the prompt benchmark: asks `Pick: ` with a
 source given as a value over `manyPaths count`. -/
@@ -631,24 +593,38 @@ def askingMany (count : Nat) : Config.Registration :=
           prompt "Pick: " { command := "picked" } ""
             [.given (.ofTexts "many" "pick" (manyPaths count))]) }
 
-/-- The `at-point` package with no use of an at-point source: what it
-registers (`Package.registered`) replayed under its name, less its uses, so
-the insert rows' host without completion at point differs from the other's
-in that alone. -/
-def atPointUnused : Package :=
-  let registered := AtPoint.package.registered
-  let replayed : Compiled :=
-    { commands := registered.commands, jobs := registered.jobs, sources := registered.sources }
-  { name := AtPoint.package.name
-    setup := do
-      replayed.package.setup
-      for atPoint in registered.atPoints do
-        defineAtPoint atPoint }
+/-- The words `makeWordBuffers`' buffers hold, each once: the one batch the
+job of `benchAtPoint`'s source answers. -/
+def benchWords : Array Completion.Candidate :=
+  (List.range 4999).toArray.map fun i => .ofText s!"word{i}_{i % 97}"
 
-/-- What the 99th percentile of a key's latency must stay under, in
-nanoseconds: 1 ms. -/
-def keyBound : Nat :=
-  1000000
+/-- The insert rows' completion at point: the source `bench-words`, which
+answers later from its job `bench-words` (`Completion.Later.batches` over
+`benchWords`), is asked once and reads the open buffers' texts; the
+at-point source `bench-words`, the run of word characters before the
+cursor on its line completed from it, asked by itself after a pause of 240
+ms; and, when `used`, its use in every buffer, so the insert rows' host
+without completion at point differs from the other's in that alone. -/
+def benchAtPoint (used : Bool) : Package :=
+  { name := "bench-at-point"
+    setup := do
+      workJob "bench-words" (Completion.Later.batches #[benchWords])
+      defineSource
+          { name := "bench-words", category := "bench-words", candidates := fun _ => pure #[]
+            later := some { job := "bench-words", reask := .never, readsTexts := true } }
+      defineAtPoint
+          { name := "bench-words", pause := some 240
+            ask := fun spot => do
+              let .ok target ← spot.view.target | return none
+              let text := target.buffer.text
+              let lineStart ← text.motion .lineStart spot.offset
+              let line ← text.slice lineStart spot.offset
+              let word := String.ofList (line.toList.reverse.takeWhile wordCharacter).reverse
+              return some
+                  { start := spot.offset - word.utf8ByteSize, stop := spot.offset
+                    sources := [.source "bench-words"] } }
+      if used then
+        useAtPoint "bench-words" }
 
 /-- How far apart the keys of the row typed at typing cadence are sent, in
 milliseconds: faster than anyone types, and shorter than a match of
@@ -656,13 +632,6 @@ milliseconds: faster than anyone types, and shorter than a match of
 handled. -/
 def cadence : Nat :=
   20
-
-/-- Whether a row of keys is within the bound the plan set for matching off
-the editor thread: its median at most twice the idle row's, and its 99th
-percentile under 1 ms. The auto-popup row is judged with the plain insert
-row as its idle row: the same key with no at-point source. -/
-def Row.keyWithinBound (row idle : Row) : Bool :=
-  row.median ≤ 2 * idle.median && row.high < keyBound
 
 /-- About 50 KB of generated words, `word<i % 4999>_<i % 4999 % 97>` for `i` from
 `first`, space-separated: one open buffer of the auto-popup row of the
@@ -682,9 +651,9 @@ def makeWordBuffers : EditorM Unit := do
 /-- `bench-prompt`: what a key costs in a prompt with no candidates, over
 1,000, 10,000 and 100,000 candidates listed inline (the limit lifted), and
 over 100,000 matched off the editor thread, keys joined and back to back;
-and what a word key costs in insert state under the Vim scheme that ships,
-with no at-point source, and with the shipped `words` popping up by itself
-over 20 open buffers; and what a key costs in `open-file`'s prompt over a
+and what a word key that types costs under the test scheme, on the kit's
+editing commands, with no at-point source, and with `benchAtPoint`'s source
+popping up by itself over 20 open buffers; and what a key costs in `open-file`'s prompt over a
 directory of 10,000 files; `samples` keys a row. -/
 def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   let pool := (← Job.Pool.warm Job.Pool.size 200).size
@@ -722,7 +691,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             jobs := requests + 2, environment := requests + 3, posts := requests + 4,
             pauseEvents := requests + 5,
             packages :=
-              #[Completion.package, ModeLine.package, Minibuffer.package,
+              #[listingsPackage, Test.Shipped.modeLine, Test.Minibuffer.package,
                 Compiled.package
                   {
                     commands :=
@@ -738,7 +707,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
           for sample in [0:samples] do
             let index := sample % keys.length
             if index == 0 && sample > 0 then
-              host.send (.run Minibuffer.cancelName)
+              host.send (.run Test.Minibuffer.cancelName)
               ask
             let ran ← IO.Promise.new
             let listed ← IO.Promise.new
@@ -777,12 +746,17 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   let backToBack :=
     Row.of s!"100,000 on the worker, keys {cadence} ms apart"
       (← row 100000 Loop.inlineMatches false false).1
-  -- The insert rows: a host of the Vim scheme that ships, as `withVimHost`
+  -- The insert rows: a host of the test scheme, as `withShippedHost`
   -- builds one, on a fake clock of its own, with the real library, queue and
-  -- recorder; `atPoint` says whether the shipped `words` is used in every
-  -- buffer. Each sample types two word keys, timed; with `atPoint`, moves the
-  -- clock past the pause and joins the `words` job, untimed; types four more
-  -- word keys, timed; and leaves insert state and undoes, untimed.
+  -- recorder, typing through the kit's editing commands
+  -- (`Test.editingPackage`) and completing at point through the kit's
+  -- package and `benchAtPoint`; `atPoint` says whether its source is used in
+  -- every buffer. Each sample types two word keys, timed; with `atPoint`,
+  -- moves the clock past the pause and joins the source's job, untimed;
+  -- types four more word keys, timed; and quits the session, if one is open,
+  -- and undoes each key, untimed. What a key costs under the Vim scheme
+  -- that ships is `mise run milestone-bench`'s `type-insert`, on the
+  -- default editor.
   let insertRow (atPoint : Bool) : IO (Array Nat) := do
     let requests ← ids.modifyGet fun next => (next, next + 6)
     let waits ← Job.Completions.new
@@ -791,21 +765,17 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
     let services : Job.Services :=
       { completions := waits, timers := clock.timers, fuzzy := Fuzzy.real
         snapshots := Job.realSnapshots published.reader }
-    let shippedPackages :=
-      if atPoint then EditorCore.EditorPackage.packages
-      else
-        EditorCore.EditorPackage.packages.map fun package =>
-          if package.name == AtPoint.package.name then atPointUnused else package
     let packages :=
-      shippedPackages.push
+      (withKitAtPoint shippedPackages ++ #[benchAtPoint atPoint, Test.editingPackage]).push
         (Compiled.package
           {
             commands :=
               #[{ name := "noop", action := .plain (pure ()) },
                 { name := "make-buffers", action := .plain makeWordBuffers }] })
     let shipped :=
-      Headless.shippedOver packages #[`Editor] sysroot (ModuleLookup.searchPath oleanDir) "" emit
-        services published (← Job.HeldSnapshots.new) (← Config.Elaborate.ModuleFiles.temporary)
+      Headless.shippedOver TestScheme.scheme packages #[`Editor] sysroot
+        (ModuleLookup.searchPath oleanDir) "" emit services published (← Job.HeldSnapshots.new)
+        (← Config.Elaborate.ModuleFiles.temporary)
     try
       Headless.withHost (guard := patience)
           { shipped with
@@ -832,7 +802,6 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
               throw (IO.userError "the keys were not handled")
           let mut times := #[]
           for _ in [0:(samples + 5) / 6] do
-            untimed "i"
             for key in ["w", "o"] do
               times := times.push (← timed key)
             if atPoint then
@@ -840,10 +809,12 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
                 throw (IO.userError "no pause was armed")
               clock.advance 240
               unless (← host.join patience) == .settled do
-                throw (IO.userError "the words were not gathered")
+                throw (IO.userError "the candidates were not delivered")
             for key in ["r", "d", "1", "_"] do
               times := times.push (← timed key)
-            untimed "<Escape> u"
+            if atPoint then
+              host.send (.run Test.AtPoint.quitName)
+            untimed "C-z C-z C-z C-z C-z C-z"
           return times
     finally
       discard <| Job.Pool.warm pool 5000
@@ -868,11 +839,11 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             wakeups := requests + 1, jobs := requests + 2, environment := requests + 3,
             posts := requests + 4, pauseEvents := requests + 5,
             packages :=
-              #[Completion.package, ModeLine.package, Files.package, Minibuffer.package,
+              #[listingsPackage, Test.Shipped.modeLine, FilesApiTest.fake, Test.Minibuffer.package,
                 Compiled.package { commands := #[{ name := "noop", action := .plain (pure ()) }] }]
             workingDirectory := "/big" } fun host => do
           let ask : IO Unit := do
-            host.send (.run Files.openName)
+            host.send (.run FileJobs.openFileCommand)
             unless (← host.join patience) == .settled do
               throw (IO.userError "the file prompt did not list its directory")
           ask
@@ -881,7 +852,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
           for sample in [0:samples] do
             let index := sample % fileKeys.length
             if index == 0 && sample > 0 then
-              host.send (.run Minibuffer.cancelName)
+              host.send (.run Test.Minibuffer.cancelName)
               ask
             let ran ← IO.Promise.new
             ranSlot.set (some ran)
@@ -929,192 +900,6 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   (← IO.getStdout).flush
   return 0
 
-/-! ## The workspace finder benchmark
-
-`bench-workspace-files` measures what a key costs in
-`find-file-in-workspace`'s prompt over a real repository
-(`Editor/Workspace/FindFile.lean`), and the time from a key to the list it
-updates: the source's job runs the workspace's lister, `git ls-files`, and
-fzf, both real, on the pool, after the source's 50 ms pause. One headless
-host of the test scheme, over the library's real process and file
-services and its queue, whose working directory is the repository. -/
-
-/-- How far apart the keys of the cadence row of the workspace finder
-benchmark are sent, in milliseconds: more than the source's 50 ms pause, so
-each key arrives while the job of the text before it runs its lister or its
-filter. -/
-def finderCadence : Nat :=
-  120
-
-/-- The median of `times`, which need not be sorted. -/
-def median (times : Array Nat) : Nat :=
-  (Row.of "" times).median
-
-/-- How long one run of `command` with `arguments` in `directory` takes, fed
-`input` when it is given, in nanoseconds, with what it wrote
-(`IO.Process.output`); a throw when it does not exit 0. -/
-def timedRun (command : String) (arguments : Array String) (directory : System.FilePath)
-    (input : Option String := none) : IO (Nat × String) := do
-  let started ← IO.monoNanosNow
-  let output ← IO.Process.output { cmd := command, args := arguments, cwd := directory } input
-  let ended ← IO.monoNanosNow
-  unless output.exitCode == 0 do
-    throw (IO.userError s!"{command} exited with status {output.exitCode}: {output.stderr}")
-  return (ended - started, output.stdout)
-
-/-- `bench-workspace-files`: what a key costs in `find-file-in-workspace`'s
-prompt over the repository at `repository`, a key in a prompt with no
-candidates as the floor, the keys `m`, `1`, `2`, `f`, `3` and `4` each
-joined, with the time from each to its updated list, and the same keys
-`finderCadence` ms apart with nothing joined; `samples` keys a row. Then
-the lister and the filter alone, each run 20 times. -/
-def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (samples : Nat) :
-    IO UInt8 := do
-  let repository ← IO.FS.realPath repository
-  let pool := (← Job.Pool.warm Job.Pool.size 200).size
-  let completions ← Job.Completions.new
-  discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
-  let timers := Job.realTimers completions
-  let published ← Snapshots.new
-  let held ← Job.HeldSnapshots.new
-  let services : Job.Services :=
-    { completions, timers, fuzzy := Fuzzy.real
-      files := Job.realFiles completions published.reader held
-      processes :=
-        Job.realProcesses completions (← Job.RefusedRuns.new) timers (← Job.TimedRuns.new)
-      snapshots := Job.realSnapshots published.reader }
-  -- The editor thread reads the clock when it prints that it ran `noop`,
-  -- and when it prints that the source's job's post, its batch, ran.
-  let ranSlot ← IO.mkRef (none : Option (IO.Promise Nat))
-  let listedSlot ← IO.mkRef (none : Option (IO.Promise Nat))
-  let failures ← IO.mkRef (#[] : Array String)
-  let refused ← IO.mkRef 0
-  let source := Workspace.FindFile.job
-  -- The status line of the finder's prompt, as `scene` prints it: it names
-  -- the workspace, so the report says git found it.
-  let labelLine ← IO.mkRef (none : Option String)
-  let emit (line : String) : IO Unit := do
-    if line.startsWith "status " && (line.splitOn "Find file in ").length > 1 then
-      labelLine.modify (·.orElse fun _ => some line)
-    if line == "run noop: ok" then
-      if let some sample← ranSlot.modifyGet fun slot => (slot, none) then
-        sample.resolve (← IO.monoNanosNow)
-    else if line.startsWith "job " && line.endsWith s!" {source}: ok" then
-      if let some sample← listedSlot.modifyGet fun slot => (slot, none) then
-        sample.resolve (← IO.monoNanosNow)
-    else if line.startsWith "job " && (line.splitOn s!" {source}: failed").length > 1 then
-      failures.modify (·.push line)
-    else if line.startsWith "loop: refused" then
-      refused.modify (· + 1)
-  Headless.withHost (scheme := TestScheme.scheme) (guard := patience)
-      { elaborator := (← measured sysroot oleanDir).1
-        source := memorySource [], emit, services, published, held, requests := 1
-        wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
-        packages :=
-          #[Completion.package, ModeLine.package, Files.package, Minibuffer.package,
-            Workspace.package,
-            Compiled.package
-              {
-                commands :=
-                  #[{ name := "noop", action := .plain (pure ()) },
-                    { name := "ask-plain"
-                      action :=
-                        .plain (discard <| Editor.prompt "Plain: " { command := "noop" } "") }] }]
-        workingDirectory := repository } fun host => do
-      let joined (what : String) : IO Unit := do
-        unless (← host.join patience) == .settled do
-          throw (IO.userError s!"{what} did not settle")
-        unless (← failures.get).isEmpty do
-          throw (IO.userError s!"the source failed: {(← failures.get)[0]!}")
-      -- The file opens, and the finder runs git for its directory.
-      host.send (.open (repository / "src" / "m0" / "f0.rs").toString)
-      joined "the open"
-      let keys := ["m", "1", "2", "f", "3", "4"]
-      -- One row: `ask` opens the prompt, joined and untimed; each key is
-      -- committed and followed by `noop`, and timed to the editor thread's
-      -- line for `noop`, and, when `listing`, to the post of the batch for
-      -- its text. After the sixth key the prompt is cancelled and asked again,
-      -- untimed. `joined` joins after each key; otherwise the next key comes
-      -- `finderCadence` ms later.
-      let row (ask : String) (listing joinEach : Bool) : IO (Array Nat × Array Nat) := do
-        let opens : IO Unit := do
-          host.send (.run ask)
-          joined s!"{ask}'s prompt"
-        opens
-        let mut keyTimes := #[]
-        let mut listingTimes := #[]
-        for sample in [0:samples] do
-          let index := sample % keys.length
-          if index == 0 && sample > 0 then
-            joined "the keys"
-            host.send (.run Minibuffer.cancelName)
-            joined "the cancel"
-            opens
-          let ran ← IO.Promise.new
-          let listed ← IO.Promise.new
-          ranSlot.set (some ran)
-          listedSlot.set (if listing then some listed else none)
-          let asked ← IO.monoNanosNow
-          host.commit (keys[index]?.getD "x")
-          host.send (.run "noop")
-          let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
-          keyTimes := keyTimes.push (handled - asked)
-          if listing then
-            let some delivered ← IO.wait listed.result? | throw (IO.userError "a listing was lost")
-            listingTimes := listingTimes.push (delivered - asked)
-          if joinEach then
-            joined "a key's listing"
-          else
-            -- real time under test: the finder row's typing cadence.
-            IO.sleep finderCadence.toUInt32
-        joined "the row"
-        host.send (.run Minibuffer.cancelName)
-        joined "the cancel"
-        return (keyTimes, listingTimes)
-      -- The finder's first listing, untimed, and its prompt's status line.
-      host.send (.run Workspace.FindFile.name)
-      joined "the first listing"
-      host.send .scene
-      joined "the scene"
-      host.send (.run Minibuffer.cancelName)
-      joined "the cancel"
-      let idle := Row.of "no candidates" (← row "ask-plain" false true).1
-      let (finderKeys, finderListings) ← row Workspace.FindFile.name true true
-      let finder := Row.of "workspace finder, each key joined" finderKeys
-      let listed := Row.of "  key to the updated list" finderListings
-      let cadence :=
-        Row.of s!"workspace finder, keys {finderCadence} ms apart"
-          (← row Workspace.FindFile.name false false).1
-      -- The lister and the filter alone, outside the editor.
-      let lister := Workspace.Lister.git "git"
-      let mut listerTimes := #[]
-      let mut filterTimes := #[]
-      let mut listedCount := 0
-      for _ in [0:20] do
-        let (time, output) ← timedRun lister.program lister.arguments repository
-        listerTimes := listerTimes.push time
-        listedCount := (Completion.Filtering.records .nul output.toUTF8 false).size
-        let (time, _) ←
-          timedRun "fzf" #["--read0", "--print0", "--filter", "m12"] repository (some output)
-        filterTimes := filterTimes.push time
-      IO.println
-          s!"pool: {pool} threads; {samples} keys a row, of m, 1, 2, f, 3 and 4 committed into the prompt; {repository}: git lists {listedCount} files; the prompt's {(← labelLine.get).getD "status line was not printed"}"
-      IO.println
-          "latency of a key, from sending it to the editor thread having handled it and published its scene, and of the list, from sending a key to the post of its batch, in µs: median / 99th percentile / maximum"
-      for row in [idle, finder, listed, cadence] do
-        IO.println row.line
-      IO.println
-          s!"alone, median of 20 runs, in µs: git ls-files -z --cached --others --exclude-standard {microseconds (median listerTimes)}; fzf --read0 --print0 --filter m12 fed its output {microseconds (median filterTimes)}"
-      IO.println
-          ("within bound (median within twice the no-candidates median, 99th percentile under 1 ms): " ++
-            "; ".intercalate
-              ([finder, cadence].map fun row =>
-                s!"{row.name}: {if row.keyWithinBound idle then "yes" else "no"}"))
-      if (← refused.get) > 0 then
-        IO.println s!"refused steps: {← refused.get}"
-      (← IO.getStdout).flush
-      return 0
-
 /-- A text of about `size` bytes in lines of 52, as `milestone-bench`
 generates its file: `%07d the quick brown fox jumps over the lazy dog`. -/
 def journalText (size : Nat) : String :=
@@ -1129,6 +914,19 @@ def journalText (size : Nat) : String :=
       line := line + 1
     return text
 
+/-- The store of lines the journal bench keeps across a restart, written
+here in the shape of the shell's history (an array of lines, as a list of
+strings), so the bench names no package's store. -/
+def journalStore : Store (Array String) :=
+  { name := "bench-history", version := 1, initial := #[]
+    encode := fun lines => .list (lines.toList.map .str)
+    decode := fun
+      | .list items =>
+        items.toArray.mapM fun
+          | .str line => some line
+          | _ => none
+      | _ => none }
+
 /-- The times of `inserts` one-character inserts into a file buffer of
 `size` bytes at `position` (`start`, `middle` or `end`), each timed from
 the reconciler (`Restore.journalOrders`) through handing its orders to the
@@ -1137,8 +935,8 @@ editor thread's share of the journal. The buffer's journal is under
 `directory`; the loop's own work around an insert, its scene and its
 history, is not timed. The state is phase 2's: two tabs of five windows,
 four on the file, one of them with 100 jump entries, and an unscoped
-`shell-history` of 10,000 lines, whose codec the reconciler is handed, so
-what it keeps of the frame and the stores is there to cost. -/
+store of 10,000 lines (`journalStore`), whose codec the reconciler is
+handed, so what it keeps of the frame and the stores is there to cost. -/
 def journalTimes (services : Job.Services) (published : Snapshots) (directory : System.FilePath)
     (size : Nat) (position : String) (inserts : Nat) : IO (Array Nat) := do
   let journal := Headless.Journal.real published.reader services
@@ -1173,8 +971,7 @@ def journalTimes (services : Job.Services) (published : Snapshots) (directory : 
             windows := #[⟨0⟩, ⟨1⟩, ⟨2⟩],
             tabsAfter := #[{ windows := #[⟨3⟩, ⟨4⟩], focused := ⟨3⟩ }] }
         workspaces :=
-          state.workspaces.setUnscopedValue Shell.historyStore.name
-            (Shell.historyStore.encode history)
+          state.workspaces.setUnscopedValue journalStore.name (journalStore.encode history)
         stateDirectory := some directory, restore := { run := some 1, restored := true } }
   let (made, texts) ← made.runReal (RealTexts.over published)
   let .ok first := made | throw (IO.userError "bench-journal: the state could not be made")
@@ -1193,8 +990,7 @@ def journalTimes (services : Job.Services) (published : Snapshots) (directory : 
       registered :=
         {
           codec? := fun name =>
-            if name == Shell.historyStore.name then some ("shell", Shell.historyStore.codec)
-            else none } }
+            if name == journalStore.name then some ("bench", journalStore.codec) else none } }
   let (reconciled, after) ← (Restore.journalOrders state true false context).runReal texts
   let .ok reconciled :=
     reconciled | throw (IO.userError "bench-journal: the first reconcile was refused")
@@ -1250,47 +1046,6 @@ def journal : IO UInt8 := do
           let times ← journalTimes services published directory size position 10000
           IO.println (Row.of s!"journal_order/{label}/{position}" times).line
   return 0
-
-/-- The auto-reload row of `config-bench` (`config-test bench-auto-reload`):
-the latency, in milliseconds, from another process's rewrite of an open,
-unmodified buffer's file (the rewriting process's exit, its rename done) to
-the rewrite shown, over the library's real watch service, `samples` times,
-each on a host and a directory of its own; printed with its budget beside
-it, auto-reload's criterion 9, a second. It asserts nothing: the criterion
-is real time, so it is measured here, never pass or fail in a test
-(`ConfigTest.autoReloadChecks`). The scene is asked again at each job line
-(`Session.shownOn`), so a sample ends on the event that shows it. -/
-def autoReloadRow (context : Context) (samples : Nat) : Check :=
-  { name := "the auto-reload row: the rewrite-to-shown latency over real watches"
-    run := do
-      let (old, new) := ("one\ntwo\n", "one\ntwo\nthree\n")
-      let mut took : Array Nat := #[]
-      for _ in [0:samples] do
-        let sample ← IO.mkRef (none : Option Nat)
-        discard <|
-            withFiles context (targets := [.files, .fileWatches]) fun files => do
-              let path := files / "note.txt"
-              IO.FS.writeBinFile path old.toUTF8
-              withRealFileHost context [("open-note", path)] fun session => do
-                  unless ← session.ran "open-note" do
-                    return false
-                  session.ask [.run Files.autoReloadName]
-                  unless ← rewriteFromOutside path new do
-                    return false
-                  let rewritten ← IO.monoNanosNow
-                  let (shown, _) ←
-                    session.shownOn (·.startsWith "job ") (·.contains (viewLine new 0))
-                  if shown then
-                    sample.set (some (((← IO.monoNanosNow) - rewritten) / 1000000))
-                  return shown
-        if let some ms← sample.get then
-          took := took.push ms
-      let sorted := took.qsort (· < ·)
-      let median := (sorted[sorted.size / 2]?).getD 0
-      let most := (sorted.back?).getD 0
-      IO.println
-          s!"auto-reload: rewrite to shown over real watches, {took.size} of {samples} samples: median {median} ms, max {most} ms; budget 1000 ms (criterion 9)"
-      return took.size == samples }
 
 end Bench
 

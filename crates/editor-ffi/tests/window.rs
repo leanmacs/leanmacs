@@ -273,7 +273,7 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     assert!(editor_ffi_window_close(SCRIPTED));
     // The recording renderer drew in it: there is no reason to give.
     assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(None)));
-    assert_eq!(asked(SCRIPTED), (0, vec![2, 8]));
+    assert_eq!(asked(SCRIPTED), (0, vec![2, 9]));
     // Nothing runs now: a wait for a park can only run out.
     assert!(!editor_ffi_window_await_parked(SCRIPTED, 0));
     // A tag that names no scripted platform has no run to park, nor has

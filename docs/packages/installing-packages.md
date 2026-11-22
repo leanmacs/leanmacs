@@ -42,12 +42,102 @@ editor never rewrites a lakefile that is there, but each package command
 writes the core's require back as the last one (see "Editing the lakefile
 by hand").
 
-The default set requires the core, `editor-core`, and the default packages:
+The default set requires the core, `editor-core`, and the default
+packages. The core itself registers no package: every feature of the
+editor is one of these, and each can be removed.
 
+- [`ex`](../../packages/ex/README.md): the ex command line, `quit`,
+  `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`,
+  `wq`, `reload`, `b`, `ls`, `bd` and their kin. It requires the interface
+  packages `ex-api`, `buffers-api` and `shell-api`. Without it there is no
+  ex line, so no `:package-…` command can be typed either, and `quit` is
+  no command; the window's close button still quits.
+- [`frame-commands`](../../packages/frame-commands/README.md):
+  `toggle-fullscreen` and `minimise-window`, with `C-s-f`, `s-m` and
+  `s-q`. It requires `frame-commands-api`.
+- [`menu`](../../packages/menu/README.md): the menu bar that ships and the
+  keys of its File and Edit items. It requires `evil-api` and
+  `frame-commands-api`. Without it there is no menu bar unless your config
+  defines one.
+- [`window-commands`](../../packages/window-commands/README.md) and
+  [`tab-commands`](../../packages/tab-commands/README.md): the commands
+  that split, close, focus and arrange windows, and that open, close and
+  select tabs. Each requires its interface package, `window-commands-api`
+  and `tab-commands-api`.
+- [`restore`](../../packages/restore/README.md): session restore's
+  registrations. The work is the editor's own, but it runs only where
+  this package registers it: without it nothing is journalled, no session
+  is restored, `restart` is no command, and a package-set build ends
+  without a restart.
+- [`package-set`](../../packages/package-set/README.md): `:package-install`,
+  `:package-remove` and `:package-update`, and the registration of the
+  build that follows a changed lakefile. Without it those three commands
+  are gone and a changed lakefile is not built: edit the lakefile by hand
+  to put it back, and restart.
+- [`evil`](../../packages/evil/README.md): the Vim scheme and evil, Vim's
+  states, motions, operators and the rest of its commands. It supplies the
+  editor's input scheme, and requires the interface packages `evil-api`,
+  `minibuffer-api`, `at-point-api`, `window-commands-api`,
+  `tab-commands-api`, `ex-api`, `buffers-api` and `shell-api`. Without it, and with no other
+  package that supplies a scheme, the editor would refuse to start
+  ("Removing, default packages included", below).
+- [`themes`](../../packages/themes/README.md): `load-theme` and the theme
+  `default`. It requires its interface package, `themes-api`. Without it
+  the theme in force is still the built-in one, named `default`, and config
+  still defines and names themes.
+- [`files`](../../packages/files/README.md): the file commands,
+  `open-file`, `save-buffer`, `edit-file`, `reload-buffer` and
+  `auto-reload-mode`. Without it no file opens and none is saved.
+- [`buffers`](../../packages/buffers/README.md): `switch-buffer`,
+  `list-buffers` and `close-buffer` (`:b`, `:ls`, `:bd`).
+- [`workspace`](../../packages/workspace/README.md): a file's workspace,
+  `find-file-in-workspace` and `find-file-in-project`. It requires the
+  interface packages `project-api` and `vc-api`. Without it no buffer has a
+  workspace.
+- [`project-search`](../../packages/project-search/README.md):
+  `project-search` and `project-search-symbol` (`SPC /`, `SPC *`). It
+  requires its interface package, `project-search-api`.
+- [`working-set`](../../packages/working-set/README.md): the working sets,
+  `working-set-add` and `working-set-open` (`SPC k a`, `SPC k o`). It
+  requires its interface package, `working-set-api`, and `vc-api`.
+- [`shell`](../../packages/shell/README.md): `:!` and `:<range>!`, and
+  `keyboard-quit`.
+- [`version-control`](../../packages/version-control/README.md): git's
+  status, commit, review, log and blame buffers and the gutter, two
+  packages, `version-control` and `version-control-gutter`. It requires
+  `project-api` and `vc-api`.
+- [`completion`](../../packages/completion/README.md): the completion
+  styles `fuzzy`, the default, `orderless` and `path`, and the candidate
+  list's display `minibuffer`. It requires its interface package,
+  `completion-api`. Without it every prompt is matched by the core's own
+  style and its list drawn plain.
+- [`mode-line`](../../packages/mode-line/README.md): the segments of the
+  mode line that ship, the Vim state's badge, the buffer's name, line:col
+  and the rest.
+- [`minibuffer`](../../packages/minibuffer/README.md): the commands that
+  answer a prompt, `minibuffer-accept` (`RET`), `minibuffer-cancel`
+  (`<Escape>`) and the rest, and the minibuffer's mode. It requires its
+  interface package, `minibuffer-api`. Without it a prompt opens and
+  nothing answers it, and no candidate that answers later arrives.
 - [`shipped-themes`](../../packages/shipped-themes/README.md): the themes
   `solarized-dark`, `solarized-light` and `fairy-floss`.
+- [`execute-command`](../../packages/execute-command/README.md): the
+  command prompt, `execute-command` (`SPC :` in the default config). It
+  requires its interface package, `execute-command-api`, which registers
+  nothing.
+- [`binding-search`](../../packages/binding-search/README.md): the binding
+  search, `search-bindings` (`SPC ?` in the default config). It requires
+  its interface package, `binding-search-api`.
 - [`compile`](../../packages/compile/README.md): `:compile`, `:next-error`
   and the rest of the compile mode, with modes for cargo, lake and mise.
+- [`at-point`](../../packages/at-point/README.md): completion at point in
+  insert state, `C-SPC`, `C-n` and the rest, and the source `words`. It
+  requires its interface package, `at-point-api`. Without it `RET`, `TAB`
+  and `C-g` in insert state do nothing, since the Vim scheme binds them to
+  its commands.
+- [`languages`](../../packages/languages/README.md): the languages that
+  ship, `rust`, `json`, `markdown`, `toml` and `lean`, and the `code` mode
+  files of them open in.
 
 Every `[[require]]` you add is a package of your editor. When a reload
 finds the requires, or the revisions `lake-manifest.json` pins, differ from
@@ -124,8 +214,100 @@ which the lakefile already requires:
 name = "config"
 
 [[require]]
+name = "ex"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/ex"
+
+[[require]]
+name = "frame-commands"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/frame-commands"
+
+[[require]]
+name = "menu"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/menu"
+
+[[require]]
+name = "window-commands"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/window-commands"
+
+[[require]]
+name = "tab-commands"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/tab-commands"
+
+[[require]]
+name = "restore"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/restore"
+
+[[require]]
+name = "package-set"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/package-set"
+
+[[require]]
+name = "evil"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/evil"
+
+[[require]]
+name = "themes"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/themes"
+
+[[require]]
+name = "files"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/files"
+
+[[require]]
+name = "buffers"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/buffers"
+
+[[require]]
+name = "workspace"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/workspace"
+
+[[require]]
+name = "project-search"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/project-search"
+
+[[require]]
+name = "working-set"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/working-set"
+
+[[require]]
+name = "shell"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/shell"
+
+[[require]]
+name = "version-control"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/version-control"
+
+[[require]]
+name = "completion"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/completion"
+
+[[require]]
+name = "mode-line"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/mode-line"
+
+[[require]]
+name = "minibuffer"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/minibuffer"
+
+[[require]]
 name = "shipped-themes"
 path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/shipped-themes"
+
+[[require]]
+name = "execute-command"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/execute-command"
+
+[[require]]
+name = "binding-search"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/binding-search"
+
+[[require]]
+name = "at-point"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/at-point"
+
+[[require]]
+name = "languages"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/languages"
 
 [[require]]
 name = "editor-core"
@@ -139,6 +321,21 @@ globs = ["Config.+"]
 The tables of packages you added stay as they were. `editor-core` cannot
 be removed, and a name the lakefile does not require is refused. By hand,
 make the same edit and `:reload`.
+
+**Removing `evil`** leaves a set with no input scheme, unless another
+package of yours supplies one. An editor of such a set refuses to start:
+it prints `editor: no input scheme is installed: no package of this
+editor's package set supplies one` and exits 1. So the build of the set
+fails: the new editor links, but the build probes it before it publishes
+it, and the probe is refused the same way. Nothing is published, there is
+no restart, and the editor you are in keeps running and says why:
+
+```
+packages: the new editor did not start: it exited with status 1; editor: no input scheme is installed: no package of this editor's package set supplies one; this editor keeps running
+```
+
+Install a package that supplies a scheme, or put `evil`'s table back, and
+`:reload`.
 
 ## Editing the lakefile by hand
 

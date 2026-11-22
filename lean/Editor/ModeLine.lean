@@ -27,7 +27,7 @@ In the default order (`ModeLine.Order.standard`):
 | Left | `buffer` | The buffer's name | `mode-line.buffer` |
 | Left | `modified` | `●` while the buffer is modified (`Context.modified`): for an excerpt buffer, while a buffer over one of its sources is | `mode-line.modified` |
 | Left | `changed` | `[changed on disk]` while a check has found the buffer's file changed on disk, or gone (`Editor/Loop.lean`, "Files that changed on disk") | `mode-line.changed` |
-| Left | `review` | A review buffer's counts, `<k> kept · <r> reverted · <n> not examined`; registered by `Editor/VersionControl/Review.lean`, not shipped here | `mode-line.secondary` |
+| Left | `review` | A review buffer's counts, `<k> kept · <r> reverted · <n> not examined`; registered by `packages/version-control/VersionControl/Review.lean`, not shipped here | `mode-line.secondary` |
 | Left | `directory` | The opened path's parent, as written | `mode-line.secondary` |
 | Right | `pending-keys` | The keys pending of a sequence begun and not completed (`Loop.pending`: `SPC f`, `d 2`, `" a`), when the window is selected | `mode-line.secondary` |
 | Right | `major-mode` | The buffer's major mode | `mode-line.secondary` |
@@ -35,7 +35,7 @@ In the default order (`ModeLine.Order.standard`):
 | Right | `position` | `All`, `Top`, `Bot` or a whole percentage | `mode-line.secondary` |
 
 **`review`** is listed by the default order but is not shipped here: the
-version-control review registers it (`Editor/VersionControl/Review.lean`),
+version-control review registers it (`packages/version-control/VersionControl/Review.lean`),
 as a component registers its own segments through the registry. So the
 default order resolved over the shipped segments alone (`standard`) leaves
 it out, which `ModelTest.modeLineChecks` pins, and a host that registers
@@ -288,7 +288,7 @@ def shipped : Array Segment :=
 the changed mark, a review's counts and the directory on the left; the
 pending keys, the major mode, line:col and the position on the right.
 `review` is not a shipped segment: version control's package registers it
-(`Editor/VersionControl/Compiled.lean`), and a mode line resolved over the shipped ones
+(`packages/version-control/VersionControl/Compiled.lean`), and a mode line resolved over the shipped ones
 alone leaves it out (`standard`). -/
 def Order.standard : Order where
   left := #["state", "buffer", "modified", "changed", "review", "directory"]

@@ -10,11 +10,39 @@
 # from it (`mise run app`).
 #
 # It requires the core and each default package. A default package has a
-# directory here and a `require` below: the shipped themes
-# (shipped-themes/), then the compile mode (compile/). They register in
-# that order, after the core's. Every other feature is still a package of
-# the core's Lake package (lean/EditorCore/EditorPackage.lean). This is
-# also the lakefile a user's package set starts from.
+# directory here and a `require` below: the ex command line (ex/, with its
+# interface package ex-api/, which it and evil/ require), the frame commands
+# (frame-commands/, with its interface package frame-commands-api/, which
+# it and menu/ require), the menu bar that ships (menu/,
+# which also requires evil-api/ for the names of Undo and Redo), the window
+# commands (window-commands/, with its interface package window-commands-api/,
+# which it and evil/ require), the tab commands (tab-commands/,
+# with its interface package tab-commands-api/, which it and evil/
+# require), session restore's registrations (restore/), the package-set commands (package-set/), evil and the Vim
+# scheme (evil/,
+# with its interface package evil-api/, which it requires),
+# which supplies the editor's input scheme, the themes (themes/, with its
+# interface package themes-api/, which it requires), the file commands (files/), the buffer commands
+# (buffers/), the workspaces (workspace/), project search (project-search/,
+# with its interface package project-search-api/, which it requires), the
+# working sets (working-set/,
+# with its interface package working-set-api/, which it requires), the
+# shell (shell/), version control (version-control/, both of its
+# packages), the completion styles and displays
+# (completion/, with its interface package completion-api/, which it
+# requires), the mode line's segments (mode-line/), the minibuffer's
+# commands and its mode (minibuffer/, with minibuffer-api/), the shipped
+# themes (shipped-themes/), the command prompt
+# (execute-command/, with its interface package execute-command-api/,
+# which it requires), the binding search (binding-search/, with
+# binding-search-api/), the compile mode (compile/, with its interface
+# package compile-api/, which it, workspace/ and project-api/ require),
+# completion at point
+# (at-point/, with at-point-api/), then the languages (languages/). They register in that order. The core's Lake package
+# registers no package and has no entry module, since the ex line, the
+# last feature it held, moved out (features-as-packages phase 8). This is
+# also the lakefile a user's
+# package set starts from.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages update --keep-toolchain
@@ -27,13 +55,236 @@ name = "default-set"
 name = "editor-core"
 path = "../lean"
 
-# The shipped themes, Solarized and Fairy Floss: the first default package.
+# The ex command line: the command `ex`, `quit`, `save-and-quit` and
+# `reload-config`, the ex names that ship for the files, the buffers and
+# its own commands, and the ex line's two completion sources. The first
+# default package (features-as-packages phase 8, D2: it was the last
+# package of the core's list, and the first it ever held, and the core's
+# packages registered before every default package, so moving it to the
+# front of the set keeps the order). It requires its interface package,
+# ex-api, which declares the names `ex` and `quit` and which the Vim
+# scheme's `:` names; an interface package registers nothing.
+[[require]]
+name = "ex"
+path = "ex"
+
+# The frame commands: `toggle-fullscreen` and `minimise-window`, with
+# their default key bindings and Command-Q's. It registers right after the
+# ex line, as it did in the core's list
+# (features-as-packages phase 8, D2: it was the last package of the core's
+# list once the menu had moved, and the core's packages registered before
+# every default package, so moving it to the front of the set kept the
+# order). It requires its interface package, frame-commands-api, which
+# declares the commands' names and which the Window menu's items name; an
+# interface package registers nothing.
+[[require]]
+name = "frame-commands"
+path = "frame-commands"
+
+# The menu bar that ships: the standard menu and the key bindings of its
+# File and Edit items. It registers right after the frame commands, as it
+# did in the core's list (features-as-packages
+# phase 8, D2: it was the last package of the core's list once the window
+# commands had moved, and the core's packages register before every
+# default package, so moving it to the front of the set kept the order).
+# It requires evil-api, whose `undo` and `redo` its Edit menu names, and
+# frame-commands-api, whose two names its Window menu's; an
+# interface package registers nothing, so that changes no order.
+[[require]]
+name = "menu"
+path = "menu"
+
+# The window commands: the commands that split, close, focus and arrange
+# the frame's windows. It registers right after the menu, as it did in the
+# core's list (features-as-packages
+# phase 8, D2: it was the last package of the core's list once the tab
+# commands had moved, and the core's packages register before every
+# default package, so moving it to the front of the set kept the order).
+# It requires its interface package, window-commands-api, which declares
+# the commands' names and which the Vim scheme's window table names; an
+# interface package registers nothing.
+[[require]]
+name = "window-commands"
+path = "window-commands"
+
+# The tab commands: the commands that open, close, select, rename and move
+# the frame's tabs, and the tabs' completion source. It registers right
+# after the window commands, as it did in the core's list
+# (features-as-packages phase 8, D2: it was the last package of
+# the core's list once session restore's had moved, and the core's
+# packages register before every default package, so moving it to the
+# front of the set kept the order). It requires its interface package,
+# tab-commands-api, which declares the commands' names and which the Vim
+# scheme's tab table names; an interface package registers nothing.
+[[require]]
+name = "tab-commands"
+path = "tab-commands"
+
+# Session restore's registrations: the jobs that restore a session and
+# journal this one, `restart` and the report's mode. It registers right
+# after the tab commands, as it did in the core's list
+# (features-as-packages phase 8, D2: it was the last package of
+# the core's list once the package-set commands had moved, and the core's
+# packages register before every default package, so moving it to the
+# front of the set kept the order). The work is the core's; the hosts
+# start the restore by the job's name, which the core declares, and the
+# loop journals only where that job is registered, so a set without this
+# package restores and journals nothing.
+[[require]]
+name = "restore"
+path = "restore"
+
+# The package-set commands: `:package-install`, `:package-remove` and
+# `:package-update`, and the registration of the package-set build. It
+# registers right after `restore`, as it did in the core's list
+# (features-as-packages phase 8, D2: it was the last
+# package of the core's list, and the core's packages register before
+# every default package, so moving it to the front of the set kept the
+# order). The build job and the edits are the core's; the reload and the
+# hosts start the job by the name the core declares, so a set without this
+# package builds no changed lakefile.
+[[require]]
+name = "package-set"
+path = "package-set"
+
+# Evil and the Vim scheme: Vim's states, motions, operators and the rest of
+# its commands, and the scheme that turns keys into their invocations. The
+# first default package (features-as-packages phase 7, D6: evil registered
+# before every default package while it was the core's, so it registers
+# first of them). It declares the keyword `editor-input-scheme`, so its
+# entry module supplies the editor's input scheme: a set without it, and
+# with no other package that supplies one, builds an editor that refuses to
+# start. It requires its interface package, evil-api, and the interface
+# packages of the minibuffer and of completion at point, whose commands its
+# tables name: the three so are in the set, and an interface package
+# registers nothing.
+[[require]]
+name = "evil"
+path = "evil"
+
+# The themes: `load-theme`, the theme `default` and the source of the
+# registered themes' names. The second default package (features-as-packages
+# phase 7, D6: it registered before every default package while it was the
+# core's, and after evil). It requires its interface package, themes-api,
+# which so is in the set too and registers nothing. The palettes that ship
+# are shipped-themes, further down, which so still registers after it.
+[[require]]
+name = "themes"
+path = "themes"
+
+# The file commands, `open-file`, `save-buffer`, `edit-file`,
+# `reload-buffer` and `auto-reload-mode`: the first of the packages
+# features-as-packages phase 6 moved out (its D5: the features that left
+# the core's list register first, in the core's order). It implements the
+# core's interface library files-api.
+[[require]]
+name = "files"
+path = "files"
+
+# The buffer commands, `switch-buffer`, `list-buffers` and
+# `close-buffer`. It implements the interface package buffers-api, which
+# it requires and which so is in the set too and registers nothing.
+[[require]]
+name = "buffers"
+path = "buffers"
+
+# The workspaces: a file's workspace found and attached when it opens, its
+# modes on markers, `workspace-current`, `find-file-in-workspace` and
+# `find-file-in-project`. It implements the core's interface library
+# project-api, and registers at files-api's `Opened` hook.
+[[require]]
+name = "workspace"
+path = "workspace"
+
+# Project search: `project-search` and `project-search-symbol`, into an
+# editable excerpt buffer of the matches. It requires its interface
+# package, project-search-api, which so is in the set too and registers
+# nothing.
+[[require]]
+name = "project-search"
+path = "project-search"
+
+# The working sets: named sets of ranges of files, `working-set-add`,
+# `working-set-open` and a set's buffer. It requires its interface
+# package, working-set-api, which so is in the set too and registers
+# nothing.
+[[require]]
+name = "working-set"
+path = "working-set"
+
+# The shell: `shell-command`, `shell-filter` and `keyboard-quit`, and the
+# history of the lines run per workspace. It implements the interface
+# package shell-api, through which ex hands it a `:!` line.
+[[require]]
+name = "shell"
+path = "shell"
+
+# Version control, as two packages, `version-control` and
+# `version-control-gutter`: git's implementation of the core's interface
+# library vc-api, the status, commit, review, log and blame buffers and the
+# gutter.
+[[require]]
+name = "version-control"
+path = "version-control"
+
+# The completion styles and displays that ship, `fuzzy`, `orderless`,
+# `path` and `minibuffer`: the first default package to register a style or
+# a display, so its style and its display are the first registered and the defaults. It requires its
+# interface package, completion-api, which so is in the set too and
+# registers nothing.
+[[require]]
+name = "completion"
+path = "completion"
+
+# The segments of the mode line that ship: a default package.
+[[require]]
+name = "mode-line"
+path = "mode-line"
+
+# The minibuffer's commands, which answer a prompt, and its mode: a
+# default package. It requires its interface package,
+# minibuffer-api, which so is in the set too and registers nothing; the
+# command prompt, the binding search and the compile mode require it too,
+# for their tests.
+[[require]]
+name = "minibuffer"
+path = "minibuffer"
+
+# The shipped themes, Solarized and Fairy Floss: a default package.
 [[require]]
 name = "shipped-themes"
 path = "shipped-themes"
 
+# The command prompt, `execute-command`: a default package. It
+# requires its interface package, execute-command-api, which so is in the
+# set too and registers nothing.
+[[require]]
+name = "execute-command"
+path = "execute-command"
+
+# The binding search, `search-bindings`: a default package. It
+# requires its interface package, binding-search-api, which so is in the
+# set too and registers nothing.
+[[require]]
+name = "binding-search"
+path = "binding-search"
+
 # The compile mode, `compile` into a workspace's compilation buffer, with
-# the modes that ship (cargo, lake, mise): the second default package.
+# the modes that ship (cargo, lake, mise): a default package. It requires
+# its interface package, compile-api, which the workspaces and project-api
+# require too, so it is in the set before them, and registers nothing.
 [[require]]
 name = "compile"
 path = "compile"
+
+# Completion at point, its commands and the source `words`: a
+# default package. It requires its interface package, at-point-api, which
+# so is in the set too and registers nothing.
+[[require]]
+name = "at-point"
+path = "at-point"
+
+# The languages that ship and the `code` mode: a default package.
+[[require]]
+name = "languages"
+path = "languages"

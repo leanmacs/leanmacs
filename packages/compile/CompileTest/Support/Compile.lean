@@ -1,39 +1,46 @@
 import Compile
 import Compile.Compiled
+import CompileApi
+import CompileApi.Format
+import CompileApi.Listing
+import CompileApiTest.Listing
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
 import Editor.Config.Packages
 import Editor.DisplayRules
 import Editor.Ex.Line
+import Editor.Extension
 import Editor.InputScheme
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
 import Editor.Keymap
 import Editor.Loop.Driver
-import Editor.Minibuffer
 import Editor.Mode
 import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
-import Editor.ProjectMode
-import Editor.ProjectMode.Format
-import Editor.ProjectMode.Listing
 import Editor.Scene
 import Editor.Setup
 import Editor.State
 import Editor.Test.Driver
+import Editor.Test.Ex
 import Editor.Test.Files
+import Editor.Test.Hosted
 import Editor.Test.Keys
-import Editor.Test.Listing
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
+import FilesApi
+import FilesApiTest.Fake
+import MinibufferApi
 
 /-!
 # Model tests: support: Compile
@@ -41,8 +48,12 @@ import Editor.Workspace
 The compile commands' world: their jobs, keys, bindings and driver, the error
 formats they read, the compile hook's setup, and the driver of the compile
 mode's checks of a listing, over the listing checks' world
-(`Editor/Test/Listing.lean`, the core's test kit). Shared by several test
-modules under `CompileTest/`; it holds no checks of its own.
+(`packages/compile-api/CompileApiTest/Listing.lean`, the core's test kit). It names no feature but
+the compile mode: files are opened by `files-api`'s fake
+(`FilesApiTest.fake`), a file's workspace and its modes on markers are the
+core kit's stand-ins' (`compileFound`, `hookMarkers`, `compileWorkspace`),
+and the ex line is the kit's (`Editor.Test.exLinePackage`). Shared by several
+test modules under `CompileTest/`; it holds no checks of its own.
 -/
 
 namespace CompileTest
@@ -50,11 +61,48 @@ namespace CompileTest
 open Editor
 open Editor.Test
 
-/-- The jobs of the compile checks: the shell checks', the compile's run job
-and its listing job. -/
+/-- The workspace a directory of the compile checks is in, standing in for
+the workspace finder's answer over their repositories: those of the open
+driver checks (`openFound`: `/r` on `main`, and `/w`, its linked worktree on
+`feature`, both of the origin `openOrigin`), a second clone of that origin
+at `/clone/r`, a repository `/up/repo` with no origin, and `/o` of the
+origin `git@github.com:o/other.git`, each a main checkout on `main`
+(`Workspace.Found.ofGit`, the core's, as the finder's git adapter answers);
+none elsewhere (`/x`, `/loose`, `/loose2`). -/
+def compileFound (directory : System.FilePath) : Option Workspace.Found :=
+  (openFound directory).orElse fun _ =>
+    ([("/clone/r", some openOrigin), ("/up/repo", none),
+            ("/o", some "git@github.com:o/other.git")] :
+          List (System.FilePath × Option String)).findSome?
+      fun (root, origin) =>
+      if Workspace.holds root directory then
+        some
+          (Workspace.Found.ofGit
+            { toplevel := root, commonDir := root / ".git", branch := .named "main" } origin)
+      else none
+
+/-- The marker files there are in the hook checks: of `marker-mode` at `/r/a`,
+above the workspace `/up/repo`, above `/loose/deep` and beside
+`/loose2/l.txt`; of `b-mode` at `/r/hook` and `a-mode` at `/r/hook/one/two`;
+and of `cargo-mode` in `/r/crate`, `/w/crate` and `/o`. -/
+def hookMarkers : Array System.FilePath :=
+  #["/r/a/marker.toml", "/up/marker.toml", "/loose/marker.toml", "/loose2/marker.toml",
+    "/r/hook/b.toml", "/r/hook/one/two/a.toml", "/r/crate/Cargo.toml", "/w/crate/Cargo.toml",
+    "/o/Cargo.toml"]
+
+/-- The stand-ins for the workspace package of the compile checks, in the
+order a host registers the workspace's hooks at `FilesApi.Opened`: a file's
+workspace by `compileFound` (the core kit's `attachByPackage`), then its modes
+on markers by the hook checks' markers (`markersByPackage`, the core's
+marker rules over `hookMarkers`). -/
+def compileWorkspace : Array Package :=
+  #[attachByPackage compileFound, markersByPackage compileFound hookMarkers]
+
+/-- The jobs of the compile checks: `files-api`'s fake's, the compile's run
+job and its listing job. -/
 def compileJobs (name : String) : Option (List Argument → Work) :=
   if name == Compile.runJob then some Compile.runWork
-  else if name == Compile.listJob then some Compile.listWork else shellJobs name
+  else if name == Compile.listJob then some Compile.listWork else FilesApiTest.jobs name
 
 /-- Steps that write each of `lines` with a line feed on standard output,
 pausing 100 ms between writes, so each is delivered, and posted, alone. -/
@@ -66,7 +114,43 @@ def linesSteps (lines : List String) : Array Process.Step :=
 def placeR : Compile.Place :=
   .workspace (.local "/r")
 
-/-- The bindings of the compile checks: the shell checks', and `C-k c`
+/-- The bindings of the compile checks that answer a prompt and work on
+windows and buffers, by the shell checks' keys: `C-e e` opens the ex line
+(`ExLine.name`, the kit's ex line's command), `C-e y` accepts the
+prompt, `C-e k` gives the window's buffer the reachable workspace `kube`,
+`C-e u` undoes, `C-e s` splits the window, `C-e c` closes it and `C-e x`
+shows a buffer `elsewhere` in it and removes the one it showed. -/
+def windowBindings : List (String × Invocation) :=
+  [("C-e e", invoke ExLine.name), ("C-e y", invoke Editor.Test.Minibuffer.acceptName),
+    ("C-e k", invoke "kube"), ("C-e u", invoke "undo"), ("C-e s", invoke "split"),
+    ("C-e c", invoke "close"), ("C-e x", invoke "drop")]
+
+/-- The commands of `windowBindings`, written over the core's API. -/
+def windowCommands : List (String × Dispatched) :=
+  [("kube", fun call => do
+      let location := Location.reachable "kube" "pod" "/app"
+      discard <| Workspace.register location openOrigin
+      Workspace.setBufferWorkspace call.target.window.buffer location
+      return none),
+    ("undo", fun call => do
+      discard <| call.target.window.buffer.undo
+      return none),
+    ("split", fun call => do
+      if let .ok made← call.target.window.id.split then
+        discard <| made.focus
+      return none),
+    ("close", fun call => do
+      discard <| call.target.window.id.close
+      return none),
+    ("drop", fun call => do
+      let window := call.target.window
+      if let .ok elsewhere← createBuffer "elsewhere" then
+        discard <| window.id.show elsewhere
+        discard <| window.buffer.remove
+      return none)]
+
+/-- The bindings of the compile checks: the open driver checks' (`openBindings`),
+`windowBindings`, and `C-k c`
 (`compile`), `C-k m` (`compile` with `make`), `C-k r` (`recompile`), `C-k k`
 (`kill-compilation`), `C-k t` (`insert-x`, which inserts `x` at the window's
 cursors), `C-k 0` (`to-start`, which puts the window's cursor at offset 0),
@@ -83,7 +167,7 @@ below view 0). For stepping: `C-k n` (`next-error`), `C-k p`
 count its columns from 0, as those of a format whose `columnBase` is 0
 do). -/
 def compileBindings : List (String × Invocation) :=
-  shellBindings ++
+  openBindings ++ windowBindings ++
     [("C-k c", invoke Compile.compileName),
       ("C-k m", { command := Compile.compileName, arguments := [.str "make"] }),
       ("C-k r", invoke "recompile"), ("C-k k", invoke Compile.killName),
@@ -92,7 +176,7 @@ def compileBindings : List (String × Invocation) :=
       ("C-k z",
         { command := Compile.outputName
           arguments := placeR.arguments ++ [.nat 1, .str "stale"] }),
-      ("C-k q", invoke Minibuffer.cancelName), ("C-o q", opens "/clone/r/src/a.lean"),
+      ("C-k q", invoke MinibufferApi.cancelName), ("C-o q", opens "/clone/r/src/a.lean"),
       ("C-k h", { command := Compile.compileName, arguments := [.str "check"] }),
       ("C-k n", invoke Compile.nextName), ("C-k p", invoke Compile.previousName),
       ("C-k e", invoke Compile.gotoName),
@@ -128,22 +212,30 @@ def compileCommands : List (String × Dispatched) :=
     Compile.setRecord placeR
         { record with locations := record.locations.map ({ · with columnBase := 0 }) }
     return none
-  shellCommands ++ dispatchedOf Compile.package.registered.commands ++
+  openCommandsWith FilesApiTest.openSaveCommands ++
+    dispatchedOf
+      (exLinePackage.registered.commands ++ Editor.Test.Minibuffer.package.registered.commands ++
+        Compile.package.registered.commands) ++
+    windowCommands ++
     [("insert-x", insertX), ("to-start", toStart), ("focus-compilation", focusCompilation),
       ("squat-clone", squat), ("to-point", toPoint), ("zero-base", zeroBase)]
 
-/-- The ex bindings of the compile checks: the `ex` package's, then the
-`compile` package's, which binds its own names, as a host handed both
-registers them. -/
+/-- The ex bindings of the compile checks: the kit's ex line's
+(`Editor.Test.exLinePackage`, standing in for the `ex` package, whose module
+a package's tests may not import), then the `compile` package's, which binds
+its own names, as a host handed both registers them. -/
 def compileExBindings : Array Ex.Binding :=
-  Ex.package.registered.ex ++ Compile.package.registered.ex
+  exLinePackage.registered.ex ++ Compile.package.registered.ex
 
 /-- The keys of the compile checks over `bindings`, with the compile mode
-and the ex names of the `ex` and `compile` packages registered: the active keymaps of a registry
-holding the compile mode's modes, so the mode's roles are on their keys in
-a compilation buffer as a host's registry puts them, then the keymap of
-`bindings`. -/
-def compileKeysOf (bindings : List (String × Invocation)) : Loop.Keys TestScheme.scheme :=
+and the ex names of the kit's ex line and the `compile` package registered,
+and the hooks at `FilesApi.Opened` of the stand-ins `workspace`
+(`compileWorkspace` by default) and of `files-api`'s fake: the active
+keymaps of a registry holding the compile mode's modes, so the mode's roles
+are on their keys in a compilation buffer as a host's registry puts them,
+then the keymap of `bindings`. -/
+def compileKeysOf (bindings : List (String × Invocation))
+    (workspace : Array Package := compileWorkspace) : Loop.Keys TestScheme.scheme :=
   let keys := dispatchKeys bindings compileCommands
   let registry := ({} : Config.Registry).replaceModes .compiled Compile.package.registered.modes
   { keys with
@@ -153,7 +245,12 @@ def compileKeysOf (bindings : List (String × Invocation)) : Loop.Keys TestSchem
       { keys.registered with
         entering := fun name => (Compile.package.registered.modes.find? (·.name == name)).map ([·])
         ex := fun name => compileExBindings.find? (·.name == name)
-        exNames := compileExBindings.map (·.name) } }
+        exNames := compileExBindings.map (·.name)
+        -- `files-api`'s fake runs its hook `FilesApi.Opened` once a buffer
+        -- holds a file: the stand-ins for the workspace's attach and its
+        -- modes on markers are registered there. A location is visited
+        -- through the fake's `FilesApi.Files` value.
+        extensions := (hostedRegistry (workspace.push FilesApiTest.fake)).extensionsAt } }
 
 /-- `driver` once every post is delivered and every pending job finished,
 oldest first, a post before a job's end; bounded. -/
@@ -243,15 +340,16 @@ def hookSetup (aCommands : Array Compile.NamedCommand := aCommands)
   project
 
 /-- The registry of the hook checks: `setup`'s contributions and project
-commands installed for config, over `compiled` for the owner `compiled`. -/
+commands installed for config, over `compiled` registered by a package, as
+the compile package registers its shipped modes. -/
 def hookRegistry (setup : SetupM Unit := hookSetup) (compiled : Array Compile.Contribution := #[]) :
     Config.Registry :=
-  let base := ({} : Config.Registry).replaceContributions .compiled compiled
-  match Config.Registrations.ofSetup setup with
-  | .ok registrations =>
-    { base.replaceContributions .config registrations.contributions with
-      projectCommands := registrations.projectCommands }
-  | .error _ => base
+  let shipping : Package :=
+    { name := "test-shipping"
+      setup :=
+        for contribution in compiled do
+          compileContribution contribution }
+  hostedRegistry #[shipping] setup
 
 /-- The bindings of the hook checks: the compile checks', `C-k i`
 (`compile-command`), and `C-o m`, `C-o u`, `C-o l`, `C-o 2`, `C-o h`, `C-o
@@ -288,15 +386,24 @@ def compileListingStreams : Array Process.StreamScript :=
     { command := shellCommand "/t/sub" "t-sub", steps := linesSteps ["ok"] },
     { command := shellCommand "/u" "u-only", steps := linesSteps ["ok"] }]
 
+/-- A package, standing in for the workspace's, that registers `opened` at
+`FilesApi.Opened` under the workspace's name: the kit's stand-ins for a
+listing file's workspace and on-modes (`listingOpened`, `kubeOpened`). -/
+def openedPackage (opened : BufferId → System.FilePath → EditorM Unit) : Package :=
+  { name := "test-workspace"
+    setup := Extension.add ({ name := "workspace", opened } : FilesApi.Opened) }
+
 /-- A driver of the compile mode's checks of a listing over `registry`, by
-default `t-mode` registered in config (`listingRegistry`): the world of the
-listing checks (`listingJobModel`), with the compile checks' keys and jobs
-and the children `compileListingStreams`; `none` if making the state was
-refused. -/
-def compileListingDriver (registry : Config.Registry := listingRegistry) : Option TestDriver :=
-  let keys := compileKeysOf compileListingBindings
-  let keys := { keys with registered := { keys.registered with compile := registry.compileHook } }
+default `t-mode` registered in config (`listingRegistry`), in which a file's
+workspace and on-modes are the kit's stand-ins' `opened` (`listingOpened` by
+default): the files and the listings' runs of the listing checks
+(`listingRuns`), with the compile checks' keys and jobs and the children
+`compileListingStreams`; `none` if making the state was refused. -/
+def compileListingDriver (registry : Config.Registry := listingRegistry)
+    (opened : BufferId → System.FilePath → EditorM Unit := listingOpened) : Option TestDriver :=
+  let keys := compileKeysOf compileListingBindings #[openedPackage opened]
+  let keys := toldHook keys registry
   (Loop.Driver.over keys compileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
-    fun driver => { driver with jobs := listingJobModel compileListingStreams }
+    fun driver => { driver with jobs := listingRuns compileListingStreams }
 
 end CompileTest

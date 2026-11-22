@@ -1,0 +1,42 @@
+# The interface package of the frame commands: the names of the
+# commands that put the window in fullscreen and minimise it, which the
+# Window menu's items run
+# (docs/design/extension-points.md, "Three layers"; docs/design/packages.md).
+# It declares the keyword `editor-interface`, so a package may import its
+# modules, and the layer imports check holds an implementation package to
+# importing interface packages and the core alone
+# (tools/layer-imports-check.sh). It registers nothing and has no entry
+# module, so a set that holds it gains no package from it.
+#
+# - `FrameCommandsApi` is its library: `FrameCommandsApi.lean`, the names.
+# - `FrameCommandsApiTest` holds its fake (`FrameCommandsApiTest/Fake.lean`), the contract check every
+#   implementation runs (`FrameCommandsApiTest/Contract.lean`) and its own tests.
+# - `frame-commands-api-test` is its test driver (`lake test`), rooted at
+#   `FrameCommandsApiTest/Model.lean`.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/frame-commands-api update --keep-toolchain
+# then the same for every set that reaches this package, and commit each
+# lake-manifest.json.
+name = "frame-commands-api"
+keywords = ["editor-interface"]
+testDriver = "«frame-commands-api-test»"
+defaultTargets = ["FrameCommandsApi", "FrameCommandsApiTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "FrameCommandsApi"
+
+[[lean_lib]]
+name = "FrameCommandsApiTest"
+globs = ["FrameCommandsApiTest.+"]
+
+[[lean_exe]]
+name = "frame-commands-api-test"
+root = "FrameCommandsApiTest.Model"

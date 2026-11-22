@@ -1,10 +1,10 @@
 import Editor.Command.Call
 import Editor.Completion
 import Editor.Completion.AtPoint
-import Editor.Completion.Displays
+import Editor.Completion.Display
 import Editor.Completion.Keys
 import Editor.Completion.Later
-import Editor.Completion.Styles
+import Editor.Completion.Style
 import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.Face
@@ -16,7 +16,6 @@ import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
-import Editor.ProjectMode
 import Editor.Store
 import Editor.TabBar
 import Editor.Window
@@ -302,13 +301,18 @@ def setup : SetupM Unit := do
 ```
 
 `defineStyle` registers a style for this config; the shipped styles,
-`fuzzy` and `orderless` (`Completion.Styles.shipped`), are registered by
-the `completion` package, which the executable's hosts are handed. `useStyleFor category name` chooses the style of the prompts of
+`fuzzy`, `orderless` and `path` (`Completion.Styles.shipped`), are
+registered by the default package `completion` (`packages/completion/`),
+which the default set's hosts are handed, and config names them with
+`import Completion.Styles`. `useStyleFor category name` chooses the style of the prompts of
 `category`, and `useStyle name` the default for the others; with none
-chosen the default is `fuzzy`. A name no style is registered under is not
-refused: it is looked up at install, the category falls to the default
-(the default to `fuzzy`), and the echo area says so
-(`Completion.Styles.unknown`). A `setup` that defines a style name twice
+chosen the default is the style registered first, in registration order
+(packages by dependency, then config), looked up by name, so config's
+style of that name is used in its place: in the default set, `fuzzy`.
+With no style registered at all it is the core's own
+(`Completion.Style.unregistered`). A name no style is registered under is
+not refused: it is looked up at install, the category falls to the
+default, and the echo area says so (`Completion.Style.unknown`). A `setup` that defines a style name twice
 is refused (`Config.Registrations.styleTwice`), and so is one that
 chooses the style of one category, or the default, twice
 (`Config.Registrations.styleChosenTwice`).
@@ -326,16 +330,19 @@ def setup : SetupM Unit := do
 
 `defineDisplay` registers a display for this config; the shipped display,
 `minibuffer` (`Completion.Displays.shipped`), is registered by the
-`completion` package.
+default package `completion` too, and config names it with
+`import Completion.Displays`.
 Config's display of a shipped name is used in its place: the first line
 above replaces the shipped `minibuffer` with one that shows at most 15
 rows, which is how config sets the most rows the minibuffer's list shows
 (10 unless it does, `Completion.Displays.rows`). `useDisplayFor category
 name` chooses the display of the prompts of `category`, and `useDisplay
-name` the default for the others; with none chosen the default is
-`minibuffer`. A name no display is registered under is not refused: it is
-looked up at install, the category falls to the default (the default to
-`minibuffer`), and the echo area says so (`Completion.Displays.unknown`).
+name` the default for the others; with none chosen the default is the
+display registered first, by the rule of styles: in the default set,
+`minibuffer`, and with none registered the core's own
+(`Completion.Display.unregistered`). A name no display is registered under
+is not refused: it is looked up at install, the category falls to the
+default, and the echo area says so (`Completion.Display.unknown`).
 A `setup` that defines a display name twice is refused
 (`Config.Registrations.displayTwice`), and so is one that chooses the
 display of one category, or the default, twice
@@ -476,7 +483,7 @@ A reload that installs takes the roots, and bumps the config generation, so
 the next file opened asks its directory's workspace again.
 
 Config chooses the command that lists a workspace's files, for
-`find-file-in-workspace` (`Editor/Workspace/Lister.lean`), for one root
+`find-file-in-workspace` (`packages/workspace/Workspace/Lister.lean`), for one root
 with `workspaceLister`, or for every workspace of a project, by its
 identity, with `projectLister`; a root's lister is used before its
 project's, and either before git's and the fallback's:
@@ -493,25 +500,11 @@ that names a relative path (a project's own script runs as `sh` with the
 script as its argument), and one root or one project given a lister twice.
 A reload that installs replaces config's listers.
 
-Config gives the compile mode what fits a kind of project with
-`compileContribution` (`Editor/ProjectMode.lean`): a minor mode's
-marker files, which turn the mode on in a buffer whose file is under one of
-them inside its workspace, its named commands, and its error formats. And
-it gives one project, by its identity, its own commands and settings for a
-mode with `projectCommands`, so every worktree of that codebase has them:
-
-```lean
-def setup : SetupM Unit := do
-  compileContribution
-    { mode := "make-mode", markers := #["Makefile"]
-      commands := #[{ name := "build", line := "make" }, { name := "test", line := "make check" }] }
-  projectCommands (.remote "github.com/me/tool") "make-mode" [("lint", "make lint")]
-```
-
-Config's contribution of a mode's name replaces a package's of that name
-whole. A contribution with no marker is refused, and so is one registered
-twice or naming a command twice, and project commands given twice for one
-project and mode, or naming a command twice.
+What fits a kind of project, a minor mode's marker files, named commands
+and error formats, and one project's own commands for a mode, are no
+request of this port: `compileContribution` and `projectCommands` register
+values at two extension points (`packages/compile-api/CompileApi.lean`,
+`Editor/Extension.lean`), so the port names nothing of the compile mode.
 
 A menu of the menu bar (`Editor/Menu.lean`) is defined with `defineMenu`,
 one menu at a time, by its title:
@@ -545,8 +538,8 @@ for the same reasons. Two things differ, both said in
   `modeLine`, `framePadding`, `keyHintDelay`, `layout`, `tabBar`,
   `titleBar`, `processEnvironment`, `autoReload`, `workspace`,
   `workspaceLister`, `projectLister`, `displayRule`, `shellTimeLimit`,
-  `syntaxRefreshDelay`, `leaderKey`, `localLeaderKey`, `projectCommands`,
-  `useStyle`, `useDisplay` and `useDisplayFor`. A package that calls one is
+  `syntaxRefreshDelay`, `leaderKey`, `localLeaderKey`, `useStyle`,
+  `useDisplay` and `useDisplayFor`. A package that calls one is
   refused whole, with a message that names it and the setting.
 - **A package's `useStyleFor` is a default**, not a choice: the style of
   the category unless config's `useStyleFor` chooses another.
@@ -654,13 +647,13 @@ inductive SetupRequest where
   | workspace (root : System.FilePath) (project : Option String)
   /-- Declare `declared` the command that lists the files of a workspace
   root, or of every workspace of a project
-  (`Editor/Workspace/Lister.lean`). -/
+  (`packages/workspace/Workspace/Lister.lean`). -/
   | workspaceLister (declared : Workspace.DeclaredLister)
   /-- Add `rule` to the display rules, after the ones made before it
   (`Editor/DisplayRules.lean`). -/
   | displayRule (rule : DisplayRule)
   /-- Set how long a `:!` or a filter may run, in milliseconds, before it is
-  killed (`Editor/Shell.lean`). -/
+  killed (`packages/shell/Shell.lean`). -/
   | shellTimeLimit (milliseconds : Nat)
   /-- Set how long a text goes unchanged after an edit, in milliseconds,
   before it is parsed whole again (`Editor/Highlight.lean`). -/
@@ -669,12 +662,6 @@ inductive SetupRequest where
   for, how its text is parsed and drawn, and its indent unit
   (`Editor/Language.lean`). -/
   | language (language : Language)
-  /-- Register `contribution`, what its minor mode gives the compile mode
-  (`Editor/ProjectMode.lean`). -/
-  | compileContribution (contribution : Compile.Contribution)
-  /-- Give one project its own commands and settings for a mode
-  (`Compile.ProjectCommands`). -/
-  | projectCommands (entry : Compile.ProjectCommands)
   /-- Register `source` as a completion source, by its name
   (`Editor/Completion.lean`). -/
   | source (source : Completion.Source)
@@ -704,6 +691,14 @@ inductive SetupRequest where
   /-- Register `value` at the extension point `key`, the name of the type
   `value` was made from (`Editor/Extension.lean`). -/
   | extend (key : Lean.Name) (value : Dynamic)
+  /-- Register the job called `name` over the extension point `key`: its
+  work is made each time it is started, by `work` applied to the values
+  registered at `key` then, in registration order, and the arguments it is
+  started with (`Extension.workJob`, `Editor/Extension.lean`, "To a job").
+  `reported` and `restarted` are as for `job`. -/
+  |
+  jobOver (key : Lean.Name) (name : String) (work : Array Dynamic → List Argument → Work)
+    (reported : Bool := false) (restarted : Bool := false)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -737,8 +732,6 @@ def SetupRequest.Reply : SetupRequest → Type
   | .shellTimeLimit _ => Unit
   | .syntaxRefreshDelay _ => Unit
   | .language _ => Unit
-  | .compileContribution _ => Unit
-  | .projectCommands _ => Unit
   | .source _ => Unit
   | .style _ => Unit
   | .useStyle .. => Unit
@@ -748,6 +741,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .useAtPoint .. => Unit
   | .menu _ => Unit
   | .extend .. => Unit
+  | .jobOver .. => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -1078,7 +1072,8 @@ def useDisplayFor (category name : String) : SetupM Unit :=
 under its name (`Editor/Completion/AtPoint.lean`): a mode's list and
 `useAtPoint` can then name it. Config's at-point source of a package's one's
 name is used in that one's place, so `defineAtPoint
-(Completion.AtPoint.words (pause := 100))` tunes the shipped `words`. The
+(Completion.AtPoint.words (pause := 100))`, with `import AtPoint.Words`,
+tunes the default package `at-point`'s `words`. The
 editor refuses the `setup` for a name defined twice. -/
 def defineAtPoint (atPoint : Completion.AtPoint) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.atPoint atPoint))
@@ -1231,7 +1226,7 @@ def autoReload (on : Bool := true) : SetupM Unit :=
 
 /-- Sets how long a `:!` or a filter may run before its child is killed and
 the echo area says so, in milliseconds: 30 000 when config says nothing
-(`Shell.defaultTimeLimit`, `Editor/Shell.lean`). A reload changes it for
+(`Shell.defaultTimeLimit`, `packages/shell/Shell.lean`). A reload changes it for
 the next run. A second call in one `setup` is refused, as a second frame
 padding is. -/
 def shellTimeLimit (milliseconds : Nat) : SetupM Unit :=
@@ -1278,7 +1273,7 @@ def relativeLister (program : String) : String :=
   s!"a workspace lister's program must be a bare name or an absolute path: {program}; run a script of the project's own as `sh` with the script as its argument"
 
 /-- Declares the command that lists the files of the workspace whose root is
-`root` (`Editor/Workspace/Lister.lean`): `program` with `arguments`, run at
+`root` (`packages/workspace/Workspace/Lister.lean`): `program` with `arguments`, run at
 the root, its standard output the root-relative paths, one a line, or one
 a NUL-ended record with `nul`. It is used in place of git's and the
 fallback's, and of a lister its project declares. Refuses the `setup` for
@@ -1296,7 +1291,7 @@ def workspaceLister (root : System.FilePath) (program : String) (arguments : Arr
         (.workspaceLister { scope := .root root, program, arguments, nul }))
 
 /-- Declares the command that lists the files of every workspace of the
-project identified by `project` (`Editor/Workspace/Lister.lean`), as
+project identified by `project` (`packages/workspace/Workspace/Lister.lean`), as
 `workspaceLister` does for one root; a root's own lister is used before
 it. Refuses the `setup` for a program that names a relative path, and for
 a project given a lister twice. -/
@@ -1307,38 +1302,5 @@ def projectLister (project : Project.Identity) (program : String) (arguments : A
   ExceptT.lift
       (Program.request (port := setupPort)
         (.workspaceLister { scope := .project project, program, arguments, nul }))
-
-/-- The message a compile contribution with no marker is refused with. -/
-def compileWithoutMarkers (mode : String) : String :=
-  s!"the compile contribution `{mode}` has no marker"
-
-/-- Registers `contribution`, what the minor mode `contribution.mode` gives
-the compile mode: its markers, which turn the mode on in a buffer whose
-file is under one of them inside its workspace, its named commands and its
-error formats (`Editor/ProjectMode.lean`). Config's contribution of
-a mode's name replaces a package's of that name whole. Refuses the
-`setup` for a contribution with no marker; the editor refuses one registered
-twice, or naming a command twice. -/
-def compileContribution (contribution : Compile.Contribution) : SetupM Unit := do
-  if contribution.markers.isEmpty then
-    throw (compileWithoutMarkers contribution.mode)
-  ExceptT.lift (Program.request (port := setupPort) (.compileContribution contribution))
-
-/-- Gives the project identified by `project` its own `commands`, each a name
-and a command line, and `settings` for the minor mode `mode`: the compile
-mode reads them by that project's identity from what the loop is told of
-config, so every worktree of the codebase has them while the mode is on
-there, and no other project does. A command
-of a name the mode's contribution gives replaces it; one of a new name comes
-after the contribution's. The editor refuses the `setup` for project
-commands given twice for one project and mode, or naming a command
-twice. -/
-def projectCommands (project : Project.Identity) (mode : String) (commands : List (String × String))
-    (settings : List (String × Value) := []) : SetupM Unit :=
-  ExceptT.lift
-    (Program.request (port := setupPort)
-      (.projectCommands
-        { project, mode, settings
-          commands := commands.toArray.map fun (name, line) => { name, line } }))
 
 end Editor

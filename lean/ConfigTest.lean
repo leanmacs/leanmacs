@@ -7,13 +7,8 @@ import ConfigTest.Editor.Config.Directory
 import ConfigTest.Editor.Config.Elaborate
 import ConfigTest.Editor.Config.Elaborator.Contract
 import ConfigTest.Editor.Config.Lakefile.Toml
-import ConfigTest.Editor.Evil
-import ConfigTest.Editor.Evil.TreeObjects
-import ConfigTest.Editor.Ex
-import ConfigTest.Editor.ExecuteCommand
 import ConfigTest.Editor.Extension
 import ConfigTest.Editor.Face
-import ConfigTest.Editor.Files
 import ConfigTest.Editor.Headless
 import ConfigTest.Editor.Headless.Stepped
 import ConfigTest.Editor.Indent
@@ -22,9 +17,7 @@ import ConfigTest.Editor.Loop
 import ConfigTest.Editor.Minibuffer
 import ConfigTest.Editor.PackageSet.Edit
 import ConfigTest.Editor.Setup
-import ConfigTest.Editor.Themes
-import ConfigTest.Editor.Themes.Check
-import ConfigTest.Editor.VersionControl.Gutter
+import ConfigTest.Editor.Theme.Check
 import ConfigTest.Lsp
 
 /-!
@@ -155,17 +148,15 @@ show:
   idle early: a join with a job's start of its sleep held, or a job's
   result on its way, blocks on it (let go from its `waitBlocked`) rather
   than answer working;
-- `shippedChecks`: what the executable's hosts start with, the registry the
-  packages of the core's Lake package make
-  (`EditorCore.EditorPackage.packages`), each entry for the owner named
-  after its package: it binds `C-s-f` to
-  `toggle-fullscreen`, `s-m` to `minimise-window` and `s-q` to `quit`, the
-  `frame-commands` package's, binds `C-x C-d` to `find-file-in-another-workspace` in the
-  prompt category `workspace-file` alone, and registers the buffer
-  commands with the ex names `b`, `ls` and `bd` bound to them, and the
-  completion sources that ship; and it holds nothing of the compile mode,
-  no command, ex name, job, mode or contribution, that mode being a
-  package outside the core's Lake package;
+- `shippedChecks`: what the executable's host starts its loop with, the
+  state directory it is handed. What its registry holds is not this
+  list's: the core's Lake package registers no package and has no entry
+  module, so a host starts from what its set's packages register, which
+  is nothing when it is handed none (`hostChecks`, above, and
+  `ModelTest.packageChecks`), and what each default package registers is
+  that package's own tests'. The ex line through the host
+  (`exChecks`, `exScriptChecks`) is the package `ex`'s linked test's
+  (`ExTest.Linked`, `packages/ex/`);
 - `scriptChecks`: the headless mode's script (its `indexed` and
   `workspaces` directives among them) and its driver, and the editor
   loop through the host: a commit and the scene it prints, read from the
@@ -203,8 +194,10 @@ show:
   command can set one yet, and the key pressed is the test scheme's for the
   role (`Session.pressKeys`), so no check names a scheme's key;
 - `promptChecks`: prompts through the host, with the test scheme, the
-  minibuffer's commands and its mode as compiled code hands them
-  (`Minibuffer.package.registered.commands`, `Minibuffer.package.registered.modes`) and commands written here: a
+  kit's minibuffer's commands and its mode as compiled code hands them
+  (`Test.Minibuffer.package.registered.commands`,
+  `Test.Minibuffer.package.registered.modes`, `Editor/Test/Minibuffer.lean`)
+  and commands written here: a
   command asks, a commit is typed into the minibuffer and the scene shows
   it; the accept key runs the continuation's command with the answer and
   the cancel key does not; a job's result is delivered while a prompt is
@@ -221,75 +214,51 @@ show:
   one category, redrawn with the default by the install's own scene once a
   reload drops the choice. The accept key and the cancel key are the test scheme's
   for the roles the minibuffer's mode fills;
-- `exChecks`: the ex command line through the host, with the test scheme
-  and the ex line's commands and the `ex` package's ex names as compiled code
-  hands them (`Ex.package.registered.commands`, `Ex.package.registered.ex`): the ex line `reload` reloads
-  the config with no restart, so a key config rebound runs the other
-  command; an ex name config binds runs config's command, and is unknown
-  after a reload without it; config's binding of a shipped name runs in
-  its place until a reload drops it; and a name nobody bound is said in
-  the scene's echo, with the editor going on. Each line is committed into
-  the minibuffer and accepted with the test scheme's key for the role the
-  minibuffer's mode fills;
-- `exScriptChecks`: scripts that a command ends, with `Headless.run` on
-  scripts built here, over the library's file service, so they run after
-  `fileChecks` and share their table of waits and pump: `e` on a file in a
-  temporary directory, a commit, `w`, a join and `q`, and the same with
-  `wq` and a join after it, each leave the file holding the buffer's text
-  and end the script with no failure and the `show` line after the quit
-  not run; a `q` that is refused leaves the script running; and a wait on
-  a host whose loop a command ended answers `ended`. They are apart from
-  `scriptChecks`, which are defined before what these hosts are handed;
-- `leaderChecks`: the leader through a host of the Vim scheme that ships:
-  a config's `<leader> f f` binding runs on `SPC f f` while config sets no
-  leader, on `\ f f` once a reload sets the leader to `\` (and `SPC f f`
-  then does not run it), and `SPC` typed in insert state is a space while
-  `SPC f f` after `<Escape>` runs the binding;
-- `hintChecks`: the key hints through a host of the Vim scheme that ships:
-  after a reload, a config's prefix name and a binding's description are
-  in the scene's `hint` lines after `SPC` and after `SPC f`, none are after
-  the binding runs, and a reload that drops the prefix name lists the
-  prefix unnamed (with a delay of 0, so they are shown at once);
+- `leaderChecks`: the leader through a host of the test scheme: a
+  config's `<leader> f f` binding runs on the scheme's leader and then
+  `f f` while config sets no leader, and on `\ f f` once a reload sets the
+  leader to `\`, when the scheme's leader no longer runs it;
+- `hintChecks`: the key hints through a host of the test scheme: after a
+  reload, a config's prefix name and a binding's description are in the
+  scene's `hint` lines after the scheme's leader and after the leader and
+  `f`, none are after the binding runs, and a reload that drops the prefix
+  name lists the prefix unnamed (with a delay of 0, so they are shown at
+  once);
 - `keyHintChecks`: when and where the key hints are shown, through a host
-  of the Vim scheme that ships, on the fake clock and the recorder: after
-  `SPC` and the default delay the scene lists the keys that can follow
-  with their descriptions and prefix names, drawn by the minibuffer
+  of the test scheme, on the fake clock and the recorder: after the
+  scheme's leader and the default delay the scene lists the keys that can
+  follow with their descriptions and prefix names, drawn by the minibuffer
   display above the bottom row, and none before; a sequence completed or
   reset before the delay withdraws it and shows none; a delay of 0 shows
   them in the first scene; the pending keys are drawn in the selected
   window's status line while pending and cleared once the sequence
   completes; a display config chooses for `key` draws them; `.never` arms
-  nothing; a reload while `SPC` is pending that sets `.never` closes hints
-  shown and withdraws a wait, one that keeps the delay keeps its wait,
-  and one that sets it again arms a new wait; and a reload refuses a delay
-  over a minute, one that is not a delay and one set twice;
+  nothing; a reload while the leader is pending that sets `.never` closes
+  hints shown and withdraws a wait, one that keeps the delay keeps its
+  wait, and one that sets it again arms a new wait; and a reload refuses a
+  delay over a minute, one that is not a delay and one set twice;
 - `defaultConfigChecks`: the default config `mise run install` ships, read
   from the directory the fourth argument names: a reload of it through a
-  host of the Vim scheme that ships installs with no diagnostic and
-  `SPC f f` then asks for a path to open, `SPC p f` and `SPC SPC` open the
-  workspace finder and `SPC p p` the project's workspace picker; each of its bindings names a
-  registered command; and each prefix it binds under the leader has a
-  prefix name (`Registry.prefixName?`);
+  host of the test scheme installs with no diagnostic; each of
+  its bindings names a registered command or one of the default packages'
+  commands, by name; and each prefix it binds under the leader, read
+  through the scheme's leader, has a prefix name (`Registry.prefixName?`);
 - `extensionChecks`: extension points (`Editor/Extension.lean`) with the
   real elaborator, over the fixture `ExtensionFixture`, which declares an
   extension point and a compiled package that reads it: a config
   elaborated at runtime registers at that point, the compiled package
   reads config's value typed and runs its interpreted program, and a
   reload without the registration replaces config's value and keeps the
-  package's;
-- `indentChecks`: `=` and the indented new lines through a host of the Vim
-  scheme that ships, over the library's Rust grammar: `gg=G` on the
-  mangled Rust indent fixture (`tests/syntax/rust/indent.rs`, read from the
-  directory the third argument names) gives the fixture back, `=af`
-  re-indents one function, one `u` undoes it and `.` repeats it, rows
-  inside a string and a comment keep their indent, `RET` after an opening
-  brace and `o`/`O` in a body start at the tree's level, and a buffer with
-  no language or no indents query is as before;
-- `evilChecks`: evil from config through the host, with the test scheme:
-  a config that the real elaborator loads names the vocabulary the editor
-  ships (`Evil.motions`) and hands it to evil's move command, as it is and
-  with a motion of config's own added. It shows what `Editor.lean` lets
-  config name; where a motion of the editor's leads is not said here;
+  package's; and the package's job over the point is made, when it is
+  started, from config's value after the package's;
+- `indentChecks`: the core's indent levels through a host of the test
+  scheme, over the library's Rust grammar, each asked by a command of
+  config's run by name: the edits `TextId.reindentEdits` answers of every
+  row of the mangled Rust indent fixture (`tests/syntax/rust/indent.rs`,
+  read from the directory the third argument names), applied, give the
+  fixture back, rows inside a string and a comment keeping their indent;
+  `TextId.openingLevel` after an opening brace is the tree's level; and a
+  buffer with no language or no indents query is refused, as a value;
 - `restoreOrderChecks`: the restore at start-up in the host, on the real
   elaborator: over the library's file service and a journal on disk, the
   restore's second half runs, and its buffer is there, before reload 1 is
@@ -301,8 +270,8 @@ show:
   restart comes back before any reload, and migrated by the package at a
   new version; a config's store comes back by the start-up reload, stays
   parked and written while a config's `setup` throws, and is claimed by a
-  later good reload. They run after `fileChecks`, whose table of waits the
-  first and the last share;
+  later good reload. The first and the last share the table of waits of
+  the hosts over a real service;
 - `journalFailureChecks`: the journal's failures in the host, over a
   journal whose failures the check puts there: they are taken after each
   step, and said once for each path, in the echo area and to the log;
@@ -324,31 +293,10 @@ show:
   colours (`Themes.effective`) is the real layout's: for the built-in
   theme, the fixture themes and two whose cursor sets one colour alone, each cursor face's
   frame is the frame of a mirror theme that sets the modelled colours;
-- `themeChecks`: named themes through a host over the display's real
-  binding: `load-theme` switches the frame to the chosen theme with config's
-  face over it, with no reload, and the scene line names the theme; and a
-  config naming a theme nobody registered says so in the echo area;
-- `fileChecks`: files through the host, over the library's file service.
-  They are the checks whose hosts are over a real service, so they share
-  one table of waits and the one completion pump, which the first of them
-  starts, and they run last. Each has temporary directories of its own and
-  writes its files' bytes itself.
-  - A job from config loads a file, and its handler makes a text of it:
-    the file's path is written into the config it loads.
-  - The file commands and their jobs as compiled code registers them
-    (`Files.package.registered.commands`, `Files.package.registered.jobs`): opening a file shows a buffer of its
-    text, named by its base name; saving a modified buffer writes the
-    buffer's text and clears the status line's modified field; opening a
-    path that is open starts no load; open then save with no edit leaves
-    the bytes of an LF file and of a CRLF file as they were, with the save
-    seen to have written; a save of a file changed on disk leaves it and
-    says so; and opening a path with no file says so and leaves the
-    window. The driver's `run` hands a command no argument, so each host
-    is handed a command, written here, that runs the compiled open command
-    with a path (`opening`). The last runs the open command by its name,
-    with no path: it asks for one, the path is committed into the
-    minibuffer, and the accept key opens it. Each host is handed the
-    minibuffer's commands and its mode for that.
+- the files' host checks (`languageChecks`, `fileChecks`, `reloadChecks`,
+  `filePromptChecks`, `autoReloadChecks`) are the files package's linked
+  test's since features-as-packages phase 6 (`FilesTest.Linked`,
+  `packages/files/FilesTest/Linked/Files.lean`).
 
 The compile mode as a real config sees it is not checked here: the compile
 mode is a package outside the core (`packages/compile/`), and the base this
@@ -363,8 +311,8 @@ decorator of the elaborator port (`Gate`) holds one file's elaboration open
 until the check lets it go, and a host's jobs wait on a fake clock
 (`Editor/Job/Fake.lean`) that only the check moves. Most host checks run on
 a host stepped on the check's own thread (`Headless.withStepped`, through
-the plain helpers `withHost`, `withVimHost`, `onStage` and the rest of
-`ConfigTest/Support/Hosts.lean`): its loop's turns are taken by the check's
+the plain helpers `withHost`, `withTestHost`, `onStage` and the rest of
+`Editor/Test/Linked/Host.lean`): its loop's turns are taken by the check's
 waits, which end on events and at idle, with a guard against a hang only.
 The checks listed in `docs/dev-practices/real-thread-checks.md` run a real
 loop thread (the `Real` helpers), and `config-test --real-threads <file>`
@@ -375,7 +323,7 @@ with the thread that emitted it, which is how a check sees that a handler
 ran on the editor thread: the check's own, on a stepped host.
 
 All the checks share one base, made once in `run` and grown when a check's
-config first imports a module it does not hold (`ConfigTest.sharing`): a
+config first imports a module it does not hold (`Editor.Test.Linked.sharing`): a
 second import of a module in one process about doubles its memory. The
 checks whose config imports `Lean` run last, since every environment made
 from a base that holds `Lean` costs a few times more. The module data of
@@ -390,7 +338,21 @@ that reads an `initialize`d constant of config's, and none runs config that
 recurses without bound.
 
 The executable also holds the benchmark (`ConfigTest.Bench`,
-`ConfigTest/Bench.lean`), which the gate builds and never runs.
+`ConfigTest/Bench.lean`), which the gate builds and never runs. The
+workspace finder's, which was here too, is the workspace package's
+(`WorkspaceTest.Linked.WorkspaceBench`, an opt-in argument of its linked
+test; `mise run find-file-bench`).
+
+Evil's checks through a host, `treeObjectChecks`, `treeObjectFixtureChecks`,
+`evilIndentChecks`, `evilChecks` and `evilLeaderChecks`, which were here,
+are the default package `evil`'s linked test's since the
+features-as-packages roadmap's phase 7
+(`packages/evil/EvilTest/Linked.lean`, whose module doc says what each
+shows): no check here runs a host of the Vim scheme.
+
+The themes' checks through a host, `themeChecks`, are the default package
+`themes`' linked test's since that phase too
+(`packages/themes/ThemesTest/Linked.lean`).
 -/
 
 namespace ConfigTest
@@ -408,7 +370,6 @@ def checks (context : Context) : List Check :=
     threadChecks context ++
     jobChecks context ++
     idleChecks context ++
-    treeObjectChecks context ++
     indentChecks context ++
     watchReloadChecks context ++
     agreementChecks () ++
@@ -418,25 +379,14 @@ def checks (context : Context) : List Check :=
     hostLoopChecks context ++
     modeChecks context ++
     promptChecks context ++
-    filePromptChecks context ++
     atPointChecks context ++
-    exChecks context ++
-    evilChecks context ++
     reloadEchoChecks context ++
     faceChecks context ++
     cursorResolutionChecks () ++
-    themeChecks context ++
-    commandPromptChecks context ++
     environmentHostChecks context ++
-    fileChecks context ++
     restoreOrderChecks context ++
     journalFailureChecks context ++
     journalDrainChecks context ++
-    languageChecks context ++
-    reloadChecks context ++
-    autoReloadChecks context ++
-    gutterChecks context ++
-    exScriptChecks context ++
     leaderChecks context ++
     hintChecks context ++
     keyHintChecks context ++
@@ -472,9 +422,7 @@ never runs.
 `bench-jobs` is the job benchmark (`ConfigTest.Bench.jobs`;
 `mise run job-bench`), which the gate never runs either, and so is
 `bench-prompt`, the prompt benchmark (`ConfigTest.Bench.prompt`;
-`mise run prompt-bench`), and `bench-workspace-files`, the workspace
-finder's (`ConfigTest.Bench.workspaceFiles`; `mise run find-file-bench`),
-handed the repository it searches, and `bench-journal`, the session
+`mise run prompt-bench`), and `bench-journal`, the session
 journal's cost on the editor thread (`ConfigTest.Bench.journal`;
 `mise run journal-bench`).
 
@@ -539,34 +487,15 @@ def main (args : List String) : IO UInt32 := do
       IO.Process.exit status
     | none =>
       ConfigTest.usage
-  | ["bench-workspace-files", sysroot, oleanDir, repository, samples] =>
-    match samples.toNat? with
-    | some samples =>
-      let status ←
-        try
-          ConfigTest.Bench.workspaceFiles sysroot oleanDir repository samples
-        catch error =>
-          IO.eprintln s!"config-test: bench-workspace-files: {error}"
-          pure 1
-      IO.Process.exit status
-    | none =>
-      ConfigTest.usage
-  | ["bench-auto-reload", sysroot, oleanDir, syntaxFixtures, defaultConfig, samples] =>
-    match samples.toNat? with
-    | some samples =>
-      IO.Process.exit
-          (←
-            ConfigTest.run (fun context => [ConfigTest.Bench.autoReloadRow context samples]) sysroot
-                oleanDir syntaxFixtures defaultConfig)
-    | none =>
-      ConfigTest.usage
   | [sysroot, oleanDir, syntaxFixtures, defaultConfig] =>
     IO.Process.exit
-        (← ConfigTest.run ConfigTest.checks sysroot oleanDir syntaxFixtures defaultConfig)
+        (←
+          ConfigTest.run ConfigTest.checks sysroot oleanDir syntaxFixtures defaultConfig
+              ConfigTest.shippedPackages)
   | [sysroot, oleanDir, syntaxFixtures, defaultConfig, "--real-threads", file] =>
     IO.Process.exit
         (←
           ConfigTest.run ConfigTest.checks sysroot oleanDir syntaxFixtures defaultConfig
-              (some file))
+              ConfigTest.shippedPackages (some file))
   | _ =>
     ConfigTest.usage

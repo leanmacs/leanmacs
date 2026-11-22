@@ -1,0 +1,21 @@
+reload 1: installed, 1 files, 3 commands
+run execute-command: ok
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 0x0: "zz-", scroll 0, selections 3..3, padding 8 0
+status 1: minibuffer.prompt "Command: "
+view 2 0,0 0x0: "zz-other  SPC f f\nzz-mine", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..17 minibuffer.annotation 10..17 minibuffer.candidate 18..25
+status 2: -
+key arrived: <Escape> Escape -
+run execute-command: ok
+key arrived: <Enter> Enter -
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, theme "zz-dark"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run prompt-label: ok
+scene 0x0, focused 0, echo "the command prompt asks \"Command: \"", echo padding 8, preedit -, theme "zz-dark"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4

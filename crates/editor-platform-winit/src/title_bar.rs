@@ -29,8 +29,8 @@
 //! winit-appkit reads from `-[NSView safeAreaInsets]`: for a full-size
 //! content view that includes the title bar. The handler divides it by the
 //! scale factor (`title_reading` in `lib.rs`), with no decision in it. So
-//! this module names winit only, and `corner` and `delegate` stay the
-//! only modules that name AppKit.
+//! this module names winit only, and `corner`, `delegate`, `menu_bar` and
+//! `background` stay the only modules that name AppKit.
 
 use editor_platform::{TitleBar, WindowOptions};
 use winit::window::WindowAttributes;

@@ -1,10 +1,7 @@
 import Editor.Api
-import Editor.Buffers
-import Editor.Files
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Jumps
-import Editor.Jumps.Go
 import Editor.Loop
 import Editor.Loop.Driver
 import Editor.State
@@ -13,16 +10,20 @@ import Editor.Test.Files
 import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Models
+import Editor.Test.Opener
 import Editor.Text
 
 /-!
 # Model tests: support: Jumps
 
 The driver of the jump checks, over the test scheme, the editor's models
-and the file model, with keys that record, move, edit, open and close; and
-what a check reads of a window's jump list and cursor, written as text.
-Shared by `ModelTest/Editor/Jumps.lean` and `ModelTest/Editor/Jumps/Go.lean`;
-it holds no checks of its own.
+and the file model, with keys that record, edit, open and close, written
+over the core's API: the kit's opener opens a file, and stand-ins written
+here switch and close; and what a check reads of a window's jump list and
+cursor, written as text. The core's `ModelTest/Editor/Jumps.lean` runs on
+its driver; the files feature's support (`ModelTest/Support/JumpsGo.lean`)
+binds the same keys to the real commands, for `ModelTest/Editor/Jumps/Go.lean`
+and `packages/evil/EvilTest/Evil/Marks.lean`. It holds no checks of its own.
 -/
 
 namespace ModelTest
@@ -30,112 +31,140 @@ namespace ModelTest
 open Editor
 open Editor.Test
 
-/-- The path of the file of the jump checks. -/
-def jumpsPath : System.FilePath :=
-  inFiles "jumps.txt"
-
-/-- The files of the jump checks: those of the file command checks, and
-`jumps.txt`, of five lines: its row 1 is indented by two blanks, and its
-row 2 starts with a two-byte character. -/
-def jumpFiles : FileModel :=
-  commandFiles.withFile jumpsPath "zero\n  one\néx two\nthree\nfour\n".toUTF8
-
 /-- The text the scratch buffer of the jump checks starts with: eight lines,
 `l0` to `l7`. -/
 def jumpScratch : String :=
   "l0\nl1\nl2\nl3\nl4\nl5\nl6\nl7\n"
 
-/-- The keys of the jump checks, over the window they are pressed in:
+/-- The keys of the jump checks, over the window they are pressed in, each
+bound to the command of its name:
 
-- `C-j 0` to `C-j 7` put the cursor at the start of that row, and `C-j w`
-  two bytes on from where it is;
-- `C-j r` records a jump (`Jumps.record`), `C-j o` and `C-j i` move one
-  back and one on (`Jumps.move`), and `C-j t` goes to the row 1 of
-  `jumps.txt` as a jump (`Jumps.goTo`);
-- `C-j l` inserts a line at the text's start, `C-j d` deletes its first
-  line, and `C-j x` deletes the rows 2 and 3;
-- `C-j n` opens `jumps.txt` (`Files.open`), `C-j v` visits its row 1 at its
-  first non-blank (`Files.visit`), and `C-j V` visits it so recording no
-  jump;
-- `C-j b` switches to the buffer `scratch` (`Buffers.switchTo`), `C-j s`
-  shows the buffer 0 with no jump, `C-j m` makes a buffer with no file and
-  shows it, `C-j k` closes the window's buffer and `C-j K` closes the
-  buffer 1 (`Buffers.close`). -/
-def jumpKeys : Loop.Keys TestScheme.scheme :=
+- `C-j 0` to `C-j 7` put the cursor at the start of that row (`row`), and
+  `C-j w` two bytes on from where it is (`step`);
+- `C-j r` records a jump (`record`, `Jumps.record`), `C-j o` and `C-j i`
+  move one back and one on (`back`, `forward`), and `C-j t` goes to the row
+  1 of `jumps.txt` as a jump (`go-to`);
+- `C-j l` inserts a line at the text's start (`line`), `C-j d` deletes its
+  first line (`delete-first`), and `C-j x` deletes the rows 2 and 3
+  (`delete-two`);
+- `C-j n` opens `jumps.txt` (`open`), `C-j v` visits its row 1 at its first
+  non-blank (`visit`), and `C-j V` visits it so recording no jump
+  (`visit-quietly`);
+- `C-j b` switches to the buffer `scratch` (`switch`), `C-j s` shows the
+  buffer 0 with no jump (`scratch`), `C-j m` makes a buffer with no file and
+  shows it (`make`), `C-j k` closes the window's buffer (`close`) and `C-j K`
+  closes the buffer 1 (`close-1`).
+
+Which commands a driver registers under those names is its own: the
+core's (`jumpCoreCommands` and `jumpStandIns`) or the files feature's
+(`ModelTest/Support/JumpsGo.lean`). -/
+def jumpBindings : List (String × Invocation) :=
   let rowKeys :=
     (List.range 8).map fun row => (s!"C-j {row}", { command := "row", arguments := [.nat row] })
-  let unit (run : Call → EditorM Unit) : Dispatched := fun call => do
-    run call
-    return none
-  let view (call : Call) : ViewId := call.target.window.id
-  dispatchKeys
-    (rowKeys ++
-      [("C-j w", invoke "step"), ("C-j r", invoke "record"), ("C-j o", invoke "back"),
-        ("C-j i", invoke "forward"), ("C-j t", invoke "go-to"), ("C-j l", invoke "line"),
-        ("C-j d", invoke "delete-first"), ("C-j x", invoke "delete-two"), ("C-j n", invoke "open"),
-        ("C-j v", invoke "visit"), ("C-j V", invoke "visit-quietly"), ("C-j b", invoke "switch"),
-        ("C-j s", invoke "scratch"), ("C-j m", invoke "make"), ("C-j k", invoke "close"),
-        ("C-j K", invoke "close-1")])
-    [("row",
-        unit fun call => do
-          let row :=
-            match call.arguments with
-            | .nat row :: _ => row
-            | _ => 0
-          let offset ← call.target.buffer.text.offsetOf ⟨row, 0⟩
-          call.target.select { ranges := #[⟨offset, offset⟩] }),
-      ("step",
-        unit fun call => do
-          let selection ← call.target.selection
-          let head := (selection.ranges[0]?.map (·.head)).getD 0
-          call.target.select { ranges := #[⟨head + 2, head + 2⟩] }),
-      ("record", unit fun call => Jumps.record (view call)),
-      ("back", unit fun call => discard <| Jumps.move (view call) (-1)),
-      ("forward", unit fun call => discard <| Jumps.move (view call) 1),
-      ("go-to", unit fun call => Jumps.goTo (view call) (.file jumpsPath 1 0) false),
-      ("line", unit fun call => call.target.buffer.text.insert 0 "new\n"),
-      ("delete-first",
-        unit fun call => do
-          let text := call.target.buffer.text
-          text.delete 0 (← text.offsetOf ⟨1, 0⟩)),
-      ("delete-two",
-        unit fun call => do
-          let text := call.target.buffer.text
-          text.delete (← text.offsetOf ⟨2, 0⟩) (← text.offsetOf ⟨4, 0⟩)),
-      ("open", unit fun call => Files.open (view call) jumpsPath),
-      ("visit",
-        unit fun call =>
-          Files.visit (view call) jumpsPath { row := 1, column := 0, firstNonBlank := true } false),
-      ("visit-quietly",
-        unit fun call =>
-          Files.visit (view call) jumpsPath { row := 1, column := 0, firstNonBlank := true } false
-            (record := false)),
-      ("switch", unit fun call => Buffers.switchTo (view call) EditorState.scratchName),
-      ("scratch", unit fun call => discard <| (view call).show ⟨0⟩),
-      ("make",
-        unit fun call => do
-          if let .ok made← createBuffer "nofile" "n0\nn1\n" then
-            discard <| (view call).show made),
-      ("close", unit fun call => Buffers.close call.target.window.buffer),
-      ("close-1", unit fun _ => Buffers.close ⟨1⟩)]
+  rowKeys ++
+    [("C-j w", invoke "step"), ("C-j r", invoke "record"), ("C-j o", invoke "back"),
+      ("C-j i", invoke "forward"), ("C-j t", invoke "go-to"), ("C-j l", invoke "line"),
+      ("C-j d", invoke "delete-first"), ("C-j x", invoke "delete-two"), ("C-j n", invoke "open"),
+      ("C-j v", invoke "visit"), ("C-j V", invoke "visit-quietly"), ("C-j b", invoke "switch"),
+      ("C-j s", invoke "scratch"), ("C-j m", invoke "make"), ("C-j k", invoke "close"),
+      ("C-j K", invoke "close-1")]
 
-/-- The driver of the jump checks: the keys of `jumpKeys`, the file jobs,
-and the files `jumpFiles`, from one window on the buffer `scratch`, which
-holds `jumpScratch`, its cursor at 0. -/
-def jumpDriver : Option TestDriver :=
-  (Loop.Driver.over jumpKeys fileJobs (holding jumpScratch #[⟨0, 0⟩]) editorModel).toOption.map
+/-- `run` as a command the jump checks' driver dispatches. -/
+def jumpCommand (run : Call → EditorM Unit) : Dispatched := fun call => do
+  run call
+  return none
+
+/-- The commands of the jump checks that are the core's alone: `row`,
+`step`, `record`, `line`, `delete-first`, `delete-two`, `scratch` and
+`make`. -/
+def jumpCoreCommands : List (String × Dispatched) :=
+  let view (call : Call) : ViewId := call.target.window.id
+  [("row",
+      jumpCommand fun call => do
+        let row :=
+          match call.arguments with
+          | .nat row :: _ => row
+          | _ => 0
+        let offset ← call.target.buffer.text.offsetOf ⟨row, 0⟩
+        call.target.select { ranges := #[⟨offset, offset⟩] }),
+    ("step",
+      jumpCommand fun call => do
+        let selection ← call.target.selection
+        let head := (selection.ranges[0]?.map (·.head)).getD 0
+        call.target.select { ranges := #[⟨head + 2, head + 2⟩] }),
+    ("record", jumpCommand fun call => Jumps.record (view call)),
+    ("line", jumpCommand fun call => call.target.buffer.text.insert 0 "new\n"),
+    ("delete-first",
+      jumpCommand fun call => do
+        let text := call.target.buffer.text
+        text.delete 0 (← text.offsetOf ⟨1, 0⟩)),
+    ("delete-two",
+      jumpCommand fun call => do
+        let text := call.target.buffer.text
+        text.delete (← text.offsetOf ⟨2, 0⟩) (← text.offsetOf ⟨4, 0⟩)),
+    ("scratch", jumpCommand fun call => discard <| (view call).show ⟨0⟩),
+    ("make",
+      jumpCommand fun call => do
+        if let .ok made← createBuffer "nofile" "n0\nn1\n" then
+          discard <| (view call).show made)]
+
+/-- Closes the buffer `id` as the core's API alone does it: the places held
+in its text detached into its file (`Jumps.detach`), the scratch buffer, or
+the buffer 1 when it is the scratch buffer being closed, shown in every
+window that showed it, and the buffer removed. A stand-in for the buffers
+feature's close, which the core's jump checks do not import. -/
+def standInClose (id : BufferId) : EditorM Unit := do
+  Jumps.detach id
+  let state ← editorState
+  let fallback : BufferId := if id == ⟨0⟩ then ⟨1⟩ else ⟨0⟩
+  for view in state.frame.everyWindow do
+    if (state.window? view).any (·.buffer == id) then
+      discard <| view.show fallback
+  discard <| id.remove
+
+/-- The stand-ins of the core's jump checks for what the file and buffer
+features do: `open` opens `jumps.txt` with the kit's opener (`Opener.open`),
+`switch` records a jump and shows the buffer `scratch`, as a switch does,
+and `close` and `close-1` close with `standInClose`. -/
+def jumpStandIns : List (String × Dispatched) :=
+  let view (call : Call) : ViewId := call.target.window.id
+  [("open", jumpCommand fun call => Opener.open (view call) jumpsPath),
+    ("switch",
+      jumpCommand fun call => do
+        Jumps.record (view call)
+        discard <| (view call).show ⟨0⟩),
+    ("close", jumpCommand fun call => standInClose call.target.window.buffer),
+    ("close-1", jumpCommand fun _ => standInClose ⟨1⟩)]
+
+/-- The driver of the jump checks with `commands` and the jobs `jobs`: the
+keys of `jumpBindings`, and the files `jumpFiles`, from one window on the
+buffer `scratch`, which holds `jumpScratch`, its cursor at 0. -/
+def jumpDriverWith (commands : List (String × Dispatched))
+    (jobs : String → Option (List Argument → Work)) : Option TestDriver :=
+  (Loop.Driver.over (dispatchKeys jumpBindings commands) jobs (holding jumpScratch #[⟨0, 0⟩])
+        editorModel).toOption.map
     fun driver => { driver with jobs := { files := jumpFiles } }
 
-/-- `driver` fed the keys `keys`, each followed by every load it started
-being finished, so a key after an open acts on the file opened. -/
-def jumped (driver : TestDriver) (keys : String) : TestDriver :=
+/-- `driver` fed the keys `keys`, each followed by every load of the job
+`loadJob` it started being finished, so a key after an open acts on the
+file opened. -/
+def jumpedWith (loadJob : String) (driver : TestDriver) (keys : String) : TestDriver :=
   (presses keys).foldl
     (fun driver event =>
       let fed := (fedTo driver [event]).1
-      (List.range 2).foldl (fun driver _ => finishNamed driver Files.loadJob) fed)
+      (List.range 2).foldl (fun driver _ => finishNamed driver loadJob) fed)
     driver
 
-/-- The driver of the jump checks after `keys` (`jumped`). -/
+/-- The driver of the core's jump checks: the core's commands and its
+stand-ins, and the kit's opener's jobs. -/
+def jumpDriver : Option TestDriver :=
+  jumpDriverWith (jumpCoreCommands ++ jumpStandIns) Opener.jobs
+
+/-- `driver`, the core's, fed the keys `keys` (`jumpedWith`). -/
+def jumped (driver : TestDriver) (keys : String) : TestDriver :=
+  jumpedWith Opener.loadJob driver keys
+
+/-- The driver of the core's jump checks after `keys` (`jumped`). -/
 def jumpedFrom (keys : String) : Option TestDriver :=
   jumpDriver.map (jumped · keys)
 

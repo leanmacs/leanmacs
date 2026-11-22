@@ -31,8 +31,7 @@ keys bound twice. What it collected is then one of three kinds.
 - **Owned.** Registered for the package's owner, as an install registers
   config's for `config` (`Config.Registry.replaceOwned`): commands, plain,
   given their call and over a store; jobs; key bindings and prefix names;
-  modes; ex names; faces; themes; segments; languages; compile
-  contributions; completion sources, styles and displays; at-point sources
+  modes; ex names; faces; themes; segments; languages; completion sources, styles and displays; at-point sources
   and their uses; and menus. Its stores are cells of its owner
   (`Config.Cells.install`), made when the host starts and never replaced,
   so a package's command over its store finds its cell
@@ -46,8 +45,8 @@ keys bound twice. What it collected is then one of three kinds.
   `useTheme`, `modeLine`, `framePadding`, `keyHintDelay`, `layout`, `tabBar`,
   `titleBar`, `processEnvironment`, `autoReload`, `workspace`,
   `workspaceLister`, `projectLister`, `displayRule`, `shellTimeLimit`,
-  `syntaxRefreshDelay`, `leaderKey`, `localLeaderKey`, `projectCommands`,
-  `useStyle`, `useDisplay` and `useDisplayFor`. They are what an install
+  `syntaxRefreshDelay`, `leaderKey`, `localLeaderKey`, `useStyle`,
+  `useDisplay` and `useDisplayFor`. They are what an install
   sets for config and nothing holds by owner, so a package that set one
   would have it dropped by the first reload. The message names the package
   and the setting (`Package.setsConfigOnly`).
@@ -131,7 +130,6 @@ def Registrations.configOnly (collected : Registrations) : List String :=
         (!collected.syntaxRefreshDelays.isEmpty, "syntaxRefreshDelay"),
         (!collected.leaders.isEmpty, "leaderKey"),
         (!collected.localLeaders.isEmpty, "localLeaderKey"),
-        (!collected.projectCommands.isEmpty, "projectCommands"),
         (collected.styleChoices.any (·.1.isNone), "useStyle"),
         (collected.displayChoices.any (·.1.isNone), "useDisplay"),
         (collected.displayChoices.any (·.1.isSome), "useDisplayFor")].filterMap

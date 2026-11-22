@@ -34,6 +34,10 @@
 //! - **A menu changes no other thing shown, and they change no menu.**
 //!   Neither fullscreen, a title nor an appearance moves the menu shown,
 //!   and a menu moves none of them.
+//! - **A background is the window's background, and of two the last
+//!   wins.** A fresh window has been asked none.
+//! - **A background changes no other thing shown, and they change no
+//!   background.**
 //!
 //! Whether a request asked with no window running is harmless is the run
 //! contract's ([`Check::run`](super::Check::run)): it needs a platform, and
@@ -43,7 +47,7 @@ use std::fmt;
 
 use crate::menu::{Action, Item, Menu, Submenu};
 use crate::scripted::Shown;
-use crate::{Appearance, Request};
+use crate::{Appearance, Request, Rgb};
 
 /// A window as far as requests go: what carries a request out, and what it
 /// then shows.
@@ -109,6 +113,13 @@ pub const MENU_SHOWN: &str = "a menu is the menu bar's, and the last wins";
 pub const MENU_APART: &str = "a menu changes no other thing shown, and they change no menu";
 /// The rule that a window with no menu bar shows no menu.
 pub const NO_MENU_BAR: &str = "a platform with no menu bar shows none";
+/// The rule that a background is the window's, the last of two winning.
+pub const BACKGROUNDED: &str =
+    "a background is the window's background, a fresh window has none, and the last wins";
+/// The rule that a background and the other things shown leave each other
+/// alone.
+pub const BACKGROUND_APART: &str =
+    "a background changes no other thing shown, and they change no background";
 
 /// One rule as the check holds it: the requests carried out on a fresh
 /// carrier, what must then hold of what it shows, and the rule's words.
@@ -166,7 +177,40 @@ pub fn check<C: Carries>(mut make: impl FnMut() -> C) -> Result<(), RequestViola
     // An appearance asked before or after a menu moves neither.
     let menu_appears = |shown: &Shown| appears(Appearance::Dark)(shown) && shows_a(shown);
     let menu_rule = if C::MENU_BAR { MENU_SHOWN } else { NO_MENU_BAR };
-    let rules: [Rule<'_>; 28] = [
+    let (paper, black) = (
+        Rgb {
+            red: 0x2e,
+            green: 0x34,
+            blue: 0x40,
+        },
+        Rgb {
+            red: 0,
+            green: 0,
+            blue: 0,
+        },
+    );
+    let on_paper = |shown: &Shown| shown.background == Some(paper);
+    let paper_alone = |shown: &Shown| {
+        fresh(shown) && shown.title.is_none() && shown.menu.is_none() && on_paper(shown)
+    };
+    let all_on_paper = |shown: &Shown| {
+        shown.fullscreen
+            && !shown.minimised
+            && titled("a")(shown)
+            && appears(Appearance::Dark)(shown)
+            && shows_a(shown)
+            && on_paper(shown)
+    };
+    let others = || vec![Enter, title("a"), dark.clone(), menu("a")];
+    let paper_last: Vec<Request> = others()
+        .into_iter()
+        .chain([Request::Background(paper)])
+        .collect();
+    let paper_first: Vec<Request> = [Request::Background(paper)]
+        .into_iter()
+        .chain(others())
+        .collect();
+    let rules: [Rule<'_>; 34] = [
         (vec![], &fresh, FRESH),
         (vec![Enter], &|shown| shown.fullscreen, ENTERS),
         (vec![Enter, Enter], &|shown| shown.fullscreen, ENTERS),
@@ -226,7 +270,21 @@ pub fn check<C: Carries>(mut make: impl FnMut() -> C) -> Result<(), RequestViola
         (vec![Enter, title("a"), menu("a")], &menu_after, MENU_APART),
         (vec![menu("a"), Enter, title("a")], &menu_before, MENU_APART),
         (vec![dark.clone(), menu("a")], &menu_appears, MENU_APART),
-        (vec![menu("a"), dark], &menu_appears, MENU_APART),
+        (vec![menu("a"), dark.clone()], &menu_appears, MENU_APART),
+        (vec![], &|shown| shown.background.is_none(), BACKGROUNDED),
+        (vec![Request::Background(paper)], &on_paper, BACKGROUNDED),
+        (
+            vec![Request::Background(black), Request::Background(paper)],
+            &on_paper,
+            BACKGROUNDED,
+        ),
+        (
+            vec![Request::Background(paper)],
+            &paper_alone,
+            BACKGROUND_APART,
+        ),
+        (paper_last, &all_on_paper, BACKGROUND_APART),
+        (paper_first, &all_on_paper, BACKGROUND_APART),
     ];
     for (asked, holds, rule) in rules {
         let mut carrier = make();
@@ -470,6 +528,52 @@ mod tests {
         fn shown(&self) -> Shown {
             self.0.clone()
         }
+    }
+
+    /// A window that ignores every background it is asked.
+    #[derive(Default)]
+    struct IgnoresBackground(Shown);
+
+    impl Carries for IgnoresBackground {
+        fn carry_out(&mut self, request: Request) {
+            if !matches!(request, Request::Background(_)) {
+                self.0.carry_out(&request);
+            }
+        }
+
+        fn shown(&self) -> Shown {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn a_window_that_ignores_a_background_is_refused() {
+        let refused = check(IgnoresBackground::default).expect_err("a background is shown");
+        assert_eq!(refused.rule, BACKGROUNDED);
+    }
+
+    /// A window whose background takes it out of fullscreen.
+    #[derive(Default)]
+    struct BackgroundLeaves(Shown);
+
+    impl Carries for BackgroundLeaves {
+        fn carry_out(&mut self, request: Request) {
+            if matches!(request, Request::Background(_)) {
+                self.0.fullscreen = false;
+            }
+            self.0.carry_out(&request);
+        }
+
+        fn shown(&self) -> Shown {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn a_window_whose_background_changes_fullscreen_is_refused() {
+        let refused =
+            check(BackgroundLeaves::default).expect_err("a background leaves fullscreen be");
+        assert_eq!(refused.rule, BACKGROUND_APART);
     }
 
     #[test]

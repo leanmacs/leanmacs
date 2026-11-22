@@ -10,13 +10,14 @@ definitions (`Editor/Face.lean`) and a scene names faces by name
 and not defined is drawn in the faces under it, the default face's look. The
 vocabulary is the list that keeps that from happening to a face the editor
 draws: every shipped theme defines every name in it, and the completeness
-check (`Themes.problems`, `Editor/Themes/Check.lean`) holds that it does.
+check (`Themes.problems`, `Editor/Theme/Check.lean`) holds that it does.
 
 - **What is drawn now.** The four names layout reads by itself (`default`,
   `selection`, `mode-line`, `echo-area`; `crates/editor-layout/src/face.rs`),
   the cursor face a scheme that names none draws in (`cursor`,
   `InputScheme.Report`), the shipped Vim scheme's cursor face and mode-line
-  badge face of each of its states (`Vim.cursorFace`, `Vim.stateFace`),
+  badge face of each of its states (`Vim.cursorFace`, `Vim.stateFace`;
+  the cursor faces are marked `cursor`, and `cursorNames` lists them),
   the mode line's faces (`ModeLine.bufferFace`, `ModeLine.modifiedFace`,
   `ModeLine.changedFace`, `ModeLine.secondaryFace`, `ModeLine.inactiveFace`,
   `ModeLine.activeFace`, `Editor/ModeLine.lean`), the divider between tiled
@@ -24,7 +25,7 @@ check (`Themes.problems`, `Editor/Themes/Check.lean`) holds that it does.
   (`Loop.promptFace`), the rows of the candidate list the minibuffer
   display draws (`Completion.Displays.candidateFace`, `chosenFace`,
   `matchFace`, `annotationFace`, `groupFace`,
-  `Editor/Completion/Displays.lean`), the
+  `packages/completion/Completion/Displays.lean`), the
   compile mode's locations by severity (`compilation.error`,
   `compilation.warning`, `compilation.note`; `Compile.Severity.face`), the
   matches of the last search (`Loop.searchMatchFace`), and the tab bar's
@@ -54,6 +55,8 @@ structure Entry where
   name : FaceName
   /-- One sentence: what is drawn in it, and by whom. -/
   meaning : String
+  /-- Whether a view's cursor is drawn in it (`cursorNames`). -/
+  cursor : Bool := false
   deriving DecidableEq, Repr
 
 /-- Each top-level name of tree-sitter's common highlight captures, with what
@@ -88,18 +91,18 @@ def vocabulary : Array Entry :=
         meaning := "Under each field of a view's status line, read by layout itself." },
       { name := ⟨"echo-area"⟩
         meaning := "The echo area in the bottom row of the frame, read by layout itself." },
-      { name := ⟨"cursor"⟩
+      { name := ⟨"cursor"⟩, cursor := true
         meaning :=
           "The cursor of a scheme that names no cursor face of its own, such as the test scheme (`InputScheme.Report`)." },
-      { name := ⟨"cursor.normal"⟩
+      { name := ⟨"cursor.normal"⟩, cursor := true
         meaning := "The cursor in the shipped Vim scheme's normal state (`Vim.cursorFace`)." },
-      { name := ⟨"cursor.insert"⟩
+      { name := ⟨"cursor.insert"⟩, cursor := true
         meaning := "The cursor in the shipped Vim scheme's insert state (`Vim.cursorFace`)." },
-      { name := ⟨"cursor.visual"⟩
+      { name := ⟨"cursor.visual"⟩, cursor := true
         meaning := "The cursor in the shipped Vim scheme's visual state (`Vim.cursorFace`)." },
-      { name := ⟨"cursor.visual-line"⟩
+      { name := ⟨"cursor.visual-line"⟩, cursor := true
         meaning := "The cursor in the shipped Vim scheme's visual-line state (`Vim.cursorFace`)." },
-      { name := ⟨"cursor.minibuffer"⟩
+      { name := ⟨"cursor.minibuffer"⟩, cursor := true
         meaning :=
           "The cursor in the minibuffer's view, in the shipped Vim scheme's minibuffer state (`Vim.cursorFace`)." },
       { name := ⟨"mode-line.state.normal"⟩
@@ -189,7 +192,7 @@ def vocabulary : Array Entry :=
           "A tracked excerpt no scene has shown yet, such as a review buffer's hunk never on screen: drawn by the loop over its bytes (`ExcerptView.unexaminedFace`)." },
       { name := ⟨"working-set-drifted"⟩
         meaning :=
-          "The quote of a working set's range that was not found in its file, shown as it was stored: a span over the whole of its read-only buffer, drawn in the set's buffer through its excerpt (`Editor/WorkingSet/Run.lean`)." },
+          "The quote of a working set's range that was not found in its file, shown as it was stored: a span over the whole of its read-only buffer, drawn in the set's buffer through its excerpt (`packages/working-set/WorkingSet/Run.lean`)." },
       { name := ⟨"block-header"⟩
         meaning :=
           "The header drawn above an excerpt of an excerpt buffer, such as a review buffer's hunk header (`ExcerptView.headerFace`)." }]
@@ -197,5 +200,13 @@ def vocabulary : Array Entry :=
 /-- The vocabulary's names, in its order. -/
 def vocabularyNames : Array FaceName :=
   vocabulary.map (·.name)
+
+/-- The faces a view's cursor is drawn in, in the vocabulary's order: the
+entries marked `cursor`. They are `cursor`, the face of a scheme that names
+none, and each face a scheme lists as one it draws a cursor in
+(`InputScheme.cursorFaces`). The completeness check holds a shipped theme
+to every one of them (`Themes.problems`, `Editor/Theme/Check.lean`). -/
+def cursorNames : Array FaceName :=
+  (vocabulary.filter (·.cursor)).map (·.name)
 
 end Editor.Face

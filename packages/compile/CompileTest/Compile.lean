@@ -2,6 +2,9 @@ import Compile
 import Compile.Contribution
 import Compile.Errors
 import Compile.Shipped
+import CompileApi
+import CompileApi.Format
+import CompileApiTest.Listing
 import CompileTest.Check
 import CompileTest.Support.Compile
 import Editor.Api
@@ -17,7 +20,6 @@ import Editor.File
 import Editor.File.Model
 import Editor.FileWatch
 import Editor.FileWatch.Model
-import Editor.Files
 import Editor.Fuzzy
 import Editor.InputScheme.Test
 import Editor.Invocation
@@ -31,8 +33,6 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
-import Editor.ProjectMode
-import Editor.ProjectMode.Format
 import Editor.Role
 import Editor.Scene
 import Editor.Setup
@@ -40,7 +40,6 @@ import Editor.State
 import Editor.State.Request
 import Editor.Store
 import Editor.SyntaxTree
-import Editor.SyntaxTree.Model
 import Editor.Test.Driver
 import Editor.Test.Files
 import Editor.Test.Keys
@@ -55,16 +54,15 @@ import Editor.Value
 import Editor.Watch
 import Editor.Watch.Model
 import Editor.Workspace
-import Editor.Workspace.Attach
-import Editor.Workspace.Model
-import Editor.Workspace.Modes
+import FilesApi
+import FilesApiTest.Fake
 
 /-!
 # Model tests: `Compile.lean`
 
 The model tests of `Compile.lean`: `compileChecks`,
 `compileLocationChecks` and `compileHookChecks`. `compileHookChecks` are of the
-compile hook, which `Editor/Workspace/Modes.lean` and `Compile.lean`
+compile hook, which `packages/workspace/Workspace/Modes.lean` and `Compile.lean`
 share; they are here with the other compile checks. The test driver's root,
 `CompileTest/Model.lean`, runs them; its module doc says what each shows.
 -/
@@ -73,15 +71,6 @@ namespace CompileTest
 
 open Editor
 open Editor.Test
-
-/-- The world of the compile checks: the workspace driver checks' world, and a
-second clone of the same origin at `/clone/r`, on `main`. -/
-def compileWorld : Workspace.World :=
-  { workspaceWorld with
-    repositories :=
-      workspaceWorld.repositories.push
-        { toplevel := "/clone/r", commonDir := "/clone/r/.git", origin := some workspaceOrigin }
-    markerDirectories := workspaceWorld.markerDirectories.push "/clone/r/.git" }
 
 /-- What `make` in `/r` does: writes `one`, pauses 100 ms, writes `two`,
 pauses 100 ms and writes `three` on its standard error. -/
@@ -147,23 +136,18 @@ def compileFiles : List (String × String) :=
     ("/r/src/main.rs", mainText), ("/r/src/lib.lean", "one\ntwo\nthree\n"),
     ("/r/src/b.lean", "xyz123\n"), ("/w/src/main.rs", "wwwwww\n")]
 
-/-- A driver of the compile checks: the world of `compileWorld`, with the
-compile checks' keys and jobs, the files the keys open, and the children of
+/-- A driver of the compile checks: the compile checks' keys and jobs, in
+which a file's workspace is the stand-in's for the finder's answer
+(`compileFound`), the files the keys open, and the children of
 `compileStreams`, `make` in `/r` exiting as `exit`; `none` if making the
 state was refused. -/
 def compileDriver (exit : Process.Exit := .code 0)
     (registered : String → Option (List Argument → Work) := compileJobs) : Option TestDriver :=
-  let model := compileWorld.jobModel "git" #["/r/src", "/w/src", "/x", "/clone/r/src"]
   let files :=
-    compileFiles.foldl (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8)
-      model.files
+    compileFiles.foldl (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) {}
   (Loop.Driver.over compileKeys registered (EditorState.initial ⟨640, 480⟩)
         editorModel).toOption.map
-    fun driver =>
-    { driver with
-      jobs :=
-        { model with
-          files, processes := { model.processes with streams := compileStreams exit } } }
+    fun driver => { driver with jobs := { files, processes := { streams := compileStreams exit } } }
 
 /-- The text of the buffer called `name` in `driver`. -/
 def compiledText (driver : TestDriver) (name : String) : Option String :=
@@ -210,8 +194,8 @@ def compiledLastLine (driver : TestDriver) : Option String :=
       ((text.splitOn "\n").filter (!·.isEmpty)).getLast?).join
 
 /-- The compile checks (`Compile.lean`), on the loop's driver over the
-editor's models, the job model and the process model, in the world of
-`compileWorld`. -/
+editor's models, the job model and the process model, with the stand-ins
+for the workspace's attach (`compileFound`). -/
 def compileChecks : List Check :=
   [{  name :=
         "criterion 1: compile with make in a buffer of /r starts /bin/sh -c make streaming in /r, and *compilation: r@main* holds the header and then each line as it is delivered, before the child ends"
@@ -609,7 +593,7 @@ def compileChecks : List Check :=
         "an empty answer to compile's prompt says compile: no command and starts nothing; with no compile-run registered the start is refused and said"
       run :=
         pure <|
-          match compileDriver, compileDriver (registered := shellJobs) with
+          match compileDriver, compileDriver (registered := FilesApiTest.jobs) with
           | some driver, some unregistered =>
             let opened := settledAfter driver "C-o a"
             let empty := (fedTo opened (presses "C-k c C-e y")).1
@@ -717,8 +701,8 @@ def splitsRefusedIf (refuseSplits : Bool) :
 
 /-- The checks of the locations the compile mode finds in its output
 (`Compile.lean`, "Locations"), on the loop's driver over the
-editor's models, the job model and the process model, in the world of
-`compileWorld`. -/
+editor's models, the job model and the process model, with the stand-ins
+for the workspace's attach (`compileFound`). -/
 def compileLocationChecks : List Check :=
   let header := "r@main in /r: check"
   let rowAt := rowStart header checkLines
@@ -831,6 +815,19 @@ def compileLocationChecks : List Check :=
               headsOf past ⟨0⟩ == headsOf fourth ⟨0⟩ &&
               echoOf unstepped == some "next-error: no locations in r@main" },
     { name :=
+        "with no files implementation, next-error makes the first location current and says so under its name, and visits no file"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let bare := { ran with keys := Test.withoutExtension FilesApi.Files ran.keys }
+            let stepped := drained (pressedOn bare "C-k n")
+            echoOf stepped == some (FilesApi.noImplementation Compile.nextName) &&
+              currentOf stepped placeR == some 0 &&
+              fileOf stepped ⟨0⟩ == fileOf ran ⟨0⟩ },
+    { name :=
         "locations criterion 5: with compilations in two worktrees of one repository, next-error in a buffer of each visits that workspace's own first location, in its own checkout's file"
       run :=
         pure <|
@@ -896,7 +893,7 @@ def compileLocationChecks : List Check :=
           | some driver =>
             let gone := drained (compiledLine (settledAfter driver "C-o a") "gone")
             let stepped := drained (pressedOn gone "C-k n")
-            echoOf stepped == some (Files.notOpened "/r/src/gone.rs" .notFound) &&
+            echoOf stepped == some (FilesApi.notOpened "/r/src/gone.rs" .notFound) &&
               fileOf stepped ⟨0⟩ == some "/r/src/a.lean" &&
               headsOf stepped ⟨0⟩ == some #[0] &&
               (stepped.loop.state.findBuffer "gone.rs").isNone &&
@@ -1053,31 +1050,6 @@ def compileLocationChecks : List Check :=
               headsOf back ⟨0⟩ == headsOf ran ⟨0⟩ &&
               headsOf back ⟨1⟩ == headsOf ran ⟨1⟩ }]
 
-/-- The world of the hook checks: the compile checks' world, a repository
-`/up/repo` with no origin, a repository `/o` of another origin, and the
-marker files of `hookSetup`'s modes. -/
-def hookWorld : Workspace.World :=
-  { compileWorld with
-    repositories :=
-      compileWorld.repositories ++
-        #[{ toplevel := "/up/repo", commonDir := "/up/repo/.git" },
-          { toplevel := "/o", commonDir := "/o/.git", origin := some "git@github.com:o/other.git" }]
-    markerDirectories :=
-      compileWorld.markerDirectories ++ (#["/up/repo/.git", "/o/.git"] : Array System.FilePath)
-    markers :=
-      compileWorld.markers ++
-        (#["/r/a/marker.toml", "/up/marker.toml", "/loose/marker.toml", "/loose2/marker.toml",
-            "/r/hook/b.toml", "/r/hook/one/two/a.toml", "/r/crate/Cargo.toml",
-            "/w/crate/Cargo.toml", "/o/Cargo.toml"] :
-          Array System.FilePath) }
-
-/-- Every directory a file of the hook checks opens in, each of which git is
-scripted for: one git leaves unscripted would fall to the marker adapter,
-which finds `Cargo.toml` as a root. -/
-def hookDirectories : Array System.FilePath :=
-  #["/r/src", "/w/src", "/x", "/clone/r/src", "/r/a/b/c", "/up/repo/src", "/loose/deep", "/loose2",
-    "/r/hook/one/two/three/four", "/r/crate/src", "/w/crate/src", "/o/src"]
-
 /-- The files of the hook checks, besides the compile checks'. -/
 def hookFiles : List (String × String) :=
   [("/r/a/b/c/x.txt", "x"), ("/up/repo/src/u.txt", "u"), ("/loose/deep/l.txt", "l"),
@@ -1088,8 +1060,7 @@ def hookFiles : List (String × String) :=
 /-- The keys of the hook checks (`hookBindings`), with the loop told of
 `registry`'s compile contributions. -/
 def hookKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
-  let keys := compileKeysOf hookBindings
-  { keys with registered := { keys.registered with compile := registry.compileHook } }
+  toldHook (compileKeysOf hookBindings) registry
 
 /-- The output both `a-build`s write: a line `a-mode`'s and `b-mode`'s `at`
 formats read, and one the general format reads. -/
@@ -1107,21 +1078,19 @@ def hookStreams : Array Process.StreamScript :=
     { command := shellCommand "/r/crate" "cargo clippy", steps := linesSteps ["ok"] },
     { command := shellCommand "/r/crate" "cargo clippy -D warnings", steps := linesSteps ["ok"] }]
 
-/-- A driver of the hook checks: the world of `hookWorld`, with the hook
-checks' keys over `registry` and the compile checks' jobs, the files of both,
-and the children of both; `none` if making the state was refused. -/
+/-- A driver of the hook checks: the hook checks' keys over `registry`, in
+which a file's workspace is the stand-in's for the finder's answer
+(`compileFound`) and its modes on markers the stand-in's over the hook
+checks' markers (`hookMarkers`), and the compile checks' jobs, the files of
+both, and the children of both; `none` if making the state was refused. -/
 def hookDriver (registry : Config.Registry := hookRegistry) : Option TestDriver :=
-  let model := hookWorld.jobModel "git" hookDirectories
   let files :=
     (compileFiles ++ hookFiles).foldl
-      (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
+      (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) {}
   (Loop.Driver.over (hookKeys registry) compileJobs (EditorState.initial ⟨640, 480⟩)
         editorModel).toOption.map
     fun driver =>
-    { driver with
-      jobs :=
-        { model with
-          files, processes := { model.processes with streams := hookStreams ++ compileStreams } } }
+    { driver with jobs := { files, processes := { streams := hookStreams ++ compileStreams } } }
 
 /-- The on-modes of `/r/hook/one/two/three/four` in the hook checks:
 `a-mode` at `/r/hook/one/two`, then `b-mode` at `/r/hook`. -/
@@ -1156,8 +1125,7 @@ def hookOverCompiled : Config.Registry :=
 `project` as its project commands, as a reload that changes them tells
 it. -/
 def toldProject (driver : TestDriver) (project : SetupM Unit) : TestDriver :=
-  let compile := (hookRegistry (hookSetup aCommands project)).compileHook
-  { driver with keys := { driver.keys with registered := { driver.keys.registered with compile } } }
+  { driver with keys := toldHook driver.keys (hookRegistry (hookSetup aCommands project)) }
 
 /-- The settings `Compile.projectSettings` gives the project of `identity`
 for the mode `mode`, run as the loop runs a command in `driver`; `none` if
@@ -1190,86 +1158,13 @@ def hookLanguageDriver : Option TestDriver :=
                   (Language.modes.find? (·.name == name)).map ([·])
               languages := [modelRs] } } }
 
-/-- The checks of the compile hook (`Editor/Workspace/Modes.lean`,
-`Compile.lean`, "The hook"), on the loop's driver over the editor's
-models, the job model and the process model, in the world of `hookWorld`
-with the contributions of `hookSetup`. -/
+/-- The checks of the compile hook (`Compile.lean`, "The hook"), on the
+loop's driver over the editor's models, the job model and the process
+model, with the stand-ins for the workspace's attach and its modes on
+markers (`compileFound`, `hookMarkers`) and the contributions of
+`hookSetup`. -/
 def compileHookChecks : List Check :=
   [{  name :=
-        "hook criterion 1: a contribution registered in config with marker marker.toml turns marker-mode on in a buffer of /r/a/b/c/x.txt, two directories under /r/a/marker.toml, with /r/a as its root, and not in a buffer of /r/src/a.lean outside it"
-      run :=
-        pure <|
-          match hookDriver with
-          | none => false
-          | some driver =>
-            let inside := settledAfter driver "C-o m"
-            let outside := settledAfter driver "C-o a"
-            (shownWorkspace inside).map (·.1.location) == some (.local "/r") &&
-              shownMinors inside == some #["marker-mode"] &&
-              shownOnModes inside == some #[{ mode := "marker-mode", root := "/r/a" }] &&
-              (shownWorkspace outside).map (·.1.location) == some (.local "/r") &&
-              shownMinors outside == some #[] &&
-              shownOnModes outside == some #[] },
-    { name :=
-        "hook criterion 2: a marker above the buffer's workspace root turns no mode on: /up/marker.toml above the workspace /up/repo; /loose/marker.toml above /loose/deep/l.txt, which has no workspace and looks in its own directory alone; /loose2/marker.toml beside /loose2/l.txt turns marker-mode on with root /loose2"
-      run :=
-        pure <|
-          match hookDriver with
-          | none => false
-          | some driver =>
-            let up := settledAfter driver "C-o u"
-            let loose := settledAfter driver "C-o l"
-            let beside := settledAfter driver "C-o 2"
-            (shownWorkspace up).map (·.1.location) == some (.local "/up/repo") &&
-              shownMinors up == some #[] &&
-              shownOnModes up == some #[] &&
-              (showing loose).map (·.buffer.name) == some "l.txt" &&
-              (shownWorkspace loose).isNone &&
-              shownMinors loose == some #[] &&
-              shownOnModes loose == some #[] &&
-              (shownWorkspace beside).isNone &&
-              shownMinors beside == some #["marker-mode"] &&
-              shownOnModes beside == some #[{ mode := "marker-mode", root := "/loose2" }] },
-    { name :=
-        "hook criterion 3: with a-mode's marker two directories above the file and b-mode's four, both inside /r, both modes are on, a-mode first with root /r/hook/one/two and b-mode with root /r/hook, though b-mode was registered first"
-      run :=
-        pure <|
-          match hookDriver with
-          | none => false
-          | some driver =>
-            let opened := settledAfter driver "C-o h"
-            shownOnModes opened ==
-                some
-                  #[{ mode := "a-mode", root := "/r/hook/one/two" },
-                    { mode := "b-mode", root := "/r/hook" }] &&
-              shownMinors opened == some #["a-mode", "b-mode"] },
-    { name :=
-        "with no compile contribution registered, opening a file starts no find-mode-markers job and gives the buffer no on-modes"
-      run :=
-        pure <|
-          match compileDriver with
-          | none => false
-          | some driver =>
-            let (opened, names) := settledNames driver "C-o a"
-            names.contains Workspace.findJob && !names.contains Workspace.markerJob &&
-              shownOnModes opened == some #[] &&
-              shownMinors opened == some #[] },
-    { name :=
-        "a second file of a directory whose workspace is cached gets its on-modes from find-mode-markers, with no git run"
-      run :=
-        pure <|
-          match hookDriver with
-          | none => false
-          | some driver =>
-            let first := settledAfter driver "C-o h"
-            let (second, names) := settledNames first "C-o g"
-            (showing second).map (·.buffer.name) == some "g.txt" &&
-              second.jobs.processes.started == first.jobs.processes.started &&
-              names.contains Workspace.markerJob &&
-              !names.contains Workspace.findJob &&
-              shownOnModes second == shownOnModes first &&
-              shownMinors second == some #["a-mode", "b-mode"] },
-    { name :=
         "hook criterion 4: in that set-up compile's prompt holds a-mode's first command, a-build; a line both a-mode's and b-mode's formats read is a-mode's location, and a line b-mode's format and the general one read is b-mode's"
       run :=
         pure <|
@@ -1281,7 +1176,7 @@ def compileHookChecks : List Check :=
             asked.loop.state.prompt.map (·.label) == some Compile.promptLabel &&
               (showing asked asked.loop.state.frame.focused).bind (·.text) == some "a-build" &&
               locationsOf ran placeR == hookLocations &&
-              (Compile.formatsOf hookRegistry.compileContributions hookModes).map (·.name) ==
+              (Compile.formatsOf (hookOf hookRegistry).contributions hookModes).map (·.name) ==
                 #["a-at", "b-at", "b-general", "general"] },
     { name :=
         "hook criterion 5: on the process model, compile accepted with its default starts /bin/sh -c a-build in /r/hook/one/two, the header says r@main in /r/hook/one/two: a-build, and the output is in *compilation: r@main*, the workspace's buffer"
@@ -1599,19 +1494,7 @@ def compileHookChecks : List Check :=
                   (fun site => (site.file.toString, site.first, site.last, site.message)) ==
                 #[("/r/hook/one/two/a.rs", 1, 2, some "unused x")] },
     { name :=
-        "a marker order crosses as arguments and back, and arguments that are no order read as none; the marker job started with them fails"
-      run :=
-        let orders : List Workspace.MarkerOrder :=
-          [{ buffer := ⟨1⟩, directory := "/r/src", bound := "/r", markers := #[] },
-            { buffer := ⟨4⟩, directory := "/a b/é", bound := "/a b", markers := #["a.toml", "B"] }]
-        pure
-          (orders.all
-              (fun order => Workspace.MarkerOrder.ofArguments? order.arguments == some order) &&
-            [[], [.nat 1, .str "/r"], [.nat 1, .str "/r", .str "/r", .nat 0]].all
-              (Workspace.MarkerOrder.ofArguments? · == none) &&
-            ((Workspace.markerWork [.nat 1] ()).runModel {}).1 matches .failed _) },
-    { name :=
-        "opening /r/crate/src/main.rs under /r/crate/Cargo.toml gives its buffer the language model-rs and the major mode code, attached with that language's grammar, and, once the marker job's command runs after, the minor mode cargo-mode with root /r/crate: setting the major mode on open and turning the markers' minor modes on later leave each other alone"
+        "opening /r/crate/src/main.rs under /r/crate/Cargo.toml gives its buffer the language model-rs and the minor mode cargo-mode with root /r/crate: choosing the language on open and turning the markers' minor modes on leave each other alone"
       run :=
         pure <|
           match hookLanguageDriver with
@@ -1619,8 +1502,7 @@ def compileHookChecks : List Check :=
           | some driver =>
             let opened := settledAfter driver "C-o k"
             (showing opened).map (·.buffer.name) == some "main.rs" &&
-              languageAndMajor opened == some (some "model-rs", some "code") &&
-              opened.model.syntaxTree.attached.map (·.2) == #["json"] &&
+              (languageAndMajor opened).map (·.1) == some (some "model-rs") &&
               shownMinors opened == some #["cargo-mode"] &&
               shownOnModes opened == some #[{ mode := "cargo-mode", root := "/r/crate" }] },
     { name :=
@@ -1630,7 +1512,7 @@ def compileHookChecks : List Check :=
           compileContribution
             { Compile.cargoMode with
               commands := #[{ name := "build", line := "cargo build --release" }] }
-        let hook := (hookRegistry setup Compile.shipped).compileHook
+        let hook := hookOf (hookRegistry setup Compile.shipped)
         pure
           (hook.contributions.map (·.mode) == #["cargo-mode", "lake-mode", "mise-mode"] &&
             (hook.contributions[0]?.map fun cargo =>
@@ -1652,7 +1534,7 @@ def compileHookChecks : List Check :=
                 commands := #[{ name := "build", line := "make" }], formats := #[atFormat] }
           projectCommands (.remote "github.com/o/r") "a-mode" [("lint", "make lint")]
               [("profile", .str "dev")]
-        let hook := (hookRegistry setup).compileHook
+        let hook := hookOf (hookRegistry setup)
         pure
           (hook.contributions.map (·.mode) == #["a-mode"] &&
             (hook.contributions.map fun contribution =>
@@ -1735,11 +1617,10 @@ def compileListedChecks : List Check :=
       run :=
         let reachable := Location.reachable "kube" "pod" "/app"
         pure <|
-          match compileListingDriver with
+          match compileListingDriver (opened := kubeOpened) with
           | none => false
           | some driver =>
-            let waiting := settledBut (fedTo driver (presses "C-p 1")).1 Workspace.markerJob
-            let moved := settledOn (pressedOn waiting "C-e k") []
+            let moved := settledAfter driver "C-p 1"
             let asked := pressedOn moved "C-k i"
             (shownWorkspace moved).map (·.1.location) == some reachable &&
               startedCount asked (tList "/t") == 0 &&

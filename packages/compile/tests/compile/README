@@ -21,20 +21,15 @@ of the core into this package.
 
 The checks of the shipped modes (cargo-mode, lake-mode and mise-mode,
 packages/compile/Compile/Shipped.lean) copy the trees below into a temporary
-directory, with a copy of `cargo` shaped as its worktree (`cargo-wt`), and
-make each a repository for the git fixture (`bin/git`). Every child they
-start gets `bin`, then /usr/bin and /bin as its `PATH`, through its
+directory, with a copy of `cargo` (`cargo-wt`) that the checks' stand-in
+for the workspace finder answers as its worktree; no git is run. Every child
+they start gets `bin`, then /usr/bin and /bin as its `PATH`, through its
 command's own environment, so the scripts in `bin` stand for the real
-tools, and no real cargo, lake, mise or git is run. Each
+tools, and no real cargo, lake or mise is run. Each
 script writes its canned output, which ends in a line feed, on one stream,
 so the compilation buffer's lines are in the order written; shell builtins
 only.
 
-- bin/git: the fixture that stands in for git, a byte-for-byte copy of the
-  core's (tests/workspaces/git, whose README says what it answers). The
-  package carries its own copy because its linked test runs in the
-  package's directory, and a package that read `../../tests/workspaces`
-  could not be fetched from anywhere else later.
 - bin/cargo: `cargo build` writes `bin/cargo-build.txt` to standard error
   and exits 101: rustc's error for line 4, column 18 of `src/main.rs`, as
   cargo 1.98 prints it, with the `Compiling` line's path dropped. Anything

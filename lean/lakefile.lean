@@ -22,7 +22,11 @@ It requires no other package. A package set requires this one by path, and
 Lake would fetch every git dependency of it into each set's own
 `.lake/packages`, so the Lean formatter is the `require` of a package of
 its own, `tools/lean-fmt/lakefile.toml`, which nothing requires
-(`docs/design/packages.md`, "The package set and its build"). -/
+(`docs/design/packages.md`, "The package set and its build").
+
+It declares no keyword: it supplies no input scheme (`schemeKeyword`). The
+Vim scheme is the default package `evil`'s (`packages/evil/`), so an editor
+built from this package alone refuses to start. -/
 package «editor-core» where leanOptions := coreLeanOptions
 
 /-- The editor's modules. Its root `Editor` is what user config is elaborated
@@ -32,21 +36,34 @@ root, `Editor.Core`, is the core's (`Editor/Core.lean`,
 directly or through another, so the build makes every core module, the
 ones `Editor` does not import among them (the bindings, the real bindings
 of the ports, the config session, the hosts, the test kit under
-`Editor/Test/`). The list of the packages still in this Lake package is a
-library of its own, below, and a feature that has moved out is another
-Lake package's (`packages/`). -/
+`Editor/Test/`). This Lake package lists no package of its own and has no
+entry module: every feature is another Lake package's (`packages/`), and a
+Lake package with no entry module contributes nothing to a set's root
+(`entryModule?`). It is named `editor-core`, not `editor`, because a Lake
+package named `p` lists its packages in the module `<P>.EditorPackage`,
+and `editor` would put a list at `Editor.EditorPackage`, under the
+namespace the core imports check rules (`docs/design/packages.md`, "The
+package set and its build"). -/
 @[default_target] lean_lib Editor where roots := #[`Editor, `Editor.Core]
 
-/-- The core's entry module (`EditorCore/EditorPackage.lean`): the list of
-the packages the features still in this Lake package make. A Lake package
-named `p` lists its packages in the module `<P>.EditorPackage`, `<P>` being
-`p` in upper camel case, which is why this package is named `editor-core`:
-`editor` would put the list at `Editor.EditorPackage`, under the namespace
-the core imports check rules (`docs/design/packages.md`, "The package set
-and its build"). The list names every package and so is no module of the
-editor: it is a library of its own, outside `Editor/`, that the generated
-root and the tests that need the list import. -/
-lean_lib EditorCore where roots := #[`EditorCore.EditorPackage]
+/-- The interface library `files-api` (`FilesApi.lean`): the hooks around a
+buffer taking in and writing a file, what files does for others, and the
+names others reach. It is in the core's Lake package as its own `lean_lib`,
+outside `Editor`, with the layout and names an interface package has, and
+a core interface for good: session restore, which stays in the core,
+reaches files through it. It imports only the core's API, and its test
+library only that, this library and the core's test kit. The interface
+libraries the features-as-packages roadmap's phase 5 staged here as it is,
+`vc-api` and `project-api`, are interface packages since phase 6
+(`packages/vc-api/`, `packages/project-api/`): their last users left the
+core, and each moved with a `git mv` and a lakefile, no import line in it
+changed. -/
+lean_lib FilesApi
+
+/-- The test library of `files-api` (`FilesApiTest/`): its fake, the core's
+kit's opener with the interface's hooks (`FilesApiTest.Fake`), and its
+contract check (`FilesApiTest.Contract`). -/
+lean_lib FilesApiTest where globs := #[.submodules `FilesApiTest]
 
 /-- Code that `ffi-test overflow` has Lean's interpreter run
 (`InterpretedFixture.lean`; `mise run ffi-overflow`). It is a library of its
@@ -729,18 +746,25 @@ order they register and the config base `base` (`setBase`). It imports the
 core's base, `Editor`, for the link alone (`Editor/Main.lean`, "This module
 names no package, and not the config base"), then the executable's entry,
 then each entry module; and its `main` is one call of `Editor.Main.run`
-with the entry modules' `packages` appended in that order, the base as an
+with the entry modules' `packages` appended in that order (`#[]` for a
+set with no entry module, as a set of the core alone is), the base as an
 array of names, and what the build says of the editor for the files it
 generates in a config directory (`Editor/Config/LakePackage.lean`,
 `Origin`): `setName`, the Lake name of the set, and `pin`, the text of the
 core's `lean-toolchain`. Every module of the base is among its imports, so
 each is linked into the executable, which the elaborator requires of a
-module it imports at runtime. -/
-def rootSource (entries base : Array Name) (setName pin : String) : String :=
+module it imports at runtime.
+
+`schemes` are the entry modules that supply an input scheme (`SetEntry.scheme`),
+in the order they register: `run` is handed the `scheme` of each, as an
+array, and runs the last (`Editor/Main.lean`, "The input scheme"). With
+none the array is empty, and the editor refuses to start. -/
+def rootSource (entries schemes base : Array Name) (setName pin : String) : String :=
   let imports := entries.foldl (fun text name => text ++ s!"import {name}\n") ""
   let lists :=
     if entries.isEmpty then "#[]"
     else " ++ ".intercalate (entries.map fun name => s!"{name}.packages").toList
+  let supplied := ", ".intercalate (schemes.map fun name => s!"{name}.scheme").toList
   let names := ", ".intercalate (base.map fun name => s!"`{name}").toList
   s!"import Editor
 import Editor.Main
@@ -753,13 +777,14 @@ the Lake packages of a package set, each after the packages it requires.
 Do not edit it: the build writes it again.
 -/
 
-/-- The editor, with the packages of the set's Lake packages, the modules
+/-- The editor, with the packages of the set's Lake packages, the input
+schemes they supply, the modules
 config is elaborated on, `Editor` and then the entry module of each package
 of the set outside the core, and the set's Lake name and the toolchain pin,
 for the lakefile and the toolchain file it generates in a config
 directory. -/
 def main (args : List String) : IO UInt32 :=
-  Editor.Main.run ({lists}) #[{names}] \{ setName := {setName.quote}, pin := {pin.quote} } args
+  Editor.Main.run ({lists}) #[{supplied}] #[{names}] \{ setName := {setName.quote}, pin := {pin.quote} } args
 "
 
 /-- The name of the root module the package-set build generates. No library
@@ -767,18 +792,45 @@ declares it. -/
 def setRootName : Name :=
   `EditorSetRoot
 
+/-- The keyword a Lake package declares in its lakefile when it supplies
+the editor's input scheme (`keywords = ["editor-input-scheme"]`, Lake's own
+package key, as `editor-interface` is, `layerOf`): its entry module then
+declares `scheme : Editor.SchemePackage` beside `packages`, in the
+namespace of its own name (`docs/design/packages.md`, "Input schemes").
+Lake is asked for the keyword, so the build reads no source: a package
+that declares it and no `scheme` fails the generated root's build, which
+names `<P>.EditorPackage.scheme`, as a missing `packages` does. -/
+def schemeKeyword : String :=
+  "editor-input-scheme"
+
+/-- An entry module of a set. -/
+structure SetEntry where
+  /-- Whether its Lake package is this one, the core. -/
+  core : Bool
+  /-- The module's name. -/
+  module : Name
+  /-- Whether its Lake package supplies an input scheme (`schemeKeyword`). -/
+  scheme : Bool
+
 /-- The entry modules of the set `pkg`, in the order they register
 (`setPackages`, `entryModule?`), each with whether its Lake package is this
-one, the core. -/
-def setEntries (pkg : Package) : FetchM (Array (Bool × Name)) := do
+one, the core, and whether it supplies an input scheme (`schemeKeyword`).
+The core has no entry module, so none of them is the core's; `core` is
+kept so that a core with one would still stay out of the base (`setBase`).
+A package that declares the scheme keyword and has no entry module is an
+error that names it: there is nowhere for its scheme to be declared. -/
+def setEntries (pkg : Package) : FetchM (Array SetEntry) := do
   let ws ← getWorkspace
-  let mut entries : Array (Bool × Name) := #[]
+  let mut entries : Array SetEntry := #[]
   for dep in setPackages ws pkg do
+    let scheme := dep.keywords.contains schemeKeyword
     match ← entryModule? dep with
     | some mod =>
-      entries := entries.push (dep.keyName == __name__, mod.name)
+      entries := entries.push { core := dep.keyName == __name__, module := mod.name, scheme }
     | none =>
-      pure ()
+      if scheme then
+        error
+            s!"the package {dep.baseName.toString (escape := false)} declares the keyword {schemeKeyword} and has no entry module {entryModuleName dep}: a package that supplies the input scheme declares `scheme` there"
   return entries
 
 /-- The config base of a set, from its entry modules (`setEntries`): the
@@ -786,11 +838,12 @@ modules its editor elaborates config on. `Editor`, the core's base
 (`Editor.lean`), then the entry module of each package of the set outside
 the core, in the order they register, so that config can name what a
 package of the set declares: an entry module imports its package's modules.
-The core's own entry module is not in it: the core's base is `Editor`, and
+The core has no entry module, and one of the core's would not be in it:
+the core's base is `Editor`, and
 what config sees of the core does not change with the set
 (`docs/design/packages.md`, "The package set and its build"). -/
-def setBase (entries : Array (Bool × Name)) : Array Name :=
-  #[`Editor] ++ (entries.filter (!·.1)).map (·.2)
+def setBase (entries : Array SetEntry) : Array Name :=
+  #[`Editor] ++ (entries.filter (!·.core)).map (·.module)
 
 /-- The root module of the set `pkg`, written from the entry modules of the
 set's packages (`setEntries`, `setBase`, `rootSource`), the set's Lake name
@@ -817,8 +870,8 @@ def setRoot (pkg : Package) : FetchM Module := do
   -- that one file (`tools/toolchain-check.sh`).
   let pin ← IO.FS.readFile (core.dir / "lean-toolchain")
   writeIfChanged root.leanFile
-      (rootSource (entries.map (·.2)) (setBase entries) (pkg.baseName.toString (escape := false))
-        pin)
+      (rootSource (entries.map (·.module)) ((entries.filter (·.scheme)).map (·.module))
+        (setBase entries) (pkg.baseName.toString (escape := false)) pin)
   return root
 
 /-- The `.olean` directories of the set `pkg`: the core's first, then that
@@ -908,8 +961,8 @@ def buildRecordText : IO String :=
 of the core, so two editors over one core have the same identity whatever
 their sets hold, and any change to the core gives a new one
 (`docs/design/packages.md`, "User package sets"). It mixes the traces of
-the objects of every module of the core's two libraries (`Editor` and
-`EditorCore`; the whole libraries, so a package that imports a core module
+the objects of every module of the core's library (`Editor`; the whole
+library, so a package that imports a core module
 the default set does not link still has its core's identity), the core's
 glue (`glue.o`), the core's Rust archive (`coreArchive`: `rustlib`, or
 the same archive reused for a user's set) and the version of the Lean
@@ -919,7 +972,7 @@ def coreIdentity (pkg : Package) : FetchM (Job String) := do
   let some core := (← getWorkspace).findPackageByKey? __name__
     | error "the core's package is not in the workspace"
   let mut libraries : Array (Job (Array Module)) := #[]
-  for name in [`Editor, `EditorCore] do
+  for name in [`Editor] do
     let some lib := core.leanLibs.find? (·.name == name)
       | error s!"the core's library {name} is not in the workspace"
     libraries := libraries.push (← lib.modules.fetch)
@@ -1115,12 +1168,22 @@ def relativeUnder (dir file : FilePath) : Option String :=
 
 #guard relativeUnder "/r/lean" "/r/other/Api.lean" == none
 
+/-- The interface libraries staged in the core's Lake package, each with its
+test library (`lean_lib FilesApi`, above): the config base imports them
+through the features still in the core, so the bundle ships them as it ships
+`Editor`. One moves out of this list when it moves to `packages/`, as
+`VcApi` and `ProjectApi` did in phase 6. -/
+def stagedInterfaceLibraries : List Lean.Name :=
+  [`FilesApi, `FilesApiTest]
+
 /-- Whether a library of `pkg` ships its modules built in the bundle
-(`editorShipped`): of the core, `Editor` and `EditorCore`, the libraries
-`coreIdentity` reads; of another package, each library but its tests,
-`<P>Test`. -/
+(`editorShipped`): of the core, `Editor`, the library
+`coreIdentity` reads, and the interface libraries staged in it
+(`stagedInterfaceLibraries`), whose changes reach the identity through the
+traces of the core's modules that import them; of another package, each
+library but its tests, `<P>Test`. -/
 def shipsLibrary (pkg : Package) (lib : LeanLib) : Bool :=
-  if pkg.keyName == __name__ then lib.name == `Editor || lib.name == `EditorCore
+  if pkg.keyName == __name__ then lib.name == `Editor || stagedInterfaceLibraries.contains lib.name
   else
     match toUpperCamelCase pkg.baseName with
     | .str namespace_ base => lib.name != .str namespace_ (base ++ "Test")
@@ -1182,7 +1245,7 @@ the packages' lakefiles name the bundle's core unchanged; a package
 elsewhere is refused. For each package of the set (`setPackages`): its
 lakefile, `lake-manifest.json` and `lean-toolchain`; and for every module
 of each library that ships (`shipsLibrary`, `libraryModules`: of the core,
-`Editor` and `EditorCore`; of the others, each library but its tests), its
+`Editor`; of the others, each library but its tests), its
 source and every file Lake wrote for it (`builtFiles`). Of the core, also
 its glue, `ffi/glue.c`, with `glue.o` built and its trace and hash. Then
 the core's Rust archive and its system libraries

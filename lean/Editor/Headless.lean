@@ -11,7 +11,6 @@ import Editor.Event.Queue
 import Editor.Headless.CommandLine
 import Editor.Headless.Queue.Real
 import Editor.Headless.Wait
-import Editor.InputScheme.Vim.Default
 import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Pool
@@ -88,8 +87,9 @@ as before, so reload and job completion work as they did.
 
 - **The host is given its input scheme**, as a parameter of its
   collaborators' type (`Collaborators β σ scheme`), and its loop runs that one
-  (`Loop scheme`). The executable's is the Vim scheme over its default
-  states (`Vim.Default.scheme`); a test hands a host the test scheme.
+  (`Loop scheme`). The executable's is the one its package set supplies
+  (`Editor/Main.lean`, "The input scheme"); a test hands a host the test
+  scheme.
 - **The frame is made when the loop is first needed** (`Running.framed`):
   at the first event from the window input, the first command run by name
   or the first job's command to deliver, whichever comes first. The host
@@ -192,9 +192,8 @@ as before, so reload and job completion work as they did.
     repeated name, one whose `setup` is refused, or one that sets what only
     config may choose. The others register and the loop starts.
   - **The executable's hosts are handed the packages of its package set**:
-    those of the core's Lake package (`EditorCore.EditorPackage.packages`,
-    `EditorCore/EditorPackage.lean`), then those of each package of the
-    set, which the executable's generated root passes through
+    those of each package of the set (the core's Lake package lists
+    none), which the executable's generated root passes through
     `Editor.Main.run` to `main` here and to the window mode's
     (`docs/design/packages.md`, "The package set and its build"). The
     core's are 23, each in
@@ -826,7 +825,7 @@ inductive Request where
   /-- Print whether the last rows query about the focused view, at what it
   was published with, matches the frame the display laid out. -/
   | agree
-  /-- Run the open command (`Files.openName`) with the path `path`: the
+  /-- Run the open command (`FileJobs.openFileCommand`) with the path `path`: the
   window mode's first request when it was given a file. -/
   | «open» (path : String)
   /-- Say `text` in the echo area (`Running.said`): what the window mode has
@@ -1074,8 +1073,7 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   source and menu the host has before config is one of theirs. The default
   is none, and a host handed none starts with an empty registry and
   publishes no menu bar; the executable's hosts are handed the packages
-  of its package set, the core's first
-  (`EditorCore/EditorPackage.lean`). -/
+  of its package set. -/
   packages : Array Package := #[]
   /-- Where a log entry goes: a command that took longer than `slowAfter`,
   and a package the host refused as its loop started (`Running.new`).
@@ -1318,8 +1316,8 @@ def reportLines (report : Config.Report) : Array String :=
   #[outcome] ++ diagnostics ++
     report.unknownTheme.toArray.map (fun name => s!"theme: {Theme.unknown name}") ++
     report.unknownSegments.map (fun name => s!"segment: {ModeLine.unknown name}") ++
-    report.unknownStyles.map (fun name => s!"style: {Completion.Styles.unknown name}") ++
-    report.unknownDisplays.map (fun name => s!"display: {Completion.Displays.unknown name}") ++
+    report.unknownStyles.map (fun name => s!"style: {Completion.Style.unknown name}") ++
+    report.unknownDisplays.map (fun name => s!"display: {Completion.Display.unknown name}") ++
     report.unknownAtPoints.map (fun name => s!"at-point: {Completion.AtPoint.unknown name}") ++
     report.unusableRules.map fun sentence => s!"rule: {sentence}"
 
@@ -2149,7 +2147,7 @@ def paused (collaborators : Collaborators β σ scheme) (running : Running β σ
   let (stepped, running) ←
     running.attempt collaborators
         (frame.invoke (running.keys collaborators (← collaborators.services.timers.now))
-          { command := AtPoint.pausedName, arguments := [.nat view.index, .nat ms] })
+          { command := Completion.AtPoint.pausedCommand, arguments := [.nat view.index, .nat ms] })
   let some stepped := stepped | return running
   running.took collaborators stepped
 
@@ -2361,7 +2359,8 @@ def request (collaborators : Collaborators β σ scheme) (running : Running β �
     Request → IO (Running β σ scheme)
   | .reload => running.reduce collaborators .requested
   | .run name => running.run collaborators { command := name }
-  | .open path => running.run collaborators { command := Files.openName, arguments := [.str path] }
+  | .open path =>
+    running.run collaborators { command := FileJobs.openFileCommand, arguments := [.str path] }
   | .say text => return running.said text
   | .spawn name => running.spawn collaborators name
   | .show => do
@@ -3854,7 +3853,7 @@ answer too, by its own milliseconds alone; an `indexed <seconds>` guards
 the index's write and a `restarted <seconds>` the hand-over by theirs, in
 place of `waitGuard`. A failure of a wait with its own guard is `waited`
 it. The headless mode passes one guard for both (`settlePatience`); a check
-passes its hang guard (`ConfigTest.hangGuard`), or, to pin a bound of the
+passes its hang guard (`Editor.Test.Linked.hangGuard`), or, to pin a bound of the
 headless mode, a short one with a reload or the editor thread held for
 good; a check that holds the loop's end gives `guard := 0`, so that the
 hang, said at once, is what lets it go. -/
@@ -3977,22 +3976,22 @@ source, `emit` as the output and stderr as the log. Config is elaborated on
 caller with no set. Each module of it must be linked into the executable
 and found in `oleans`. It is an argument every caller writes, with no
 default: a host that fell back to `Editor` without a word would reject
-config that names a package's declarations. Its input scheme is the Vim scheme's default
-(`Vim.Default.scheme`), which is the host's type and no package's. Its
+config that names a package's declarations. Its input scheme is `scheme`,
+which is the host's type: the executable passes the one its package set
+supplies (`Editor/Main.lean`, "The input scheme"). Its
 display is the recorder and its clipboard its own, as a host's are by
 default.
 
 It names no package: the executable passes the packages of its package
-set, the core's first (`EditorCore/EditorPackage.lean`), and what those
-register is said there and in each package's module.
+set, and what those register is said in each package's module.
 
 It is apart from `shipped`, which makes what it is over, so that the
 collaborators can be made with no pump started. -/
-def shippedOver (packages : Array Package) (base : Array Lean.Name) (sysroot : String)
-    (oleans : List String) (configDir : String) (emit : String → IO Unit) (services : Job.Services)
-    (published : Snapshots) (held : Job.HeldSnapshots) (files : Config.Elaborate.ModuleFiles)
-    (stateDirectory : Option System.FilePath := none) :
-    Collaborators Config.Elaborate.Base Config.Elaborate.Handle Vim.Default.scheme :=
+def shippedOver (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Name)
+    (sysroot : String) (oleans : List String) (configDir : String) (emit : String → IO Unit)
+    (services : Job.Services) (published : Snapshots) (held : Job.HeldSnapshots)
+    (files : Config.Elaborate.ModuleFiles) (stateDirectory : Option System.FilePath := none) :
+    Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme :=
   { elaborator :=
       Config.Elaborate.elaborator
         { sysroot, oleanDirs := oleans.map System.FilePath.mk, imports := base } files,
@@ -4012,7 +4011,8 @@ def reportedEnvironments (state : IO.Ref Process.Environments) (source : UInt64)
   Job.sharedEnvironments state fun text => discard <| queue.post { source, code := 0, text }
 
 /-- The collaborators the executable's hosts are made of, the headless
-mode's and the window mode's, with `packages` as the packages the host
+mode's and the window mode's, which run the input scheme `scheme`, with
+`packages` as the packages the host
 registers: `shippedOver` the library's timer service,
 file service, process service, watch service and diff service for the
 jobs, the library's matcher (`Fuzzy.real`), which the loop's match jobs ask,
@@ -4022,10 +4022,11 @@ Config is elaborated on `base`, which every caller names (`shippedOver`).
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
 queues ends. -/
-def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : String)
-    (oleans : List String) (configDir : String) (emit : String → IO Unit) (host : Process.Host)
-    (fakeClock : Bool := false) (stateDirectory : Option System.FilePath := none) :
-    IO (Collaborators Config.Elaborate.Base Config.Elaborate.Handle Vim.Default.scheme) := do
+def shipped (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Name)
+    (sysroot : String) (oleans : List String) (configDir : String) (emit : String → IO Unit)
+    (host : Process.Host) (fakeClock : Bool := false)
+    (stateDirectory : Option System.FilePath := none) :
+    IO (Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme) := do
   discard <| Job.Pool.warm Job.Pool.size warmPatience
   let completions ← Job.Completions.new
   discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
@@ -4050,7 +4051,7 @@ def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : Strin
   -- temporary directory, made when the first is written.
   let files ← Config.Elaborate.ModuleFiles.temporary
   let collaborators :=
-    shippedOver packages base sysroot oleans configDir emit
+    shippedOver scheme packages base sysroot oleans configDir emit
       { completions, timers
         files := Job.realFiles completions published.reader held
         processes := Job.realProcesses completions refused timers timed
@@ -4119,7 +4120,8 @@ def runningAt (origin : Config.LakePackage.Origin) (appPath : String) (configDir
   PackageSet.at appPath config (directory.map (origin.setName, ·)) coreDirectory sysroot data
       readFile fun path => System.FilePath.pathExists path
 
-/-- The headless mode of the executable, handed the packages its host
+/-- The headless mode of the executable, handed the input scheme its host
+runs, the packages its host
 registers, the base config is elaborated on (`Editor/Main.lean`, "The
 base") and the command line after
 `headless`: `editor headless [--render] [--generate] [<sysroot> <olean dir>]
@@ -4170,8 +4172,9 @@ executable's path; `main` reads that path and the record at the edge
 editor's (`Collaborators.workingDirectory`): where `:!` runs for a buffer
 with neither a workspace nor a file; no path of the command line is read
 against it. -/
-def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.LakePackage.Origin)
-    (launch : Restart.Launch) (arguments : List String) : IO UInt32 := do
+def main (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Name)
+    (origin : Config.LakePackage.Origin) (launch : Restart.Launch) (arguments : List String) :
+    IO UInt32 := do
   let appPath := (← IO.appPath).toString
   -- The record the build wrote beside the executable, read at the edge: a
   -- record that is not there, or cannot be read, names no directory.
@@ -4212,7 +4215,7 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
       IO.eprintln s!"editor: the headless render session could not be started: {reason}"
       return 1
   let shipped ←
-    shipped packages base sysroot oleans configDir IO.println .headless (fakeClock := true)
+    shipped scheme packages base sysroot oleans configDir IO.println .headless (fakeClock := true)
         (stateDirectory := state.map System.FilePath.mk)
   let workingDirectory ← IO.currentDir
   -- Only with `--generate` may the headless mode write into the config

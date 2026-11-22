@@ -83,9 +83,14 @@ What the gate does check of the window, with none open:
   before a draw of another size, after a texture that no longer fitted
   and when its picture begins to be kept, and at no other time; what is
   done with each answer it can give when asked for a texture; and whether
-  its picture is read back, and in what order of bytes. On wgpu's no-op
-  back end: that a window no adapter can present to gives no renderer,
-  and that a surface that offers its adapter nothing is refused.
+  its picture is read back, and in what order of bytes. The format is
+  chosen for each blending: in linear light an sRGB one, and encoded a
+  format that is not sRGB, as it is or through a view, or, where the
+  surface offers no 8-bit format with an sRGB pair, linear light's
+  choice with the surface saying it blends in linear light; the colour
+  space is `Auto` under both. On wgpu's no-op back end: that a window no
+  adapter can present to gives no renderer, and that a surface that
+  offers its adapter nothing is refused.
 - **What the window that draws makes of what it saw**, in
   `crates/editor-ffi` (`examples/window/`, whose unit tests `cargo
   test` runs, and which open no window): how its command line is read,
@@ -111,6 +116,53 @@ What the gate does check of the window, with none open:
   a window going into fullscreen tells them, are one draw on the last.
   In `crates/editor-render-wgpu`: that a renderer says which masks its
   last draw used.
+- **A resize's final state, the paper around a frame, and the Metal
+  layer's rules** (text-rendering phase 3), each asserted once the system
+  is idle and never as a count that depends on timing:
+  - `crates/editor-render` (`render_loop`): once at rest after six
+    scripts of a resize (sizes within a refresh, frames one size behind,
+    a failed and a hidden draw among them, a change of scale alone, a
+    size and back), the last request is on the last size asked with the
+    frame laid out for it, nothing more is drawn over a further 100
+    refreshes, and every draw is on the size last asked before it;
+  - Lean (`ModelTest/Editor/Loop.lean`): a burst of resizes, a key among
+    them, publishes a scene for each event and ends in one of the last
+    size that tiles it;
+  - `crates/editor-ffi` (`display.rs`): a bound display, told resizes as
+    the window session tells them, draws its last frame at the size and
+    scale the window last said, the window's own sequence for a change of
+    scale among them;
+  - `crates/editor-render-wgpu` (`surface`): a window's surface is
+    configured `Opaque` where it offers that and `Auto` otherwise, at the
+    size of the last draw whatever it answered between, not again for a
+    draw at the size of one whose texture was not presented, and at the
+    new size, not the scale, for a change of scale;
+  - `crates/editor-layout` (`frame`): a frame's ground is the default
+    face's background, `BASE_BACKGROUND` while nothing defines one, frames
+    that differ only in it differ, and one made by hand has `Color(0)`;
+  - `crates/editor-render-wgpu`: the CPU's clear is the ground at full
+    opacity (`cpu`), the GPU's in the space the device blends in
+    (`gpu/tests.rs`, `clear_color`), every kind of quad is drawn on the
+    no-op back end on a ground that is not black, and, through the public
+    API, a half-covered frame is its view's background and its ground and
+    nowhere black (`tests/ground.rs`);
+  - the window port's `Request::Background`: the scripted platform
+    records and shows it, the request contract holds a carrier to it (a
+    fresh window has none, the last wins, it and every other thing shown
+    leave each other alone), the winit adapter sets one only when it is
+    not the one asked last and turns it into AppKit's components
+    (`asked.rs`, `background.rs`), the presenter sends a frame's ground
+    only when it changes and after the title and the menu bar
+    (`render.rs`), its words cross to Lean (`asked_words`, tag 8) and Lean
+    reads them (`askedOf`, `FfiTest/Editor/Ffi/Window.lean`), and the
+    window-host check finds the built-in theme's paper the last background
+    asked;
+  - `crates/editor-render-wgpu` (`layer`): `misses` on readings built in
+    code, each rule alone, a layer read across a change of scale, and
+    `Followed::holds`; a renderer with no window has no layer to read;
+  - `crates/editor-platform-winit` (`examples/settings/reading.rs`, run by
+    `cargo test` since the example is declared `test = true`): the window
+    settings' rules, a background 2/255 off missing.
 - **How the clipboard library's answers become the port's**, in
   `crates/editor-platform-arboard`, on values built in the tests.
 
@@ -372,19 +424,21 @@ decoding of a reply. On the Lean side the job port's search properties
 (`JobContract.grepProperties`) run against the pure model of project
 search and the runner over its fake in `model-test`, and against the
 library's grep service on real files in `contract-test`, beside its
-`grepChecks`; `project-search` itself is pinned on the loop's driver over
-the models (`ModelTest.projectSearchRunChecks`) and over the real bindings
-in a temporary directory (`ContractTest.projectSearchChecks`).
+`grepChecks`; `project-search` itself is pinned, in its package
+(`packages/project-search/`), on the loop's driver over the models
+(`ProjectSearchTest.projectSearchRunChecks`) and over the real bindings in
+a temporary directory (`ProjectSearchTest.Linked.projectSearchChecks`).
 
-Working sets are pinned the same way. Their decisions are Lean's and run
-in `model-test`: the stored form and its JSON (`ModelTest.workingSetChecks`),
-the re-find ladder against the fuzzy model
-(`ModelTest.workingSetRefindChecks`), and, on the loop's driver over the
+Working sets are pinned the same way, in their package
+(`packages/working-set/`). Their decisions are Lean's and run in its test
+driver, `working-set-test`: the stored form and its JSON
+(`WorkingSetTest.workingSetChecks`), the re-find ladder against the fuzzy
+model (`WorkingSetTest.workingSetRefindChecks`), and, on the loop's driver over the
 models, where ranges are held (`workingSetPlaceChecks`), the commands
 (`workingSetRunChecks`, the phase's first acceptance criterion) and the
 store under a state directory of the file model's, through a restart
-(`workingSetDiskChecks`, the second). `contract-test` runs both criteria
-once over the real bindings (`ContractTest.workingSetChecks`): the library's
+(`workingSetDiskChecks`, the second). Its linked test runs both criteria
+once over the real bindings (`WorkingSetTest.Linked.workingSetChecks`): the library's
 file service, text store and fuzzy matcher and real git, in a repository and
 a state directory of its own, both temporary, with the file rewritten by
 `IO.FS.writeFile` between two hosts. No check reads `$HOME` or
@@ -404,12 +458,42 @@ needs none. What it checks:
   real condition variable; it and the tests of that wait read channels
   with a bound, and nothing sleeps.
 - **The painter and the glyph cache**, in `crates/editor-render-wgpu`, on
-  a hand-written rasteriser that reads no font: where each quad goes,
-  the drawing order, what is rasterised once, what is never evicted and
-  what the bound does.
-- **The rasteriser**, on the fixture fonts under `tests/fonts`, compiled
-  in, with glyph ids read from each font's own character map. Its tests
-  state relations only (more ink, wider, differs, the same twice).
+  the rasteriser port's published fake, which reads no font: where each
+  quad goes, the drawing order, what is rasterised once, what is never
+  evicted and what the bound does.
+- **The rasteriser.** The rasteriser port's contract
+  (`crates/editor-raster`, `contract`) runs on its published fake, plain
+  and reading luminance, and on a rasteriser written to break each
+  property, which must fail by that property's name; and on swash's
+  adapter (`crates/editor-render-wgpu/src/raster.rs`), on the fixture
+  fonts under `tests/fonts`, compiled in, with glyph ids read from each
+  font's own character map. The luminance bucket rule and `Fallback` are
+  tested on the fake. Every pure module of the Core Text adapter
+  (`crates/editor-raster-coretext`: the bitmap and the pen, the smoothing
+  decision on its published fake, what is declined, the fill grey, the
+  mask comparison) runs on both legs; no test calls Core Text, and on
+  macOS the gate builds the adapter and its example `check` and runs
+  neither (`mise run coretext-check` runs it on demand). The swash
+  rasteriser's own tests state relations only (more ink, wider, differs,
+  the same twice).
+- **Placement, against Core Text's.** The shaper's pen places of the
+  sentence of the Core Text captures, in the fixture font at 28 and 14
+  px, are within an eighth of a pixel of Core Text's
+  (`crates/editor-shape-parley/tests/core_text.rs`), and the painter
+  puts each of Core Text's places on Core Text's grid
+  (`crates/editor-render-wgpu/src/placement_tests.rs`), both over
+  `tests/coretext/positions.txt`, compiled in.
+- **The blending**, in `crates/editor-render-wgpu` (`blend`, `cpu`,
+  `tests/rasterizer.rs`): both arithmetics, linear light and
+  sRGB-encoded values, for every kind of quad, with the contrast's
+  luminance in linear light in either; the encoded arithmetic within 1
+  of 255 of Core Graphics' own result on every case of
+  `tests/coretext/blend.txt`, compiled in, and linear light missing its
+  cases at half alpha; the compositor and the headless renderer blending
+  as their settings say, and an encoded picture nowhere lighter than a
+  linear one; `Settings::core_text()` blending encoded with a contrast
+  of 0, and the swash fallback's weight fitted encoded
+  (`weight_tests.rs`).
 - **The renderer's picture.** The headless adapter draws one frame of
   real text on the CPU, and no channel of any pixel may be further than 2
   of 255 from the reference image checked in at `tests/render/frame.png`
@@ -419,7 +503,7 @@ needs none. What it checks:
   (`tests/reuse.rs`) are the only two of that crate that run the real
   shaper, for the wiring alone.
 - **The themes' pictures.** The theme picture check
-  (`lean/Editor/Themes/Picture.lean`), in `mise run ffi-test`, publishes a
+  (`lean/Editor/Theme/Picture.lean`), in `mise run ffi-test`, publishes a
   fixture file from Lean through the display's real binding, in each
   theme it is handed, over a display of one fixture font, and the CPU
   renderer draws it. No channel of any pixel may be further than 2 of 255
@@ -438,8 +522,15 @@ needs none. What it checks:
   validates every call as a real one would and draws nothing: the shader
   compiles in both its forms, the pipeline's vertex layout is the
   shader's, and a frame with every kind of quad and every kind of atlas
-  page is drawn inside an error scope with no error
-  (`crates/editor-render-wgpu/src/gpu/tests.rs`).
+  page is drawn inside an error scope with no error, under both
+  blendings, with dual-source blending and without; a device that
+  blends encoded draws on its own target in `Rgba8Unorm` and tells the
+  shader so in its globals (`crates/editor-render-wgpu/src/gpu/tests.rs`).
+- **What the composited sentence is measured by**, in `crates/editor-ffi`
+  (`examples/coretext/measure.rs`, whose unit tests `cargo test` runs, on
+  pictures made in code): the ink, the dark pixels, the worst channel and
+  the direction of a miss. The example itself draws on Core Text and the
+  GPU, and is run on demand (`mise run coretext-check`).
 
 What it cannot check, and so does not claim: what a GPU draws. wgpu has
 no software renderer of its own, so a machine with no GPU and no driver
@@ -509,8 +600,8 @@ model (`lean/Editor/Loop/Driver.lean`): the job is handed its argument,
 its result comes back as a command, and events fed meanwhile are handled
 first; a job saves a snapshot its command took, and a job's command is
 handed what its job loaded and no other job's. The file commands
-(`lean/Editor/Files.lean`) are checked on that driver, over the model of
-files, with no file touched (`ModelTest.fileCommandChecks`): opening a file
+(`packages/files/Files.lean`) are checked on that driver, over the model of
+files, with no file touched (`FilesTest.fileCommandChecks`): opening a file
 makes a buffer of its text, named by its base name, with its file's stamp
 and dominant line ending; what is typed while a load is in flight is
 handled first; a path that is open is shown and not loaded again; a save
@@ -551,12 +642,14 @@ the API. Completion at point is checked on the models in the same layers
 (completion's phase 5): its interface and the shipped `words` against their
 contract (`atPointContractChecks`, `wordsChecks`), a session in the state
 (`atPointStateChecks`), asking through the dispatcher and the chain
-(`atPointChecks`, `registryChecks`), and, on the evil driver over the
-models, the keys, the preview, the accept, the closing rules, one undo step,
-the repeat, a trigger and a pause moved by `Loop.Driver.pass`
-(`atPointLoopChecks`, `atPointRepeatChecks`, `atPointAskChecks`,
-`atPointByItselfChecks`). The editor state's side of a
-save in flight, the snapshot the loop releases once a save has ended and
+(`atPointChecks`, `registryChecks`), and, on the loop's driver over the
+models, under a scheme written in the test that reports a session, the
+keys, the preview, the accept, the closing rules, one undo step, a trigger
+and a pause moved by `Loop.Driver.pass` (`atPointLoopChecks`,
+`atPointAskChecks`, `atPointByItselfChecks`), and, under the Vim scheme
+in the package `evil`'s tests (`packages/evil/EvilTest/Evil/Repeat.lean`),
+the repeat (`atPointRepeatChecks`). The editor state's
+side of a save in flight, the snapshot the loop releases once a save has ended and
 the saved mark a rollback takes back are checked with the state requests
 and the loop's dispatch.
 
@@ -593,7 +686,8 @@ test modules share are in `<Root>/Support/`, and contract-test's rig over
 the real services in the linked test kit, `lean/Editor/Test/Linked/`; `Check` (and `failures`,
 `run` and `usage`, and config-test's `Context`, where the root has them)
 are in `<Root>/Check.lean`; the benchmark is in
-`lean/ConfigTest/Bench.lean`; and the checks of the default config
+`lean/ConfigTest/Bench.lean`, but for the workspace finder's, which is the
+workspace's, in `lean/ConfigTest/Editor/Workspace/Bench.lean`; and the checks of the default config
 (`config/default`), which is no Lean module to mirror, are in
 `lean/ConfigTest/DefaultConfig.lean`. Each root keeps its imports, its `checks`
 aggregator (contract-test's is `main`) and `main`, and every list stays in
@@ -601,7 +695,7 @@ its root's namespace, so `FfiTest.<name>Checks`, `ConfigTest.<name>Checks`
 and `ContractTest.<name>Checks` name it wherever it lives. Put a new check
 in the test module of the module it tests.
 
-The ex command line (`lean/Editor/Ex.lean`) is checked there in layers,
+The ex command line (`packages/ex/Ex.lean`) is checked there in layers,
 so that a change to one breaks no other's checks:
 
 - **A line and a binding, as data** (`exLineChecks`): what a typed line
@@ -638,7 +732,7 @@ so that a change to one breaks no other's checks:
   and with another buffer unsaved, and `reload`. Each message is read
   from the function that makes it.
 
-Evil, Vim's states and motions on the editor API (`lean/Editor/Evil.lean`),
+Evil, Vim's states and motions on the editor API (`packages/evil/Evil.lean`),
 is checked there in three layers, so that a change to one breaks no other's
 checks:
 
@@ -745,13 +839,16 @@ checks:
   costs in requests, on the counting model; and the anchors a scroll by
   rows and a scroll to the cursor's row place, swept the same way.
   `viewChecks` press keys on the loop's driver over the editor's models,
-  under the Vim scheme that ships with evil's commands, in frames a few
-  rows tall: a view follows its cursor after `j`, `k`, `g g` and `$` on a
-  wrapped line, after a resize, and after an edit through another window
-  on the same buffer; a motion that leaves the cursor shown leaves the
-  anchor; the margin holds after every motion of the vocabulary; a failed
-  command and a view whose selection marker was given up leave the
-  anchor; `C-d`, `C-u`, `C-f` and `C-b` move the anchor and the cursor by
+  under the test scheme with the test kit's editing keys, in frames a few
+  rows tall: a view follows its cursor after a move down, up, to the
+  text's start and to the end of a wrapped line, after a resize, and after
+  an edit through another window on the same buffer; a move that leaves
+  the cursor shown leaves the anchor; the margin holds after every move of
+  the kit's editing keys; and a failed command and a view whose selection
+  marker was given up leave the anchor. `evilScrollChecks` press keys on
+  the same driver under the Vim scheme that ships with evil's commands:
+  the margin holds after every motion of the vocabulary; `C-d`, `C-u`,
+  `C-f` and `C-b` move the anchor and the cursor by
   half the rows and by the rows the view fits, with a count, at the
   text's two ends, in a text that ends in a line feed, in a visual state,
   and stopped by the interrupt before each of their requests; and `z t`,
@@ -764,7 +861,7 @@ checks:
 The build checks the theorem that inserting at a
 position and deleting what was inserted leaves the text
 (`lean/Editor/Api/Theorems.lean`), and the theorem that `x` then `u`
-restores the text, with its lemmas (`lean/Editor/Evil/Theorems.lean`,
+restores the text, with its lemmas (`packages/evil/Evil/Theorems.lean`,
 `lean/Editor/UndoTree/Theorems.lean`, `lean/Editor/Text/Model.lean`). The task
 shows by behaviour
 that they build without the library. It puts a `cargo` that always fails
@@ -775,21 +872,22 @@ whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` first runs the host imports check ("The host imports
 check", below) and the core imports check ("The core imports check"), then `lean/.lake/build/bin/ffi-test`, the test executable
-linked against the real library, then `contract-test`, handed five
+linked against the real library, then `contract-test`, handed three
 directories: `tests/process-environment` (the fixtures that stand in for
-mise in the checks of a child's environment), `tests/workspaces` (the
-fixture that stands in for git in the workspace finder's checks, which run
-the finder's contract over the real process and file services; the mode
-marker search's contract runs there too, over the real file service, with
-no fixture),
-`tests/shell` (the fixture `:!` runs over the real process service, and the
-editor's working directory in those checks), `tests/syntax`
-(the syntax fixtures, whose Rust fixtures the indent and text-object checks
-read) and `tests/completion` (the fixture that stands in for fzf in the
-checks of a source a command filters, and in the checks of git's lister and
-the fallback that list a workspace's files, which run real git, isolated
-from the user's config, and real `find` in temporary directories, so they
-pass where fzf is not installed); each fixture must stay executable. The
+mise in the checks of a child's environment), `tests/syntax` (the syntax
+fixtures, whose Rust fixtures the indent and text-object checks read) and
+`tests/completion` (the fixture that stands in for fzf in the checks of a
+source a command filters, so they pass where fzf is not installed); each
+fixture must stay executable. The workspace finder's and the mode marker
+search's contracts over the real services, git's lister and the fallback,
+`:!` over the real process service, project search, the working sets and
+version control over real git were `contract-test`'s until the seven
+features of the files cluster moved out of the core (features-as-packages
+phase 6), and are their packages' linked tests' now, on their own
+fixtures: `packages/workspace/tests/workspaces` (git's stand-in) and
+`packages/workspace/tests/completion` (a byte-for-byte copy of fzf's),
+and `packages/shell/tests/shell` (the fixture `:!` runs, and the editor's
+working directory in those checks). The
 checks of a compile over the real process service, which `contract-test`
 ran on `tests/compile` until the compile mode moved out of the core, are
 its package's linked test's now, on `packages/compile/tests/compile` (the
@@ -814,12 +912,7 @@ its sleep, and whose output must be exactly `scene-expected`; and with `dispatch
 interrupt key, then the keys of a command that ends, then the keys of a
 command that starts a job with an argument, whose sleep the script
 advances past and whose result the job's command says in the echo area,
-and whose output must be exactly `dispatch/expected`; and with
-`at-point/script`, on the shared config, which types `a` and `l` in insert
-state, advances the headless mode's clock 240 ms so the shipped `words`
-source's pause fires, and prints the session's candidate list, then
-previews and accepts its first candidate, and whose output must be exactly
-`at-point/expected`; and with `finder-session/script` on the
+and whose output must be exactly `dispatch/expected`; and with `finder-session/script` on the
 config in `finder-session/config`, which runs that config's command by its
 key `C-c h` and by its ex name `finder-hello`, so the fixture is known to
 load and to say `finder-session: config loaded`, and whose output must be exactly
@@ -828,13 +921,7 @@ load and to say `finder-session: config loaded`, and whose output must be exactl
 no file: `save-buffer` on the scratch buffer says it has no file, and a
 command of config's opens a path that is not absolute, which starts the
 compiled load job and is refused by the library before it asks the file
-system, and whose output must be exactly `files/expected`; and with
-`prompt/script` on the config in `prompt/config`, under the Vim scheme the
-executable runs: a command of config's asks for a prompt, a key that
-prints is typed into the minibuffer, whose view the scene prints with the
-prompt text as its status line, `<Enter>` accepts and config's command
-receives the answer and `<Escape>` cancels, and the run touches no file;
-its output must be exactly `prompt/expected`; and with `evil-script`, which has no `reload` and so
+system, and whose output must be exactly `files/expected`; and with `evil-script`, which has no `reload` and so
 loads no config: it sends `i`, the keys of `hello`, `<Escape>` and `0`,
 and its scenes must show the text, the cursor after each, and the state's
 name in the status line, exactly as `evil-expected` has them. That run is
@@ -850,17 +937,19 @@ listing of the working directory is waited for with `join` and not
 printed before `<Escape>` cancels it, and with `q`, which ends
 the loop, so that the `scene` line
 after it prints nothing; its output must be exactly `ex/expected`. The
-ninth is `candidates/script` on the config in `candidates/config`, under
-the Vim scheme and with the library's fuzzy matcher: a command of
-config's asks with the candidates `wq`, `edit` and `w`; `w` is typed and
-the scene lists `w` and then `wq` after the prompt's label, which only
-the rule that a candidate that is the text is first orders, since the
-library scores the two the same; `C-n` twice chooses `wq`, which the
-scene shows in the chosen face; `<Enter>` gives config's command `wq`;
-with `z` typed the scene lists none, `<Tab>` puts nothing in the input,
-and the command receives `z`; and with `e` typed `<Tab>` puts the first
-listed, `edit`, in the input, the prompt still open, and `<Enter>` gives
-the command `edit`. Its output must be exactly `candidates/expected`.
+fixtures `at-point`, `prompt` and `candidates` were the core's and run here
+until the features-as-packages roadmap's phase 4 moved them, byte for
+byte, into the default packages `at-point` and `minibuffer`, whose
+fixtures the package steps run ("The package steps", below):
+`at-point`, on the shared config copied into it, types `a` and `l` in
+insert state, advances the headless mode's clock 240 ms so the shipped
+`words` source's pause fires, and prints the session's candidate list,
+then previews and accepts its first candidate; `prompt` asks for a
+prompt, types into the minibuffer, accepts with `<Enter>` and cancels
+with `<Escape>`; and `candidates` asks with the candidates `wq`, `edit`
+and `w`, lists `w` before `wq` for `w` typed, which only the rule that a
+candidate that is the text is first orders, chooses with `C-n` and
+inserts with `<Tab>`.
 
 `open-file/script` is a process check on real files, of the session
 check's form (below): its entry copies `open-file/tree` into a temporary
@@ -991,10 +1080,11 @@ answer's command run before a key sent right after the accept key; and a
 continuation over a store reading the cell after the accepting command's
 write.
 
-`config-test` runs completion at point through headless hosts of the Vim
-scheme that ships (`ConfigTest.atPointChecks`, `withVimHost`), over the real
+`config-test` runs completion at point through headless hosts of the test
+scheme, on keys of the checks' own for the kit's at-point commands
+(`ConfigTest.atPointChecks`, `withAtPointHost`), over the real
 elaborator, queue, text binding and recorder and the stage's fake clock:
-`C-n` in insert state lists the words of open buffers, a config's trigger
+the key of `at-point-next` lists what a config's source answers, a config's trigger
 source opens a session on its character and no other, a pause of 240 ms
 after two characters opens one of `words`, a typed key arms one pause wait
 and starts no job, and the pause's event is queued before the clock's
@@ -1002,7 +1092,7 @@ move returns, so a `join` after an `advance` finds the session.
 
 `config-test` runs the ex command line through headless hosts too, with
 the test scheme and the ex line's commands and the ex names that ship as
-compiled code registers them. `ConfigTest.exChecks`, over the real
+compiled code registers them. `ExTest.Linked.exChecks`, over the real
 elaborator: a config binds a key to a command, its file is rewritten to
 bind the key to another, the ex line `reload` is run, and the key runs the
 other command, with no restart; an ex name config binds runs config's
@@ -1010,7 +1100,7 @@ command with the rest of the line, and is not an ex command after a
 reload of a config without the binding; config's binding of a shipped
 name runs in its place until a reload drops it; and a name nobody bound
 is said in the scene's echo, with the editor going on.
-`ConfigTest.exScriptChecks`, with `Headless.run` on scripts built in the
+`ExTest.Linked.exScriptChecks`, with `Headless.run` on scripts built in the
 check, over the library's file service on a file each check writes in a
 temporary directory of its own: `e`, a commit, `w`, a join and `q` leave
 the file with the buffer's text and end the script with no failure, with
@@ -1019,8 +1109,9 @@ it; a `q` that is refused leaves the script running; and a wait on a host
 whose loop a command ended answers `ended`. No test of `config-test`
 spawns a process.
 
-`config-test` also loads a config that names evil's vocabulary
-(`ConfigTest.evilChecks`): a command of config's hands the move command
+The package `evil`'s linked test also loads a config that names evil's vocabulary
+(`EvilTest.Linked.evilChecks`, which was `config-test`'s until evil became
+a package): a command of config's hands the move command
 the table of motions the editor ships, as it is and with a motion of
 config's own added, and the cursor goes where config's motion says. That
 is the check of what the root module lets config name of evil: a config
@@ -1373,9 +1464,12 @@ and leaves its store as it was; the editor answers events while a file
 elaborates; reloads are serialised; a script that cannot run to its end
 says why; a job's command that sets a mode with a syntax tree reaches the
 host's syntax tree; a parse of a highlighted text the library delivers
-makes the host publish a scene, with no key pressed; and, in a Rust buffer
-of a host of the Vim scheme that ships, `v a f` selects the enclosing
-function and `d a f` deletes it. Its config directories are temporary directories of its own, and so is the directory the module data of the config files it elaborates is written to.
+makes the host publish a scene, with no key pressed. That `v a f` selects
+the enclosing function and `d a f` deletes it in a Rust buffer of a host of
+the Vim scheme is the package `evil`'s linked test's since the
+features-as-packages roadmap's phase 7 (`EvilTest.Linked.treeObjectChecks`,
+`packages/evil/EvilTest/Linked.lean`): no check of `config-test` runs a
+host of the Vim scheme. Its config directories are temporary directories of its own, and so is the directory the module data of the config files it elaborates is written to.
 Its fourth argument is the default config `mise run install` ships
 (`config/default`), which it reads and never writes: `defaultConfigChecks`
 pin that a reload of it installs with no diagnostic and `SPC f f` then
@@ -1506,9 +1600,8 @@ cd lean && sh ../tools/host-imports-check.sh
 
 Part of `mise run ffi-test`. A host registers features only from the
 packages it is handed, and the modules that list them, the entry modules
-of the Lake packages of a package set (`<P>.EditorPackage`; the core's is
-`lean/EditorCore/EditorPackage.lean`, a library of its own outside
-`lean/Editor/`), are outside the host
+of the Lake packages of a package set (`<P>.EditorPackage`; the core's
+Lake package has none), are outside the host
 ([lean-runtime.md](../design/lean-runtime.md), "Packages";
 [packages.md](../design/packages.md), "The package set and its build").
 This check shows the import half of that on Lake's module graph, with both
@@ -1537,37 +1630,41 @@ each one the host reaches and exits 1.
   any form. The queries build nothing and write nothing under `lean/`.
 - **The gate runs it on the fixture set too**
   (`host-imports-check.sh --set ../tests/packages`), whose root imports
-  seven entry modules, the core's, the three fixture packages', the two
-  default packages' and the writing guide's example package's: the form a
-  set with packages outside the core takes.
+  an entry module for each fixture package, each default package and the
+  writing guide's example package: the form a set with packages outside
+  the core takes.
 - **The user-side link's set is asked for its root.** `ffi-test` also
   requires `lake -d ../tests/user-link query :editorRoot` to give a file,
   and that root's imports to be the config base, the executable's entry,
-  the core's entry module and the fixture package's, in that order. The
+  the default packages' entry modules and the fixture package's, in that
+  order. The
   opt-in check that links an editor as a user's Mac would stages that
   generated root ([on-demand-checks.md](on-demand-checks.md), "The
   user-side link, on demand"), so the gate keeps its generation working
   on every platform.
 - **The gate sees it bite.** `ffi-test` runs it another time in its
   module form (`host-imports-check.sh <root module> [<list module>]`),
-  pointed at the core's module `ConfigTest`, a root that imports the
-  packages, with the core's entry module as the list, and requires exit 1.
+  pointed at the core's module `ConfigTest`, a root that imports modules
+  that define packages, with the test kit's stand-ins for default
+  packages as the list (`host-imports-check.sh ConfigTest
+  Editor.Test.Shipped`), and requires exit 1. The core's entry module was
+  the list until its own list emptied (features-as-packages phase 8): it
+  imports nothing now, so it names nothing to forbid.
   A query Lake fails is exit 2, never 1, so a broken query cannot stand in
   for a finding; so is a root with no list module among its imports.
 - **An entry module imports package modules and nothing else**,
   since its direct imports are what the check forbids a host.
-- **What it does not claim.** The core loop still imports feature code
-  that defines no package, such as `Editor.Files` and `Editor.Ex`
-  (`lean/Editor/Loop.lean`). Those features are still the core's, and
-  this check says nothing of them; the module map of
-  [packages.md](../design/packages.md) lists what each would have to cross
-  to move out. That the core imports no module of a feature that does
-  move out is the next check's.
+- **What it does not claim.** It is of the modules that define packages.
+  That the core imports no module of a package is Lake's own rule, since
+  the core requires none, and the next check's for a module still in the
+  core that is moving out; the module map of
+  [packages.md](../design/packages.md) lists which package each feature
+  that was the core's is.
 
 What a host registers from the list is checked by behaviour, not imports:
 a host handed no packages starts with an empty registry and no menu bar
-(`ConfigTest.hostChecks`), and in the state the core's packages make every
-entry's owner is one of them (`ModelTest.packageSetChecks`).
+(`ConfigTest.hostChecks`, `ModelTest.packageChecks`), which is what an
+editor of the core alone is handed.
 
 ## The core imports check
 
@@ -1618,12 +1715,9 @@ stops at the first that fails:
   root imports them to list the packages.
 - **The moving names are named, never derived.** "Every module the root
   does not reach" would pass whatever the core imported.
-- **No module is exempt by name.** The list of the core's packages
-  imports every package still in the core, and it is not a module of the
-  editor:
-  `EditorCore.EditorPackage` is outside `lean/Editor/` and the namespace
-  `Editor`, so the second rule, which is of the modules named `Editor.…`,
-  does not meet it.
+- **No module is exempt by name.** The core's Lake package lists no
+  package and has no entry module, so there is no list for the second
+  rule to step around.
 - **The editor's own root is one of the roots.** It is generated by the
   package-set build and no library declares it, so its transitive imports
   are asked of the default set
@@ -1636,10 +1730,13 @@ stops at the first that fails:
   written in any form. It makes six queries, one for the root and one for
   each root of the build, builds nothing and writes nothing under `lean/`
   or `packages/`: the build has written the generated root already.
-- **The gate sees each rule bite.** `ffi-test` runs it told that a feature
-  still in the core, the shell, is moving (`core-imports-check.sh
-  Editor.Core Editor.Shell`), and requires exit 1, with `Editor.Shell` and
-  `Editor.Shell.Compiled` found in the root's closure; pointed at the root
+- **The gate sees each rule bite.** `ffi-test` runs it told that a module
+  of the core, the ex line's data, is moving (`core-imports-check.sh
+  Editor.Core Editor.Ex.Line`), and requires exit 1, with `Editor.Ex.Line`
+  found in the root's closure. No feature is left in the core to name: the
+  shell, named here until it moved out of the core in features-as-packages
+  phase 6, evil, named until it moved out in phase 7, and the ex line,
+  named until it moved out in phase 8, are packages now. It is pointed at the root
   `Editor.Setup`, which imports no moving
   module and is not the whole core, and requires exit 3; and told with
   `--base Editor.Core` that the config base is a module no executable's
@@ -1653,10 +1750,9 @@ stops at the first that fails:
   a list of roots that has fallen behind the build, would look
   like. `ffi-test` sees that too: told with `--elaborator Editor.Core` that
   the adapter is a module no root reaches, it must exit 2 and say why.
-- **What it does not claim.** It names the feature that still moves in
-  this roadmap. A feature that is still the core's (the ex line, files,
-  version control and the rest) is imported by core modules, and the
-  module map records by which. And it says nothing of what a package
+- **What it does not claim.** It names a module that is moving, while one
+  is. No feature is the core's any more, so none is imported by a core
+  module; the module map records which package each is. And it says nothing of what a package
   imports: that is the package imports check, below.
 
 ## The package imports check
@@ -1673,7 +1769,7 @@ graph.
 
 | Importing module | May import, of the core's Lake package |
 |---|---|
-| A module of the package's library | The core's API: any module named `Editor.…` that is neither internal nor a test double |
+| A module of the package's library | The core's API: the core's interface libraries (`FilesApi`, `BuffersApi`, `ShellApi`, `ProjectApi`, `VcApi`) and any module named `Editor.…` that is neither internal nor a test double |
 | A test module (under `<P>Test`) | The API and the test doubles |
 | The root of the linked test (`<P>Test.Linked`) | The API, the test doubles, the real bindings of the ports (`….Real`), the headless host, the config base and the core's entry module |
 
@@ -1687,8 +1783,17 @@ graph.
   the modules of each of the package's libraries, so a library whose root
   does not import every module of it declares `globs` that hold them all,
   as `compile`'s does.
-- **The lists are in the script**, as names and patterns: the test
-  doubles, the linked test kit (`Editor.Test.Linked.…`, which only the
+- **The lists are in the script**, as names and patterns: the core's
+  interface libraries, which the core's Lake package holds outside
+  `Editor` (`FilesApi`, for good; `BuffersApi` and `ShellApi`, staged
+  until ex moves out; `ProjectApi` and `VcApi`, staged until they move
+  into interface packages), importable by every kind; the test
+  doubles (a feature's test kit still in the core, `Editor.*.Kit` such as
+  `Editor.Files.Kit`, among them, so a package's tests may import it and
+  its library may not, and the core interfaces' test libraries,
+  `FilesApiTest.…`, `VcApiTest.…` and the rest), the linked test kit
+  (`Editor.Test.Linked.…`, and a core interface's `<I>Test.Linked.…` such
+  as `VcApiTest.Linked.Repositories`, which only the
   linked test's root and the modules under it may import), the internal
   modules, each with the reason printed for it, and what the linked
   test's root may import beyond the doubles. They are named,
@@ -1704,14 +1809,21 @@ graph.
   hands it `tests/package-imports/lines`, written by hand with a line for
   each branch of the rule, and requires exit 1 and exactly
   `tests/package-imports/expected`: every refused import with its reason,
-  and none of the allowed ones (a library importing an API module; a test
+  and none of the allowed ones (a library importing an API module and a
+  core interface, `FilesApi`; a test importing a core interface's fake,
+  `VcApiTest.Fake`; the linked test's root importing a core interface's
+  linked support, `VcApiTest.Linked.Repositories`; a test
   importing a model, a contract, the loop's driver beside the loop, and
   `Editor.Config.Packages` beside another module of the config session; a
   linked test importing a real binding, the headless host, the base and
-  the entry module; a test importing a module of the model test kit; the
+  the entry module; a test importing a module of the model test kit and a
+  feature's kit, `Editor.Files.Kit`; the
   linked test's root and a module under it importing a module of the
   linked test kit). Among the refused: a plain test module and a library
-  importing the linked test kit, and a module under the linked test's
+  importing the linked test kit, a plain test module importing a core
+  interface's linked support, a library importing a feature's kit and a
+  core interface's fake (`FilesApiTest.Fake`), a library importing a
+  module outside `Editor` that is no interface (`ModelTest.Check`), and a module under the linked test's
   root importing the headless host, a real binding or a raw binding,
   which only the root may, or none may. So a change
   to a list that lets an internal module through, or refuses an allowed
@@ -1796,7 +1908,11 @@ package's modules.
   `lake -d ../packages query :editorLayerImports` whose importer's layer
   is `core`, and requires more than none.
 - **The sets it is run over**, each required to pass: the default set,
-  `packages/`, so `shipped-themes` and `compile` import only the core;
+  `packages/`, so its twenty-five default packages and eighteen interface
+  packages import only the core, and the implementations besides only
+  interface packages, their own or another's
+  ([packages.md](../design/packages.md), "The module map", lists each
+  one's);
   the fixture set, `tests/packages/`, where `greeting-loud` reaches
   `greeting`'s command through `greeting-api`; the user-side link's set,
   `tests/user-link/`; and `tests/empty-set/`, the core alone.
@@ -1807,6 +1923,155 @@ package's modules.
 - **What it does not claim.** It checks `import` lines. A `require` of an
   implementation package, as `greeting-loud`'s of `greeting`, which orders
   registration, is not refused yet (the task `layer-requires-check`).
+
+## The leave-out check
+
+```sh
+mise run leave-out        # cd lean && sh ../tools/leave-out-check.sh ../packages
+```
+
+**Opt-in, not part of `mise run ci` or of the pre-commit hook.** Anything
+moved out of the core can be left out of a set
+([extension-points.md](../design/extension-points.md), "Three layers"),
+and this check builds it: for each implementation package of the default
+set, an editor built from the set without that package builds, and holds
+every other package of the set and not that one.
+
+- **What it does, for each implementation package**, in the set's order
+  (`lake -d <set dir> query :editorPackageGraph`):
+  1. it writes, in a fresh temporary directory, the set's lakefile without
+     that package's `[[require]]` and with every relative `path` made
+     absolute, beside a copy of the set's `lean-toolchain`;
+  2. it runs `lake update --keep-toolchain` and `lake build --wfail
+     :editor` there: the set's root is generated, built and linked, and
+     the packages themselves are built where they are;
+  3. it requires the generated root's imports (`:editorRootImports`) to be
+     the set's own without that package's entry module, and no other;
+  4. it runs the editor it built with `--probe` and prints
+     `leave-out: <package>: built, <the probe's first line>`.
+- **A refusing probe is no failure.** The criterion is that the editor
+  builds. Every probe says `probe: ok` but `evil`'s: an editor without
+  `evil` has no input scheme and refuses to start, with the line of
+  `tests/headless/no-input-scheme/expected`
+  ([packages.md](../design/packages.md), "Input schemes").
+- **Exit 0** when every such editor built and held what it should, one
+  line a package. **Exit 1**, after `leave-out: <package>: …` on stderr
+  with why, at the first package whose set does not resolve or build, or
+  whose root is not the set's without it: a package that another package
+  of the set requires is still in the set once its own `[[require]]` is
+  gone, and fails there.
+- **It refuses to pass over nothing.** A command line it does not take, a
+  query Lake fails, a set with no implementation package, and a package
+  of the set that the set's lakefile does not require itself (it reaches
+  the set through another set, so no edit of this lakefile leaves it out)
+  are exit 2.
+- **Why it is not in the gate.** It links one editor a package,
+  twenty-five of them. The gate keeps what makes it true: the layer
+  imports check, above (no module of any package imports a module of an
+  implementation package, so no package fails to build for want of one),
+  and `user-sets-test`, which drops a default package from a user's set
+  end to end. And no implementation package of the default set requires
+  another, so leaving one out of the lakefile leaves it out of the set.
+- **The gate holds its edit of the lakefile**, which is of the text alone,
+  by dry runs (`mise run lean-test`): `leave-out-check.sh --dry-run
+  <package> [--root <dir>] <set dir>` builds nothing and asks Lake
+  nothing, and prints the lakefile it would write. Over a lakefile written
+  by hand (`tests/leave-out/lakefile.toml`) it must print exactly
+  `without-beta` for a package in the middle and `without-gamma` for the
+  last; a package the lakefile does not require is exit 2, and so is a
+  command line it does not take.
+  - A `[[require]]` is the line `[[require]]` and the `key = value` lines
+    after it. The comment lines directly above it, with no blank line
+    between, go with it, and so does one blank line after it, or, at the
+    end of the file, one before it.
+  - A relative `path` anywhere in what is left is resolved against the
+    root, `.` and `..` folded; an absolute one is kept.
+- **It builds the packages where they are**, so it is never run while
+  `mise run ci` or another build of the checkout runs. Everything else it
+  writes is in a temporary directory it removes.
+
+## The module map check
+
+```sh
+cd lean && sh ../tools/module-map-check.sh
+```
+
+Part of `mise run ffi-test`. [packages.md](../design/packages.md), "The
+module map", lists every module of the core and every package of the
+default set with the extension points it registers at and reads, and this
+check holds that map to the tree and to Lake, so it cannot drift from what
+it describes. It prints nothing and exits 0 when they agree; otherwise it
+prints what differs, each part under a line that names it, and exits 1.
+
+- **What it checks**, in three parts:
+  1. the core's modules: every module under `lean/Editor/` is named in the
+     subsection "The core's modules", and that subsection names no module
+     that is not there;
+  2. the packages: every package of the default set (`lake -d ../packages
+     query :editorPackageGraph`) has a row that starts with its name and
+     its layer as its lakefile declares it;
+  3. the extension points: every registration and read the library
+     modules of the packages under `packages/` hold is in that package's
+     row, in its fourth column for a registration and its fifth for a
+     read, and no row names one the sources lack.
+- **The third part is a reading of the sources**, by the rules the map's
+  section states: what counts as a registration, what counts as a read,
+  and what is skipped (text in backticks, a declaration's first line, a
+  package's test libraries and fixtures, and in an interface package the
+  points of its own namespace). It reads source text, which no test of
+  the code does (AGENTS.md, "Test behaviour, never text"): it is no test
+  of the code, and holds a document to the sources it describes.
+- **The gate holds that reading** by a fixture (`mise run lean-test`):
+  `module-map-check.sh --points <packages dir> <map>` checks the third
+  part alone, over the packages under a directory and a map it is given,
+  and asks Lake nothing. `tests/module-map/packages` holds seven packages
+  written by hand:
+  - `sample`, an implementation package, holds one line for each of the
+    four ways the reader counts a registration (an `Extension.add` whose
+    type is on the same line, one whose type is on a later line,
+    `compileContribution` and `projectCommands`), one for each of the
+    four operations it counts as a read (`Extension.values`, `.named`,
+    `.configValues` and `.workJob`), and one for each of the five texts
+    it skips (prose in backticks, a `def`'s first line, a test library's
+    root, a test library's module and a fixture's config).
+  - `buffers-api`, an interface package, reads its own two points, which
+    are not counted in it, and one of another namespace, which is.
+  - `readers` holds one call of each of the seven readers an interface
+    declares over one point (`FilesApi.runOpened`, `.runSaved` and
+    `.files?`, `BuffersApi.runClosing` and `.buffers?`,
+    `ProjectApi.workspaces?` and `VcApi.connect?`), each on a line of its
+    own and over a point nothing else in the package reads.
+  - `compile-hook`, `compile-listings`, `compile-markers` and
+    `compile-work` hold one each of the four readers of both of the
+    compile mode's points (`Compile.hook`, `refreshListings`,
+    `markerSettings` and `Compile.listWork`) and nothing else. The four
+    count the same two reads of a package, so in one package any three
+    would hide the fourth; a package each shows that each is counted.
+
+  Over `tests/module-map/map.md`, whose rows name exactly what those
+  sources hold, it must print nothing and exit 0, so each of the rules
+  above, dropped by itself, fails there: a registration or a read its
+  line holds is then one the map names and the sources lack, and a text
+  no longer skipped is a read the sources hold and the map lacks. Over
+  `stale-map.md`, the same map with one registration dropped and one read
+  added, it must exit 1 and print exactly `stale-expected`, the two lines
+  that differ. A command line it does not take is exit 2.
+- **What it costs.** One `lake query` and an `awk` pass over each library
+  module of each package: under two seconds on a developer's Mac.
+- **What it does not claim.** A row's third column, what the package
+  requires, and its last, the names it declares or reaches, are not
+  checked. A way to register or read that the rules do not name is not
+  seen, so a new one is added to the rules in the map's section, to the
+  script and to the fixture. The fixture holds the rules listed above and
+  no others. It has no `.lake/` directory; no declaration that starts
+  `abbrev`, `theorem` or `structure`; no interface package but
+  `buffers-api`; and no longer or qualified name that ends in one of the
+  four names the reader looks for bare (`compileContribution`,
+  `projectCommands`, `markerSettings`, `refreshListings`). So the script
+  can stop skipping or telling apart any of those and still pass the
+  fixture's lines. And the pre-commit hook does not run it for a
+  commit that stages only the document or the script, which no Lean step
+  reads ("The pre-commit hook", below); `mise run ci` always does.
 
 ## The package steps
 
@@ -1836,8 +2101,9 @@ package's tests are by convention are in
   fixture interface package `greeting-api`, the fixture package `echo`,
   which holds Rust, the default set, and the example package of the guide
   to writing a package, `word-count` (`docs/packages/word-count/`). So the
-  default packages, `shipped-themes` and `compile`, and the code the guide
-  quotes are tested, built, format-checked and run through it. `run`
+  default packages, all twenty-five, with the eighteen interface
+  packages ([packages.md](../design/packages.md), "The module map"), and
+  the code the guide quotes are tested, built, format-checked and run through it. `run`
   is also given the default set itself, `packages/`, so those packages'
   linked tests and fixtures hold of the default set's editor, the one
   that is shipped.
@@ -1852,9 +2118,11 @@ package's tests are by convention are in
   the default set has.
 - **The default packages' tests are required to have run.** `lean-test`
   keeps the `test` step's output and requires the line the step prints as
-  it reaches each of them, `package-set: test shipped-themes (<its
-  directory>)` and `package-set: test compile (<its directory>)`, and the
-  same line for `word-count`, matched on what comes before the directory. The step stops at the first driver
+  it reaches each of them, `package-set: test <name> (<its directory>)`
+  for each default package and each interface package of the default set
+  (the names are listed in the task), and the same line for
+  `word-count`, matched on what
+  comes before the directory. The step stops at the first driver
   that fails, so those lines and exit 0 say each package's driver ran and
   passed: the themes hold under the core's completeness check, and the
   compile mode's 98 model checks hold on the core's test kit.
@@ -1869,15 +2137,22 @@ package's tests are by convention are in
   test, `hello`, `reply`, the linked test of `echo` with its line (`echo
   linked test: the contract's 7 properties hold on the Rust-backed
   binding, each request completed through the completion queue`), the
-  linked test of `shipped-themes` with the
+  linked test of `completion` with its line, `completion linked test: 6
+  checks passed`, and its fixture `completion-choices`, the linked test
+  of `shipped-themes` with the
   line its pictures print, its fixtures `load-theme`, `package-names`,
   `shipped-themes` and `themes`, the linked test of `compile` with its
   line, `compile linked test: 7 checks passed`, its fixtures `config`,
-  `ex-names` and `shipped-formats`, the three fixtures of `word-count`,
-  `as-config`, `count` and `from-config`, and `package-set: ran 4 linked
-  tests and 12 headless fixtures over 7 packages`; and over the default set, the
-  two default packages' linked tests and seven fixtures and `package-set:
-  ran 2 linked tests and 7 headless fixtures over 2 packages`. A fixture or a linked test that is
+  `ex-names` and `shipped-formats`, the fixtures `mode-line` of
+  `mode-line`, `candidates` and `prompt` of `minibuffer`, `command-prompt`
+  of `execute-command`, `binding-search` of `binding-search` and
+  `at-point` and `at-point-tuned` of `at-point`, the three fixtures of
+  `word-count`, `as-config`, `count` and `from-config`, and `package-set:
+  ran 14 linked tests and 20 headless fixtures over 48 packages`, with the
+  line of each linked test, `ex`'s, `evil`'s, `themes`' and the files
+  cluster's among them; and over the default set, the default packages'
+  twelve linked tests and fifteen fixtures and `package-set: ran 12
+  linked tests and 15 headless fixtures over 43 packages`. A fixture or a linked test that is
   renamed, moved or no longer found by the naming convention fails that
   line.
 - **The default packages' own checks.** `shipped-themes`: sixteen checks
@@ -1908,20 +2183,55 @@ package's tests are by convention are in
   with no byte changed; the third was written after the move, and an
   editor built at the commit before the move prints its `expected` for it,
   byte for byte ([packages.md](../design/packages.md), "The default
-  package `compile`").
-- **An editor without the default packages.** `mise run lean` also links
-  an editor from `tests/empty-set`, the default set with its packages
-  dropped, and `ffi-test` runs two of the core's fixtures on it.
-  `tests/headless/core-themes`: it starts in the theme `default`,
-  its theme prompt lists `default` and the theme config defines and no
-  palette, and `solarized-dark`, answered, is said in the echo area to be
-  no registered theme. `tests/headless/core-ex-names`: it starts and loads
-  config, and `compile` typed on its ex line is answered `compile: not an
-  ex command`, as `bogus` is. The default set's editor prints other lines
-  for each script. The gate also requires that set's config base to be
+  package `compile`"). The four of the features-as-packages roadmap's
+  phase 3: `mode-line` (1 check; the fixture `mode-line`),
+  `execute-command` (16 checks, the interface's contract check and the
+  registration of its completion source among them; the fixture
+  `command-prompt`), `binding-search` (13 checks, the same;
+  the fixture `binding-search`) and `languages` (1 check; no fixture),
+  and the interface packages `execute-command-api` and
+  `binding-search-api` (4 checks each: the fake keeps the contract, and
+  the contract refuses a package that lacks or misspells the name)
+  ([packages.md](../design/packages.md), "The default packages of the
+  features-as-packages roadmap's phase 3"). The three of its phase 4:
+  `completion` (19 checks: the shipped styles and display and its
+  `Package` value, the interface's contract check among them; a linked
+  test of 6 checks, the shipped styles' contract over the real fuzzy
+  binding; the fixture `completion-choices`), `at-point` (29 checks, the
+  interface's contract check among them; the fixtures `at-point` and
+  `at-point-tuned`) and `minibuffer` (23 checks, the same; the fixtures
+  `prompt` and `candidates`), and the interface packages
+  `completion-api` (6 checks), `at-point-api` (7) and `minibuffer-api`
+  (8): the names pinned whole, the fake, which for the last two is the
+  core test kit's own implementation, keeps the contract, and the
+  contract refuses a package that registers nothing, lacks a name or
+  misspells one ([packages.md](../design/packages.md), "The default
+  packages of the features-as-packages roadmap's phase 4").
+- **An editor without the default packages refuses to start.** `mise run
+  lean` also links an editor from `tests/empty-set`, the default set with
+  its packages dropped. No package of that set supplies an input scheme,
+  since the Vim scheme is the default package `evil`'s, so `ffi-test` runs
+  that editor twice, in the headless mode on
+  `tests/headless/no-input-scheme` and with `--probe`, and requires exit 1
+  and exactly the line `editor: no input scheme is installed: no package
+  of this editor's package set supplies one` each time
+  ([packages.md](../design/packages.md), "Input schemes"). Until the
+  features-as-packages roadmap's phase 7 the core supplied the scheme and
+  two fixtures ran on this editor, `core-themes` and `core-ex-names`; they
+  are retired, and where what they showed of an editor without the
+  default packages is held is in
+  [packages.md](../design/packages.md), "Dropping evil or themes
+  leaves…". The gate also requires that set's config base to be
   `Editor` alone (`lake -d ../tests/empty-set query :editorBase`), and the
-  default set's `Editor`, `ShippedThemes.EditorPackage` and
-  `Compile.EditorPackage`.
+  default set's `Editor` and the entry modules of its twenty-five default
+  packages, in the order they register (`Ex.EditorPackage` …
+  `PackageSet.EditorPackage`, `Evil.EditorPackage`,
+  `Themes.EditorPackage`, `Files.EditorPackage` …
+  `VersionControl.EditorPackage`, then `Completion.EditorPackage` …
+  `Languages.EditorPackage`), and that set's root to import `Editor` and
+  `Editor.Main` alone (`:editorRootImports`): the core's Lake package has
+  no entry module, so an editor of the core alone hands its hosts no
+  package.
 - **`run` refuses a directory that is not a whole fixture.** A directory
   under a package's `tests/headless/` with no `config/`, no `script` or no
   `expected` is exit 2, naming what is missing, and so is a set whose
@@ -2149,6 +2459,22 @@ core's repository, tagged `nightly-20000101000000`, holding none of the
 core's sources (`tools/core-repo.sh`), with the copy's manifest written by
 `lake update` against it.
 
+The `lean` and `lake` it runs are those of the toolchain `lean
+--print-prefix` named before it moved `HOME` (wrappers around
+`$sysroot/bin/lean` and `lake`, first on the `PATH`), and
+`user-sets-check` does the same. A toolchain manager that resolves its
+toolchains under `HOME`, as elan does on CI, would otherwise install and
+run another copy of the toolchain, and the default set's editor's link
+trace names the toolchain's directory (`-L <toolchain>/lib`), so that copy
+reads the editor as out of date though nothing rebuilt it (found
+2026-11-20, CI run 44825190133 on macOS). Both tasks run under
+`tools/home-bound-toolchain.sh`, whose `lean` and `lake`, like elan's
+proxies, exit 1 when run under any `HOME` but the one they were made
+under, so a bare `lake` after `HOME` moves fails on a developer's machine
+too, where mise's `lean` does not depend on `HOME`. `lean-test` probes the
+stand-in: its `lake` under `HOME=/nonexistent` must exit 1 with its
+message, and under its own `HOME` exit 0.
+
 - **A, install, a failing link, a dropped default package**
   (`tests/user-sets/install-script`), three processes started by
   `leanmacs --data … --default packages/.lake/build/bin/editor -- headless
@@ -2286,8 +2612,8 @@ package's test, build, format check and run.
   registering the command it calls. A change to `greeting` alone runs
   `greeting`'s checks, not `reply`.
 - The core's headless fixtures run on the default set's editor, which
-  links `shipped-themes` and `compile`. A change to one of those packages
-  does not rerun them at commit time.
+  links the default packages. A change to one of those packages does not
+  rerun them at commit time.
 
 **Pinned by the gate.** `lean-test` runs the shared decision over a graph
 written by hand (`tests/graph-targets/graph`): a node that propagates

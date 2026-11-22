@@ -1,0 +1,57 @@
+# The interface package of evil (docs/design/extension-points.md, "Three
+# layers"): the contract between the default package `evil`, which
+# implements it, and whatever reaches evil's commands by name: completion
+# at point, which runs `insert-newline` and `insert-tab` when no session is
+# open (packages/at-point/AtPoint.lean), and the Edit menu, whose Undo and
+# Redo run `undo` and `redo` (packages/menu/Menu/Compiled.lean, which
+# names the constants). It declares the names
+# those four commands are registered under (`EvilApi.insertNewlineName`,
+# `EvilApi.insertTabName`, `EvilApi.undoName`, `EvilApi.redoName`), as an
+# interface package declares every name another package may reach
+# ("Reaches by name"), and registers no behaviour. Another input scheme's
+# package that implements it answers those reaches in evil's place.
+#
+# It is an interface package: it declares the keyword `editor-interface`
+# below, so another package may import its modules, and the layer imports
+# check reads that keyword from Lake (tools/layer-imports-check.sh).
+#
+# - `EvilApi` is the package's library: `EvilApi.lean`, the names.
+# - `EvilApiTest` holds what it publishes for other packages' tests, as the
+#   owner of a port publishes its fake and its contract check (AGENTS.md,
+#   "Testing with hand-written mocks"): `EvilApiTest/Fake.lean`, a package
+#   that registers every declared name over the core's API, which a
+#   consumer's tests use in place of any implementation; and
+#   `EvilApiTest/Contract.lean`, the check every implementation runs. Its
+#   own tests are `EvilApiTest/EvilApi.lean`.
+# - `evil-api-test` is its test driver (`lake test`), rooted at
+#   `EvilApiTest/Model.lean`. It is no default target, as the core's
+#   `model-test` is not: `mise run lean` links with the system compiler,
+#   which this executable has no flags for.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/evil-api update --keep-toolchain
+# then the same for every package and set that reaches this package
+# (packages/evil, packages/at-point, packages/, tests/packages,
+# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+name = "evil-api"
+keywords = ["editor-interface"]
+testDriver = "«evil-api-test»"
+defaultTargets = ["EvilApi", "EvilApiTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "EvilApi"
+
+[[lean_lib]]
+name = "EvilApiTest"
+globs = ["EvilApiTest.+"]
+
+[[lean_exe]]
+name = "evil-api-test"
+root = "EvilApiTest.Model"

@@ -8,27 +8,30 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Fake
-import Editor.Completion.Styles
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.File
-import Editor.InputScheme.Vim.Default
+import Editor.InputScheme.Test
 import Editor.Invocation
+import Editor.Keymap
 import Editor.Language
 import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Minibuffer
 import Editor.Mode
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.Test.Completion
 import Editor.Test.Driver
+import Editor.Test.Editing
+import Editor.Test.Excerpt
+import Editor.Test.Keys
 import Editor.Test.Loop
+import Editor.Test.Minibuffer
 import Editor.Test.Models
+import Editor.Test.Prompts
 import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
@@ -39,7 +42,6 @@ import Editor.Watch.Model
 import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.Candidates
-import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
 
 /-!
@@ -419,42 +421,55 @@ def apiStateChecks : List Check :=
 /-- The checks of putting a prompt's candidate into its minibuffer
 (`minibuffer-insert`, `insertCandidate`, `Editor/Api.lean`) and of going
 into a partial candidate (`Completion.Candidate.isPartial`, `acceptPrompt`),
-under the Vim scheme that ships, whose minibuffer state binds `TAB` to the
-insert and `RET` to the accept. -/
+under the test scheme with the kit's minibuffer (`minibufferKeys`,
+`Editor/Test/Prompts.lean`), whose mode has `C-n` choose the next candidate
+and `RET` accept, and with `TAB` bound here to the insert, as a scheme's
+minibuffer table binds it. -/
 def insertCandidateChecks : List Check :=
   let ask (candidates : Array Completion.Candidate) : Dispatched := fun _ => do
     discard <|
         prompt pickLabel { command := "picked" } "" [.given (.fixed "pick" "pick" candidates)]
     return none
-  let handed :=
-    evilHanded #[]
-      [("pick", ask (offered pickCandidates)),
-        ("dirs", ask #[{ text := "src/", isPartial := true }, .ofText "a.txt"]),
-        ("picked", fun call => do
-          message (picked call.arguments)
-          return none)]
-  let asked (command : String) : Option EvilDriver := do
-    let driver ← evilDriver "|" handed
+  let commands : List (String × Dispatched) :=
+    [("pick", ask (offered pickCandidates)),
+      ("dirs", ask #[{ text := "src/", isPartial := true }, .ofText "a.txt"]),
+      ("picked", fun call => do
+        message (picked call.arguments)
+        return none)]
+  let handed : Loop.Keys TestScheme.scheme :=
+    { minibufferKeys with
+      maps := fun state view =>
+        Keymap.ofList [(keys "TAB", invoke Test.Minibuffer.insertName)] ::
+          minibufferKeys.maps state view
+      command? := fun name =>
+        match commands.find? (·.1 == name) with
+        | some (_, command) => some command
+        | none => minibufferKeys.command? name }
+  let over (fixture : String) : Option TestDriver :=
+    let (contents, head) := barred fixture
+    (Loop.Driver.over handed (fun _ => none) (barState contents head) editorModel).toOption
+  let asked (command : String) : Option TestDriver := do
+    let driver ← over "|"
     return (driver.stepped (driver.loop.runNamed driver.handed command)).1
-  let listed (driver : EvilDriver) : Array String :=
+  let listed (driver : TestDriver) : Array String :=
     ((driver.loop.state.prompt.map (·.candidates.listed.map (·.text))).getD #[])
   [{  name :=
-        "TAB, minibuffer-insert, with a candidate chosen replaces the input with its text, the bar at its end, and leaves the prompt open; with nothing chosen it inserts the first listed; with nothing listed it changes nothing"
+        "a key bound to minibuffer-insert, with a candidate chosen, replaces the input with its text, the bar at its end, and leaves the prompt open; with nothing chosen it inserts the first listed; with nothing listed it changes nothing"
       run :=
         pure <|
           match asked "pick" with
           | none => false
           | some asking =>
-            let chosen := evilFed asking "C-n C-n TAB"
-            let typed := evilFed asking "e"
-            let first := evilFed typed "TAB"
-            let unmatched := evilFed asking "z z TAB"
+            let chosen := keysFed asking "C-n C-n TAB"
+            let typed := keysFed asking "e"
+            let first := keysFed typed "TAB"
+            let unmatched := keysFed asking "z z TAB"
             let second := (listed asking)[1]?.getD ""
-            evilShown chosen ⟨1⟩ == second ++ "|" && chosen.loop.state.prompt.isSome &&
+            shownOf chosen ⟨1⟩ == second ++ "|" && chosen.loop.state.prompt.isSome &&
               second != (listed asking)[0]?.getD "" &&
-              evilShown first ⟨1⟩ == (listed typed)[0]?.getD "" ++ "|" &&
+              shownOf first ⟨1⟩ == (listed typed)[0]?.getD "" ++ "|" &&
               first.loop.state.prompt.isSome &&
-              evilShown unmatched ⟨1⟩ == "zz|" &&
+              shownOf unmatched ⟨1⟩ == "zz|" &&
               unmatched.loop.state.prompt.isSome },
     { name :=
         "a candidate is inserted only from a listing for the text: chosen, or the first listed with none chosen; a listing for another text inserts nothing, and with no prompt the command says it is not open"
@@ -463,12 +478,12 @@ def insertCandidateChecks : List Check :=
           let candidates : Candidates :=
             { listedFor := some "e", listed := #[.of (.ofText "edit"), .of (.ofText "rewrite")] }
           let unasked :=
-            match evilDriver "a|bc" handed with
+            match over "a|bc" with
             | none => false
             | some driver =>
               let (ran, _) :=
-                driver.stepped (driver.loop.runNamed driver.handed Minibuffer.insertName)
-              ran.loop.state.echo == Minibuffer.notOpen && evilShown ran == "a|bc"
+                driver.stepped (driver.loop.runNamed driver.handed Test.Minibuffer.insertName)
+              ran.loop.state.echo == PromptRefusal.notOpen.describe && shownOf ran == "a|bc"
           (candidates.toInsert "e").map (·.text) == some "edit" &&
             (Candidates.toInsert { candidates with chosen := some 1 } "e").map (·.text) ==
               some "rewrite" &&
@@ -482,9 +497,9 @@ def insertCandidateChecks : List Check :=
           match asked "dirs" with
           | none => false
           | some asking =>
-            let entered := evilFed asking "C-n RET"
-            let answered := evilFed asking "C-n C-n RET"
-            evilShown entered ⟨1⟩ == "src/|" && entered.loop.state.prompt.isSome &&
+            let entered := keysFed asking "C-n RET"
+            let answered := keysFed asking "C-n C-n RET"
+            shownOf entered ⟨1⟩ == "src/|" && entered.loop.state.prompt.isSome &&
               answered.loop.state.prompt.isNone &&
               answered.loop.state.echo == picked [.str "a.txt"] }]
 
@@ -512,12 +527,11 @@ def insertRegistrations : Array Config.Registration :=
 
 /-- A driver of the insert checks: the excerpt buffer checks' driver with the
 insert commands, once `make-ex` has run. -/
-def insertDriver : Option EvilDriver :=
-  (evilDriver "|" (evilHanded (excerptRegistrations ++ insertRegistrations))).map
-    (excerptInvoked · "make-ex")
+def insertDriver : Option ExcerptDriver :=
+  excerptDriverWith insertRegistrations
 
 /-- The headers of the excerpt buffer called `name`. -/
-def headersOf (driver : EvilDriver) (name : String) : Option (Array String) := do
+def headersOf (driver : ExcerptDriver) (name : String) : Option (Array String) := do
   let buffer ← excerptBufferNamed driver name
   let excerpts ← buffer.excerpts
   return excerpts.entries.map (·.header)
@@ -534,12 +548,12 @@ def insertExcerptChecks : List Check :=
           match insertDriver with
           | none => false
           | some driver =>
-            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            let typed := sessionTyped driver "<ArrowRight>" ["X"]
             let inserted := excerptInvoked typed "insert-beta"
             -- An edit before the first excerpt in its source, and one typed
             -- in it again: an anchored range follows both.
             let moved := excerptInvoked inserted "edit-one"
-            let typedAgain := evilFed (excerptFed (evilFed moved "g g i") [.commit "Y"]) "<Escape>"
+            let typedAgain := sessionTyped moved "C-<Home>" ["Y"]
             excerptRead inserted "ex" == some "tXwo\n\nbeta\n\nalpha\n" &&
               headersOf inserted "ex" == some #["one", "beta", "two"] &&
               excerptRead moved "ex" == some "tXwo\n\nbeta\n\nalpha\n" &&
@@ -553,5 +567,37 @@ def insertExcerptChecks : List Check :=
           | some driver =>
             let made := excerptInvoked driver "make-empty"
             excerptRead made "empty" == some "one\n" && headersOf made "empty" == some #["h"] }]
+
+/-- A driver of the checks of giving up on a layout refusal: `C-a` runs
+`give`, which gives up on the refusal of closing the last window and would
+then say `after`, and `C-b` runs `pass`, which says the value it was handed. -/
+def givingUpDriver : Option TestDriver :=
+  let keys :=
+    dispatchKeys [("C-a", invoke "give"), ("C-b", invoke "pass")]
+      [("give", fun _ => do
+          let _ : Unit ← orGiveUp (.error .onlyWindow)
+          message "after"
+          return none),
+        ("pass", fun _ => do
+          let value : Nat ← orGiveUp (.ok 3)
+          message s!"passed {value}"
+          return none)]
+  (Loop.Driver.over keys (fun _ => none) (EditorState.initial ⟨640, 480⟩) editorModel).toOption
+
+/-- The checks of giving up on a layout refusal (`orGiveUp`,
+`Editor/Api.lean`). -/
+def orGiveUpChecks : List Check :=
+  [{  name :=
+        "a layout refusal given up on ends the command with the refusal's sentence, under the command's name, and nothing after it runs; a value that is no refusal is handed on"
+      run :=
+        pure <|
+          match givingUpDriver with
+          | none => false
+          | some driver =>
+            echoOf (fedTo driver (presses "C-a")).1 ==
+                some s!"give: {LayoutRefusal.onlyWindow.describe}" &&
+              echoOf (fedTo driver (presses "C-a")).1 ==
+                some "give: the last window cannot be closed" &&
+              echoOf (fedTo driver (presses "C-b")).1 == some "passed 3" }]
 
 end ModelTest

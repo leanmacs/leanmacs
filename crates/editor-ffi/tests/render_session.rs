@@ -27,18 +27,19 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
 
-use editor_ffi::display::{Display, WireScene};
+use editor_ffi::display::{Display, WireFace, WireScene};
 use editor_ffi::events::{EventKind, Queue};
 use editor_ffi::interrupt::Interrupt;
 use editor_ffi::render::{Asker, Presenter, Session, target};
 use editor_ffi::window::{self, CountingClock};
 use editor_layout::Layout;
+use editor_layout::face::{BASE_BACKGROUND, Color, Face};
 use editor_layout::frame::Frame;
 use editor_layout::scene::{Rect, Scene};
 use editor_layout::shaper::fake::CellShaper;
 use editor_platform::menu::Submenu;
 use editor_platform::{
-    CannotOpen, Canvas, Drawer, Input, Menu, Platform, Request, Resize, ScriptedPlatform,
+    CannotOpen, Canvas, Drawer, Input, Menu, Platform, Request, Resize, Rgb, ScriptedPlatform,
     WindowOptions,
 };
 use editor_render::clock::FakeClock;
@@ -492,13 +493,97 @@ fn a_published_scenes_title_reaches_the_scripted_window_as_the_title_it_sets_onc
     let (result, _) = done.recv_timeout(BOUND).expect("the run returns");
     assert_eq!(result, Ok(()));
 
+    // The frames' ground, the base paper since no face sets one, goes
+    // with the title when the window opens, and is not sent again.
     assert_eq!(
         platform.asked(),
         [
             Request::Title("notes.txt".into()),
+            Request::Background(base_paper()),
             Request::Title("todo.txt".into())
         ]
     );
+}
+
+/// The base paper, as a background: what `editor-layout` grounds a frame
+/// with when no face sets a background. That crate owns the colour, so it
+/// is read from it here and not written out.
+fn base_paper() -> Rgb {
+    let [red, green, blue, _] = BASE_BACKGROUND.0.to_be_bytes();
+    Rgb { red, green, blue }
+}
+
+/// Publishes to `display` a scene of no view titled `scratch` whose
+/// default face's background is `paper`.
+fn publish_on(display: &Display, paper: Rgb) {
+    let wire = WireScene {
+        size: [80, 32],
+        title: "scratch".to_owned(),
+        faces: Some(vec![WireFace {
+            name: "default".to_owned(),
+            face: Face {
+                background: Some(Color::rgb(paper.red, paper.green, paper.blue)),
+                ..Face::default()
+            },
+        }]),
+        ..WireScene::default()
+    };
+    let (words, strings) = wire.encode();
+    assert!(display.publish(&words, &strings, &[]));
+}
+
+#[test]
+fn a_published_scenes_paper_reaches_the_scripted_window_as_its_background_after_the_title() {
+    let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+    let presenter = Presenter::new();
+    let asker: Asker = {
+        let platform = Arc::clone(&platform);
+        Arc::new(move |request| platform.request(request))
+    };
+    let session: Session<RecordingRenderer> = Session::new(
+        Arc::new(FakeClock::new()),
+        |_, _| Ok(RecordingRenderer::new()),
+        Arc::clone(&presenter),
+    )
+    .asking(asker);
+    let display = Display::cells(8, 16);
+    display.present_to(Arc::clone(&presenter));
+    let queue = Arc::new(Queue::new());
+    let (paper, light) = (
+        Rgb {
+            red: 0x2e,
+            green: 0x34,
+            blue: 0x40,
+        },
+        Rgb {
+            red: 0xec,
+            green: 0xef,
+            blue: 0xf4,
+        },
+    );
+
+    // Published before the window opens: sent when it does, after the
+    // title.
+    publish_on(&display, paper);
+    let done = run_on_a_thread(&platform, &queue, session.drawer());
+    assert_eq!(kinds(&queue, 1), [EventKind::WindowOpened]);
+    // The same paper again is not sent again; another is.
+    publish_on(&display, paper);
+    publish_on(&display, light);
+    let shown = platform.shown().background;
+    platform.close();
+    let (result, _) = done.recv_timeout(BOUND).expect("the run returns");
+    assert_eq!(result, Ok(()));
+
+    assert_eq!(
+        platform.asked(),
+        [
+            Request::Title("scratch".into()),
+            Request::Background(paper),
+            Request::Background(light)
+        ]
+    );
+    assert_eq!(shown, Some(light));
 }
 
 /// A menu bar of one empty menu titled `title`.
@@ -562,6 +647,7 @@ fn a_published_scenes_menu_reaches_the_scripted_window_as_one_request_for_each_c
         [
             Request::Title("scratch".into()),
             Request::Menu(menu_titled("File")),
+            Request::Background(base_paper()),
             Request::Menu(menu_titled("Edit"))
         ]
     );

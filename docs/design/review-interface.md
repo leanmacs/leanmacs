@@ -210,7 +210,7 @@ hunks (tool 4), has a *why* pane beside it, a chain from the code
 upward:
 
 ```
-hunk     lean/Editor/Workspace/FindFile.lean @@ +1,40 @@
+hunk     packages/workspace/Workspace/FindFile.lean @@ +1,40 @@
 commit   feat(lean): find-file-in-workspace over the workspace's lister and fzf
 step     plan step 4 · "The finder" (Design §4)
 tests    criteria 1, 4, 5, 7 → findFileChecks

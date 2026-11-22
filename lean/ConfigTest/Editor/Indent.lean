@@ -1,77 +1,56 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
-import ConfigTest.Support.Keys
-import ConfigTest.Support.Lines
-import ConfigTest.Support.Syntax
-import Editor.Evil.Operators
-import Editor.File.Model
-import Editor.Headless
-import Editor.InputScheme.Vim
+import ConfigTest.Support.Shipped
 import Editor.SyntaxTree
+import Editor.Test.Linked.Host
+import Editor.Test.Linked.Lines
+import Editor.Test.Linked.Syntax
 
 /-!
 # Config tests: `Editor/Indent.lean`
 
-The tests of `Editor/Indent.lean`: `indentChecks`, on the syntax fixtures. The
-root module `ConfigTest` runs them; its module doc says what each shows.
+The tests of `Editor/Indent.lean` through a host: `indentChecks`, on the
+syntax fixtures, with commands of config's that ask the text for its indent
+levels (`TextId.reindentEdits`, `TextId.openingLevel`). The root module
+`ConfigTest` runs them; its module doc says what each shows. What a
+scheme's keys do with those levels is that scheme's package's: evil's `=`,
+`RET`, `o` and `O` are pinned by `evilIndentChecks`
+(`packages/evil/EvilTest/Linked/Evil/Operators.lean`).
 -/
 
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
-/-- The rows of the Rust indent fixture (`tests/syntax/rust/indent.rs`) inside
-its multi-line string and block comment, which the indent rule keeps: found
-by their content, never by their number. -/
-def indentKept : List String :=
-  ["not indented by the rule\";", "       comment */"]
-
-/-- `source` with the indentation of its rows mangled: a row of `kept`, and
-the last, empty after the final line feed, stays as it is; a blank row
-becomes three spaces; any other row loses its leading blanks and gains, by
-its number, nothing, two spaces, a tab or six spaces. Made in code from the
-fixture, so no second fixture can drift from it. -/
-def mangledRust (source : String) (kept : List String) : String :=
-  let lines := source.splitOn "\n"
-  "\n".intercalate <|
-    lines.zipIdx.map fun (line, row) =>
-      if kept.contains line || row + 1 == lines.length then line
-      else
-        let content := (line.dropWhile fun char => char == ' ' || char == '\t').toString
-        if content.isEmpty then "   " else ["", "  ", "\t", "      "].getD (row % 4) "" ++ content
-
-/-- The byte offset of the first occurrence of `needle` in `text`, or 0 when
-it holds none. -/
-def cursorAt (text needle : String) : Nat :=
-  (offsetOf text needle).getD 0
-
-/-- The texts the indent checks load, each with where the cursor goes and
-the language its buffer is set to, if any (`indentText`): the mangled Rust
-fixture `mangled`, and texts written here. -/
-def indentFixtures (mangled : String) : List (String × String × Nat × Option String) :=
-  let twoFns :=
-    "struct S;\n\nfn one() {\nlet a = 1;\n        a\n}\n\nfn two() {\nlet b = 2;\n        b\n}\n"
-  let mid := "fn main() {\n    x();\n}\n"
+/-- The texts the indent checks load besides the mangled Rust fixture, each
+with the offset its cursor goes to and the language its buffer is set to,
+if any: a Rust function closed and one open at the text's end, a method in
+an `impl` open at the text's end, a text with no language, and a JSON one,
+whose language has no indents query. -/
+def reindentFixtures : List (String × String × Nat × Option String) :=
+  let closed := "fn main() {\n    let x = 1;\n}\n"
   let nested := "impl S {\n    fn one(&self) {"
-  [("mangled", mangled, 0, some "rust"), ("two-fns", twoFns, cursorAt twoFns "let b", some "rust"),
-    ("strings", "fn f() {\nlet s = \"a\n   b\";\n/* c\n     d */\n        s\n}\n", 0, some "rust"),
-    ("closed", "fn main() {\n    let x = 1;\n}\n", 0, some "rust"),
-    ("eof", "fn main() {", 0, some "rust"),
-    ("nested-eof", nested, cursorAt nested "fn one", some "rust"),
-    ("mid", mid, cursorAt mid "x()", some "rust"),
-    ("method", rustObjectsText, cursorAt rustObjectsText "let x", some "rust"),
-    ("method-closing", rustObjectsText, cursorAt rustObjectsText "}\n}\n", some "rust"),
-    ("plain", "    ab", 5, none), ("json", "[\n  1\n]", 4, some "json")]
+  [("closed", closed, "fn main() {".utf8ByteSize, some "rust"),
+    ("eof", "fn main() {", "fn main() {".utf8ByteSize, some "rust"),
+    ("nested-eof", nested, nested.utf8ByteSize, some "rust"), ("plain", "    ab", 5, none),
+    ("json", "[\n  1\n]", 4, some "json")]
 
-/-- A config whose `setup` registers, for each of `indentFixtures mangled`,
-the command `load-<name>`: it puts the fixture's text in the scratch
-buffer's text, in place of what it held, and the cursor where the fixture
-says, and then, for a fixture with a language, records the language and
-makes `code` the buffer's major mode, so the text is parsed as the language
-says. -/
-def indentText (mangled : String) : String :=
+/-- A config whose `setup` registers, for the mangled Rust fixture `mangled`
+(as `mangled`, its cursor at 0) and each of `reindentFixtures`, the command
+`load-<name>`: it puts the text in the scratch buffer's text, in place of
+what it held, and the cursor where the fixture says, and then, for a text
+with a language, records the language and makes `code` the buffer's major
+mode, so the text is parsed as the language says. And two commands over the
+core's indent API: `reindent` replaces the leading whitespace of every row
+by the edits `TextId.reindentEdits` answers in the buffer's indent unit, or
+says `refused: ` and the refusal; `opening` says the level
+`TextId.openingLevel` answers of a line opened at the cursor, what follows
+it moved to the new row, as `level <n>`, `level kept` or `refused: ` and
+the refusal. -/
+def reindentText (mangled : String) : String :=
   let commands :=
-    (indentFixtures mangled).map fun (name, text, cursor, language) =>
+    (("mangled", mangled, 0, some "rust") :: reindentFixtures).map
+      fun (name, text, cursor, language) =>
       let language :=
         match language with
         | some name => s!"(some {name.quote})"
@@ -86,161 +65,101 @@ def indentText (mangled : String) : String :=
     discard <| (⟨0⟩ : BufferId).setLanguage (some language)
     discard <| (⟨0⟩ : ViewId).setMajorMode \"code\"
 
+def reindent (call : Call) : EditorM Unit := do
+  let text := call.target.buffer.text
+  match ← text.reindentEdits 0 ((← text.rowCount) - 1) (← call.target.indentUnit) with
+  | .error refusal => message s!\"refused: {refusal.describe}\"
+  | .ok edits =>
+    let before ← call.target.selection
+    call.target.replaceEachCarrying edits before before
+
+def opening (call : Call) : EditorM Unit := do
+  let selection ← call.target.selection
+  let some range := selection.ranges[selection.primary]? | return
+  match ← call.target.buffer.text.openingLevel range.head true with
+  | .error refusal => message s!\"refused: {refusal.describe}\"
+  | .ok (some level) => message s!\"level {level}\"
+  | .ok none => message \"level kept\"
+
 def setup : SetupM Unit := do
+  commandWith \"reindent\" reindent
+  commandWith \"opening\" opening
 " ++
     "\n".intercalate commands ++
     "\n"
 
-/-- Runs `check` against a host of the Vim scheme that ships
-(`withRealVimHost`) over `indentText` of the mangled Rust indent fixture, with
-the config loaded: handed the fixture's text and the mangled one. -/
+/-- Runs `check` against a real host of the test scheme (`withRealTestHost`)
+over `reindentText` of the mangled Rust indent fixture, with the config
+loaded: handed the fixture's text and the mangled one. -/
 def withIndentHost (context : Context) (check : RealSession → String → String → IO Bool) :
     IO Bool := do
   let source ← IO.FS.readFile (context.syntaxFixtures / "rust" / "indent.rs")
   let mangled := mangledRust source indentKept
-  withRealVimHost context [("init.lean", indentText mangled)] fun session => do
+  withRealTestHost context [("init.lean", reindentText mangled)] fun session => do
       session.ask [.reload]
       check session source mangled
 
-/-- Whether the view line `line` shows the text `text` and one selection
-from `anchor` to `head`. -/
-def showsText (line text : String) (anchor head : Nat) : Bool :=
-  (line.splitOn s!"{text.quote}, scroll").length == 2 &&
-    (line.splitOn s!"selections {anchor}..{head},").length == 2
-
-/-- The view line after `load-<name>` and then the keys `keys`. -/
-def Session.loadedAndTyped (session : Session) (name keys : String) : IO String := do
+/-- The text the view shows after `load-<name>` and then the command
+`command`, as its view line, and what the echo area says. -/
+def _root_.Editor.Test.Linked.Session.loadedAndRan (session : Session) (name command : String) :
+    IO (String × String) := do
   session.ask [.run ("load-" ++ name)]
-  session.typed keys
-  return lastViewLine (← session.sceneLines)
+  session.ask [.run command]
+  return (lastViewLine (← session.sceneLines), ← session.echo)
 
-/-- The checks of `=` and of indented new lines through a host of the Vim
-scheme that ships (`withRealVimHost`), with the real elaborator, the real text
-binding and the library's syntax service with Rust's shipped indents query,
-each through keys: the acceptance criteria of `=` and of `RET`, `o` and
-`O` in a Rust buffer, and in a buffer with no language and one whose
-language has no indents query. Which level a row gets is
+/-- The checks of the core's indent levels through a host of the test
+scheme (`withRealTestHost`), with the real elaborator, the real text binding
+and the library's syntax service with Rust's shipped indents query, each
+through a command of config's run by name: the rows re-indented, and the
+level of a line opened, in a Rust buffer, in a buffer with no language and
+in one whose language has no indents query. Which level a row gets is
 `Editor/Indent.lean`'s, pinned by `ModelTest`'s indent checks and, over the
 library, by `ContractTest`. -/
 def indentChecks (context : Context) : List Check :=
   [{  name :=
-        "in a Rust buffer whose indentation was mangled, g g = G gives text equal to the rustfmt-formatted fixture it came from, with the cursor on the first row's first non-blank, through the host's loop and the library's syntax tree; the rows inside its multi-line string and block comment, which the rule would indent by four spaces, keep theirs"
-      run :=
-        withIndentHost context fun session source mangled => do
-          let line ← session.loadedAndTyped "mangled" "g g = G"
-          let leading (row : String) := (row.takeWhile (· == ' ')).toString
-          unless showsText line source 0 0 do
-            throw (IO.userError line)
-          return mangled != source &&
-              indentKept.all (fun row => (source.splitOn ("\n" ++ row ++ "\n")).length == 2) &&
-              indentKept.all (leading · != "    ") },
+        "in a Rust buffer whose indentation was mangled, a command of config's that applies the edits TextId.reindentEdits answers of every row gives text equal to the rustfmt-formatted fixture it came from, through the host's loop and the library's syntax tree, the rows inside its multi-line string and block comment kept; in a buffer with no language it is refused as a text with no syntax tree and the text is left, and in a JSON buffer, whose language has no indents query, as one with no query"
+      run := do
+        let said (refusal : SyntaxTreeError) := s!"refused: {refusal.describe}".quote
+        -- A host of its own for the buffers of no Rust: the scratch buffer
+        -- keeps the language a load gave it.
+        let refused ←
+          withIndentHost context fun session _ _ => do
+              let (plain, plainEcho) ← session.loadedAndRan "plain" "reindent"
+              let (json, jsonEcho) ← session.loadedAndRan "json" "reindent"
+              unless
+                showsText plain "    ab" 5 5 && plainEcho == said .notAttached &&
+                  showsText json "[\n  1\n]" 4 4 &&
+                  jsonEcho == said .noQuery do
+                throw (IO.userError s!"{plain} {plainEcho} / {json} {jsonEcho}")
+              return true
+        let reindented ←
+          withIndentHost context fun session source mangled => do
+              let (line, _) ← session.loadedAndRan "mangled" "reindent"
+              unless showsText line source 0 0 do
+                throw (IO.userError line)
+              return mangled != source &&
+                  indentKept.all fun row => (source.splitOn ("\n" ++ row ++ "\n")).length == 2
+        return refused && reindented },
     { name :=
-        "= keeps the leading whitespace of a row inside a multi-line string and inside a block comment, and re-indents the rows around them"
-      run :=
-        withIndentHost context fun session _ _ => do
-          let line ← session.loadedAndTyped "strings" "g g = G"
-          let indented := "fn f() {\n    let s = \"a\n   b\";\n    /* c\n     d */\n    s\n}\n"
-          unless showsText line indented 0 0 do
-            throw (IO.userError line)
-          return true },
-    { name :=
-        "in a Rust buffer, = a f inside the second of two mangled functions re-indents exactly that function's rows: the first function and the struct above keep their mangled indentation byte for byte"
-      run :=
-        withIndentHost context fun session _ _ => do
-          let line ← session.loadedAndTyped "two-fns" "= a f"
-          let indented :=
-            "struct S;\n\nfn one() {\nlet a = 1;\n        a\n}\n\nfn two() {\n    let b = 2;\n    b\n}\n"
-          let some at_ := offsetOf indented "fn two" | return false
-          unless showsText line indented at_ at_ do
-            throw (IO.userError line)
-          return true },
-    { name :=
-        "in a Rust buffer, one = a f is undone by one u, which gives back the whole mangled text, and . then re-indents the other function, leaving the first as u left it"
-      run :=
-        withIndentHost context fun session _ _ => do
-          discard <| session.loadedAndTyped "two-fns" "= a f u"
-          let undone := lastViewLine (← session.sceneLines)
-          session.typed "g g j j j ."
-          let repeated := lastViewLine (← session.sceneLines)
-          let mangled :=
-            "struct S;\n\nfn one() {\nlet a = 1;\n        a\n}\n\nfn two() {\nlet b = 2;\n        b\n}\n"
-          let some letB := offsetOf mangled "let b" | return false
-          let indented :=
-            "struct S;\n\nfn one() {\n    let a = 1;\n    a\n}\n\nfn two() {\nlet b = 2;\n        b\n}\n"
-          let some fnOne := offsetOf indented "fn one" | return false
-          unless showsText undone mangled letB letB && showsText repeated indented fnOne fnOne do
-            throw (IO.userError s!"{undone} / {repeated}")
-          return true },
-    { name :=
-        "in a Rust buffer, A RET after an opening brace starts the new line one indent unit deeper than the brace's line: above a closing brace, at the text's end with none, and two deep in a method of an impl at the text's end"
-      run :=
-        withIndentHost context fun session _ _ => do
-          let closed ← session.loadedAndTyped "closed" "A RET"
-          session.typed "<Escape>"
-          let eof ← session.loadedAndTyped "eof" "A RET"
-          session.typed "<Escape>"
-          let nested ← session.loadedAndTyped "nested-eof" "A RET"
-          let closedText := "fn main() {\n    \n    let x = 1;\n}\n"
-          let nestedText := "impl S {\n    fn one(&self) {\n        "
-          unless
-            showsText closed closedText 16 16 && showsText eof "fn main() {\n    " 16 16 &&
-              showsText nested nestedText nestedText.utf8ByteSize nestedText.utf8ByteSize do
-            throw (IO.userError s!"{closed} / {eof} / {nested}")
-          return true },
-    { name :=
-        "in a Rust function body, o opens a row at the body's level, and typing if a { and RET there starts the next row a level deeper, though the if is not closed"
-      run :=
-        withIndentHost context fun session _ _ => do
-          let line ← session.loadedAndTyped "mid" "o i f SPC a SPC { RET"
-          let typed := "fn main() {\n    x();\n    if a {\n        "
-          unless showsText line (typed ++ "\n}\n") typed.utf8ByteSize typed.utf8ByteSize do
-            throw (IO.userError line)
-          return true },
-    { name :=
-        "in a Rust method's body, o and O on a statement start the new row at the body's level, and O on the method's closing brace does too"
-      run :=
-        withIndentHost context fun session _ _ => do
-          let below ← session.loadedAndTyped "method" "o"
-          session.typed "<Escape>"
-          let above ← session.loadedAndTyped "method" "O"
-          session.typed "<Escape>"
-          let closing ← session.loadedAndTyped "method-closing" "O"
-          let opened (needle : String) : Option (String × Nat) := do
-            let at_ ← offsetOf rustObjectsText needle
-            let bar := at_ + needle.utf8ByteSize + 8
-            return ((rustObjectsText.take (at_ + needle.length)).toString ++ "        \n" ++
-                  (rustObjectsText.drop (at_ + needle.length)).toString,
-                bar)
-          let some (belowText, belowBar) := opened "let x = 1;\n" | return false
-          let some (aboveText, aboveBar) := opened "u8 {\n" | return false
-          let some (closingText, closingBar) := opened "        x\n" | return false
-          unless
-            showsText below belowText belowBar belowBar &&
-              showsText above aboveText aboveBar aboveBar &&
-              showsText closing closingText closingBar closingBar do
-            throw (IO.userError s!"{below} / {above} / {closing}")
-          return true },
-    { name :=
-        "in a buffer with no language = = leaves the text and says the buffer has no syntax tree, and A RET, o and O insert bare line breaks as before; in a JSON buffer, whose language has no indents query, = = says so and A RET inserts a bare line break"
-      run :=
-        withIndentHost context fun session _ _ => do
-          let plain ← session.loadedAndTyped "plain" "= ="
-          let (plainEcho, _) ← session.scene
-          session.typed "A RET <Escape> o <Escape> O <Escape>"
-          let opened := lastViewLine (← session.sceneLines)
-          let json ← session.loadedAndTyped "json" "= ="
-          let (jsonEcho, _) ← session.scene
-          session.typed "A RET"
-          let broken := lastViewLine (← session.sceneLines)
-          let said (refusal : SyntaxTreeError) :=
-            s!"{Vim.operateCommand}: {Evil.cannotIndent refusal}".quote
-          unless
-            showsText plain "    ab" 5 5 && plainEcho == said .notAttached &&
-              (opened.splitOn s!"{"    ab\n\n\n".quote}, scroll").length == 2 &&
-              showsText json "[\n  1\n]" 4 4 &&
-              jsonEcho == said .noQuery &&
-              showsText broken "[\n  1\n\n]" 6 6 do
-            throw (IO.userError s!"{plain} {plainEcho} / {opened} / {json} {jsonEcho} / {broken}")
-          return true }]
+        "in a Rust buffer, TextId.openingLevel asked by a command of config's answers one level after an opening brace, above a closing brace and at the text's end with none, and two in a method of an impl at the text's end; in a buffer with no language it is refused as a text with no syntax tree, and in a JSON buffer as one with no indents query"
+      run := do
+        let said (refusal : SyntaxTreeError) := s!"refused: {refusal.describe}".quote
+        let refused ←
+          withIndentHost context fun session _ _ => do
+              let (_, plain) ← session.loadedAndRan "plain" "opening"
+              let (_, json) ← session.loadedAndRan "json" "opening"
+              unless plain == said .notAttached && json == said .noQuery do
+                throw (IO.userError s!"{plain} / {json}")
+              return true
+        let levels ←
+          withIndentHost context fun session _ _ => do
+              let (_, closed) ← session.loadedAndRan "closed" "opening"
+              let (_, eof) ← session.loadedAndRan "eof" "opening"
+              let (_, nested) ← session.loadedAndRan "nested-eof" "opening"
+              unless
+                closed == "level 1".quote && eof == "level 1".quote && nested == "level 2".quote do
+                throw (IO.userError s!"{closed} / {eof} / {nested}")
+              return true
+        return refused && levels }]
 
 end ConfigTest

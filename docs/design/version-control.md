@@ -12,29 +12,55 @@ parsed output, run as a job over the process service
 Git is one implementation of a small interface in the editor's own terms,
 so jj, or an in-process library, is another.
 
-Built in `lean/Editor/VersionControl.lean` (the interface),
-`lean/Editor/VersionControl/Porcelain.lean` (the reader of git's status),
-`lean/Editor/VersionControl/Plumbing.lean` (the readers of its worktree
+Version control is the default package `version-control`
+(`packages/version-control/`, two packages, `version-control` and
+`version-control-gutter`) since the features-as-packages roadmap's phase
+6, and its interface the interface package `vc-api` (`packages/vc-api/`),
+which phase 5 staged in the core's Lake package and phase 6 moved out with
+it. Built in `packages/vc-api/VcApi.lean` (the interface: the port, its
+hunk helpers, the backend point `VcApi.Backend` and the names others
+reach),
+`packages/version-control/VersionControl/Porcelain.lean` (the reader of git's status),
+`packages/version-control/VersionControl/Plumbing.lean` (the readers of its worktree
 list, branches, raw diff and blobs),
-`lean/Editor/VersionControl/HistoryRead.lean` (the readers of its log,
+`packages/version-control/VersionControl/HistoryRead.lean` (the readers of its log,
 blame and range-diff),
-`lean/Editor/VersionControl/Git.lean` (the git implementation),
-`lean/Editor/VersionControl/Model.lean` and
-`lean/Editor/VersionControl/Contract.lean` (its model and its contract),
-`lean/Editor/VersionControl/Status.lean` (the status buffer),
-`lean/Editor/VersionControl/Show.lean` (`vc-show`),
-`lean/Editor/VersionControl/Gutter.lean` (the gutter),
-`lean/Editor/VersionControl/Hunk.lean` and
-`lean/Editor/VersionControl/Stage.lean` (staging a hunk),
-`lean/Editor/VersionControl/Commit.lean` (the message buffer),
-`lean/Editor/VersionControl/Worktrees.lean` (the worktree list),
-`lean/Editor/VersionControl/ReviewHunks.lean` and
-`lean/Editor/VersionControl/Review.lean` (the review buffer),
-`lean/Editor/VersionControl/Log.lean` (the log buffer),
-`lean/Editor/VersionControl/Blame.lean` (the blame view),
-`lean/Editor/VersionControl/Views.lean` (what those buffers share: a day,
+`packages/version-control/VersionControl/Git.lean` (the git implementation),
+`packages/vc-api/VcApiTest/Fake.lean` and `packages/vc-api/VcApiTest/Contract.lean` (the
+interface's model, its fake, and its contract, with
+`VcApiTest.registrationChecks`),
+`packages/version-control/VersionControlTest/Git/Model.lean` (git's half of the model: what
+git prints of it, and the job model that answers git's command lines),
+`packages/version-control/VersionControl/Status.lean` (the status buffer),
+`packages/version-control/VersionControl/Show.lean` (`vc-show`),
+`packages/version-control/VersionControl/Gutter.lean` (the gutter),
+`packages/version-control/VersionControl/Hunk.lean` and
+`packages/version-control/VersionControl/Stage.lean` (staging a hunk),
+`packages/version-control/VersionControl/Commit.lean` (the message buffer),
+`packages/version-control/VersionControl/Worktrees.lean` (the worktree list),
+`packages/version-control/VersionControl/ReviewHunks.lean` and
+`packages/version-control/VersionControl/Review.lean` (the review buffer),
+`packages/version-control/VersionControl/Log.lean` (the log buffer),
+`packages/version-control/VersionControl/Blame.lean` (the blame view),
+`packages/version-control/VersionControl/Views.lean` (what those buffers share: a day,
 the cursor's row, making a read-only buffer and showing it) and
-`lean/Editor/VersionControl/Compiled.lean` (their registrations).
+`packages/version-control/VersionControl/Compiled.lean` (their registrations, the backend
+`git` among them); the gutter's reconciler and its jobs' names and orders
+are the core's, `lean/Editor/Gutter/Track.lean`.
+
+**The backend point.** `VcApi.Backend { name; connect }` is how a feature
+that is not version control reaches a repository: working-set's write asks
+for `HEAD`'s commit and find-in-project for the worktrees, each from a job
+registered over the point (`Extension.workJob`). The point is a choice by
+the name `git` (`VcApi.connect?`): the latest backend of that name is used,
+so config's `git` replaces version control's, and a backend of another
+name is not used; with none named `git` each takes the case "no
+repository". Version control
+registers `{ name := "git", connect := Git.handler }`. Open, and not
+changed by phase 5: the program a consumer passes `connect` is the
+workspace settings' `git`, so a second backend (jj) would need a setting
+of its own; and the workspace finder runs git itself, so a jj checkout is
+found only by config's roots or by markers.
 
 ## The interface
 
@@ -514,7 +540,7 @@ the files as a status holds them.
 ### Reading the history
 
 The readers of a log, a blame and a range-diff are pure too, and tested on
-fixtures git printed (`ModelTest.versionControlHistoryParserChecks`), text
+fixtures git printed (`VersionControlTest.versionControlHistoryParserChecks`), text
 decoded by the store's escape rule.
 
 - **A log**: one record a line, five fields separated by NULs: the id, the
@@ -652,7 +678,9 @@ editor with git integration does.
   changed `~` in `diff.changed`, and lines removed an empty `-` in
   `diff.removed` at the start of the line after them; glyphs that read on
   a grid of cells.
-- **The reconciler** runs after each publish, beside auto-reload's, and
+- **The reconciler** (the core's `Gutter.reconcile`,
+  `lean/Editor/Gutter/Track.lean`, which names the three jobs version
+  control registers) runs after each publish, beside auto-reload's, and
   is pure but for the text port, where it takes the diffs' snapshots: it
   keeps the tracked buffers and the watched repositories in step with what
   is wanted, starts the fetches, the diffs and the watches, and for a
@@ -663,9 +691,9 @@ editor with git integration does.
   and the workspace finder ask for, so one repository is never read by
   two gits.
 
-Pinned by `ModelTest.gutterChecks` on the models (`Repository.commit` and
+Pinned by `VersionControlTest.gutterChecks` on the models (`Repository.commit` and
 the driver's touch of the parked watch for a commit made outside the
-editor) and `ConfigTest.gutterChecks` over real git, the library's watch
+editor) and `VersionControlTest.Linked.gutterChecks` over real git, the library's watch
 service and its diff engine.
 
 ## Staging a hunk: `vc-stage-hunk` and `vc-unstage-hunk`
@@ -724,9 +752,9 @@ names run them, and no key binds them: binding one is config's.
 - **Untracked, conflicted and deleted files** have no hunk to stage: each
   is said, and the whole-file commands stage them.
 
-Pinned by `ModelTest.hunkChecks` (the pure core and the exact patch text),
-`ModelTest.stageHunkChecks` on the models, and
-`ContractTest.statusBufferChecks` over real git and the library's diff
+Pinned by `VersionControlTest.hunkChecks` (the pure core and the exact patch text),
+`VersionControlTest.stageHunkChecks` on the models, and
+`VersionControlTest.Linked.statusBufferChecks` over real git and the library's diff
 engine: on a line of the second of two hunks, in a buffer with unsaved
 changes, the buffer is saved and that hunk alone is staged; and pressed
 twice on one line before the first has staged, the first stages the hunk
@@ -768,9 +796,9 @@ is.
   buffer's, and whether a commit is in flight, as the shell keeps what it
   runs.
 
-Pinned by `ModelTest.commitBufferChecks` on the models (the bytes
+Pinned by `VersionControlTest.commitBufferChecks` on the models (the bytes
 `git commit --file=-` is fed are the buffer's text) and
-`ContractTest.statusBufferChecks` over real git: the commit's message is
+`VersionControlTest.Linked.statusBufferChecks` over real git: the commit's message is
 the buffer's text, and a pre-commit hook's lines on both streams are shown
 with `HEAD` as it was. A commit run by the checks has git's user from the
 hostile config, never guessed from the host's name.
@@ -809,8 +837,8 @@ to find files in one, and reaches a worktree not yet found through the same
 helper `vc-worktrees-visit` does ([projects.md](projects.md), "The project's
 workspaces and `find-file-in-project`").
 
-Pinned by `ModelTest.worktreeViewChecks` and `ModelTest.worktreeBufferChecks`
-on the models, and `ContractTest.statusBufferChecks` over real git: the
+Pinned by `VersionControlTest.worktreeViewChecks` and `VersionControlTest.worktreeBufferChecks`
+on the models, and `VersionControlTest.Linked.statusBufferChecks` over real git: the
 list of a repository with a worktree on `feature` holding a changed file,
 and visiting its row opens `*vc-status: repo@feature*` naming that file.
 
@@ -912,13 +940,13 @@ the log or the blame), so each is the same `vc-review-read` →
   `vc-review-since`, focused. No merge-base request is added: `changes`'
   base is the answer.
 
-Pinned by `ModelTest.reviewHunkChecks`, `reviewOrderChecks` and
-`reviewRecordChecks` (the pure core), `ModelTest.reviewBufferChecks` on the
+Pinned by `VersionControlTest.reviewHunkChecks`, `reviewOrderChecks` and
+`reviewRecordChecks` (the pure core), `VersionControlTest.reviewBufferChecks` on the
 models, the read run over the interface's model (`Model.readHandler`), and
-`ContractTest.reviewBufferChecks` over real git: from a linked worktree,
+`VersionControlTest.Linked.reviewBufferChecks` over real git: from a linked worktree,
 `vc-review` with no text reviews against `main`, and reverting one hunk
 makes that file's buffer hold the base's lines for it and leaves the
-other. `ContractTest.historyBufferChecks` runs `vc-review-since` over real
+other. `VersionControlTest.Linked.historyBufferChecks` runs `vc-review-since` over real
 git: after `vc-review` against `base` and a new commit it shows that
 commit's hunk alone, and after the commit is amended it opens the
 range-diff, which pairs the amended commit `!`.
@@ -945,8 +973,8 @@ buffer `*vc-log: <label> <revision>*` in the mode `vc-log`, magit's log.
   commit says so. **`refresh`** (`vc-log-refresh`) reads the log again
   into the same buffer.
 
-Pinned by `ModelTest.logViewChecks` and `ModelTest.logBufferChecks` on the
-models, and `ContractTest.historyBufferChecks` over real git: `vc-log
+Pinned by `VersionControlTest.logViewChecks` and `VersionControlTest.logBufferChecks` on the
+models, and `VersionControlTest.Linked.historyBufferChecks` over real git: `vc-log
 feature` lists feature's two commits newest first, and visiting the older
 one's row opens its change with its one header.
 
@@ -972,9 +1000,9 @@ commit that last changed it and that commit's author, in a read-only buffer
 - Which lines an agent wrote, as against a person, waits for provenance
   ([review-and-navigation.md](review-and-navigation.md), "History views").
 
-Pinned by `ModelTest.blameViewChecks` and `ModelTest.blameBufferChecks` on
+Pinned by `VersionControlTest.blameViewChecks` and `VersionControlTest.blameBufferChecks` on
 the models, where the changed line's row names its commit's author `b` and
-the others `a`, and `ContractTest.historyBufferChecks` over real git, under
+the others `a`, and `VersionControlTest.Linked.historyBufferChecks` over real git, under
 the hostile config whose `blame.ignoreRevsFile` names every commit but
 `HEAD`'s: the changed line's row alone names `HEAD`'s commit and its author
 `b`.

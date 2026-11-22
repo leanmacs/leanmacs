@@ -5,17 +5,16 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Display
-import Editor.Completion.Displays
 import Editor.Completion.Style
-import Editor.Completion.Styles
-import Editor.Completion.Words
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Reload
 import Editor.Config.Session
 import Editor.Config.Stores
 import Editor.DisplayRules
 import Editor.Ex.Line
+import Editor.Extension
 import Editor.Face
 import Editor.Fuzzy
 import Editor.Fuzzy.Model
@@ -30,8 +29,6 @@ import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
-import Editor.ProjectMode
-import Editor.ProjectMode.Format
 import Editor.Role
 import Editor.Scene
 import Editor.State
@@ -113,6 +110,28 @@ def problemUnder (scheme : InputScheme) (setup : SetupM Unit) : Option String :=
 def inCategory (text command category : String) : Config.KeyBinding :=
   { binding text command with category := some category }
 
+/-- The styles of the registry checks, written here and registered as a
+package's would be: `fuzzy`, which keeps the candidates the text starts,
+`orderless`, which keeps those that hold it, and `path`, which keeps every
+candidate. Only their names and what they keep are read. -/
+def writtenStyles : Array Completion.Style :=
+  #[.keeping "fuzzy" fun text candidate => candidate.startsWith text,
+    .keeping "orderless" fun text candidate => (candidate.splitOn text).length > 1,
+    .keeping "path" fun _ _ => true]
+
+/-- A display of the registry checks, written here: `minibuffer`, which
+shows the texts of the first `rows` listed, one a row. -/
+def cappedDisplay (rows : Nat) : Completion.Display :=
+  { name := "minibuffer"
+    sheet := fun showing =>
+      { rows := (showing.listed.extract 0 rows).map fun listed => { text := listed.text } } }
+
+/-- A value of an extension point of the registry's checks: a number. -/
+structure Counted where
+  /-- The number. -/
+  n : Nat
+  deriving TypeName
+
 /-- The checks of the registry (`Editor/Config/Registry.lean`). -/
 def registryChecks : List Check :=
   [{  name :=
@@ -171,14 +190,14 @@ def registryChecks : List Check :=
         "the latest at-point entry of a name is the one found, config's over compiled's until a reload drops it; a name a use or a mode lists that nobody registered is unknown; the loop is told the lookup and the chain"
       run :=
         pure <|
+          let words (pause : Nat) : Completion.AtPoint :=
+            { Completion.AtPoint.silent "words" with pause := some pause }
           let compiled :=
-            (({} : Config.Registry).replaceAtPoints .compiled
-                  #[Completion.AtPoint.words]).replaceModes
-              .compiled #[{ name := "m", atPoint := ["lost"] }]
+            (({} : Config.Registry).replaceAtPoints .compiled #[words 240]).replaceModes .compiled
+              #[{ name := "m", atPoint := ["lost"] }]
           let tuned :=
-            (compiled.replaceAtPoints .config
-                  #[Completion.AtPoint.words (pause := 100)]).replaceAtPointUses
-              .config #[(none, "words"), (none, "gone")]
+            (compiled.replaceAtPoints .config #[words 100]).replaceAtPointUses .config
+              #[(none, "words"), (none, "gone")]
           let dropped := tuned.replaceAtPoints .config #[]
           (tuned.atPoint? "words").bind (·.pause) == some 100 &&
             (dropped.atPoint? "words").bind (·.pause) == some 240 &&
@@ -186,33 +205,6 @@ def registryChecks : List Check :=
             tuned.unknownAtPoints == #["gone", "lost"] &&
             ((tuned.registered.atPoint "words").bind (·.pause)) == some 100 &&
             tuned.registered.atPointNames (some "m") #[] == #["lost", "words", "gone"] },
-    { name :=
-        "the registry's compile contributions are config's in config's order, then the compiled ones config does not register; config's a-mode replaces the compiled a-mode whole, and replacing config's with none brings the compiled one back"
-      run :=
-        let compiledA : Compile.Contribution :=
-          { mode := "a-mode", markers := #["a.toml"]
-            commands :=
-              #[{ name := "build", line := "compiled-build" },
-                { name := "lint", line := "compiled-lint" }]
-            formats := #[Compile.Format.general] }
-        let compiledC : Compile.Contribution := { mode := "c-mode", markers := #["c.toml"] }
-        let configB : Compile.Contribution := { mode := "b-mode", markers := #["b.toml"] }
-        let configA : Compile.Contribution :=
-          { mode := "a-mode", markers := #["x.toml"]
-            commands := #[{ name := "build", line := "config-build" }] }
-        let compiled :=
-          ({} : Config.Registry).replaceContributions .compiled #[compiledA, compiledC]
-        let both := compiled.replaceContributions .config #[configB, configA]
-        let dropped := both.replaceContributions .config #[]
-        let shape (contributions : Array Compile.Contribution) :=
-          contributions.map fun contribution =>
-            (contribution.mode, contribution.markers, contribution.commands,
-              contribution.formats.map (·.name))
-        pure
-          (shape compiled.compileContributions == shape #[compiledA, compiledC] &&
-            shape both.compileContributions == shape #[configB, configA, compiledC] &&
-            shape dropped.compileContributions == shape #[compiledA, compiledC] &&
-            shape both.compileHook.contributions == shape #[configB, configA, compiledC]) },
     {
       name :=
         "replace for an owner leaves exactly the new commands of that owner, and a second replace does not add to the first",
@@ -630,7 +622,7 @@ def registryChecks : List Check :=
         "a category's compiled default sits between config's two choices: the category gets it, owned by compiled, and other categories the fuzzy style; config's default leaves it and moves the others; config's choice for the category overrides it; a default naming no style falls through to the next"
       run :=
         let shipped : Config.Registry :=
-          { ({} : Config.Registry).replaceStyles .compiled Completion.Styles.shipped with
+          { ({} : Config.Registry).replaceStyles .compiled writtenStyles with
             styleDefaults := #[("file", "path")] }
         let entryOf (registry : Config.Registry) (category : String) : String × Config.Owner :=
           let entry := registry.styleEntry (some category)
@@ -651,10 +643,10 @@ def registryChecks : List Check :=
             (shipped.matching.styleFor (some "file")).name == "path" &&
             shipped.matching.ownerFor (some "file") == .compiled) },
     { name :=
-        "the matching follows config's choices over the registered styles: a category's chosen style, the chosen default for a category with none, and the fuzzy style with no choice; a choice of a name nobody registered falls to the default and is reported once; config's style of a shipped name is the one found until config's styles are replaced, and with no choice config's style named fuzzy is the default, on a host that ships the fuzzy style and on one that ships none"
+        "the matching follows config's choices over the registered styles: a category's chosen style, the chosen default for a category with none, and the style registered first, fuzzy, with no choice, or the core's own with none registered; a choice of a name nobody registered falls to the default and is reported once; config's style of a shipped name is the one found until config's styles are replaced, and with no choice config's style named fuzzy is the default, on a host that ships the fuzzy style and on one that ships none"
       run :=
         let shipped : Config.Registry :=
-          ({} : Config.Registry).replaceStyles .compiled Completion.Styles.shipped
+          ({} : Config.Registry).replaceStyles .compiled writtenStyles
         let mine : Completion.Style := .keeping "mine" fun _ _ => true
         let chosen : Config.Registry :=
           { shipped.replaceStyles .config #[mine] with
@@ -676,7 +668,7 @@ def registryChecks : List Check :=
           (nameOf chosen (some "pick") == "orderless" && nameOf chosen (some "other") == "mine" &&
             nameOf chosen none == "mine" &&
             nameOf shipped (some "pick") == "fuzzy" &&
-            nameOf {} none == "fuzzy" &&
+            nameOf {} none == Completion.Style.unregistered.name &&
             nameOf unknown (some "pick") == "fuzzy" &&
             unknown.unknownStyles == #["nope", "gone"] &&
             chosen.unknownStyles == #[] &&
@@ -689,7 +681,7 @@ def registryChecks : List Check :=
         "the matching says who registered the style each category gets: config for a category config chose its own style for, and for the default config's style; compiled for a shipped style chosen by config, for the shipped default, and on a registry with no style"
       run :=
         let shipped : Config.Registry :=
-          ({} : Config.Registry).replaceStyles .compiled Completion.Styles.shipped
+          ({} : Config.Registry).replaceStyles .compiled writtenStyles
         let mine : Completion.Style := .keeping "mine" fun _ _ => true
         let chosen : Config.Registry :=
           { shipped.replaceStyles .config #[mine] with
@@ -706,10 +698,10 @@ def registryChecks : List Check :=
             shipped.matching.ownerFor none == .compiled &&
             ({} : Config.Registry).matching.ownerFor none == .compiled) },
     { name :=
-        "the matching's style and owner for a category are the one style entry the category resolves to: its style, by what it matches, and its owner, on registries with choices, with a choice of a name nobody registered, with config's style named fuzzy over the shipped one and with none; with no entry, the compiled fuzzy style"
+        "the matching's style and owner for a category are the one style entry the category resolves to: its style, by what it matches, and its owner, on registries with choices, with a choice of a name nobody registered, with config's style named fuzzy over the shipped one and with none; with no entry, the core's own style, as compiled's"
       run :=
         let shipped : Config.Registry :=
-          ({} : Config.Registry).replaceStyles .compiled Completion.Styles.shipped
+          ({} : Config.Registry).replaceStyles .compiled writtenStyles
         let mine : Completion.Style := .keeping "mine" fun _ _ => true
         let keepingAll : Completion.Style := .keeping "fuzzy" fun _ _ => true
         let overridden : Config.Registry := shipped.replaceStyles .config #[keepingAll]
@@ -735,20 +727,20 @@ def registryChecks : List Check :=
             (overridden.styleEntry none).owner == .config &&
             hitsOf (overridden.styleEntry (some "pick")).style == #[.ofIndex 0] &&
             empty.owner == .compiled &&
-            empty.style.name == Completion.Styles.fuzzy.name &&
+            empty.style.name == Completion.Style.unregistered.name &&
             hitsOf empty.style == #[]) },
     { name :=
-        "the displaying follows config's choices over the registered displays: a category's chosen display, the chosen default for a category with none, and the minibuffer display with no choice; config's display named minibuffer is used in the shipped one's place, so it sets the rows, until config's displays are replaced; a choice of a name nobody registered falls to the default and is reported once; with no entry, the compiled minibuffer display"
+        "the displaying follows config's choices over the registered displays: a category's chosen display, the chosen default for a category with none, and the display registered first, minibuffer, with no choice; config's display named minibuffer is used in the shipped one's place, so it sets the rows, until config's displays are replaced; a choice of a name nobody registered falls to the default and is reported once; with no entry, the core's own display, as compiled's"
       run :=
         let shipped : Config.Registry :=
-          ({} : Config.Registry).replaceDisplays .compiled Completion.Displays.shipped
+          ({} : Config.Registry).replaceDisplays .compiled #[cappedDisplay 10]
         let plain := Completion.Display.plain "plain"
         let chosen : Config.Registry :=
           { shipped.replaceDisplays .config #[plain] with
             displayChoices := #[(some "pick", "plain")] }
         let defaulted : Config.Registry :=
           { shipped.replaceDisplays .config #[plain] with displayChoices := #[(none, "plain")] }
-        let three := shipped.replaceDisplays .config #[Completion.Displays.minibuffer 3]
+        let three := shipped.replaceDisplays .config #[cappedDisplay 3]
         let unknown : Config.Registry :=
           { shipped with
             displayChoices := #[(some "pick", "nope"), (some "other", "nope"), (none, "gone")] }
@@ -764,19 +756,103 @@ def registryChecks : List Check :=
             nameOf defaulted (some "pick") == "plain" &&
             nameOf defaulted none == "plain" &&
             rowsOf chosen (some "pick") == 15 &&
-            rowsOf shipped none == Completion.Displays.rows &&
+            rowsOf shipped none == 10 &&
             rowsOf three none == 3 &&
             rowsOf three (some "pick") == 3 &&
             (three.displayEntry none).owner == .config &&
-            rowsOf (three.replaceDisplays .config #[]) none == Completion.Displays.rows &&
-            nameOf {} none == "minibuffer" &&
-            rowsOf {} none == Completion.Displays.rows &&
+            rowsOf (three.replaceDisplays .config #[]) none == 10 &&
+            nameOf {} none == Completion.Display.unregistered.name &&
+            rowsOf {} none == 15 &&
             (({} : Config.Registry).displayEntry none).owner == .compiled &&
             nameOf unknown (some "pick") == "minibuffer" &&
             unknown.unknownDisplays == #["nope", "gone"] &&
             chosen.unknownDisplays == #[] &&
             (three.display? "minibuffer").isSome &&
             (({} : Config.Registry).display? "plain").isNone) },
+    { name :=
+        "with no style registered, every category, and a prompt with none, is matched with the core's own style, ranked, owned by compiled: it lists what the fuzzy port ranks, in its order, with no ranges"
+      run :=
+        let empty : Config.Registry := {}
+        let hitsOf (style : Completion.Style) : Array Completion.Hit :=
+          (Program.run (port := fuzzyPort) FuzzyModel.handle (style.hits "ab" #["xab", "ab", "b"])
+              ()).1
+        pure
+          ([none, some "pick", some "file"].all fun category =>
+            let entry := empty.styleEntry category
+            entry.owner == .compiled && entry.style.name == Completion.Style.unregistered.name &&
+              (empty.matching.styleFor category).name == "ranked" &&
+              hitsOf entry.style == #[.ofIndex 1, .ofIndex 0]) },
+    { name :=
+        "with two packages' styles registered and no choice, every category is matched with the style registered first, the earlier package's, owned by it"
+      run :=
+        let first : Config.Owner := { name := "first" }
+        let second : Config.Owner := { name := "second" }
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceStyles first
+                #[.keeping "one" fun _ _ => true, .keeping "two" fun _ _ => true]).replaceStyles
+            second #[.keeping "three" fun _ _ => true]
+        pure
+          ([none, some "pick"].all fun category =>
+            let entry := registry.styleEntry category
+            entry.style.name == "one" && entry.owner == first) },
+    { name :=
+        "config's style of the name of the style registered first is used in its place as the default, owned by config, until config's styles are replaced"
+      run :=
+        let first : Config.Owner := { name := "first" }
+        let registry : Config.Registry :=
+          ({} : Config.Registry).replaceStyles first
+            #[.keeping "one" fun _ _ => false, .keeping "two" fun _ _ => true]
+        let mine := registry.replaceStyles .config #[.keeping "one" fun _ _ => true]
+        let hitsOf (registry : Config.Registry) : Array Completion.Hit :=
+          (Program.run (port := fuzzyPort) FuzzyModel.handle
+              ((registry.matching.styleFor none).hits "z" #["a"]) ()).1
+        pure
+          ((mine.styleEntry none).owner == .config && hitsOf mine == #[.ofIndex 0] &&
+            (mine.replaceStyles .config #[] |>.styleEntry none).owner == first &&
+            hitsOf (mine.replaceStyles .config #[]) == #[]) },
+    { name :=
+        "with no display registered, every category, and a listing with none, is shown with the core's own display, plain, owned by compiled: the interface's model"
+      run :=
+        let empty : Config.Registry := {}
+        let showing : Completion.Showing :=
+          { listed := #[.of (.ofText "a"), .of (.ofText "b")], chosen := some 1 }
+        pure
+          ([none, some "pick", some "file"].all fun category =>
+            let entry := empty.displayEntry category
+            entry.owner == .compiled &&
+              entry.display.name == Completion.Display.unregistered.name &&
+              (empty.displaying.displayFor category).name == "plain" &&
+              entry.display.sheet showing == (Completion.Display.plain "plain").sheet showing) },
+    { name :=
+        "with two packages' displays registered and no choice, every category is shown with the display registered first, the earlier package's, owned by it"
+      run :=
+        let first : Config.Owner := { name := "first" }
+        let second : Config.Owner := { name := "second" }
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceDisplays first
+                #[Completion.Display.plain "one", Completion.Display.plain "two"]).replaceDisplays
+            second #[Completion.Display.plain "three"]
+        pure
+          ([none, some "pick"].all fun category =>
+            let entry := registry.displayEntry category
+            entry.display.name == "one" && entry.owner == first) },
+    { name :=
+        "config's display of the name of the display registered first is used in its place as the default, owned by config, until config's displays are replaced"
+      run :=
+        let first : Config.Owner := { name := "first" }
+        let registry : Config.Registry :=
+          ({} : Config.Registry).replaceDisplays first
+            #[Completion.Display.plain "one", Completion.Display.plain "two"]
+        let mine : Completion.Display :=
+          { name := "one", sheet := fun _ => { rows := #[{ text := "mine" }] } }
+        let configured := registry.replaceDisplays .config #[mine]
+        let rowsOf (registry : Config.Registry) : Array String :=
+          ((registry.displaying.displayFor none).sheet { listed := #[.of (.ofText "a")] }).rows.map
+            (·.text)
+        pure
+          ((configured.displayEntry none).owner == .config && rowsOf configured == #["mine"] &&
+            (configured.replaceDisplays .config #[] |>.displayEntry none).owner == first &&
+            rowsOf (configured.replaceDisplays .config #[]) == #["  a"]) },
     { name :=
         "completion sources are held by owner and replaced as a set: the latest entry of a name is the one found, config's source of a compiled source's name while config registers it and the compiled one again once it does not; the loop is told what the lookup answers"
       run :=
@@ -907,7 +983,67 @@ def registryChecks : List Check :=
                         items :=
                           #[.item "Open…" (some opened) (.command "open"), .separator,
                             .item "Save" none (.command "save"),
-                            .item "Close" none (.command "close")] }] }) }]
+                            .item "Close" none (.command "close")] }] }) },
+    { name :=
+        "a job registered over an extension point holds a work that fails at once, saying it is started through `Config.State.work?`, and `workWith` makes its work from the values handed it at its point; a job with no point's `workWith` is its work"
+      run :=
+        let counting : Package :=
+          { name := "counting"
+            setup :=
+              Extension.workJob Counted "count-values" fun values arguments =>
+                Work.of (fun _ => pure (values.map (·.n), arguments.length)) fun (ns, count) =>
+                  makes s!"{ns.toList} {count}" }
+        let job := (Package.registered counting).jobs.find? (·.name == "count-values")
+        let values (key : Lean.Name) : Array Dynamic :=
+          if key == TypeName.typeName Counted then
+            #[.mk ({ n := 1 } : Counted), .mk ({ n := 2 } : Counted)]
+          else #[]
+        pure
+          ((job.map fun job => worked (job.work [])) ==
+              some
+                (.failed
+                  "count-values: made over an extension point; it is started through Config.State.work?") &&
+            (job.map fun job => worked (job.workWith values [.nat 7])) ==
+              some (.finished #["[1, 2] 1"]) &&
+            (job.map fun job => worked (job.workWith (fun _ => #[]) [])) ==
+              some (.finished #["[] 0"]) &&
+            worked ((jobRegistration "plain" "p").workWith values []) == .finished #["p"]) },
+    { name :=
+        "of the values at an extension point the registry answers config's alone, in order, where it is asked for config's: a package's value there, and config's value at another point, are not among them, and the loop is told the same"
+      run :=
+        let other : Lean.Name := `ModelTest.OtherPoint
+        let key := TypeName.typeName Counted
+        let counted (n : Nat) : Lean.Name × Dynamic := (key, .mk ({ n } : Counted))
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceExtensions { name := "counting" }
+                #[counted 1, counted 2]).replaceExtensions
+            .config #[counted 3, (other, .mk ({ n := 9 } : Counted)), counted 4]
+        let numbers (values : Array Dynamic) : Array Nat :=
+          values.filterMap fun value => (value.get? Counted).map (·.n)
+        pure
+          (numbers (registry.extensionsAt key) == #[1, 2, 3, 4] &&
+            numbers (registry.configExtensionsAt key) == #[3, 4] &&
+            numbers (registry.configExtensionsAt other) == #[9] &&
+            numbers (registry.registered.answer (.configExtensions key)) == #[3, 4] &&
+            numbers (registry.registered.answer (.extensions key)) == #[1, 2, 3, 4] &&
+            numbers (RegistryRequest.bare (.configExtensions key)) == #[]) },
+    { name :=
+        "the collector keeps a job over an extension point with its point, a host installs it with its owner, and `Package.registered` lists its name among the jobs"
+      run :=
+        let counting : Package :=
+          { name := "counting"
+            setup :=
+              Extension.workJob Counted "count-values" (reported := true) fun _ _ =>
+                Work.of (fun _ => pure ()) fun _ => pure () }
+        let (state, refused) : Config.State Unit Unit × Array String :=
+          Config.State.ofPackages #[counting]
+        pure
+          (refused.isEmpty &&
+            ((Package.registered counting).jobs.map (·.name)) == #["count-values"] &&
+            ((Package.registered counting).jobs.map fun job =>
+                (job.over.map (·.1), job.reported)) ==
+              #[(some (TypeName.typeName Counted), true)] &&
+            (state.registry.findJob? "count-values").map (·.owner.name) == some "counting") }]
 
 /-- The invocation of the command `filling name` fills `role` with. -/
 def filled (name : String) (role : Role) : Invocation :=

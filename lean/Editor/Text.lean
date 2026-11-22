@@ -1039,7 +1039,7 @@ def Origin.user : Origin :=
 
 /-- The origin of a reload from disk: the edit a reload of a buffer from its
 file makes, which takes in the text another program wrote
-(`Files.reloaded`, `Editor/Files.lean`). That 2 means this is the editor's
+(`Files.reloaded`, `packages/files/Files.lean`). That 2 means this is the editor's
 convention, as 0 and 1 do. -/
 def Origin.disk : Origin :=
   ⟨2⟩

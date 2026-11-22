@@ -1,7 +1,7 @@
 import Compile.Contribution
+import CompileApi
+import CompileApiTest.Listing
 import CompileTest.Check
-import Editor.ProjectMode
-import Editor.Test.Listing
 import Editor.Workspace
 
 /-!

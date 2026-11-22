@@ -1,25 +1,22 @@
 import Editor.Api
-import Editor.AtPoint
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
-import Editor.Completion.Displays
 import Editor.Completion.Keys
 import Editor.Completion.Later
-import Editor.Completion.Styles
 import Editor.Config.Owner
 import Editor.Config.Stores
 import Editor.Event
-import Editor.Ex
-import Editor.Files
+import Editor.FileJobs
 import Editor.Gutter
+import Editor.Gutter.Track
 import Editor.InputScheme
 import Editor.Key.Notation
 import Editor.Marks.Follow
 import Editor.ModeLine
+import Editor.Quit
 import Editor.Restore
 import Editor.State
-import Editor.VersionControl.Gutter
 
 /-!
 # The command loop
@@ -191,7 +188,7 @@ registered"), so it is guarded, answered, rolled back and said with it.
   for a write gives the asking command up (`Loop.writesInside`), and the
   loop rolls both back: the write is not lost in silence.
 - **Why it exists.** Evil's dot repeat replays a change by the name the
-  change's keys compiled to (`Editor/Evil/Repeat.lean`). Looked up in a
+  change's keys compiled to (`packages/evil/Evil/Repeat.lean`). Looked up in a
   table of its own, the name could stand for another command than the one
   the key ran: config's command of a compiled command's name runs in its
   place, and a second table would not know.
@@ -275,7 +272,7 @@ loop has little of its own to do.
   scheme's report after the answer, and the scheme's state is kept as the
   state at rest when the command ran to its end, and put back to the state
   at rest when it did not. This is how Vim's `/` asks for its pattern and
-  then makes its edit (`Editor/InputScheme/Vim.lean`, "Motions that ask").
+  then makes its edit (`packages/evil/Evil/Vim.lean`, "Motions that ask").
 - **Keys pressed by an invocation** are one whose name is the reserved
   `InputScheme.keysName`, with a key string as its argument: `Loop.invoke`
   hands it to `Loop.pressed`, which feeds the keys to the scheme for the
@@ -286,7 +283,7 @@ loop has little of its own to do.
   so a prefix left pending cannot extend them, and the Vim scheme still
   knows which state each view is in. Keys that complete nothing are said
   (`Loop.notBound`). The binding search runs the binding accepted this way
-  (`Editor/BindingSearch.lean`), so it runs as its key would: the scheme's
+  (`packages/binding-search/BindingSearch.lean`), so it runs as its key would: the scheme's
   own invocation, with no count and no register, and the scheme's state
   changed as the key changes it.
 - **Which keys reach a command** (`RegistryRequest.keyBindings`) is answered
@@ -300,8 +297,8 @@ loop has little of its own to do.
   as an answered one is. So the answers a step hands back are the
   invocations to run next: a prompt's continuation with its answer, and
   what the command asked for. The ex command runs the command a line
-  names this way (`Editor/Ex.lean`), and so does the command prompt,
-  `execute-command`, the command accepted (`Editor/ExecuteCommand.lean`).
+  names this way (`packages/ex/Ex.lean`), and so does the command prompt,
+  `execute-command`, the command accepted (`packages/execute-command/ExecuteCommand.lean`).
   A name no command is registered
   under is said by that step, `<name>: no such command`.
 - **Rollback needs no rule of its own.** A command that asks and then
@@ -323,8 +320,10 @@ loop has little of its own to do.
   answer, followed by the candidates filtered sources passed
   (`EditorState.listCandidates`, `Editor/State.lean`, "Prompts"). Nothing
   else asks a style for a prompt. With nothing chosen by config the style
-  is the fuzzy matcher's (`Completion.Styles.fuzzy`), which asks
-  `Fuzzy.rank` once (`Editor/Fuzzy.lean`).
+  is the one registered first, in the default set the fuzzy matcher's,
+  `fuzzy`, from the `completion` package (`packages/completion/`), which
+  asks `Fuzzy.rank` once (`Editor/Fuzzy.lean`); with none registered, the
+  core's own (`Completion.Style.unregistered`).
   - **The candidates listed are those that answer the typed text**
     (`Candidates.answering`, in `Candidates.listing`): an asking source's
     answer for another directory, and a candidate the text does not
@@ -376,10 +375,12 @@ loop has little of its own to do.
   category (`Loop.Keys.displaying`, `Completion.Displaying.displayFor`,
   `Editor/Completion/Display.lean`) is handed the whole listing, the
   choice and where its window started last, and answers its rows: by
-  default the minibuffer display's (`Completion.Displays.minibuffer`), at
-  most ten (`Completion.Displays.rows`, as Emacs's vertico and ivy list
-  ten), in a window round the choice, so moving the choice past the last
-  row shown scrolls the list. The listing is handed over as it is and
+  default the display registered first, in the default set the minibuffer
+  display, `minibuffer`, from the `completion` package, at most ten rows
+  (as Emacs's vertico and ivy list ten), in a window round the choice, so
+  moving the choice past the last row shown scrolls the list; with none
+  registered, the core's own (`Completion.Display.unregistered`), which
+  shows every candidate. The listing is handed over as it is and
   never copied, so each publish builds text for at most the display's
   rows, whatever the listing's size. The state keeps what it answered on
   the prompt (`Prompt.sheet`) and draws it in the candidate list's view
@@ -472,11 +473,16 @@ step (`Stepped.answered`), and the sources' pauses are armed
 one while a prompt or a session is open, withdraws them. The host arms each
 pause as a wait on the job clock, and runs `at-point-paused` when one fires
 (`Headless.Running.pause`, `paused`); the driver on the models by
-`Loop.Driver.pass`.
+`Loop.Driver.pass`. Both names are the core's
+(`Completion.AtPoint.triggeredCommand`, `.pausedCommand`,
+`Editor/Completion/AtPoint.lean`), and the loop defines neither command: an
+at-point package registers them, and the registry finds each by name when
+it runs.
 
 Pinned by `ModelTest.atPointLoopChecks`, `atPointRepeatChecks`,
-`atPointAskChecks`, `atPointByItselfChecks` and `completionJobChecks`; on the
-headless host by `ConfigTest.atPointChecks`.
+`atPointAskChecks`, `atPointByItselfChecks` and `completionJobChecks`, on the
+kit's at-point package (`Editor/Test/AtPoint.lean`); on the headless host by
+`ConfigTest.atPointChecks`.
 
 ## Key hints
 
@@ -603,9 +609,8 @@ request sets a flag of the editor state (`EditorState.quitting`,
   flag is editor state, and the loop's state is then the one from before
   the command ("Rollback").
 - **A window's close request is a quit by `q`'s rule.** The loop runs the
-  rule itself (`Ex.closeRequested`, `Editor/Ex.lean`, "A window's close
-  request") as it runs a delivered command (`deliver`, labelled
-  `Ex.quitName`): guarded, rolled back and published, with the echo area
+  rule itself (`Quit.closeRequested`, `Editor/Quit.lean`) as it runs a delivered command (`deliver`, labelled
+  `Quit.name`): guarded, rolled back and published, with the echo area
   not cleared first, and saying stop only when the state it left leaves.
   So a close request while a buffer that holds a file has unsaved changes
   publishes one scene, with the refusal in the bottom row, and the loop
@@ -619,7 +624,7 @@ request sets a flag of the editor state (`EditorState.quitting`,
 - **The system's quit is put through `quit`** (`Event.quitRequested`:
   Command-Q, the Dock's Quit, a logout). The step remembers it
   (`EditorState.systemQuit`) and runs the command named `quit`
-  (`Ex.quitName`) as an invocation no key yielded, so the rules above hold
+  (`Quit.name`) as an invocation no key yielded, so the rules above hold
   of it: config's command of that name runs in its place, and the step
   says stop when the editor leaves, as for `:q`. When the editor does not
   quit, because `quit` was refused or did not ask, or a quit that waited is
@@ -845,10 +850,10 @@ is queued, and marks that event. What the loop does with the flag is here
 | `compositionDisabled` | Clears the preedit |
 | `resize` | Sets the frame's size, whether the window is in fullscreen (`Frame.fullscreen`), its corner clearance in points (`Frame.corner`), which the bottom row is inset by (`EditorState.bottomInset`), and its top inset in points (`Frame.top`), which the views along the frame's top edge start their text below (`EditorState.topInset`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: Lean handles no scale, and the display lays out at its own |
 | `focus gained` | Sets whether the frame has the keyboard focus. A gain starts a check of every file buffer after the publish ("Files that changed on disk") |
-| `closeRequested` | Runs the quit rule (`Ex.closeRequested`) as a delivered command is run (`Loop.deliver`), labelled `quit`: it publishes a scene, and says stop only once the editor leaves ("Quit") |
+| `closeRequested` | Runs the quit rule (`Quit.closeRequested`) as a delivered command is run (`Loop.deliver`), labelled `quit`: it publishes a scene, and says stop only once the editor leaves ("Quit") |
 | `quit` | Nothing: the step says stop, and publishes nothing |
-| `openFiles paths` | Runs `open-file` (`Files.openName`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
-| `quitRequested` | Remembers that the system asked to quit (`EditorState.systemQuit`) and runs `quit` (`Ex.quitName`) with no arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The step says stop when the editor leaves; otherwise the publish asks the frame `keepRunning` once ("Quit") |
+| `openFiles paths` | Runs `open-file` (`FileJobs.openFileCommand`, `Editor/FileJobs.lean`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`packages/files/Files.lean`, "Open"). With no path it does nothing |
+| `quitRequested` | Remembers that the system asked to quit (`EditorState.systemQuit`) and runs `quit` (`Quit.name`) with no arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The step says stop when the editor leaves; otherwise the publish asks the frame `keepRunning` once ("Quit") |
 | `menu name` | Tells the scheme that a menu item named the command `name`, with no arguments, for the focused view (`InputScheme.invoked`), and runs the invocation it hands back as one no key yielded, in the focused window, with the report of the scheme's state it hands back: guarded, rolled back and published as every command is, and config's command of the name runs in its place. A name no command is registered under says so, as an invocation does. The scheme's states are then as after a key: a command that runs to its end keeps the state handed back, which is the state at rest when nothing is pending, and one that does not puts the scheme back at rest. A scheme that treats no menu item apart hands back the invocation and the state as they were, so the command `name` runs |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
 | a key release, the press of a modifier by itself, a pointer, `windowOpened`, `compositionEnabled`, a message, a completion | Nothing |
@@ -1043,8 +1048,11 @@ Every edit the loop makes for an input event carries `Origin.user`.
 
 The editor watches no file unless auto-reload is on, and it is off by
 default: what notices that another program changed a buffer's file is a
-check, one stat a file (`Files.checkWork`, `Editor/Files.lean`), which the
-loop asks for at three moments, and a save's own check.
+check, one stat a file, which the loop asks for at three moments, and a
+save's own check. The loop names the job and its order by the core's
+`Editor/FileJobs.lean` (`FileJobs.checkJob`, `FileJobs.Checked`), and the
+files feature registers and works it (`Files.checkWork`,
+`packages/files/Files.lean`).
 
 - **When.** After each publish, `Loop.fileJobs` compares the state with
   `Loop.seen`, what the last publish saw (`Loop.seenOf`: whether the frame
@@ -1072,8 +1080,9 @@ loop asks for at three moments, and a save's own check.
   `Guarded.superseded` (`Editor/Command/Dispatch.lean`). It is rolled back
   as one that gave up is; then the told flag is set on the restored state,
   so it survives the rollback, and the echo area reads
-  `Files.changedOnDisk`, which names `:e`, or for a file that is gone
-  `Files.goneFromDisk`, which names `:w!`, with no command name before it.
+  `FileJobs.changedOnDisk`, which names `:e`, or for a file that is gone
+  `FileJobs.goneFromDisk`, which names `:w!`, with no command name before
+  it.
   A committed text is dropped the same way (`handle`).
 - **The next edit lands**, since the user was told, as Emacs's supersession
   check lets the next modification through. The mark stays, and a save is
@@ -1084,7 +1093,8 @@ loop asks for at three moments, and a save's own check.
   marks the buffer and says so. Emacs stats synchronously at the first
   modification; the editor thread never blocks on I/O.
 
-Pinned by `ModelTest.stalenessChecks`.
+Pinned by `ModelTest.loopFileJobChecks` on stand-in works, and with the
+files feature by its `FilesTest.stalenessChecks`.
 
 ## Auto-reload
 
@@ -1102,7 +1112,8 @@ auto-reload is on.** A config's own jobs may still watch, as a plugin would.
   `Loop.fileJobs`) keeps `EditorState.following` in step with what is
   wanted: every open file buffer with no save in flight, while the mode is
   on and `follow-file` is registered, and nothing otherwise. A buffer
-  wanted and not followed gets a `follow-file` start of the key
+  wanted and not followed gets a `follow-file` start (`FileJobs.followJob`,
+  its order `FileJobs.FollowOrder`) of the key
   `follow <buffer>` (`JobStart.key`); one followed and no longer wanted (the
   mode off, the buffer closed, its path changed, a save started) gets a
   cancel of its key (`Loop.Stepped.cancels`). One whose buffer's stamp
@@ -1114,7 +1125,7 @@ auto-reload is on.** A config's own jobs may still watch, as a plugin would.
   `Loop.Driver`): starting a job of a key cancels the running job of that
   key, and a cancel ends the job of its key, even one that has finished
   and not been delivered, so its command never runs (`Job.Jobs.cancel`).
-- **The follow job** (`Files.followWork`) starts a watch on the file, with
+- **The follow job** (`Files.followWork`, the files feature's) starts a watch on the file, with
   a window of 50 ms and a bound of one path, then stats the file, and
   waits for the next delivery while the stat answers what its order
   expected: the last stamp found, which is the buffer's own unless it is
@@ -1133,8 +1144,8 @@ auto-reload is on.** A config's own jobs may still watch, as a plugin would.
   parked jobs' watches and resumes those with a delivery, and
   `Loop.Driver.openWatches` is how many watches they hold.
 
-Pinned by `ModelTest.autoReloadChecks` on the models, and by
-`ConfigTest.autoReloadChecks` on real files with the library's watch
+Pinned by `FilesTest.autoReloadChecks` on the models, and by
+`FilesTest.Linked.autoReloadChecks` on real files with the library's watch
 service.
 
 ## Decorations
@@ -1253,7 +1264,7 @@ is kept here.
   too, and a motion has no snapshot.
 
 Pinned by `ModelTest.viewChecks`, on the loop's driver over the editor's
-models; by a case of `Editor/Api/Cases.lean`, on the models and on the
+models under the test scheme; by a case of `Editor/Api/Cases.lean`, on the models and on the
 real text binding with the recorder; and by the fixture
 `tests/headless/view`, on the executable. The floats' places are pinned by
 `ModelTest.floatViewChecks`, on the same driver, and by the fixture
@@ -1277,7 +1288,7 @@ session is one step of the history
   meanwhile. The loop keeps nothing of its own for a session. A command
   may still set a boundary inside one itself, with `BufferId.closeGroup`
   (`Editor/Api.lean`, "Undo"): evil's arrow keys of insert state do, once
-  they moved (`Editor/Evil.lean`, "Editing keys"), so the session is then
+  they moved (`packages/evil/Evil.lean`, "Editing keys"), so the session is then
   more than one step.
 - **A session with nothing edited makes no node**: closing a group with
   nothing pending makes none.
@@ -1537,27 +1548,27 @@ structure Loop.Keys (scheme : InputScheme) where
   tabBar : Option TabBar.Shown := none
   /-- The menu bar the scene names, its key equivalents filled from the
   registry's bindings as they are now (`Config.Registry.menuOf`,
-  `Editor/Menu/Compiled.lean`); `none` for a host with no menu bar, whose
+  `packages/menu/Menu/Compiled.lean`); `none` for a host with no menu bar, whose
   scenes name none. -/
   menu : Option Menu := none
   /-- The styles a prompt's candidates are listed with, chosen by its
   category (`Editor/Completion/Style.lean`): the host hands the registry's,
-  config's choices or the fuzzy style for every category
+  config's choices or the style registered first for every category
   (`Config.Registry.matching`, `Headless.keys`). It is looked up for each
   step and never kept in the state, so a reload changes it from the next
   listing. -/
-  matching : Completion.Matching := Completion.Matching.standard
+  matching : Completion.Matching := Completion.Matching.unregistered
   /-- How many candidates a prompt may have to match for its listing to be
   made in the publish, on the editor thread; more are matched by a job of
   the loop's own ("Prompts", in the module docs). -/
   inlineMatches : Nat := Loop.inlineMatches
   /-- The displays a prompt's listing is shown with, chosen by its category
   (`Editor/Completion/Display.lean`): the host hands the registry's,
-  config's choices or the minibuffer display for every category
+  config's choices or the display registered first for every category
   (`Config.Registry.displaying`, `Headless.Running.keys`). It is looked up
   for each step and never kept in the state, so a reload changes it from
   the next scene. -/
-  displaying : Completion.Displaying := Completion.Displaying.standard
+  displaying : Completion.Displaying := Completion.Displaying.unregistered
   /-- How long a prefix is pending before its key hints are shown ("Key
   hints", in the module docs). The host hands config's setting
   (`keyHintDelay`, `Editor/Setup.lean`) or the editor's own,
@@ -2129,7 +2140,7 @@ revision gone by, and is no longer in flight, so the reconciler cancels it.
 A state with no prompt, or a prompt with no candidates, is as it was, and
 nothing is read or asked. It is not refused: a refusal of the read is
 handed back, with the state as it was. -/
-def listed (state : EditorState) (matching : Completion.Matching := .standard)
+def listed (state : EditorState) (matching : Completion.Matching := .unregistered)
     (inlineMatches : Nat := Loop.inlineMatches) :
     EditorM (EditorState × Option String × Option TextError) := do
   let some completing := state.completing? | return (state, none, none)
@@ -2245,7 +2256,8 @@ def atPointExhausted (state : EditorState) : EditorState × Option AtPointSessio
       ({ state with
           atPoint := none
           echo :=
-            if session.tallest == 0 && !session.silent then AtPoint.noCompletions else state.echo },
+            if session.tallest == 0 && !session.silent then Completion.AtPoint.noCompletions
+            else state.echo },
         some session)
     else (state, none)
   | _, _ => (state, none)
@@ -2530,8 +2542,8 @@ text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
 def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (padding : Nat := 0)
     (layout : Option Layout := none) (tabBar : Option TabBar.Shown := none)
-    (matching : Completion.Matching := .standard) (inlineMatches : Nat := Loop.inlineMatches)
-    (displaying : Completion.Displaying := .standard) (now : Nat := 0)
+    (matching : Completion.Matching := .unregistered) (inlineMatches : Nat := Loop.inlineMatches)
+    (displaying : Completion.Displaying := .unregistered) (now : Nat := 0)
     (keyHints : Array KeyHint := #[]) (generation : Nat := 0) : EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The marks follow the event's line deletions and undo, now that the
@@ -2663,8 +2675,8 @@ def insert (target : Target) (text : String) : TextM Unit :=
 refused because its file changed on disk, or, with `found = none`, is
 gone. -/
 def supersededSays (path : System.FilePath) : Option File.Stamp → String
-  | some _ => Files.changedOnDisk path
-  | none => Files.goneFromDisk path
+  | some _ => FileJobs.changedOnDisk path
+  | none => FileJobs.goneFromDisk path
 
 /-- `state` once the commit of `text` into an excerpt buffer, `excerpt`,
 shown by `target`, is dropped or inserted ("What each event does", in the
@@ -3127,7 +3139,7 @@ buffer with no save in flight, when the frame gained the keyboard focus;
 otherwise one shown now that was open and shown by no view then, and one
 modified now that was open and unmodified then. A buffer opened since is
 not due: its stamp is a moment old. -/
-def dueChecks (seen : Seen) (state : EditorState) : Array Files.Checked :=
+def dueChecks (seen : Seen) (state : EditorState) : Array FileJobs.Checked :=
   let now := seenOf state
   let gained := now.focused && !seen.focused
   now.present.filterMap fun id => do
@@ -3150,7 +3162,8 @@ file buffer with no save in flight while auto-reload is in effect and
 and is not armed again, while it is wanted. -/
 def reconcile (state : EditorState) (keys : Keys scheme) :
     EditorState × Array JobStart × Array String :=
-  let on := state.autoReload.getD keys.registered.autoReload && keys.registered.jobs Files.followJob
+  let on :=
+    state.autoReload.getD keys.registered.autoReload && keys.registered.jobs FileJobs.followJob
   let wanted : Array (BufferId × Buffer.File) :=
     if on then
       (seenOf state).present.filterMap fun id => do
@@ -3168,9 +3181,9 @@ def reconcile (state : EditorState) (keys : Keys scheme) :
   let arming := wanted.filter fun (id, _) => !kept.any (·.buffer == id)
   let starts : Array JobStart :=
     arming.map fun (id, file) =>
-      { name := Files.followJob
+      { name := FileJobs.followJob
         arguments :=
-          Files.FollowOrder.arguments
+          FileJobs.FollowOrder.arguments
             { buffer := id, path := file.path, stamp := file.stamp
               expected := (file.changed.map (·.found)).getD (some file.stamp) }
         key := some (Following.keyOf id) }
@@ -3188,8 +3201,8 @@ def fileJobs (loop : Loop scheme) (keys : Keys scheme) :
     Loop scheme × Array JobStart × Array String :=
   let due := dueChecks loop.seen loop.state
   let checks :=
-    if keys.registered.jobs Files.checkJob && !due.isEmpty then
-      #[{ name := Files.checkJob, arguments := Files.checkArguments due }]
+    if keys.registered.jobs FileJobs.checkJob && !due.isEmpty then
+      #[{ name := FileJobs.checkJob, arguments := FileJobs.checkArguments due }]
     else #[]
   let (state, follows, cancels) := reconcile loop.state keys
   ({ loop with
@@ -3358,7 +3371,7 @@ def atPointAsks (loop : Loop scheme) (keys : Keys scheme) (key : Option (ViewId 
           text.toList.getLast?.filter fun char => sources.any (·.triggers.contains char)
         let invocations : Array Invocation :=
           trigger.toArray.map fun char =>
-            { command := AtPoint.triggeredName, arguments := [.str char.toString] }
+            { command := Completion.AtPoint.triggeredCommand, arguments := [.str char.toString] }
         let pauses := (sources.filterMap (·.pause)).toList.eraseDups.toArray
         (invocations, if pauses.isEmpty then .keep else .arm view pauses)
       | _, _ => (#[], withdraw)
@@ -3397,7 +3410,7 @@ job (`Keys.inlineMatches`): its loop is
 the one the publish left, with the file jobs it starts and cancels
 (`fileJobs`) after the step's own, then the open prompt's jobs it starts,
 cancels and spawns (`completionJobs`), then the version-control gutter's
-(`VersionControl.reconcile`), handed the git program of the workspace
+(`Gutter.reconcile`, `Editor/Gutter/Track.lean`), handed the git program of the workspace
 settings `keys` was told of (`Registered.workspaceSettings`, what the
 version-control commands ask for), then the session journal's orders, its
 index write and the modes a restore deferred (`Restore.journalOrders`,
@@ -3412,7 +3425,7 @@ def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM 
   let (loop, starts, cancels) := loop.fileJobs keys
   let (loop, sourceStarts, sourceCancels, spawns) := loop.completionJobs keys
   let (state, gutterStarts, gutterCancels) ←
-    VersionControl.reconcile keys.registered.jobs keys.registered.workspaceSettings.git loop.state
+    Gutter.reconcile keys.registered.jobs keys.registered.workspaceSettings.git loop.state
   let loop := { loop with state }
   let reconciled ←
     Restore.journalOrders loop.state (keys.registered.jobs Restore.restoreJob)
@@ -3564,7 +3577,7 @@ def deliver (keys : Keys scheme) (loop : Loop scheme) (label : String) (command 
 /-- Handles `event` and publishes a scene of the state after it, and says
 whether to go on: stop, once the editor leaves ("Quit", in the module
 docs). A queue's quit stops the loop and publishes nothing; a window's
-close request is a quit by `q`'s rule (`Ex.closeRequested`), run as a
+close request is a quit by `q`'s rule (`Quit.closeRequested`), run as a
 delivered command is (`deliver`). A key press is stepped through the scheme, and the invocation it
 yields is run (`stepped?`, `key`). A handler that is refused leaves the
 state as it was, with the refusal in the echo area. The step itself is not
@@ -3589,17 +3602,17 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
     -- A quit by `q`'s rule, run as a delivered command is: guarded, rolled
     -- back and published, with the echo left, and stop once the editor
     -- leaves.
-    loop.deliver keys Ex.quitName Ex.closeRequested
+    loop.deliver keys Quit.name Quit.closeRequested
   | .openFiles (path :: rest) =>
     -- An invocation no key yielded, run as every command is, in the
     -- focused window: config's command of the name runs in its place.
-    loop.invoke keys { command := Files.openName, arguments := (path :: rest).map .str }
+    loop.invoke keys { command := FileJobs.openFileCommand, arguments := (path :: rest).map .str }
   | .quitRequested =>
     -- The system's quit is remembered first, so that a `quit` that is
     -- refused or interrupted rolls back to a state that still holds it,
     -- and the publish answers it.
     ({ loop with state := { loop.state with systemQuit := true } }).invoke keys
-        { command := Ex.quitName }
+        { command := Quit.name }
   | .menu name =>
     -- An invocation no key yielded, as a file to open is: config's
     -- command of the name runs in its place. The scheme says what it runs

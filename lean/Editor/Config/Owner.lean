@@ -40,8 +40,9 @@ def Owner.config : Owner :=
   { name := "config" }
 
 /-- The owner of what the core falls back to when no package registered it:
-the fuzzy style and the minibuffer display of a registry that holds none
-(`Registry.styleEntry`, `Registry.displayEntry`), and the default owner of a
+the core's own style and display of a registry that holds none
+(`Completion.Style.unregistered`, `Completion.Display.unregistered`;
+`Registry.styleEntry`, `Registry.displayEntry`), and the default owner of a
 job the loop starts for itself (`Loop.Spawn.owner`) and of a style's match
 (`Completion.Matching.ownerFor`). No host registers anything under it: what
 a feature registers belongs to its package's owner (`Package.owner`,

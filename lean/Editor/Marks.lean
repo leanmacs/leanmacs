@@ -39,7 +39,7 @@ the loop runs them once an event has been handled
     is `dd`'s and `cc`'s on a text of one line.
   - A command that deletes whole lines decides about their marks itself,
     as Vim's `del_lines` does, and the edit's shape decides nothing for
-    them (`Jumps.deleteRows`, called by `Editor/Evil/Operators.lean`): the
+    them (`Jumps.deleteRows`, called by `packages/evil/Evil/Operators.lean`): the
     linewise delete erases those of all its lines (`dd` on a text's only
     line among them), and the linewise change those of its lines after
     the first, keeping the first's, whose markers it records as decided
@@ -72,7 +72,7 @@ the loop runs them once an event has been handled
   when a line is split before it.
 
 Pinned by `ModelTest.markRuleChecks`; the marks erased and put back in the
-editor by `ModelTest.evilMarkChecks`.
+editor by `EvilTest.evilMarkChecks`.
 -/
 
 namespace Editor.Marks

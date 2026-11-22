@@ -1,27 +1,25 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
-import ConfigTest.Support.Hosts
-import ConfigTest.Support.Keys
-import ConfigTest.Support.Lines
-import ConfigTest.Support.Syntax
+import ConfigTest.Support.Shipped
 import Editor.Config.Directory
 import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Reload
 import Editor.Headless
-import Editor.InputScheme.Vim.Default
-import Editor.ProjectSearch.Run
-import Editor.WorkingSet.Run
-import Editor.Workspace.FindFile
-import Editor.Workspace.FindInProject
-import EditorCore.EditorPackage
+import Editor.InputScheme.Test
+import Editor.Test.Linked.Host
+import Editor.Test.Linked.Lines
 
 /-!
 # Config tests: the default config
 
 The tests of the default config `mise run install` ships (`config/default`):
-`defaultConfigChecks`, through a host of the Vim scheme that ships and on the
-registry a host starts with. The default config is config, not a Lean module,
+`defaultConfigChecks`, through a host of the test scheme and on the
+registry a host starts with: its bindings are written under `<leader>`, so
+they are read through the scheme's leader (`InputScheme.leaders`), whatever
+scheme that is. That the Vim scheme's leader is `SPC` is evil's
+(`EvilTest.vimDefaultChecks`), and what the default editor runs for its
+keys under it the headless fixture `tests/headless/default-config`'s. The default config is config, not a Lean module,
 so this module mirrors none; it sits beside the mirrored ones under
 `ConfigTest/`. The root module `ConfigTest` runs them; its module doc says what
 each shows.
@@ -30,15 +28,16 @@ each shows.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- The registrations of the default config (`config/default`, the
 directory `context.defaultConfig` names), built as a reload builds them
-(`Config.build`), under the Vim scheme that ships, with the real
+(`Config.build`), under the test scheme, with the real
 elaborator. Throws with the diagnostics when the build is rejected, so a
 check that fails says why. -/
 def defaultBuilt (context : Context) : IO Config.Registrations := do
   let outcome ←
-    Config.build Vim.Default.scheme context.elaborator
+    Config.build TestScheme.scheme context.elaborator
         (Config.Directory.source context.defaultConfig) Config.PackageFiles.none none none #[]
   match outcome.built with
   | some built =>
@@ -49,179 +48,142 @@ def defaultBuilt (context : Context) : IO Config.Registrations := do
           s!"the default config was rejected: {outcome.diagnostics.toList.map (·.message)}"
 
 /-- The registry a host of the executable starts with, the one the packages
-of the core's Lake package make (`Config.State.ofPackages` of
-`EditorCore.EditorPackage.packages`), with the
+of the core's Lake package and the kit's stand-ins make
+(`Config.State.ofPackages` of `shippedPackages`), with the
 default config's bindings, prefix names
 and leaders installed for the owner `.config`, as a reload installs them
 (`Config.Reload.install`). -/
 def defaultRegistry (registrations : Config.Registrations) : IO Config.Registry := do
   let (state, _) : Config.State Config.Elaborate.Base Config.Elaborate.Handle × Array String :=
-    Config.State.ofPackages EditorCore.EditorPackage.packages
+    Config.State.ofPackages shippedPackages
   let registry :=
     (state.registry.replaceBindings .config registrations.bindings).replacePrefixNames .config
       registrations.prefixNames
   return { registry with
       leader := registrations.leader, localLeader := registrations.localLeader }
 
-/-- Whether `lines` hold the status line of a prompt labelled `label`. Each
-prompt opens a minibuffer view of its own, so a prompt's status line is
-compared from its view's id on. -/
-def promptOf (label : String) (lines : Array String) : Bool :=
-  lines.any fun line => line.startsWith "status " && afterId line == afterId (promptStatus label)
+/-- The commands the default config binds that no package of the core's
+Lake package registers: the command prompt's, `execute-command`, and the
+binding search's, `search-bindings`, which default packages register, and
+the twelve of the files, the buffers, the workspace, project search and the
+working sets, which the default packages of those features register, and
+the themes' `load-theme`, which the default package `themes` registers. They
+are written as text, as a reacher inside the core names a name another
+package declares (`docs/design/extension-points.md`, "Reaches by name"):
+the core cannot import a package. The interface packages of the features
+declare them: `execute-command-api` and `binding-search-api` the first two,
+`files-api` `open-file`, `save-buffer` and `reload-buffer`, `buffers-api`
+`switch-buffer`, `list-buffers` and `close-buffer`, `project-api`
+`find-file-in-workspace` and `find-file-in-project`, `project-search-api`
+`project-search` and `project-search-symbol`, `working-set-api`
+`working-set-add` and `working-set-open`, `themes-api` `load-theme`
+(bound to `<leader> h t`), and `tab-commands-api` the tab commands the
+config binds under `<leader> TAB`: `tab-switch`, `tab-new`, `tab-close`,
+`tab-rename`, `tab-next`, `tab-previous` and `tab-select-1` to
+`tab-select-9`, and `window-commands-api` the thirty-three window commands
+the config binds under `<leader> w`. That the default editor runs the first fourteen
+for their keys under the Vim scheme's leader (`SPC :`, `SPC ?`, `SPC f f`,
+`SPC p f`, `SPC SPC`, `SPC p p`, `SPC s p`, `SPC /`, `SPC *`, `SPC k a`,
+`SPC k o`) is the headless fixture
+`tests/headless/default-config`'s. -/
+def defaultPackageCommands : Array String :=
+  #["execute-command", "search-bindings", "open-file", "save-buffer", "reload-buffer",
+    "switch-buffer", "list-buffers", "close-buffer", "find-file-in-workspace",
+    "find-file-in-project", "project-search", "project-search-symbol", "working-set-add",
+    "working-set-open", "load-theme", "tab-switch", "tab-new", "tab-close", "tab-rename",
+    "tab-next", "tab-previous", "tab-select-1", "tab-select-2", "tab-select-3", "tab-select-4",
+    "tab-select-5", "tab-select-6", "tab-select-7", "tab-select-8", "tab-select-9", "window-split",
+    "window-split-vertically", "window-new", "window-close", "window-quit", "window-only",
+    "window-focus-left", "window-focus-down", "window-focus-up", "window-focus-right",
+    "window-focus-next", "window-focus-previous", "window-focus-top", "window-focus-bottom",
+    "window-focus-last", "window-exchange", "window-rotate", "window-rotate-back", "window-balance",
+    "window-taller", "window-shorter", "window-wider", "window-narrower", "window-zoom",
+    "window-promote", "window-demote", "window-main-more", "window-main-fewer", "window-edge-left",
+    "window-edge-bottom", "window-edge-top", "window-edge-right", "window-float"]
 
 /-- The checks of the default config `mise run install` ships
 (`config/default`), read from the directory the fourth argument names: it
-loads with no reload error and `SPC f f` opens a file, `SPC p f` and `SPC SPC`
-open the workspace finder and `SPC p p` runs `find-file-in-project`, each binding names a
-registered command, and each prefix it binds under the leader is named. -/
+loads with no reload error, each binding names a registered command or one of
+`defaultPackageCommands`, and each prefix it binds under the leader is named.
+What its keys into the default packages do is the headless fixture
+`tests/headless/default-config`'s. -/
 def defaultConfigChecks (context : Context) : List Check :=
-  [{  name :=
-        "the default config: a reload installs it with no diagnostic; SPC f f then runs open-file, which asks for a path, once that is cancelled SPC : opens the command prompt, and once that is cancelled SPC ? opens the binding search, which, once open is typed, lists SPC f f  open-file"
+  [{  name := "the default config: a reload installs it with no diagnostic"
       run := do
         let files ← configFiles context.defaultConfig
-        withVimHost context files fun session => do
+        withTestHost context files fun session => do
             session.ask [.reload]
             let output ← session.output.get
             let installed := output.any (·.startsWith "reload 1: installed")
             let clean := !output.any (·.startsWith "diagnostic:")
-            let before ← session.sceneLines
-            session.typed "SPC f f"
-            let joined := (← session.join) == .settled
-            let after ← session.sceneLines
-            session.typed "<Escape>"
-            let cancelled ← session.sceneLines
-            session.typed "SPC :"
-            let rejoined := (← session.join) == .settled
-            let commanding ← session.sceneLines
-            session.typed "<Escape>"
-            session.typed "SPC ?"
-            let searched := (← session.join) == .settled
-            let searching ← session.sceneLines
-            -- The list shows only its first rows: typing `open` narrows it
-            -- to the bindings that match.
-            session.typed "o p e n"
-            let narrowed := (← session.join) == .settled
-            let opening ← session.sceneLines
-            return installed && clean && joined && rejoined && searched && narrowed &&
-                !before.contains (promptStatus Files.openPrompt) &&
-                after.contains (promptStatus Files.openPrompt) &&
-                !cancelled.contains (promptStatus Files.openPrompt) &&
-                !promptOf ExecuteCommand.label cancelled &&
-                promptOf ExecuteCommand.label commanding &&
-                !promptOf BindingSearch.label commanding &&
-                promptOf BindingSearch.label searching &&
-                opening.any fun line =>
-                  line.startsWith "view " && (afterId line).contains "SPC f f  open-file" },
+            return installed && clean },
     { name :=
-        "the default config: SPC p f opens the workspace finder, once that is cancelled SPC SPC opens it again, and once that is cancelled SPC p p runs find-file-in-project, which says the scratch buffer is in no project"
-      run := do
-        let files ← configFiles context.defaultConfig
-        withVimHost context files fun session => do
-            session.ask [.reload]
-            let output ← session.output.get
-            let installed := output.any (·.startsWith "reload 1: installed")
-            let clean := !output.any (·.startsWith "diagnostic:")
-            let label := Workspace.FindFile.promptLabel "/"
-            let before ← session.sceneLines
-            session.typed "SPC p f"
-            let joined := (← session.join) == .settled
-            let finding ← session.sceneLines
-            session.typed "<Escape>"
-            let cancelled ← session.sceneLines
-            session.typed "SPC SPC"
-            let rejoined := (← session.join) == .settled
-            let refinding ← session.sceneLines
-            session.typed "<Escape>"
-            let recancelled ← session.sceneLines
-            session.typed "SPC p p"
-            let switched := (← session.join) == .settled
-            let switching ← session.sceneLines
-            let said := s!", echo {(Workspace.FindInProject.noProject "scratch").quote}"
-            return installed && clean && joined && rejoined && switched && !promptOf label before &&
-                promptOf label finding &&
-                !promptOf label cancelled &&
-                promptOf label refinding &&
-                !promptOf label recancelled &&
-                switching.any fun line => (line.splitOn said).length == 2 },
-    { name :=
-        "the default config: every binding names a command registered compiled or by the config, <leader> f f is bound to open-file, <leader> : to execute-command, described Execute command, and <leader> ? to search-bindings, described Search bindings, <leader> p f and <leader> SPC to find-file-in-workspace, described Find file in workspace, <leader> p p to find-file-in-project, described Switch workspace, <leader> s p and <leader> / to project-search, described Search workspace, <leader> * to project-search-symbol, described Search symbol in workspace, <leader> k a to working-set-add, described Add to working set, and <leader> k o and <leader> RET to working-set-open, described Open working set"
+        "the default config: every binding names a command registered compiled, by the config, or one of the default packages' commands it binds, by name (defaultPackageCommands); <leader> f f is bound to open-file, <leader> : to execute-command, described Execute command, and <leader> ? to search-bindings, described Search bindings, <leader> p f and <leader> SPC to find-file-in-workspace, described Find file in workspace, <leader> p p to find-file-in-project, described Switch workspace, <leader> s p and <leader> / to project-search, described Search workspace, <leader> * to project-search-symbol, described Search symbol in workspace, <leader> k a to working-set-add, described Add to working set, and <leader> k o and <leader> RET to working-set-open, described Open working set"
       run := do
         let registrations ← defaultBuilt context
         let registry ← defaultRegistry registrations
         let unregistered :=
           registrations.bindings.filter fun binding =>
             (registry.find? binding.command).isNone &&
-              !registrations.commands.any (·.name == binding.command)
+              !registrations.commands.any (·.name == binding.command) &&
+              !defaultPackageCommands.contains binding.command
         unless unregistered.isEmpty do
           throw <| IO.userError s!"unregistered commands: {unregistered.toList.map (·.command)}"
         return !registrations.bindings.isEmpty &&
             registrations.bindings.any
               (fun binding =>
                 Key.strokeNotations binding.keys == "<leader> f f" &&
-                  binding.command == Files.openName) &&
+                  binding.command == "open-file") &&
             registrations.bindings.any
               (fun binding =>
                 Key.strokeNotations binding.keys == "<leader> :" &&
-                  binding.command == ExecuteCommand.name &&
+                  binding.command == "execute-command" &&
                   binding.desc == some "Execute command") &&
             registrations.bindings.any
               (fun binding =>
                 Key.strokeNotations binding.keys == "<leader> ?" &&
-                  binding.command == BindingSearch.name &&
+                  binding.command == "search-bindings" &&
                   binding.desc == some "Search bindings") &&
             registrations.bindings.any
               (fun binding =>
                 Key.strokeNotations binding.keys == "<leader> p f" &&
-                  binding.command == Workspace.FindFile.name &&
+                  binding.command == "find-file-in-workspace" &&
                   binding.desc == some "Find file in workspace") &&
             registrations.bindings.any
               (fun binding =>
                 Key.strokeNotations binding.keys == "<leader> SPC" &&
-                  binding.command == Workspace.FindFile.name &&
+                  binding.command == "find-file-in-workspace" &&
                   binding.desc == some "Find file in workspace") &&
             registrations.bindings.any
               (fun binding =>
                 Key.strokeNotations binding.keys == "<leader> p p" &&
-                  binding.command == Workspace.FindInProject.name &&
+                  binding.command == "find-file-in-project" &&
                   binding.desc == some "Switch workspace") &&
             ["<leader> s p", "<leader> /"].all
               (fun keys =>
                 registrations.bindings.any fun binding =>
-                  Key.strokeNotations binding.keys == keys &&
-                    binding.command == ProjectSearch.name &&
+                  Key.strokeNotations binding.keys == keys && binding.command == "project-search" &&
                     binding.desc == some "Search workspace") &&
             registrations.bindings.any
               (fun binding =>
                 Key.strokeNotations binding.keys == "<leader> *" &&
-                  binding.command == ProjectSearch.symbolName &&
+                  binding.command == "project-search-symbol" &&
                   binding.desc == some "Search symbol in workspace") &&
             registrations.bindings.any
               (fun binding =>
                 Key.strokeNotations binding.keys == "<leader> k a" &&
-                  binding.command == WorkingSet.addName &&
+                  binding.command == "working-set-add" &&
                   binding.desc == some "Add to working set") &&
             ["<leader> k o", "<leader> <Enter>"].all fun keys =>
               registrations.bindings.any fun binding =>
-                Key.strokeNotations binding.keys == keys &&
-                  binding.command == WorkingSet.openName &&
+                Key.strokeNotations binding.keys == keys && binding.command == "working-set-open" &&
                   binding.desc == some "Open working set" },
     { name :=
-        "the default config: SPC k o runs working-set-open, which says the scratch buffer is in no workspace"
-      run := do
-        let files ← configFiles context.defaultConfig
-        withVimHost context files fun session => do
-            session.ask [.reload]
-            session.typed "SPC k o"
-            let ran := (← session.join) == .settled
-            let lines ← session.sceneLines
-            let said := s!", echo {(WorkingSet.noWorkspace WorkingSet.openName "scratch").quote}"
-            return ran && lines.any fun line => (line.splitOn said).length == 2 },
-    { name :=
-        "the default config: every prefix it binds under the leader has a prefix name, and those prefixes are SPC f, SPC b, SPC w, SPC TAB, SPC h, SPC p, SPC s and SPC k, named project, search and working set"
+        "the default config: every prefix it binds under the leader has a prefix name, and those prefixes are <leader> f, <leader> b, <leader> w, <leader> TAB, <leader> h, <leader> p, <leader> s and <leader> k, the last three named project, search and working set"
       run := do
         let registrations ← defaultBuilt context
         let registry ← defaultRegistry registrations
-        let leaders := registry.leaders Vim.Default.scheme
+        let leaders := registry.leaders TestScheme.scheme
         let leader := leaders.leader.map Key.chord
         let mut prefixes : Array (List Key) := #[]
         for binding in registrations.bindings do
@@ -233,18 +195,21 @@ def defaultConfigChecks (context : Context) : List Check :=
             unless prefixes.contains begun do
               prefixes := prefixes.push begun
         let unnamed :=
-          prefixes.filter fun begun => (registry.prefixName? Vim.Default.scheme begun).isNone
+          prefixes.filter fun begun => (registry.prefixName? TestScheme.scheme begun).isNone
         unless unnamed.isEmpty do
           throw <| IO.userError s!"unnamed prefixes: {unnamed.toList.map Key.notations}"
+        -- A prefix as config writes it, under the leader in force.
+        let under (text : String) : List Key :=
+          ((Key.parseStrokes text).toOption.map fun strokes =>
+                (Key.expand leaders strokes).map Key.chord).getD
+            []
         let expected :=
-          ["SPC f", "SPC b", "SPC w", "SPC TAB", "SPC h", "SPC p", "SPC s", "SPC k"].map fun text =>
-            (keysOf text).map Key.chord
+          ["<leader> f", "<leader> b", "<leader> w", "<leader> TAB", "<leader> h", "<leader> p",
+                "<leader> s", "<leader> k"].map
+            under
         return prefixes.size == expected.length && expected.all prefixes.contains &&
-            registry.prefixName? Vim.Default.scheme ((keysOf "SPC p").map Key.chord) ==
-              some "project" &&
-            registry.prefixName? Vim.Default.scheme ((keysOf "SPC s").map Key.chord) ==
-              some "search" &&
-            registry.prefixName? Vim.Default.scheme ((keysOf "SPC k").map Key.chord) ==
-              some "working set" }]
+            registry.prefixName? TestScheme.scheme (under "<leader> p") == some "project" &&
+            registry.prefixName? TestScheme.scheme (under "<leader> s") == some "search" &&
+            registry.prefixName? TestScheme.scheme (under "<leader> k") == some "working set" }]
 
 end ConfigTest

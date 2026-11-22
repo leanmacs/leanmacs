@@ -1,34 +1,35 @@
-import Editor.PackageSet.Compiled
+import Editor.Test.PackageSet
+import Editor.Test.Restore
 import ModelTest.Check
 import ModelTest.Editor.Restore.Restart
-import ModelTest.Support.PackageSet
 import ModelTest.Support.Restore
 
 /-!
-# Model tests: `Editor/PackageSet/Build.lean` and `Editor/PackageSet/Compiled.lean`
+# Model tests: `Editor/PackageSet/Build.lean`
 
-The model tests of the package-set build and its commands:
-`packageSetBuildChecks`. The decision a reload asks (`decide`) is pinned
-as a pure function; the job `package-build` and the commands on the
-loop's driver over the editor's models and the job model, each command of
-the build scripted on the process model, the restore's restart registered
-beside them and the state directory `/state`. The root module `ModelTest`
-runs them; its module doc says what each shows.
+The model tests of the package-set build: `packageSetBuildChecks`. The
+decision a reload asks (`decide`) is pinned as a pure function; the job
+`package-build` and the two commands it posts to on the loop's driver over
+the editor's models and the job model, registered by the kit's stand-in
+for the build (`Test.PackageSet.buildPackage`, `Editor/Test/PackageSet.lean`),
+each command of the build scripted on the process model, the restart of
+the kit's stand-in for the `restore` package (`Test.Restore.package`)
+registered beside them and the state directory `/state`. So the module
+names nothing of the package `package-set`, whose `:package-…` commands
+and edit job are checked in that package
+(`PackageSetTest.packageSetCommandChecks`, `packages/package-set/`). The root module `ModelTest` runs them; its
+module doc says what each shows.
 -/
 
 namespace ModelTest
 
 open Editor
+open Editor.Test
 open Editor.PackageSet
-open PackageSetTest
+open Editor.Test.PackageSet
 open RestoreTest
-open WorkingSetTest
 
 namespace BuildTest
-
-/-- A git package. -/
-def gitPackage : Require :=
-  { name := "g", source := .git "https://example.invalid/g" (some "v1") none }
 
 /-- The order a reload of `facts` starts, if it starts one. -/
 def orderFor (facts : Facts) : Option Order :=
@@ -39,11 +40,6 @@ def orderFor (facts : Facts) : Option Order :=
 /-- The command `program --version` the build runs for `order`. -/
 def tool (order : Order) (program : String) : Process.Command :=
   toolCommand order program
-
-/-- A run replying status `code` with `stdout`. -/
-def replied (command : Process.Command) (code : Nat := 0) (stdout : String := "") :
-    Process.Script :=
-  { command, reply := .ok { exit := .code code, stdout := stdout.toUTF8, stderr := .empty } }
 
 /-- A streaming command writing `lines` to standard output, then exiting
 with `code`. -/
@@ -88,10 +84,10 @@ def succeeding (order : Order) (crates : String := "") (probe : String := "probe
 processes as `scripts` and `streams` say, and its config directory `/c`
 there. -/
 def buildDriver (running : Running) (scripts : Array Process.Script)
-    (streams : Array Process.StreamScript := #[]) : Option EvilDriver :=
-  (driverWith (Restore.package.registered.commands ++ PackageSet.package.registered.commands)
-        Restore.package.registered.modes
-        (Restore.package.registered.jobs ++ PackageSet.package.registered.jobs)).map
+    (streams : Array Process.StreamScript := #[]) : Option RestoreDriver :=
+  (driverWith (Test.Restore.package.registered.commands ++ buildPackage.registered.commands)
+        Test.Restore.package.registered.modes
+        (Test.Restore.package.registered.jobs ++ buildPackage.registered.jobs)).map
     fun driver =>
     let driver :=
       { driver with
@@ -110,37 +106,28 @@ def buildDriver (running : Running) (scripts : Array Process.Script)
     begun driver
 
 /-- `driver` once the build of `order` was started and everything settled. -/
-def built (driver : EvilDriver) (order : Order) : EvilDriver :=
+def built (driver : RestoreDriver) (order : Order) : RestoreDriver :=
   drained
     (driver.started #[{ name := buildJob, arguments := [.str order.encode], key := some buildJob }])
 
 /-- The lines of the build's buffer. -/
-def bufferLines (driver : EvilDriver) : Array String :=
+def bufferLines (driver : RestoreDriver) : Array String :=
   ((textNamed driver bufferName).map fun text =>
         (text.splitOn "\n").toArray.filter (!·.isEmpty)).getD
     #[]
 
 /-- The commands started, by their programs and arguments. -/
-def startedRuns (driver : EvilDriver) : Array (String × Array String) :=
+def startedRuns (driver : RestoreDriver) : Array (String × Array String) :=
   driver.jobs.processes.started.map fun command => (command.program, command.arguments)
 
 /-- Whether `driver`'s last buffer line is a failure starting `how`. -/
-def failedWith (driver : EvilDriver) (how : String) : Bool :=
+def failedWith (driver : RestoreDriver) (how : String) : Bool :=
   ((bufferLines driver).back?.map (·.startsWith s!"Package build failed: {how}")).getD false
-
-/-- Two answers of the install's parse are equal when both are the same
-require or the same refusal. -/
-instance : BEq (Except String Require) where
-  beq
-    | .ok one, .ok other => one == other
-    | .error one, .error other => one == other
-    | _, _ => false
 
 end BuildTest
 
 open BuildTest in
-/-- The checks of the package-set build and its commands
-(`Editor/PackageSet/Build.lean`, `Editor/PackageSet/Compiled.lean`). -/
+/-- The checks of the package-set build (`Editor/PackageSet/Build.lean`). -/
 def packageSetBuildChecks : List Check :=
   [{  name :=
         "a reload whose fingerprint matches the running editor's starts no build: the generated lakefile, which requires the running core at its root, the one generated before it did, and one whose manifest differs only in its path entries; a root core naming another directory starts one"
@@ -634,165 +621,6 @@ def packageSetBuildChecks : List Check :=
             pruned "/d" "c1" 4 #["1", "2", "3", "4"] #["c1"] "/d/editors/c1/3/editor" ==
               #["/d/editors/c1/1", "/d/editors/c1/2"] &&
             pruned "/d" "c1" 13 #["1", "11", "12", "13"] #["c1"] "/d/editors/c1/1/editor" ==
-              #["/d/editors/c1/11"]) },
-    { name :=
-        ":package-install edits the lakefile through the edit job, which writes it and asks for a reload; a lakefile.lean is refused"
-      run :=
-        let facts := lakefileWith
-        let text :=
-          match facts.lakefile with
-          | .toml text _ => text
-          | _ => ""
-        let edited :=
-          (withCoreEdit "/c" (some coreDirectory) text generated (install · · hello)).toOption.getD
-            ""
-        let cat := replied (rootCommand "/bin/cat" #["/c/lakefile.toml"]) 0 text
-        let mv :=
-          replied (rootCommand "/bin/mv" #["/c/lakefile.toml.leanmacs-edit", "/c/lakefile.toml"])
-        match buildDriver (runningWith facts) #[cat, mv],
-          buildDriver (runningWith { lakefile := .lean "x" }) #[] with
-        | some driver, some leanDriver =>
-          let done := drained (invoked driver installName [.str "hello /h"])
-          let refused := drained (invoked leanDriver installName [.str "hello /h"])
-          pure
-            (done.reloads == driver.reloads + 1 &&
-              done.loop.state.echo == s!"{installName}: added hello; reloading" &&
-              bytesAt done "/c/lakefile.toml.leanmacs-edit" == some edited.toUTF8 &&
-              refused.loop.state.echo ==
-                s!"{installName}: this config's lakefile is a lakefile.lean, and the package commands edit lakefile.toml only")
-        | _, _ => pure false },
-    { name :=
-        ":package-install, :package-remove and :package-update with a rev, on the lakefile generated before the core was required at its root, each start the edit job with the text repaired: the running core's require last"
-      run :=
-        let facts := setOnlyLakefileWith #[gitPackage]
-        let (text, required) :=
-          match facts.lakefile with
-          | .toml text required => (text, required)
-          | _ => ("", #[])
-        let cat := replied (rootCommand "/bin/cat" #["/c/lakefile.toml"]) 0 text
-        let mv :=
-          replied (rootCommand "/bin/mv" #["/c/lakefile.toml.leanmacs-edit", "/c/lakefile.toml"])
-        let repaired (edit : String → Array Require → Except String String) : Option ByteArray :=
-          (withCoreEdit "/c" (some coreDirectory) text required edit).toOption.map (·.toUTF8)
-        let lastIsCore (bytes : Option ByteArray) : Bool :=
-          match bytes.bind (String.fromUTF8? ·) with
-          | some edited =>
-            (edited.splitOn "name = \"editor-core\"").length == 2 &&
-              (edited.splitOn "[[require]]").getLast?.map
-                  (·.startsWith "\nname = \"editor-core\"\npath = \"/w/lean\"\n") ==
-                some true
-          | none => false
-        let after (name : String) (argument : String) : Option ByteArray :=
-          (buildDriver (runningWith facts) #[cat, mv]).bind fun driver =>
-            bytesAt (drained (invoked driver name [.str argument])) "/c/lakefile.toml.leanmacs-edit"
-        let installed := after installName "hello /h"
-        let removed := after removeName "compile"
-        let revised := after updateName "g v2"
-        pure
-          (installed == repaired (install · · hello) && lastIsCore installed &&
-            removed ==
-              repaired (remove · · "compile" "/c" (some "default-set") facts.setRequires) &&
-            lastIsCore removed &&
-            revised == repaired (setRev · · "g" "v2") &&
-            lastIsCore revised) },
-    { name :=
-        "an editor that knows no directory of its core refuses an edit, saying so, and writes nothing"
-      run :=
-        let facts := setOnlyLakefileWith
-        match buildDriver { runningWith facts with coreDirectory := none } #[] with
-        | some driver =>
-          let done := drained (invoked driver installName [.str "hello /h"])
-          pure
-            (done.reloads == driver.reloads &&
-              done.loop.state.echo ==
-                s!"{installName}: this editor knows no directory of its core, so it cannot write the lakefile's editor-core require")
-        | none => pure false },
-    { name :=
-        "an edit of a lakefile that changed since the last reload is refused, and nothing is written or reloaded"
-      run :=
-        let facts := lakefileWith
-        let cat := replied (rootCommand "/bin/cat" #["/c/lakefile.toml"]) 0 "edited by hand\n"
-        match buildDriver (runningWith facts) #[cat] with
-        | some driver =>
-          let done := drained (invoked driver removeName [.str "compile"])
-          pure
-            (done.reloads == driver.reloads &&
-              done.loop.state.echo ==
-                s!"{removeName}: the lakefile changed since the last reload; :reload and try again")
-        | none => pure false },
-    { name :=
-        ":package-update and :package-update <name>, on the lakefile generated before the core was required at its root, start the edit job with the text repaired, the running core's require last, and no build; on a repaired one they start the build, with no edit"
-      run :=
-        let facts := setOnlyLakefileWith #[gitPackage]
-        let (text, required) :=
-          match facts.lakefile with
-          | .toml text required => (text, required)
-          | _ => ("", #[])
-        let cat := replied (rootCommand "/bin/cat" #["/c/lakefile.toml"]) 0 text
-        let mv :=
-          replied (rootCommand "/bin/mv" #["/c/lakefile.toml.leanmacs-edit", "/c/lakefile.toml"])
-        let repaired :=
-          (withCoreEdit "/c" (some coreDirectory) text required fun text _ => .ok text).toOption.map
-            (·.toUTF8)
-        let repairs (argument : String) : Bool :=
-          match buildDriver (runningWith facts) #[cat, mv] with
-          | some driver =>
-            let updating := invoked driver updateName [.str argument]
-            let done := drained updating
-            repaired != some text.toUTF8 &&
-              bytesAt done "/c/lakefile.toml.leanmacs-edit" == repaired &&
-              done.reloads == driver.reloads + 1 &&
-              done.loop.state.echo ==
-                s!"{updateName}: wrote the core's require at the root of the lakefile; :{updateName} again to update; reloading" &&
-              !updating.startedJobs.contains (buildJob, some buildJob)
-          | none => false
-        let builds (argument : String) : Bool :=
-          match buildDriver (runningWith (repairedLakefileWith #[gitPackage])) #[] with
-          | some driver =>
-            let updating := invoked driver updateName [.str argument]
-            updating.startedJobs.contains (buildJob, some buildJob) &&
-              !updating.startedJobs.contains (editJob, some editJob) &&
-              updating.loop.state.echo == startedLine &&
-              updating.reloads == driver.reloads
-          | none => false
-        pure (repairs "" && repairs "g" && builds "" && builds "g") },
-    { name :=
-        ":package-update with a rev edits the require's rev; with none it starts the build resolving every git package, with no edit"
-      run :=
-        let facts := repairedLakefileWith #[gitPackage]
-        let (text, required) :=
-          match facts.lakefile with
-          | .toml text required => (text, required)
-          | _ => ("", #[])
-        let cat := replied (rootCommand "/bin/cat" #["/c/lakefile.toml"]) 0 text
-        let mv :=
-          replied (rootCommand "/bin/mv" #["/c/lakefile.toml.leanmacs-edit", "/c/lakefile.toml"])
-        match buildDriver (runningWith facts) #[cat, mv] with
-        | some driver =>
-          let revised := drained (invoked driver updateName [.str "g v2"])
-          let updating := invoked driver updateName [.str ""]
-          let order := updating.startedJobs.contains (buildJob, some buildJob)
-          pure
-            (revised.reloads == driver.reloads + 1 &&
-              bytesAt revised "/c/lakefile.toml.leanmacs-edit" ==
-                ((withCoreEdit "/c" (some coreDirectory) text required
-                      (setRev · · "g" "v2")).toOption.map
-                  (·.toUTF8)) &&
-              order &&
-              updating.loop.state.echo == startedLine &&
-              updating.reloads == driver.reloads)
-        | none => pure false },
-    { name :=
-        "the install's forms: a path, a git url with a rev, and scope/name with a version; anything else says what it takes"
-      run :=
-        pure
-          (requireOf none ["a", "/p"] == .ok { name := "a", source := .path "/p" } &&
-            requireOf (some "/home/ada") ["a", "~/p"] ==
-              .ok { name := "a", source := .path "/home/ada/p" } &&
-            requireOf none ["g", "https://h/g", "v1"] ==
-              .ok { name := "g", source := .git "https://h/g" (some "v1") none } &&
-            requireOf none ["lc/batteries", "v4"] ==
-              .ok { name := "batteries", source := .reservoir "lc" (some "v4") } &&
-            requireOf none ["a"] == .error installUsage) }]
+              #["/d/editors/c1/11"]) }]
 
 end ModelTest

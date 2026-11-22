@@ -172,10 +172,13 @@ const REQUEST_MENU: u64 = 5;
 /// which no request from Lean has.
 const REQUEST_APPEARANCE_LIGHT: u8 = 6;
 const REQUEST_APPEARANCE_DARK: u8 = 7;
+/// The tag of a background in what a scripted window was asked. No request
+/// from Lean has it: the presenter sends it from each frame's ground.
+const REQUEST_BACKGROUND: u64 = 8;
 /// The tag of the close in what a scripted window was asked, in its place
 /// among the requests. No request from Lean has it: a close is asked with
 /// [`editor_ffi_window_close`].
-const ASKED_CLOSE: u64 = 8;
+const ASKED_CLOSE: u64 = 9;
 
 /// The tags of a title bar, as `editor_ffi_window_run` takes them and
 /// `editor_ffi_window_opened_with` writes them.
@@ -974,11 +977,53 @@ impl Renderer for WindowRenderer<'_> {
     }
 }
 
+/// What draws the glyphs of a window's text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rasteriser {
+    /// Core Text, with swash for what it declines.
+    CoreText,
+    /// Swash.
+    Swash,
+}
+
+/// What draws a window's glyphs where `macos` says whether it is macOS:
+/// Core Text there, as macOS's own apps draw, and swash elsewhere. Both
+/// the process's window (`window_renderer`) and the example `window`,
+/// for its renderer and the one it compares it with, take their
+/// rasteriser from this answer.
+pub fn window_rasteriser(macos: bool) -> Rasteriser {
+    if macos {
+        Rasteriser::CoreText
+    } else {
+        Rasteriser::Swash
+    }
+}
+
+/// The Core Text rasteriser, made from the user's font-smoothing
+/// preference, when `rasteriser` is Core Text; none for swash, which every
+/// renderer already falls back to.
+#[cfg(target_os = "macos")]
+pub fn core_text(rasteriser: Rasteriser) -> Option<editor_raster_coretext::CoreTextRasterizer> {
+    match rasteriser {
+        Rasteriser::CoreText => {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "a window draws with the user's font smoothing: this is the one place it is read, for the process's window and the example `window`; no test runs it"
+            )]
+            let defaults = editor_raster_coretext::SystemDefaults::new();
+            Some(editor_raster_coretext::CoreTextRasterizer::from_defaults(
+                &defaults,
+            ))
+        }
+        Rasteriser::Swash => None,
+    }
+}
+
 /// The renderer for the process's window on `platform`, presenting as
 /// `presentation` asks: the recording fake for a scripted platform, none
 /// for the one whose window nothing can draw in, and the wgpu renderer on
 /// the native window for the real one, in the platform's weight of text
-/// (Core Text's on macOS).
+/// and with its rasteriser (Core Text's on macOS, [`window_rasteriser`]).
 fn window_renderer<'a>(
     platform: PlatformId,
     window: Option<&NativeWindow>,
@@ -1010,6 +1055,14 @@ fn window_renderer<'a>(
                 reason = "the process's window draws with the wgpu renderer; no test runs the winit platform"
             )]
             let made = unsafe { WgpuRenderer::on_window(window, settings) };
+            let rasteriser = window_rasteriser(cfg!(target_os = "macos"));
+            #[cfg(target_os = "macos")]
+            let made = made.map(|renderer| match core_text(rasteriser) {
+                Some(core_text) => renderer.rasterizing_with(core_text),
+                None => renderer,
+            });
+            #[cfg(not(target_os = "macos"))]
+            let _ = rasteriser;
             made.map(|renderer| WindowRenderer::Wgpu(Box::new(renderer), slot))
                 .map_err(|error| error.to_string())
         }
@@ -1265,10 +1318,12 @@ pub extern "C" fn editor_ffi_window_request(platform: u8, request: u8) -> bool {
 
 /// The words of what a window was asked, oldest first: for each request its
 /// tag, for a title the tag 3 followed by the count and the scalar values
-/// of its characters, and for a menu bar the tag 5 followed by its layout
-/// (`crate::menu`), each text in it written as a title's is. The close,
-/// when `before_close` says how many requests came before it
-/// ([`ScriptedPlatform::asked_with_close`]), is the tag 8 in its place.
+/// of its characters, for a menu bar the tag 5 followed by its layout
+/// (`crate::menu`), each text in it written as a title's is, and for a
+/// background the tag 8 followed by its red, its green and its blue, a
+/// word each. The close, when `before_close` says how many requests came
+/// before it ([`ScriptedPlatform::asked_with_close`]), is the tag 9 in its
+/// place.
 ///
 /// The match on [`WindowRequest`] is exhaustive on purpose: this crate must
 /// give every variant its words, since a request with none could not be
@@ -1308,6 +1363,12 @@ pub fn asked_words(asked: &[WindowRequest], before_close: Option<usize>) -> Vec<
             WindowRequest::Menu(menu) => {
                 words.word(REQUEST_MENU);
                 crate::menu::write(&mut words, menu);
+            }
+            WindowRequest::Background(rgb) => {
+                words.word(REQUEST_BACKGROUND);
+                for byte in [rgb.red, rgb.green, rgb.blue] {
+                    words.word(u64::from(byte));
+                }
             }
         }
     }
@@ -2004,17 +2065,39 @@ mod tests {
     }
 
     #[test]
-    fn the_close_crosses_as_tag_8_in_its_place_among_the_requests() {
+    fn the_close_crosses_as_tag_9_in_its_place_among_the_requests() {
         let asked = [
             WindowRequest::Minimise,
             WindowRequest::Title("é".into()),
             WindowRequest::EnterFullscreen,
         ];
         assert_eq!(asked_words(&asked, None), [2, 3, 1, 0xe9, 0]);
-        assert_eq!(asked_words(&asked, Some(0)), [8, 2, 3, 1, 0xe9, 0]);
-        assert_eq!(asked_words(&asked, Some(1)), [2, 8, 3, 1, 0xe9, 0]);
-        assert_eq!(asked_words(&asked, Some(3)), [2, 3, 1, 0xe9, 0, 8]);
-        assert_eq!(asked_words(&[], Some(0)), [8], "a close with nothing asked");
+        assert_eq!(asked_words(&asked, Some(0)), [9, 2, 3, 1, 0xe9, 0]);
+        assert_eq!(asked_words(&asked, Some(1)), [2, 9, 3, 1, 0xe9, 0]);
+        assert_eq!(asked_words(&asked, Some(3)), [2, 3, 1, 0xe9, 0, 9]);
+        assert_eq!(asked_words(&[], Some(0)), [9], "a close with nothing asked");
+    }
+
+    #[test]
+    fn a_background_a_scripted_window_was_asked_crosses_as_its_tag_and_its_three_bytes() {
+        let paper = editor_platform::Rgb {
+            red: 0x2e,
+            green: 0x34,
+            blue: 0x40,
+        };
+        assert_eq!(
+            asked_words(
+                &[WindowRequest::Background(paper), WindowRequest::Minimise],
+                None
+            ),
+            [8, 0x2e, 0x34, 0x40, 2]
+        );
+        // A background's bytes are never taken for the close's tag: the
+        // close is a tag in a request's place, and the bytes follow tag 8.
+        assert_eq!(
+            asked_words(&[WindowRequest::Background(paper)], Some(1)),
+            [8, 0x2e, 0x34, 0x40, 9]
+        );
     }
 
     #[test]
@@ -2857,6 +2940,12 @@ mod tests {
             let tag = u8::try_from(mode_tag(mode)).expect("a tag is small");
             assert_eq!(asked_presentation(tag, 1).mode, Some(mode));
         }
+    }
+
+    #[test]
+    fn a_window_on_macos_draws_its_glyphs_with_core_text_and_elsewhere_with_swash() {
+        assert_eq!(window_rasteriser(true), Rasteriser::CoreText);
+        assert_eq!(window_rasteriser(false), Rasteriser::Swash);
     }
 
     #[test]

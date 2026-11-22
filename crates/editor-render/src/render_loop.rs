@@ -1237,6 +1237,217 @@ mod tests {
         assert_eq!(rig.requests(), 3);
     }
 
+    /// The frame an editor lays out for `target`: one view of text the
+    /// target's size, at the target's scale, on the fake shaper.
+    fn laid_for(target: Target) -> Arc<Frame> {
+        let rect = Rect {
+            x: 0,
+            y: 0,
+            width: target.width,
+            height: target.height,
+        };
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        layout.set_scale(target.scale);
+        Arc::new(layout.frame(&Scene::of_text("the window draws this", rect)))
+    }
+
+    /// One move of a scripted window and editor over a loop.
+    #[derive(Debug, Clone, Copy)]
+    enum Move {
+        /// The window says its size and scale.
+        Resize(Target),
+        /// The editor submits the frame it laid out for a target.
+        Publish(Target),
+        /// The render thread takes one step.
+        Step,
+        /// The clock moves on.
+        Advance(u64),
+        /// The renderer's next present fails.
+        FailNext,
+        /// The renderer finds its target hidden at its next draw.
+        HideNext,
+        /// The window says it is hidden, or shown.
+        Hidden(bool),
+    }
+
+    /// A script played on a loop, then stepped to rest.
+    struct Played {
+        /// The loop, at rest.
+        rig: Rig,
+        /// For each request the renderer was given, the size last asked
+        /// before the step that drew it.
+        asked: Vec<Target>,
+        /// The size last asked.
+        last: Target,
+    }
+
+    /// The sizes the scripts move between, at scale 1, and one at scale 2.
+    const A: Target = TARGET;
+    const B: Target = Target {
+        width: 500,
+        height: 350,
+        scale: 1.0,
+    };
+    const C: Target = Target {
+        width: 643,
+        height: 481,
+        scale: 1.0,
+    };
+    const D: Target = Target {
+        width: 720,
+        height: 500,
+        scale: 1.0,
+    };
+    const A_DENSER: Target = Target { scale: 2.0, ..A };
+
+    /// Steps `rig` once, and notes `last` as the size asked for every
+    /// request that step gave the renderer.
+    fn step_noting(rig: &mut Rig, last: Target, asked: &mut Vec<Target>) {
+        rig.render.step();
+        asked.resize(rig.requests(), last);
+    }
+
+    /// Plays `script` on a loop that shows `laid_for(A)` on `A`, a refresh
+    /// and more ago, then steps it, a refresh apart, until it is at rest.
+    /// A loop that never rests is a hang: the bound is a guard, not a
+    /// result.
+    fn played(script: &[Move]) -> Played {
+        let mut rig = Rig::showing(&laid_for(A));
+        let mut asked = vec![A];
+        let mut last = A;
+        for one in script {
+            match *one {
+                Move::Resize(target) => {
+                    last = target;
+                    rig.handle.resize(target);
+                }
+                Move::Publish(target) => rig.handle.submit(laid_for(target), None),
+                Move::Step => step_noting(&mut rig, last, &mut asked),
+                Move::Advance(ns) => rig.clock.advance(ns),
+                Move::FailNext => rig.render.renderer_mut().fail_next_present(),
+                Move::HideNext => rig.render.renderer_mut().hide_next_present(),
+                Move::Hidden(hidden) => rig.handle.set_hidden(hidden),
+            }
+        }
+        for _ in 0..1000 {
+            step_noting(&mut rig, last, &mut asked);
+            if rig.handle.resting() {
+                return Played { rig, asked, last };
+            }
+            rig.clock.advance(REFRESH);
+        }
+        panic!("the loop never came to rest: a hang");
+    }
+
+    /// The scripts of a resize, by name: what a window and an editor do,
+    /// in the orders they may do it in.
+    fn resize_scripts() -> Vec<(&'static str, Vec<Move>)> {
+        use Move::{Advance, FailNext, Hidden, HideNext, Publish, Resize, Step};
+        // Three sizes, the frames one size behind, a step and a refresh
+        // between each; `at_b` is done before the draw of `B`'s frame, and
+        // `after_b` after it.
+        let behind = |at_b: &[Move], after_b: &[Move]| {
+            let mut script = vec![
+                Resize(B),
+                Step,
+                Advance(REFRESH),
+                Publish(A),
+                Step,
+                Advance(REFRESH),
+                Resize(C),
+                Step,
+                Advance(REFRESH),
+                Publish(B),
+            ];
+            script.extend_from_slice(at_b);
+            script.push(Step);
+            script.extend_from_slice(after_b);
+            script.extend([Advance(REFRESH), Publish(C), Step]);
+            script
+        };
+        vec![
+            (
+                "three sizes within one refresh, each with its frame",
+                vec![
+                    Resize(B),
+                    Publish(B),
+                    Step,
+                    Advance(100),
+                    Resize(C),
+                    Publish(C),
+                    Step,
+                    Advance(100),
+                    Resize(D),
+                    Publish(D),
+                    Step,
+                ],
+            ),
+            ("three sizes, the frames one behind", behind(&[], &[])),
+            (
+                "the frames one behind, the draw of the second failing",
+                behind(&[FailNext], &[]),
+            ),
+            (
+                "the frames one behind, the draw of the second hidden",
+                behind(&[HideNext], &[Hidden(true), Hidden(false)]),
+            ),
+            (
+                "a change of scale alone",
+                vec![
+                    Resize(A_DENSER),
+                    Step,
+                    Advance(REFRESH),
+                    Publish(A_DENSER),
+                    Step,
+                ],
+            ),
+            (
+                "a size and back again before a draw",
+                vec![Resize(B), Publish(B), Resize(A), Publish(A), Step],
+            ),
+        ]
+    }
+
+    /// Hypothesis 1 of text-rendering's phase 3: that a resize ends with a
+    /// frame of another size drawn last, or with none of the last size.
+    #[test]
+    fn once_at_rest_the_last_draw_is_the_last_frame_on_the_last_size() {
+        // The frames of the sizes are told apart, a change of scale alone
+        // among them, or the comparison below could not see a stale one.
+        let frames = [A, B, C, D, A_DENSER].map(laid_for);
+        for (i, one) in frames.iter().enumerate() {
+            assert!(frames[i + 1..].iter().all(|other| other != one));
+        }
+        for (name, script) in resize_scripts() {
+            let Played { mut rig, last, .. } = played(&script);
+            let requests = rig.render.renderer().requests().to_vec();
+            let drawn = requests.last().expect("a draw");
+            assert_eq!(drawn.target, last, "{name}: the last draw's target");
+            assert_eq!(drawn.frame, laid_for(last), "{name}: the last draw's frame");
+            // At rest, nothing more is drawn however far the clock moves.
+            for _ in 0..100 {
+                rig.clock.advance(REFRESH);
+                rig.render.step();
+            }
+            assert_eq!(rig.requests(), requests.len(), "{name}: drawn at rest");
+        }
+    }
+
+    #[test]
+    fn every_draw_is_on_the_size_last_asked_before_it() {
+        for (name, script) in resize_scripts() {
+            let Played { rig, asked, .. } = played(&script);
+            let drawn_on: Vec<Target> = rig
+                .render
+                .renderer()
+                .requests()
+                .iter()
+                .map(|request| request.target)
+                .collect();
+            assert_eq!(drawn_on, asked, "{name}");
+        }
+    }
+
     #[test]
     fn a_frame_is_drawn_at_an_animation_deadline() {
         let frame = frame_of("one");

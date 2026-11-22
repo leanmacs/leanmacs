@@ -59,7 +59,7 @@ def stubborn : JobM Unit := do
 fake's arrival, the rig's idle, a start reaching a service); only a hang
 reaches the bound, and the check then fails as a hang. In milliseconds: ten
 times the slowest such event seen under the stress load and more, as
-`ConfigTest.hangGuard` is set. -/
+`Editor.Test.Linked.hangGuard` is set. -/
 def patience : Nat :=
   120000
 

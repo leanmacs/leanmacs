@@ -6,7 +6,9 @@
 # Run from lean/, after `lean` and `launcher`. Everything it writes is in a
 # fresh temporary directory, removed at the end: the config, the state and
 # data directories, and HOME and XDG_* point inside it, so a missed flag
-# still lands there. The fixture packages (tests/user-sets/<name>) are
+# still lands there. The `lean` and `lake` it runs are those of the
+# toolchain `lean --print-prefix` names before HOME moves, as elan
+# resolves its toolchains under $HOME. The fixture packages (tests/user-sets/<name>) are
 # built in place, into their own .lake/, as the fixture set's packages are,
 # but hello-init: a copy of it in the temporary directory names the core
 # from git, from a `file://` stand-in for the core's repository
@@ -61,6 +63,19 @@ tmp=$(cd "$tmp" && pwd -P)
 . "$repo/tools/leftovers.sh"
 trap 'reap "$tmp"; rm -rf "$tmp"' EXIT
 trap 'exit 1' HUP INT TERM
+# The `lean` and `lake` run from here on are the toolchain's own
+# ($sysroot/bin), not whatever the PATH names: elan, CI's toolchain
+# manager, resolves its toolchains under $HOME, so once HOME moves its
+# proxy installs and runs another copy of the toolchain, and the default
+# editor's link trace names the toolchain's directory. Wrappers, not
+# symlinks, so Lake still finds its install from the real binary's path;
+# only these two, as $sysroot/bin also holds the toolchain's clang.
+mkdir "$tmp/toolchain-bin"
+for tool in lean lake; do
+  printf '#!/bin/sh\nexec "%s/bin/%s" "$@"\n' "$sysroot" "$tool" >"$tmp/toolchain-bin/$tool"
+  chmod +x "$tmp/toolchain-bin/$tool"
+done
+export PATH="$tmp/toolchain-bin:$PATH"
 export HOME="$tmp/home" XDG_DATA_HOME="$tmp/xdg-data" XDG_STATE_HOME="$tmp/xdg-state" XDG_CONFIG_HOME="$tmp/xdg-config"
 mkdir -p "$HOME"
 

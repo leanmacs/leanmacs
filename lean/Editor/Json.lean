@@ -7,7 +7,7 @@ What a tool prints as JSON, read into a tree (`Json.Value`), for the
 compile mode's computed commands (`mise tasks ls --json`,
 `packages/compile/Compile/Shipped.lean`); and a tree written as a document
 (`Json.render`), for the working sets a workspace keeps on disk
-(`Editor/WorkingSet.lean`). Pure. It is read here, and not with
+(`packages/working-set/WorkingSet.lean`). Pure. It is read here, and not with
 `Lean.Data.Json`, which lives in `Lean`, outside config's closure, as
 `Editor/Process/Environment.lean` records for `mise env --json`, whose
 string reader (`Process.string`, `Process.skipSpace`) it shares.

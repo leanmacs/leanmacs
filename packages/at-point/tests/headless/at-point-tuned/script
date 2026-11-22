@@ -1,0 +1,26 @@
+# Completion at point's auto popup (docs/dev-practices/headless-mode.md), as
+# tests/headless/at-point's, on a config that defines the shipped `words`
+# source again with a pause of 100 ms in place of its 240. The headless
+# mode's job clock is fake: the pause fires only when the script advances it.
+reload
+settle
+resize 640 480
+key i KeyI -
+commit alpha alpine beta
+# RET with no session breaks the line; `a` and `l` are typed, and each
+# re-arms the pause of config's `words`.
+key <Enter> Enter -
+key a KeyA -
+key l KeyL -
+settle
+# The tuned pause, 100 ms, fires: the session of `words` opens with nothing
+# chosen, and its job lists the words of the open buffers that match `al`.
+advance 100
+join
+scene
+# C-n chooses the first and previews it in the region.
+key n KeyN control
+scene
+# RET accepts it: the list closes and the window is full height again.
+key <Enter> Enter -
+scene

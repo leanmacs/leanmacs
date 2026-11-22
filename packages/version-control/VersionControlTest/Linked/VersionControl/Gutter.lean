@@ -1,0 +1,169 @@
+import Editor.Completion
+import Editor.Config.Packages
+import Editor.Ex.Line
+import Editor.Face
+import Editor.InputScheme.Test
+import Editor.Language
+import Editor.Process
+import Editor.Test.Linked.Host
+import Editor.Test.Minibuffer
+import Editor.Test.Workspace
+import FilesApiTest.Fake
+import VersionControl.Compiled
+import VersionControlTest.Check
+
+/-!
+# Linked tests: `VersionControl/Gutter.lean`
+
+The tests of `VersionControl/Gutter.lean`: `gutterChecks`, through the
+headless host over real git. The linked test's root,
+`VersionControlTest/Linked.lean`, runs them; its module doc says what each
+shows.
+-/
+
+namespace VersionControlTest.Linked
+
+open Editor
+open Editor.Test.Linked
+
+/-- The variables every git a gutter check runs is given: git kept from the
+system's config and from the user's, whose home is `home`, and a fixed
+author, so a commit needs nothing of the machine's. -/
+def isolatedGit (home : System.FilePath) : Array (String × String) :=
+  #[("GIT_CONFIG_NOSYSTEM", "1"), ("GIT_CONFIG_GLOBAL", "/dev/null"), ("HOME", home.toString),
+    ("XDG_CONFIG_HOME", home.toString), ("GIT_AUTHOR_NAME", "a"),
+    ("GIT_AUTHOR_EMAIL", "a@example.com"), ("GIT_COMMITTER_NAME", "a"),
+    ("GIT_COMMITTER_EMAIL", "a@example.com")]
+
+/-- Runs git with `arguments` in `directory`, as another program would, with
+`isolatedGit home` and none of `GIT_DIR`, `GIT_WORK_TREE` and
+`GIT_INDEX_FILE`: what it printed, or a throw when it did not exit 0. The
+test process's own environment is never touched. -/
+def gitOutside (home directory : System.FilePath) (arguments : Array String) : IO String :=
+  IO.Process.run
+    { cmd := "git", args := arguments, cwd := directory
+      env :=
+        (isolatedGit home).map (fun (name, value) => (name, some value)) ++
+          #[("GIT_DIR", none), ("GIT_WORK_TREE", none), ("GIT_INDEX_FILE", none)] }
+
+/-- The library's process service, each child it starts given
+`isolatedGit home` over the variables its command sets; each request that
+starts a child is matched constructor by constructor, so the replies' types
+line up. -/
+def isolatedProcesses (processes : Job.Processes) (home : System.FilePath) : Job.Processes :=
+  let change (command : Process.Command) : Process.Command :=
+    let names := (isolatedGit home).map (·.1)
+    { command with
+      environment :=
+        { command.environment with
+          set := (command.environment.set.filter (!names.contains ·.1)) ++ isolatedGit home } }
+  let changed : ProcessRequest → ProcessRequest
+    | .run command limit => .run (change command) limit
+    | .runWithin command limit time => .runWithin (change command) limit time
+    | .runInput command input limit time => .runInput (change command) input limit time
+    | .runHead command input limit time => .runHead (change command) input limit time
+    | .start command streaming => .start (change command) streaming
+    | other => other
+  { processes with
+    start := fun id request => processes.start id (changed request)
+    take := fun id request =>
+      match request with
+      | .run command limit => processes.take id (.run (change command) limit)
+      | .runWithin command limit time => processes.take id (.runWithin (change command) limit time)
+      | .runInput command input limit time =>
+        processes.take id (.runInput (change command) input limit time)
+      | .runHead command input limit time =>
+        processes.take id (.runHead (change command) input limit time)
+      | .start command streaming => processes.take id (.start (change command) streaming)
+      | other => processes.take id other }
+
+/-- The checks of the version-control gutter through the headless host
+(`VersionControl/Gutter.lean`), wiring only: real git over the
+library's process service, the library's watch service and its diff
+engine, in a repository the check writes in a temporary directory of its
+own, every git kept from the user's and the system's config. Every wait is
+polled, never a fixed sleep. -/
+def gutterChecks (context : HostContext) : List Check :=
+  [{  name :=
+        "criterion 6 through the host over real git: a tracked file with a line changed shows a changed mark, and after git commit -a run by another process its gutter has no mark"
+      run :=
+        context.withFiles (targets := [.files, .diffs]) fun base => do
+          let base ← IO.FS.realPath base
+          let (home, repo, configDir) := (base / "home", base / "repo", base / "config")
+          for directory in [home, repo, configDir] do
+            IO.FS.createDirAll directory
+          let file := repo / "a.txt"
+          discard <| gitOutside home repo #["-c", "init.defaultBranch=main", "init", "-q"]
+          IO.FS.writeFile file "a\nb\nc\n"
+          discard <| gitOutside home repo #["add", "a.txt"]
+          discard <|
+              gitOutside home repo #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "one"]
+          IO.FS.writeFile file "a\nB\nc\n"
+          -- `open-a` opens the file with the files implementation's open
+          -- command, here `files-api`'s fake's.
+          let openA : Config.Registration :=
+            { name := "open-a"
+              action :=
+                .plain
+                  (Editor.invoke
+                    { command := FilesApi.openFileName, arguments := [.str file.toString] }) }
+          let stage ←
+            Stage.overFiles context (Config.Directory.source configDir)
+                { packages :=
+                    #[FilesApiTest.fake,
+                      Test.attachPackage
+                        (Workspace.Found.ofGit
+                          { toplevel := repo, commonDir := repo / ".git", branch := .named "main" }
+                          none),
+                      VersionControl.gutterPackage]
+                  commands := Test.Minibuffer.package.registered.commands ++ #[openA]
+                  modes := Test.Minibuffer.package.registered.modes }
+          let collaborators := stage.collaborators
+          let services := collaborators.services
+          let processes :=
+            Job.realProcesses services.completions (← Job.RefusedRuns.new) services.timers
+              (← Job.TimedRuns.new)
+          -- The watch job runs git before it starts its watch, so the watch
+          -- may be registered after the mark is shown: its first `next` is
+          -- asked only once its start has been answered, the watch
+          -- registered, and resolves `armed`, which the commit waits for.
+          let armed ← IO.Promise.new
+          let watches := services.fileWatches
+          let fileWatches :=
+            { watches with
+              start := fun id request => do
+                watches.start id request
+                if request matches .next _ then
+                  armed.resolve () }
+          let stage :=
+            { stage with
+              collaborators :=
+                { collaborators with
+                  services :=
+                    { services with
+                      processes := isolatedProcesses processes home, fileWatches } } }
+          onRealStage stage fun host stage => do
+              let session : Session := (RealSession.ofStage host configDir stage)
+              -- The watch job never ends, so the host's jobs never settle: the
+              -- open is asked for, and the scene asked again at each line a
+              -- gutter job's result or post prints (`Session.shownOn`).
+              session.ask [.run "open-a"]
+              let changed := "marks 0: ~ diff.changed 2..4"
+              let gutterLine (line : String) : Bool := line.startsWith "job "
+              let (marked, saw) ← session.shownOn gutterLine (·.contains changed)
+              unless marked do
+                throw (IO.userError s!"the changed mark was not shown: {saw}")
+              unless (← Job.awaitWithin hangGuard armed.result?).isSome do
+                throw (IO.userError "a hang: the repository's watch was not registered")
+              discard <|
+                  gitOutside home repo
+                    #["-c", "commit.gpgsign=false", "commit", "-q", "-a", "-m", "two"]
+              let (cleared, last) ←
+                session.shownOn gutterLine fun lines =>
+                    !lines.any (·.startsWith "marks 0:") &&
+                      lines.any fun line => line.startsWith "view 0" && line.endsWith " gutter 12"
+              unless cleared do
+                throw (IO.userError s!"the mark was not cleared after the commit: {last}")
+              return true }]
+
+end VersionControlTest.Linked

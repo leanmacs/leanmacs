@@ -70,4 +70,16 @@ structure Call where
   report : InputScheme.Report := {}
   deriving BEq, Repr
 
+/-- The count the call carries: its first argument when that is a natural
+number, as an input scheme lays a count out before a command's own
+arguments, and 0 for none. -/
+def Call.count (call : Call) : Nat :=
+  match call.arguments with
+  | .nat count :: _ => count
+  | _ => 0
+
+/-- The call's count as a number of steps: 1 for none. -/
+def Call.steps (call : Call) : Nat :=
+  max 1 call.count
+
 end Editor

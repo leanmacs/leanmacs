@@ -5,7 +5,7 @@ import Editor.PackageSet.Fingerprint
 # Edits of a config's `lakefile.toml`
 
 The text edits behind `:package-install`, `:package-remove` and
-`:package-update <name> <rev>` (`Editor/PackageSet/Compiled.lean`;
+`:package-update <name> <rev>` (the package `package-set`, `packages/package-set/`;
 `docs/design/packages.md`, "User package sets"). Each takes the
 lakefile's text and its `[[require]]` tables as the last reload read them
 with Lake's loader (`PackageSet.Facts`), and answers the new text or why
@@ -303,7 +303,7 @@ are `required`, with the core's require at its root, last, by the running
 editor's core directory `core`, and nothing else changed: `withCoreEdit`
 with an edit that changes nothing, so a repaired lakefile is answered as
 it is. What `:package-update` with no rev writes first when the lakefile
-lacks it (`Editor/PackageSet/Compiled.lean`). -/
+lacks it (the package `package-set`). -/
 def repair (config : String) (core : Option String) (text : String) (required : Array Require) :
     Except String String :=
   withCoreEdit config core text required fun text _ => .ok text

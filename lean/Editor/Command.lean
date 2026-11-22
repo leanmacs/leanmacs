@@ -54,7 +54,7 @@ with it, and releases it. It is here, beside the lifts, because its program
 is a command (it may ask the display of the snapshot, so it is no `TextM`),
 and because this is the lowest module that has a command's type: the API
 (`Target.onArea`, `Editor/Api.lean`) and a vocabulary's motions
-(`Editor/Evil/Motions.lean`), neither of which imports the other, both
+(`packages/evil/Evil/Motions.lean`), neither of which imports the other, both
 import it. The rule is written once, here:
 
 - **The snapshot is released when the program has ended**, also when it was
@@ -67,7 +67,7 @@ import it. The rule is written once, here:
 
 Pinned through its callers: the API's case of `Target.onArea`
 (`Editor/Api/Cases.lean`) and the motions' counts of requests and of
-snapshots held (`ModelTest.evilMotionChecks`).
+snapshots held (`EvilTest.evilMotionChecks`).
 
 ## The state requests are the loop's to answer
 

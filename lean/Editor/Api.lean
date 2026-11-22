@@ -73,7 +73,7 @@ operation, such as `exBinding`, `runCommand` or `giveUp`, not the request.
 - `BufferId.hasUnsavedChanges id` is whether a buffer has unsaved changes
   (`Buffer.unsavedAt`), by a copy of its undo tree told the revision its
   text is at, so an edit made earlier in the same command counts. `quit`,
-  `list-buffers` and `close-buffer` all ask it (`Editor/Buffers.lean`).
+  `list-buffers` and `close-buffer` all ask it (`packages/buffers/Buffers.lean`).
 - `BufferId.text` is the buffer's text. Reading a buffer is the text
   port's reads on it (`TextId.read`, `rowContent`, `slice`, `byteLength`
   and the rest of `Editor/Text.lean`): there is no read request of the
@@ -131,9 +131,9 @@ with `noSuchWindow` for a view with no window.
   calls it, and none writes `"\n"` itself. A command whose edit must carry
   the selection from before the command, and so is made with
   `Target.replaceCarrying`, reads the buffer's line ending itself: evil's
-  commands that open a line (`Editor/Evil.lean`) and its line-wise put and
-  line-wise registers (`Editor/Evil/Registers.lean`,
-  `Editor/Evil/Operators.lean`). Nothing else is translated: a committed
+  commands that open a line (`packages/evil/Evil.lean`) and its line-wise put and
+  line-wise registers (`packages/evil/Evil/Registers.lean`,
+  `packages/evil/Evil/Operators.lean`). Nothing else is translated: a committed
   text and a text read from the clipboard are inserted as they are.
 
 Each is one transaction made by the user that carries the selection before
@@ -215,7 +215,7 @@ at, does its part, and records the tree that comes back as the buffer's
   is the same over the steps to redo, with nothing pending. Neither hands a
   selection back: the sources' transactions carried none, and a source's
   selection is in its own offsets, so the caller rests the cursor where
-  the window's marker moved (`Editor/Evil/Undo.lean`).
+  the window's marker moved (`packages/evil/Evil/Undo.lean`).
 - `BufferId.isModified` says whether the buffer's text is in another state
   than the one last saved. It tells the tree the text's revision first, so
   an edit made earlier in the same command counts. A question of the state
@@ -432,7 +432,7 @@ cannot be done (`docs/design/concurrency.md`, "Foreground: commands").
 found that what its key stands for cannot be done, after doing something
 that is to stay. It is how evil's operate command leaves the cursor where a
 motion got to before it failed, with the operator cancelled
-(`Editor/Evil/Operators.lean`).
+(`packages/evil/Evil/Operators.lean`).
 
 - **Its type is `EditorM α` for any `α`**, and it cannot be caught, as
   `giveUp` cannot: it makes one control request
@@ -475,10 +475,10 @@ is set as a register is: never refused, editor state that a command which
 does not run to its end leaves as it was, and no request of the library.
 A command reads it from the state (`EditorState.lastFind` on
 `editorState`). Pinned through evil's character finds by
-`ModelTest.evilFindChecks`. `setLastSearch search` keeps the last search
+`EvilTest.evilFindChecks`. `setLastSearch search` keeps the last search
 the same way (`Editor/State.lean`, "The last search"), which `n` and `N`
 repeat and the loop draws the matches of; pinned through evil's searches
-by `ModelTest.evilSearchChecks`.
+by `EvilTest.evilSearchChecks`.
 
 ## Ex bindings
 
@@ -486,7 +486,7 @@ by `ModelTest.evilSearchChecks`.
 what the name takes (`Ex.Binding`, `Editor/Ex/Line.lean`). The loop that
 runs the command answers from the registry as it is at that step
 (`Editor/Command/Dispatch.lean`); `none` is a name nobody bound. It is how
-the ex command (`Editor/Ex.lean`) finds what a line runs: a command is a
+the ex command (`packages/ex/Ex.lean`) finds what a line runs: a command is a
 program over the editor's port and cannot hold the registry.
 
 ## Running another command
@@ -519,7 +519,7 @@ registered"; `Editor/Loop.lean`, "A command run inside another").
   would be lost.
 - **`false`, with nothing run**, for a name no command is registered
   under, and where no loop runs the command.
-- It is how evil's dot repeat replays a change (`Editor/Evil/Repeat.lean`).
+- It is how evil's dot repeat replays a change (`packages/evil/Evil/Repeat.lean`).
   Pinned by `ModelTest.dispatchStateChecks` and
   `ModelTest.dispatchRunCommandChecks`.
 
@@ -575,14 +575,14 @@ asking loads none. Neither makes a request of the library. Pinned by
 compiled code's first, then config's, in the order they were first
 registered, as the loop is told of the registry for the step that asks, so
 a reload that drops config's command drops its name. It is what the command
-prompt lists (`Editor/ExecuteCommand.lean`). Where no loop runs the command
+prompt lists (`packages/execute-command/ExecuteCommand.lean`). Where no loop runs the command
 it answers none. It makes no request of the library. Pinned by
 `ModelTest.dispatchStateChecks`.
 
 `keyBindings` answers the key sequences that reach a command in a view, as
 the input scheme says in the scheme's state of the step that asks, each
 with the command's name and description (`KeyBinding`). The binding search
-lists them (`Editor/BindingSearch.lean`), and the command prompt shows a
+lists them (`packages/binding-search/BindingSearch.lean`), and the command prompt shows a
 command's keys from them. Where no loop runs the command, and for a
 command a job runs, it answers `#[]`.
 
@@ -608,7 +608,7 @@ arrived before it (`Editor/Loop.lean`, "Jobs from commands").
   cancelled, once the command has run to its end: it never runs its
   command, even one that has finished and not been delivered. A command
   that is refused or interrupted after asking cancels nothing. It is how
-  `:!` keeps one run a workspace and `C-g` ends it (`Editor/Shell.lean`).
+  `:!` keeps one run a workspace and `C-g` ends it (`packages/shell/Shell.lean`).
 - **A job may hand the editor a command while it runs** (`post`,
   `Editor/Job.lean`): an invocation, which its host runs on the editor
   thread with `runPosted`, as a delivery labelled `job <id> <name>`, before
@@ -764,7 +764,7 @@ point"; `Editor/Completion/AtPoint.lean`).
 ## Files
 
 Opening a file and saving a buffer are not operations here: each is a
-command that starts a job, in `Editor/Files.lean` (`Files.open`,
+command that starts a job, in `packages/files/Files.lean` (`Files.open`,
 `Files.save`), written over this API. What they need of the editor state is
 here:
 
@@ -782,7 +782,7 @@ here:
   state and the line ending.
 
 The three state requests ask the library nothing, and are pinned once, on
-the models (`ModelTest.stateRequestChecks`, `ModelTest.fileCommandChecks`).
+the models (`ModelTest.stateRequestChecks`, `FilesTest.fileCommandChecks`).
 
 ## Workspaces
 
@@ -795,6 +795,11 @@ is one read of the state or one state request (`Editor/State.lean`,
   its buffer-local value (`Workspace.bufferLocal`), or `none`.
 - `BufferId.inheritWorkspace id source` gives a buffer the workspace of the
   buffer it was made from; a source with none gives none.
+- `Workspace.setBufferWorkspace id location` gives a buffer the workspace
+  at `location`, as its buffer-local value; and `readOnlyBufferOf name
+  content location` makes a read-only buffer of generated text under the
+  first free name of `name`, given that workspace, as the version-control
+  views and the working sets' drifted quotes are made.
 - `BufferId.workingDirectory` is where a command run for a buffer runs: its
   workspace's root on this machine, its workspace's location when that is
   elsewhere, the directory of its file when it has no workspace, or none.
@@ -860,6 +865,15 @@ Run where no loop dispatches the command it is refused with
 def giveUp {α : Type} (reason : String) : EditorM α := do
   ControlRequest.ask (.giveUp reason)
   throw .badSelection
+
+/-- The value of `result`, or the command given up with what its layout
+refusal says (`giveUp`, `LayoutRefusal.describe`): what a command that
+splits, closes, focuses or arranges windows and tabs does with a refusal it
+has nothing to add to. -/
+def orGiveUp {α : Type} (result : Except LayoutRefusal α) : EditorM α :=
+  match result with
+  | .ok value => pure value
+  | .error refusal => giveUp refusal.describe
 
 /-- Ends the command here, with `reason`, and keeps what it did ("Breaking
 off", in the module docs): the loop that runs the command rolls nothing
@@ -1552,7 +1566,7 @@ keeps every excerpt it has: each kept excerpt's range of its source as it is
 now (`TextId.excerpts`), so its text, and an edit typed in it, stay, and its
 entry, its header and what was viewed of it included
 (`EditorState.setExcerptHistory`). It is how a list grows as results arrive
-(`Editor/ProjectSearch.lean`). Refused with `noSuchBuffer` for a buffer there
+(`packages/project-search/ProjectSearch.lean`). Refused with `noSuchBuffer` for a buffer there
 is none of, `id` or one `list` names, and `notExcerpts` for one that is not
 an excerpt buffer; what the store refuses is thrown. -/
 def insertExcerpts (id : BufferId) (index : Nat) (list : Array BufferExcerpt) :
@@ -2418,7 +2432,22 @@ decode. -/
 def Table.getUnscoped {α : Type} (table : Table) (store : Store α) : α :=
   ((table.unscopedValue? store.name).bind store.decode).getD store.initial
 
+/-- Gives the buffer `id` the workspace at `location`, as its local value. -/
+def setBufferWorkspace (id : BufferId) (location : Location) : EditorM Unit :=
+  discard <| id.setValue bufferLocal location.encode
+
 end Workspace
+
+/-- A read-only buffer holding `content`, under the first free name of
+`name`, given the workspace at `location`; none when it cannot be made. The
+version-control buffers of generated text make theirs with it
+(`packages/version-control/VersionControl/Views.lean`), and so do the working sets' drifted
+quotes (`packages/working-set/WorkingSet/Run.lean`). -/
+def readOnlyBufferOf (name content : String) (location : Location) : EditorM (Option BufferId) := do
+  let .ok id ← createBuffer ((← editorState).freeName name) content | return none
+  discard <| id.setReadOnly true
+  Workspace.setBufferWorkspace id location
+  return some id
 
 namespace Project
 

@@ -1,0 +1,13 @@
+# The script `mise run ffi-test` hands the headless mode of an editor built
+# from the core alone (the set `tests/empty-set`, which is the default set
+# with its packages dropped), with the config in `config/`, which is empty.
+# No package of that set supplies an input scheme: the Vim scheme is the
+# default package `evil`'s (packages/evil/). So the editor refuses to
+# start: it prints the one line of `expected` on stderr and exits 1, before
+# it reads this script or loads the config, and runs no directive below.
+# `editor --probe`, which a restart runs before it hands the session over,
+# is refused with the same line and status. It touches no file.
+
+reload
+settle
+scene

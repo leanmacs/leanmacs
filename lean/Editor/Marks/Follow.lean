@@ -50,7 +50,7 @@ A buffer whose text refuses is left as it was, and the first refusal is
 handed back.
 
 Pinned by `ModelTest.markFollowChecks`, the markers given up among them;
-the marks erased and put back by keys by `ModelTest.evilMarkChecks`.
+the marks erased and put back by keys by `EvilTest.evilMarkChecks`.
 -/
 
 namespace Editor

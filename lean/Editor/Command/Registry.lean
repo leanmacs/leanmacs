@@ -3,7 +3,6 @@ import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.InputScheme
 import Editor.Language.IndentUnit
-import Editor.ProjectMode
 import Editor.Store.Codec
 import Editor.Workspace
 
@@ -27,7 +26,8 @@ request of the editor's port (`EditorRequest.registry`,
   So a question about a source is answered its names (`categorySources`,
   `atPointSources`), and the source is run by a control request
   (`Editor/Command/Control.lean`).
-  The one exception is `extensions`, answered the values registered at an
+  The one exception is `extensions`, and `configExtensions` with it,
+  answered the values registered at an
   extension point as `Dynamic`s: `Dynamic` is an opaque `Type`, so a value
   whose fields are `EditorM` programs travels in it without the reply's
   type referring to itself, and the command that reads it, typed again by
@@ -49,19 +49,19 @@ request of the editor's port (`EditorRequest.registry`,
   `themeNames` the names themes are registered under.
 - `commandNames` is answered the names commands are registered under, each
   once, in their order: the command prompt's candidates
-  (`Editor/ExecuteCommand.lean`).
+  (`packages/execute-command/ExecuteCommand.lean`).
 - `keyBindings` is answered the key sequences that reach a command in a
   view, as the input scheme says in the scheme's state of the step that
   asks: the loop fills it per step from the scheme, not from the registry
   (`Loop.Registered.keyBindings`). The binding search and the command
-  prompt ask (`Editor/BindingSearch.lean`, `Editor/ExecuteCommand.lean`).
+  prompt ask (`packages/binding-search/BindingSearch.lean`, `packages/execute-command/ExecuteCommand.lean`).
 - `autoReload` is answered config's setting alone. Whether auto-reload is
   in effect is a command's choice, which is state (`EditorState.autoReload`),
   or else this.
 - `workspaceSettings` is answered config's workspace roots and the config
   generation: what the finder is handed. Its settings carry config's
   workspace listers too, which choose what lists a workspace's files
-  (`Editor/Workspace/Lister.lean`).
+  (`packages/workspace/Workspace/Lister.lean`).
 - `displayRules` is answered config's display rules, in order
   (`Editor/DisplayRules.lean`).
 - `shellTimeLimit` and `syntaxRefreshDelay` are answered config's shell
@@ -69,9 +69,6 @@ request of the editor's port (`EditorRequest.registry`,
 - `languageOf` is answered the name of the language the table chooses for
   a path (`Language.forPath`), and `indentUnitOf` the unit of the table's
   first entry of a name.
-- `compileHook` is answered the registered compile contributions in
-  registration order and config's project commands (`Compile.Hook`,
-  `Editor/ProjectMode.lean`).
 - `hasJob` is answered whether a job is registered under a name, as a
   start is checked.
 - `categorySources` is answered the names of the completion sources
@@ -141,9 +138,6 @@ inductive RegistryRequest where
   /-- The indent unit of the language called `language`, from the
   registry's table. -/
   | indentUnitOf (language : String)
-  /-- The compile contributions, in registration order, and config's
-  project commands. -/
-  | compileHook
   /-- Whether a job is registered under `name`. -/
   | hasJob (name : String)
   /-- Which completion sources are registered in `category`, by name, in
@@ -160,6 +154,10 @@ inductive RegistryRequest where
   point's type, in registration order, each as a `Dynamic`
   (`Editor/Extension.lean`). -/
   | extensions (key : Lean.Name)
+  /-- The values config registered at the extension point `key`, in
+  registration order, each as a `Dynamic`: the tail of `extensions`'
+  answer (`Extension.configValues`). -/
+  | configExtensions (key : Lean.Name)
 
 /-- The type of the reply to each question. -/
 abbrev RegistryRequest.Reply : RegistryRequest → Type
@@ -175,12 +173,12 @@ abbrev RegistryRequest.Reply : RegistryRequest → Type
   | .syntaxRefreshDelay => Option Nat
   | .languageOf _ => Option String
   | .indentUnitOf _ => Option Language.IndentUnit
-  | .compileHook => Compile.Hook
   | .hasJob _ => Bool
   | .categorySources _ => Array String
   | .atPointSources .. => Array String
   | .storeCodec _ => Option (String × StoreCodec)
   | .extensions _ => Array Dynamic
+  | .configExtensions _ => Array Dynamic
 
 /-- The answer to `request` where no loop dispatched the command: as with
 nothing registered and config's defaults, except that any job name is
@@ -198,11 +196,11 @@ def RegistryRequest.bare : (request : RegistryRequest) → request.Reply
   | .syntaxRefreshDelay => none
   | .languageOf _ => none
   | .indentUnitOf _ => none
-  | .compileHook => {}
   | .hasJob _ => true
   | .categorySources _ => #[]
   | .atPointSources .. => #[]
   | .storeCodec _ => none
   | .extensions _ => #[]
+  | .configExtensions _ => #[]
 
 end Editor

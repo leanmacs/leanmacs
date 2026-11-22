@@ -556,7 +556,7 @@ the whole editor, as Vim keeps it and as the registers are kept.
   the one it had. It is never refused.
 - **A motion does not set it**: a motion changes nothing. It hands the
   find back as data (`Vocabulary.To.find`), and the command that ran it
-  keeps it (`Editor/Evil.lean`, `Editor/Evil/Operators.lean`).
+  keeps it (`packages/evil/Evil.lean`, `packages/evil/Evil/Operators.lean`).
 - **It is a field of the state, so a command that does not run to its end
   leaves it as it was.**
 
@@ -786,10 +786,10 @@ candidate list with no typed text (`EditorState.keyHints`, a
   own name is as it was. It is there for one rule: the buffer left after
   the last one is closed is called `scratchName`, the name the initial
   buffer has, which is free only once the closed buffer is removed, and a
-  shown buffer cannot be removed (`Editor/Buffers.lean`, "Close").
+  shown buffer cannot be removed (`packages/buffers/Buffers.lean`, "Close").
 - `markRestored` marks a buffer as made or reopened by a session restore
   (`Buffer.historyRestored`): its undo tree starts at the restore, and
-  evil's `u` at its root says so (`Editor/Evil/Undo.lean`). It refuses
+  evil's `u` at its root says so (`packages/evil/Evil/Undo.lean`). It refuses
   `noSuchBuffer`.
 - `scratchName` is the editor's one name for its empty buffer with no file:
   the initial state's, and the one left after the last buffer is closed.
@@ -815,7 +815,7 @@ candidate list with no typed text (`EditorState.keyHints`, a
   (`paddingOf`). Unlike spans they follow the edits made since: a view
   carries them to the revision it shows through the text's log
   (`Gutter.marksOf`). The version-control gutter is their owner
-  (`Editor/VersionControl/Gutter.lean`).
+  (`packages/version-control/VersionControl/Gutter.lean`).
 
 ### Excerpt buffers
 
@@ -838,7 +838,7 @@ its excerpts, which `setExcerptHistory` replaces whole (refused with
   and a view draws one no scene has shown yet in `review-unexamined`
   (`Editor/ExcerptView.lean`). Both are pure, and ignore an entry that is
   not tracked and an index past the entries. The review buffer's excerpts
-  are tracked (`Editor/VersionControl/Review.lean`).
+  are tracked (`packages/version-control/VersionControl/Review.lean`).
 
 - **Its own `history`** is an undo tree over its text like any buffer's,
   told and closed by the loop and never moved: its text keeps no inverse, so
@@ -885,7 +885,7 @@ buffers in that order.
   order still has an answer. `none` when no other buffer is open.
 - **`openBuffers`** is every open buffer but the minibuffer's in that same
   order: the order first, then the rest by slot. The buffer list and the
-  switch prompt read it (`Editor/Buffers.lean`).
+  switch prompt read it (`packages/buffers/Buffers.lean`).
 - `wellFormed` asks that every buffer of the order is open, and that none
   is there twice.
 
@@ -1030,7 +1030,7 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
   frame does not have it, the scene names no focused view.
 - The frame's `fullscreen` is whether the window last said it is in the
   system's fullscreen, on a resize: a command reads it
-  (`toggle-fullscreen`, `Editor/FrameCommands.lean`), and nothing but a
+  (`toggle-fullscreen`, `packages/frame-commands/FrameCommands.lean`), and nothing but a
   resize changes it.
 - The selected view (`EditorState.selectedView`) is the open prompt's asker
   while a prompt is open, and the focused view otherwise. The window's
@@ -1670,7 +1670,7 @@ def Following.keyOf (buffer : BufferId) : String :=
   s!"follow {buffer.index}"
 
 /-- A buffer of a tracked file the version-control gutter keeps marks for
-(`Editor/VersionControl/Gutter.lean`): which file, its content at `HEAD`,
+(`packages/version-control/VersionControl/Gutter.lean`): which file, its content at `HEAD`,
 and the head fetch and the diff in flight for it. Plain data, beside
 `Following`; the gutter's reconciler keeps it in step after each publish. -/
 structure Tracked where
@@ -1988,7 +1988,10 @@ structure Prompt where
 
 /-- The name of the major mode the minibuffer's buffer is made with. A mode
 is registered under it by whoever ships the minibuffer's commands
-(`Editor/Minibuffer.lean`); with none registered it contributes nothing. -/
+(the default package `minibuffer`, `packages/minibuffer/Minibuffer.lean`);
+with none registered it contributes nothing. The interface package
+`minibuffer-api` declares its mode name from this
+(`MinibufferApi.modeName`). -/
 def Prompt.mode : String :=
   "minibuffer"
 
@@ -2204,7 +2207,7 @@ structure EditorState where
   once the prompt no longer wants them. -/
   completionKeys : Array String := #[]
   /-- The buffers of tracked files the version-control gutter keeps marks
-  for (`Editor/VersionControl/Gutter.lean`). -/
+  for (`packages/version-control/VersionControl/Gutter.lean`). -/
   tracked : Array Tracked := #[]
   /-- The repositories whose `HEAD` and index the version-control gutter
   watches. -/
@@ -2229,7 +2232,7 @@ structure EditorState where
   home : Option System.FilePath := none
   /-- The editor's state directory, where what is kept across a restart
   lives (`docs/design/lean-runtime.md`, "Where state lives"): the working
-  sets of each workspace (`Editor/WorkingSet/Disk.lean`). A host that has
+  sets of each workspace (`packages/working-set/WorkingSet/Disk.lean`). A host that has
   one sets it once, with the working directory; none until then, and a
   host that has none keeps nothing across a restart. -/
   stateDirectory : Option System.FilePath := none
@@ -2895,7 +2898,7 @@ def wellFormed (state : EditorState) : Bool :=
 
 /-- The name the editor gives its empty buffer with no file: the initial
 state's buffer's, and the one left after the last buffer is closed
-(`Editor/Buffers.lean`, "Close"). -/
+(`packages/buffers/Buffers.lean`, "Close"). -/
 def scratchName : String :=
   "scratch"
 
@@ -3569,7 +3572,7 @@ def setSpans (id : BufferId) (spans : Array Decoration) (state : EditorState) :
   changeBuffer id (fun buffer => ((), { buffer with spans })) state
 
 /-- The state once `change` is told ("The version-control gutter",
-`Editor/VersionControl/Gutter.lean`): a head that arrived for the latest
+`packages/version-control/VersionControl/Gutter.lean`): a head that arrived for the latest
 fetch is held and the next publish diffs against it; a diff that arrived
 for the latest head clears the one in flight and records its revision; a
 repository that moved makes its tracked buffers stale; and a refused watch

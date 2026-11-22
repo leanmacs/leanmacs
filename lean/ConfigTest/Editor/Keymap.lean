@@ -1,20 +1,22 @@
 import ConfigTest.Check
-import ConfigTest.Support.Hosts
-import ConfigTest.Support.Keys
-import ConfigTest.Support.Syntax
+import ConfigTest.Support.Shipped
+import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
 
 /-!
 # Config tests: `Editor/Keymap.lean`
 
 The tests of `Editor/Keymap.lean`: `hintChecks`, what the key hints list of
 a config's binding descriptions and prefix names (`Keymap.continuations`),
-through a host of the Vim scheme that ships. The root module `ConfigTest` runs
-them; its module doc says what each shows.
+through a host of the test scheme. The root module `ConfigTest` runs them; its
+module doc says what each shows. That the Vim scheme lists them after its
+leader is evil's (`evilLeaderChecks`, `packages/evil/EvilTest/Linked/Evil.lean`).
 -/
 
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- A config whose `setup` registers `leader-find`, which says `leader find`
 in the echo area, binds `<leader> f f` to it described as `Find file`, and,
@@ -29,27 +31,22 @@ def hintText (named : Bool) : String :=
 " ++
     if named then "  prefixName \"<leader> f\" \"file\"\n" else ""
 
-/-- Asks the host for the scene, and returns its key hint lines: the lines
-that start with `hint `. -/
-def Session.hints (session : Session) : IO (Array String) := do
-  return (← session.sceneLines).filter (·.startsWith "hint ")
-
-/-- The checks of the key hints through a host of the Vim scheme that ships
-(`withRealVimHost`), with the real elaborator: a config's description of a
+/-- The checks of the key hints through a host of the test scheme
+(`withTestHost`), with the real elaborator: a config's description of a
 binding and its name of a prefix are in the scene's hints once it is
 reloaded, and a reload that drops the name drops it from them. What the
 hints list, and in which order, is pinned by `ModelTest`'s checks of the
-keymap, the Vim scheme and the loop. -/
+keymap, the test scheme and the loop. -/
 def hintChecks (context : Context) : List Check :=
   [{  name :=
-        "criterion 4: after a reload, SPC lists f as the prefix config named, SPC f lists f as the binding config described, and SPC f f runs it and lists nothing"
+        "criterion 4: after a reload, the scheme's leader lists f as the prefix config named, the leader and then f lists f as the binding config described, and the leader and then f f runs it and lists nothing"
       run :=
-        withVimHost context [("init.lean", hintText true)] fun session => do
+        withTestHost context [("init.lean", hintText true)] fun session => do
           session.ask [.reload]
-          session.typed "SPC"
+          session.typed schemeLeader
           let afterLeader ← session.hints
           session.typed "<Escape>"
-          session.typed "SPC f"
+          session.typed s!"{schemeLeader} f"
           let afterPrefix ← session.hints
           session.typed "f"
           let afterBinding ← session.hints
@@ -60,14 +57,14 @@ def hintChecks (context : Context) : List Check :=
     { name :=
         "criterion 5: a reload that drops a config's prefix name drops it from the hints, and the prefix is listed unnamed"
       run :=
-        withVimHost context [("init.lean", hintText true)] fun session => do
+        withTestHost context [("init.lean", hintText true)] fun session => do
           session.ask [.reload]
-          session.typed "SPC"
+          session.typed schemeLeader
           let named ← session.hints
           session.typed "<Escape>"
           session.write "init.lean" (hintText false)
           session.ask [.reload]
-          session.typed "SPC"
+          session.typed schemeLeader
           let unnamed ← session.hints
           return named.contains "hint f: prefix \"file\" 1" &&
               unnamed.contains "hint f: prefix - 1" &&

@@ -3,25 +3,25 @@ import Editor
 import Editor.Clipboard.InProcess
 import Editor.Config.Directory
 import Editor.Config.LakePackage
-import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Session
-import Editor.DisplayRules
 import Editor.Ffi.Display
 import Editor.Ffi.Render
 import Editor.Ffi.Window
-import Editor.FrameCommands.Compiled
+import Editor.InputScheme.Test
 import Editor.Menu
-import Editor.Menu.Compiled
 import Editor.Process.Environment
-import Editor.ProjectMode
+import Editor.Test.AtPoint
+import Editor.Test.Editing
+import Editor.Test.Minibuffer
+import Editor.Test.Restore
+import Editor.Test.Shipped
 import Editor.Window
 import Editor.Window.Real
-import Editor.Workspace
-import EditorCore.EditorPackage
 import FfiTest.Check
 import FfiTest.Support.Queues
+import FilesApiTest.Fake
 
 /-!
 # FFI tests: `Editor/Window/Real.lean`
@@ -98,6 +98,48 @@ def shutBeforeClose (asked : Array Editor.Ffi.WindowAsked) : Bool :=
   | some minimised, some closed => minimised < closed
   | _, _ => false
 
+/-- The title of the menu the window checks write. -/
+def windowMenuTitle : String :=
+  "Window Test"
+
+/-- The command the window checks' menu item names; nothing registers it. -/
+def windowMenuCommand : String :=
+  "window-test-greet"
+
+/-- A package written for the window checks: a menu of one command item,
+and the chord `s-g` bound to the item's command, so the menu bar the host
+publishes holds a menu and a key equivalent that are no feature's. -/
+def windowMenuPackage : Editor.Package :=
+  { name := "window-menu"
+    setup := do
+      Editor.bindKeys
+          [Editor.Key.chord { logical := .character "g", modifiers := { superKey := true } }]
+          windowMenuCommand
+      Editor.defineMenu
+          { title := windowMenuTitle,
+            items := #[.item "Greet" none (.command windowMenuCommand)] } }
+
+/-- The packages the window host is handed in these scenarios, as the
+default editor's root hands them: the
+kit's stand-in for the default package `restore`
+(`Editor.Test.Restore.package`, `Editor/Test/Restore.lean`), through whose
+`restart` the restart check hands over, then the menu the checks write
+(`windowMenuPackage`), then `files-api`'s fake (`FilesApiTest.fake`), which opens the file in place of
+the default package `files`, then the kit's stand-ins for the default packages whose data the core keeps
+(`Editor.Test.Shipped`, `Editor/Test/Shipped.lean`), then the kit's
+implementation of the default package `at-point`'s commands
+(`Editor.Test.AtPoint`, `Editor/Test/AtPoint.lean`), which a scheme's keys
+of completion at point run, and its implementation of the default package
+`minibuffer`'s commands and mode (`Editor.Test.Minibuffer`,
+`Editor/Test/Minibuffer.lean`), which answer a prompt, and the kit's
+editing commands and keys (`Editor.Test.editingPackage`,
+`Editor/Test/Editing.lean`), with which a printable key of the test scheme
+the hosts run types. -/
+def shippedPackages : Array Editor.Package :=
+  #[Editor.Test.Restore.package, windowMenuPackage, FilesApiTest.fake] ++
+    Editor.Test.Shipped.packages ++
+    #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package, Editor.Test.editingPackage]
+
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
 scripted platform, on the absolute path `file`, or with no file, on the
 editor's one empty buffer, when it is `none`: a cells display bound to the
@@ -126,9 +168,9 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     Editor.Ffi.windowRequest .scripted .minimise
     Editor.Window.shutdown drained
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options (.skip none)
-        (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[] shutdown
-        .headless
+    Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor] .scripted options
+        (.skip none) (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle
+        #[] shutdown .headless
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host: the window mode ended with status {status}"
     return 1
@@ -158,10 +200,25 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
   let requests :=
     ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
       | .request request => some request
-      | .title _ | .menu _ | .close => none
+      | .title _ | .menu _ | .background .. | .close => none
   unless requests == #[.darkAppearance, .minimise] do
     IO.eprintln
         s!"ffi-test window-host: the window was asked {repr requests}, not the dark appearance and then the shutdown's minimise"
+    return 1
+  -- The paper crossed whole, from Lean's theme through layout's frame and
+  -- the presenter to the scripted window's record and back: the last
+  -- background asked is the built-in theme's paper, `#2e3440`, the
+  -- `default` face's background that `Editor/Appearance.lean` classifies.
+  let backgrounds :=
+    ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
+      | .background red green blue => some (red, green, blue)
+      | .request _ | .title _ | .menu _ | .close => none
+  let byte (color : Editor.Color) (shift : UInt32) : UInt8 := (color.word >>> shift).toUInt8
+  let paper : Option (UInt8 × UInt8 × UInt8) :=
+    (Editor.Theme.builtin.paper).map fun color => (byte color 24, byte color 16, byte color 8)
+  unless paper == some (0x2e, 0x34, 0x40) && backgrounds.back? == paper do
+    IO.eprintln
+        s!"ffi-test window-host: the window was last asked for the background {repr backgrounds.back?}, not the built-in theme's paper {repr paper}"
     return 1
   -- With no file the selected buffer is the one empty buffer, whose name is
   -- the window's title. With a file, its load may not finish before the
@@ -170,26 +227,33 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     let titles :=
       ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
         | .title text => some text
-        | .request _ | .menu _ | .close => none
+        | .request _ | .menu _ | .background .. | .close => none
     unless titles.back? == some "scratch" do
       IO.eprintln
           s!"ffi-test window-host: the window was last asked for the title {titles.back?}, not scratch"
       return 1
     -- The menu bar crossed whole, from Lean through the scene to the
-    -- scripted window's record and back: the standard one, with the keys
-    -- the packages' bindings give it, asked once, since it never changed.
+    -- scripted window's record and back: the one the host's packages
+    -- register, with the keys their bindings give it, the menu written
+    -- here (`windowMenuPackage`) with its chord among it, asked once,
+    -- since it never changed.
     let menus :=
       ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
         | .menu menu => some menu
-        | .request _ | .title _ | .close => none
-    let compiled :=
-      ({} : Editor.Config.Registry).replaceBindings .compiled
-        (Editor.FrameCommands.package.registered.bindings ++
-          Editor.Menu.package.registered.bindings)
-    let expected := compiled.menuOf Editor.Menu.standard
-    unless menus == #[expected] do
+        | .request _ | .title _ | .background .. | .close => none
+    let (state, _) : Editor.Config.State Unit Unit × Array String :=
+      Editor.Config.State.ofPackages shippedPackages
+    let expected := state.registry.menuBar?
+    let written :=
+      expected.any fun menu =>
+        menu.menus.any fun submenu =>
+          submenu.title == windowMenuTitle &&
+            submenu.items ==
+              #[.item "Greet" (some { character := 'g', modifiers := { superKey := true } })
+                  (.command windowMenuCommand)]
+    unless written && menus.map some == #[expected] do
       IO.eprintln
-          s!"ffi-test window-host: the window was asked for {menus.size} menu bars, not the standard one once: {repr menus}"
+          s!"ffi-test window-host: the window was asked for {menus.size} menu bars, not the host's packages' one once, the test's menu with its chord among it: {repr menus}"
       return 1
   IO.println "ffi-test window-host: the window ran and closed, and frames were drawn in it"
   return 0
@@ -208,7 +272,7 @@ def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 :=
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
       oleans := [oleanDir], composition := true }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
+    Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor] .scripted options
         (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
         -- hang guard: none of its own; the start-up reload's end, which the window
         -- mode's `awaitConfig` waits for over `Host.waitWhile`'s untracked branch
@@ -245,7 +309,7 @@ def windowHostBaseScenario (sysroot oleanDir configDir : String) : IO UInt8 := d
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
       oleans := [oleanDir], composition := true }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor, `ConfigFixture] .scripted
+    Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor, `ConfigFixture] .scripted
         options (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
         -- hang guard: none of its own; the start-up reload's end, which the window
         -- mode's `awaitConfig` waits for over `Host.waitWhile`'s untracked branch
@@ -287,7 +351,7 @@ def windowHostGenerateScenario (sysroot oleanDir configDir : String) : IO UInt8 
   let generator : Editor.Config.Generator :=
     { create := Editor.Config.Directory.create configDir, pin, set := some set }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
+    Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor] .scripted options
         (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
         -- hang guard: none of its own; the start-up reload's end, which the window
         -- mode's `awaitConfig` waits for over `Host.waitWhile`'s untracked branch
@@ -339,7 +403,7 @@ def windowHostDirectScenario (editorPath sysroot configDir : String) : IO UInt8 
       return 1
   let plan := options.configPlan false
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options plan
+    Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor] .scripted options plan
         (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
         -- hang guard: none of its own; the start-up reload's end, which the window
         -- mode's `awaitConfig` waits for over `Host.waitWhile`'s untracked branch
@@ -370,7 +434,7 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
     { file := some file, config := none, configGiven := false, sysroot := none, oleans := []
       composition := true }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scriptedUndrawn options
+    Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor] .scriptedUndrawn options
         (.skip none) (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle
         #[] Editor.Window.shutdown .headless
   unless status == 1 do
@@ -451,7 +515,7 @@ def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 :
       return "recorded"
     let said ← IO.mkRef (#[] : Array String)
     let status ←
-      Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
+      Editor.Window.host Editor.TestScheme.scheme shippedPackages #[`Editor] .scripted options
           (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
           -- hang guard: none of its own; the start-up reload's end, which the window
           -- mode's `awaitConfig` waits for over `Host.waitWhile`'s untracked branch

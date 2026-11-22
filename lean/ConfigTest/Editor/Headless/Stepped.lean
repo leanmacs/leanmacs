@@ -1,7 +1,6 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
 import ConfigTest.Support.Gate
-import ConfigTest.Support.Hosts
 import Editor.Config.Session
 import Editor.Event
 import Editor.Event.Queue
@@ -9,6 +8,7 @@ import Editor.Ffi.Events
 import Editor.Headless
 import Editor.Headless.Stepped
 import Editor.Job.Fake
+import Editor.Test.Linked.Host
 
 /-!
 # Config tests: `Editor/Headless/Stepped.lean`
@@ -24,6 +24,7 @@ The root module `ConfigTest` runs them; its module doc says what they show.
 namespace ConfigTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- A config of one root file whose `setup` registers nothing. -/
 def emptyRoot : List (String × String) :=

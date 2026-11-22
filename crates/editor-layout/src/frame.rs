@@ -17,6 +17,14 @@
 //! them apart from the views ([`Frame::dividers`]), and the renderer fills
 //! them first.
 //!
+//! **The ground.** A frame carries the default face's background, the
+//! theme's paper, as [`Frame::ground`]: what a renderer clears its target
+//! to before it draws the dividers and the views. A pixel nothing of the
+//! frame covers, and the part of a target larger than the frame, is then
+//! the paper and not black. It is the colour every view's background
+//! already is, so the text of a frame ([`Frame::describe`]) does not
+//! print it.
+//!
 //! The rows that fit are the rows query's ([`query`](crate::query), "The
 //! rows that fit"): each counts as at least one pixel, so a frame holds at
 //! most a row for each pixel of its view's height, whatever height a font
@@ -465,11 +473,22 @@ pub struct ViewFrame {
 /// What to draw: the dividers, every view, in drawing order, and the fonts
 /// their glyphs are drawn in.
 ///
-/// Two frames are equal when their views, their dividers, their
-/// generations and their tables of fonts are: a font is compared by what
-/// it names and never by its bytes ([`ResolvedFont`]).
-#[derive(Debug, Clone, PartialEq, Default)]
+/// Two frames are equal when their grounds, their views, their dividers,
+/// their generations and their tables of fonts are: a font is compared by
+/// what it names and never by its bytes ([`ResolvedFont`]).
+///
+/// A frame made by hand with [`Frame::default`] has a ground of
+/// `Color(0)`, which a renderer, clearing at full opacity, clears to
+/// black.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Frame {
+    /// What is drawn where nothing of the frame is: the default face's
+    /// background, as the views' backgrounds are
+    /// ([`BASE_BACKGROUND`](crate::face::BASE_BACKGROUND) while nothing
+    /// defines one). A renderer clears its target to it before it draws,
+    /// so a pixel no view or divider covers, and a target larger than the
+    /// frame, is the theme's paper.
+    pub ground: Color,
     /// The views.
     pub views: Vec<ViewFrame>,
     /// The dividers between the views, each a fill of its rectangle,
@@ -487,6 +506,20 @@ pub struct Frame {
     /// changes and the table only grows, so the table of a later frame
     /// describes the glyphs of an earlier one too.
     pub fonts: Arc<[ResolvedFont]>,
+}
+
+/// Written by hand, since [`Color`] has no default: a frame of nothing, of
+/// the ground `Color(0)`.
+impl Default for Frame {
+    fn default() -> Self {
+        Self {
+            ground: Color(0),
+            views: Vec::new(),
+            dividers: Vec::new(),
+            generation: 0,
+            fonts: Arc::default(),
+        }
+    }
 }
 
 impl Frame {
@@ -737,6 +770,7 @@ impl<S: Shaper> Layout<S> {
             })
             .collect();
         let frame = Frame {
+            ground: self.styles.style(&self.shaper, &[]).paint.background,
             views,
             dividers,
             generation: self.shaper.generation(),
@@ -3777,5 +3811,66 @@ mod tests {
         let filled = layout.frame(&divided(&[(rect, "tab")]));
         assert_eq!(filled.views, plain.views);
         assert_ne!(filled, plain);
+    }
+
+    /// The paper of the theme the phase-3 tests of text-rendering name.
+    const PAPER: Color = Color::rgb(0x2e, 0x34, 0x40);
+
+    #[test]
+    fn a_frames_ground_is_the_default_faces_background() {
+        let scene = Scene {
+            views: vec![view("ab", 4, 40, 0, &[])],
+            faces: Some(vec![def("default", bg(PAPER))]),
+            ..Scene::default()
+        };
+        let frame = Layout::new(CellShaper::new(10.0, 16.0)).frame(&scene);
+        assert_eq!(frame.ground, PAPER);
+        // The colour every view's background already is.
+        assert_eq!(frame.views[0].background, PAPER);
+    }
+
+    #[test]
+    fn with_no_default_background_the_ground_is_the_base_background() {
+        let scene = Scene {
+            views: vec![view("ab", 4, 40, 0, &[])],
+            faces: Some(vec![def("default", fg(RED))]),
+            ..Scene::default()
+        };
+        let frame = Layout::new(CellShaper::new(10.0, 16.0)).frame(&scene);
+        assert_eq!(frame.ground, BASE_BACKGROUND);
+        let undefined = Layout::new(CellShaper::new(10.0, 16.0)).frame(&Scene::default());
+        assert_eq!(undefined.ground, BASE_BACKGROUND);
+    }
+
+    #[test]
+    fn a_frame_of_no_views_has_the_ground_of_its_faces() {
+        let scene = Scene {
+            faces: Some(vec![def("default", bg(PAPER))]),
+            ..Scene::default()
+        };
+        let frame = Layout::new(CellShaper::new(10.0, 16.0)).frame(&scene);
+        assert!(frame.views.is_empty());
+        assert_eq!(frame.ground, PAPER);
+    }
+
+    #[test]
+    fn a_change_of_paper_alone_is_another_frame() {
+        let frame = layout().frame(&Scene {
+            views: vec![view("ab", 4, 40, 0, &[])],
+            ..Scene::default()
+        });
+        // The views are the same, so equality cannot rest on their
+        // backgrounds.
+        let repapered = Frame {
+            ground: PAPER,
+            ..frame.clone()
+        };
+        assert_eq!(repapered.views, frame.views);
+        assert_ne!(repapered, frame);
+    }
+
+    #[test]
+    fn a_frame_made_by_hand_has_a_ground_of_zero() {
+        assert_eq!(Frame::default().ground, Color(0));
     }
 }

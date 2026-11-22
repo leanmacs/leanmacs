@@ -3,7 +3,7 @@ import Editor.Config.Packages
 import Editor.Face
 import Editor.Package
 import Editor.TabBar
-import Editor.Themes.Check
+import Editor.Theme.Check
 import ShippedThemes
 import ShippedThemesTest.Check
 
@@ -15,7 +15,7 @@ The tests of `ShippedThemes.lean` that need no Rust library:
 runs them; its module doc says what each shows. They read what the package
 registers through the core's test double for that
 (`Config.State.ofPackages`, `Editor/Config/Packages.lean`) and run the
-core's completeness check (`Themes.problems`, `Editor/Themes/Check.lean`).
+core's completeness check (`Themes.problems`, `Editor/Theme/Check.lean`).
 -/
 
 namespace ShippedThemesTest

@@ -1,0 +1,14 @@
+reload 1: installed, 1 files, 2 commands
+run pick: ok
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 0x0: "a g", scroll 0, selections 3..3, padding 8 0
+status 1: minibuffer.prompt "Pick: "
+view 2 0,0 0x0: "beta gamma\ngamma alpha", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..10 minibuffer.match 3..4 minibuffer.match 5..6 minibuffer.candidate 11..22 minibuffer.match 11..13
+status 2: -
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "picked a g", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4

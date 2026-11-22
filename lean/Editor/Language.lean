@@ -191,7 +191,8 @@ def codeMode : Mode :=
   { name := codeName, syntaxTreeOfLanguage := true }
 
 /-- The modes that ship with the languages, which the `languages` package
-registers (`Editor/Language/Compiled.lean`): `code`. -/
+registers (the default package `languages`, `packages/languages/`):
+`code`. -/
 def modes : Array Mode :=
   #[codeMode]
 

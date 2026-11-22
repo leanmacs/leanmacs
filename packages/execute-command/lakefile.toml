@@ -1,0 +1,69 @@
+# The command prompt, `execute-command`, which asks for a registered
+# command's name and runs it, as Emacs's `M-x` does: a default package, a
+# Lake package outside the core that the default package set requires
+# (../lakefile.toml; docs/design/packages.md, "The package set and its
+# build"). It was modules of the core, `Editor.ExecuteCommand` and
+# `Editor.ExecuteCommand.Compiled`, until the features-as-packages
+# roadmap's phase 3. The gate's package steps build, test, lint,
+# format-check and run it headless through the fixture set, which requires
+# the default set (tools/package-set.sh), and the package imports check
+# holds what it imports of the core (tools/package-imports-check.sh).
+#
+# - `ExecuteCommand` is the package's library: `ExecuteCommand.lean`, the
+#   command, its source and its resolution; `ExecuteCommand/Compiled.lean`,
+#   the `Package` value; and its entry module
+#   `ExecuteCommand/EditorPackage.lean`, which the package-set build reads.
+#   Its `globs` hold every module under `ExecuteCommand`, not only what the
+#   root imports, so the package imports check sees each one's imports.
+# - `execute-command-test` is its test driver (`lake test`): the tests that
+#   need no Rust library, rooted at `ExecuteCommandTest/Model.lean`. It is
+#   no default target, as the core's `model-test` is not: `mise run lean`
+#   links with the system compiler, which this executable has no flags for.
+# - `ExecuteCommandTest` holds the test modules.
+# - `tests/headless/` holds its headless fixture.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its modules,
+# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/execute-command update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages,
+# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+name = "execute-command"
+testDriver = "«execute-command-test»"
+defaultTargets = ["ExecuteCommand", "ExecuteCommandTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+# The interface package this one implements: it declares the name the
+# command prompt is registered under, which the default config binds, and
+# publishes the contract check this package's tests run.
+[[require]]
+name = "execute-command-api"
+path = "../execute-command-api"
+
+# The minibuffer's interface package: its tests answer the command prompt
+# with its fake (`MinibufferApiTest.fake`, the core's test kit's
+# minibuffer) and bind its names (`MinibufferApi.acceptName`), so they
+# import no implementation of the minibuffer.
+[[require]]
+name = "minibuffer-api"
+path = "../minibuffer-api"
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "ExecuteCommand"
+globs = ["ExecuteCommand.*"]
+
+[[lean_lib]]
+name = "ExecuteCommandTest"
+globs = ["ExecuteCommandTest.+"]
+
+[[lean_exe]]
+name = "execute-command-test"
+root = "ExecuteCommandTest.Model"

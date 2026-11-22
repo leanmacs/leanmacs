@@ -42,6 +42,13 @@
 # `parley::FontContext::new`"; with one that calls
 # `std::fs::read("/nonexistent")`, with "use of a disallowed method
 # `std::fs::read`". With each taken out it passes.
+#
+# One other target reads files, on demand and never in the gate: the
+# example `examples/core_text/` (`mise run coretext-menlo`), which is given
+# a font file of the machine (Menlo) and Core Text's places of its glyphs,
+# written by the capture tool into a temporary directory, and reads both
+# under an `expect` that states why. Menlo's licence keeps it out of the
+# repository, so it can only be read where it is installed.
 
 disallowed-methods = [
   # Every free function of `std::fs`.

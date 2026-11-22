@@ -5,7 +5,7 @@ What a file prompt's text means as a path, read as Emacs reads a file name
 typed in the minibuffer. It is pure, and imports nothing: the file source
 (`Editor/Completion/Paths.lean`) reads the directory part of the text with
 it, and `open-file` resolves its answer and the paths it is handed with it
-(`Files.resolve`, `Editor/Files.lean`).
+(`Files.resolve`, `packages/files/Files.lean`).
 
 - **`split`** gives the directory part, through the last `/`, and the last
   component, which is what is matched. With no `/` the directory part is

@@ -22,7 +22,7 @@ A motion (`Motion`) is a name and a function from where a cursor is
 
 - **It answers the raw target**: the position the motion leads to, never
   clamped to where a cursor may rest. Resting is a rule of the caller's
-  (`Editor/Evil.lean`, "Where a cursor rests"), and an operator needs the
+  (`packages/evil/Evil.lean`, "Where a cursor rests"), and an operator needs the
   raw target: a deletion to the next word's start on the last word wants
   the text's end.
 - **No count is not a count of 1** (`From.count`, optional): a motion to a
@@ -62,7 +62,7 @@ A motion (`Motion`) is a name and a function from where a cursor is
   as Vim fails a motion that has nowhere to go, or that has gone as far as
   it can with steps left over. An operator that waits for it is cancelled
   by its caller, which leaves the cursor at the position the motion
-  answers (`Editor/Evil/Operators.lean`). The move command does not read
+  answers (`packages/evil/Evil/Operators.lean`). The move command does not read
   it: the cursor goes to the target the motion answers.
 - **A motion is told the window and the buffer it is made in**
   (`From.view`, `From.buffer`): the call's target's, which need not be the
@@ -98,7 +98,7 @@ An operator (`Operator`) is a name and what it does with what it is handed
   as a stretch (`Stretch`): cells, as one extent of the text with the reach
   they were taken by, or whole lines, as the rows of the first and the
   last. What a motion, a doubled key or a selection amounts to is the
-  caller's rule (`Editor/Evil/Operators.lean`), so an operator is written
+  caller's rule (`packages/evil/Evil/Operators.lean`), so an operator is written
   once for all three.
 - **An operand also carries** the head the operator was called at, where a
   cursor that is left alone is to rest (`rest`), the register the call
@@ -130,35 +130,35 @@ object, as Vim fails a text object.
   pair of an object's end and whether it is inclusive. An operator takes a
   span as it takes a motion's target from `start`, so Vim's rules for an
   exclusive end at a line's start and for a deletion over lines apply to
-  it, as Vim applies them (`Editor/Evil/Operators.lean`, "What an operator
+  it, as Vim applies them (`packages/evil/Evil/Operators.lean`, "What an operator
   takes"). In a visual state `start` is the selection's new anchor and
   `stop` its new head, or the cell before `stop` when the reach is
   `exclusive`; the two may be in either order.
 - **Its function is a command** (`EditorM`), as a motion's target is, so
   that an object that asks more than the text has the same shape: the
   syntax tree's objects ask the text's kept text objects query
-  (`Editor/Evil/TreeObjects.lean`). It changes nothing: the entry's rule, which its type does
+  (`packages/evil/Evil/TreeObjects.lean`). It changes nothing: the entry's rule, which its type does
   not enforce.
 
 ## Where an addition goes
 
 | Addition | Where |
 |---|---|
-| A new motion | An entry, a `Motion` value, in the table its command looks names up in (`Editor/Evil/Motions.lean`) |
+| A new motion | An entry, a `Motion` value, in the table its command looks names up in (`packages/evil/Evil/Motions.lean`) |
 | Something every motion is told of where it starts | A field of `From` |
 | Something every motion says of where it leads | A field of `To`, with a default |
 | How an operator takes a motion | The motion's `reach`, or its `taken` when the position differs too |
 | Something every command that makes a motion does with it (record a jump) | A field of `Motion`, with a default, read by the move and the operate commands |
-| A new operator | An entry, an `Operator` value, in the table its command looks names up in (`Editor/Evil/Operators.lean`) |
+| A new operator | An entry, an `Operator` value, in the table its command looks names up in (`packages/evil/Evil/Operators.lean`) |
 | Something every operator is told of what it acts on | A field of `Operand` |
-| A new text object | An entry, a `TextObject` value, in the table its commands look names up in (`Editor/Evil/Objects.lean`) |
+| A new text object | An entry, a `TextObject` value, in the table its commands look names up in (`packages/evil/Evil/Objects.lean`) |
 | Something every text object is told of where it is asked from | A field of `Within` |
 | A new part of speech | A record here, beside `Motion`, `Operator` and `TextObject` |
 
 Pinned through the motions that are entries, by
-`ModelTest.evilMotionChecks`, through the operators that are, by
-`ModelTest.evilOperatorChecks`, and through the text objects that are, by
-`ModelTest.evilObjectChecks`.
+`EvilTest.evilMotionChecks`, through the operators that are, by
+`EvilTest.evilOperatorChecks`, and through the text objects that are, by
+`EvilTest.evilObjectChecks`.
 -/
 
 namespace Editor.Vocabulary

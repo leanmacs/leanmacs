@@ -1,0 +1,60 @@
+# The package-set commands: `:package-install`, `:package-remove` and
+# `:package-update`, the job that writes an edited lakefile, and the
+# registration of the package-set build: a default package, a Lake package
+# outside the core that the default package set requires (../lakefile.toml;
+# docs/design/packages.md, "The package set and its build"). It was a
+# module of the core, `Editor.PackageSet.Compiled`, until the
+# features-as-packages roadmap's phase 8. The gate's package steps build,
+# test, lint and format-check it through the fixture set, which requires
+# the default set (tools/package-set.sh), and the package imports check
+# holds what it imports of the core (tools/package-imports-check.sh).
+#
+# - `PackageSet` is the package's library: `PackageSet/Compiled.lean`, the
+#   commands and the `Package` value, and its entry module
+#   `PackageSet/EditorPackage.lean`, which the package-set build reads. Its
+#   `globs` hold every module under `PackageSet`, so the package imports
+#   check sees each one's imports. The machinery it registers and edits
+#   through is the core's (`lean/Editor/PackageSet/`: the build job and the
+#   two commands it posts to, the edits of a lakefile, the fingerprint and
+#   what a running editor knows of its set): the reload asks for a build
+#   and the hosts start the job by its name, which the core declares.
+# - `package-set-test` is its test driver (`lake test`): the tests that
+#   need no Rust library, rooted at `PackageSetTest/Model.lean`. It is no
+#   default target, as the core's `model-test` is not: `mise run lean`
+#   links with the system compiler, which this executable has no flags for.
+# - `PackageSetTest` holds the test modules.
+#
+# It has no headless fixture of its own: the user-sets test
+# (tools/user-sets-test.sh) runs its commands end to end, on an editor
+# built from the default set.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its modules,
+# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/package-set update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages,
+# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+name = "package-set"
+testDriver = "«package-set-test»"
+defaultTargets = ["PackageSet", "PackageSetTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "PackageSet"
+globs = ["PackageSet.+"]
+
+[[lean_lib]]
+name = "PackageSetTest"
+globs = ["PackageSetTest.+"]
+
+[[lean_exe]]
+name = "package-set-test"
+root = "PackageSetTest.Model"

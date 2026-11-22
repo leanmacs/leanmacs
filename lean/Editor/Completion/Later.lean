@@ -201,7 +201,10 @@ def batchOfArguments? : List Argument → Option (ViewId × Nat × Nat × Array 
   | _ => none
 
 /-- The command a source's job posts its batches as: the minibuffer's
-(`Editor/Minibuffer.lean`), which takes a batch into the open prompt. -/
+(the default package `minibuffer`, `packages/minibuffer/Minibuffer.lean`),
+which takes a batch into the open prompt. The interface package
+`minibuffer-api` declares the name from this
+(`MinibufferApi.candidatesName`). -/
 def candidatesCommand : String :=
   "minibuffer-candidates"
 

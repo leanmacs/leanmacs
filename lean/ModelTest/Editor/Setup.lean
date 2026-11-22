@@ -5,7 +5,6 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Display
-import Editor.Completion.Displays
 import Editor.Completion.Keys
 import Editor.Completion.Later
 import Editor.Completion.Style
@@ -31,8 +30,6 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
-import Editor.ProjectMode
-import Editor.ProjectMode.Format
 import Editor.Role
 import Editor.Scene
 import Editor.Setup
@@ -651,7 +648,7 @@ def setupChecks : List Check :=
           defineDisplay (Completion.Display.plain "plain")
           useDisplayFor "pick" "plain"
           useDisplay "minibuffer"
-          defineDisplay (Completion.Displays.minibuffer (rows := 3))
+          defineDisplay (Completion.Display.plain "minibuffer")
         let twice : SetupM Unit := do
           defineDisplay (Completion.Display.plain "plain")
           defineDisplay (Completion.Display.plain "plain")
@@ -850,68 +847,6 @@ def setupChecks : List Check :=
             refusal (keyHintDelay 60001) == some (Completion.Keys.keyHintDelayTooLong 60001) &&
             refusal twice == some Config.Registrations.keyHintDelayTwice &&
             Config.Registrations.keyHintDelayTwice == "the key hint delay is set twice") },
-    { name :=
-        "a setup's compile contributions and project commands are collected in the order it registered them; a setup that registers none collects none"
-      run :=
-        let setup : SetupM Unit := do
-          compileContribution
-              { mode := "b-mode", markers := #["b.toml"]
-                commands := #[{ name := "build", line := "b-build" }] }
-          projectCommands (.remote "github.com/o/r") "cargo-mode" [("lint", "cargo clippy")]
-              [("profile", .str "dev")]
-          compileContribution
-              { mode := "a-mode", markers := #["a.toml"], formats := #[Compile.Format.general] }
-        let lint : Compile.ProjectCommands :=
-          { project := .remote "github.com/o/r", mode := "cargo-mode"
-            commands := #[{ name := "lint", line := "cargo clippy" }]
-            settings := [("profile", .str "dev")] }
-        match Config.Registrations.ofSetup setup,
-          Config.Registrations.ofSetup (command "x" (makes "1")) with
-        | .ok collected, .ok plain =>
-          pure
-            (collected.contributions.map (·.mode) == #["b-mode", "a-mode"] &&
-              collected.contributions.map (·.markers) == #[#["b.toml"], #["a.toml"]] &&
-              collected.contributions.map (·.commands) ==
-                #[#[{ name := "build", line := "b-build" }], #[]] &&
-              (collected.contributions.map fun contribution => contribution.formats.map (·.name)) ==
-                #[#[], #["general"]] &&
-              collected.projectCommands == #[lint] &&
-              plain.contributions.isEmpty &&
-              plain.projectCommands.isEmpty)
-        | _, _ => pure false },
-    { name :=
-        "a setup that registers a compile contribution with no marker, one twice, one that names a command twice, or project commands for one project and mode twice or naming a command twice, is refused with a message that says so"
-      run :=
-        let a : Compile.Contribution := { mode := "a-mode", markers := #["a.toml"] }
-        let remote : Project.Identity := .remote "github.com/o/r"
-        let twice : SetupM Unit := do
-          compileContribution a
-          compileContribution { a with markers := #["other.toml"] }
-        let given : SetupM Unit := do
-          projectCommands remote "a-mode" []
-          projectCommands remote "a-mode" [("lint", "make lint")]
-        let apart : SetupM Unit := do
-          compileContribution a
-          compileContribution { mode := "b-mode", markers := #["a.toml"] }
-          projectCommands remote "a-mode" []
-          projectCommands (.remote "github.com/o/other") "a-mode" []
-          projectCommands remote "b-mode" []
-        pure
-          (refusal (compileContribution { mode := "a-mode", markers := #[] }) ==
-              some "the compile contribution `a-mode` has no marker" &&
-            refusal twice == some "the compile contribution `a-mode` is registered twice" &&
-            refusal
-                (compileContribution
-                  { a with
-                    commands :=
-                      #[{ name := "build", line := "x" }, { name := "build", line := "y" }] }) ==
-              some "the compile contribution `a-mode` names the command `build` twice" &&
-            refusal given ==
-              some "the project commands of `a-mode` for remote github.com/o/r are given twice" &&
-            refusal (projectCommands remote "a-mode" [("lint", "a"), ("lint", "b")]) ==
-              some
-                "the project commands of `a-mode` for remote github.com/o/r name the command `lint` twice" &&
-            refusal apart == none) },
     { name :=
         "a setup's title bar is collected, a setup that chooses none has none, and one that chooses it twice is refused with a message that says so"
       run :=

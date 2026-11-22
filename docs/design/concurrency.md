@@ -313,7 +313,7 @@ time, in order, on the editor thread.
     phase 8; before it the driver's run and a job's command were run bare.
   - **A job is cancelled by a command, not by the flag.** No job reads
     the flag. Under the Vim scheme `C-g` is bound in normal state to
-    `keyboard-quit` (`lean/Editor/Shell.lean`), which the key runs once it
+    `keyboard-quit` (`packages/shell/Shell.lean`), which the key runs once it
     has lowered the flag: it cancels the `:!` or filter running in the
     focused buffer's workspace by that workspace's job key (`cancelJob`,
     "Getting results back"), which kills its child, and says
@@ -535,7 +535,7 @@ Long work belongs in a job.
 
 Status: decided 2026-11-14 and built, by the command loop's phase 12
 (`lean/Editor/State.lean`, "Quit"; `lean/Editor/Api.lean`, `quit`;
-`lean/Editor/Loop.lean`, "Quit"; `lean/Editor/Ex.lean` for the commands
+`lean/Editor/Loop.lean`, "Quit"; `packages/ex/Ex.lean` for the commands
 `quit` and `save-and-quit`; `lean/Editor/Headless.lean` for the host).
 
 A command asks the editor to quit, and the editor quits once it can. A
@@ -711,7 +711,7 @@ Pinned by `ModelTest.stateChecks`, `stateRequestChecks` and
 `apiStateChecks` (the state's rules and the API's `quit`, which also has a
 case on the real binding), `dispatchQuitChecks` (the loop: stop, the wait
 and the withdrawn quit, with commands written in the test), `exChecks`
-(the commands and the ex names `q` and `wq`), `ConfigTest.exScriptChecks`
+(the commands and the ex names `q` and `wq`), `ExTest.Linked.exScriptChecks`
 (through the host, on real files), and the two process checks of the
 `ffi-test` task, which read the executable's exit status and the file's
 bytes.
@@ -893,7 +893,7 @@ and changes on disk:
   the bytes it puts in, refused if the text has moved past the revision the
   script was made for. `Diff.hunks` asks the same service for the hunks of
   whole lines instead, which the version-control gutter turns into marks
-  (`lean/Editor/VersionControl/Gutter.lean`).
+  (`packages/version-control/VersionControl/Gutter.lean`).
 - **A project search is a request a job awaits** (`lean/Editor/Grep.lean`):
   `Grep.start` names a root, a pattern, open buffers' snapshots as overlays
   (named as a save names its source), limits and a bound, and replies with
@@ -904,7 +904,7 @@ and changes on disk:
   takes nothing, so memory is bounded. A `next` of a search the job does
   not hold is `noSuchSearch`, answered at once, and a search does not
   outlive its job. `project-search` posts each delivery to the editor as a
-  command of its own (`lean/Editor/ProjectSearch/Run.lean`).
+  command of its own (`packages/project-search/ProjectSearch/Run.lean`).
 - **No request carries a promise.** A request is plain data; how a wait is
   completed is the runner's business. A snapshot of editor state arrives as
   a further request of this port, each with a reply type, a
@@ -1046,7 +1046,7 @@ transaction through. Where those come from is open.
   what the job loaded and nothing else, and what a job held is released
   once its command has run, or when the job fails.
 - **Opening a file is a command, a job and the job's command**
-  (`lean/Editor/Files.lean`, built by the command loop's phase 9), the
+  (`packages/files/Files.lean`, built by the command loop's phase 9), the
   first use of this route by compiled code:
   - the command (`Files.open`) shows the buffer that holds the path, if
     one does, and starts nothing. Otherwise it starts the job `load-file`
@@ -1215,7 +1215,7 @@ never a poll.
 site in one of three forms (AGENTS.md, "Deterministic concurrency in
 tests"; `mise run wait-inventory` lists any site that says none): a **hang
 guard**, the bound on a wait for an event that must come, which only a hang
-reaches (`ConfigTest.hangGuard` and the other guards, set to ten times the
+reaches (`Editor.Test.Linked.hangGuard` and the other guards, set to ten times the
 slowest the event was seen to take under the stress loop's load, 120 000 ms
 for Lean where nothing slower was measured); a **hang guard run out on
 purpose**, where a check holds something for good and pins the hang; and
@@ -1267,7 +1267,7 @@ reaches its guard says the hang once through `waitHung`
 ended within M ms`) and fails the run as a hang (`Failure.reloading`,
 `unanswered` or `busy`, each described as `a hang: …`). `working` and
 `stalled` are never a guard's outcome. A check's waits pass
-`ConfigTest.hangGuard`, long enough that only a real hang trips it.
+`Editor.Test.Linked.hangGuard`, long enough that only a real hang trips it.
 `waitBlocked` is the wait's hook for a test: it is called each time the
 wait is about to block, with `"answer"` before the editor thread's answer
 and `"running work"` before a block on work still running, and a check
@@ -1399,27 +1399,27 @@ sources a command filters by project navigation's phase 1.
 | `prompt`, `acceptPrompt`, `cancelPrompt` | `lean/Editor/Api.lean` ("Prompts") |
 | The answer handed back with the step; an invocation no key yielded | `lean/Editor/Loop.lean` ("Prompts": `Loop.Stepped.answered`, `Loop.invoke`) |
 | The hosts that run the answer's command before the next event | `lean/Editor/Loop/Driver.lean` (`Loop.Driver.took`), `lean/Editor/Headless.lean` (`Running.took`) |
-| `minibuffer-accept`, `minibuffer-cancel` and the minibuffer's mode | `lean/Editor/Minibuffer.lean`, `lean/Editor/Minibuffer/Compiled.lean` |
-| `open-file` asking for its path | `lean/Editor/Files.lean` (`openCommand`) |
+| `minibuffer-accept`, `minibuffer-cancel` and the minibuffer's mode | `packages/minibuffer/Minibuffer.lean`, `packages/minibuffer/Minibuffer/Compiled.lean` |
+| `open-file` asking for its path | `packages/files/Files.lean` (`openCommand`) |
 | An invocation a command asks to be run after it, with no prompt | `lean/Editor/State/Request.lean` (`StateRequest.invoke`), `lean/Editor/Api.lean` (`invoke`) |
-| `ex` asking for its line, and running the answer's command | `lean/Editor/Ex.lean` (`exCommand`, `run`) |
+| `ex` asking for its line, and running the answer's command | `packages/ex/Ex.lean` (`exCommand`, `run`) |
 | A prompt's candidates, records, their listing and the choice; setting them and choosing | `lean/Editor/State.lean` ("Prompts": `Candidates`), `lean/Editor/State/Request.lean` |
 | Completion sources, the query and the candidate record; their model, fake and contract | `lean/Editor/Completion.lean`, `lean/Editor/Completion/Candidate.lean`, `lean/Editor/Completion/Fake.lean`, `lean/Editor/Completion/Contract.lean` |
 | Sources registered by name; a named source run inside the asking command; the names of the sources registered in a category, for a prompt that asks for one | `lean/Editor/Config/Registry.lean` ("Sources": `sourcesIn`), `lean/Editor/Setup.lean` (`defineSource`), `lean/Editor/Command/Dispatch.lean` (`ControlRequest.askSource`, `RegistryRequest.categorySources`) |
-| Matching styles: the interface, its model and contract, the fuzzy and orderless styles; their registration and config's choice by category | `lean/Editor/Completion/Style.lean`, `lean/Editor/Completion/Styles.lean`, `lean/Editor/Completion/StyleContract.lean`, `lean/Editor/Config/Registry.lean` ("Styles"), `lean/Editor/Setup.lean` (`defineStyle`, `useStyle`, `useStyleFor`) |
+| Matching styles: the interface, its model and contract, the fuzzy and orderless styles; their registration and config's choice by category | `lean/Editor/Completion/Style.lean`, `packages/completion/Completion/Styles.lean`, `lean/Editor/Completion/StyleContract.lean`, `lean/Editor/Config/Registry.lean` ("Styles"), `lean/Editor/Setup.lean` (`defineStyle`, `useStyle`, `useStyleFor`) |
 | `prompt` with candidates from sources, `setCandidates`, `chooseCandidate`; accepting the chosen candidate | `lean/Editor/Api.lean` ("Prompts") |
 | The listing, made before each scene from what the prompt's style answers, the style chosen by its category from the matching the host hands | `lean/Editor/Loop.lean` ("Prompts": `Loop.listed`, `Loop.Keys.matching`), `lean/Editor/Completion/Style.lean`, `lean/Editor/Fuzzy.lean` |
-| `minibuffer-next`, `minibuffer-previous` and the roles the mode fills with them | `lean/Editor/Minibuffer.lean` |
-| Sources that answer later: `Reask`, `Later`, the asking source a prompt holds, its job's order and batches, `sourceJob`, `minibuffer-candidates` | `lean/Editor/Completion/Candidate.lean`, `lean/Editor/Completion/Later.lean`, `lean/Editor/Setup.lean` (`sourceJob`), `lean/Editor/Minibuffer.lean` |
+| `minibuffer-next`, `minibuffer-previous` and the roles the mode fills with them | `packages/minibuffer/Minibuffer.lean` |
+| Sources that answer later: `Reask`, `Later`, the asking source a prompt holds, its job's order and batches, `sourceJob`, `minibuffer-candidates` | `lean/Editor/Completion/Candidate.lean`, `lean/Editor/Completion/Later.lean`, `lean/Editor/Setup.lean` (`sourceJob`), `packages/minibuffer/Minibuffer.lean` |
 | The reconciler of a prompt's jobs: a source's job started and started again, the match job spawned, closing cancelling them | `lean/Editor/Loop.lean` ("Prompts": `Loop.completionJobs`, `Loop.matchWork`, `Loop.Spawn`), `lean/Editor/Headless.lean` (`Running.launch`, `Running.publish`) |
 | The match job: the listing made on a pool thread over the job port's matcher, its delivery, a failed match | `lean/Editor/Loop.lean` (`Candidates.listing`, `Loop.inlineMatches`), `lean/Editor/Job.lean` (`JobRequest.fuzzy`, `Job.embedFuzzy`), `lean/Editor/State.lean` (`listMatched`, `matchFailed`) |
 | A filtered source's candidates marked with the style's ranges, in their order, none dropped; the size that chooses inline or a match job counting them | `lean/Editor/Loop.lean` (`Candidates.listing`, `Loop.listed`, `Loop.completionJobs`), `lean/Editor/State.lean` (`Candidates.passingSize`, `Candidates.listingSize`) |
 | Sources a command filters: a lister, a filter fed its output with the typed text as an argument, the first records in one batch | `lean/Editor/Completion/Filtering.lean` |
 | A run that keeps the head of its standard output | `lean/Editor/Process.lean` (`ProcessRequest.runHead`, `Process.Head`), `lean/Editor/Job.lean` (`Process.runHead`), `crates/editor-process/src/service.rs` (`Service::start_head`, `RunResult::Cut`) |
-| Displays: the interface, its model and contract, the minibuffer display and its rows; their registration and config's choice by category | `lean/Editor/Completion/Display.lean`, `lean/Editor/Completion/Displays.lean`, `lean/Editor/Completion/DisplayContract.lean`, `lean/Editor/Config/Registry.lean` ("Displays"), `lean/Editor/Setup.lean` (`defineDisplay`, `useDisplay`, `useDisplayFor`) |
+| Displays: the interface, its model and contract, the minibuffer display and its rows; their registration and config's choice by category | `lean/Editor/Completion/Display.lean`, `packages/completion/Completion/Displays.lean`, `lean/Editor/Completion/DisplayContract.lean`, `lean/Editor/Config/Registry.lean` ("Displays"), `lean/Editor/Setup.lean` (`defineDisplay`, `useDisplay`, `useDisplayFor`) |
 | The candidate list: the sheet shown in the publish, kept on the prompt, the place that grows and never shrinks, and the list's view above the minibuffer's | `lean/Editor/State.lean` ("The minibuffer's place": `displayed`, `Prompt.tallest`, `cutStrip`, `candidateListRect?`), `lean/Editor/Loop.lean` (`Loop.candidateListView`, `Loop.Keys.displaying`) |
-| The `:!` history and the ex names as the ex line's candidates, from two sources | `lean/Editor/Ex.lean` (`exCommand`, `historySource`, `namesSource`), `lean/Editor/Api.lean` (`exNames`) |
-| An answer for the input scheme: `minibuffer-ask`, the reserved continuation `InputScheme.answerName`, and the loop handing the answer to the scheme | `lean/Editor/Minibuffer.lean`, `lean/Editor/InputScheme.lean` (`answered`), `lean/Editor/Loop.lean` ("Prompts": `Loop.answer`) |
+| The `:!` history and the ex names as the ex line's candidates, from two sources | `packages/ex/Ex.lean` (`exCommand`, `historySource`, `namesSource`), `lean/Editor/Api.lean` (`exNames`) |
+| An answer for the input scheme: `minibuffer-ask`, the reserved continuation `InputScheme.answerName`, and the loop handing the answer to the scheme | `packages/minibuffer/Minibuffer.lean`, `lean/Editor/InputScheme.lean` (`answered`), `lean/Editor/Loop.lean` ("Prompts": `Loop.answer`) |
 | Keys pressed by an invocation: the reserved name `InputScheme.keysName`, which the binding search invokes with the keys of the binding accepted, and the loop feeding them to the scheme from rest | `lean/Editor/BindingSearch.lean`, `lean/Editor/InputScheme.lean` (`keysInvocation`), `lean/Editor/Loop.lean` ("Prompts": `Loop.pressed`) |
 
 Pinned on the models by `ModelTest.stateChecks` and `stateRequestChecks`
@@ -1646,7 +1646,7 @@ prompt.** Built by the command loop's phase 12.
 - **Set aside: one request that looks an ex name up and records its
   command.** The rule for an argument a name does not take would then be
   in the dispatcher. With two requests the dispatcher answers a question,
-  and the ex line's rules are in `lean/Editor/Ex.lean`.
+  and the ex line's rules are in `packages/ex/Ex.lean`.
 
 **Rollback and the interrupt around a prompt.**
 
@@ -1687,7 +1687,7 @@ prompt.** Built by the command loop's phase 12.
   (`EditorState.askedFrom`, the one definition of that rule;
   `Files.shownIn`). The prompt stays open with the focus. Before this the
   show was refused, and a loaded file was left in a buffer no window
-  showed. Pinned by `ModelTest.fileCommandChecks`.
+  showed. Pinned by `FilesTest.fileCommandChecks`.
 - **A reload leaves the prompt open.** It is compiled state. Its
   continuation is a name, looked up when the answer arrives.
 
@@ -2176,8 +2176,9 @@ outlives it (AGENTS.md, "Deterministic concurrency in tests"):
   a cancelled search's thread, which may still be walking), waited for with no deadline,
   whether the body returned or threw; a guard says a hang, and a refused
   flush is said too. A check that runs a host over the directory nests the
-  host's bracket inside it. ConfigTest reaches it through
-  `ConfigTest.withFiles`; FfiTest's `inOwnDirectory` keeps the same rule
+  host's bracket inside it. ConfigTest and the packages' linked tests reach
+  it through the kit's `HostContext.withFiles`
+  (`lean/Editor/Test/Linked/Host.lean`); FfiTest's `inOwnDirectory` keeps the same rule
   with a flush of its own, pulled through the one parked pull of the
   completion queue (`FfiTest.pullTask`). Pinned by
   `ContractTest.linkedServicesChecks` over the real file service, its
@@ -2202,8 +2203,9 @@ outlives it (AGENTS.md, "Deterministic concurrency in tests"):
 - **A check's bracket gives up on a hung loop**: with D3 a reload that
   really hangs keeps the loop's end waiting, so `withHost` and
   `withHostEnding` take the `grace` and `abandoned` that `hostedWithin` has,
-  and ConfigTest's `onStage` (every check host) and `withVimHost` pass
-  `grace := some ConfigTest.hangGuard`: a loop still running `hangGuard`
+  and the linked test kit's `onStage` (every check host) and
+  `withShippedHost` (`lean/Editor/Test/Linked/`) pass
+  `grace := some hangGuard`: a loop still running `hangGuard`
   after its hang was said is handed to `abandoned`, and the check fails as a
   hang (`a hang: the editor loop had not ended …; giving up`). The window
   mode, the bench and the CLI keep what they had (`none`, `none`, `some
@@ -2572,7 +2574,9 @@ stores and the jobs, but compares three revisions (the host's cells', the
 table's and the config generation) with the ones last mirrored and runs a
 codec only when one moved, and a store's value is rendered only by the
 debounced write. With a state of two tabs, five windows, 100 jump entries
-and a 10,000-line `shell-history` whose codec the reconciler is handed,
+and a 10,000-line store of the shape of `shell-history`, whose codec the
+reconciler is handed (the bench's own since the shell's store left the
+core),
 `journal-bench` gave a median of 3.2 to 3.6 µs a key and a 99th percentile
 of 4.2 to 6.8 µs (`journal_order/4KiB/start` 3.3 / 6.6, `middle` 3.3 /
 6.3, `end` 3.3 / 6.2; `1MiB` 3.2 / 6.1, 3.4 / 4.3, 3.5 / 4.5; `10MiB` 3.3 /
@@ -2769,7 +2773,7 @@ As built (`lean/Editor/Config/Reload.lean`, `lean/Editor/Headless.lean`):
   report in the echo area: the headless host prints it. On the models the
   loop's driver counts the requests, since it has no config session
   (`ModelTest.dispatchQuitChecks`, `exChecks`); through the host,
-  `ConfigTest.exChecks` rewrites a config's file, runs the ex line
+  `ExTest.Linked.exChecks` rewrites a config's file, runs the ex line
   `reload`, and sees the key run the new command.
 
 `config-test` shows the editor answering while a file elaborates: with a
