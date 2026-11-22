@@ -1141,6 +1141,12 @@ hogs unless it says otherwise:
   completion, the process service's flush completed by an open's answer, the
   library queue's leftover `parsed` events, and a guard that could leave a
   check's pull parked for good.
+- Config again, at c926a7df, from 10:44 to 11:09 CST on 2026-11-22, `mise
+  run stress -- 10 config`: config 10/10. It covers the config-test checks
+  added in c8fe16b3 after the run at 43f421a6 (lean/ConfigTest/Editor/
+  Headless.lean: `awaitIndexed`'s answers at idle over a scripted wait, and,
+  through the real host, `indexed` failing at idle with a job asleep), and
+  the loop as 0199931c and c926a7df left it, its probe passing first.
 - The open-file fixture alone, 50 rounds at 5142a367: open-file: 50/50.
 - `mise run stress -- 10 ffi` was not run, under the same cut.
 - Supplementary, the Linux container (arm64 Debian, 8 CPUs, 16 hogs), at
