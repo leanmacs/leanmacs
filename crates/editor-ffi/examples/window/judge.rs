@@ -292,6 +292,7 @@ mod tests {
             })
             .collect();
         Frame {
+            ground: white,
             views: vec![ViewFrame {
                 id: ViewId(1),
                 rect: Rect::default(),

@@ -20,6 +20,12 @@ editor-platform = { path = "../editor-platform" }
 # The frame a renderer draws, as plain data. `deny.toml` lists this crate
 # among editor-layout's wrappers.
 editor-layout = { path = "../editor-layout" }
+# The rasteriser port: what makes a glyph's image, with its published
+# fake, its contract, the luminance bucket and the fallback. The swash
+# adapter here (`raster.rs`) implements it and runs its contract, and the
+# painter and the glyph cache are written over it. `deny.toml` lists this
+# crate among editor-raster's wrappers.
+editor-raster = { path = "../editor-raster" }
 # Packs glyph images into the pages of the atlas: a shelf allocator that
 # gives a rectangle back when its glyph is evicted. Pinned exactly, and
 # kept behind one type of this crate (`atlas::Atlas`); `deny.toml` lets no
@@ -29,8 +35,10 @@ etagere = "=0.3.0"
 # Rasterises a glyph of a font file, by glyph id, at a size, a variation
 # and a fraction of a pixel: as a mask, as a subpixel mask with a coverage
 # for each colour stripe, or in colour. Pinned exactly, and kept behind
-# the private rasteriser trait (`glyphs::Rasterize`); `deny.toml` lets no
-# other crate depend on it. It brings a second copy of `skrifa` beside
+# the rasteriser port (`editor_raster::Rasterize`), whose adapter here is
+# private (`raster::SwashRasterizer`): every platform's rasteriser, and
+# the fallback for what another declines. `deny.toml` lets no other crate
+# depend on it. It brings a second copy of `skrifa` beside
 # Parley's. Checked in a spike on three fixture fonts, on macOS and on
 # Linux (`docs/design/rendering-prior-art.md`).
 swash = "=0.2.10"

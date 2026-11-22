@@ -1,0 +1,77 @@
+# What no line of `editor-raster-coretext` may name, its tests included: a
+# real file, a directory of the machine, a process, a clock, or this
+# machine's preferences. A font reaches the adapter as the bytes a frame
+# carries, and the captures the example compares with are compiled in.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, and the workspace root has none, so this file governs
+# every target of this crate and no other. `disallowed_methods` and
+# `disallowed_types` are on by default at `warn`, and `mise run lint` denies
+# warnings, so a line that names one of these fails the gate.
+#
+# The list is `crates/editor-raster/clippy.toml`'s, the renderer's for
+# files, the environment, processes and clocks, and one more:
+# `SystemDefaults::new`, the real `FontDefaults`, which reads
+# `AppleFontSmoothing`. No test calls it. The example `check`, which runs on
+# demand on macOS (`mise run coretext-check`), calls it at one call site
+# under its own `#[expect(clippy::disallowed_methods, reason = "…")]`, as
+# `crates/editor-render-wgpu/clippy.toml` says of its examples. Seen to
+# bite once by hand, on 2026-11-20: with that `expect` taken off,
+# `mise run lint` fails with "use of a disallowed method
+# `editor_raster_coretext::SystemDefaults::new`".
+
+disallowed-methods = [
+  # Every free function of `std::fs`.
+  { path = "std::fs::canonicalize", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::copy", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::create_dir", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::create_dir_all", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::exists", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::hard_link", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::metadata", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::read", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::read_dir", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::read_link", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::read_to_string", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::remove_dir", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::remove_dir_all", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::remove_file", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::rename", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::set_permissions", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::symlink_metadata", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::write", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  # The methods of `Path` that ask the disk.
+  { path = "std::path::Path::canonicalize", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::exists", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::is_dir", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::is_file", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::is_symlink", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::metadata", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::read_dir", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::read_link", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::symlink_metadata", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::try_exists", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  # The directories of the machine.
+  { path = "std::env::current_dir", reason = "the Core Text rasteriser has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::set_current_dir", reason = "the Core Text rasteriser has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::temp_dir", reason = "the Core Text rasteriser has no directory of the machine, and a test leaves the process as it found it" },
+  # Processes.
+  { path = "std::process::Command::new", reason = "the Core Text rasteriser starts no process" },
+  # The clocks.
+  { path = "std::time::SystemTime::now", reason = "the Core Text rasteriser reads no clock" },
+  { path = "std::time::Instant::now", reason = "the Core Text rasteriser reads no clock" },
+  # The file port's real adapter, which this crate does not depend on.
+  { path = "editor_fs_std::StdFs::system", reason = "the Core Text rasteriser touches no file system, real or fake" },
+  # This machine's font-smoothing preference: what it reads depends on the
+  # machine and the user. The type is macOS only, so on another platform
+  # the path names nothing, which clippy warns of unless told it may.
+  { path = "editor_raster_coretext::SystemDefaults::new", allow-invalid = true, reason = "no test reads this machine's defaults: the smoothing decision is tested on the published fake (`defaults::fake::Canned`), and the example `check` and editor-ffi's wiring are the places the real ones are read" },
+]
+
+disallowed-types = [
+  { path = "std::fs::File", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::OpenOptions", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::DirBuilder", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::ReadDir", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::DirEntry", reason = "the Core Text rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+]

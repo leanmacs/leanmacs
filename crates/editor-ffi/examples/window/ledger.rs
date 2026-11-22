@@ -6,11 +6,14 @@
 use std::sync::{Arc, Mutex};
 
 use editor_ffi::render::target;
+use editor_ffi::window::{Rasteriser, window_rasteriser};
 use editor_layout::frame::Frame;
 use editor_platform::{Canvas, Drawer, NativeWindow};
 use editor_render::clock::Clock;
 use editor_render::port::{DrawRequest, Drawn, Renderer, Target};
-use editor_render_wgpu::{Antialiasing, HeadlessRenderer, Image, Masks, Settings, WgpuRenderer};
+use editor_render_wgpu::{
+    Antialiasing, Blending, HeadlessRenderer, Image, Masks, Settings, WgpuRenderer,
+};
 
 use crate::judge::{Picture, uncompared};
 use crate::tally::{Happened, Record, Tally};
@@ -255,21 +258,32 @@ fn compare(picture: &Image, expected: &Image, target: Target) -> Picture {
     }
 }
 
-/// The renderer's settings for this window: the platform's weight of
-/// text, and plain masks where the adapter cannot blend by a coverage for
-/// each channel (`per_channel`).
+/// The renderer's settings for this window, as the platform draws text.
 ///
 /// Where the platform draws with Core Text (`matches_core_text`, which
-/// the caller sets on macOS), text is drawn to Core Text's weight
-/// ([`Settings::core_text`]); everywhere else it keeps the default,
-/// linear light and the outlines as they are. This is the one place the
-/// target system is asked: whatever later makes the editor's own
-/// renderer applies the same rule.
-fn settings(per_channel: bool, matches_core_text: bool) -> Settings {
-    let platform = if matches_core_text {
+/// the caller sets on macOS), text is drawn as Core Text draws it
+/// ([`Settings::core_text`]: blended in sRGB-encoded values, at the swash
+/// fallback's weight); everywhere else it keeps the default, linear light
+/// and the outlines as they are. This is the one place the target system
+/// is asked: whatever later makes the editor's own renderer applies the
+/// same rule.
+fn platform(matches_core_text: bool) -> Settings {
+    if matches_core_text {
         Settings::core_text()
     } else {
         Settings::default()
+    }
+}
+
+/// The settings of the picture the window's is compared with: the
+/// platform's ([`platform`]), blended as the renderer on the window says
+/// it blends (`blending`: a surface that cannot blend encoded blends in
+/// linear light), and in plain masks where its adapter cannot blend by a
+/// coverage for each channel (`per_channel`).
+fn settings(per_channel: bool, blending: Blending, matches_core_text: bool) -> Settings {
+    let platform = Settings {
+        blending,
+        ..platform(matches_core_text)
     };
     if per_channel {
         platform
@@ -279,6 +293,75 @@ fn settings(per_channel: bool, matches_core_text: bool) -> Settings {
             ..platform
         }
     }
+}
+
+/// A renderer that can be handed what draws its glyphs: the renderer on
+/// the window, and the headless one it is compared with.
+trait Handed: Sized {
+    /// The renderer, drawing its glyphs with what `rasteriser` names, and
+    /// with swash for what that declines.
+    fn handed(self, rasteriser: Rasteriser) -> Self;
+}
+
+impl Handed for WgpuRenderer {
+    fn handed(self, rasteriser: Rasteriser) -> Self {
+        handed(
+            self,
+            rasteriser,
+            #[cfg(target_os = "macos")]
+            WgpuRenderer::rasterizing_with,
+        )
+    }
+}
+
+impl Handed for HeadlessRenderer {
+    fn handed(self, rasteriser: Rasteriser) -> Self {
+        handed(
+            self,
+            rasteriser,
+            #[cfg(target_os = "macos")]
+            HeadlessRenderer::rasterizing_with,
+        )
+    }
+}
+
+/// The renderer on the window, `window`, and the headless renderer whose
+/// picture it is compared with, made by `picture` from the window's once
+/// it is handed: each handed the one `rasteriser`, so the pictures
+/// compared have their glyphs drawn alike.
+fn alike<W: Handed, P: Handed>(
+    rasteriser: Rasteriser,
+    window: W,
+    picture: impl FnOnce(&W) -> P,
+) -> (W, P) {
+    let window = window.handed(rasteriser);
+    let picture = picture(&window).handed(rasteriser);
+    (window, picture)
+}
+
+/// `renderer`, handed the rasteriser `rasteriser` names through
+/// `handing`, the renderer's own `rasterizing_with`.
+#[cfg(target_os = "macos")]
+fn handed<R>(
+    renderer: R,
+    rasteriser: Rasteriser,
+    handing: fn(R, editor_raster_coretext::CoreTextRasterizer) -> R,
+) -> R {
+    match editor_ffi::window::core_text(rasteriser) {
+        Some(core_text) => handing(renderer, core_text),
+        None => renderer,
+    }
+}
+
+/// `renderer` as it is: off macOS no rasteriser but swash is chosen.
+///
+/// It is handed no `rasterizing_with`, and its callers name none here:
+/// that function takes any rasteriser, and off macOS there is none to
+/// name it with (the Core Text one is macOS's alone), so a renderer's
+/// `rasterizing_with` handed on would leave its type unknown.
+#[cfg(not(target_os = "macos"))]
+fn handed<R>(renderer: R, _: Rasteriser) -> R {
+    renderer
 }
 
 /// A renderer on `window`, checked: each frame it presents is read back
@@ -301,25 +384,38 @@ pub fn renderer(
         clippy::disallowed_methods,
         reason = "this example is the one place a renderer is made on a window: it is the window's check, run on demand"
     )]
-    let made = unsafe { WgpuRenderer::on_window(window, settings(true, macos)) };
-    let mut gpu = made.map_err(|error| error.to_string())?;
+    let made = unsafe { WgpuRenderer::on_window(window, platform(macos)) };
+    let (mut gpu, headless) = alike(
+        window_rasteriser(macos),
+        made.map_err(|error| error.to_string())?,
+        // An adapter that cannot blend by a coverage for each channel
+        // draws plain masks whatever it is asked, and a surface that
+        // cannot blend encoded blends in linear light: so must what it is
+        // compared with, at the same weight.
+        |gpu: &WgpuRenderer| {
+            HeadlessRenderer::new(settings(gpu.per_channel(), gpu.blending(), macos))
+        },
+    );
     // A run that reads no picture asks the renderer to keep none: a draw
     // then costs what the editor's own would, and not a read-back more.
     let copies = read && gpu.keep_picture();
     *locked(&shared.adapter) = Some(format!(
-        "{}, blending by a coverage for each channel: {}",
+        "{}, blending by a coverage for each channel: {}; it blends in {}, and the picture it is compared with in {}",
         gpu.adapter(),
-        gpu.per_channel()
+        gpu.per_channel(),
+        gpu.blending(),
+        headless.blending()
     ));
-    // An adapter that cannot blend by a coverage for each channel draws
-    // plain masks whatever it is asked: so must what it is compared with,
-    // at the same weight.
-    let compared = settings(gpu.per_channel(), macos);
+    *locked(&shared.rasterizing) = Some(format!(
+        "{} on the window, and {} for the picture it is compared with",
+        gpu.rasterizing(),
+        headless.rasterizing()
+    ));
     Ok(Checked {
         gpu,
         read,
         copies,
-        headless: HeadlessRenderer::new(compared),
+        headless,
         shared: Arc::clone(shared),
     })
 }
@@ -338,22 +434,98 @@ mod tests {
     use editor_render::clock::FakeClock;
     use editor_render::fake::RecordingRenderer;
     use editor_render::port::{DrawRequest, Renderer};
-    use editor_render_wgpu::{Antialiasing, Masks, Settings, SubpixelOrder};
+    use editor_render_wgpu::{Antialiasing, Blending, Masks, Settings, SubpixelOrder};
 
-    use super::{Entered, Ledger, entering, happened, settings};
+    use editor_ffi::window::Rasteriser;
+
+    use super::{Entered, Handed, Ledger, alike, entering, happened, platform, settings};
     use crate::tally::Happened;
     use crate::testing::{LARGE, MS, SMALL, began, presented_as};
 
     #[test]
-    fn the_window_draws_to_core_texts_weight_where_it_matches_core_text_and_linear_elsewhere() {
+    fn the_window_draws_with_core_texts_settings_where_it_matches_core_text_and_the_default_elsewhere()
+     {
         let plain = |settings: Settings| Settings {
             antialiasing: Antialiasing::Grayscale,
             ..settings
         };
-        assert_eq!(settings(true, false), Settings::default());
-        assert_eq!(settings(false, false), plain(Settings::default()));
-        assert_eq!(settings(true, true), Settings::core_text());
-        assert_eq!(settings(false, true), plain(Settings::core_text()));
+        // The platform's settings are editor-render-wgpu's own: what
+        // either holds is that crate's to pin.
+        assert_eq!(platform(true), Settings::core_text());
+        assert_eq!(platform(false), Settings::default());
+        // A renderer on the window that blends as it was asked gives the
+        // platform's settings back.
+        let default = Settings::default();
+        assert_eq!(settings(true, default.blending, false), default);
+        assert_eq!(settings(false, default.blending, false), plain(default));
+        let core_text = Settings::core_text();
+        assert_eq!(settings(true, core_text.blending, true), core_text);
+        assert_eq!(settings(false, core_text.blending, true), plain(core_text));
+    }
+
+    #[test]
+    fn the_picture_is_blended_as_the_renderer_on_the_window_says_it_blends() {
+        // Whatever the renderer on the window says it blends in, as a
+        // surface that could not blend encoded fell back to linear light,
+        // what the window's picture is compared with blends in too, and
+        // is otherwise the platform's.
+        for blending in [Blending::Linear, Blending::Encoded] {
+            for matches_core_text in [true, false] {
+                let compared = settings(true, blending, matches_core_text);
+                assert_eq!(compared.blending, blending);
+                assert_eq!(
+                    compared,
+                    Settings {
+                        blending,
+                        ..platform(matches_core_text)
+                    }
+                );
+            }
+        }
+    }
+
+    /// A renderer that keeps what it is handed to draw its glyphs with,
+    /// and what it was made from.
+    #[derive(Debug, Default, PartialEq)]
+    struct Holding {
+        /// Each rasteriser it was handed, in order.
+        handed: Vec<Rasteriser>,
+        /// What the renderer it was made from held when it was made;
+        /// `None` of one made from nothing.
+        made_from: Option<Vec<Rasteriser>>,
+    }
+
+    impl Handed for Holding {
+        fn handed(mut self, rasteriser: Rasteriser) -> Self {
+            self.handed.push(rasteriser);
+            self
+        }
+    }
+
+    /// Both renderers are handed the one rasteriser, and the headless one
+    /// is made from the window's once it is handed: so a headless renderer
+    /// made at the window's settings draws its glyphs as the window does.
+    ///
+    /// Seen to bite on 2026-11-20: with `alike` handing the headless
+    /// renderer nothing, it failed, the picture's renderer holding `[]`
+    /// where the window's held `[CoreText]`.
+    #[test]
+    fn the_window_and_the_picture_it_is_compared_with_draw_glyphs_alike() {
+        for rasteriser in [Rasteriser::CoreText, Rasteriser::Swash] {
+            let (window, picture) =
+                alike(rasteriser, Holding::default(), |window: &Holding| Holding {
+                    handed: Vec::new(),
+                    made_from: Some(window.handed.clone()),
+                });
+            assert_eq!(window.handed, [rasteriser]);
+            assert_eq!(
+                picture,
+                Holding {
+                    handed: vec![rasteriser],
+                    made_from: Some(vec![rasteriser]),
+                }
+            );
+        }
     }
 
     #[test]

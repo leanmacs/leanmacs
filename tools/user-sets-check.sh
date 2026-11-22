@@ -5,9 +5,11 @@
 # Run from lean/, after `lean` and `launcher`, on a machine with git and
 # Cargo. Everything it writes is in a fresh temporary directory, removed at
 # the end, with HOME and XDG_* inside it (Cargo's and rustup's homes are
-# kept, so G builds offline from the registry cache), but the fixture
-# packages' own .lake/ and, for G, the checkout's target/, which every Rust
-# build of a set shares.
+# kept, so G builds offline from the registry cache, and the `lean` and
+# `lake` it runs are those of the toolchain `lean --print-prefix` names
+# before HOME moves, as elan resolves its toolchains under $HOME), but the
+# fixture packages' own .lake/ and, for G, the checkout's target/, which
+# every Rust build of a set shares.
 #
 #   E. The first launch after an editor update: a version 1 is built; a copy
 #      of the shipped default whose `editor.core` is another core is
@@ -49,6 +51,19 @@ tmp=$(cd "$tmp" && pwd -P)
 . "$repo/tools/leftovers.sh"
 trap 'reap "$tmp"; rm -rf "$tmp"' EXIT
 trap 'exit 1' HUP INT TERM
+# The `lean` and `lake` run from here on are the toolchain's own
+# ($sysroot/bin), not whatever the PATH names: elan, CI's toolchain
+# manager, resolves its toolchains under $HOME, so once HOME moves its
+# proxy installs and runs another copy of the toolchain, and the default
+# editor's link trace names the toolchain's directory. Wrappers, not
+# symlinks, so Lake still finds its install from the real binary's path;
+# only these two, as $sysroot/bin also holds the toolchain's clang.
+mkdir "$tmp/toolchain-bin"
+for tool in lean lake; do
+  printf '#!/bin/sh\nexec "%s/bin/%s" "$@"\n' "$sysroot" "$tool" >"$tmp/toolchain-bin/$tool"
+  chmod +x "$tmp/toolchain-bin/$tool"
+done
+export PATH="$tmp/toolchain-bin:$PATH"
 export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 export HOME="$tmp/home" XDG_DATA_HOME="$tmp/xdg-data" XDG_STATE_HOME="$tmp/xdg-state" XDG_CONFIG_HOME="$tmp/xdg-config"
 mkdir -p "$HOME"

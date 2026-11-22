@@ -1,77 +1,178 @@
-# Core Text's drawing of the weight sentence
+# Core Text's drawings of the weight sentence
 
-`sentence.png` is the sentence `the window draws this` as Core Text draws
-it on macOS: the macOS target for how heavy the renderer draws text. The
-renderer's test draws the same sentence through its CPU path and holds
-its dark pixels and its ink to this file's
-(`crates/editor-render-wgpu/src/weight_tests.rs`). The file is compiled
-into the test, so no test reads a file when it runs.
+The sentence `the window draws this` as Core Text draws it on macOS, in
+five drawings, with the place of each of its glyphs. They are macOS's own
+text, which the renderer is held to:
 
-It is not a reference image of the renderer: the renderer never drew it,
-`mise run render-reference` never writes it, and the renderer's one
+- `sentence.png` is the target for how heavy the renderer draws text with
+  swash. The renderer's test draws the same sentence through its CPU path
+  and holds its dark pixels and its ink to this file's
+  (`crates/editor-render-wgpu/src/weight_tests.rs`). The file is compiled
+  into the test, so no test reads a file when it runs.
+- The other four drawings are what the Core Text rasteriser's masks are
+  compared with, black on white and light on dark at 14 and 28 pixels,
+  and grey on white (`crates/editor-raster-coretext/examples/check/`,
+  `mise run coretext-check`, run on demand on macOS).
+- `composited/` holds the same five drawings as macOS composited them:
+  each bitmap's own pixels, ground and text blended by Core Graphics, as
+  8-bit RGB. They are what the renderer's composite of the sentence, drawn
+  through the Core Text rasteriser on the CPU and the GPU, is compared
+  with (`crates/editor-ffi/examples/coretext/`, the second half of
+  `mise run coretext-check`, run on demand on macOS).
+- `blend.txt` is Core Graphics' own result for a uniform fill over a
+  ground: four text colours over three grounds at five alphas, in the
+  same kind of bitmap. The renderer's encoded blending
+  (`Blending::Encoded`, what `Settings::core_text()` blends with) is held
+  to it within 1 of 255 in the gate, and linear-light blending must miss
+  its cases at half alpha (`crates/editor-render-wgpu/src/blend.rs`,
+  compiled in). The composited drawings are held, by the same
+  renderers drawing the sentence, to the ink and dark-pixel bounds of the
+  mask check and to 3 of 255 a channel at scale 2, 21 at scale 1.
+- `positions.txt` is where Core Text puts each glyph on the line. The
+  shaper's test and the painter's test hold their places to it
+  (`crates/editor-shape-parley/tests/core_text.rs`,
+  `crates/editor-render-wgpu/src/placement_tests.rs`), in the gate.
+
+None is a reference image of the renderer: the renderer never drew them,
+`mise run render-reference` never writes them, and the renderer's one
 reference image is still `tests/render/frame.png`.
 
 | File | Size | Bytes | sha256 |
 |---|---|---|---|
 | `sentence.png` | 385 by 71 pixels, 8-bit grayscale | 2658 | `1c16d8153eecfacc12ae57b4dafa010de3f9a0b9059affe9afb890b5af76ab85` |
+| `sentence-dark.png` | 385 by 71 pixels, 8-bit grayscale | 2585 | `207d8ca2dd3d5eb348ca2ae23711ce0e2fd3ab87dc38934f1139bd02bc303161` |
+| `sentence-14.png` | 209 by 52 pixels, 8-bit grayscale | 1263 | `5d1b64efef153df73e9bdfe65e244698cd2bb4810fa4bc1f19eae919a86dc243` |
+| `sentence-14-dark.png` | 209 by 52 pixels, 8-bit grayscale | 1268 | `8973fc4c2ada4f8cfb3f64afd5864ced493b6316f2d774037214f4bdcd5e2195` |
+| `sentence-grey.png` | 385 by 71 pixels, 8-bit grayscale | 2540 | `a89c76d7908102bc4318475c8714ea2bf8595de73d18d0b8556fd84cb612dfb0` |
+| `positions.txt` | 42 lines of glyphs, under 2 of comment | 1295 | `f73652a3ad732f80da4b8606185067cd45351fcdbd687505a6d8333aa514c81d` |
+| `composited/sentence.png` | 385 by 71 pixels, 8-bit RGB | 4508 | `1663380a73827fcb42c37b404baed1ac7c34865209afb7975123fa0020b9c7e4` |
+| `composited/sentence-dark.png` | 385 by 71 pixels, 8-bit RGB | 5085 | `c51f8639a1ebbc1c650ce8da55741cdbe35a5d290713bb5bfab3cc8750b3a9cf` |
+| `composited/sentence-14.png` | 209 by 52 pixels, 8-bit RGB | 2444 | `5b1e31d3f096f96499c104ac45260071cacbf9999f685c8ef00076233713484b` |
+| `composited/sentence-14-dark.png` | 209 by 52 pixels, 8-bit RGB | 2761 | `1b117dba7acbb77b360d681738b3c7f5ffb08e8482192edc2659855273f32b04` |
+| `composited/sentence-grey.png` | 385 by 71 pixels, 8-bit RGB | 4497 | `177c3a642185b1689587afaa06c0df277af948fe976910d13a2baa11e0a9f568` |
+| `blend.txt` | 50 lines of cases, under 5 of comment | 1912 | `cb073e0c65d081ab12bbd01db15768a24c956a86e11939b6c2421c9bbcbecdd8` |
 
-## What it shows
+## What they show
 
-Black text on a white ground: the sentence in Noto Sans Mono
+Every drawing is the sentence in Noto Sans Mono
 (`tests/fonts/NotoSansMono-Regular.subset.ttf`, the stand-in for Menlo) at
-14 pt on a bitmap of scale 2, so 28 pixels to the em, as TextEdit draws
-Menlo 14 pt on a display of scale 2. The baseline is on a whole pixel, 25
-pixels up from the bottom, with a margin of 16 pixels around the line's
-typographic bounds. No glyph reaches the border.
+14 pt, as one `CTLine`, with a margin of 16 pixels around the line's
+typographic bounds and the baseline on a whole pixel. No glyph reaches the
+border.
 
-## How it was captured
+| File | Scale (pixels to the em) | Text on ground | Baseline, up from the bottom | Values |
+|---|---|---|---|---|
+| `sentence.png` | 2 (28) | black on white | 25 | the red channel as drawn: 255 is the white ground |
+| `sentence-dark.png` | 2 (28) | `#d8dee9` on `#2e3440`, the default theme's | 25 | coverage: 255 is full ink |
+| `sentence-14.png` | 1 (14) | black on white | 21 | coverage |
+| `sentence-14-dark.png` | 1 (14) | `#d8dee9` on `#2e3440` | 21 | coverage |
+| `sentence-grey.png` | 2 (28) | `#808080` on white | 25 | coverage |
+
+`#808080` is in the luminance bucket 1 by its encoded value (0.502) and
+in bucket 0 by its linear light (0.216), counted against Core Text's
+smoothing levels (`editor_raster::SMOOTHING_LEVELS`), so its drawing tells
+which of the two Core Text's smoothing follows.
+
+`positions.txt` has one line for each glyph at scale 1 and at scale 2,
+`<scale> <glyph id> <x px> <y px> <advance px>`, in device pixels from the
+line's origin: x and y as the line's run places the glyph
+(`CTRunGetGlyphs`, `CTRunGetPositions`), and the advance as the font's own
+metrics give it (`CTFontGetAdvancesForGlyphs`). In this font every glyph
+is 0.6 em on from the last, 8.4 pixels at scale 1 and 16.8 at scale 2, and
+the line's positions are its advances summed: the script found no pen step
+that differs from the glyph's advance.
+
+## How they were captured
 
 ```sh
 mise run coretext-reference
 ```
 
 which is `swift tools/coretext/capture.swift
-tests/fonts/NotoSansMono-Regular.subset.ttf tests/coretext/sentence.png`.
+tests/fonts/NotoSansMono-Regular.subset.ttf tests/coretext`.
 
-- On 2026-11-14, on an Apple M5 Max (Mac17,7), macOS 27.2 (26B123), with
-  Apple Swift 6.4.2. `AppleFontSmoothing` was not set
+- `sentence.png`: on 2026-11-14, on an Apple M5 Max (Mac17,7), macOS 27.2
+  (26B123), with Apple Swift 6.4.2. `AppleFontSmoothing` was not set
   (`defaults read -g AppleFontSmoothing` finds no such key), so the
-  system's default smoothing applied.
+  system's default smoothing applied. The capture of 2026-11-20 below
+  drew it again to the same bytes, so the weight fit's target is still
+  the 2026-11-14 capture.
+- The other files: on 2026-11-20, on the same machine, macOS 27.2.1
+  (26B131), with Apple Swift 6.4.2, `AppleFontSmoothing` not set. They
+  were first drawn that day with subpixel quantisation off, and drawn
+  again the same day with the context's default flags, as below; these
+  are the second drawings. Two runs gave the same bytes, for every file,
+  and `sentence.png` came out the same bytes as before.
+- `composited/` and `blend.txt`: on 2026-11-20, on the same machine,
+  macOS 27.2.1 (26B131), with Apple Swift 6.4.2, `AppleFontSmoothing` not
+  set. The same run drew the five coverage files and `positions.txt` to
+  the bytes already committed, and a second run gave the same bytes for
+  every file. Each composited file is the bitmap's red, green and blue as
+  they are; the script checked that the alpha was 255 at every pixel and
+  that the border was the ground exactly. Each case of `blend.txt` is a
+  bitmap of the same kind, 8 by 8, filled with the ground, with a 4 by 4
+  rectangle of the text colour filled over it at the alpha / 255 (four
+  texts, three grounds, alphas 32, 64, 128, 192 and 224, a text equal to
+  its ground left out); the line holds the middle pixel. The script
+  printed that the encoded prediction, `round(ground + alpha · (text −
+  ground))` over sRGB values, is at worst 1 of 255 from every channel of
+  every case, and the linear-light prediction at worst 73.
 - The font is loaded from the file's bytes (`CGDataProvider`, `CGFont`,
   `CTFontCreateWithGraphicsFont` at 14 pt); nothing is installed or
   registered on the system.
-- The bitmap is 8-bit RGB with alpha, premultiplied first, little-endian,
-  in the sRGB colour space, filled white, its transform scaled by 2.
-  Antialiasing and font smoothing are allowed and on. Subpixel positioning
-  and quantisation are left at the context's defaults, which CoreGraphics
-  gives no way to read.
-- The sentence is one `CTLine`, black.
-- The script checked that red, green and blue agree within 1 at every
-  pixel (they do: smoothing on macOS is not by colour stripes) and wrote
-  the red channel as it is.
-- Two runs gave the same bytes.
+- Each bitmap is 8-bit RGB with alpha, premultiplied first, little-endian,
+  in the sRGB colour space, filled with its ground, its transform scaled
+  by its scale. Antialiasing and font smoothing are allowed and on.
+- For every drawing, subpixel positioning and quantisation are left at
+  the context's defaults, as native apps leave them and as `sentence.png`
+  was drawn on 2026-11-14. Core Text then floors each glyph's place to
+  its own grid: a third of a pixel at scale 1, a half at scale 2
+  (measured on macOS 27.2.1, 2026-11-20, by drawing one glyph across a
+  pixel in steps of 1/400).
+  The renderer's painter places glyphs on the same grid
+  (`crates/editor-render-wgpu/src/glyphs.rs`, `bin_of`), so the Core Text
+  adapter's masks are compared with these drawings as they are.
+- The script checked each drawing before writing it: nothing drawn on the
+  border; for `sentence.png`, red, green and blue within 1 of each other
+  at every pixel, and the red channel written as it is; for the others,
+  each channel mapped back through its ground and its text colour
+  (`(value - ground) / (text - ground)`) to one coverage within 2 of 255,
+  and the mean written. They agreed: smoothing on macOS is not by colour
+  stripes.
 
 What the script printed:
 
-| Drawing | Dark pixels (below 128) | Ink (255 less each value, summed) |
-|---|---|---|
-| Smoothed: the file | 1891 | 503470 |
-| Not smoothed, for comparison | 1638 | 429519 |
+| Drawing | Dark pixels (below 128) | Ink (255 less each value, summed) | Coverage, summed |
+|---|---|---|---|
+| `sentence.png`, smoothed: the file | 1891 | 503470 | |
+| `sentence.png` not smoothed, for comparison | 1638 | 429519 | |
+| `sentence-dark.png` | | | 564423 |
+| `sentence-14.png` | | | 126109 |
+| `sentence-14-dark.png` | | | 149127 |
+| `sentence-grey.png` | | | 536558 |
 
-So font smoothing makes the drawing about 15% darker in dark pixels and
-17% in ink: Core Text did smooth, offscreen, in this bitmap.
+So font smoothing makes the black drawing about 15% darker in dark pixels
+and 17% in ink, and light text on a dark ground has about 12% more
+coverage than black on white at the same size.
 
-The file was looked at, enlarged four times, when it was captured: by the
-agent that implemented the weight, and not yet by a person.
+## Capturing them again
 
-## Capturing it again
+Capture them again on a new major version of macOS, or when the fixture
+font changes. The script's checks stand in for looking at the files: it
+refuses a drawing with ink on its border or with channels that are not one
+coverage. Then:
 
-Capture it again on a new major version of macOS, or when the fixture font
-changes. Then:
-
-1. Open the new file, enlarged, and check it against "What it shows".
-2. Update the table and the capture's facts above.
-3. Run the weight tests
+1. Update the tables and the capture's facts above.
+2. Run the weight tests
    (`cargo test --locked -p editor-render-wgpu --lib weight_tests -- --nocapture`);
-   if the macOS weight no longer matches within its tolerance, fit it
-   again as `weight_tests.rs` says, in the same commit.
+   if the swash fallback's weight no longer matches within its tolerance,
+   fit it again as `weight_tests.rs` says, in the same commit.
+3. Run the placement tests (`cargo test --locked -p editor-shape-parley
+   --test core_text`, `cargo test --locked -p editor-render-wgpu --lib
+   placement_tests`) and `mise run coretext-check`, whose second half
+   compares the renderers' composite with `composited/`, and record the
+   figures in `docs/dev-practices/on-demand-checks.md`.
+4. Run the blend tests (`cargo test --locked -p editor-render-wgpu --lib
+   blend`): if Core Graphics' blend of `blend.txt` has moved from the
+   encoded arithmetic, the renderer's encoded blending is fixed to it,
+   test-first, in `crates/editor-render-wgpu/src/blend.rs`.

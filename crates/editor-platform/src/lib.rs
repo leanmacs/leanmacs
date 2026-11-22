@@ -93,11 +93,15 @@
 //! The editor asks things of the running window with [`Platform::request`]:
 //! a [`Request`], one variant for each thing asked (enter or leave
 //! fullscreen, minimise, a title, keep running, the menu bar, the
-//! [`Appearance`] the window's title and buttons are drawn in). Keep running
+//! [`Appearance`] the window's title and buttons are drawn in, the
+//! [`Background`](Request::Background) ([`Rgb`]) shown wherever nothing has
+//! drawn). Keep running
 //! is the editor's answer to a quit the system asked when it does not quit:
 //! it changes nothing the window shows. The menu bar ([`menu`]) is the
 //! application's: a platform with no menu bar changes nothing shown when it
-//! is asked for one, and the rule is [`contract::requests`]'. A request
+//! is asked for one, and the rule is [`contract::requests`]'. A platform with
+//! no background setting likewise changes nothing shown when it is asked for
+//! one. A request
 //! asked with no window running
 //! does nothing and is not remembered. [`Platform::close`] stays a method
 //! of its own: it ends the run, which no request does, and with the
@@ -442,6 +446,22 @@ pub enum Request {
     /// Draw the window's own parts (its title and its buttons) in this
     /// appearance. One asked already is asked again harmlessly.
     Appearance(Appearance),
+    /// Fill whatever the window shows that nothing drew with this colour:
+    /// behind the drawable area while it is resized, and before a first
+    /// frame. One asked already is asked again harmlessly. A platform
+    /// with no such setting does nothing with it.
+    Background(Rgb),
+}
+
+/// A colour as three sRGB bytes, opaque.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Rgb {
+    /// Red, 0 to 255, sRGB-encoded.
+    pub red: u8,
+    /// Green.
+    pub green: u8,
+    /// Blue.
+    pub blue: u8,
 }
 
 /// Which of the system's appearances the window's own drawing (its title

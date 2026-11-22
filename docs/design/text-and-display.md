@@ -3408,12 +3408,20 @@ bound submits nothing.
   the two adapters are the same code down to the quads and the atlas's
   bytes, and differ in the blend of one quad, which is one function and
   one shader that state the same arithmetic.
-- **Where a glyph goes.** At its `x` plus its `dx` across, rounded to a
-  quarter of a pixel, and at its row's top plus the baseline plus its
-  `dy` down, each rounded to a whole pixel: a baseline is a whole pixel.
+- **Where a glyph goes.** At its `x` plus its `dx` across, floored to
+  Core Text's grid: thirds of a pixel at scale 1, halves at scale 2 and
+  whole pixels from scale 3 (`max(1, 4 − scale)` places a pixel, with
+  1/1024 of a pixel's grace under a line for the error of f32 sums), as
+  `CTLineDraw` with the context's default flags and TextEdit place it,
+  measured on macOS 27.2.1 by sweeping one glyph across a pixel in steps
+  of 1/400 (its image changed at 0.3325 and 0.6675 px at scale 1, at 0.5
+  at scale 2, and only at whole pixels at scale 3); on every platform
+  (owner's decision, 2026-11-20). Down, at its row's top plus the baseline plus its `dy`,
+  each rounded to a whole pixel: a baseline is a whole pixel.
 - **The glyph cache.** A glyph image is kept by resolved font id, glyph
-  id, one of 4 horizontal bins of a quarter pixel, and the kind asked
-  for. There are three kinds, each in atlas pages of its own format:
+  id, one of 12 horizontal bins of a twelfth of a pixel (which hold each
+  of Core Text's grids), the kind asked for and the run's luminance
+  bucket. There are three kinds, each in atlas pages of its own format:
   masks (one coverage a pixel), subpixel masks (a coverage for each of
   red, green and blue) and colour images. An image is pinned by every
   kept row that draws it, and rows are kept for the frame last drawn, so
@@ -3424,15 +3432,154 @@ bound submits nothing.
   added, counted, and given back at a later draw. A frame of another
   generation empties the cache. What cannot be drawn is counted: a glyph
   of a font with no bytes (the fake shaper's), a glyph id past 16 bits,
-  an image larger than a page. Rasterising is `swash`, packing the pages
-  is `etagere`.
-- **Text is blended over what is under it, in linear light.** For each
-  of red, green and blue, `out = text × coverage + under × (1 −
-  coverage)`: nothing is composited against an assumed background. The
-  target holds sRGB values and blending is in linear light, so half
-  coverage of white on black is 188, not 128. On a GPU a coverage for
-  each channel is dual-source blending; an adapter without it is given
-  plain masks and one coverage, and says so.
+  an image larger than a page. Rasterising is the rasteriser port's
+  (below): Core Text on macOS, swash elsewhere and for what Core Text
+  declines. Packing the pages is `etagere`.
+- **On macOS Core Text draws each glyph, behind the rasteriser port.**
+  The owner's decision (2026-11-20, the text-rendering roadmap's phase
+  1): on macOS the renderer does what Core Text and native apps do, as
+  Zed, Ghostty, kitty, Chromium (Skia) and Firefox (WebRender) do
+  ([rendering-prior-art.md](rendering-prior-art.md), "Text on macOS").
+  - *The port.* `crates/editor-raster` owns the rasteriser port: the
+    `Rasterize` trait, what an image is kept by (`GlyphKey`) and asked
+    with (`GlyphRequest`), the image (`GlyphImage`, of a `Kind`), the
+    luminance bucket rule, a `Fallback` of two rasterisers, the
+    published fake and the contract every adapter is held to (the
+    image's shape, its kinds, the same request giving the same image,
+    each bin moving the ink by its offset, a capital on the baseline
+    and placed from the pen, and the luminance read only by a rasteriser
+    that says it reads it). It depends on `editor-layout` alone. Swash's
+    adapter stays in `editor-render-wgpu` and runs the contract in the
+    gate; the painter is written over the port.
+  - *The adapter.* `crates/editor-raster-coretext` loads a face from the
+    frame's bytes (nothing is registered on the system), and draws each
+    glyph with `CTFontDrawGlyphs` into an unscaled 8-bit alpha bitmap
+    (14 pt at scale 2 is the same drawing as 28 px at scale 1), with
+    antialiasing on, smoothing as the user's `AppleFontSmoothing` says
+    (only `0` turns it off, as in Zed and crossfont, read once through
+    the `FontDefaults` port), subpixel positioning on and quantisation
+    off, since the painter has already put the glyph on Core Text's grid
+    and the bin's offset is drawn as given. A subpixel mask asked for is
+    a plain one: macOS draws no LCD text. Core Text does not hint. It
+    declines, to swash, a face at variation coordinates other than the
+    default, synthetic bold or slant, and a colour font (rdm task
+    `editor-raster-coretext-variations-and-synthesis`).
+  - *The luminance bucket.* Core Text's smoothing dilates lighter text
+    more, in five levels of the text colour's luminance, measured on
+    macOS 27.2.1 by sweeping the fill grey: 0.3886, 0.6460, 0.8124,
+    0.9428 of the encoded Rec. 709 luminance. The bucket of a run's
+    colour is how many of those it reaches, it is part of the glyph key
+    when the rasteriser says it reads luminance (Core Text with
+    smoothing on), and the adapter fills each bucket in a grey well
+    inside its level (0, 0.5, 0.75, 0.875, 1). Zed's `round(4L)` is not
+    used: it put the default theme's text (`#d8dee9`, 0.869) in the
+    wrong level, 5% lighter than Core Text's own at 14 px. Glyphs
+    redrawn under a block cursor still keep their run's bucket (rdm task
+    `editor-render-cursor-glyph-bucket`).
+  - *The fallback.* A renderer draws with swash until it is handed a
+    rasteriser (`rasterizing_with`); then with that one, and swash, at
+    the settings' dilation, for each glyph it declines. `editor-ffi`
+    hands the process's window, and the example `window` both of its
+    renderers, Core Text on macOS (`window_rasteriser`, the one choice,
+    pinned in the gate). A renderer says what draws its glyphs
+    (`rasterizing()`), and the window example prints it.
+  - *Measured.* The adapter's masks, laid on Core Text's grid at Core
+    Text's own places, against Core Text's own drawings of the weight
+    sentence (`mise run coretext-check`, 2026-11-20): `sentence.png`
+    exactly (ink and dark pixels x1.0000, worst pixel 0.000), the
+    default theme's colours at 28 px x1.0017 / x1.0000 / 0.004, grey
+    x0.9972 / x1.0000 / 0.008, and at 14 px x1.0001 / x1.0000 / 0.020
+    black on white and x1.0035 / x1.0000 / 0.071 light on dark; each
+    control misses (light on dark at bucket 0: ink x0.89 and x0.85;
+    black on white not smoothed: x0.85; grey at its linear light's
+    bucket: x0.94). The thresholds and why are in
+    `docs/dev-practices/on-demand-checks.md`, "The Core Text rasteriser
+    and its blending, on demand".
+  - *Placement.* In the gate, the shaper's pen places of the sentence in
+    the fixture font are within an eighth of a pixel of Core Text's at
+    28 and 14 px (measured 0.0000 px; `editor-shape-parley`'s
+    `tests/core_text.rs`), and the painter puts each of Core Text's
+    places on Core Text's grid (`placement_tests.rs`). On demand, in
+    Menlo, the shaper's places are Core Text's to 0.0000 px at both
+    sizes, and Core Text applies no tracking or kerning to the sentence
+    (`mise run coretext-menlo`, 2026-11-20).
+  - *Shader sampling.* The shader reads the atlas with `textureLoad` at
+    whole texel coordinates from a page bound with `filterable: false`
+    and no sampler, and every quad is on whole pixels, so no glyph is
+    filtered bilinearly and the blur of Zed issue #57777 cannot occur;
+    `mise run render-gpu` compares the GPU's picture with the CPU
+    compositor's, which reads texels exactly.
+- **Text is blended over what is under it, in sRGB-encoded values on
+  macOS, as Core Graphics does, and in linear light elsewhere.** For
+  each of red, green and blue, `out = text × coverage + under × (1 −
+  coverage)`: nothing is composited against an assumed background. In
+  which space is a setting, `Settings::blending` (`Blending`), chosen
+  per platform where the program wires the renderer:
+  `Settings::core_text()` blends `Encoded`, and the default, which
+  Linux and every other target keep, `Linear`. Decided 2026-11-20 (the
+  text-rendering roadmap's phase 2, the owner's direction: on macOS, do
+  what Core Text and native apps do).
+  - *The two spaces.* In linear light the target's sRGB values are made
+    linear, blended and encoded again, so half coverage of white on
+    black is 188 of 255. Encoded, the values / 255 are blended as they
+    are, with no conversion either way, so it is 128. Core Graphics
+    composites in an 8-bit sRGB bitmap that way, which is how a
+    layer-backed AppKit view draws its text, and Core Text's masks are
+    made for it: linear light makes dark text on a light ground thinner
+    and light text on a dark ground heavier, which is what the window
+    looked like ("heavy and strange" at 2x on the dark default theme).
+    `blend.rs` states both arithmetics once, the CPU compositor calls
+    it and the shader states the same expressions.
+  - *The whole frame.* A render pass has one attachment format, so the
+    GPU cannot blend text in one space and fills in the other within a
+    draw: the blending covers fills and colour glyphs too. Core Graphics
+    composites everything that way (`tests/coretext/blend.txt`), so an
+    opaque fill comes out the same in both spaces, and a fill with an
+    alpha (a selection colour with one) and a colour glyph come out as
+    macOS draws them.
+  - *The contrast's luminance* is the colour's linear light in either
+    space, on the CPU and in the shader: how light the text is does not
+    change with the space it is blended in.
+  - *On a GPU*, blending encoded draws through a target that is not
+    sRGB: `Rgba8Unorm` for a target of the device's own, `Bgra8Unorm`
+    on a Metal surface, as Zed's layer is. The shader takes the colour
+    as given in place of making it linear (the globals' `encoded`), and
+    the fixed-function blend then does exactly the encoded arithmetic.
+    It was chosen over Ghostty's `linear-corrected`, which remaps the
+    coverage so that linear blending gives the encoded result, because
+    that remap needs the colour under the text, which a fixed-function
+    blend does not give the shader, and the text may lie over a
+    selection, a cursor or any fill: it would be exact over one assumed
+    ground only. The target that is not sRGB is exact over any ground,
+    and keeps the GPU and the CPU byte-close: both compute in unit
+    values and round once. A coverage for each channel is dual-source
+    blending; an adapter without it is given plain masks and one
+    coverage, and says so. A renderer says which space it blends in
+    (`blending()`), and a window's surface that offers no 8-bit format
+    with an sRGB pair blends in linear light and says so (below).
+  - *Measured.* In the gate, the encoded arithmetic is within 1 of 255
+    of Core Graphics' own result for uniform fills on every one of the
+    50 cases of `tests/coretext/blend.txt` (four text colours over three
+    grounds at five alphas), and linear light misses it by up to 73
+    (black at 192 over white: 136, Core Graphics 63). On demand, on
+    2026-11-20, on an Apple M5 Max (Metal), macOS 27.2.1, final figures
+    at the phase's last code commit: `mise run render-gpu` drew the
+    fixture at the macOS setting with 0 pixels differing from the CPU in
+    plain and in subpixel masks, grey text encoded at a contrast of 1
+    with 0, and its control, the GPU encoded against the CPU in linear
+    light, missed by 73 (1556 pixels). `mise run coretext-check` drew
+    the sentence through the real renderers with Core Text's glyphs
+    against what macOS composited (`tests/coretext/composited/`): the
+    CPU and the GPU alike, ink and dark pixels x1.0000 / x1.0000,
+    worst channel 0 of 255, black on white at 28 px; x1.0016 / x1.0000
+    / 1 light on dark; x0.9971 / x0.9956 / 1 grey; x1.0001 / x1.0000 /
+    5 and x1.0035 / x1.0000 / 12 at 14 px; the GPU 0 of 255 from the CPU
+    in every capture. Linear light missed every capture in the direction
+    the reason gives: lighter on light grounds (ink x0.8618 black at 28
+    px, x0.7155 at 14 px, x0.9466 grey) and heavier on the dark ground
+    (x1.0857 at 28 px, x1.1453 at 14 px); the old contrast of 0.1 missed
+    `sentence.png` (ink x1.0123, worst 6 of 255). The figures and the
+    thresholds are in `docs/dev-practices/on-demand-checks.md`.
 - **The weight of text matches the platform's: on macOS, Core Text's.**
   The owner's decision (2026-11-14, rdm task
   `editor-render-text-lighter-than-core-text`): match the platform's
@@ -3448,8 +3595,17 @@ bound submits nothing.
   thicker than its outline (swash's `embolden`, in the rasteriser, so
   the GPU reads the same atlas). The default, `Weight::LINEAR`, is 0
   and 0, and draws every byte as before. The macOS setting is
-  `Settings::core_text()`: `Weight::CORE_TEXT`, a contrast of 0.1 and a
-  dilation of 0.8 px, with hinting off, as the fit chose. The program
+  `Settings::core_text()`: blended encoded, with `Weight::CORE_TEXT`, a
+  contrast of 0 and a dilation of 0.4 px, and hinting off, as the fit
+  chose. Since 2026-11-20 Core Text draws the glyphs on macOS (above),
+  and `Weight::CORE_TEXT` is the swash fallback's, for the glyphs Core
+  Text declines (variable faces off their defaults, synthetic bold and
+  slant, colour fonts), fitted blended encoded as macOS draws them. It
+  has no contrast: the contrast of 0.1 it had until then was fitted to
+  make up for linear light thinning dark text, and Skia sets Core
+  Graphics' contrast to 0 for the same reason. The contrast machinery
+  stays, at 0 in both shipped weights (rdm task
+  `editor-render-drop-text-contrast`). The program
   picks it where it wires the renderer: `editor-ffi`'s example `window`
   asks `cfg!(target_os = "macos")` and nothing in the renderer or the
   core names a system. Whatever later makes the editor's own renderer
@@ -3476,46 +3632,62 @@ bound submits nothing.
   |---|---|---|---|---|
   | Core Text, smoothed: the target | 1891 | 503470 | 1.000 | 1.000 |
   | Core Text, not smoothed (for comparison) | 1638 | 429519 | 0.866 | 0.853 |
-  | The default, `Weight::LINEAR`, hinted | 1321 | 362857 | 0.699 | 0.721 |
-  | macOS, `Settings::core_text()` | 1910 | 499078 | 1.010 | 0.991 |
+  | The default, `Weight::LINEAR`, linear light, hinted | 1320 | 361410 | 0.698 | 0.718 |
+  | Swash encoded, the outline as it is, unhinted | 1638 | 431498 | 0.866 | 0.857 |
+  | macOS, `Settings::core_text()`: encoded, 0.4 px, unhinted | 1904 | 496219 | 1.007 | 0.986 |
 
-  The fit swept the contrast from 0 to 1 and the dilation from 0 to
-  0.8 px in steps of 0.1, with hinting on and off, and took the point
-  whose larger miss of the two counts was least: 0.010. Many points
-  come within a few hundredths, trading contrast for dilation (a
-  contrast of 1 with 0.5 px, hinted, misses by 0.012), so the
-  constant is one good point of a shallow valley, not a unique one. The
-  earlier candidates' directions still hold and are pinned: dilating
-  the outline, raising the coverage, blending on sRGB values and
-  drawing black on white each add ink. Even without smoothing Core Text
-  draws about a fifth more ink than the default; smoothing adds about
-  as much again.
+  The fit (2026-11-20, refitted for encoded blending) swept the
+  dilation from 0 to 1 px in steps of 0.1, at a contrast of 0, with
+  hinting on and off, blended encoded, and took the point whose larger
+  miss of the two counts was least: 0.014, at 0.4 px unhinted; 0.4 px
+  hinted misses by 0.030 and 0.3 px unhinted by 0.047. Undilated,
+  encoded swash draws what Core Text draws with smoothing off, to within
+  half a percent of its ink: what linear light lost was the blending,
+  and smoothing's dilation is what is left. The first fit, of
+  2026-11-14, in linear light, swept the contrast as well and took a
+  contrast of 0.1 and 0.8 px (1.010 and 0.991). The earlier
+  candidates' directions still hold and are pinned: dilating the
+  outline, raising the coverage, blending on sRGB values and drawing
+  black on white each add ink.
 
   The caveats. The font is Noto Sans Mono, a stand-in for Menlo, whose
   licence keeps it out of the repository. It is fitted at one size,
   28 px. The dilation is a fixed number of pixels, where Pathfinder
   reads Core Text's stem darkening as growing with the size below about
   25 px ("Risks", in [rendering-prior-art.md](rendering-prior-art.md);
-  read, not verified): at other sizes the match is not measured (rdm
-  task `editor-render-weight-at-other-sizes`). The target is Core Text
+  read, not verified): at other sizes the match is not measured; the
+  rdm task `editor-render-weight-at-other-sizes` was answered on
+  2026-11-20 by having Core Text draw the glyphs on macOS, and the
+  measurement of 2026-11-20 found Core Text's dilation is about
+  `min(k(L) × px per em, 0.30)` px an edge, `k` from about 0.0058 for
+  black to 0.015 for white. The target is Core Text
   drawing offscreen into a bitmap, not TextEdit on screen. Beside
   TextEdit, by eye, the owner saw on 2026-11-14 that the window in Menlo
   14 pt is as heavy as TextEdit in Menlo Regular 14 pt at 100%, not
   lighter, compared in Menlo by the example `window` with `--family
   Menlo` (the display's scale not stated). Some of the
   spacing, and maybe the `w`, are not quite the same as TextEdit's: rdm
-  task `editor-render-glyph-spacing-and-shape-vs-core-text`.
+  task `editor-render-glyph-spacing-and-shape-vs-core-text`, taken into
+  the text-rendering roadmap's phase 1, which measured the places in
+  Menlo as Core Text's to 0.0000 px and put the glyphs on Core Text's
+  grid with Core Text's own masks (above).
 
   Pinned in `crates/editor-render-wgpu/src/weight_tests.rs`: the macOS
   setting within a tenth of both counts, and no worse than its
-  neighbours on the grid and the default; the counts are printed by
+  neighbours on the grid and the outline as it is; the counts are printed by
   `cargo test --locked -p editor-render-wgpu --lib weight_tests --
   --nocapture`, and two runs print the same. That the GPU draws what
   the CPU draws at the macOS weight is checked on demand, by `mise run
   render-gpu` and `mise run linux-render`.
 - **Antialiasing is a setting, and by default follows the scale:**
   subpixel masks below 2 physical pixels to a logical one, plain masks
-  from 2 up. The order of a display's colour stripes cannot be asked of
+  from 2 up. On macOS the program asks for plain masks at every scale
+  (`Settings::core_text()` gives `Antialiasing::Grayscale`, since
+  2026-11-20): macOS has drawn no subpixel (LCD) text since 10.14, and
+  Core Graphics drawing smoothed text into an RGB context gave no pixel
+  whose red, green and blue differ (macOS 27.2.1, a scratch probe,
+  `lcd.swift`). Subpixel masks stay in scope on other platforms, where
+  the default still follows the scale. The order of a display's colour stripes cannot be asked of
   the window system, so it is a setting too (red, green, blue unless
   told otherwise). Hinting is a setting, on by default and off at the
   macOS weight (`Settings::core_text()`). A renderer says which
@@ -3526,15 +3698,102 @@ bound submits nothing.
   person, so nothing downstream matches on it. The window example prints
   it for each draw, which is how a change of antialiasing between two
   displays is seen.
-- **The scale changes what the renderer sizes, and nothing else.** A
+- **The scale changes what the renderer sizes, and the glyphs' grid.** A
   frame is in physical pixels and so is a target. What the renderer
   itself sizes is `max(1, round(scale))` pixels thick: an underline, a
-  strike-through, a bar or underline cursor, a hollow cursor's edge.
+  strike-through, a bar or underline cursor, a hollow cursor's edge. A
+  glyph is placed on Core Text's grid of the scale ("Where a glyph
+  goes", above).
   Rows built at one scale are built again at another. A theme's lengths
   are multiplied by the scale in layout, before shaping ("Layout and
   rendering", as built, "The scale"), so a frame reaches the renderer
   already at its target's scale, and the renderer multiplies nothing in
   it: nothing is scaled twice.
+- **The target is cleared to the frame's ground, on every platform**
+  (text-rendering phase 3, 2026-11-20). A frame carries the default
+  face's background, the theme's paper (`Frame::ground`, which layout
+  fills as it fills every view's background, `BASE_BACKGROUND` while
+  nothing defines one), and both devices clear to it at full opacity
+  before they draw: the CPU's `cpu::cleared`, and the GPU's `LoadOp::Clear`
+  with the ground's bytes over 255 on a target that holds encoded values,
+  or each made linear on one drawn through an sRGB view, which the GPU
+  encodes as it stores. So a pixel no view or divider covers, and the part
+  of a target larger than the frame drawn on it, is the paper and never
+  black: the transient of a resize, in which the loop draws the frame of
+  the old size on the new target until Lean's frame for it arrives, shows
+  paper where that frame does not reach. A frame made by hand with
+  `Frame::default()` has the ground `Color(0)`, cleared to opaque black as
+  before. Linux gets the same: the clear is not part of text blending. No
+  reference picture moved: every one covers its whole target. `mise run
+  render-gpu` holds the GPU's clear to the ground within 1 of 255 in
+  either space, with a control on black that must miss (0 pixels off, the
+  control 64 off, 2026-11-20).
+- **The Metal layer, read** (text-rendering phase 3, 2026-11-20).
+  wgpu-hal 30.0.2 makes the `CAMetalLayer` through raw-window-metal 1.1.0,
+  as a sublayer of the view's layer that copies the view layer's bounds
+  and `contentsScale` by key-value observation; its contents gravity is
+  the default, `kCAGravityResize`. `configure` sets its `drawableSize` to
+  the target's size, `opaque` from the alpha mode, the pixel format, and
+  its colour space from the configuration's, which wgpu-core resolves to
+  sRGB for an 8-bit format: so the pin already has what wgpu PR #10286
+  added, and the layer is not left with a nil colour space.
+  `WgpuRenderer::layer` reads the layer as plain data (`layer.rs`), through
+  wgpu's re-export of wgpu-hal and method calls whose types are never
+  named, and `layer::misses` holds it to the surface: the drawable is the
+  target, `contentsScale` is its scale, `bounds × contentsScale` is exactly
+  the drawable (else the system scales the contents and blurs every
+  glyph), opaque, a colour space present, and the configured pixel format.
+  The reading says a colour space is present; that it is
+  `kCGColorSpaceSRGB` rests on the source, since naming it would need Core
+  Graphics in `editor-render-wgpu`, which `deny.toml` forbids. `mise run
+  window-layer` read the real window's layer on 2026-11-20, with the
+  screen locked: 800 by 600 points at `contentsScale` 2, a drawable of
+  1600 by 1200, opaque, a colour space present, `BGRA8Unorm` (80) as
+  configured, gravity `resize`; no miss
+  ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "The
+  window's settings and its Metal layer, on demand").
+- **The layer's scale after a change of scale** (text-rendering phase 3,
+  2026-11-20). The phase asked that `contentsScale` equal the backing
+  scale after a scale change. **That criterion is confirmed by reading
+  the source only, not by observing a change of the backing scale**: no
+  run of the phase changed it, which takes a second display of another
+  scale (and phase 5's work). The source: raw-window-metal 1.1.0
+  (`src/observer.rs`) observes the view layer's `contentsScale` with
+  `Initial | New` and copies each new value (`setContentsScale`), and
+  AppKit sets the view layer's `contentsScale` to the window's backing
+  scale when it changes. What was observed, on one display: the value
+  read at opening came through the same observation (`Initial`), and the
+  layer check set the view layer's `contentsScale` from 2 to 1 and back
+  (`WgpuRenderer::follow_scale`): the Metal layer read 1, then 2. So a
+  change of the view layer's scale reaches the Metal layer; that AppKit
+  makes that change when the window moves between displays is the
+  source's word. The gate holds the rest without a display: the surface
+  is configured at the new scale's size for the window's own sequence of
+  a change of scale (`surface.rs`), the presenter's last frame is laid out
+  at it (`display.rs`), and `layer::misses` sees a layer left at the old
+  scale. `window-layer` on two displays, with the window moved before the
+  reading, is the run to take then.
+- **What phase 3's final-state tests found** (2026-11-20). The owner saw
+  a thin black line around the window after a resize, and text at scale 1
+  that looked worse. Of the phase's three hypotheses, the first two were
+  driven test-first to the state once the system is idle, at every level
+  that could leave a stale frame or size, and **every one of those tests
+  passed on the code as it was**: the render loop, over bursts of sizes
+  and frames one size behind, a failed and a hidden draw, a change of
+  scale alone, and a size and back, ends on the last frame on the last
+  size (`render_loop.rs`); Lean's loop ends a burst of resizes on a scene
+  of the last size that tiles it (`ModelTest/Editor/Loop.lean`); the
+  presenter's last frame is laid out at the size and scale the window last
+  said (`display.rs`); and the surface is configured at the size of the
+  last draw whatever it answered between (`surface.rs`). So no stale
+  frame or size is left in our code. The black can only have been the
+  clear where the old frame did not reach, or the window's own background
+  outside the layer, for the moment before Lean's frame arrived: both are
+  the paper now. A steady stretch of the text by the system is ruled out
+  on this machine at the opened size (the layer reads pixel for pixel);
+  the stretch during a resize, while the drawable trails the layer's
+  bounds, is the contents gravity, and is rdm task
+  `render-layer-contents-anchored`.
 - **A ligature across a change of paint** is drawn whole in the paint of
   its first byte: a glyph has one cluster, and the painter paints a
   glyph by the run that holds it.
@@ -3677,19 +3936,23 @@ window is still run with nothing drawing in it. The threads are in
   drawn while it is, and it is drawn once when it is shown if anything
   was asked meanwhile. All of that is read, in this tree and in winit,
   and each step is pinned on fakes; **nobody has seen a window of ours
-  enter fullscreen, move between displays or change Space.** Two things
-  cannot be promised by a resize alone. Between a change of size and the
+  enter fullscreen, move between displays or change Space.** One thing
+  cannot be promised by a resize alone: between a change of size and the
   next picture presented at it, the system stretches the last picture to
   the layer's new bounds (the default contents gravity of the Metal
-  layer wgpu makes: read). And the loop's first draw on a new size is of
-  the frame laid out for the old one, with the target cleared to black
-  where that frame has no view, until the frame for the new size
-  arrives. Each lasts a draw or two; whether either shows during the
-  system's animation has not been seen
-  ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "The
-  window's scale, as seen"). Changing the first is a call on the layer,
-  and the second is who lays out on a resize
-  ([concurrency.md](concurrency.md)); neither is built.
+  layer wgpu makes, `kCAGravityResize`: read, and read again on the real
+  layer by `mise run window-layer`, 2026-11-20). Anchoring the contents
+  instead is rdm task `render-layer-contents-anchored`: which constant
+  anchors to the top left depends on the flipped geometry of winit's view
+  and its sublayer, and only a picture of the composited window can show
+  it. What used to be a second thing is not one any more (text-rendering
+  phase 3): the loop's first draw on a new size is still of the frame laid
+  out for the old one, until the frame for the new size arrives, but the
+  target is cleared to the frame's ground, so where that frame has no
+  view it is the paper and not black; and what shows outside the layer,
+  where its frame trails the view's bounds, is the window's background,
+  which is the paper too (below). Who lays out on a resize is unchanged
+  ([concurrency.md](concurrency.md)).
 - **A resize says the window's corner clearance** (theming phase 6): how
   far in from the left and right edges its rounded bottom corners reach,
   in whole logical points (`Resize::corner_clearance`), as data beside
@@ -3750,6 +4013,40 @@ window is still run with nothing drawing in it. The threads are in
   when the pointer reaches the top, over the first row while it shows;
   that is the system's. Following the system's own appearance is not
   built: the roadmap leaves it out.
+- **The window's background is the paper** (text-rendering phase 3,
+  2026-11-20). The window port asks for one (`Request::Background(Rgb)`,
+  sRGB bytes), beside `Request::Appearance`. The presenter
+  (`editor-ffi`'s `render::Presenter`) sends the ground of each frame it
+  presents, only when it is not the one last sent, as it does a title; a
+  window that opens is sent the title, the menu bar, then the background.
+  It does not come from Lean: Lean's scene, its wire and its requests are
+  unchanged, and the scripted window's record crosses back to Lean's
+  tests with it (`WindowAsked.background`). On macOS the winit adapter
+  sets `NSWindow.backgroundColor` to it with
+  `colorWithSRGBRed:green:blue:alpha:` at alpha 1, only when it is not the
+  colour last asked (`background.rs`); off macOS winit has no setter, and
+  it does nothing. This is what Zed does with black behind its layer. It
+  covers what shows outside the Metal layer during a live resize and
+  before the first frame: winit sets no background for an opaque window,
+  so it was `windowBackgroundColor`, which read white (1, 1, 1) on this
+  machine's window as it opened, asked no appearance (2026-11-20), and
+  is a dark grey under the dark appearance (read, not seen). The Metal
+  layer's own background is not set: under the default gravity its
+  contents always fill it.
+- **A rim at the window's edge is the system's** (hypothesis 3 of
+  text-rendering phase 3; read 2026-11-20, not judged). `mise run
+  window-layer`'s first half read the themed window back from AppKit
+  after asking it for the paper `#2e3440` and the dark appearance: its
+  background 46, 52, 64 of 255; `NSAppearanceNameDarkAqua`; opaque; a
+  shadow; titled, resizable and full-size content; a transparent title
+  bar; and the content view's layer and winit's view's layer (one view)
+  border 0, corner radius 0. With the paper inside the layer (the clear)
+  and behind it (the window's background), no strip of ours can be black
+  or the window's grey. A line still seen at the window's edge is the
+  system's, its shadow's edge or the rim macOS draws on a titled window
+  in dark mode, which cannot be read in code, and nothing here changes it.
+  Comparing it with a native window in the same appearance needs a
+  picture of the screen, which a locked screen gives none of.
 - **Fullscreen and minimise are commands too.** `toggle-fullscreen` and
   `minimise-window` (`packages/frame-commands/FrameCommands.lean`), bound by default
   to `C-s-f` (Ctrl-Cmd-F) and `s-m` (Cmd-M), ask the window through the
@@ -3768,15 +4065,35 @@ window is still run with nothing drawing in it. The threads are in
   display, and tells the drawer when the answer is another than the
   last. The session turns thousandths of a hertz into the loop's
   interval; a display that does not say leaves the loop's default.
-- **The surface.** Its format is the first sRGB one it offers, wherever
-  that is in the offer, since the blend is in linear light and Metal
-  offers a format that is not sRGB first; with none, the first, drawn on
-  through its sRGB form. Its present mode and frame latency are the
+- **The surface.** Its format follows the blending (`surface::
+  choose_format`). In linear light it is the first sRGB one it offers,
+  wherever that is in the offer, since Metal offers a format that is not
+  sRGB first; with none, the first, drawn on through its sRGB form.
+  Encoded, as on macOS, it is the first format offered that is not sRGB
+  and has an sRGB form, drawn on as it is (`Bgra8Unorm` on Metal), or an
+  sRGB one drawn on through a view of its other form; a surface that
+  offers no 8-bit format with an sRGB pair (only `Rgba16Float`, say) is
+  chosen for as linear light is, blends in linear light and says so
+  (`blending()`), and the window example compares its picture with one
+  blended the same. The colour space is `Auto` under either blending
+  (2026-11-20): in wgpu 30.0.2 `Auto` is sRGB for an 8-bit format, and
+  wgpu's Metal surface tags the `CAMetalLayer` with `kCGColorSpaceSRGB`
+  from it, so the bytes are sRGB values whether they are drawn through
+  an sRGB view or not, and the window server colour-matches the layer
+  alike; a gate test pins `Auto`, and a later wgpu that resolves it
+  otherwise is to be configured `Srgb` explicitly. Its present mode and frame latency are the
   choice already on record, `Fifo` at 1, and never wgpu's default, which
   on llvmpipe's surface was a mode that tears. An outdated or lost
   surface is configured again and tried once; an occluded one is not
   presented to, and the draw says its target is hidden, so that the loop
-  waits to be told more and not for a refresh. The picture is copied out of the surface only when a
+  waits to be told more and not for a refresh. A window's surface is
+  configured `Opaque` where it offers that, and `Auto` where it does not
+  (text-rendering phase 3, 2026-11-20): the window is opaque and so is
+  everything drawn on it, and wgpu-core refuses a mode a surface does not
+  offer. On Metal that is what `Auto` resolved to already (Metal offers
+  `Opaque` and `PostMultiplied`, and `Auto` takes `Opaque` first), so
+  nothing changed there; it is now a decision pinned in `surface.rs`.
+  The picture is copied out of the surface only when a
   check asks for it. All of this is decided in one place that makes no
   call of wgpu's (`surface::State`), which reaches the surface through a
   port of two calls, configure and ask for the next texture: the device
@@ -4251,10 +4568,11 @@ frame journal and the renderer's counters.
   CPU's blend state one arithmetic twice, kept alike by hand.
 - **No colour glyph from a real font.** No fixture font has one. Colour
   is tested in the cache, the painter and the compositor on images the
-  tests make, and never through the rasteriser. No GPU has drawn a
-  colour image either: the on-demand check draws the fixture frame, in
-  subpixel masks and in plain ones, and that path of the shader is only
-  validated. COLR version 1 glyphs are not drawn in colour by `swash` at
+  tests make, and never through the rasteriser. A GPU draws colour
+  images only in the on-demand check (`mise run render-gpu`), from a
+  rasteriser of the check's own that makes every glyph of the fixture
+  one, blended in sRGB-encoded values; in linear light no GPU has drawn
+  one, and that path of the shader is only validated. COLR version 1 glyphs are not drawn in colour by `swash` at
   the pin, and a colour bitmap's alpha convention was not checked.
 - **What only a person at a display can tune.** Hinting (on by
   default, off at the macOS weight), the weight of text (a per-platform

@@ -135,6 +135,13 @@ dir = "lean"
 run = [
   "sh ../tools/toolchain-check.sh",
   "status=0; out=$(sh ../tools/toolchain-check.sh lake-manifest.json 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF tools/lean-fmt/lean-toolchain; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # The stand-in for CI's elan that `user-sets-test` and `user-sets-check`
+  # run under (tools/home-bound-toolchain.sh; docs/dev-practices/the-gate.md,
+  # "The user sets test") cannot pass silently: its `lake` run with another
+  # HOME must exit 1 with its message, and run with the HOME it was made
+  # under must exit 0. Its output is shown only when it does not.
+  "status=0; out=$(sh ../tools/home-bound-toolchain.sh sh -c 'HOME=/nonexistent lake --version' 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qF 'home-bound-toolchain: lake run with HOME=/nonexistent'; } || { printf '%s\\n' \"$out\"; echo \"lean-test: home-bound-toolchain exited $status on a moved HOME\"; exit 1; }",
+  "out=$(sh ../tools/home-bound-toolchain.sh lake --version 2>&1) || { printf '%s\\n' \"$out\"; echo 'lean-test: home-bound-toolchain failed under its own HOME'; exit 1; }",
   # The decision both pre-commit hooks share (tools/graph-targets.sh;
   # docs/dev-practices/the-gate.md, "The pre-commit hook"): which nodes of
   # a graph the staged paths reach, over a graph written by hand
@@ -1400,13 +1407,16 @@ run = "sh ../tools/bundle-test.sh"
 # set's packages build in place. Its Lake builds read what `lean` built
 # and write nothing it shares: it ends by requiring the default set's
 # editor to read as up to date. It has a task and a time limit of its own,
-# as the builds take longer than `ffi-test`'s commands.
+# as the builds take longer than `ffi-test`'s commands. It runs under
+# tools/home-bound-toolchain.sh, whose `lean` and `lake` fail once HOME
+# moves, as elan's do on CI, so a bare `lake` run after it moves HOME
+# fails here too, not only on CI.
 [tasks.user-sets-test]
 description = "A user's package set end to end through the launcher: install a package and restart into the per-user build with the session restored, a failing link that keeps the editor running, a default package dropped, a set that fails to elaborate, and git missing (tools/user-sets-test.sh, tests/user-sets)"
 depends = ["lean", "launcher"]
 dir = "lean"
 timeout = "600s"
-run = "sh ../tools/user-sets-test.sh"
+run = "sh ../tools/home-bound-toolchain.sh sh ../tools/user-sets-test.sh"
 
 # Opt-in, never part of `ci` or hk.pkl: the leave-out check
 # (tools/leave-out-check.sh; docs/dev-practices/the-gate.md, "The leave-out
@@ -1434,12 +1444,13 @@ run = "sh ../tools/leave-out-check.sh ../packages"
 # git repository, a set holding a Rust crate built with Cargo, and a probe
 # failure. Everything it writes is in a temporary directory, but the
 # fixture packages' own .lake/ and, for the Rust set, the checkout's
-# target/.
+# target/. It runs under tools/home-bound-toolchain.sh, as `user-sets-test`
+# does, so a bare `lake` run after it moves HOME fails here too.
 [tasks.user-sets-check]
 description = "Opt-in, never part of ci: a user's package set after an editor update, updated from git, holding a Rust crate, and failing its probe (tools/user-sets-check.sh)"
 depends = ["lean", "launcher"]
 dir = "lean"
-run = "sh ../tools/user-sets-check.sh"
+run = "sh ../tools/home-bound-toolchain.sh sh ../tools/user-sets-check.sh"
 
 # The build ID (crates/editor-release, `build_id`): LEANMACS_BUILD_ID when
 # it is set, else HEAD's committer time in UTC, the time landing sets. CI's
@@ -2066,22 +2077,111 @@ dir = "lean"
 run = ".lake/build/bin/ffi-test excerpt-picture ../tests/render/excerpts ../tests/fonts/NotoSansMono-Regular.subset.ttf --write"
 
 # Opt-in: run it by hand, on macOS, and do not add it to `ci` or to hk.pkl.
-# It needs the system's `swift`, and it writes a file of the repository,
+# It needs the system's `swift`, and it writes files of the repository,
 # which no gate may do.
 #
 # It runs `tools/coretext/capture.swift`: Core Text draws the sentence "the
-# window draws this" from the fixture font at 14 pt on a bitmap of scale 2,
-# black on white, with font smoothing on, and the drawing is written to
-# `tests/coretext/sentence.png`. That file is the macOS weight's target: the
-# renderer's test draws the same sentence through its CPU path and holds its
-# weight to the file's (`crates/editor-render-wgpu/src/weight_tests.rs`).
+# window draws this" from the fixture font at 14 pt, as one line, and the
+# drawings and the glyphs' places are written under `tests/coretext/`:
 #
-# Run it on a new major version of macOS, or when the fixture font changes.
-# Then look at the file, enlarged, before committing it, and record the
-# capture in `tests/coretext/README.md`.
+# - `sentence.png`, at scale 2, black on white, the context's subpixel
+#   flags left at their defaults: the macOS weight's target. The renderer's
+#   test draws the same sentence through its CPU path and holds its weight
+#   to the file's (`crates/editor-render-wgpu/src/weight_tests.rs`). It is
+#   drawn exactly as it was on 2026-11-14.
+# - `sentence-dark.png`, at scale 2, the default theme's `#d8dee9` on
+#   `#2e3440`; `sentence-14.png` and `sentence-14-dark.png`, at scale 1,
+#   black on white and light on dark; `sentence-grey.png`, at scale 2,
+#   `#808080` on white. Each is the coverage, and is what the Core Text
+#   adapter's masks are compared with (`mise run coretext-check`).
+# - `positions.txt`, each glyph's place on the line at scale 1 and 2, which
+#   the shaper's and the painter's placement tests hold to
+#   (`crates/editor-shape-parley/tests/core_text.rs`,
+#   `crates/editor-render-wgpu/src/placement_tests.rs`).
+# - `composited/<drawing>.png`, for each of the five drawings: the
+#   bitmap's own pixels as 8-bit RGB, what macOS composited, which the
+#   renderer's composite of the sentence is compared with on demand
+#   (`mise run coretext-check`, its second half).
+# - `blend.txt`, Core Graphics' own result for uniform fills of four text
+#   colours over three grounds at five alphas, which the renderer's encoded
+#   blending is held to in the gate (`crates/editor-render-wgpu/src/
+#   blend.rs`).
+#
+# Every drawing is made with the context's default subpixel flags, as
+# native apps draw text: Core Text floors each glyph's place to its own
+# grid (thirds of a pixel at scale 1, halves at scale 2), the grid the
+# renderer's painter places glyphs on.
+#
+# The script checks each drawing itself (nothing on the border, the three
+# channels one coverage) and fails rather than write one that is not. Run
+# it on a new major version of macOS, or when the fixture font changes, and
+# record the capture in `tests/coretext/README.md`. If `sentence.png`
+# changes, the weight's fit is out of date: `tests/coretext/README.md` says
+# what to do.
 [tasks.coretext-reference]
-description = "Opt-in, never part of ci; macOS only: draw the weight sentence with Core Text from the fixture font and write it to tests/coretext/sentence.png, the macOS weight's target. Look at the file before committing it"
-run = "swift tools/coretext/capture.swift tests/fonts/NotoSansMono-Regular.subset.ttf tests/coretext/sentence.png"
+description = "Opt-in, never part of ci; macOS only: draw the weight sentence with Core Text from the fixture font and write the drawings and the glyphs' places under tests/coretext/, the macOS weight's target and the Core Text adapter's comparison"
+run = "swift tools/coretext/capture.swift tests/fonts/NotoSansMono-Regular.subset.ttf tests/coretext"
+
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to
+# hk.pkl. What Core Text draws is the system's: it changes between macOS
+# releases, and the gate's macOS runner is not the machine the captures
+# were made on, so it is no part of a gate that must give the same answer
+# everywhere.
+#
+# It runs two examples, and each must exit 0.
+#
+# First the Core Text adapter's (`crates/editor-raster-coretext/examples/
+# check/`): the adapter held to the rasteriser port's contract, smoothed
+# and not, at 14 and 28 pixels; what `AppleFontSmoothing` holds and what
+# was decided from it; and the adapter's masks, laid at the painter's bins
+# of Core Text's own positions, against Core Text's drawings under
+# `tests/coretext/`, each within its thresholds, with the controls that
+# must miss them.
+#
+# Then the blending's (`crates/editor-ffi/examples/coretext/`): the
+# sentence drawn through the real renderers, the headless one and the wgpu
+# one on this machine's GPU, with `Settings::core_text()` and the Core Text
+# rasteriser, against what macOS composited (`tests/coretext/composited/`),
+# each within its thresholds and the GPU within 3 of 255 of the CPU, with
+# the controls that must miss: linear light, in the direction that is why
+# macOS blends encoded, and the old contrast of 0.1. It opens no window.
+#
+# A pass is exit 0 from both: every property holds, every capture is
+# within the thresholds of its scale and every control is outside them.
+# The gate builds both examples and never runs them.
+#
+# Run it when macOS's major version changes, when a binding's pin or the
+# wgpu pin moves, when the adapter changes, and when the blend, the shader
+# or the surface changes, and record its figures, dated, in
+# `docs/dev-practices/on-demand-checks.md`.
+[tasks.coretext-check]
+description = "Opt-in, never part of ci; macOS only: hold the Core Text rasteriser to the rasteriser port's contract and compare its masks with Core Text's own drawings, then the renderers' composite of the sentence with what macOS composited, under tests/coretext/. Needs a GPU, opens no window"
+run = [
+  "cargo run --locked -p editor-raster-coretext --example check",
+  "cargo run --locked -p editor-ffi --example coretext",
+]
+
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to
+# hk.pkl. It reads a font of the machine, Menlo, whose licence keeps it out
+# of the repository, and it needs the system's `swift`.
+#
+# It writes Core Text's places of the glyphs of "the window draws this" in
+# Menlo at 14 pt, at scale 1 and 2 (`tools/coretext/capture.swift
+# --positions`), into a temporary directory that is removed when it ends,
+# and runs the shaper's example (`crates/editor-shape-parley/examples/
+# core_text/`): the same sentence laid out through Parley over Menlo
+# alone, each glyph's error against Core Text's printed, and its exit
+# status non-zero when a glyph is not Core Text's or a place is more than
+# an eighth of a pixel off. The gate holds the fixture font to the same
+# bound (`crates/editor-shape-parley/tests/core_text.rs`); this is the
+# font the owner reads. The gate builds the example and never runs it.
+#
+# Run it when macOS's major version changes, when the pin of Parley or
+# fontique moves, and when the shaper changes, and record its result,
+# dated, in `docs/dev-practices/on-demand-checks.md`.
+[tasks.coretext-menlo]
+description = "Opt-in, never part of ci; macOS only: hold the shaper's places of a sentence in Menlo to Core Text's"
+run = "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && swift tools/coretext/capture.swift --positions /System/Library/Fonts/Menlo.ttc \"$dir/menlo.txt\" && cargo run --locked -p editor-shape-parley --example core_text -- /System/Library/Fonts/Menlo.ttc \"$dir/menlo.txt\" Menlo"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. What it
 # finds depends on this machine's GPU and its driver, so it is no part of
@@ -2091,16 +2191,35 @@ run = "swift tools/coretext/capture.swift tests/fonts/NotoSansMono-Regular.subse
 # It runs the renderer's example (`crates/editor-render-wgpu/examples/
 # gpu.rs`): the wgpu adapter on this machine's adapter, held to the
 # renderer port's contract; then the fixture frame drawn on the GPU, read
-# back, and compared with the reference image (within 3 of 255 a channel);
-# then how long a first frame, an edited frame and a cursor-only frame
-# took, which nothing is asserted of. Its exit status is whether the
-# contract and the comparison held.
+# back, and compared with the reference image and with the CPU's picture
+# (within 3 of 255 a channel), in linear light and, at the macOS setting,
+# in sRGB-encoded values, with a control that must miss (the GPU encoded
+# against the CPU in linear light); then how long a first frame, an
+# edited frame and a cursor-only frame took, which nothing is asserted
+# of. Its exit status is whether the contract, the comparisons and the
+# control held.
 #
 # The gate runs the wgpu adapter on wgpu's no-op back end only, which
 # checks its calls and draws nothing. This is where its picture is
 # checked. Run it after a change to the shader, the device, the painter or
 # `blend`, and when the pin of wgpu moves; `linux-render` runs the same in
 # the container, on Mesa's software Vulkan.
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to
+# hk.pkl. It opens the window, so it needs a desktop session, but it draws
+# nothing it waits on and presents nothing it judges, so it passes with the
+# screen locked. Its first half is `editor-platform-winit`'s example
+# `settings`, whose pure module's tests run in the gate; its second is
+# `editor-ffi`'s example `layer`, whose rules (`editor-render-wgpu`'s
+# `layer::misses`) are tested in the gate on readings built in code.
+# `docs/dev-practices/on-demand-checks.md`, "The window's settings and its
+# Metal layer, on demand", says when to run it and what it read.
+[tasks.window-layer]
+description = "Opt-in, never part of ci; macOS only: open the window, ask it for a paper and the dark appearance and read back its settings, then read the Metal layer the renderer draws on and hold it to the surface's configuration. Presents nothing, so it passes with the screen locked"
+run = [
+  "cargo run --locked --package editor-platform-winit --example settings",
+  "cargo run --locked --package editor-ffi --example layer",
+]
+
 [tasks.render-gpu]
 description = "Opt-in, never part of ci: hold the wgpu renderer on this machine's GPU to the renderer port's contract, and compare the frame it draws with the reference image. Opens no window; needs a GPU"
 run = "cargo run --locked --package editor-render-wgpu --example gpu"

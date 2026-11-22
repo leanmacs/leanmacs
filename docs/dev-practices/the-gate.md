@@ -83,9 +83,14 @@ What the gate does check of the window, with none open:
   before a draw of another size, after a texture that no longer fitted
   and when its picture begins to be kept, and at no other time; what is
   done with each answer it can give when asked for a texture; and whether
-  its picture is read back, and in what order of bytes. On wgpu's no-op
-  back end: that a window no adapter can present to gives no renderer,
-  and that a surface that offers its adapter nothing is refused.
+  its picture is read back, and in what order of bytes. The format is
+  chosen for each blending: in linear light an sRGB one, and encoded a
+  format that is not sRGB, as it is or through a view, or, where the
+  surface offers no 8-bit format with an sRGB pair, linear light's
+  choice with the surface saying it blends in linear light; the colour
+  space is `Auto` under both. On wgpu's no-op back end: that a window no
+  adapter can present to gives no renderer, and that a surface that
+  offers its adapter nothing is refused.
 - **What the window that draws makes of what it saw**, in
   `crates/editor-ffi` (`examples/window/`, whose unit tests `cargo
   test` runs, and which open no window): how its command line is read,
@@ -111,6 +116,53 @@ What the gate does check of the window, with none open:
   a window going into fullscreen tells them, are one draw on the last.
   In `crates/editor-render-wgpu`: that a renderer says which masks its
   last draw used.
+- **A resize's final state, the paper around a frame, and the Metal
+  layer's rules** (text-rendering phase 3), each asserted once the system
+  is idle and never as a count that depends on timing:
+  - `crates/editor-render` (`render_loop`): once at rest after six
+    scripts of a resize (sizes within a refresh, frames one size behind,
+    a failed and a hidden draw among them, a change of scale alone, a
+    size and back), the last request is on the last size asked with the
+    frame laid out for it, nothing more is drawn over a further 100
+    refreshes, and every draw is on the size last asked before it;
+  - Lean (`ModelTest/Editor/Loop.lean`): a burst of resizes, a key among
+    them, publishes a scene for each event and ends in one of the last
+    size that tiles it;
+  - `crates/editor-ffi` (`display.rs`): a bound display, told resizes as
+    the window session tells them, draws its last frame at the size and
+    scale the window last said, the window's own sequence for a change of
+    scale among them;
+  - `crates/editor-render-wgpu` (`surface`): a window's surface is
+    configured `Opaque` where it offers that and `Auto` otherwise, at the
+    size of the last draw whatever it answered between, not again for a
+    draw at the size of one whose texture was not presented, and at the
+    new size, not the scale, for a change of scale;
+  - `crates/editor-layout` (`frame`): a frame's ground is the default
+    face's background, `BASE_BACKGROUND` while nothing defines one, frames
+    that differ only in it differ, and one made by hand has `Color(0)`;
+  - `crates/editor-render-wgpu`: the CPU's clear is the ground at full
+    opacity (`cpu`), the GPU's in the space the device blends in
+    (`gpu/tests.rs`, `clear_color`), every kind of quad is drawn on the
+    no-op back end on a ground that is not black, and, through the public
+    API, a half-covered frame is its view's background and its ground and
+    nowhere black (`tests/ground.rs`);
+  - the window port's `Request::Background`: the scripted platform
+    records and shows it, the request contract holds a carrier to it (a
+    fresh window has none, the last wins, it and every other thing shown
+    leave each other alone), the winit adapter sets one only when it is
+    not the one asked last and turns it into AppKit's components
+    (`asked.rs`, `background.rs`), the presenter sends a frame's ground
+    only when it changes and after the title and the menu bar
+    (`render.rs`), its words cross to Lean (`asked_words`, tag 8) and Lean
+    reads them (`askedOf`, `FfiTest/Editor/Ffi/Window.lean`), and the
+    window-host check finds the built-in theme's paper the last background
+    asked;
+  - `crates/editor-render-wgpu` (`layer`): `misses` on readings built in
+    code, each rule alone, a layer read across a change of scale, and
+    `Followed::holds`; a renderer with no window has no layer to read;
+  - `crates/editor-platform-winit` (`examples/settings/reading.rs`, run by
+    `cargo test` since the example is declared `test = true`): the window
+    settings' rules, a background 2/255 off missing.
 - **How the clipboard library's answers become the port's**, in
   `crates/editor-platform-arboard`, on values built in the tests.
 
@@ -406,12 +458,42 @@ needs none. What it checks:
   real condition variable; it and the tests of that wait read channels
   with a bound, and nothing sleeps.
 - **The painter and the glyph cache**, in `crates/editor-render-wgpu`, on
-  a hand-written rasteriser that reads no font: where each quad goes,
-  the drawing order, what is rasterised once, what is never evicted and
-  what the bound does.
-- **The rasteriser**, on the fixture fonts under `tests/fonts`, compiled
-  in, with glyph ids read from each font's own character map. Its tests
-  state relations only (more ink, wider, differs, the same twice).
+  the rasteriser port's published fake, which reads no font: where each
+  quad goes, the drawing order, what is rasterised once, what is never
+  evicted and what the bound does.
+- **The rasteriser.** The rasteriser port's contract
+  (`crates/editor-raster`, `contract`) runs on its published fake, plain
+  and reading luminance, and on a rasteriser written to break each
+  property, which must fail by that property's name; and on swash's
+  adapter (`crates/editor-render-wgpu/src/raster.rs`), on the fixture
+  fonts under `tests/fonts`, compiled in, with glyph ids read from each
+  font's own character map. The luminance bucket rule and `Fallback` are
+  tested on the fake. Every pure module of the Core Text adapter
+  (`crates/editor-raster-coretext`: the bitmap and the pen, the smoothing
+  decision on its published fake, what is declined, the fill grey, the
+  mask comparison) runs on both legs; no test calls Core Text, and on
+  macOS the gate builds the adapter and its example `check` and runs
+  neither (`mise run coretext-check` runs it on demand). The swash
+  rasteriser's own tests state relations only (more ink, wider, differs,
+  the same twice).
+- **Placement, against Core Text's.** The shaper's pen places of the
+  sentence of the Core Text captures, in the fixture font at 28 and 14
+  px, are within an eighth of a pixel of Core Text's
+  (`crates/editor-shape-parley/tests/core_text.rs`), and the painter
+  puts each of Core Text's places on Core Text's grid
+  (`crates/editor-render-wgpu/src/placement_tests.rs`), both over
+  `tests/coretext/positions.txt`, compiled in.
+- **The blending**, in `crates/editor-render-wgpu` (`blend`, `cpu`,
+  `tests/rasterizer.rs`): both arithmetics, linear light and
+  sRGB-encoded values, for every kind of quad, with the contrast's
+  luminance in linear light in either; the encoded arithmetic within 1
+  of 255 of Core Graphics' own result on every case of
+  `tests/coretext/blend.txt`, compiled in, and linear light missing its
+  cases at half alpha; the compositor and the headless renderer blending
+  as their settings say, and an encoded picture nowhere lighter than a
+  linear one; `Settings::core_text()` blending encoded with a contrast
+  of 0, and the swash fallback's weight fitted encoded
+  (`weight_tests.rs`).
 - **The renderer's picture.** The headless adapter draws one frame of
   real text on the CPU, and no channel of any pixel may be further than 2
   of 255 from the reference image checked in at `tests/render/frame.png`
@@ -440,8 +522,15 @@ needs none. What it checks:
   validates every call as a real one would and draws nothing: the shader
   compiles in both its forms, the pipeline's vertex layout is the
   shader's, and a frame with every kind of quad and every kind of atlas
-  page is drawn inside an error scope with no error
-  (`crates/editor-render-wgpu/src/gpu/tests.rs`).
+  page is drawn inside an error scope with no error, under both
+  blendings, with dual-source blending and without; a device that
+  blends encoded draws on its own target in `Rgba8Unorm` and tells the
+  shader so in its globals (`crates/editor-render-wgpu/src/gpu/tests.rs`).
+- **What the composited sentence is measured by**, in `crates/editor-ffi`
+  (`examples/coretext/measure.rs`, whose unit tests `cargo test` runs, on
+  pictures made in code): the ink, the dark pixels, the worst channel and
+  the direction of a miss. The example itself draws on Core Text and the
+  GPU, and is run on demand (`mise run coretext-check`).
 
 What it cannot check, and so does not claim: what a GPU draws. wgpu has
 no software renderer of its own, so a machine with no GPU and no driver
@@ -2363,6 +2452,22 @@ core from git, as a published package does: a `file://` stand-in for the
 core's repository, tagged `nightly-20000101000000`, holding none of the
 core's sources (`tools/core-repo.sh`), with the copy's manifest written by
 `lake update` against it.
+
+The `lean` and `lake` it runs are those of the toolchain `lean
+--print-prefix` named before it moved `HOME` (wrappers around
+`$sysroot/bin/lean` and `lake`, first on the `PATH`), and
+`user-sets-check` does the same. A toolchain manager that resolves its
+toolchains under `HOME`, as elan does on CI, would otherwise install and
+run another copy of the toolchain, and the default set's editor's link
+trace names the toolchain's directory (`-L <toolchain>/lib`), so that copy
+reads the editor as out of date though nothing rebuilt it (found
+2026-11-20, CI run 44825190133 on macOS). Both tasks run under
+`tools/home-bound-toolchain.sh`, whose `lean` and `lake`, like elan's
+proxies, exit 1 when run under any `HOME` but the one they were made
+under, so a bare `lake` after `HOME` moves fails on a developer's machine
+too, where mise's `lean` does not depend on `HOME`. `lean-test` probes the
+stand-in: its `lake` under `HOME=/nonexistent` must exit 1 with its
+message, and under its own `HOME` exit 0.
 
 - **A, install, a failing link, a dropped default package**
   (`tests/user-sets/install-script`), three processes started by

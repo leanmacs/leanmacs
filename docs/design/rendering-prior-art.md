@@ -425,17 +425,30 @@ port that contains it.
   a native back end be added later if measurement says so.
 - **Low-resolution displays.** Zed carried complaints about blurry text on
   Linux for years. Subpixel antialiasing and gamma correction have to be
-  planned, not added. Gamma-correct blending makes dark text on a light
+  planned, not added. Subpixel text stays in scope, but not on macOS: the
+  platform has drawn none since 10.14, a probe on 2026-11-20 (macOS
+  27.2.1, `lcd.swift`, scratch) found Core Graphics' smoothed text in an
+  RGB context equal in red, green and blue at every pixel, and
+  WebRender's and Skia's macOS back ends rasterise plain masks there too.
+  So the macOS settings ask for plain masks at every scale
+  (`Settings::core_text()`). Gamma-correct blending makes dark text on a light
   ground thinner, and Pathfinder answers it with stem darkening: its
   outlines are expanded by `0.0121` of the size in pixels across and
   `0.0121 × 1.25` down, with a maximum of 0.3 device pixels each
   (`MAX_STEM_DARKENING_AMOUNT`), to "approximate
   the macOS look" of 10.13 (`content/src/effects.rs` and
-  `content/src/dilation.rs` in `servo/pathfinder` at `6c3c046`; read,
-  not verified against macOS). Each edge moves out by that amount, so
-  at 28 pixels a stem is 0.6 pixels thicker. What that does to the
-  weight of the window's text is measured in
-  [text-and-display.md](text-and-display.md) ("The renderer, as built").
+  `content/src/dilation.rs` in `servo/pathfinder` at `6c3c046`; read).
+  Those constants describe 10.13 High Sierra, not macOS today. Measured
+  on 2026-11-20 on macOS 27.2.1 (scratch probes, Menlo and SF Mono `H`),
+  each edge moves out by about `min(k(L) × device px per em, 0.30)` px,
+  the same in x and y (no ×1.25 down), independent of the backing scale,
+  and `k` grows with the text colour's luminance `L` (about 0.0058 for
+  black, 0.0083 for mid-grey, 0.0108 at 0.75 and 0.015 for white), where
+  Pathfinder has one factor for every colour. So rather than dilate
+  outlines to Pathfinder's numbers, the renderer has Core Text draw each
+  glyph on macOS ("Text on macOS", below). What the weight comes to is
+  measured in [text-and-display.md](text-and-display.md) ("The
+  renderer, as built").
 - **Vello is young**: its GPU path and its glyph crate are both described
   as immature. It was the first candidate for drawing and glyph caching
   behind the `Renderer` port, and we were to write our own atlas only if
@@ -447,6 +460,77 @@ port that contains it.
   that changes.
 - **Very long lines** are unsolved in Helix and were a Parley bug until
   recently. Per-line layout needs a bound.
+
+## Text on macOS
+
+Of the seven custom renderers surveyed on 2026-11-20 for the
+text-rendering roadmap, six rasterise glyphs with Core Text on macOS:
+Zed, Alacritty, Ghostty, kitty, Chromium (Skia) and Firefox (WebRender).
+WezTerm alone rasterises with FreeType there. What each does, as read in
+that audit:
+
+- **Zed** has Core Text draw each glyph into an alpha bitmap, filled with
+  a grey from the run's luminance bucket (four times the luminance,
+  rounded; PR #54886, 2026-04-29), which it reports matches Safari and
+  TextEdit exactly; it turns smoothing off for its darkest bucket, and
+  honours `AppleFontSmoothing = 0`. Its issue #57777 reports blurred text
+  from sampling a glyph atlas bilinearly.
+- **Ghostty** and **kitty** rasterise each glyph with Core Text into
+  their own atlases, on macOS only, and with FreeType elsewhere.
+- **Skia** (Chromium) and **WebRender** (Firefox) rasterise with Core
+  Text in their macOS back ends, in plain masks: neither draws subpixel
+  (LCD) text on macOS, which has drawn none since 10.14.
+
+This editor does as they do, behind a port of its own (the rasteriser
+port, `crates/editor-raster`), with Core Text's adapter in
+`crates/editor-raster-coretext` and swash for everything else. It
+differs from Zed in two measured ways: the luminance buckets are Core
+Text's own smoothing levels, not `round(4L)`, and smoothing stays on for
+black, whose dilation is not zero. Each glyph is placed on Core Text's
+own subpixel grid, measured: thirds of a pixel at scale 1, halves at 2,
+whole pixels from 3. The atlas is read at whole texels with no sampler,
+so Zed's blur cannot occur. The measurements are in
+[text-and-display.md](text-and-display.md) ("The renderer, as built").
+
+How the masks are blended matters as much as the masks, read in the same
+audit (Zed 34639504, Ghostty d69f9ed8, Skia 8845aecd). Core Graphics
+composites text in an 8-bit sRGB context in the encoded values, and
+Core Text's masks are made for that. **Ghostty** names that blending
+`native`, its macOS default, and says linear blending "makes dark text
+look much thinner than normal and light text much thicker"; its
+`linear-corrected` blends in linear light with the coverage remapped so
+that the result looks like the encoded blend over a known ground.
+**Zed** draws to a `CAMetalLayer` of `BGRA8Unorm`, a format that is not
+sRGB, and multiplies the alpha in its shader, so the GPU blends the
+encoded values. **Skia** sets Core Graphics' contrast to 0, since
+"CoreGraphics dilates smoothed text to provide contrast". This editor
+takes Zed's way and Skia's (2026-11-20): on macOS the whole frame is
+blended in sRGB-encoded values, on the GPU through a target that is not
+sRGB, and the macOS weight's contrast is 0. Ghostty's remap was not
+taken: it needs the colour under the text, which a fixed-function blend
+does not give the shader, so it would be exact over one assumed ground
+only, where the target that is not sRGB is exact over any and keeps the
+GPU's picture within a rounding of the CPU's. Linux and every other
+target keep linear light.
+
+The layer under the glyphs, read for the text-rendering roadmap's phase
+3 (2026-11-20). The `CAMetalLayer` wgpu makes keeps Core Animation's
+default contents gravity, `kCAGravityResize` (raw-window-metal 1.1.0), so
+during a resize, while the drawable trails the layer's bounds, the system
+stretches the last picture to fit. What shows around it is whatever is
+behind: the target's clear inside the layer, the window's own background
+outside it. The roadmap records **Zed** as setting a background of its
+own colour, black, behind its layer, and **Ghostty** as drawing on a
+renderer thread of its own, as this editor does, which is the case where
+the drawable can trail a live resize at all (an app that draws on the
+main thread can present in step with the resize instead). This phase took
+Zed's way, with the theme's paper for black: the target is cleared to the
+frame's ground and the window's background is set to it, so no strip can
+be black. It left the gravity as it is, filed as rdm task
+`render-layer-contents-anchored`: anchoring the contents to a corner stops
+the stretch, but which constant does so depends on the flipped geometry
+of winit's view, and only a picture of the composited window can show it
+([text-and-display.md](text-and-display.md), "The window, as built").
 
 ## Choices this leaves open
 

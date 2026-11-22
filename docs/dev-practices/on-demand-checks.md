@@ -525,7 +525,7 @@ it owns, and detaches it however it ends. Then:
 - a user's package set must build from the read-only volume alone: the
   image's `leanmacs headless --generate`, on a temporary config of
   `tests/headless/generate`'s `init.lean`, writes a lakefile naming the
-  volume's set, and the volume's own `lake -d <config> build
+  volume's set and core, and the volume's own `lake -d <config> build
   :editorInstall`, with an empty environment but `PATH=/usr/bin:/bin`,
   `HOME` in the temporary directory and the app's `editor.build`, exits 0
   and installs an editor with the app's core that starts. The volume is
@@ -992,6 +992,43 @@ headless renderer's at the same settings, the worst by 1 of 255: on
 Metal the window's picture at the macOS weight is the headless
 renderer's.
 
+### The window with Core Text's glyphs
+
+Since 2026-11-20 both renderers of the second program, the one on the
+window and the headless one it is compared with, draw their glyphs with
+Core Text on macOS, and it prints `window: glyphs are drawn by Core Text,
+and swash for what it declines on the window, and Core Text, and swash
+for what it declines for the picture it is compared with`. A pass is
+exit 0, with both renderers reporting Core Text and the window's
+picture within 3 of 255 of the headless one's.
+
+It was run on 2026-11-20 on macOS 27.2.1 (26B131), Apple M5 Max (Metal),
+by the agent that wired it, with the screen locked and the display
+asleep. The first program passed (`window-contract: the winit platform
+keeps the window port's contract`; resizes 1600x1200 at scale 2,
+fullscreen false, corner 16, top 32). The second printed the line above,
+so both renderers drew with Core Text, but it exited 1. Its surface gave
+no texture (`Occluded`), so no frame was presented and no picture was
+compared. No key or pointer input arrived, because a pointer moved over
+a window on a locked screen sends none.
+
+It was run again later on 2026-11-20, on the same machine, by the agent
+answering that run's review, and the screen was still locked
+(`CGSSessionScreenIsLocked` true since 16:41 local time). It ended the
+same way. The first program passed, with the same resizes. The second
+printed the line above, then `a draw was not presented: the window's
+surface gave no texture: Occluded` for both of its draws. It failed with
+`no frame was presented`, `the window was never seen idle: no frame was
+presented` and `no key and no pointer event came off the queue: type or
+click in the window`, and exited 1.
+
+Drawing to an offscreen target while the window is occluded would not
+make this check pass. The check reads back the picture the window's own
+surface is about to present, and an offscreen picture is not that
+picture. Input cannot arrive on a locked screen either. So the picture
+comparison with Core Text's glyphs is still to be seen. It needs `mise run window-contract` on an unlocked
+desktop, with any key or click in the window.
+
 ## The window to try, on demand
 
 ```sh
@@ -1381,13 +1418,33 @@ the first two held:
    of two physical pixels to a logical one gets them, with the headless
    adapter's picture of the same frame drawn the same way. An adapter
    that cannot blend by a coverage for each channel draws only the
-   second. Then the same frame at the macOS weight
-   (`Settings::core_text()`), in plain masks and, where the adapter can,
+   second. Then the same frame at the macOS setting
+   (`Settings::core_text()`, blended in sRGB-encoded values through a
+   target that is not sRGB), in plain masks and, where the adapter can,
    in subpixel masks, each against the headless adapter's picture drawn
-   with the same settings: the contrast reaches the shader and the
-   dilation the atlas. The fixture has no colour glyph, so a colour image is drawn by
-   no GPU here: that path of the shader is validated in the gate and has
-   never been seen;
+   with the same settings: the contrast and the blending reach the
+   shader and the dilation the atlas. Then the fixture with its text in
+   grey (`#808080`), blended encoded at a contrast of 1, against the CPU:
+   the contrast is reckoned from the colour's linear light in either
+   space, and a shader that took it from the encoded value misses. Then a
+   control that must miss: the GPU's encoded picture against the CPU's
+   linear one, otherwise alike, must differ by more than 3, or the check
+   prints `WITHIN: the comparison cannot see the blending` and fails.
+   Then the fixture with every glyph a colour image, made by a rasteriser
+   of the example's own (`InColour`: a box of one colour at sixty alphas,
+   its colours multiplied by its alpha), since the fixture's fonts have
+   no colour glyph: blended encoded, against the CPU drawing it alike,
+   and then the control, against the CPU blending it in linear light,
+   which must miss, or the check prints `WITHIN: the comparison cannot
+   see how a colour image is blended` and fails. Then the clear: a frame
+   of no views on the ground `#2e3440`, in either blending, read back,
+   must be that colour within 1 of 255 in every pixel, and the CPU's
+   exactly that colour; and a control that must miss, the same frame on
+   a black ground, which must differ from it by more than 1, or the check
+   prints `WITHIN: the comparison cannot see the clear` and fails. A miss
+   of the clear in linear light only means the view format and
+   `blend::to_linear` disagree. Each renderer prints the space it blends
+   in;
 3. prints how long a first frame, a frame with a row edited and a frame
    that differs only in its cursor took, with the rows each built. The
    times are of one run of a debug build: nothing is asserted of them and
@@ -1411,6 +1468,53 @@ masks and 64 in subpixel masks, the worst by 1 of 255 in each. With the
 contrast left out of the CPU's side only (a change made for the run and
 undone), the macOS weight's comparisons failed, the worst by 5: so the
 check sees the shader's contrast.
+
+Interim run, 2026-11-20, on the same machine (macOS 27.2.1, Metal on the
+Apple M5 Max), with encoded blending in the GPU (text-rendering phase 2,
+step 4), before the window's surface, `Settings::core_text()` and the
+macOS weight changed: these are not the phase's final figures, which
+follow. Exit
+status 0; all 9 properties held; 113 pixels differed from the reference
+image and 70 from the plain masks, the worst by 1 of 255 in each; at the
+macOS setting blended encoded (asked for explicitly, contrast 0.1 and
+dilation 0.8), 0 pixels differed in plain masks and 0 in subpixel masks;
+the grey text at a contrast of 1, encoded, 0 pixels. The control missed
+as it must: 1597 pixels differed, the worst by 73. With the shader's
+luminance taken from the encoded colour (a change made for the run and
+undone), the grey comparison failed, 1224 pixels differing, the worst by
+10: so the check sees which luminance the shader's contrast uses.
+
+Final run, 2026-11-20, on the same machine, at the last code commit of
+the text-rendering roadmap's phase 2, with `Settings::core_text()`
+blending encoded at a contrast of 0 and a dilation of 0.4 px: exit
+status 0; all 9 properties held; 113 pixels differed from the reference
+image and 70 from the plain masks, the worst by 1 of 255 in each; at the
+macOS setting, 0 pixels differed in plain masks and 0 in subpixel masks;
+the grey text at a contrast of 1, encoded, 0 pixels. Each renderer
+said it blends in the space it was asked to. The control missed as it
+must: 1556 pixels differed, the worst by 73 of 255.
+
+Run again on 2026-11-20 on the same machine, with the colour-image
+comparison added (a review of phase 2 found that no check drew the
+shader's encoded colour image): exit status 0; every figure above as
+before; with every glyph a colour image, blended encoded, 0 pixels
+differed from the CPU's picture. Its control missed as it must: against
+the CPU blending in linear light, 1914 pixels differed, the worst by 53
+of 255. With the shader's encoded colour image left multiplied by its
+alpha (the division by it taken out, a change made for the run and
+undone), the colour comparison failed, 1914 pixels differing, the worst
+by 74: so the check sees that path of the shader.
+
+Run on 2026-11-20 on the same machine (macOS 27.2.1, 26B131), with the
+clear made the frame's ground (text-rendering phase 3, step 6): exit
+status 0; all 9 properties held; every figure above as before (113 and
+70 pixels from the reference image and the plain masks, the worst by 1;
+0 pixels at the macOS setting, for the grey text and for the colour
+images; the controls 1556 pixels, the worst by 73, and 1914, the worst by
+53). The CPU's clear to `#2e3440` was exactly that colour in either
+blending. The GPU's was 0 pixels from it in linear light and 0 in
+encoded values. The control, the same frame on black, missed in each: all
+24576 pixels differed, the worst by 64 of 255.
 
 ## The renderer on Linux, on demand
 
@@ -1483,6 +1587,267 @@ Run it on a new major version of macOS, or when the fixture font changes.
 `tests/coretext/README.md` records how the file was last captured. If a
 new capture no longer matches the renderer's weight, the weight is fitted
 again.
+
+## The Core Text rasteriser and its blending, on demand
+
+```sh
+mise run coretext-check
+```
+
+This runs two examples, on macOS, and each must exit 0: the mask check,
+then the blending's.
+
+The first is the example `check` of `crates/editor-raster-coretext`. It holds the Core Text adapter to the rasteriser port's contract
+(`editor_raster::contract`), smoothed and not, at 14 and 28 pixels; says
+what `AppleFontSmoothing` holds and what was decided from it; and compares
+the adapter's masks with Core Text's own drawings of the weight sentence
+under `tests/coretext/`. Each glyph is laid at Core Text's own place
+(`positions.txt`), floored to Core Text's grid as the painter floors it
+(thirds of a pixel at scale 1, halves at scale 2), in the luminance
+bucket of the capture's text colour, and the masks are joined into one
+picture and measured against the capture
+(`crates/editor-raster-coretext/src/compare.rs`):
+
+- the ink and the dark pixels within [0.995, 1.005], a pixel counted as
+  dark or light only where both pictures are more than 1/255 from half
+  covered;
+- the worst pixel at most 2/255 at scale 2, and at most 0.08 at scale 1,
+  where Core Text's own line drawing puts a few glyphs a little off the
+  thirds its grid is measured at.
+
+Three controls must each miss those thresholds, or the comparison could
+not see what it claims to: (a) the light-on-dark captures drawn at
+bucket 0; (b) the black-on-white captures not smoothed; (c) the grey
+capture at the bucket of its linear light. A pass is exit 0: every
+property holds, every capture is within and every control is outside.
+
+What Core Text draws is the system's, and the gate's macOS runner is not
+the capture machine, so the gate builds the example and never runs it.
+Run it when macOS's major version changes, when a binding's pin moves,
+and when the adapter changes, and record the figures here.
+
+On 2026-11-20, on macOS 27.2.1 (26B131), `AppleFontSmoothing` not set:
+exit 0. Every property held at 14 and 28 pixels, smoothed and not.
+
+| Capture | Scale | Bucket | Ink | Dark pixels | Worst pixel |
+|---|---|---|---|---|---|
+| `sentence.png` | 2 | 0 | x1.0000 | x1.0000 | 0.000 |
+| `sentence-dark.png` | 2 | 3 | x1.0017 | x1.0000 | 0.004 |
+| `sentence-14.png` | 1 | 0 | x1.0001 | x1.0000 | 0.020 |
+| `sentence-14-dark.png` | 1 | 3 | x1.0035 | x1.0000 | 0.071 |
+| `sentence-grey.png` | 2 | 1 | x0.9972 | x1.0000 | 0.008 |
+
+| Control | Capture | Ink | Dark pixels | Worst pixel |
+|---|---|---|---|---|
+| (a) bucket 0 | `sentence-dark.png` | x0.8920 | x0.8458 | 0.420 |
+| (a) bucket 0 | `sentence-14-dark.png` | x0.8457 | x0.8206 | 0.282 |
+| (b) not smoothed | `sentence.png` | x0.8531 | x0.8679 | 0.533 |
+| (b) not smoothed | `sentence-14.png` | x0.8535 | x0.8864 | 0.231 |
+| (c) bucket 0 | `sentence-grey.png` | x0.9383 | x0.9282 | 0.243 |
+
+The grid was measured the same day by drawing one glyph across a pixel
+in steps of 1/400 with the context's default flags: its image changed at
+0.3325 and 0.6675 px at scale 1, at 0.5 px at scale 2, and only at whole
+pixels at scale 3. At scale 1 the masks laid at exact thirds are 0.020
+and 0.071 off at the worst pixel, and the best fit of the two places,
+86/256 and 170/256 of a pixel, was no better (0.016 and 0.071). Placed on
+a grid of a quarter of a pixel instead, the scale-1 captures were 0.169
+and 0.173 off.
+
+### The composited sentence
+
+The second is the example `coretext` of `crates/editor-ffi`, the crate
+that wires the Core Text rasteriser into the renderers. For each of the
+five captures it draws the sentence through the real renderers with
+`Settings::core_text()` (blended in sRGB-encoded values) and the Core
+Text rasteriser, smoothing on, as the captures were drawn, without
+reading the machine's preference: on the CPU (`HeadlessRenderer`) and on
+this machine's GPU (`WgpuRenderer::on_this_machine`, read back; it opens
+no window). Each glyph is at Core Text's own place on the capture's
+ground. Each picture is compared with what macOS composited
+(`tests/coretext/composited/`), by `examples/coretext/measure.rs`, whose
+tests run in the gate:
+
+- the ink, the sum over pixels and channels of how far each value is
+  from the ground, and the dark pixels, those more than half of the way
+  from the ground to the text, counted where both pictures are more than
+  1/255 from half of the way, each within [0.995, 1.005];
+- no channel of any pixel more than 3 of 255 off at scale 2 (the mask
+  check's 2 and one for rounding), and 21 at scale 1 (its 0.08 of
+  coverage over a full range, and one);
+- and the GPU's picture within 3 of 255 of the CPU's in every channel of
+  every pixel, `render-gpu`'s tolerance.
+
+Two controls must miss, or the check prints `WITHIN: the comparison
+cannot see it` and fails: (a) linear light on the CPU against every
+capture, which must miss by its ink in the direction that is why macOS
+blends encoded, heavier (ink past 1.005) light on dark and lighter (ink
+under 0.995) dark on light, a miss the other way, or by the dark pixels
+or the worst channel alone, failing too; (b) the old
+contrast of 0.1, encoded, against `sentence.png`. For the record, and
+not asserted, (c) swash alone at the macOS setting against each capture.
+On a miss: if the mask check misses too, the masks moved; if only the
+CPU misses, it is the blending or the frame; if only the GPU, the
+format it draws through or the shader's flag.
+
+Run it when macOS's major version changes, when the wgpu pin moves, and
+when the blend, the shader or the surface changes, as well as when the
+mask check is due, and record the figures here.
+
+On 2026-11-20, on macOS 27.2.1 (26B131), Metal on an Apple M5 Max,
+`AppleFontSmoothing` not set, at the last code commit of the
+text-rendering roadmap's phase 2 (these are the final figures): exit 0,
+the mask check's figures as above. The CPU and the GPU gave the same
+figures, and the GPU was 0 of 255 from the CPU in every capture.
+
+| Capture | Scale | Ink | Dark pixels | Worst channel |
+|---|---|---|---|---|
+| `sentence.png` | 2 | x1.0000 | x1.0000 | 0 |
+| `sentence-dark.png` | 2 | x1.0016 | x1.0000 | 1 |
+| `sentence-14.png` | 1 | x1.0001 | x1.0000 | 5 |
+| `sentence-14-dark.png` | 1 | x1.0035 | x1.0000 | 12 |
+| `sentence-grey.png` | 2 | x0.9971 | x0.9956 | 1 |
+
+| Control | Capture | Ink | Dark pixels | Worst channel | Missed |
+|---|---|---|---|---|---|
+| (a) linear light | `sentence.png` | x0.8618 | x0.8403 | 73 | lighter, as it must |
+| (a) linear light | `sentence-dark.png` | x1.0857 | x1.1165 | 34 | heavier, as it must |
+| (a) linear light | `sentence-14.png` | x0.7155 | x0.5314 | 75 | lighter, as it must |
+| (a) linear light | `sentence-14-dark.png` | x1.1453 | x1.1836 | 37 | heavier, as it must |
+| (a) linear light | `sentence-grey.png` | x0.9466 | x0.9236 | 14 | lighter, as it must |
+| (b) contrast 0.1 | `sentence.png` | x1.0123 | x1.0170 | 6 | heavier |
+| (c) swash alone, for the record | `sentence.png` | x0.9856 | x1.0058 | 173 | |
+| (c) swash alone, for the record | `sentence-dark.png` | x0.8792 | x0.8432 | 142 | |
+| (c) swash alone, for the record | `sentence-14.png` | x1.1100 | x1.1125 | 187 | |
+| (c) swash alone, for the record | `sentence-14-dark.png` | x0.9385 | x0.9101 | 130 | |
+| (c) swash alone, for the record | `sentence-grey.png` | x0.9250 | x0.9324 | 98 | |
+
+Run again on 2026-11-20 on the same machine, once control (a) was made
+to miss by its ink itself (a review of phase 2 found it had counted any
+miss with its ink on the due side of 1): exit 0, and every figure in
+both tables as above; each control (a) missed by its ink the way due.
+
+Run again on 2026-11-20 on the same machine, with the target cleared to
+the frame's ground (text-rendering phase 3, step 6): exit 0, the mask
+check's figures and every figure in both tables as above. The sentence's
+view covers its whole target, so the clear does not show in it, as
+expected.
+
+The GPU renderer is made again for each capture: the frames are built by
+hand, all of generation 0 with a font of another size under the same id,
+and a renderer kept across them took one capture's glyphs for another's
+(a first run of the example, 2026-11-20, failed three captures that
+way), which the editor's frames, laid out, never do.
+
+## The window's settings and its Metal layer, on demand
+
+```sh
+mise run window-layer
+```
+
+macOS only. It opens the window, so it needs a desktop session, but it
+presents nothing it judges and waits on no frame, so it passes with the
+screen locked. It is two examples, each of which exits 0 on a pass, 1 on a
+miss and 2 off macOS or when no window could be opened:
+
+1. `editor-platform-winit`'s `settings`: the themed window, read back from
+   AppKit as it opened (a control, which must miss the paper or the check
+   prints `WITHIN` and fails), then asked for the paper `#2e3440`
+   (`Request::Background`) and the dark appearance and read again: its
+   background in sRGB, which must be the paper within 1/255 a component;
+   its appearance, which must be `NSAppearanceNameDarkAqua`; whether it
+   is opaque, which it must be; the border of the content view's layer
+   and of winit's view's layer, which must be 0; and, printed and not
+   judged, its shadow, its style mask's titled, resizable and full-size
+   content bits, whether its title bar is transparent, and the layers'
+   corner radii. The rules are `examples/settings/reading.rs`, whose tests
+   run in the gate.
+2. `editor-ffi`'s `layer`: a `WgpuRenderer` on the window with
+   `Settings::core_text()`, one frame drawn at the size the window opened
+   at (whether it was presented is printed and not judged: an occluded
+   window's surface is configured all the same), and its Metal layer read
+   (`WgpuRenderer::layer`) and held to `editor-render-wgpu`'s
+   `layer::misses`: the drawable is the target, `contentsScale` is its
+   scale, `bounds × contentsScale` is exactly the drawable, opaque, a
+   colour space present, and the configured pixel format. The control:
+   the same reading held to the target at the other of the scales 1 and 2
+   must miss. Then the view layer's `contentsScale` is set to the other
+   scale and back (`WgpuRenderer::follow_scale`), and the Metal layer must
+   follow it both ways; then the layer is read again and must miss
+   nothing.
+
+Run it when the wgpu or winit pin moves, when macOS's major version
+changes, and when the surface, the window's background or the layer's
+reading changes. Do not loosen the 1/255 to make it pass.
+
+On 2026-11-20 at 21:44, on macOS 27.2.1 (26B131), Metal on an Apple M5
+Max, one display, the screen locked: exit 0 from both.
+
+- `settings`: as it opened, the background was white (1, 1, 1), with no
+  appearance of the window's own; the control missed the paper, as it
+  must. Asked, the background read 0.180392, 0.203922, 0.250980 (46, 52,
+  64 of 255), the appearance `NSAppearanceNameDarkAqua`; opaque, a
+  shadow, titled, resizable, full-size content, a transparent title bar;
+  the content view's layer and winit's view's layer border 0 and corner
+  radius 0.
+- `layer`: the window opened at 1600 by 1200 pixels at scale 2. The draw
+  was refused, as occluded (hidden), and the surface was configured all
+  the same. The layer: bounds 800 by 600 points, `contentsScale` 2, a
+  drawable of 1600 by 1200, opaque, a colour space present, pixel format
+  80 (`BGRA8Unorm`) as configured, gravity `resize`: no miss. The control,
+  held to scale 1, missed ("contentsScale is 2, not the target's scale
+  1"). The view layer's scale set from 2 to 1: the Metal layer read 1;
+  set back, 2. Read again: no miss. The reading is at the scale the window
+  opened at, 2; the backing scale itself did not change.
+
+**Outstanding run** (2026-11-20): `mise run window-layer` on a machine
+with two displays of different scales, with the window moved to the
+other display before the layer is read, is the run that confirms
+`contentsScale` follows a change of the backing scale. It is not taken in
+text-rendering's phase 3, because this machine has one display and the
+window port cannot move a window. Until it is, that criterion rests on
+reading the source of raw-window-metal 1.1.0 (`src/observer.rs`), on the
+gate's tests (the surface's configuration at the new scale's size, the
+presenter's last frame at the new scale, `layer::misses` on a layer left
+at the old scale) and on the observation `layer` makes of a change of the
+view layer's scale, which is not a change of the backing scale. If
+`window-layer` gains a way to read after a move (a `--read-after-move`
+that waits for the window to say a new scale, then reads again and holds
+the reading to the new target with `misses`), it is the same check with
+one more reading, not a new one.
+
+## The shaper's places in Menlo, on demand
+
+```sh
+mise run coretext-menlo
+```
+
+This holds the shaper's places of the glyphs of "the window draws this" to
+Core Text's in Menlo, the font the owner reads, which its licence keeps
+out of the repository. On macOS, it has `tools/coretext/capture.swift
+--positions` write Core Text's places of the sentence in
+`/System/Library/Fonts/Menlo.ttc` at 14 pt, at scale 1 and 2, into a
+temporary directory removed when it ends, and runs the example
+`core_text` of `crates/editor-shape-parley`: the sentence laid out through
+Parley over Menlo alone at 28 and 14 pixels, each glyph's error printed,
+and its exit status non-zero when a glyph is not Core Text's or a place is
+more than an eighth of a pixel from Core Text's. The gate holds the
+fixture font, Noto Sans Mono, to the same bound
+(`crates/editor-shape-parley/tests/core_text.rs`), with the painter's
+grid checked beside it (`crates/editor-render-wgpu/src/placement_tests.rs`).
+Run it when macOS's major version changes, when the pin of Parley or
+fontique moves, and when the shaper changes, and record the result here.
+
+On 2026-11-20, on macOS 27.2.1 (26B131): exit 0. Every glyph was Core
+Text's, and every pen place and the line's end were 0.0000 px from Core
+Text's at 28 and at 14 pixels. The capture tool found no pen step that
+differs from the glyph's advance (`CTFontGetAdvancesForGlyphs`): Core Text
+applies no tracking or kerning to this sentence in Menlo, so the
+letter-spacing the owner saw in Menlo on 2026-11-14 was not in the
+places. What drew the glyphs from them then, the 0.8 px dilation and the
+rounding to quarters of a pixel, is replaced on macOS by Core Text's own
+masks on Core Text's own grid; the window is judged again after the
+blending phase.
 
 ## The editor on a file, on demand
 

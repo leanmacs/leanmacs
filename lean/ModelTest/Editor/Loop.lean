@@ -225,6 +225,23 @@ def loopChecks : List Check :=
               | _ => false
           | none => false },
     { name :=
+        "a burst of resizes, a key between the last two, publishes a scene for each event and ends in a scene of the last size, its views and dividers tiling it above its bottom row"
+      run :=
+        pure <|
+          let resize (width height : Nat) : Event := .resize { width, height, scale := 2.0 }
+          let events := [resize 641 479, resize 800 600, pressF5, resize 643 481]
+          match looped threeWindows events with
+          | some ((loop, _), scenes, _) =>
+            scenes.size == events.length && loop.state.frame.size == ⟨643, 481⟩ &&
+              match scenes.back? with
+              | some scene =>
+                -- The display model's bottom row is a pixel tall.
+                scene.size == ⟨643, 481⟩ &&
+                  tiles (frameRect ⟨643, 480⟩)
+                    (scene.views.map (·.rect) ++ scene.dividers.map (·.rect))
+              | none => false
+          | none => false },
+    { name :=
         "the scene of two tiled windows side by side has one divider, in window-divider, between the two views; of two stacked windows one divider between them"
       run :=
         pure <|

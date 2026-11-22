@@ -4,7 +4,7 @@
 use crate::blend;
 use crate::present::Asked;
 use crate::{
-    Antialiasing, DEFAULT_ATLAS_BUDGET, Masks, PAGE_SIZE, Settings, SubpixelOrder, Weight,
+    Antialiasing, Blending, DEFAULT_ATLAS_BUDGET, Masks, PAGE_SIZE, Settings, SubpixelOrder, Weight,
 };
 
 #[test]
@@ -21,6 +21,21 @@ fn a_kind_of_mask_says_itself_for_a_person() {
 }
 
 #[test]
+fn a_blending_says_itself_for_a_person() {
+    assert_eq!(Blending::Linear.to_string(), "linear light");
+    assert_eq!(
+        Blending::Encoded.to_string(),
+        "sRGB-encoded values, as macOS blends"
+    );
+}
+
+#[test]
+fn the_default_settings_blend_in_linear_light() {
+    assert_eq!(Settings::default().blending, Blending::Linear);
+    assert_eq!(Blending::default(), Blending::Linear);
+}
+
+#[test]
 fn the_default_settings_leave_antialiasing_to_the_display_and_hint() {
     // And ask for no presentation: the decision's.
     assert_eq!(
@@ -30,11 +45,33 @@ fn the_default_settings_leave_antialiasing_to_the_display_and_hint() {
             hinting: true,
             atlas_budget: DEFAULT_ATLAS_BUDGET,
             weight: Weight::LINEAR,
+            blending: Blending::Linear,
             presentation: Asked::NOTHING,
         }
     );
     assert_eq!(Antialiasing::default(), Antialiasing::Auto);
     assert_eq!(SubpixelOrder::default(), SubpixelOrder::Rgb);
+}
+
+#[test]
+fn the_core_text_settings_ask_for_plain_masks_no_hinting_and_encoded_blending() {
+    // macOS draws no subpixel (LCD) text since 10.14, so the settings a
+    // program on macOS draws with ask for one coverage a pixel at every
+    // scale; and it composites in sRGB-encoded values, which Core Text's
+    // masks are made for.
+    assert_eq!(
+        Settings::core_text(),
+        Settings {
+            antialiasing: Antialiasing::Grayscale,
+            hinting: false,
+            weight: Weight::CORE_TEXT,
+            blending: Blending::Encoded,
+            ..Settings::default()
+        }
+    );
+    // Encoded blending needs no contrast to make up for thin dark text,
+    // as Skia sets Core Graphics' to none.
+    assert_eq!(Weight::CORE_TEXT.contrast, 0.0);
 }
 
 #[test]

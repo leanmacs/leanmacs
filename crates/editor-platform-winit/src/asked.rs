@@ -26,15 +26,20 @@
 //!   `set_theme`, which on macOS sets the window's `NSAppearance` to
 //!   `aqua` or `darkAqua`; on X11 and Wayland it hints a GTK variant or
 //!   themes the client-side decorations.
+//! - **A background is set only when it is not the one the window was
+//!   last asked**, which starts as none asked, as an appearance is. It is
+//!   the module `background`'s one call: on macOS the `NSWindow`'s
+//!   `backgroundColor`, and nothing elsewhere.
 //! - **Keeping running is nothing done to the window.** It answers the
 //!   system's quit, which is the module `terminate`'s.
 //!
 //! The adapter's run of `editor_platform::contract::requests` is this
 //! module's: the translation, over a window that records what it is told
 //! and models what winit documents of `set_fullscreen`, `set_minimized`,
-//! `set_title` and `set_theme`.
+//! `set_title` and `set_theme`, and what AppKit does with a window's
+//! `backgroundColor`.
 
-use editor_platform::{Appearance, Request};
+use editor_platform::{Appearance, Request, Rgb};
 use winit::monitor::Fullscreen;
 use winit::window::{Theme, Window};
 
@@ -51,16 +56,20 @@ pub(crate) enum Act {
     Title(String),
     /// Draw the window's title and buttons in this appearance.
     Appearance(Appearance),
+    /// Fill what nothing drew with this colour.
+    Background(Rgb),
 }
 
 /// What the translation remembers of the window: the title it shows, and
-/// the appearance it was last asked.
+/// the appearance and the background it was last asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Asked {
     /// The title the window shows.
     title: String,
     /// The appearance the window was last asked; `None` until one is.
     appearance: Option<Appearance>,
+    /// The background the window was last asked; `None` until one is.
+    background: Option<Rgb>,
 }
 
 impl Default for Asked {
@@ -69,6 +78,7 @@ impl Default for Asked {
         Self {
             title: WinitPlatform::TITLE.to_owned(),
             appearance: None,
+            background: None,
         }
     }
 }
@@ -97,6 +107,11 @@ impl Asked {
                 self.appearance = Some(appearance);
                 Some(Act::Appearance(appearance))
             }
+            Request::Background(rgb) if self.background == Some(rgb) => None,
+            Request::Background(rgb) => {
+                self.background = Some(rgb);
+                Some(Act::Background(rgb))
+            }
         }
     }
 }
@@ -113,6 +128,8 @@ pub(crate) trait Control {
     fn set_title(&self, title: &str);
     /// Draws the window's title and buttons in `appearance`.
     fn set_appearance(&self, appearance: Appearance);
+    /// Fills what nothing drew in the window with `rgb`.
+    fn set_background(&self, rgb: Rgb);
 }
 
 /// Does `act` to `window`: one call.
@@ -122,6 +139,7 @@ pub(crate) fn apply(window: &(impl Control + ?Sized), act: Act) {
         Act::Minimise => window.minimise(),
         Act::Title(title) => window.set_title(&title),
         Act::Appearance(appearance) => window.set_appearance(appearance),
+        Act::Background(rgb) => window.set_background(rgb),
     }
 }
 
@@ -156,6 +174,10 @@ impl Control for dyn Window {
             Appearance::Light => Theme::Light,
             Appearance::Dark => Theme::Dark,
         }));
+    }
+
+    fn set_background(&self, rgb: Rgb) {
+        crate::background::set(self, rgb);
     }
 }
 
@@ -231,6 +253,32 @@ mod tests {
         assert_eq!(asked.act(appearance(Appearance::Dark), false), None);
     }
 
+    #[test]
+    fn a_background_is_set_only_when_it_is_not_the_one_asked_last() {
+        let mut asked = Asked::default();
+        let paper = Rgb {
+            red: 0x2e,
+            green: 0x34,
+            blue: 0x40,
+        };
+        let white = Rgb {
+            red: 0xff,
+            green: 0xff,
+            blue: 0xff,
+        };
+        // The window opens with none asked.
+        assert_eq!(
+            asked.act(Request::Background(paper), false),
+            Some(Act::Background(paper))
+        );
+        assert_eq!(asked.act(Request::Background(paper), true), None);
+        assert_eq!(
+            asked.act(Request::Background(white), false),
+            Some(Act::Background(white))
+        );
+        assert_eq!(asked.act(Request::Background(white), false), None);
+    }
+
     /// A call made on a [`RecordingWindow`].
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum Call {
@@ -238,12 +286,14 @@ mod tests {
         Minimise,
         SetTitle(String),
         SetAppearance(Appearance),
+        SetBackground(Rgb),
     }
 
     /// A window that records each call made on it and models what winit
     /// documents of it: `set_fullscreen` puts the window in fullscreen or
     /// takes it out, `set_minimized(true)` minimises it, `set_title` shows
-    /// the title, and `set_theme` the appearance.
+    /// the title, and `set_theme` the appearance; and what AppKit does with
+    /// a window's `backgroundColor`, which is the background it shows.
     #[derive(Default)]
     struct RecordingWindow {
         shown: RefCell<Shown>,
@@ -275,6 +325,11 @@ mod tests {
                 .borrow_mut()
                 .push(Call::SetAppearance(appearance));
             self.shown.borrow_mut().appearance = Some(appearance);
+        }
+
+        fn set_background(&self, rgb: Rgb) {
+            self.calls.borrow_mut().push(Call::SetBackground(rgb));
+            self.shown.borrow_mut().background = Some(rgb);
         }
     }
 
@@ -355,6 +410,16 @@ mod tests {
             Request::LeaveFullscreen,
             Request::Appearance(Appearance::Dark),
             Request::Appearance(Appearance::Dark),
+            Request::Background(Rgb {
+                red: 1,
+                green: 2,
+                blue: 3,
+            }),
+            Request::Background(Rgb {
+                red: 1,
+                green: 2,
+                blue: 3,
+            }),
             Request::Minimise,
         ] {
             carried.carry_out(request);
@@ -366,6 +431,11 @@ mod tests {
                 Call::SetTitle("notes.txt".into()),
                 Call::SetFullscreen(false),
                 Call::SetAppearance(Appearance::Dark),
+                Call::SetBackground(Rgb {
+                    red: 1,
+                    green: 2,
+                    blue: 3,
+                }),
                 Call::Minimise,
             ]
         );

@@ -39,14 +39,69 @@
 //!
 //! # The format
 //!
-//! The pipeline blends in linear light, so what it draws on is an sRGB
-//! format: the GPU turns each value linear to blend and back to store.
-//! [`choose_format`] takes the first sRGB format a surface offers,
-//! wherever it is in the offer: Metal offers a format that is not sRGB
-//! first. A surface that offers none is configured with the first format
-//! it offers and drawn on through that format's sRGB form, as a view; a
-//! format with no sRGB form is drawn on as it is. A surface that offers
-//! nothing has no format, and no renderer is made on it.
+//! [`choose_format`] chooses for the space the renderer blends in
+//! (`Settings::blending`).
+//!
+//! To blend in linear light, what the pipeline draws on is an sRGB
+//! format: the GPU turns each value linear to blend and back to store. It
+//! takes the first sRGB format a surface offers, wherever it is in the
+//! offer: Metal offers a format that is not sRGB first. A surface that
+//! offers none is configured with the first format it offers and drawn on
+//! through that format's sRGB form, as a view; a format with no sRGB form
+//! is drawn on as it is.
+//!
+//! To blend in sRGB-encoded values, as macOS does, what the pipeline draws
+//! on is a format that holds sRGB values and is not sRGB, so that the GPU
+//! blends the stored values as they are. It takes the first format offered
+//! that is not sRGB and has an sRGB form (`Bgra8Unorm` or `Rgba8Unorm`),
+//! drawn on as it is, with no view: on Metal, `Bgra8Unorm`, as Zed's layer
+//! is. A surface that offers only sRGB formats is configured with the
+//! first and drawn on through a view of its form that is not sRGB. A
+//! surface that offers no 8-bit format with an sRGB pair (only
+//! `Rgba16Float`, say, whose values are linear) is chosen for as linear
+//! light is, and blends in linear light: [`State::blending`] says so, and
+//! the renderer's `blending` with it.
+//!
+//! The surface is configured in the colour space `Auto` under either
+//! blending. In wgpu 30.0.2, the pin, `wgpu-core` resolves `Auto` to sRGB
+//! for an 8-bit format, and `wgpu-hal`'s Metal surface tags the
+//! `CAMetalLayer` with `kCGColorSpaceSRGB` from it
+//! (`wgpu-hal-30.0.2/src/metal/surface.rs`, `configure`). Whether the
+//! format is the sRGB form or not changes only how the GPU reads and
+//! writes the bytes, not what they mean: they are sRGB values in both, and
+//! the window server colour-matches the layer to the display alike. So
+//! drawing through a format that is not sRGB needs no other colour space.
+//! A test pins `Auto` under both. If a later pin of wgpu stops resolving
+//! `Auto` to sRGB for 8-bit formats, the surface is to be configured with
+//! `SurfaceColorSpace::Srgb`, test-first here.
+//!
+//! A surface that offers nothing has no format, and no renderer is made on
+//! it.
+//!
+//! # The alpha mode
+//!
+//! A window's surface is configured `Opaque` where it offers that
+//! ([`alpha_mode`]), and `Auto` where it does not, since wgpu-core refuses
+//! an alpha mode a surface does not offer. The window is opaque, and
+//! everything drawn on it is, the clear at alpha 255 among them, so nothing behind the window is to show through. On Metal
+//! this is what `Auto` resolved to already: wgpu-core 30.0.2 resolves
+//! `Auto` to `Opaque` where it is offered, else to `Inherit`
+//! (`wgpu-core-30.0.2/src/device/surface_config.rs`), and Metal offers
+//! `[Opaque, PostMultiplied]` (`wgpu-hal-30.0.2/src/metal/adapter.rs`).
+//! `wgpu-hal`'s `configure` sets the `CAMetalLayer`'s `opaque` from it.
+//! Naming it makes "the layer is opaque, as the window is" a decision
+//! pinned here, not a resolution inside wgpu.
+//!
+//! # What a surface is configured at
+//!
+//! The size of the last draw, whatever the surface answered between: a
+//! draw at another size configures it first, and a draw at the size of
+//! the one before, after a texture that was not presented, does not
+//! configure it again, since it is configured at that size already. The
+//! size is in pixels, so a change of scale alone changes nothing here:
+//! the window's own sequence for one is a resize at the size last known
+//! and the new scale, then winit's new size as a resize of its own, and
+//! only the second reaches the surface as a new size.
 //!
 //! # The present mode
 //!
@@ -94,8 +149,8 @@
 use editor_platform::NativeWindow;
 use wgpu::rwh::{RawDisplayHandle, RawWindowHandle};
 
-use crate::Image;
 use crate::present::{self, Asked, Mode, Offered, Presentation};
+use crate::{Blending, Image};
 
 /// The handles wgpu takes for `window`: its window's, and its display's.
 ///
@@ -130,24 +185,52 @@ pub(crate) fn handles(window: &NativeWindow) -> (RawWindowHandle, RawDisplayHand
     }
 }
 
-/// The formats a surface is used with.
+/// The formats a surface is used with, and the space it blends in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Formats {
     /// The format the surface is configured with: one it offers.
     pub surface: wgpu::TextureFormat,
     /// The format its texture is drawn on through: `surface`, or its sRGB
-    /// form.
+    /// form, or its form that is not sRGB.
     pub target: wgpu::TextureFormat,
+    /// The space a pipeline drawing through `target` blends in: the one
+    /// asked for, or linear light where the surface offers no format to
+    /// blend encoded through.
+    pub blending: Blending,
 }
 
 /// The formats to use a surface with, from those it offers in the order it
-/// offers them; `None` when it offers none.
-pub(crate) fn choose_format(offered: &[wgpu::TextureFormat]) -> Option<Formats> {
+/// offers them, to blend in `blending`'s space; `None` when it offers none.
+pub(crate) fn choose_format(
+    offered: &[wgpu::TextureFormat],
+    blending: Blending,
+) -> Option<Formats> {
+    if blending == Blending::Encoded {
+        // A format of sRGB values the GPU does not convert: one that is
+        // not sRGB but has an sRGB form, drawn on as it is; else an sRGB
+        // one, drawn on through its other form.
+        let paired = |format: &wgpu::TextureFormat| format.add_srgb_suffix() != *format;
+        let plain = offered.iter().copied().find(paired);
+        let srgb = || {
+            offered
+                .iter()
+                .copied()
+                .find(|format| format.remove_srgb_suffix() != *format)
+        };
+        if let Some(surface) = plain.or_else(srgb) {
+            return Some(Formats {
+                surface,
+                target: surface.remove_srgb_suffix(),
+                blending,
+            });
+        }
+    }
     let srgb = offered.iter().copied().find(wgpu::TextureFormat::is_srgb);
     let surface = srgb.or_else(|| offered.first().copied())?;
     Some(Formats {
         surface,
         target: surface.add_srgb_suffix(),
+        blending: Blending::Linear,
     })
 }
 
@@ -161,6 +244,17 @@ impl Formats {
         } else {
             vec![self.target]
         }
+    }
+}
+
+/// How a surface that offers `offered` composites with what is behind it:
+/// opaque where it offers that, and wgpu's own choice otherwise
+/// (module docs, "The alpha mode").
+pub(crate) fn alpha_mode(offered: &[wgpu::CompositeAlphaMode]) -> wgpu::CompositeAlphaMode {
+    if offered.contains(&wgpu::CompositeAlphaMode::Opaque) {
+        wgpu::CompositeAlphaMode::Opaque
+    } else {
+        wgpu::CompositeAlphaMode::Auto
     }
 }
 
@@ -260,6 +354,8 @@ pub(crate) struct State {
     config: wgpu::SurfaceConfiguration,
     /// The format its texture is drawn on through.
     target: wgpu::TextureFormat,
+    /// The space a pipeline drawing through `target` blends in.
+    blending: Blending,
     /// Whether it is configured as `config` says. It is not before the
     /// first draw, nor after a texture that no longer fitted it.
     configured: bool,
@@ -316,9 +412,14 @@ pub(crate) fn order_of(format: wgpu::TextureFormat) -> Result<Order, String> {
 impl State {
     /// What is known of a surface that offers `offered`, before anything
     /// is drawn on it, for a run that asked for the presentation `asked`
-    /// ([`present::choose`]). The error says why nothing can be.
-    pub(crate) fn new(offered: &wgpu::SurfaceCapabilities, asked: Asked) -> Result<Self, String> {
-        let formats = choose_format(&offered.formats)
+    /// ([`present::choose`]) and to blend in `blending`'s space
+    /// ([`choose_format`]). The error says why nothing can be.
+    pub(crate) fn new(
+        offered: &wgpu::SurfaceCapabilities,
+        asked: Asked,
+        blending: Blending,
+    ) -> Result<Self, String> {
+        let formats = choose_format(&offered.formats, blending)
             .ok_or("the window's surface offers no format on this adapter")?;
         if offered.present_modes.is_empty() {
             return Err("the window's surface offers no present mode on this adapter".to_owned());
@@ -343,10 +444,11 @@ impl State {
                 height: 1,
                 present_mode: wgpu_mode(presentation.mode),
                 desired_maximum_frame_latency: presentation.frame_latency,
-                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                alpha_mode: alpha_mode(&offered.alpha_modes),
                 view_formats: formats.views(),
             },
             target: formats.target,
+            blending: formats.blending,
             configured: false,
             copies: offered.usages.contains(wgpu::TextureUsages::COPY_SRC),
             keep: false,
@@ -410,10 +512,21 @@ impl State {
         Some(order_of(self.config.format))
     }
 
+    /// The format the surface is configured with, or is to be: one it
+    /// offers, which its layer's pixel format is made from.
+    pub(crate) fn configured_format(&self) -> wgpu::TextureFormat {
+        self.config.format
+    }
+
     /// The format the surface's texture is drawn on through: what the
     /// pipeline is made for.
     pub(crate) fn target(&self) -> wgpu::TextureFormat {
         self.target
+    }
+
+    /// The space a pipeline drawing through [`State::target`] blends in.
+    pub(crate) fn blending(&self) -> Blending {
+        self.blending
     }
 
     /// The surface's next texture, `width` by `height`: the surface is
@@ -470,8 +583,8 @@ mod tests {
         Answer, Calls, Formats, Next, Order, State, choose_format, handles, mode_of, next,
         order_of, wgpu_mode,
     };
-    use crate::Image;
     use crate::present::{self, Asked, Mode, Offered, Presentation};
+    use crate::{Blending, Image};
 
     /// A pointer to something of the test's own, never read through: a
     /// handle is only carried.
@@ -517,6 +630,7 @@ mod tests {
         State::new(
             &offer(formats, &[wgpu::PresentMode::Fifo], true),
             Asked::NOTHING,
+            Blending::Linear,
         )
         .expect("an offer with a format and a present mode")
     }
@@ -584,19 +698,21 @@ mod tests {
         let through_a_view = Formats {
             surface: Bgra8Unorm,
             target: Bgra8UnormSrgb,
+            blending: Blending::Linear,
         };
         assert_eq!(through_a_view.views(), [Bgra8UnormSrgb]);
         let as_it_is = Formats {
             surface: Bgra8UnormSrgb,
             target: Bgra8UnormSrgb,
+            blending: Blending::Linear,
         };
         assert_eq!(as_it_is.views(), []);
     }
 
     #[test]
     fn the_first_draw_configures_the_surface_at_its_size_with_what_was_chosen_from_the_offer() {
-        let mut state =
-            State::new(&llvmpipe(), Asked::NOTHING).expect("an offer with a format and a mode");
+        let mut state = State::new(&llvmpipe(), Asked::NOTHING, Blending::Linear)
+            .expect("an offer with a format and a mode");
         let mut surface = Scripted::answering(&[Answer::Success]);
         assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
         assert_eq!(surface.calls, [Call::Configured(800, 600), Call::Asked]);
@@ -612,7 +728,7 @@ mod tests {
                 height: 600,
                 present_mode: wgpu::PresentMode::Fifo,
                 desired_maximum_frame_latency: present::FRAME_LATENCY,
-                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                alpha_mode: wgpu::CompositeAlphaMode::Opaque,
                 view_formats: Vec::new(),
             }]
         );
@@ -621,12 +737,112 @@ mod tests {
     }
 
     #[test]
+    fn a_window_surface_is_configured_opaque_where_it_offers_that() {
+        let configured_with = |alpha_modes: &[wgpu::CompositeAlphaMode]| {
+            let offered = wgpu::SurfaceCapabilities {
+                alpha_modes: alpha_modes.to_vec(),
+                ..llvmpipe()
+            };
+            let mut state = State::new(&offered, Asked::NOTHING, Blending::Linear)
+                .expect("an offer with a format and a mode");
+            let mut surface = Scripted::answering(&[Answer::Success]);
+            assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
+            surface.configs[0].alpha_mode
+        };
+        // What Metal offers.
+        assert_eq!(
+            configured_with(&[
+                wgpu::CompositeAlphaMode::Opaque,
+                wgpu::CompositeAlphaMode::PostMultiplied
+            ]),
+            wgpu::CompositeAlphaMode::Opaque
+        );
+        // A surface that does not offer it, as some Wayland surfaces do
+        // not, keeps `Auto`: wgpu refuses a mode a surface does not offer.
+        assert_eq!(
+            configured_with(&[
+                wgpu::CompositeAlphaMode::PreMultiplied,
+                wgpu::CompositeAlphaMode::Inherit
+            ]),
+            wgpu::CompositeAlphaMode::Auto
+        );
+    }
+
+    /// Hypothesis 2 of text-rendering's phase 3, on the surface: that a
+    /// draw refused, or a texture that no longer fitted, leaves the surface
+    /// configured at another size than the last draw's.
+    #[test]
+    fn a_surface_is_configured_at_the_size_of_the_last_draw_whatever_it_answered_between() {
+        let (a, b, c) = ((800, 600), (801, 600), (1024, 768));
+        let mut state = State::new(&llvmpipe(), Asked::NOTHING, Blending::Linear)
+            .expect("an offer with a format and a mode");
+        let mut surface = Scripted::answering(&[
+            Answer::Success,
+            Answer::Occluded,
+            Answer::Timeout,
+            Answer::Outdated,
+            Answer::Success,
+            Answer::Suboptimal,
+            Answer::Success,
+            Answer::Success,
+        ]);
+        // Each draw's size, whether it was presented, and how many times
+        // it configured the surface.
+        let draws = [
+            (a, true, 1),
+            (b, false, 1),
+            // The same size again after a texture that was not presented:
+            // the surface is configured at it already.
+            (b, false, 0),
+            // Outdated: configured, then configured again and asked once
+            // more.
+            (c, true, 2),
+            // Suboptimal: drawn, and the next draw configures again.
+            (b, true, 1),
+            (a, true, 1),
+            (a, true, 0),
+        ];
+        for (i, ((width, height), presented, configures)) in draws.into_iter().enumerate() {
+            let before = surface.configs.len();
+            let got = state.acquire(&mut surface, width, height);
+            assert_eq!(got.is_ok(), presented, "draw {i}: {got:?}");
+            assert_eq!(surface.configs.len() - before, configures, "draw {i}");
+            let last = surface.configs.last().expect("configured");
+            assert_eq!((last.width, last.height), (width, height), "draw {i}");
+        }
+    }
+
+    /// The gate's half of "the layer's `contentsScale` is the backing scale
+    /// after a change of scale": the window's own sequence for one
+    /// (`editor-platform-winit`'s `translate`: the size last known at the
+    /// new scale, then winit's new size), as `editor-ffi`'s `render::target`
+    /// makes targets of it. The drawable is in pixels, so it changes only
+    /// with the size.
+    #[test]
+    fn a_change_of_scale_alone_configures_the_drawable_at_the_new_scales_size() {
+        let mut state = State::new(&llvmpipe(), Asked::NOTHING, Blending::Linear)
+            .expect("an offer with a format and a mode");
+        let mut surface = Scripted::answering(&[Answer::Success; 3]);
+        // 400 by 300 at scale 1, 400 by 300 at scale 2, 800 by 600 at 2.
+        for (width, height) in [(400, 300), (400, 300), (800, 600)] {
+            assert!(state.acquire(&mut surface, width, height).is_ok());
+        }
+        let sizes: Vec<(u32, u32)> = surface
+            .configs
+            .iter()
+            .map(|config| (config.width, config.height))
+            .collect();
+        assert_eq!(sizes, [(400, 300), (800, 600)]);
+    }
+
+    #[test]
     fn a_mode_and_a_latency_asked_for_are_what_the_surface_is_configured_with_when_offered() {
         let asked = Asked {
             mode: Some(Mode::Immediate),
             frame_latency: Some(2),
         };
-        let mut state = State::new(&llvmpipe(), asked).expect("an offer with a format");
+        let mut state =
+            State::new(&llvmpipe(), asked, Blending::Linear).expect("an offer with a format");
         // Nothing is said of a surface not yet configured.
         assert_eq!(state.presentation(), None);
         let mut surface = Scripted::answering(&[Answer::Success]);
@@ -663,7 +879,8 @@ mod tests {
             frame_latency: Some(1),
         };
         let offered = offer(&[Bgra8UnormSrgb], &[wgpu::PresentMode::Fifo], false);
-        let mut state = State::new(&offered, asked).expect("an offer with a format");
+        let mut state =
+            State::new(&offered, asked, Blending::Linear).expect("an offer with a format");
         let mut surface = Scripted::answering(&[Answer::Success]);
         assert_eq!(state.acquire(&mut surface, 40, 30), Ok(1));
         assert_eq!(surface.configs[0].present_mode, wgpu::PresentMode::Fifo);
@@ -679,7 +896,8 @@ mod tests {
             mode: None,
             frame_latency: Some(2),
         };
-        let mut state = State::new(&llvmpipe(), asked).expect("an offer with a format");
+        let mut state =
+            State::new(&llvmpipe(), asked, Blending::Linear).expect("an offer with a format");
         let mut surface = Scripted::answering(&[Answer::Success]);
         assert_eq!(state.acquire(&mut surface, 40, 30), Ok(1));
         // The decided mode, at the latency asked.
@@ -695,7 +913,8 @@ mod tests {
             }
         );
         // Nothing asked is said as nothing asked.
-        let mut state = State::new(&llvmpipe(), Asked::NOTHING).expect("an offer with a format");
+        let mut state = State::new(&llvmpipe(), Asked::NOTHING, Blending::Linear)
+            .expect("an offer with a format");
         let mut surface = Scripted::answering(&[Answer::Success]);
         assert_eq!(state.acquire(&mut surface, 40, 30), Ok(1));
         assert_eq!(
@@ -735,17 +954,25 @@ mod tests {
     fn a_surface_that_offers_no_format_or_no_present_mode_is_refused_and_says_which() {
         let fifo = [wgpu::PresentMode::Fifo];
         assert_eq!(
-            State::new(&offer(&[], &fifo, true), Asked::NOTHING),
+            State::new(&offer(&[], &fifo, true), Asked::NOTHING, Blending::Linear),
             Err("the window's surface offers no format on this adapter".to_owned())
         );
         assert_eq!(
-            State::new(&offer(&[Bgra8UnormSrgb], &[], true), Asked::NOTHING),
+            State::new(
+                &offer(&[Bgra8UnormSrgb], &[], true),
+                Asked::NOTHING,
+                Blending::Linear
+            ),
             Err("the window's surface offers no present mode on this adapter".to_owned())
         );
         // What wgpu gives for a surface its adapter cannot present to:
         // nothing of either.
         assert_eq!(
-            State::new(&wgpu::SurfaceCapabilities::default(), Asked::NOTHING),
+            State::new(
+                &wgpu::SurfaceCapabilities::default(),
+                Asked::NOTHING,
+                Blending::Linear
+            ),
             Err("the window's surface offers no format on this adapter".to_owned())
         );
     }
@@ -910,15 +1137,15 @@ mod tests {
 
     #[test]
     fn no_picture_is_taken_of_a_surface_until_one_is_asked_for() {
-        let state =
-            State::new(&llvmpipe(), Asked::NOTHING).expect("an offer with a format and a mode");
+        let state = State::new(&llvmpipe(), Asked::NOTHING, Blending::Linear)
+            .expect("an offer with a format and a mode");
         assert_eq!(state.picture(), None);
     }
 
     #[test]
     fn keeping_the_picture_configures_the_surface_again_so_that_its_texture_is_copied_from() {
-        let mut state =
-            State::new(&llvmpipe(), Asked::NOTHING).expect("an offer with a format and a mode");
+        let mut state = State::new(&llvmpipe(), Asked::NOTHING, Blending::Linear)
+            .expect("an offer with a format and a mode");
         let mut surface = Scripted::answering(&[Answer::Success; 3]);
         assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
         state.keep_picture();
@@ -950,8 +1177,8 @@ mod tests {
     #[test]
     fn a_surface_whose_texture_cannot_be_copied_from_is_left_as_it_is_and_its_picture_says_so() {
         let offered = offer(&[Bgra8UnormSrgb], &[wgpu::PresentMode::Fifo], false);
-        let mut state =
-            State::new(&offered, Asked::NOTHING).expect("an offer with a format and a mode");
+        let mut state = State::new(&offered, Asked::NOTHING, Blending::Linear)
+            .expect("an offer with a format and a mode");
         let mut surface = Scripted::answering(&[Answer::Success; 2]);
         assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
         state.keep_picture();
@@ -971,12 +1198,12 @@ mod tests {
 
     #[test]
     fn keeping_the_picture_says_whether_the_surface_lets_its_texture_be_copied_from() {
-        let mut copied_from =
-            State::new(&llvmpipe(), Asked::NOTHING).expect("an offer with a format and a mode");
+        let mut copied_from = State::new(&llvmpipe(), Asked::NOTHING, Blending::Linear)
+            .expect("an offer with a format and a mode");
         assert!(copied_from.keep_picture());
         let offered = offer(&[Bgra8UnormSrgb], &[wgpu::PresentMode::Fifo], false);
-        let mut not_copied_from =
-            State::new(&offered, Asked::NOTHING).expect("an offer with a format and a mode");
+        let mut not_copied_from = State::new(&offered, Asked::NOTHING, Blending::Linear)
+            .expect("an offer with a format and a mode");
         assert!(!not_copied_from.keep_picture());
         // Asked again, the same.
         assert!(copied_from.keep_picture());
@@ -1088,33 +1315,40 @@ mod tests {
         // What wgpu's Metal back end offers, in its order (read in wgpu's
         // source): the first is not sRGB.
         assert_eq!(
-            choose_format(&[Bgra8Unorm, Bgra8UnormSrgb, Rgba16Float]),
+            choose_format(&[Bgra8Unorm, Bgra8UnormSrgb, Rgba16Float], Blending::Linear),
             Some(Formats {
                 surface: Bgra8UnormSrgb,
                 target: Bgra8UnormSrgb,
+                blending: Blending::Linear,
             })
         );
         // What llvmpipe's surface offered under Xvfb (seen).
         assert_eq!(
-            choose_format(&[Bgra8UnormSrgb, Bgra8Unorm]),
+            choose_format(&[Bgra8UnormSrgb, Bgra8Unorm], Blending::Linear),
             Some(Formats {
                 surface: Bgra8UnormSrgb,
                 target: Bgra8UnormSrgb,
+                blending: Blending::Linear,
             })
         );
         // The first of two sRGB formats, and one that is last of all.
         assert_eq!(
-            choose_format(&[Rgba8Unorm, Rgba8UnormSrgb, Bgra8UnormSrgb]),
+            choose_format(
+                &[Rgba8Unorm, Rgba8UnormSrgb, Bgra8UnormSrgb],
+                Blending::Linear
+            ),
             Some(Formats {
                 surface: Rgba8UnormSrgb,
                 target: Rgba8UnormSrgb,
+                blending: Blending::Linear,
             })
         );
         assert_eq!(
-            choose_format(&[Rgba16Float, Bgra8Unorm, Rgba8UnormSrgb]),
+            choose_format(&[Rgba16Float, Bgra8Unorm, Rgba8UnormSrgb], Blending::Linear),
             Some(Formats {
                 surface: Rgba8UnormSrgb,
                 target: Rgba8UnormSrgb,
+                blending: Blending::Linear,
             })
         );
     }
@@ -1122,32 +1356,129 @@ mod tests {
     #[test]
     fn with_no_srgb_format_the_first_is_taken_with_its_srgb_view() {
         assert_eq!(
-            choose_format(&[Bgra8Unorm, Rgba8Unorm]),
+            choose_format(&[Bgra8Unorm, Rgba8Unorm], Blending::Linear),
             Some(Formats {
                 surface: Bgra8Unorm,
                 target: Bgra8UnormSrgb,
+                blending: Blending::Linear,
             })
         );
         assert_eq!(
-            choose_format(&[Rgba8Unorm]),
+            choose_format(&[Rgba8Unorm], Blending::Linear),
             Some(Formats {
                 surface: Rgba8Unorm,
                 target: Rgba8UnormSrgb,
+                blending: Blending::Linear,
             })
         );
         // A format with no sRGB form is drawn on as it is.
         assert_eq!(
-            choose_format(&[Rgba16Float, Bgra8Unorm]),
+            choose_format(&[Rgba16Float, Bgra8Unorm], Blending::Linear),
             Some(Formats {
                 surface: Rgba16Float,
                 target: Rgba16Float,
+                blending: Blending::Linear,
             })
         );
     }
 
     #[test]
+    fn an_encoded_surface_is_drawn_on_in_the_first_non_srgb_format_with_an_srgb_form() {
+        // Metal's order: drawn on as it is, with no view.
+        let metal = choose_format(&[Bgra8Unorm, Bgra8UnormSrgb], Blending::Encoded);
+        assert_eq!(
+            metal,
+            Some(Formats {
+                surface: Bgra8Unorm,
+                target: Bgra8Unorm,
+                blending: Blending::Encoded,
+            })
+        );
+        assert_eq!(metal.map(Formats::views), Some(Vec::new()));
+        // A float format, which has no sRGB form, is passed over.
+        assert_eq!(
+            choose_format(
+                &[Rgba16Float, Bgra8UnormSrgb, Bgra8Unorm],
+                Blending::Encoded
+            ),
+            Some(Formats {
+                surface: Bgra8Unorm,
+                target: Bgra8Unorm,
+                blending: Blending::Encoded,
+            })
+        );
+    }
+
+    #[test]
+    fn an_encoded_surface_that_offers_only_srgb_formats_is_drawn_on_through_a_view_of_the_non_srgb_form()
+     {
+        let chosen = choose_format(&[Bgra8UnormSrgb], Blending::Encoded);
+        assert_eq!(
+            chosen,
+            Some(Formats {
+                surface: Bgra8UnormSrgb,
+                target: Bgra8Unorm,
+                blending: Blending::Encoded,
+            })
+        );
+        assert_eq!(chosen.map(Formats::views), Some(vec![Bgra8Unorm]));
+    }
+
+    #[test]
+    fn an_encoded_surface_with_no_eight_bit_srgb_pair_is_chosen_as_linear_and_says_so() {
+        let chosen = choose_format(&[Rgba16Float], Blending::Encoded);
+        assert_eq!(chosen, choose_format(&[Rgba16Float], Blending::Linear));
+        assert_eq!(
+            chosen.map(|formats| formats.blending),
+            Some(Blending::Linear)
+        );
+        // And what is known of such a surface says so too.
+        let state = State::new(
+            &offer(&[Rgba16Float], &[wgpu::PresentMode::Fifo], true),
+            Asked::NOTHING,
+            Blending::Encoded,
+        )
+        .expect("an offer with a format and a mode");
+        assert_eq!(state.blending(), Blending::Linear);
+    }
+
+    #[test]
+    fn a_surface_is_configured_in_the_automatic_colour_space_under_either_blending() {
+        // In wgpu 30.0.2, `Auto` is sRGB for an 8-bit format, and the
+        // Metal layer is tagged sRGB from it: the bytes mean sRGB values
+        // whether they are drawn on through an sRGB view or not.
+        for blending in [Blending::Linear, Blending::Encoded] {
+            let mut state = State::new(&llvmpipe(), Asked::NOTHING, blending)
+                .expect("an offer with a format and a mode");
+            assert_eq!(state.blending(), blending);
+            let mut surface = Scripted::answering(&[Answer::Success]);
+            assert_eq!(state.acquire(&mut surface, 8, 6), Ok(1));
+            let colour_spaces: Vec<_> = surface
+                .configs
+                .iter()
+                .map(|config| config.color_space)
+                .collect();
+            assert_eq!(
+                colour_spaces,
+                [wgpu::SurfaceColorSpace::Auto],
+                "{blending:?}"
+            );
+        }
+        // An encoded surface is configured with the format it is drawn on
+        // in, and the pipeline is made for it.
+        let mut state = State::new(&llvmpipe(), Asked::NOTHING, Blending::Encoded)
+            .expect("an offer with a format and a mode");
+        let mut surface = Scripted::answering(&[Answer::Success]);
+        assert_eq!(state.acquire(&mut surface, 8, 6), Ok(1));
+        assert_eq!(surface.configs[0].format, Bgra8Unorm);
+        assert_eq!(surface.configs[0].view_formats, Vec::new());
+        assert_eq!(state.target(), Bgra8Unorm);
+    }
+
+    #[test]
     fn a_surface_that_offers_no_format_has_none() {
-        assert_eq!(choose_format(&[]), None);
+        assert_eq!(choose_format(&[], Blending::Linear), None);
+        assert_eq!(choose_format(&[], Blending::Encoded), None);
     }
 
     #[test]

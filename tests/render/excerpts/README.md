@@ -15,7 +15,7 @@ the editor sends.
 
 | File | Size | Bytes | sha256 |
 |---|---|---|---|
-| `excerpts.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 4722 | `9831f26fdfc1b2a4b21a9bcb27fd99c14bc0291c345273e2571c82abf098c218` |
+| `excerpts.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 4642 | `428ac1fde6dc49e679cbe2da1f3f0bf2120075fab83a776c31155141925836e6` |
 
 It is kept small on purpose: the scene's size, 320 by 160, and at most
 20 KB, which the scenario checks, as the shipped themes' images are
@@ -62,6 +62,13 @@ the two headers are bold near-white `a.txt` and `b.txt` on a box of the
 raised colour that covers their glyphs, each one row above its excerpt;
 `beta`, an empty row, `one` and `two` are in the theme's ink on its paper,
 and the block cursor covers the `t` of `two`.
+
+Made again on 2026-11-20, when the painter began to floor each glyph's
+place to Core Text's own grid, thirds of a pixel at scale 1, instead of
+rounding it to the nearest quarter of a pixel
+(`crates/editor-render-wgpu/src/glyphs.rs`, `bin_of`): at scale 1 a glyph
+moves by up to a third of a pixel, so the text's edges changed and
+nothing else did; looked at, enlarged, by the agent that made it.
 
 ## Making it again
 

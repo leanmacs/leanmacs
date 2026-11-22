@@ -17,6 +17,22 @@
 //! fragment output and another blend, one coverage for the three, and the
 //! painter is told to ask for plain masks.
 //!
+//! # The blending
+//!
+//! A device blends in one space for the whole frame
+//! (`Settings::blending`), since a render pass has one attachment format.
+//! In linear light it draws through an sRGB format, which the GPU makes
+//! linear before it blends and encodes after. In sRGB-encoded values, as
+//! macOS blends, it draws through the same bytes in a format that is not
+//! sRGB ([`own_format`] for a target of its own, `surface::choose_format`
+//! for a window's), so that the fixed-function blend works on the stored
+//! values / 255 as they are, and the shader is told, by the globals'
+//! fourth float, to take the colour as given in place of making it linear.
+//! The CPU and the GPU then both compute in unit values and round once.
+//! [`Device::blending`] says which space a device blends in: a window's
+//! surface that offers no format to blend encoded through blends in
+//! linear light.
+//!
 //! # Every draw is checked
 //!
 //! Each draw, and the making of the pipeline, is inside one of wgpu's
@@ -81,13 +97,16 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use editor_layout::face::Color;
+
 use crate::atlas::{Atlas, PageView};
-use crate::cpu::CLEAR;
+use crate::blend::to_linear;
 use crate::glyphs::Kind;
+use crate::layer::{Followed, Layer, LayerReading, metal_format};
 use crate::present::{Asked, Offered};
 use crate::quads::{Quad, QuadKind};
 use crate::surface::{Answer, Calls, State};
-use crate::{Image, Weight};
+use crate::{Blending, Image, Weight};
 
 /// The body of the shader, shared by both blends.
 const SHADER: &str = include_str!("shader.wgsl");
@@ -119,10 +138,23 @@ fn fragment(in: Varying) -> @location(0) vec4<f32> {
 }
 ";
 
-/// The format of a target of the device's own: sRGB values, so that
-/// blending is in linear light. A window's surface has the format chosen
-/// from what it offers (`surface::choose_format`).
+/// The format of a target of the device's own that blends in linear
+/// light: sRGB values, which the GPU makes linear before it blends and
+/// encodes after. One that blends in encoded values draws on the same
+/// bytes in this format's non-sRGB form ([`own_format`]). A window's
+/// surface has the format chosen from what it offers
+/// (`surface::choose_format`).
 const OWN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+
+/// The format of a target of the device's own that blends in `blending`'s
+/// space: [`OWN_FORMAT`], or its non-sRGB form, through which the GPU's
+/// fixed-function blend works on the sRGB values themselves.
+fn own_format(blending: Blending) -> wgpu::TextureFormat {
+    match blending {
+        Blending::Linear => OWN_FORMAT,
+        Blending::Encoded => OWN_FORMAT.remove_srgb_suffix(),
+    }
+}
 
 /// How many bytes one quad takes in the instance buffer: its box, its
 /// source and its colour.
@@ -174,14 +206,15 @@ struct Window {
 
 impl Window {
     /// The surface, with what `surface::State` decides from what it offers
-    /// `adapter` and what the run `asked` for. The error says why nothing
-    /// can be drawn on it.
+    /// `adapter`, what the run `asked` for and the space it is to blend in.
+    /// The error says why nothing can be drawn on it.
     fn new(
         surface: wgpu::Surface<'static>,
         adapter: &wgpu::Adapter,
         asked: Asked,
+        blending: Blending,
     ) -> Result<Self, String> {
-        let state = State::new(&surface.get_capabilities(adapter), asked)?;
+        let state = State::new(&surface.get_capabilities(adapter), asked, blending)?;
         Ok(Self {
             surface,
             state,
@@ -245,13 +278,16 @@ pub struct Device {
     adapter: String,
     /// Whether it blends by a coverage for each channel.
     per_channel: bool,
+    /// The space it blends in: what the format it draws through gives,
+    /// and what the shader is told.
+    blending: Blending,
     /// The format of what the pipeline draws on.
     format: wgpu::TextureFormat,
     /// The one pipeline.
     pipeline: wgpu::RenderPipeline,
     /// The layout of a page's bind group.
     page_layout: wgpu::BindGroupLayout,
-    /// The target's size and the contrast, for the shader.
+    /// The target's size, the contrast and the blending, for the shader.
     globals: wgpu::Buffer,
     /// What binds `globals`.
     globals_bind: wgpu::BindGroup,
@@ -273,17 +309,103 @@ pub struct Device {
 }
 
 /// The bytes of the shader's globals: the target's size, `width` by
-/// `height`, then `contrast`, then a float unused, each in the machine's
-/// byte order.
-fn globals(width: u32, height: u32, contrast: f32) -> [u8; 16] {
+/// `height`, then `contrast`, then whether `blending` is in encoded values
+/// (1) or in linear light (0), each a float in the machine's byte order.
+fn globals(width: u32, height: u32, contrast: f32, blending: Blending) -> [u8; 16] {
+    let encoded = match blending {
+        Blending::Linear => 0.0,
+        Blending::Encoded => 1.0,
+    };
     let mut bytes = [0; 16];
-    for (at, value) in [width as f32, height as f32, contrast, 0.0]
+    for (at, value) in [width as f32, height as f32, contrast, encoded]
         .into_iter()
         .enumerate()
     {
         bytes[at * 4..at * 4 + 4].copy_from_slice(&value.to_ne_bytes());
     }
     bytes
+}
+
+/// What a target that blends in `blending`'s space is cleared to for the
+/// frame's ground `ground`, at full opacity whatever its alpha: the
+/// ground's bytes over 255 where the target holds the encoded values as
+/// they are, and each made linear where the target is drawn through an
+/// sRGB view, since the GPU encodes a clear made on one as it stores it.
+fn clear_color(ground: Color, blending: Blending) -> wgpu::Color {
+    let [red, green, blue, _] = ground.0.to_be_bytes();
+    let channel = |byte: u8| match blending {
+        Blending::Encoded => f64::from(byte) / 255.0,
+        Blending::Linear => f64::from(to_linear(byte)),
+    };
+    wgpu::Color {
+        r: channel(red),
+        g: channel(green),
+        b: channel(blue),
+        a: 1.0,
+    }
+}
+
+/// What `surface`'s Metal layer reads now: the layer wgpu-hal draws on
+/// (`render_layer`), reached through wgpu's re-export of wgpu-hal. Every
+/// read is a method of the layer or a field of what it returns, whose type
+/// is never named, so this crate depends on no binding of Core Animation
+/// or Core Graphics (`deny.toml`). The colour space is read as present or
+/// not.
+#[cfg(target_os = "macos")]
+fn read_layer(surface: &wgpu::Surface<'_>) -> Option<LayerReading> {
+    // SAFETY: the layer is only read, on the thread that holds the
+    // renderer, under wgpu-hal's own lock of it, and nothing of it is kept
+    // past this call: the surface is not destroyed, and wgpu-hal's state is
+    // left as it was.
+    let hal = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }?;
+    let layer = hal.render_layer().lock();
+    let bounds = layer.bounds();
+    let drawable = layer.drawableSize();
+    Some(LayerReading {
+        bounds: (bounds.size.width, bounds.size.height),
+        contents_scale: layer.contentsScale(),
+        drawable: (drawable.width, drawable.height),
+        opaque: layer.isOpaque(),
+        colorspace: layer.colorspace().is_some(),
+        format: layer.pixelFormat().0 as u64,
+        gravity: layer.contentsGravity().to_string(),
+    })
+}
+
+/// No surface off macOS has a Metal layer.
+#[cfg(not(target_os = "macos"))]
+fn read_layer(_: &wgpu::Surface<'_>) -> Option<LayerReading> {
+    None
+}
+
+/// Sets the `contentsScale` of the view layer `surface`'s Metal layer
+/// follows (its superlayer) to `asked`, reads the Metal layer's, sets it
+/// back and reads again (`layer::Followed`). Key-value observation tells
+/// the Metal layer as the value is set, on this thread.
+#[cfg(target_os = "macos")]
+fn follow_scale(surface: &wgpu::Surface<'_>, asked: f64) -> Option<Followed> {
+    // SAFETY: as `read_layer`'s; the one thing changed, the view layer's
+    // scale, is set back before the call returns.
+    let hal = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }?;
+    let layer = hal.render_layer().lock();
+    let view_layer = layer.superlayer()?;
+    let before = view_layer.contentsScale();
+    view_layer.setContentsScale(asked);
+    let read = layer.contentsScale();
+    view_layer.setContentsScale(before);
+    let back = layer.contentsScale();
+    Some(Followed {
+        before,
+        asked,
+        read,
+        back,
+    })
+}
+
+/// No surface off macOS has a Metal layer.
+#[cfg(not(target_os = "macos"))]
+fn follow_scale(_: &wgpu::Surface<'_>, _: f64) -> Option<Followed> {
+    None
 }
 
 /// Waits for `future`, which wgpu resolves without an executor.
@@ -293,32 +415,46 @@ fn wait<T>(future: impl Future<Output = T>) -> T {
 
 impl Device {
     /// A device on an adapter of `instance` that draws on a target of its
-    /// own, blending by a coverage for each channel when the adapter can
-    /// and `allow_per_channel` says it may.
-    pub fn new(instance: &wgpu::Instance, allow_per_channel: bool) -> Result<Self, Unavailable> {
-        Self::build(instance, None, allow_per_channel)
+    /// own, blending in `blending`'s space, and by a coverage for each
+    /// channel when the adapter can and `allow_per_channel` says it may.
+    pub fn new(
+        instance: &wgpu::Instance,
+        allow_per_channel: bool,
+        blending: Blending,
+    ) -> Result<Self, Unavailable> {
+        Self::build(instance, None, allow_per_channel, blending)
     }
 
     /// A device on an adapter of `instance` that can present to `surface`,
     /// and draws on it, presenting as `asked` says of each half the run
-    /// asked for (`present::choose`). It is refused, with the reason, when
-    /// no adapter can, or when the surface offers nothing to configure it
-    /// with.
+    /// asked for (`present::choose`), and blending in `blending`'s space
+    /// where the surface offers a format to, in linear light where it does
+    /// not (`surface::choose_format`; [`Device::blending`] says which). It
+    /// is refused, with the reason, when no adapter can, or when the
+    /// surface offers nothing to configure it with.
     pub fn on_surface(
         instance: &wgpu::Instance,
         surface: wgpu::Surface<'static>,
         asked: Asked,
         allow_per_channel: bool,
+        blending: Blending,
     ) -> Result<Self, Unavailable> {
-        Self::build(instance, Some((surface, asked)), allow_per_channel)
+        Self::build(
+            instance,
+            Some((surface, asked)),
+            allow_per_channel,
+            blending,
+        )
     }
 
     /// A device on an adapter of `instance`, drawing on `surface` when
-    /// there is one and on a target of its own otherwise.
+    /// there is one and on a target of its own otherwise, blending in
+    /// `blending`'s space.
     fn build(
         instance: &wgpu::Instance,
         surface: Option<(wgpu::Surface<'static>, Asked)>,
         allow_per_channel: bool,
+        blending: Blending,
     ) -> Result<Self, Unavailable> {
         let adapter = wait(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: surface.as_ref().map(|(surface, _)| surface),
@@ -327,12 +463,16 @@ impl Device {
         .map_err(|error| Unavailable(format!("no adapter: {error}")))?;
         let info = adapter.get_info();
         let window = surface
-            .map(|(surface, asked)| Window::new(surface, &adapter, asked))
+            .map(|(surface, asked)| Window::new(surface, &adapter, asked, blending))
             .transpose()
             .map_err(|reason| Unavailable(format!("{reason} ({})", info.name)))?;
         let format = window
             .as_ref()
-            .map_or(OWN_FORMAT, |window| window.state.target());
+            .map_or(own_format(blending), |window| window.state.target());
+        // What the surface can blend in, when there is one.
+        let blending = window
+            .as_ref()
+            .map_or(blending, |window| window.state.blending());
         let dual = wgpu::Features::DUAL_SOURCE_BLENDING;
         let per_channel = allow_per_channel && adapter.features().contains(dual);
         let (device, queue) = wait(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -469,6 +609,7 @@ impl Device {
             queue,
             adapter: format!("{} ({:?})", info.name, info.backend),
             per_channel,
+            blending,
             format,
             pipeline,
             page_layout,
@@ -514,10 +655,36 @@ impl Device {
         self.window.as_ref()?.state.presentation()
     }
 
+    /// The window's Metal layer as read now, with the format its surface
+    /// is configured with (`layer`); `None` off macOS, for a device that
+    /// draws on a target of its own, and for a surface whose format has
+    /// no Metal number of this crate's.
+    pub fn layer(&self) -> Option<Layer> {
+        let window = self.window.as_ref()?;
+        let configured = metal_format(window.state.configured_format())?;
+        let reading = read_layer(&window.surface)?;
+        Some(Layer {
+            reading,
+            configured,
+        })
+    }
+
+    /// What the window's Metal layer read across a change of the view
+    /// layer's scale to `asked` and back (`layer::Followed`); `None` as for
+    /// [`Device::layer`].
+    pub fn follow_scale(&self, asked: f64) -> Option<Followed> {
+        follow_scale(&self.window.as_ref()?.surface, asked)
+    }
+
     /// Whether the device blends by a coverage for each channel, so that
     /// subpixel masks may be drawn on it.
     pub fn per_channel(&self) -> bool {
         self.per_channel
+    }
+
+    /// The space the device blends in.
+    pub fn blending(&self) -> Blending {
+        self.blending
     }
 
     /// The adapter's name and back end, for a person.
@@ -526,20 +693,23 @@ impl Device {
     }
 
     /// Draws `quads`, in order, over a target `width` by `height` cleared
-    /// first, reading glyph quads from `atlas`: on the window's surface,
-    /// which is then presented, or on the device's own target. The error
-    /// is wgpu's, when it refuses a call of the draw, or says that the
-    /// window's surface gave no texture to draw on.
+    /// first to `ground` at full opacity (the frame's ground,
+    /// [`clear_color`]), reading glyph quads from `atlas`: on the window's
+    /// surface, which is then presented, or on the device's own target.
+    /// The error is wgpu's, when it refuses a call of the draw, or says
+    /// that the window's surface gave no texture to draw on.
     pub fn draw(
         &mut self,
         quads: &[Quad],
         atlas: &Atlas,
         width: u32,
         height: u32,
+        ground: Color,
     ) -> Result<(), String> {
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let sent = self.send_pages(atlas);
-        let drawn = self.draw_on(quads, width.max(1), height.max(1));
+        let clear = clear_color(ground, self.blending);
+        let drawn = self.draw_on(quads, width.max(1), height.max(1), clear);
         if let Some(error) = wait(scope.pop()) {
             return Err(error.to_string());
         }
@@ -593,10 +763,17 @@ impl Device {
     }
 
     /// The calls of one draw, on a target `width` by `height`, neither of
-    /// them 0. The error says why the window's surface gave no texture.
-    fn draw_on(&mut self, quads: &[Quad], width: u32, height: u32) -> Result<(), String> {
+    /// them 0, cleared to `clear`. The error says why the window's surface
+    /// gave no texture.
+    fn draw_on(
+        &mut self,
+        quads: &[Quad],
+        width: u32,
+        height: u32,
+        clear: wgpu::Color,
+    ) -> Result<(), String> {
         let (view, presented) = self.canvas(width, height)?;
-        let written = globals(width, height, self.contrast);
+        let written = globals(width, height, self.contrast, self.blending);
         self.queue.write_buffer(&self.globals, 0, &written);
 
         let (bytes, runs) = instances(quads, |page| self.pages.contains_key(&page));
@@ -620,12 +797,6 @@ impl Device {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         if let Some((buffer, _)) = &self.instances {
             self.queue.write_buffer(buffer, 0, &bytes);
-            let clear = wgpu::Color {
-                r: f64::from(CLEAR[0]) / 255.0,
-                g: f64::from(CLEAR[1]) / 255.0,
-                b: f64::from(CLEAR[2]) / 255.0,
-                a: f64::from(CLEAR[3]) / 255.0,
-            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("frame"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {

@@ -12,8 +12,9 @@
 # starts an editor passes only once nothing it started is still running
 # (tools/leftovers.sh).
 #
-# - `pieces`: `lean`, `lake`, `clang` and `ld64.lld` are in the bundle's
-#   toolchain and executable, with `Init`, `Std`, `Lean` and `Lake`,
+# - `pieces`: `lean`, `lake`, `clang` and the toolchain's linker, `ld64.lld`
+#   on macOS and `ld.lld` elsewhere, are in the bundle's toolchain and
+#   executable, with `Init`, `Std`, `Lean` and `Lake`,
 #   `lean.h`, the static libraries, the Rust archive and its system
 #   libraries, the core's and each default package's built modules, the
 #   core's glue, the set's lakefile, on macOS the link stubs, and the
@@ -119,7 +120,8 @@ generated() {
 
 case "$check" in
 pieces)
-  for tool in lean lake clang ld64.lld; do
+  if [ "$(uname)" = Darwin ]; then linker=ld64.lld; else linker=ld.lld; fi
+  for tool in lean lake clang "$linker"; do
     test -f "$lean/toolchain/bin/$tool" && test -x "$lean/toolchain/bin/$tool" ||
       fail "the bundle has no executable $tool in its toolchain"
   done
@@ -146,7 +148,7 @@ pieces)
   done
   ! grep -q '^LEAN_CC=' "$app/Contents/Resources/editor.build" ||
     fail "the bundle's editor.build sets LEAN_CC, so its builds would not use the bundled clang"
-  echo 'bundle-sets: the bundle holds lean, lake, clang, ld64.lld, Init, Std, Lean, the static libraries, the Rust archive, the built core and default packages'
+  echo "bundle-sets: the bundle holds lean, lake, clang, $linker, Init, Std, Lean, the static libraries, the Rust archive, the built core and default packages"
   exit 0
   ;;
 first-launch)

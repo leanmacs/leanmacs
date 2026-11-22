@@ -6,7 +6,8 @@
 //! port's [`Input`] and [`Canvas`], and ends its loop when it is asked to
 //! close. No winit or objc2 type is public, no other crate depends on
 //! winit or on the objc2 crates it names (`deny.toml`), and AppKit is named
-//! only in the modules `delegate`, `menu_bar` and `corner`, on macOS.
+//! only in the modules `delegate`, `menu_bar`, `corner` and `background`,
+//! on macOS.
 //!
 //! The translation is the module `translate`'s, with a key's names in
 //! `names` and the window's native handles in `native`: every key with its
@@ -75,6 +76,11 @@
 //!   the window's fullscreen, corners and title bar are read and a change
 //!   of any reported as a resize. A request asked with no window running does nothing, and one
 //!   that arrives before the window is made is dropped.
+//! - **It fills what nothing drew with the background asked**
+//!   ([`Request::Background`]): on macOS the `NSWindow`'s
+//!   `backgroundColor` (the module `background`), which shows behind the
+//!   content view during a live resize and before a first frame. Elsewhere
+//!   winit has no setter, and it does nothing.
 //! - **It receives the files the system asks the app to open (macOS)**,
 //!   through an application delegate of its own (the module `delegate`),
 //!   installed once winit's event loop is built and before it runs, since a
@@ -220,6 +226,7 @@
 //! not been seen.
 
 mod asked;
+mod background;
 mod corner;
 #[cfg(target_os = "macos")]
 mod delegate;

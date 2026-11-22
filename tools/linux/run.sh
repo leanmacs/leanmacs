@@ -88,8 +88,19 @@ usage() {
 # Points the copy's `target/` at the volume, makes the copy a git repository
 # of its own (the `c-fmt` task lists files with `git ls-files`) and installs
 # the tools `mise.toml` pins.
+#
+# The volume's `target/` is made here, not by Cargo, so it is given the
+# `CACHEDIR.TAG` Cargo writes in a target directory it makes: without it
+# `cargo clean`, which the lakefile runs when a cached Rust archive left no
+# list of its system libraries (lean/lakefile.lean, `buildRust`), refuses
+# the directory ("missing or invalid `CACHEDIR.TAG` file").
 inside_prepare() {
   mkdir -p /cargo/home /cargo/target
+  [ -f /cargo/target/CACHEDIR.TAG ] ||
+    printf '%s\n' 'Signature: 8a477f597d28d172789f06886806bc55' \
+      '# This file is a cache directory tag created by cargo.' \
+      '# For information about cache directory tags see https://bford.info/cachedir/' \
+      >/cargo/target/CACHEDIR.TAG
   if [ ! -L /work/target ]; then
     rm -rf /work/target
     ln -s /cargo/target /work/target
@@ -120,7 +131,7 @@ inside_ci() {
   inside_prepare
   if [ "$clean" = yes ]; then
     rm -rf /work/lean/.lake/build
-    find /cargo/target -mindepth 1 -delete
+    find /cargo/target -mindepth 1 ! -path /cargo/target/CACHEDIR.TAG -delete
   fi
   inside_versions
 

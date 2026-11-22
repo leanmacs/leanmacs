@@ -55,7 +55,7 @@
 //! not bound presents nothing, and a presenter with no target lets the
 //! frame go and spends the stamp.
 //!
-//! # What reaches the window: the title and the menu
+//! # What reaches the window: the title, the menu and the background
 //!
 //! The scene's title is the window's ([`crate::display::WireScene`]'s
 //! `title`): a display bound to a presenter hands it the title of each
@@ -76,9 +76,23 @@
 //! made names none, changes nothing, so the menu bar named last stays. A
 //! window that opens is sent the title, then the menu bar.
 //!
+//! The ground of each frame presented (`Frame::ground`, the theme's
+//! paper) goes the same way as the window's background, a
+//! `editor_platform::Request::Background` ([`Presenter::present`]), with
+//! the title's rule: sent only when it is not the background last sent,
+//! and kept for the next window when none is open. A window that opens is
+//! sent the title, the menu bar, then the background. So what the window
+//! shows where nothing drew, behind the drawable area during a resize and
+//! before a first frame, is the paper the renderer clears to. It does not
+//! come from Lean: the presenter has every frame, and the scene, its wire
+//! and Lean's requests are unchanged.
+//!
 //! These rules are pinned here on a recording asker; that a published
-//! title and menu bar reach the scripted window is wiring, in
-//! `tests/render_session.rs`.
+//! title, menu bar and paper reach the scripted window is wiring, in
+//! `tests/render_session.rs`. What the scripted window was asked crosses
+//! back to Lean's tests as words (`crate::window::asked_words`, a
+//! background as the tag 8 and its three bytes), and the window-host
+//! check reads the built-in theme's paper there.
 //!
 //! The presenter is a value, handed explicitly to whatever uses it, and
 //! every test makes its own. The process has one, [`PRESENTER`], reached
@@ -130,7 +144,7 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use editor_layout::frame::Frame;
-use editor_platform::{Canvas, Drawer, Menu, NativeWindow, Request, Resize};
+use editor_platform::{Canvas, Drawer, Menu, NativeWindow, Request, Resize, Rgb};
 use editor_render::clock::Clock;
 use editor_render::journal::Entry;
 use editor_render::port::{Renderer, Target};
@@ -301,6 +315,9 @@ struct Named {
     title: Option<String>,
     /// The menu bar the last scene that named one named, if one has.
     menu: Option<Menu>,
+    /// The ground of the frame last presented, as the window's background,
+    /// if one has been.
+    background: Option<Rgb>,
     /// The open window, and what was last sent to it.
     window: Option<(Asker, Sent)>,
 }
@@ -312,11 +329,14 @@ struct Sent {
     title: Option<String>,
     /// The menu bar, if one has been.
     menu: Option<Menu>,
+    /// The background, if one has been.
+    background: Option<Rgb>,
 }
 
 impl Named {
     /// Sends the title named to the open window, when there is one and it
-    /// is not the title last sent there; then the same of the menu bar.
+    /// is not the title last sent there; then the same of the menu bar, and
+    /// then of the background.
     fn send(&mut self) {
         let Some((asker, sent)) = &mut self.window else {
             return;
@@ -332,6 +352,12 @@ impl Named {
         {
             sent.menu = Some(menu.clone());
             asker(Request::Menu(menu.clone()));
+        }
+        if let Some(background) = self.background
+            && sent.background != Some(background)
+        {
+            sent.background = Some(background);
+            asker(Request::Background(background));
         }
     }
 }
@@ -409,8 +435,9 @@ impl Presenter {
     }
 
     /// Makes `asker` the open window's, and sends it the title named so
-    /// far, then the menu bar, if each has been: a window opens with the
-    /// platform's own title and no menu bar of the editor's.
+    /// far, then the menu bar, then the background, if each has been: a
+    /// window opens with the platform's own title, no menu bar of the
+    /// editor's and the system's background.
     pub fn open_window(&self, asker: Asker) {
         let mut named = locked(&self.named);
         named.window = Some((asker, Sent::default()));
@@ -429,7 +456,18 @@ impl Presenter {
     /// follows the scene. With no target the stamp is spent all the same,
     /// so an input that led to no frame shown is never counted against a
     /// later one.
+    ///
+    /// The frame's ground is kept as the window's background, and sent to
+    /// the open window when it is not the background last sent there, as
+    /// [`name`](Self::name) does a title; with no window open it is kept
+    /// for the next.
     pub fn present(&self, frame: Arc<Frame>, size: (u32, u32)) {
+        {
+            let [red, green, blue, _] = frame.ground.0.to_be_bytes();
+            let mut named = locked(&self.named);
+            named.background = Some(Rgb { red, green, blue });
+            named.send();
+        }
         let stamp = self.answering.take();
         let Some((handle, follows)) = locked(&self.target).clone() else {
             return;
@@ -936,7 +974,8 @@ mod tests {
     use editor_render::port::Target;
     use editor_render::render_loop::{RecordingPark, RenderHandle, RenderLoop, Step};
 
-    use editor_platform::Request;
+    use editor_layout::face::Color;
+    use editor_platform::{Request, Rgb};
 
     use super::{Answering, Asker, Follows, Presenter, Session, leave_word, refresh_ns, target};
     use crate::window::{CountingClock, InputClock, Monotonic};
@@ -1497,6 +1536,69 @@ mod tests {
         presenter.menu(&menu_titled("C"));
 
         assert_eq!(held(&asked), [menu("A"), menu("B")]);
+    }
+
+    /// A frame made by hand, of no view, on the ground `ground`.
+    fn grounded(ground: Color) -> Arc<Frame> {
+        Arc::new(Frame {
+            ground,
+            ..Frame::default()
+        })
+    }
+
+    /// The request for the background of `ground`.
+    fn background(ground: Color) -> Request {
+        let [red, green, blue, _] = ground.0.to_be_bytes();
+        Request::Background(Rgb { red, green, blue })
+    }
+
+    /// Two papers.
+    const PAPER: Color = Color::rgb(0x2e, 0x34, 0x40);
+    const LIGHT: Color = Color::rgb(0xec, 0xef, 0xf4);
+
+    #[test]
+    fn the_ground_of_a_presented_frame_is_asked_of_the_window_only_when_it_changes() {
+        let presenter = Presenter::new();
+        let (asker, asked) = recording_asker();
+        presenter.open_window(asker);
+        for ground in [PAPER, PAPER, LIGHT, LIGHT, PAPER] {
+            presenter.present(grounded(ground), (400, 300));
+        }
+        assert_eq!(
+            held(&asked),
+            [background(PAPER), background(LIGHT), background(PAPER)]
+        );
+    }
+
+    #[test]
+    fn a_window_that_opens_is_sent_the_title_the_menu_bar_and_then_the_background() {
+        let presenter = Presenter::new();
+        let (asker, asked) = recording_asker();
+        presenter.present(grounded(PAPER), (400, 300));
+        presenter.name("scratch");
+        presenter.menu(&menu_titled("A"));
+
+        presenter.open_window(asker);
+
+        assert_eq!(
+            held(&asked),
+            [title("scratch"), menu("A"), background(PAPER)]
+        );
+    }
+
+    #[test]
+    fn with_no_window_the_ground_is_kept_for_the_next() {
+        let presenter = Presenter::new();
+        let (first, asked_first) = recording_asker();
+        presenter.open_window(first);
+        presenter.present(grounded(PAPER), (400, 300));
+        presenter.close_window();
+        presenter.present(grounded(LIGHT), (400, 300));
+        assert_eq!(held(&asked_first), [background(PAPER)]);
+
+        let (second, asked_second) = recording_asker();
+        presenter.open_window(second);
+        assert_eq!(held(&asked_second), [background(LIGHT)]);
     }
 
     #[test]

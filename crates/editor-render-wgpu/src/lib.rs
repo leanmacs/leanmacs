@@ -7,9 +7,12 @@
 //! which glyph images are kept and for how long (the module `glyphs`) and
 //! where (`atlas`), what a frame comes to as rectangles (`painter`,
 //! `quads`), and how a rectangle's pixel is laid over what is under it
-//! (`blend`). Glyph images are made by `swash` (`raster`) and packed by
-//! `etagere` (`atlas`); no type of either is public here. Those modules
-//! are private, and their docs say what each decides.
+//! (`blend`). Glyph images are made through the rasteriser port, which
+//! `editor-raster` owns: by `swash` (`raster`) unless the program hands a
+//! renderer another rasteriser, and by swash for every glyph that one
+//! declines. They are packed by `etagere` (`atlas`); no type of either
+//! library is public here. Those modules are private, and their docs say
+//! what each decides.
 //!
 //! [`HeadlessRenderer`] lays the quads over a pixel buffer on the CPU
 //! (`cpu`): it needs no GPU, and every test of it runs in the gate.
@@ -35,6 +38,7 @@ mod blend;
 mod cpu;
 mod glyphs;
 mod gpu;
+pub mod layer;
 mod painter;
 mod png;
 pub mod present;
@@ -43,6 +47,10 @@ mod raster;
 mod surface;
 
 #[cfg(test)]
+mod placement_tests;
+#[cfg(test)]
+mod rasterizer_tests;
+#[cfg(test)]
 mod settings_tests;
 #[cfg(test)]
 mod weight_tests;
@@ -50,7 +58,9 @@ mod weight_tests;
 use std::error::Error;
 use std::fmt;
 
+use editor_layout::face::Color;
 use editor_platform::NativeWindow;
+use editor_raster::{Fallback, GlyphImage, GlyphRequest, Rasterize};
 use editor_render::port::{DrawRequest, Drawn, Renderer};
 
 use crate::painter::Painter;
@@ -102,6 +112,63 @@ impl Image {
     }
 }
 
+/// What a renderer's glyph images are made by: the rasteriser it was
+/// handed ([`HeadlessRenderer::rasterizing_with`],
+/// [`WgpuRenderer::rasterizing_with`]), and swash, at the settings'
+/// weight, for every glyph that one declines.
+type Rasterizers = Fallback<Box<dyn Rasterize + Send>, SwashRasterizer>;
+
+/// The rasteriser a renderer asks first until it is handed one: it
+/// declines every glyph, so swash draws them all.
+struct Declines;
+
+impl Rasterize for Declines {
+    fn rasterize(&mut self, _: &GlyphRequest<'_>) -> Option<GlyphImage> {
+        None
+    }
+
+    fn name(&self) -> &'static str {
+        DECLINES
+    }
+}
+
+/// What [`Declines`] is called.
+const DECLINES: &str = "no rasteriser";
+
+/// What draws a renderer's glyph images, for a person
+/// ([`HeadlessRenderer::rasterizing`], [`WgpuRenderer::rasterizing`]):
+/// `swash`, or the rasteriser it was handed and swash for what that one
+/// declines. Whatever prints it prints this, as it does [`Masks`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rasterizing {
+    /// The name of the rasteriser asked first ([`Rasterize::name`]).
+    first: &'static str,
+}
+
+impl Rasterizing {
+    /// What draws the glyphs of `rasterizers`.
+    fn of(rasterizers: &Rasterizers) -> Self {
+        Self {
+            first: rasterizers.first().name(),
+        }
+    }
+}
+
+impl fmt::Display for Rasterizing {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.first == DECLINES {
+            formatter.write_str("swash")
+        } else {
+            write!(formatter, "{}, and swash for what it declines", self.first)
+        }
+    }
+}
+
+/// `first`, falling back to swash at `dilation` ([`Weight::dilation`]).
+fn rasterizers(first: Box<dyn Rasterize + Send>, dilation: f32) -> Rasterizers {
+    Fallback::new(first, SwashRasterizer::dilated(dilation))
+}
+
 /// The headless adapter of the `Renderer` port: it draws a frame into a
 /// picture in memory, with no window and no GPU.
 ///
@@ -112,22 +179,36 @@ impl Image {
 /// whose fonts have no bytes, is drawn without its glyphs.
 pub struct HeadlessRenderer {
     /// What turns a frame into quads.
-    painter: Painter<SwashRasterizer>,
+    painter: Painter<Rasterizers>,
     /// The picture of the frame last drawn.
     image: Image,
     /// How much the coverage of dark text is raised ([`Weight::contrast`]).
     contrast: f32,
+    /// The space it blends in ([`Settings::blending`]).
+    blending: Blending,
 }
 
 impl HeadlessRenderer {
     /// A renderer that has drawn nothing: its picture is of no size.
     pub fn new(settings: Settings) -> Self {
-        let rasterizer = SwashRasterizer::dilated(settings.weight.dilation);
+        let rasterizer = rasterizers(Box::new(Declines), settings.weight.dilation);
         Self {
             painter: Painter::new(rasterizer, &settings, true, PAGE_SIZE),
-            image: cpu::cleared(0, 0),
+            image: cpu::cleared(0, 0, Color(0)),
             contrast: settings.weight.contrast,
+            blending: settings.blending,
         }
+    }
+
+    /// The renderer, drawing its glyphs with `rasterizer`, and with swash
+    /// at its settings' weight for every glyph `rasterizer` declines. Made
+    /// after a draw, the next draw makes every glyph image again and
+    /// builds every row again.
+    pub fn rasterizing_with(mut self, rasterizer: impl Rasterize + Send + 'static) -> Self {
+        let dilation = self.painter.rasterizer().fallback().dilation();
+        self.painter
+            .set_rasterizer(rasterizers(Box::new(rasterizer), dilation));
+        self
     }
 
     /// The picture of the frame last drawn, the size of its target.
@@ -139,6 +220,17 @@ impl HeadlessRenderer {
     /// before a first draw ([`Masks`]).
     pub fn masks(&self) -> Option<Masks> {
         self.painter.masks()
+    }
+
+    /// What draws its glyph images.
+    pub fn rasterizing(&self) -> Rasterizing {
+        Rasterizing::of(self.painter.rasterizer())
+    }
+
+    /// The space it blends in: its settings', which the CPU can always
+    /// blend in.
+    pub fn blending(&self) -> Blending {
+        self.blending
     }
 }
 
@@ -183,7 +275,7 @@ impl Error for NoAdapter {}
 /// image on demand, on a real adapter (`mise run render-gpu`).
 pub struct WgpuRenderer {
     /// What turns a frame into quads.
-    painter: Painter<SwashRasterizer>,
+    painter: Painter<Rasterizers>,
     /// The GPU.
     device: gpu::Device,
     /// What wgpu said of the last draw it refused.
@@ -268,7 +360,13 @@ impl WgpuRenderer {
                 reason: format!("no surface on the window: {error}"),
             })?;
         Self::with(
-            gpu::Device::on_surface(instance, surface, settings.presentation, allow_per_channel),
+            gpu::Device::on_surface(
+                instance,
+                surface,
+                settings.presentation,
+                allow_per_channel,
+                settings.blending,
+            ),
             settings,
         )
     }
@@ -281,7 +379,10 @@ impl WgpuRenderer {
         settings: Settings,
         allow_per_channel: bool,
     ) -> Result<Self, NoAdapter> {
-        Self::with(gpu::Device::new(instance, allow_per_channel), settings)
+        Self::with(
+            gpu::Device::new(instance, allow_per_channel, settings.blending),
+            settings,
+        )
     }
 
     /// A renderer over `device`, if there is one.
@@ -292,7 +393,7 @@ impl WgpuRenderer {
         let mut device = device.map_err(|gpu::Unavailable(reason)| NoAdapter { reason })?;
         device.contrast = settings.weight.contrast;
         let painter = Painter::new(
-            SwashRasterizer::dilated(settings.weight.dilation),
+            rasterizers(Box::new(Declines), settings.weight.dilation),
             &settings,
             device.per_channel(),
             PAGE_SIZE,
@@ -304,12 +405,40 @@ impl WgpuRenderer {
         })
     }
 
+    /// The renderer, drawing its glyphs with `rasterizer`, and with swash
+    /// at its settings' weight for every glyph `rasterizer` declines. Made
+    /// after a draw, the next draw makes every glyph image again and
+    /// builds every row again.
+    pub fn rasterizing_with(mut self, rasterizer: impl Rasterize + Send + 'static) -> Self {
+        let dilation = self.painter.rasterizer().fallback().dilation();
+        self.painter
+            .set_rasterizer(rasterizers(Box::new(rasterizer), dilation));
+        self
+    }
+
     /// What the window's surface offered, what the run asked for
     /// ([`Settings::presentation`]) and what the surface was configured
     /// with; `None` for a renderer with no window, and before its first
     /// draw configures the surface.
     pub fn presentation(&self) -> Option<Offered> {
         self.device.presentation()
+    }
+
+    /// The Metal layer the renderer draws on, read now and held with the
+    /// format its surface was configured with, for [`layer::misses`];
+    /// `None` off macOS and for a renderer with no window.
+    pub fn layer(&self) -> Option<layer::Layer> {
+        self.device.layer()
+    }
+
+    /// Sets the scale of the view layer the renderer's Metal layer
+    /// follows to `asked`, reads the Metal layer's, and sets it back
+    /// ([`layer::Followed`]): the observation of a change of scale, seen
+    /// on a machine with one display. For the on-demand layer check alone,
+    /// on the main thread; `None` off macOS and for a renderer with no
+    /// window.
+    pub fn follow_scale(&self, asked: f64) -> Option<layer::Followed> {
+        self.device.follow_scale(asked)
     }
 
     /// The adapter's name and back end, for a person.
@@ -324,10 +453,22 @@ impl WgpuRenderer {
         self.device.per_channel()
     }
 
+    /// The space it blends in: its settings' ([`Settings::blending`]),
+    /// unless it draws on a window whose surface cannot blend in that
+    /// space, which then blends in linear light.
+    pub fn blending(&self) -> Blending {
+        self.device.blending()
+    }
+
     /// The kind of mask the last draw asked its glyph images in, whether
     /// or not it was presented; none before a first draw ([`Masks`]).
     pub fn masks(&self) -> Option<Masks> {
         self.painter.masks()
+    }
+
+    /// What draws its glyph images.
+    pub fn rasterizing(&self) -> Rasterizing {
+        Rasterizing::of(self.painter.rasterizer())
     }
 
     /// Why the last draw was not presented, when it was not: what wgpu
@@ -349,7 +490,7 @@ impl WgpuRenderer {
     pub fn read_back(&mut self) -> Image {
         self.device.read_back().unwrap_or_else(|refused| {
             self.refused = Some(refused);
-            cpu::cleared(0, 0)
+            cpu::cleared(0, 0, Color(0))
         })
     }
 }
@@ -363,6 +504,7 @@ impl Renderer for WgpuRenderer {
             self.painter.atlas(),
             target.width,
             target.height,
+            request.frame.ground,
         );
         self.refused = sent.err();
         if self.refused.is_some() {
@@ -384,12 +526,13 @@ impl Renderer for HeadlessRenderer {
     fn draw(&mut self, request: &DrawRequest<'_>) -> Drawn {
         let target = request.target;
         let drawn = self.painter.paint(request.frame, target);
-        self.image = cpu::cleared(target.width, target.height);
+        self.image = cpu::cleared(target.width, target.height, request.frame.ground);
         cpu::composite(
             &mut self.image,
             self.painter.quads(),
             self.painter.atlas(),
             self.contrast,
+            self.blending,
         );
         Drawn {
             presented: true,
@@ -420,6 +563,35 @@ pub enum Antialiasing {
     Subpixel(SubpixelOrder),
 }
 
+/// The space a quad is blended over what is under it in, the whole frame
+/// alike: fills, masks and colour images (the module `blend`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Blending {
+    /// In linear light: the target's sRGB values are made linear, blended
+    /// and encoded again, so half coverage of white on black is 188 of
+    /// 255. What every platform gets unless its program says otherwise.
+    #[default]
+    Linear,
+    /// In the sRGB-encoded values themselves, with no conversion either
+    /// way, so half coverage of white on black is 128: as Core Graphics
+    /// composites in an 8-bit sRGB bitmap, which is how macOS draws text
+    /// (`tests/coretext/blend.txt`).
+    Encoded,
+}
+
+/// The space for a person, to end a sentence that says how a renderer
+/// blends: `linear light`, or `sRGB-encoded values, as macOS blends`.
+/// Whatever prints a blending prints this, so that one added here needs
+/// no other crate changed.
+impl fmt::Display for Blending {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Linear => "linear light",
+            Self::Encoded => "sRGB-encoded values, as macOS blends",
+        })
+    }
+}
+
 /// What a renderer of this crate is told once, when it is made.
 ///
 /// The default draws text in linear light, its outlines as they are
@@ -437,6 +609,11 @@ pub struct Settings {
     pub atlas_budget: u64,
     /// How heavy text is drawn.
     pub weight: Weight,
+    /// The space every quad is blended in: linear light, or the
+    /// sRGB-encoded values, as macOS blends ([`Blending`]). A renderer on
+    /// a window whose surface cannot blend in the space asked for says
+    /// which it blends in ([`WgpuRenderer::blending`]).
+    pub blending: Blending,
     /// The present mode and the frame latency a run asks for in place of
     /// the decision's, each on its own, to measure another
     /// ([`present::choose`]); a half not asked for, as in the default
@@ -452,20 +629,27 @@ impl Default for Settings {
             hinting: true,
             atlas_budget: DEFAULT_ATLAS_BUDGET,
             weight: Weight::LINEAR,
+            blending: Blending::Linear,
             presentation: Asked::NOTHING,
         }
     }
 }
 
 impl Settings {
-    /// The default settings, with text drawn as Core Text draws it: its
-    /// weight ([`Weight::CORE_TEXT`]) and the hinting fitted with it,
-    /// which is off: the fit came nearest Core Text's drawing with
-    /// outlines not fitted to the pixel grid.
+    /// The default settings, with text drawn as Core Text draws it:
+    /// blended in sRGB-encoded values ([`Blending::Encoded`]), as Core
+    /// Graphics composites and as macOS's glyph masks are made for; with
+    /// the swash fallback's weight ([`Weight::CORE_TEXT`]) and the hinting
+    /// fitted with it, which is off: the fit came nearest Core Text's
+    /// drawing with outlines not fitted to the pixel grid. Glyphs are plain
+    /// masks at every scale ([`Antialiasing::Grayscale`]): macOS draws no
+    /// subpixel text.
     pub fn core_text() -> Self {
         Self {
+            antialiasing: Antialiasing::Grayscale,
             hinting: false,
             weight: Weight::CORE_TEXT,
+            blending: Blending::Encoded,
             ..Self::default()
         }
     }
@@ -492,24 +676,29 @@ impl Weight {
         dilation: 0.0,
     };
 
-    /// Core Text's weight, with hinting off ([`Settings::core_text`]):
-    /// fitted to Core Text's drawing of a sentence of the fixture font
-    /// Noto Sans Mono at 28 pixels, black on white
-    /// (`tests/coretext/sentence.png`).
+    /// The swash fallback's weight on macOS, with hinting off and blended
+    /// encoded ([`Settings::core_text`]): what the glyphs Core Text
+    /// declines are drawn with (variable faces off their defaults,
+    /// synthetic bold and slant, colour fonts). Fitted, blended encoded,
+    /// to Core Text's drawing of a sentence of the fixture font Noto Sans
+    /// Mono at 28 pixels, black on white (`tests/coretext/sentence.png`).
     ///
-    /// Drawn with it, the sentence has 1910 pixels darker than mid-grey
-    /// against Core Text's 1891 (1.010 of them) and ink of 499078
-    /// against 503470 (0.991); the default draws 0.699 and 0.721 of
-    /// them. Of the amounts the fit swept, contrast and dilation each in
-    /// steps of 0.1 and hinting on and off, it is the nearest, and the
-    /// tests in `weight_tests` hold it to that and to within a tenth of
-    /// each count.
+    /// Drawn with it, the sentence has 1904 pixels darker than mid-grey
+    /// against Core Text's 1891 (1.007 of them) and ink of 496219
+    /// against 503470 (0.986); the outline as it is, blended encoded and
+    /// unhinted, draws 0.866 and 0.857 of them, as Core Text's own drawing
+    /// with smoothing off has 0.866 and 0.853. Of the dilations the fit
+    /// swept, from 0 to 1 pixel in steps of 0.1 at a contrast of 0, hinting
+    /// on and off, it is the nearest, and the tests in `weight_tests`
+    /// hold it to that and to within a tenth of each count. It has no
+    /// contrast: the contrast made up for linear light thinning dark
+    /// text, and encoded blending does not thin it.
     ///
     /// The dilation is a number of pixels whatever the size, fitted at
     /// one size: what it comes to at other sizes is not measured.
     pub const CORE_TEXT: Weight = Weight {
-        contrast: 0.1,
-        dilation: 0.8,
+        contrast: 0.0,
+        dilation: 0.4,
     };
 }
 
