@@ -19,6 +19,7 @@ import Editor.Process.Environment
 import Editor.Test.AtPoint
 import Editor.Test.Editing
 import Editor.Test.Minibuffer
+import Editor.Test.Restore
 import Editor.Test.Shipped
 import Editor.Window
 import Editor.Window.Real
@@ -52,8 +53,10 @@ set's packages.
 namespace FfiTest
 
 /-- The packages the window host is handed in these scenarios, as the
-default editor's root hands them: the core's Lake package's, then
-`files-api`'s fake (`FilesApiTest.fake`), which opens the file in place of
+default editor's root hands them: the core's Lake package's, then the
+kit's stand-in for the default package `restore`
+(`Editor.Test.Restore.package`, `Editor/Test/Restore.lean`), through whose
+`restart` the restart check hands over, then `files-api`'s fake (`FilesApiTest.fake`), which opens the file in place of
 the default package `files`, then the kit's stand-ins for the default packages whose data the core keeps
 (`Editor.Test.Shipped`, `Editor/Test/Shipped.lean`), then the kit's
 implementation of the default package `at-point`'s commands
@@ -65,7 +68,8 @@ editing commands and keys (`Editor.Test.editingPackage`,
 `Editor/Test/Editing.lean`), with which a printable key of the test scheme
 the hosts run types. -/
 def shippedPackages : Array Editor.Package :=
-  EditorCore.EditorPackage.packages ++ #[FilesApiTest.fake] ++ Editor.Test.Shipped.packages ++
+  EditorCore.EditorPackage.packages ++ #[Editor.Test.Restore.package, FilesApiTest.fake] ++
+    Editor.Test.Shipped.packages ++
     #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package, Editor.Test.editingPackage]
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's

@@ -100,7 +100,6 @@ import ModelTest.Editor.Quit
 import ModelTest.Editor.Restart.Handover
 import ModelTest.Editor.Restart.Launch
 import ModelTest.Editor.Restore
-import ModelTest.Editor.Restore.Compiled
 import ModelTest.Editor.Restore.Document
 import ModelTest.Editor.Restore.Frame
 import ModelTest.Editor.Restore.Indexed
@@ -805,11 +804,6 @@ The config session's decisions are tested here too, with no elaborator:
   (`VersionControlTest.versionControlPackageChecks`,
   `packages/version-control/`), and the compile mode's six its package's
   (`CompileTest.compilePackageChecks`, `packages/compile/`);
-- `restorePackageChecks`: which jobs the `restore` package leaves to its
-  owner to start again after a restart, never counted as stopped, its four
-  (`Editor/Restore/Compiled.lean`) (the `files` package's are
-  `FilesTest.filesPackageChecks`', and the `workspace` package's
-  `WorkspaceTest.workspacePackageChecks`', each in its package);
 - `packageSetFingerprintChecks`: a user's package set's fingerprint
   (`Editor/PackageSet/Fingerprint.lean`): each require's line, a path
   made absolute and normalised; the manifest's git pins, read from a
@@ -854,9 +848,9 @@ The config session's decisions are tested here too, with no elaborator:
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
-  list is the 6 packages, in order, each accepted, with no package of the
+  list is the 5 packages, in order, each accepted, with no package of the
   shipped palettes, of the compile mode, of the seven features phase 6
-  moved out or of the package-set commands among them, in the state they
+  moved out, of session restore or of the package-set commands among them, in the state they
   make every entry's owner is one of them, the ex names are bound in the
   order the headless fixtures show, the `ex` package's first, and no theme
   is registered; and the set keeps no store across a restart (the shell's
@@ -864,8 +858,10 @@ The config session's decisions are tested here too, with no elaborator:
   `VersionControlTest.versionControlPackageChecks`', each in its package),
   reports no job (the package-set build is reported by the package
   `package-set`, `PackageSetTest.packageSetCommandChecks`, whose commands'
-  checks moved there with it, `packages/package-set/`), and leaves exactly
-  the restore's six to their owner to start again.
+  checks moved there with it, `packages/package-set/`), and leaves no job
+  to its owner to start again (the restore's six are restarted by the
+  package `restore`, `RestoreTest.restorePackageChecks`,
+  `packages/restore/`).
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
@@ -1227,7 +1223,6 @@ def checks : List Check :=
     packageChecks ++
     extensionChecks ++
     exPackageChecks ++
-    restorePackageChecks ++
     restartChecks ++
     restartHandoverChecks ++
     restartLaunchChecks ++

@@ -2,6 +2,7 @@ greeting-api	interface	-
 greeting	implementation	greeting-api
 greeting-loud	implementation	greeting greeting-api
 echo	implementation	-
+restore	implementation	-
 package-set	implementation	-
 evil-api	interface	-
 minibuffer-api	interface	-

@@ -1,7 +1,6 @@
 import Editor.Ex.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.Menu.Compiled
-import Editor.Restore.Compiled
 import Editor.TabCommands.Compiled
 import Editor.WindowCommands.Compiled
 
@@ -73,8 +72,6 @@ language table read as they did:
 
 - `menu` comes after `frame-commands`: the key bindings are the frame's,
   then the menu's;
-- `restore` comes after the tab commands: it keeps state under the state
-  directory, and what it registers follows theirs;
 - `ex` comes first of the packages that bind ex names: the ex names'
   completion lists them in the order they were bound, the `ex` package's
   first, and every Lake package's after the core's.
@@ -139,6 +136,11 @@ package `package-set` (`packages/package-set/`) since that roadmap's phase
 8, and the first default package to register (its D2: the last of this
 list moves to the front of the set, so the order is what it was): its
 commands and ex names still follow the restore's and come before evil's.
+Session restore's package, which was last here once that one had moved,
+is the default package `restore` (`packages/restore/`) since that phase
+too, and registers first, right before `package-set` (its D2): what it
+registers still follows the tab commands' and comes before the package
+set's.
 -/
 
 namespace EditorCore.EditorPackage
@@ -148,7 +150,6 @@ open Editor
 /-- The packages of the core's Lake package, in the order a host registers
 them ("The order", in the module docs). -/
 def packages : Array Package :=
-  #[Ex.package, FrameCommands.package, Menu.package, WindowCommands.package, TabCommands.package,
-    Restore.package]
+  #[Ex.package, FrameCommands.package, Menu.package, WindowCommands.package, TabCommands.package]
 
 end EditorCore.EditorPackage

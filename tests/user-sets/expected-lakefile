@@ -1,6 +1,10 @@
 name = "config"
 
 [[require]]
+name = "restore"
+path = "@REPO@/packages/restore"
+
+[[require]]
 name = "package-set"
 path = "@REPO@/packages/package-set"
 

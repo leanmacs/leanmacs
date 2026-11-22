@@ -16,7 +16,6 @@ import Editor.InputScheme.Contract
 import Editor.Jumps.Go
 import Editor.Main
 import Editor.Menu.Compiled
-import Editor.Restore.Compiled
 import Editor.SearchRoot
 import Editor.TabCommands.Compiled
 import Editor.Test.AtPoint

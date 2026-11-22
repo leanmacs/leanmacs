@@ -7,7 +7,7 @@ import FilesApi
 /-!
 # Restoring a session, and writing its index
 
-The jobs and commands of the `restore` package (`Editor/Restore/Compiled.lean`)
+The jobs and commands of the `restore` package (`packages/restore/`)
 over the core of `Editor/Restore.lean`.
 
 ## Restoring
