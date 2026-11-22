@@ -1,13 +1,10 @@
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
-import Editor.Command.Dispatch
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Config.Packages
-import Editor.Config.Registry
-import Editor.Config.Stores
 import Editor.DisplayRules
 import Editor.Event
 import Editor.Ex.Line
@@ -16,7 +13,6 @@ import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
 import Editor.Language
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Mode
 import Editor.Program
@@ -29,6 +25,7 @@ import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Models
 import Editor.Test.Prompts
+import Editor.Test.Sources
 import Editor.Text
 import Editor.Themes
 import Editor.Themes.Compiled
@@ -85,63 +82,66 @@ def themeKeys : Loop.Keys TestScheme.scheme :=
 /-- The checks of the command that loads a theme (`Editor/Themes.lean`,
 `Editor/Themes/Compiled.lean`), on the loop's driver over the editor's
 models and the test scheme: it asks for a name among the registered ones,
-and a step that loads one hands the name back. -/
+and a step that loads one hands the name back. And its completion source
+(`Themes.source`) held to the completion sources' contract, on the kit's
+runner (`Editor.Test.sourceHolds`, `Editor/Test/Sources.lean`). -/
 def themeChecks : List Check :=
   let driver? : Option TestDriver :=
     (Loop.Driver.over themeKeys (fun _ => none) (EditorState.initial ⟨640, 480⟩)
         editorModel).toOption
-  [{  name :=
-        "the theme command with no name opens a prompt labelled with its label, whose continuation is the command itself and whose candidates are the registered themes' names"
-      run :=
-        pure <|
-          match driver? with
-          | none => false
-          | some driver =>
-            let (asking, steps) := fedTo driver (presses "C-t t")
-            asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
-                some (Themes.label, { command := Themes.loadName }) &&
-              (candidatesOf asking).map (·.all.map (·.text)) ==
-                some #[Theme.defaultName, "second"] &&
-              steps.map (·.map (·.theme)) == #[some none, some none] },
-    { name :=
-        "the theme command with a registered name hands the name back with its step and says nothing; accepting its prompt with a name loads that one"
-      run :=
-        pure <|
-          match driver? with
-          | none => false
-          | some driver =>
-            let (loaded, steps) := fedTo driver (presses "C-t s")
-            let (typed, _) := fedTo driver (presses "C-t t" ++ [.commit "second"])
-            let (accepted, _) := fedTo typed (presses "C-e y")
-            steps.map (·.map (·.theme)) == #[some none, some (some "second")] &&
-              promptEcho loaded == "" &&
-              loaded.themes == #["second"] &&
-              accepted.themes == #["second"] &&
-              accepted.loop.state.prompt == none },
-    { name :=
-        "the theme command with a name nobody registered says so in the echo area, by its name and the theme's, and loads none; the editor goes on"
-      run :=
-        pure <|
-          match driver? with
-          | none => false
-          | some driver =>
-            let (unknown, _) := fedTo driver (presses "C-t n")
-            let (after, _) := fedTo unknown (presses "C-e o")
-            promptEcho unknown == "load-theme: no theme is registered as `nope`" &&
-              promptEcho unknown == Themes.notLoaded (.noSuchTheme "nope") &&
-              unknown.themes == #[] &&
-              promptEcho after == "other" },
-    { name :=
-        "the theme command while a prompt is open says the refusal after its own name and leaves that prompt open"
-      run :=
-        pure <|
-          match driver? with
-          | none => false
-          | some driver =>
-            let (asking, _) := fedTo driver (presses "C-t t")
-            let (again, _) := fedTo asking (presses "C-t t")
-            promptEcho again == Themes.notAsking (.alreadyOpen ⟨1⟩) &&
-              promptEcho again == "load-theme: a prompt is open already" &&
-              again.loop.state.prompt.isSome }]
+  [{    name :=
+          "the theme command with no name opens a prompt labelled with its label, whose continuation is the command itself and whose candidates are the registered themes' names"
+        run :=
+          pure <|
+            match driver? with
+            | none => false
+            | some driver =>
+              let (asking, steps) := fedTo driver (presses "C-t t")
+              asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
+                  some (Themes.label, { command := Themes.loadName }) &&
+                (candidatesOf asking).map (·.all.map (·.text)) ==
+                  some #[Theme.defaultName, "second"] &&
+                steps.map (·.map (·.theme)) == #[some none, some none] },
+      { name :=
+          "the theme command with a registered name hands the name back with its step and says nothing; accepting its prompt with a name loads that one"
+        run :=
+          pure <|
+            match driver? with
+            | none => false
+            | some driver =>
+              let (loaded, steps) := fedTo driver (presses "C-t s")
+              let (typed, _) := fedTo driver (presses "C-t t" ++ [.commit "second"])
+              let (accepted, _) := fedTo typed (presses "C-e y")
+              steps.map (·.map (·.theme)) == #[some none, some (some "second")] &&
+                promptEcho loaded == "" &&
+                loaded.themes == #["second"] &&
+                accepted.themes == #["second"] &&
+                accepted.loop.state.prompt == none },
+      { name :=
+          "the theme command with a name nobody registered says so in the echo area, by its name and the theme's, and loads none; the editor goes on"
+        run :=
+          pure <|
+            match driver? with
+            | none => false
+            | some driver =>
+              let (unknown, _) := fedTo driver (presses "C-t n")
+              let (after, _) := fedTo unknown (presses "C-e o")
+              promptEcho unknown == "load-theme: no theme is registered as `nope`" &&
+                promptEcho unknown == Themes.notLoaded (.noSuchTheme "nope") &&
+                unknown.themes == #[] &&
+                promptEcho after == "other" },
+      { name :=
+          "the theme command while a prompt is open says the refusal after its own name and leaves that prompt open"
+        run :=
+          pure <|
+            match driver? with
+            | none => false
+            | some driver =>
+              let (asking, _) := fedTo driver (presses "C-t t")
+              let (again, _) := fedTo asking (presses "C-t t")
+              promptEcho again == Themes.notAsking (.alreadyOpen ⟨1⟩) &&
+                promptEcho again == "load-theme: a prompt is open already" &&
+                again.loop.state.prompt.isSome }] ++
+    (sourceHolds Themes.source).map fun (name, held) => { name, run := pure held }
 
 end ModelTest

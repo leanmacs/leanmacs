@@ -293,8 +293,10 @@ show:
   frame is the frame of a mirror theme that sets the modelled colours;
 - `themeChecks`: named themes through a host over the display's real
   binding: `load-theme` switches the frame to the chosen theme with config's
-  face over it, with no reload, and the scene line names the theme; and a
-  config naming a theme nobody registered says so in the echo area;
+  face over it, with no reload, and the scene line names the theme; a
+  config naming a theme nobody registered says so in the echo area; and a
+  prompt of config's that asks for the themes' source by name lists the
+  registered themes, and config's own source under that name in its place;
 - the files' host checks (`languageChecks`, `fileChecks`, `reloadChecks`,
   `filePromptChecks`, `autoReloadChecks`) are the files package's linked
   test's since features-as-packages phase 6 (`FilesTest.Linked`,

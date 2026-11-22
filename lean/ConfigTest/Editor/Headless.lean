@@ -68,8 +68,6 @@ import Editor.Test.Linked.Shipped
 import Editor.Text
 import Editor.Text.Model
 import Editor.Text.Real
-import Editor.Themes
-import Editor.Themes.Compiled
 import Editor.Watch
 import Editor.Window
 import Editor.WindowCommands.Compiled
@@ -2482,8 +2480,7 @@ def shippedChecks (_ : Unit) : List Check :=
           registry.sources.any fun entry =>
             entry.source.name == name && entry.owner == ({ name := package } : Config.Owner)
         return [(Ex.package.name, Ex.historySource.name), (Ex.package.name, Ex.namesSource.name),
-                (TabCommands.package.name, TabCommands.source.name),
-                (Themes.package.name, Themes.source.name)].all
+                (TabCommands.package.name, TabCommands.source.name), ("themes", "themes")].all
             fun (package, name) => ownedBy package name && (registry.source? name).isSome },
     { name :=
         "the executable's hosts start with nothing of the files package: no command open-file, save-buffer, edit-file, reload-buffer or auto-reload-mode, no job load-file, save-file, reload-file, check-files or follow-file, no source files, no source in the category file, and no value of files-api's Files, registered by a package of the core's Lake package"
@@ -2602,7 +2599,7 @@ def shippedChecks (_ : Unit) : List Check :=
         let registry := shippedRegistry
         return registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] &&
             registry.sourcesIn "tab" == #[TabCommands.source.name] &&
-            registry.sourcesIn "theme" == #[Themes.source.name] },
+            registry.sourcesIn "theme" == #["themes"] },
     { name :=
         "the executable's hosts start with nothing of the compile mode: no command, ex name, job, mode or contribution of it is registered by a package of the core's Lake package, and compile as an ex name is not bound"
       run := do
@@ -2629,7 +2626,8 @@ def shippedChecks (_ : Unit) : List Check :=
         "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered by the themes package, and no other theme: the packages of the core's Lake package ship no palette"
       run := do
         let registry := shippedRegistry
-        return (registry.find? Themes.loadName).any (·.owner == Themes.package.owner) &&
+        return (registry.find? "load-theme").any
+              (·.owner == ({ name := "themes" } : Config.Owner)) &&
             registry.theme? Theme.defaultName ==
               some { name := "default", theme := Theme.builtin } &&
             registry.themes.map (fun entry => (entry.named.name, entry.owner.name)) ==

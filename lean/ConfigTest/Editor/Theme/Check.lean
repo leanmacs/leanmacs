@@ -13,7 +13,6 @@ import Editor.Scene
 import Editor.Text
 import Editor.Text.Real
 import Editor.Theme.Check
-import Editor.Themes.Compiled
 
 /-!
 # Config tests: `Editor/Theme/Check.lean`
@@ -35,7 +34,8 @@ a foreground, so the other falls through to the default face's. -/
 def resolutionThemes : Array (String × Theme) :=
   let alone (face : Face) : Theme :=
     (Theme.builtin.filter (·.name != ⟨"cursor.normal"⟩)).push { name := ⟨"cursor.normal"⟩, face }
-  (#[Themes.defaultTheme] ++ fixtureThemes).map (fun named => (named.name, named.theme)) ++
+  (#[({ name := Theme.defaultName, theme := Theme.builtin } : NamedTheme)] ++ fixtureThemes).map
+      (fun named => (named.name, named.theme)) ++
     #[("a background alone", alone { background := some (Color.rgb 200 0 0) }),
       ("a foreground alone", alone { foreground := some (Color.rgb 0 200 0) })]
 

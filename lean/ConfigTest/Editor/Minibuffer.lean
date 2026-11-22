@@ -13,7 +13,6 @@ import Editor.Config.Registry
 import Editor.Display
 import Editor.Event
 import Editor.Event.Queue
-import Editor.Face
 import Editor.Fuzzy
 import Editor.Fuzzy.Real
 import Editor.Headless
@@ -30,7 +29,6 @@ import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Listings
 import Editor.Test.Minibuffer
 import Editor.Text
-import Editor.Themes.Compiled
 
 /-!
 # Config tests: `Editor/Minibuffer.lean`
@@ -136,15 +134,23 @@ def sourceText (defines : Bool) : String :=
     "  command \"pick\" (discard <| prompt \"Pick: \" { command := \"picked\" }\n" ++
     "    (sources := [.named \"picks\"]))\n"
 
-/-- A config whose `setup` registers `pick-theme`, which asks `Theme: ` with
-the completion source registered under `themes`, by name, one the
-executable's hosts ship (`Themes.source`), and, when `overrides`, a source
-of config's own under that name, whose one candidate is `mine`. -/
+/-- The package `shipping` of the prompt checks: it defines the completion
+source `shipped`, of the category `shipped`, whose one candidate is
+`theirs`, as a package a host is handed ships a source. -/
+def shippingPackage : Package :=
+  { name := "shipping"
+    setup := defineSource (.ofTexts "shipped" "shipped" #["theirs"]) }
+
+/-- A config whose `setup` registers `pick-shipped`, which asks `Shipped: `
+with the completion source registered under `shipped`, by name, one a
+package the host is handed ships (`shippingPackage`), and, when
+`overrides`, a source of config's own under that name, whose one candidate
+is `mine`. -/
 def shippedSourceText (overrides : Bool) : String :=
-  let source := "  defineSource (.ofTexts \"themes\" \"theme\" #[\"mine\"])\n"
+  let source := "  defineSource (.ofTexts \"shipped\" \"shipped\" #[\"mine\"])\n"
   "def setup : SetupM Unit := do\n" ++ (if overrides then source else "") ++
-    "  command \"pick-theme\" (discard <| prompt \"Theme: \" { command := \"picked\" }\n" ++
-    "    (sources := [.named \"themes\"]))\n"
+    "  command \"pick-shipped\" (discard <| prompt \"Shipped: \" { command := \"picked\" }\n" ++
+    "    (sources := [.named \"shipped\"]))\n"
 
 /-- A config whose `setup` makes the choices of completion style `choices`
 (lines of `setup`, each indented) and registers two commands, `pick` and
@@ -456,32 +462,31 @@ def promptChecks (context : Context) : List Check :=
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
     { name :=
-        "config asks for a source the executable's hosts ship by name: on a host handed the `themes` package, which the executable's hosts are, a prompt asking for `themes` lists the theme default's name once it is committed; with config's own source of that name it lists config's candidate instead, and reloaded with a config that defines none, the shipped source's again"
+        "config asks for a source a package the host is handed ships, by name: a prompt asking for it lists the package's candidate once it is committed; with config's own source of that name it lists config's candidate instead, and reloaded with a config that defines none, the package's source's again"
       run := do
-        let theme := Themes.defaultTheme
         -- Each prompt opens a minibuffer view of its own, so the lines are
         -- compared from their fields on, whichever view they are of.
         let lists (asking : Array String) (candidate : String) : Bool :=
-          listsAfter asking "Theme: " [candidate]
+          listsAfter asking "Shipped: " [candidate]
         withHost context [("init.lean", shippedSourceText false)]
             (fun session => do
               let asked (query : String) : IO (Array String) := do
                 session.ask [.reload]
-                session.ask [.run "pick-theme"]
+                session.ask [.run "pick-shipped"]
                 unless ← Event.post (.commit query) do
                   return #[]
                 let asking ← session.sceneLines
                 session.pressKeys cancelKeys
                 return asking
-              let shippedFirst ← asked theme.name
+              let shippedFirst ← asked "theirs"
               session.write "init.lean" (shippedSourceText true)
               let overridden ← asked "mine"
               session.write "init.lean" (shippedSourceText false)
-              let restored ← asked theme.name
-              return lists shippedFirst theme.name && lists overridden "mine" &&
-                  lists restored theme.name &&
+              let restored ← asked "theirs"
+              return lists shippedFirst "theirs" && lists overridden "mine" &&
+                  lists restored "theirs" &&
                   !(← session.output.get).any (·.startsWith "loop: refused"))
-            { minibufferCompiled with packages := #[Themes.package] } },
+            { minibufferCompiled with packages := #[shippingPackage] } },
     { name :=
         "criterion 3: a config that chooses the hosts' style parts for the category pick lists a pick prompt by it and every other by the default: after `w` is committed the pick prompt lists `wq`, `rewrite` and `w`, the candidates' own order, and a prompt of another category lists the same three with `w` first, the library's matcher's; reloaded with a config that chooses no style, the pick prompt lists `w` first too"
       run :=
