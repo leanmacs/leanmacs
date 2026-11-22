@@ -2,6 +2,7 @@ import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Reload
+import Editor.Face
 import Editor.Package
 import EditorCore.EditorPackage
 import ModelTest.Check
@@ -22,8 +23,7 @@ open Editor
 /-- The names of the packages of the core's Lake package, in the order they
 register. -/
 def shippedPackageNames : Array String :=
-  #["ex", "frame-commands", "menu", "window-commands", "tab-commands", "themes", "restore",
-    "package-set"]
+  #["ex", "frame-commands", "menu", "window-commands", "tab-commands", "restore", "package-set"]
 
 /-- The checks of the packages of the core's Lake package
 (`EditorCore/EditorPackage.lean`): the list a host is handed is whole,
@@ -42,16 +42,17 @@ def packageSetChecks : List Check :=
               #["restore", "restore-files", "restore-write", "restore-save", "restart-probe",
                 "restart-save"] },
     { name :=
-        "every package of the shipped set is accepted, and their names are the 8 of the package table, each once, in its order, with no package of the shipped palettes and none of evil, the file commands, the buffer commands, the workspaces, project search, the working sets, the shell, version control and its gutter, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
+        "every package of the shipped set is accepted, and their names are the 7 of the package table, each once, in its order, with no package of the shipped palettes and none of evil, the themes, the file commands, the buffer commands, the workspaces, project search, the working sets, the shell, version control and its gutter, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
       run :=
         let (state, refused) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (refused == #[] &&
             EditorCore.EditorPackage.packages.map (·.name) == shippedPackageNames &&
-            shippedPackageNames.size == 8 &&
-            shippedPackageNames.toList.eraseDups.length == 8 &&
+            shippedPackageNames.size == 7 &&
+            shippedPackageNames.toList.eraseDups.length == 7 &&
             !shippedPackageNames.contains "evil" &&
+            !shippedPackageNames.contains "themes" &&
             !shippedPackageNames.contains "files" &&
             !shippedPackageNames.contains "buffers" &&
             !shippedPackageNames.contains "workspace" &&
@@ -95,10 +96,10 @@ def packageSetChecks : List Check :=
             #["w", "w!", "e", "e!", "autoread", "noautoread", "q", "wq", "reload", "b", "ls", "bd",
               "restart", "package-install", "package-remove", "package-update"]) },
     { name :=
-        "the shipped set registers one theme, `default`: the palettes that ship are a package outside the core's Lake package"
+        "the shipped set registers no theme: the themes are a package outside the core's Lake package, as the palettes that ship are, and the theme in force with none registered is named `default`"
       run :=
         let (state, _) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
-        pure (state.registry.themeNames == #["default"]) }]
+        pure (state.registry.themeNames == #[] && Theme.defaultName == "default") }]
 
 end ModelTest

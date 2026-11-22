@@ -28,7 +28,8 @@ Its design record is in [packages.md](../../docs/design/packages.md),
    and the test driver `evil-test`, and turns every Lean linter on with
    warnings as errors.
 2. [`Evil/EditorPackage.lean`](Evil/EditorPackage.lean): the entry module.
-   It imports `Evil.Compiled` and the modules config names evil through.
+   It imports `Evil.Compiled`, which brings the modules config names evil
+   through, and `Evil.Theorems`.
 
    ```lean
    def packages : Array Editor.Package :=

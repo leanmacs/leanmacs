@@ -31,7 +31,7 @@ hints' source (`Completion.Keys.source`), and it reports a source that makes
 a text and one that is refused. The sources of the command prompt and the
 binding search are held to it by their own checks, on the same runner
 (`Editor.Test.sourceHolds`, `Editor/Test/Sources.lean`), and so are the
-themes' source (`ModelTest.themeChecks`), the files feature's file source
+themes' source (`ThemesTest.themeChecks`), the files feature's file source
 (`FilesTest.pathsChecks`), the buffers
 feature's buffer source (`BuffersTest.bufferCommandChecks`) and the
 workspace's two (`WorkspaceTest.findFileChecks`, `WorkspaceTest.findInProjectChecks`). -/

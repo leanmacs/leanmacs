@@ -11,7 +11,8 @@
 #
 # It requires the core and each default package. A default package has a
 # directory here and a `require` below: evil and the Vim scheme (evil/),
-# which supplies the editor's input scheme, the file commands (files/), the buffer commands
+# which supplies the editor's input scheme, the themes (themes/, with its
+# interface package themes-api/, which it requires), the file commands (files/), the buffer commands
 # (buffers/), the workspaces (workspace/), project search (project-search/,
 # with its interface package project-search-api/, which it requires), the
 # working sets (working-set/,
@@ -52,6 +53,16 @@ path = "../lean"
 [[require]]
 name = "evil"
 path = "evil"
+
+# The themes: `load-theme`, the theme `default` and the source of the
+# registered themes' names. The second default package (features-as-packages
+# phase 7, D6: it registered before every default package while it was the
+# core's, and after evil). It requires its interface package, themes-api,
+# which so is in the set too and registers nothing. The palettes that ship
+# are shipped-themes, further down, which so still registers after it.
+[[require]]
+name = "themes"
+path = "themes"
 
 # The file commands, `open-file`, `save-buffer`, `edit-file`,
 # `reload-buffer` and `auto-reload-mode`: the first of the packages

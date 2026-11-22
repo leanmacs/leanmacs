@@ -66,7 +66,8 @@ def defaultRegistry (registrations : Config.Registrations) : IO Config.Registry 
 Lake package registers: the command prompt's, `execute-command`, and the
 binding search's, `search-bindings`, which default packages register, and
 the twelve of the files, the buffers, the workspace, project search and the
-working sets, which the default packages of those features register. They
+working sets, which the default packages of those features register, and
+the themes' `load-theme`, which the default package `themes` registers. They
 are written as text, as a reacher inside the core names a name another
 package declares (`docs/design/extension-points.md`, "Reaches by name"):
 the core cannot import a package. The interface packages of the features
@@ -74,8 +75,9 @@ declare them: `execute-command-api` and `binding-search-api` the first two,
 `files-api` `open-file`, `save-buffer` and `reload-buffer`, `buffers-api`
 `switch-buffer`, `list-buffers` and `close-buffer`, `project-api`
 `find-file-in-workspace` and `find-file-in-project`, `project-search-api`
-`project-search` and `project-search-symbol`, and `working-set-api`
-`working-set-add` and `working-set-open`. That the default editor runs them
+`project-search` and `project-search-symbol`, `working-set-api`
+`working-set-add` and `working-set-open`, and `themes-api` `load-theme`
+(bound to `<leader> h t`). That the default editor runs the first fourteen
 for their keys under the Vim scheme's leader (`SPC :`, `SPC ?`, `SPC f f`,
 `SPC p f`, `SPC SPC`, `SPC p p`, `SPC s p`, `SPC /`, `SPC *`, `SPC k a`,
 `SPC k o`) is the headless fixture
@@ -84,7 +86,7 @@ def defaultPackageCommands : Array String :=
   #["execute-command", "search-bindings", "open-file", "save-buffer", "reload-buffer",
     "switch-buffer", "list-buffers", "close-buffer", "find-file-in-workspace",
     "find-file-in-project", "project-search", "project-search-symbol", "working-set-add",
-    "working-set-open"]
+    "working-set-open", "load-theme"]
 
 /-- The checks of the default config `mise run install` ships
 (`config/default`), read from the directory the fourth argument names: it

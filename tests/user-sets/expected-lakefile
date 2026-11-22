@@ -5,6 +5,10 @@ name = "evil"
 path = "@REPO@/packages/evil"
 
 [[require]]
+name = "themes"
+path = "@REPO@/packages/themes"
+
+[[require]]
 name = "files"
 path = "@REPO@/packages/files"
 

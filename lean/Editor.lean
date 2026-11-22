@@ -6,7 +6,6 @@ import Editor.Indent
 import Editor.Jumps.Go
 import Editor.TabCommands
 import Editor.Text.Word
-import Editor.Themes
 import Editor.UndoTree.Theorems
 import Editor.Vocabulary
 
@@ -110,13 +109,17 @@ split, close, focus and arrange the frame's windows, so a config's command
 can call them; their registrations (`Editor/WindowCommands/Compiled.lean`)
 are not imported. So are the tab commands (`Editor/TabCommands.lean`):
 `tab-new`, `tab-close`, `tab-next`, `tab-switch` and the rest; their
-registrations (`Editor/TabCommands/Compiled.lean`) are not imported. The command that switches the theme in force is here too
-(`Editor/Themes.lean`): `load-theme`, which a command of config's calls
-with `Themes.loadThemeCommand`, over `themeNames` and `loadTheme`
-(`Editor/Api.lean`); `setup` registers a theme with `defineTheme` and names
-the one in force with `useTheme` (`Editor/Setup.lean`). Its registration
-with the theme `default` (`Editor/Themes/Compiled.lean`) is not imported,
-and the palettes that ship are a package outside the core
+registrations (`Editor/TabCommands/Compiled.lean`) are not imported. The
+command that switches the theme in force, `load-theme`, is not here: it
+is the default package `themes` (`packages/themes/`) since the
+features-as-packages roadmap's phase 7, with the theme `default` it
+registers, and a command of config's calls it with
+`Themes.loadThemeCommand` through the set's base, the package's entry
+module (`Themes.EditorPackage`) among it. What it is written over is
+here: `themeNames` and `loadTheme` (`Editor/Api.lean`), and `setup`
+registers a theme with `defineTheme` and names
+the one in force with `useTheme` (`Editor/Setup.lean`). The palettes that
+ship are a package outside the core too
 (`packages/shipped-themes/`), which config names by a theme's name alone.
 The command prompt, `execute-command`, is not here: it is a package
 outside the core (`packages/execute-command/`), and config reaches it with

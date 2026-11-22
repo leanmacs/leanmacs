@@ -40,7 +40,6 @@ import Editor.Test.Views
 import Editor.Text.Word
 import Editor.Theme.Check
 import Editor.Theme.Picture
-import Editor.Themes.Compiled
 import Editor.UndoTree.Theorems
 import Editor.Vocabulary
 import Editor.Watch.Contract

@@ -18,9 +18,10 @@ This is the library of the Lake package `shipped-themes`
 (`packages/lakefile.toml`), and the package-set build registers it after
 the core's packages, through its entry module
 (`ShippedThemes/EditorPackage.lean`; `docs/design/packages.md`). The
-core's `themes` package (`Editor/Themes/Compiled.lean`) registers the
+default package `themes` (`packages/themes/Themes/Compiled.lean`), which
+the default set requires before this one, registers the
 command that loads a theme, the theme `default` and the theme source, and
-no core package after it defines a theme, so the theme names read
+no package between them defines a theme, so the theme names read
 `default`, then these. A set without this package still has `load-theme`
 and `default`.
 

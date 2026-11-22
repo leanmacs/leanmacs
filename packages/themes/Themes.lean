@@ -1,5 +1,6 @@
 import Editor.Api
 import Editor.Command.Call
+import ThemesApi
 
 /-!
 # The command that loads a theme
@@ -8,9 +9,10 @@ A theme is registered by name, by its owner, as a command is
 (`Editor/Config/Registry.lean`, "Themes"), and the theme in force is the
 reload reducer's state (`Editor/Config/Reload.lean`). `load-theme` is the
 command that switches it, with no reload, written over the editor API
-(`themeNames`, `loadTheme`, `Editor/Api.lean`). `Editor.lean` imports this
-module, so config calls it. The command as compiled code registers it, and
-the theme `default`, are in `Editor/Themes/Compiled.lean`; the palettes
+(`themeNames`, `loadTheme`, `Editor/Api.lean`). The package's entry module
+(`Themes/EditorPackage.lean`), a module of the config base of a set that
+holds this package, imports this module, so config calls it. The command as compiled code registers it, and
+the theme `default`, are in `Themes/Compiled.lean`; the palettes
 that ship are a package outside the core (`packages/shipped-themes/`).
 
 - **It asks for a name when it is given none** (`loadThemeCommand`), as the
@@ -37,8 +39,8 @@ that ship are a package outside the core (`packages/shipped-themes/`).
   draws the next scene in it (`Editor/Loop.lean`, "A theme switch from a
   command"). The command says nothing.
 
-Pinned by `ModelTest.themeChecks`, on the loop's driver over the editor's
-models and the test scheme; by `ConfigTest.themeChecks`, through a host over
+Pinned by `ThemesTest.themeChecks`, on the loop's driver over the editor's
+models and the test scheme; by `ThemesTest.Linked.themeChecks`, through a host over
 the real binding; and on the executable by the fixture
 `packages/shipped-themes/tests/headless/themes`, in the package of the
 shipped palettes.
@@ -47,9 +49,10 @@ shipped palettes.
 namespace Editor.Themes
 
 /-- The name the command that loads a theme is registered under, Emacs's
-name for it. -/
+name for it: the interface package `themes-api`'s, which declares it for
+whatever reaches the command by name (`ThemesApi.loadName`). -/
 def loadName : String :=
-  "load-theme"
+  ThemesApi.loadName
 
 /-- The label of the prompt the command asks for a theme's name with. -/
 def label : String :=

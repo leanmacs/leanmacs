@@ -21,7 +21,7 @@ Its caller is the headless host (`Editor/Headless.lean`, `Running.reduce`),
 which hands it its display's `setTheme`: the real binding's in a window and
 under `--render`, and one that does nothing for the recorder, which draws no
 face. `ModelTest.reloadChecks` pins when it is called, with a recording
-`setTheme`; `ConfigTest.faceChecks` and `ConfigTest.themeChecks` check it
+`setTheme`; `ConfigTest.faceChecks` and `ThemesTest.Linked.themeChecks` check it
 through a host over the real binding.
 -/
 

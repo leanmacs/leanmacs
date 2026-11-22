@@ -4,7 +4,6 @@ import Editor.Menu.Compiled
 import Editor.PackageSet.Compiled
 import Editor.Restore.Compiled
 import Editor.TabCommands.Compiled
-import Editor.Themes.Compiled
 import Editor.WindowCommands.Compiled
 
 /-!
@@ -75,12 +74,8 @@ language table read as they did:
 
 - `menu` comes after `frame-commands`: the key bindings are the frame's,
   then the menu's;
-- `themes` defines the theme `default` and no package after it defines a
-  theme, so the themes of a Lake package that requires the core (the
-  palettes of `shipped-themes`, `packages/shipped-themes/`) follow
-  `default`, as the theme prompt lists them;
-- `restore` comes after `themes`: it keeps state under the state
-  directory, and what it registers follows the themes';
+- `restore` comes after the tab commands: it keeps state under the state
+  directory, and what it registers follows theirs;
 - `package-set` comes right after `restore`: a user's package-set build
   restarts the editor through the restore's restart, and its ex names
   follow `restart`'s;
@@ -136,7 +131,13 @@ ex's and come before the compile mode's. Evil's package, which
 was first here, is the default package `evil` (`packages/evil/`) since
 that roadmap's phase 7, and the first default package to register (its
 D6): its commands, which were the first registered, follow `package-set`'s
-in the command prompt now and come before the files'.
+in the command prompt now and come before the files'. The themes'
+package, which was between `tab-commands` and `restore` here and defined
+the theme `default`, is the default package `themes` (`packages/themes/`)
+since that phase too, and registers right after evil's (its D6): this list
+defines no theme, `load-theme` follows evil's `set-mark` in the command
+prompt and comes before the files', and `default` is still the first
+theme registered in the default set, before the shipped palettes'.
 -/
 
 namespace EditorCore.EditorPackage
@@ -147,6 +148,6 @@ open Editor
 them ("The order", in the module docs). -/
 def packages : Array Package :=
   #[Ex.package, FrameCommands.package, Menu.package, WindowCommands.package, TabCommands.package,
-    Themes.package, Restore.package, PackageSet.package]
+    Restore.package, PackageSet.package]
 
 end EditorCore.EditorPackage

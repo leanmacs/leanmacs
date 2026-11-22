@@ -18,7 +18,6 @@ import ConfigTest.Editor.Minibuffer
 import ConfigTest.Editor.PackageSet.Edit
 import ConfigTest.Editor.Setup
 import ConfigTest.Editor.Theme.Check
-import ConfigTest.Editor.Themes
 import ConfigTest.Lsp
 
 /-!
@@ -269,12 +268,6 @@ show:
   colours (`Themes.effective`) is the real layout's: for the built-in
   theme, the fixture themes and two whose cursor sets one colour alone, each cursor face's
   frame is the frame of a mirror theme that sets the modelled colours;
-- `themeChecks`: named themes through a host over the display's real
-  binding: `load-theme` switches the frame to the chosen theme with config's
-  face over it, with no reload, and the scene line names the theme; a
-  config naming a theme nobody registered says so in the echo area; and a
-  prompt of config's that asks for the themes' source by name lists the
-  registered themes, and config's own source under that name in its place;
 - the files' host checks (`languageChecks`, `fileChecks`, `reloadChecks`,
   `filePromptChecks`, `autoReloadChecks`) are the files package's linked
   test's since features-as-packages phase 6 (`FilesTest.Linked`,
@@ -322,6 +315,10 @@ are the default package `evil`'s linked test's since the
 features-as-packages roadmap's phase 7
 (`packages/evil/EvilTest/Linked.lean`, whose module doc says what each
 shows): no check here runs a host of the Vim scheme.
+
+The themes' checks through a host, `themeChecks`, are the default package
+`themes`' linked test's since that phase too
+(`packages/themes/ThemesTest/Linked.lean`).
 -/
 
 namespace ConfigTest
@@ -350,7 +347,6 @@ def checks (context : Context) : List Check :=
     reloadEchoChecks context ++
     faceChecks context ++
     cursorResolutionChecks () ++
-    themeChecks context ++
     environmentHostChecks context ++
     restoreOrderChecks context ++
     journalFailureChecks context ++

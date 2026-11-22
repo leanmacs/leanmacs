@@ -18,14 +18,16 @@ it: the Vim scheme. The value is `Editor.Evil.scheme`, of
 of the scheme's own.
 
 It is also a module of that set's config base. It imports `Evil.Compiled`,
-the `Package` value, and the modules the config base `Editor` imported
-while evil was the core's: the commands' modules (`Evil.Clipboard`,
-`Evil.Jumps`, `Evil.Operators`, `Evil.Repeat`, `Evil.Scroll`,
-`Evil.TreeObjects`, `Evil.Undo`, which bring `Evil`, the motions, the text
-objects and the registers), the scheme's default states and bindings
-(`Evil.Vim.Default`, which brings the scheme) and what is proved of evil on
-the text model (`Evil.Theorems`, imported so that the build checks the
-proofs). So config calls evil's commands and names its vocabularies
+the `Package` value, which brings every module the config base `Editor`
+imported while evil was the core's but one: the commands' modules
+(`Evil.Clipboard`, `Evil.Jumps`, `Evil.Operators`, `Evil.Repeat`,
+`Evil.Scroll`, `Evil.TreeObjects`, `Evil.Undo`, with `Evil`, the motions,
+the text objects and the registers) and the scheme's default states and
+bindings (`Evil.Vim.Default`, with the scheme). The one it does not bring,
+what is proved of evil on the text model (`Evil.Theorems`), is imported
+here by name, so that the build checks the proofs. An import of a module
+`Evil.Compiled` already brings is redundant, and the formatter's check
+refuses it. So config calls evil's commands and names its vocabularies
 (`Evil.move Evil.motions`, `Vim.Bound`) through the set's base, as it did
 through `Editor`.
 -/

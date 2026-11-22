@@ -1,4 +1,3 @@
-import ConfigTest.Check
 import Editor.Completion
 import Editor.Config.Packages
 import Editor.Event
@@ -9,23 +8,24 @@ import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
 import Editor.Test.Minibuffer
-import Editor.Themes
-import Editor.Themes.Compiled
+import Themes
+import Themes.Compiled
+import ThemesTest.Check
 
 /-!
-# Config tests: `Editor/Themes.lean`
+# Linked tests: `Themes.lean`
 
-The tests of `Editor/Themes.lean`: `themeChecks`, through the headless host. The
-root module `ConfigTest` runs them; its module doc says what each shows.
+The tests of `Themes.lean`: `themeChecks`, through the headless host. The
+root module `ThemesTest.Linked` runs them; its module doc says what each shows.
 -/
 
-namespace ConfigTest
+namespace ThemesTest.Linked
 
 open Editor
 open Editor.Test.Linked
 
 /-- What compiled code hands the hosts of the theme checks: the command that
-loads a theme and the theme `default` (`Editor/Themes/Compiled.lean`), and
+loads a theme and the theme `default` (`Themes/Compiled.lean`), and
 the kit's minibuffer's commands and its mode (`Editor/Test/Minibuffer.lean`),
 which its prompt is answered with. -/
 def themeCompiled : Compiled :=
@@ -58,7 +58,7 @@ layout (`withFramedHost`, `Editor/Test/Linked/Frames.lean`). A frame is
 compared with the frame a second display, handed the same scene, lays out
 in a theme written here. And the themes' completion source asked by
 config, by name. -/
-def themeChecks (context : Context) : List Check :=
+def themeChecks (context : HostContext) : List Check :=
   [{  name :=
         "criteria 3 and 4: the theme command switches the theme the display draws in with no reload, to the frame the chosen theme followed by config's own face gives, and the scene line names the theme it was drawn in"
       run :=
@@ -151,4 +151,4 @@ def themeChecks (context : Context) : List Check :=
             { commands := Test.Minibuffer.package.registered.commands
               modes := Test.Minibuffer.package.registered.modes, packages := #[Themes.package] } }]
 
-end ConfigTest
+end ThemesTest.Linked

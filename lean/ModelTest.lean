@@ -126,7 +126,6 @@ import ModelTest.Editor.Text
 import ModelTest.Editor.Text.Contract
 import ModelTest.Editor.Text.Model
 import ModelTest.Editor.Text.Word
-import ModelTest.Editor.Themes
 import ModelTest.Editor.TypedPath
 import ModelTest.Editor.UndoTree
 import ModelTest.Editor.Version
@@ -599,10 +598,6 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   none, handing the shell nothing. Each message is read from the function
   that makes it. The ex package binds none of Vim's ex names for marks,
   which evil's recorded departures type on the kit's ex line;
-- `themeChecks`: the command that loads a theme (`Editor/Themes.lean`) on
-  that driver, told of two registered themes: with no name it asks among
-  them, with a registered name the step hands the name back, and a name
-  nobody registered, or a prompt already open, is said in the echo area;
 - `faceVocabularyChecks`: the face vocabulary (`Editor/Face/Vocabulary.lean`)
   names each face once with its meaning, marks its cursor faces, and
   lists every face the mode line and the loop draw, layout's four and the
@@ -918,6 +913,11 @@ moved with them, under their names, to that package's test driver
 shows). No check here presses a Vim key: what is typed is typed on the test
 scheme, the kit's editing keys (`Editor/Test/Editing.lean`) or a scheme
 written in the check.
+
+The command that loads a theme is not checked here either: it is the
+default package `themes` (`packages/themes/`) since that phase, and
+`themeChecks` moved with it, under its name, to that package's test driver
+(`packages/themes/ThemesTest/Model.lean`).
 
 A view that follows its cursor (`Editor/Loop.lean`, "Following the
 cursor") is checked on the loop's driver under the test scheme, with the
@@ -1349,7 +1349,6 @@ def checks : List Check :=
     dispatchQuitChecks ++
     systemQuitChecks ++
     exChecks ++
-    themeChecks ++
     appearanceChecks ++
     faceVocabularyChecks ++
     searchDecorationChecks ++

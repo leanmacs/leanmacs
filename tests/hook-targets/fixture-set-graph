@@ -3,6 +3,8 @@ greeting	implementation	greeting-api
 greeting-loud	implementation	greeting greeting-api
 echo	implementation	-
 evil	implementation	-
+themes-api	interface	-
+themes	implementation	themes-api
 files	implementation	-
 buffers	implementation	-
 project-api	interface	-

@@ -1,10 +1,10 @@
 import Editor.Package
-import Editor.Themes
+import Themes
 
 /-!
 # The `themes` package: the command that loads a theme, and the theme `default`
 
-What a host registers so that it has themes (`Editor/Themes.lean`): the
+What a host registers so that it has themes (`Themes.lean`): the
 package `themes` (`Themes.package`, `Editor/Package.lean`), whose `setup`
 registers the command that loads a theme, the theme `default` and the
 theme source. A host registers it for the owner `themes` when its loop
@@ -27,20 +27,18 @@ load, a reload does not replace them, and config's theme of the name
 The palettes that ship, `solarized-dark`, `solarized-light` and
 `fairy-floss`, are a package of their own outside the core,
 `shipped-themes` (`packages/shipped-themes/`, a Lake package the default
-package set requires), which registers after every package of the core.
-This module is a core module and imports no palette
-(`docs/design/packages.md`), and a set without that package still has
-`load-theme` and `default`.
+package set requires), which registers after this one. This package
+imports no palette (`docs/design/packages.md`), and a set without that
+package still has `load-theme` and `default`.
 
 The mode line's shipped segments are a package of their own, the default
 package `mode-line` (`packages/mode-line/`).
 
-This module is apart from `Editor/Themes.lean` because it is what a host is
-handed, not what config calls: `Editor.lean` imports the command, so that
-config can call it, and not this.
+This module is apart from `Themes.lean` because it is what a host is
+handed, not what config calls.
 
-Pinned by `ModelTest.themeChecks`, `ModelTest.faceVocabularyChecks`,
-`ConfigTest.shippedChecks` and `ConfigTest.cursorResolutionChecks`.
+Pinned by `ThemesTest.themeChecks`, which holds it to the contract of the
+interface package `themes-api` and says what it registers.
 -/
 
 namespace Editor.Themes

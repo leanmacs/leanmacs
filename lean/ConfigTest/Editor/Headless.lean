@@ -2473,14 +2473,14 @@ def shippedChecks (_ : Unit) : List Check :=
         return !TabCommands.package.registered.commands.isEmpty &&
             TabCommands.package.registered.commands.all (compiled ·.name) },
     { name :=
-        "the executable's hosts start with the completion sources that ship each registered by its package, so config can ask for each by name: the ex line's history and its names, the tabs and the themes"
+        "the executable's hosts start with the completion sources that ship each registered by its package, so config can ask for each by name: the ex line's history and its names, and the tabs"
       run := do
         let registry := shippedRegistry
         let ownedBy (package : String) (name : String) : Bool :=
           registry.sources.any fun entry =>
             entry.source.name == name && entry.owner == ({ name := package } : Config.Owner)
         return [(Ex.package.name, Ex.historySource.name), (Ex.package.name, Ex.namesSource.name),
-                (TabCommands.package.name, TabCommands.source.name), ("themes", "themes")].all
+                (TabCommands.package.name, TabCommands.source.name)].all
             fun (package, name) => ownedBy package name && (registry.source? name).isSome },
     { name :=
         "the executable's hosts start with nothing of the files package: no command open-file, save-buffer, edit-file, reload-buffer or auto-reload-mode, no job load-file, save-file, reload-file, check-files or follow-file, no source files, no source in the category file, and no value of files-api's Files, registered by a package of the core's Lake package"
@@ -2598,8 +2598,7 @@ def shippedChecks (_ : Unit) : List Check :=
       run := do
         let registry := shippedRegistry
         return registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] &&
-            registry.sourcesIn "tab" == #[TabCommands.source.name] &&
-            registry.sourcesIn "theme" == #["themes"] },
+            registry.sourcesIn "tab" == #[TabCommands.source.name] },
     { name :=
         "the executable's hosts start with nothing of the compile mode: no command, ex name, job, mode or contribution of it is registered by a package of the core's Lake package, and compile as an ex name is not bound"
       run := do
@@ -2623,15 +2622,16 @@ def shippedChecks (_ : Unit) : List Check :=
             (registry.mode? "minibuffer").isNone &&
             (registry.mode? Prompt.mode).isNone },
     { name :=
-        "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered by the themes package, and no other theme: the packages of the core's Lake package ship no palette"
+        "the executable's hosts start with nothing of the themes package: no command load-theme, no theme, default among them, no source themes, no source in the category theme, and no entry of an owner themes, registered by a package of the core's Lake package; the theme in force with none registered is still named default"
       run := do
         let registry := shippedRegistry
-        return (registry.find? "load-theme").any
-              (·.owner == ({ name := "themes" } : Config.Owner)) &&
-            registry.theme? Theme.defaultName ==
-              some { name := "default", theme := Theme.builtin } &&
-            registry.themes.map (fun entry => (entry.named.name, entry.owner.name)) ==
-              #[("default", "themes")] },
+        return (registry.find? "load-theme").isNone && registry.themes.isEmpty &&
+            registry.themeNames == #[] &&
+            (registry.theme? Theme.defaultName).isNone &&
+            (registry.source? "themes").isNone &&
+            registry.sourcesIn "theme" == #[] &&
+            !registry.ownersByKind.flatten.contains ({ name := "themes" } : Config.Owner) &&
+            Theme.defaultName == "default" },
     { name :=
         "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a to open-file, save-buffer, undo, redo, clipboard-cut, clipboard-copy, clipboard-paste and select-all for the menu package"
       run := do
