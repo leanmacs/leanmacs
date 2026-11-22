@@ -253,7 +253,9 @@ mode's test modules out with it, to `packages/compile/CompileTest/`:
 [packages.md](packages.md), "What moving the compile mode added to the
 core's API".)
 ConfigTest gained no list: main's two edits to it are in
-`lean/ConfigTest/Support/Lines.lean` (`statusOf`'s modified mark) and
+`lean/Editor/Test/Linked/Lines.lean` (`statusOf`'s modified mark; it was
+`lean/ConfigTest/Support/Lines.lean` until the support was published as
+the linked test kit) and
 `lean/ConfigTest/Editor/Loop.lean` (the slow-command check's clock reads).
 Main added no `EditorState` field (there are still 28), no `StateRequest`
 variant (still 64), no binding (still 142, all in the families under
