@@ -1208,6 +1208,12 @@ config's. -/
 def extensionsAt (registry : Registry) (key : Lean.Name) : Array Dynamic :=
   (registry.extensions.filter (·.key == key)).map (·.value)
 
+/-- The values config registered at the extension point `key`, in
+registration order: the tail of `extensionsAt`'s answer, since config
+installs after every package. -/
+def configExtensionsAt (registry : Registry) (key : Lean.Name) : Array Dynamic :=
+  (registry.extensions.filter fun entry => entry.key == key && entry.owner == .config).map (·.value)
+
 /-- The menu bar ("Menus", in the module docs): `none` when no menu is
 registered; otherwise each title once, at the place it was first
 registered, as its latest entry, with every command item's key filled from
@@ -1390,7 +1396,8 @@ def registered (registry : Registry) : Loop.Registered :=
     sources := registry.source?, categorySources := registry.sourcesIn
     atPoint := registry.atPoint?, atPointNames := registry.atPointNames
     codec? := fun name => (registry.codec? name).map fun (owner, codec) => (owner.name, codec)
-    reported := registry.reported, extensions := registry.extensionsAt }
+    reported := registry.reported, extensions := registry.extensionsAt
+    configExtensions := registry.configExtensionsAt }
 
 end Registry
 

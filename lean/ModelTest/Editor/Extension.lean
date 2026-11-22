@@ -105,6 +105,12 @@ def finderNames (state : ModelState) : Option (Array String) :=
   askedOf state do
     return (← Extension.values Finder).map (·.name)
 
+/-- The names of the finders config registered, as `state`'s loop sees
+them. -/
+def configFinderNames (state : ModelState) : Option (Array String) :=
+  askedOf state do
+    return (← Extension.configValues Finder).map (·.name)
+
 /-- A `setup`, config's, that registers a finder called `name`, which finds
 the root `root` for every path. -/
 def findingAs (name root : String) : SetupM Unit :=
@@ -176,6 +182,34 @@ def extensionChecks : List Check :=
         pure
           (finderNames a == some #["git", "a"] && finderNames b == some #["git", "b"] &&
             finderNames cleared == some #["git"]) },
+    { name :=
+        "with two packages' values and config's two at a point, `configValues` gives config's alone, in order, and `values` the packages' and then config's; before config registers, after a reload without them, and run bare, it gives none"
+      run :=
+        let (state, _) : ModelState × Array String :=
+          Config.State.ofPackages #[gitPackage, everywherePackage]
+        let both :=
+          reloadedTo state do
+            findingAs "a" "/a"
+            findingAs "b" "/b"
+        let cleared := reloadedTo both (pure ())
+        pure
+          (configFinderNames state == some #[] && configFinderNames both == some #["a", "b"] &&
+            finderNames both == some #["git", "everywhere", "a", "b"] &&
+            configFinderNames cleared == some #[] &&
+            finderNames cleared == some #["git", "everywhere"] &&
+            ((Extension.configValues Finder).runModel editorModel).1.toOption.map (·.size) ==
+              some 0) },
+    { name :=
+        "config's value of another type does not come back from `Finder`'s `configValues`, and does from its own"
+      run :=
+        let (state, _) : ModelState × Array String := Config.State.ofPackages #[gitPackage]
+        let installed := reloadedTo state (Extension.add ({ n := 3 } : Impostor))
+        pure
+          (configFinderNames installed == some #[] &&
+            askedOf installed
+                (do
+                  return (← Extension.configValues Impostor).map (·.n)) ==
+              some #[3]) },
     { name :=
         "a choice: `named` finds config's value of a package's name, the package's again after a reload without it, and nothing of a name nobody registered"
       run :=

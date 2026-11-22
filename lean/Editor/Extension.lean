@@ -43,6 +43,11 @@ The interface package says which each of its points is:
   that name, so config's value of a package's name replaces the
   package's.
 
+A hook's reader that ranks config's values before the packages' asks for
+config's apart (`configValues`): they are the tail of `values`, so the
+packages' are what comes before it. The compile mode's hook does
+(`Compile.hook`).
+
 No value registered is an ordinary case: a hook nobody registered at is
 empty, and a choice of a name nobody registered is `none`.
 
@@ -82,6 +87,13 @@ def add {α : Type} [TypeName α] (value : α) : SetupM Unit :=
 order. -/
 def values (α : Type) [TypeName α] : EditorM (Array α) := do
   return (← RegistryRequest.ask (.extensions (TypeName.typeName α))).filterMap (·.get? α)
+
+/-- The values config registered at the extension point `α`, in
+registration order: the tail of `values`, which holds the packages' first.
+For a reader that ranks config's values before the packages' ("A hook, or a
+choice", in the module docs). -/
+def configValues (α : Type) [TypeName α] : EditorM (Array α) := do
+  return (← RegistryRequest.ask (.configExtensions (TypeName.typeName α))).filterMap (·.get? α)
 
 /-- The latest value registered at the extension point `α` whose name, as
 `name` reads it, is `wanted`, or `none` when no value has that name. -/

@@ -1038,6 +1038,25 @@ def registryChecks : List Check :=
               some (.finished #["[] 0"]) &&
             worked ((jobRegistration "plain" "p").workWith values []) == .finished #["p"]) },
     { name :=
+        "of the values at an extension point the registry answers config's alone, in order, where it is asked for config's: a package's value there, and config's value at another point, are not among them, and the loop is told the same"
+      run :=
+        let other : Lean.Name := `ModelTest.OtherPoint
+        let key := TypeName.typeName Counted
+        let counted (n : Nat) : Lean.Name × Dynamic := (key, .mk ({ n } : Counted))
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceExtensions { name := "counting" }
+                #[counted 1, counted 2]).replaceExtensions
+            .config #[counted 3, (other, .mk ({ n := 9 } : Counted)), counted 4]
+        let numbers (values : Array Dynamic) : Array Nat :=
+          values.filterMap fun value => (value.get? Counted).map (·.n)
+        pure
+          (numbers (registry.extensionsAt key) == #[1, 2, 3, 4] &&
+            numbers (registry.configExtensionsAt key) == #[3, 4] &&
+            numbers (registry.configExtensionsAt other) == #[9] &&
+            numbers (registry.registered.answer (.configExtensions key)) == #[3, 4] &&
+            numbers (registry.registered.answer (.extensions key)) == #[1, 2, 3, 4] &&
+            numbers (RegistryRequest.bare (.configExtensions key)) == #[]) },
+    { name :=
         "the collector keeps a job over an extension point with its point, a host installs it with its owner, and `Package.registered` lists its name among the jobs"
       run :=
         let counting : Package :=

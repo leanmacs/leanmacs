@@ -559,6 +559,11 @@ structure Loop.Registered where
   in registration order (`Config.Registry.extensionsAt`), for a command that
   asks (`RegistryRequest.extensions`, `Editor/Extension.lean`). -/
   extensions : Lean.Name → Array Dynamic := fun _ => #[]
+  /-- The values config registered at an extension point, by the name of its
+  type, in registration order (`Config.Registry.configExtensionsAt`): the
+  tail of `extensions`' answer, for a command that asks for config's apart
+  (`RegistryRequest.configExtensions`, `Extension.configValues`). -/
+  configExtensions : Lean.Name → Array Dynamic := fun _ => #[]
 
 /-- The workspace settings `registered` says: config's workspace roots, the
 git program, the marker modes of the compile contributions, and config's
@@ -596,6 +601,7 @@ def Loop.Registered.answer (registered : Loop.Registered) :
       (registered.atPoint name).any (·.asksOn occasion)
   | .storeCodec name => registered.codec? name
   | .extensions key => registered.extensions key
+  | .configExtensions key => registered.configExtensions key
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/

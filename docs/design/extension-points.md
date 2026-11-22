@@ -195,12 +195,13 @@ def projectRoot (path : System.FilePath) : EditorM (Option System.FilePath) := d
   return none
 ```
 
-The core's whole API for it is four functions:
+The core's whole API for it is five functions:
 
 | Function | What it does |
 |---|---|
 | `Extension.add (value : α) : SetupM Unit` | Registers `value` at the extension point `α`, for whoever runs this `setup`: a package or config |
 | `Extension.values (α) : EditorM (Array α)` | Every value registered at `α`, in registration order |
+| `Extension.configValues (α) : EditorM (Array α)` | The values config registered at `α`, in order: the tail of `values`, for a hook's reader that ranks config's first ("A hook, or a choice", below) |
 | `Extension.named (α) (name : α → String) (wanted : String) : EditorM (Option α)` | The latest value registered at `α` whose name is `wanted` |
 | `Extension.workJob (α) (name) (work : Array α → List Argument → Work) (reported restarted) : SetupM Unit` | Registers the job `name` over `α`: each time it is started, its work is `work` applied to every value registered at `α` then, in registration order ("To a job", below) |
 
@@ -213,6 +214,9 @@ extension points is:
   `completion-at-point-functions`. A package's values come before config's,
   and packages in the order they register (by dependency,
   [packages.md](packages.md), "The order packages register in").
+  A reader that ranks config's values before the packages' asks for
+  config's apart (`configValues`): they are the tail of `values`, so the
+  packages' are the values before it.
 - **A choice** uses one value, by name (`named`), as Emacs uses
   `completing-read-function` and as the editor uses `useStyle`. The latest
   registration of a name wins, so config's value replaces a package's value
@@ -234,6 +238,9 @@ place of a constructor per kind:
 - A command asks for the values at a key with a question to the registry
   (`RegistryRequest.extensions key`), answered by the loop from what it was
   told of the registry, and gets them back typed by `Dynamic.get? α`.
+  Config's values alone are a second question (`RegistryRequest.configExtensions key`),
+  answered from the registry's entries whose owner is config
+  (`Config.Registry.configExtensionsAt`).
 
 A registry reply cannot otherwise hold a program over the editor's port: a
 reply type that held `EditorM` would refer to itself, which is why an
@@ -356,6 +363,8 @@ package, two implementation packages and a consumer, and show:
   does not come back from `Finder`'s, and does from its own;
 - a reload replaces config's values and keeps a package's, which come
   first;
+- `configValues` gives config's values alone, in order, and none before
+  config registers, after a reload without them, or run bare;
 - `named` finds config's value of a package's name, the package's again
   after a reload without it, and nothing of a name nobody registered.
 
@@ -531,9 +540,14 @@ and it is not routed through an extension point.**
   changed by phase 5 ([version-control.md](version-control.md)).
 
 - **Order within a hook.** Values come in registration order, which is
-  dependency order between Lake packages. Emacs lets a hook function ask to
-  run early or late (`add-hook`'s depth). Whether a hook needs that is
-  decided when a hook first needs it.
+  dependency order between Lake packages, and config's last. **A reader
+  that ranks config's values first asks for config's apart**
+  (`Extension.configValues`, decided in features-as-packages phase 8 for
+  the first hook that needed it, the compile mode's): the order is the
+  reader's rule, written once in the interface package, and a value
+  carries no rank. Emacs lets a hook function ask to run early or late
+  (`add-hook`'s depth). Whether a value needs to say that for itself is
+  still open, and is decided when a hook first needs it.
 - **The registrations the core already has.** Completion sources, styles,
   displays and at-point sources, and the compile mode's contributions, are
   constructors of `SetupRequest` today. **Styles, displays and at-point

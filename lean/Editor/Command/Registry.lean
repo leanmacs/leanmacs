@@ -27,7 +27,8 @@ request of the editor's port (`EditorRequest.registry`,
   So a question about a source is answered its names (`categorySources`,
   `atPointSources`), and the source is run by a control request
   (`Editor/Command/Control.lean`).
-  The one exception is `extensions`, answered the values registered at an
+  The one exception is `extensions`, and `configExtensions` with it,
+  answered the values registered at an
   extension point as `Dynamic`s: `Dynamic` is an opaque `Type`, so a value
   whose fields are `EditorM` programs travels in it without the reply's
   type referring to itself, and the command that reads it, typed again by
@@ -160,6 +161,10 @@ inductive RegistryRequest where
   point's type, in registration order, each as a `Dynamic`
   (`Editor/Extension.lean`). -/
   | extensions (key : Lean.Name)
+  /-- The values config registered at the extension point `key`, in
+  registration order, each as a `Dynamic`: the tail of `extensions`'
+  answer (`Extension.configValues`). -/
+  | configExtensions (key : Lean.Name)
 
 /-- The type of the reply to each question. -/
 abbrev RegistryRequest.Reply : RegistryRequest → Type
@@ -181,6 +186,7 @@ abbrev RegistryRequest.Reply : RegistryRequest → Type
   | .atPointSources .. => Array String
   | .storeCodec _ => Option (String × StoreCodec)
   | .extensions _ => Array Dynamic
+  | .configExtensions _ => Array Dynamic
 
 /-- The answer to `request` where no loop dispatched the command: as with
 nothing registered and config's defaults, except that any job name is
@@ -204,5 +210,6 @@ def RegistryRequest.bare : (request : RegistryRequest) → request.Reply
   | .atPointSources .. => #[]
   | .storeCodec _ => none
   | .extensions _ => #[]
+  | .configExtensions _ => #[]
 
 end Editor
