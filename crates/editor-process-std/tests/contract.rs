@@ -89,7 +89,7 @@ fn exits_within(pid: Pid, bound: Duration) -> rustix::io::Result<bool> {
     };
     let timeout = Timespec {
         tv_sec: i64::try_from(bound.as_secs()).unwrap_or(i64::MAX),
-        tv_nsec: bound.subsec_nanos().try_into().unwrap_or(0),
+        tv_nsec: bound.subsec_nanos().into(),
     };
     let mut fds = [PollFd::new(&fd, PollFlags::IN)];
     Ok(poll(&mut fds, Some(&timeout))? > 0)
