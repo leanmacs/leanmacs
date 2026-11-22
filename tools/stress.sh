@@ -16,12 +16,16 @@
 #   rust       cargo test --workspace --locked
 #   open-file  the open-file headless fixture, exactly as ffi-test runs it
 #   ffi        mise run ffi-test, every headless fixture (slow)
+#   probe      the shell command in STRESS_PROBE: a stand-in suite, for
+#              tools/stress-probe.sh alone
 #
 # With no suite named it runs config, contract, rust and open-file.
 #
 # The load is `2 x cores` processes of `yes >/dev/null` (cores from
 # `sysctl -n hw.ncpu` on macOS, `nproc` elsewhere; STRESS_HOGS overrides),
-# started before the first round and killed by a trap on EXIT, INT and TERM.
+# started before the first round and killed by a trap on EXIT, INT and TERM,
+# which first ends the round's suite run and its limit guard, each with its
+# whole process group (tools/stress-probe.sh proves it).
 # Each suite runs in the foreground under `taskpolicy -c utility` on macOS
 # and `nice -n 19` elsewhere, so the hogs win the CPU. Each run's output goes
 # to `$STRESS_OUT/<suite>-<round>.log` (a fresh temporary directory when
@@ -56,7 +60,7 @@ case "$rounds" in '' | *[!0-9]*) usage ;; esac
 [ "$rounds" -ge 1 ] || usage
 suites=${*:-config contract rust open-file}
 for suite in $suites; do
-  case "$suite" in config | contract | rust | open-file | ffi) ;; *) usage ;; esac
+  case "$suite" in config | contract | rust | open-file | ffi | probe) ;; *) usage ;; esac
 done
 
 root=$(git rev-parse --show-toplevel)
@@ -74,8 +78,28 @@ else
 fi
 hogs=${STRESS_HOGS:-$((2 * cores))}
 
+# The round's suite run and its guard, each the leader of a process group
+# of its own (`bounded`), while they run; and the hogs.
+run=
+guard=
 pids=
+
+# Sends TERM to the group the child $1 leads: to the child first, so one
+# started but not yet in a group of its own (setsid has not run in it) ends
+# too, then to the group.
+end_group() {
+  kill -TERM "$1" 2>/dev/null || true
+  kill -TERM "-$1" 2>/dev/null || true
+}
+
+# Ends everything this script started: the round's run and its guard, each
+# with its whole group, out of reach of a terminal's Ctrl-C, and waited
+# for; then the hogs.
 stop() {
+  for group in $run $guard; do end_group "$group"; done
+  for group in $run $guard; do wait "$group" 2>/dev/null || true; done
+  run=
+  guard=
   for pid in $pids; do kill "$pid" 2>/dev/null || true; done
   for pid in $pids; do wait "$pid" 2>/dev/null || true; done
   pids=
@@ -84,7 +108,10 @@ trap stop EXIT
 trap 'stop; exit 130' INT
 trap 'stop; exit 143' TERM
 
-prefix=$(cd "$root/lean" && lean --print-prefix)
+prefix=
+case " $suites " in
+*" config "* | *" open-file "*) prefix=$(cd "$root/lean" && lean --print-prefix) ;;
+esac
 
 # Runs one suite once, in the foreground, its output to the file $1.
 run_suite() {
@@ -105,6 +132,8 @@ run_suite() {
       printf "%s\n" "$out" | sed "s|$dir|@DIR@|g" | diff ../tests/headless/open-file/expected -' open-file "$prefix") >"$log" 2>&1 ;;
   ffi)
     (cd "$root" && low mise run ffi-test) >"$log" 2>&1 ;;
+  probe)
+    sh -c "${STRESS_PROBE:?the probe suite runs STRESS_PROBE}" >"$log" 2>&1 ;;
   esac
 }
 
@@ -136,17 +165,30 @@ grouped() {
 # Runs one suite as run_suite does (this script's `--run`), in a process
 # group of its own, and kills that group if it has not ended within $limit
 # seconds, saying so in its log. The guard is killed with its own group once
-# the run ends, so no sleep is left behind.
+# the run ends, so no sleep is left behind. Both are in `run` and `guard`
+# while they run, for `stop`: an INT or TERM that comes while they start is
+# held until both are there, then acted on.
 bounded() {
+  signalled=
+  trap 'signalled=130' INT
+  trap 'signalled=143' TERM
   grouped sh "$0" --run "$1" "$2"
-  pid=$started
+  run=$started
   grouped sh -c 'sleep "$1" && kill -TERM "-$2" 2>/dev/null &&
-    echo "stress: a hang: $3 had not ended within $1 s and was killed" >>"$4"' guard "$limit" "$pid" "$2" "$1"
+    echo "stress: a hang: $3 had not ended within $1 s and was killed" >>"$4"' guard "$limit" "$run" "$2" "$1"
   guard=$started
+  trap 'stop; exit 130' INT
+  trap 'stop; exit 143' TERM
+  if [ -n "$signalled" ]; then
+    stop
+    exit "$signalled"
+  fi
   status=0
-  wait "$pid" || status=$?
-  kill -TERM "-$guard" 2>/dev/null || true
+  wait "$run" || status=$?
+  run=
+  end_group "$guard"
   wait "$guard" 2>/dev/null || true
+  guard=
   return "$status"
 }
 

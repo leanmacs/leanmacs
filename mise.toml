@@ -1683,9 +1683,15 @@ run = "tools/user-link-check.sh lean"
 # (or the suites named, `ffi` for every fixture) that many times under
 # `2 x cores` `yes` hogs at lowered priority, and prints each suite's
 # passes. Run it after `mise run ci` has built everything.
+# `tools/stress-probe.sh` runs first, in under a second: it interrupts and
+# terminates the loop mid-round, on a stand-in suite, and proves that the
+# loop then leaves neither the suite's run nor its guard running.
 [tasks.stress]
-description = "Opt-in, never part of ci: run the thread-heavy suites over and over under a CPU load of twice the cores, and print each suite's passes (tools/stress.sh). Run after `mise run ci`"
-run = "sh tools/stress.sh"
+description = "Opt-in, never part of ci: run the thread-heavy suites over and over under a CPU load of twice the cores, and print each suite's passes (tools/stress.sh), after the probe that an interrupted loop leaves nothing running (tools/stress-probe.sh). Run after `mise run ci`"
+run = [
+  "sh tools/stress-probe.sh",
+  "sh tools/stress.sh",
+]
 
 # Opt-in, never part of `ci` or hk.pkl: AGENTS.md forbids a test that scans
 # source text, and this is a review aid, not a test. It lists every wait

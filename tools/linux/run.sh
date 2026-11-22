@@ -141,7 +141,8 @@ inside_ci() {
 }
 
 # The stress loop (tools/stress.sh) in the container, after the gate has
-# built everything and passed: the loop builds nothing.
+# built everything and passed: the loop builds nothing. Its probe runs
+# first (tools/stress-probe.sh), under the container's dash and setsid.
 inside_stress() {
   [ $# -ge 1 ] || usage
   inside_prepare
@@ -152,6 +153,7 @@ inside_stress() {
     echo "linux-stress: \`mise run ci\` exited $status; the loop did not run"
     return "$status"
   fi
+  sh tools/stress-probe.sh || return $?
   rm -rf /work/stress-logs
   STRESS_OUT=/work/stress-logs mise exec -- sh tools/stress.sh "$@"
 }

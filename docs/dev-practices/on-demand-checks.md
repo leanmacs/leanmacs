@@ -1093,8 +1093,19 @@ tree inside the loop. Each run's output goes to
 `$STRESS_OUT/<suite>-<round>.log` (a fresh temporary directory when it is
 unset). It prints `<suite>: <passed>/<rounds>` for each suite, then each
 failing run with the `FAILED:` lines of the Lean checks or the failing
-Rust tests' names, and exits 1 on any failure. A trap kills the hogs on
-exit or interrupt, so nothing is left running.
+Rust tests' names, and exits 1 on any failure. Each suite's run is in a
+process group of its own (`setsid` on Linux, the shell's job control on
+macOS), with a guard in another that kills the run's whole group if it has
+not ended within `STRESS_LIMIT` seconds (30 minutes), so a hang shows as a
+failed run. Those groups are out of reach of a terminal's Ctrl-C, so the
+trap on exit, INT and TERM sends TERM to the run's group and the guard's
+and waits for them, then kills the hogs: nothing is left running.
+`tools/stress-probe.sh`, which `mise run stress` and `mise run
+linux-stress` run first, proves it in under a second. It interrupts, then
+terminates, the loop mid-round on a stand-in suite, with the guard's
+`sleep` a stand-in too, and fails if a process of either group is still
+there to be released once the loop has exited. Run against the trap that
+killed only the hogs, it failed on both signals.
 
 The open-file fixture was the named case: it pinned the count of scenes
 published, which the syntax worker's deliveries vary under load (21 of 30
