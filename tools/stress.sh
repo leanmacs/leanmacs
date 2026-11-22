@@ -40,6 +40,15 @@ usage() {
   exit 2
 }
 
+# `--run <log> <suite>` runs one suite once, as a round does: what a bounded
+# run starts in a session of its own (`bounded`, below).
+single=
+if [ "${1:-}" = --run ]; then
+  [ $# -eq 3 ] || usage
+  single=$2
+  set -- 1 "$3"
+fi
+
 [ $# -ge 1 ] || usage
 rounds=$1
 shift
@@ -51,8 +60,10 @@ for suite in $suites; do
 done
 
 root=$(git rev-parse --show-toplevel)
-out=${STRESS_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/stress.XXXXXXXX")}
-mkdir -p "$out"
+if [ -z "$single" ]; then
+  out=${STRESS_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/stress.XXXXXXXX")}
+  mkdir -p "$out"
+fi
 
 if [ "$(uname -s)" = Darwin ]; then
   cores=$(sysctl -n hw.ncpu)
@@ -102,21 +113,39 @@ run_suite() {
 # STRESS_LIMIT (seconds) overrides the 30 minutes.
 limit=${STRESS_LIMIT:-1800}
 
-# Runs one suite as run_suite does, in a process group of its own, and kills
-# that group if it has not ended within $limit seconds, saying so in its log.
-# The guard is killed with its own group once the run ends, so no sleep is
-# left behind.
+if [ -n "$single" ]; then
+  trap - EXIT INT TERM
+  run_suite "$single" "$suites"
+  exit $?
+fi
+
+# Starts `$@` in a process group of its own; `started` is the group's id:
+# `setsid` where there is one (Linux, where a script's shell has no job
+# control), else the shell's job control (macOS).
+grouped() {
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" &
+  else
+    set -m
+    "$@" &
+    set +m
+  fi
+  started=$!
+}
+
+# Runs one suite as run_suite does (this script's `--run`), in a process
+# group of its own, and kills that group if it has not ended within $limit
+# seconds, saying so in its log. The guard is killed with its own group once
+# the run ends, so no sleep is left behind.
 bounded() {
-  set -m
-  run_suite "$1" "$2" &
-  pid=$!
-  (sleep "$limit" && kill -TERM -- "-$pid" 2>/dev/null &&
-    echo "stress: a hang: $2 had not ended within $limit s and was killed" >>"$1") &
-  guard=$!
-  set +m
+  grouped sh "$0" --run "$1" "$2"
+  pid=$started
+  grouped sh -c 'sleep "$1" && kill -TERM "-$2" 2>/dev/null &&
+    echo "stress: a hang: $3 had not ended within $1 s and was killed" >>"$4"' guard "$limit" "$pid" "$2" "$1"
+  guard=$started
   status=0
   wait "$pid" || status=$?
-  kill -TERM -- "-$guard" 2>/dev/null || true
+  kill -TERM "-$guard" 2>/dev/null || true
   wait "$guard" 2>/dev/null || true
   return "$status"
 }
