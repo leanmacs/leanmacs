@@ -33,9 +33,12 @@ import Editor.Test.Linked.Shipped
 import Editor.Test.Linked.Syntax
 import Editor.Test.Linked.Trees
 import Editor.Test.Modes
+import Editor.Test.PackageSet
 import Editor.Test.Prompts
+import Editor.Test.Restore
 import Editor.Test.Sources
 import Editor.Test.Views
+import Editor.Test.Windows
 import Editor.Test.Workspace
 import Editor.Text.Word
 import Editor.Theme.Check

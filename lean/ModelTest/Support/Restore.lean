@@ -1,14 +1,13 @@
-import BuffersApiTest.Fake
-import Editor.Ex.Compiled
 import Editor.Jumps
 import Editor.Jumps.Go
-import Editor.Restore.Compiled
-import Editor.TabCommands.Compiled
+import Editor.Quit
 import Editor.Test.Editing
+import Editor.Test.Ex
 import Editor.Test.Hosted
 import Editor.Test.Minibuffer
+import Editor.Test.Restore
+import Editor.Test.Windows
 import Editor.Test.Workspace
-import Editor.WindowCommands.Compiled
 import FilesApiTest.Fake
 import ModelTest.Support.Switching
 
@@ -19,13 +18,17 @@ The session restore checks' world and driver: `switching`, the scheme
 written for the core's checks (`ModelTest/Support/Switching.lean`), with
 the kit's editing keys and the keys of `keysWith`, over the editor's
 models, the files of the checks under `/r` on the job model's disk,
-the commands and jobs of `files-api`'s fake and `buffers-api`'s, with the
-`restore` package's commands, mode and jobs, the ex commands, the window
-commands and the tab commands, and the state directory `/state`. A file
-opens and saves through `files-api`'s fake and is given the workspace `/r`
-by the kit's stand-in for the workspace's attach (`attachPackage`), so the
-support names no module of the files feature, the buffers', the
-workspace's or the working sets', and the core's checks of the journal's
+the commands and jobs of `files-api`'s fake, a close and a quit written
+here (`closeName`, `Quit.name`), with the commands, mode and jobs of the
+kit's stand-in for the `restore` package (`Editor/Test/Restore.lean`), the
+kit's ex line (`Editor/Test/Ex.lean`) and the kit's stand-ins for the
+window and tab commands (`Editor/Test/Windows.lean`), and the state
+directory `/state`. A file opens and saves through `files-api`'s fake and
+is given the workspace `/r` by the kit's stand-in for the workspace's
+attach (`attachPackage`), so the support names no module of the files
+feature, the buffers', the workspace's, the working sets', the ex line's,
+the window or tab commands' or the `restore` package's, and the core's
+checks of the journal's
 reconciler (`Editor/Restore.lean`, `Editor/Restore/Restart.lean`) and of
 session restore's own run (`Editor/Restore/Run.lean`), which reaches the
 files through `files-api` too, run on it.
@@ -70,18 +73,55 @@ def found : Workspace.Found :=
   Workspace.Found.ofGit { toplevel := root, commonDir := root / ".git", branch := .detached }
     (some "git@github.com:o/r.git")
 
+/-- The command of the checks that closes a buffer. -/
+def closeName : String :=
+  "test-close"
+
+/-- `closeName`: the buffer its first argument names is removed, over the
+core's API: its jumps are detached, every window that showed it shows the
+most recent other buffer, or a new scratch buffer where there is none, and
+the buffer is removed. -/
+def closeCommand (call : Call) : EditorM Unit := do
+  let .str name :: _ := call.arguments | return
+  let some id := (← editorState).findBuffer name | return
+  Jumps.detach id
+  let state ← editorState
+  let fallback ←
+    match state.mostRecent id with
+    | some fallback =>
+      pure (some fallback)
+    | none =>
+      match ← createBuffer (state.freeName EditorState.scratchName) with
+      | .ok made =>
+        pure (some made)
+      | .error _ =>
+        pure none
+  let some fallback := fallback | return
+  for view in state.frame.everyWindow do
+    if (state.window? view).any (·.buffer == id) then
+      discard <| view.show fallback
+  discard <| id.remove
+
+/-- The commands the checks write: the close (`closeName`), and the quit
+command, under the core's name (`Quit.name`), which runs the core's quit
+rule (`Quit.closeRequested`), as the ex line's package's does. -/
+def ownPackage : Package :=
+  { name := "restore-checks"
+    setup := do
+      commandWith closeName closeCommand
+      commandWith Quit.name fun _ => Quit.closeRequested }
+
 /-- The commands every driver of the checks has: `files-api`'s fake's (the
-kit's opener, `FilesApiTest.fake`) and `buffers-api`'s fake's
-(`BuffersApiTest.fake`). -/
+kit's opener, `FilesApiTest.fake`) and the checks' own (`ownPackage`). -/
 def baseCommands : Array Config.Registration :=
-  FilesApiTest.fake.registered.commands ++ BuffersApiTest.fake.registered.commands
+  FilesApiTest.fake.registered.commands ++ ownPackage.registered.commands
 
 /-- What the checks' extension points hold: the kit's stand-in for the
-workspace's attach at `FilesApi.Opened` (`attachPackage found`), the fake's
-`FilesApi.Files` value, and the buffers fake's, in that order, as a host
-registers the workspace before the files' users. -/
+workspace's attach at `FilesApi.Opened` (`attachPackage found`), then the
+fake's `FilesApi.Files` value, as a host registers the workspace before
+the files' users. -/
 def hooks : Array Package :=
-  #[attachPackage found, FilesApiTest.fake, BuffersApiTest.fake]
+  #[attachPackage found, FilesApiTest.fake]
 
 /-- A driver of the session restore checks: a loop over `switching`. -/
 abbrev RestoreDriver :=
@@ -106,7 +146,7 @@ state is, and `C-e` ends it; the kit's editing keys
 (`Editor/Test/Editing.lean`), but `C-<Home>` and `C-<End>`, which run
 `jump-first` and `jump-last` (`jumped`); `C-o` and `C-i`, which go back
 and on one place in the window's jump list (`Jumps.move`); and `C-x`, which
-runs the ex line's command. The commands are the kit's minibuffer's, the base ones and
+runs the kit's ex line's command (`ExLine.name`). The commands are the kit's minibuffer's, the base ones and
 `commands`, under their names, then the kit's editing commands and the
 four written here; with `modes`, as a host's registry holds them, and the
 extension points `hooks` register. -/
@@ -123,7 +163,7 @@ def keysWith (commands : Array Config.Registration) (modes : Array Mode) : Loop.
     editingBindings.filter (fun (text, _) => text != "C-<Home>" && text != "C-<End>") ++
       [("C-b", invoke "begin"), ("C-e", invoke "end"), ("C-<Home>", invoke "jump-first"),
         ("C-<End>", invoke "jump-last"), ("C-o", invoke "jump-back"), ("C-i", invoke "jump-on"),
-        ("C-x", invoke Ex.name)]
+        ("C-x", invoke ExLine.name)]
   let registry := ({} : Config.Registry).replaceModes .compiled modes
   let own : Keymap switching.Binding :=
     Keymap.ofList (bindings.map fun (text, invocation) => (keys text, invocation))
@@ -187,10 +227,10 @@ that starts is settled. -/
 def opened (driver : RestoreDriver) (name : String) : RestoreDriver :=
   drained (invoked driver FilesApi.openFileName [.str (root / name).toString])
 
-/-- `driver` once the buffer called `name` is closed and everything that
-starts is settled. -/
+/-- `driver` once the buffer called `name` is closed (`closeName`) and
+everything that starts is settled. -/
 def closed (driver : RestoreDriver) (name : String) : RestoreDriver :=
-  drained (invoked driver BuffersApi.closeName [.str name])
+  drained (invoked driver closeName [.str name])
 
 /-- `driver` with the file `/r/<name>` holding `text` on disk, as another
 program would leave it. -/
@@ -209,17 +249,19 @@ def stateDirectory : System.FilePath :=
 
 /-- A driver of the checks over `files`, its state directory `state`, each
 step handed a log bound of `limit`, with `modes` registered beside the
-restore package's, the config generation `generation` and `jobs` registered
-after the restore package's; `none` if making the state was refused. -/
+kit's `restore`'s (`Test.Restore.package`), the config generation
+`generation` and `jobs` registered after its jobs, and the commands of the
+kit's ex line and of its window and tab stand-ins (`Test.Windows.package`);
+`none` if making the state was refused. -/
 def restoreDriver (files : Option FileModel := none)
     (state : Option System.FilePath := some stateDirectory) (limit : Nat := Restore.bound)
     (modes : Array Mode := #[]) (generation : Nat := 0)
     (jobs : Array Config.JobRegistration := #[]) : Option RestoreDriver :=
   (driverWith
-        (Restore.package.registered.commands ++ Ex.package.registered.commands ++
-          WindowCommands.package.registered.commands ++
-          TabCommands.package.registered.commands)
-        (Restore.package.registered.modes ++ modes) (Restore.package.registered.jobs ++ jobs)).map
+        (Test.Restore.package.registered.commands ++ exLinePackage.registered.commands ++
+          Test.Windows.package.registered.commands)
+        (Test.Restore.package.registered.modes ++ modes)
+        (Test.Restore.package.registered.jobs ++ jobs)).map
     fun driver =>
     { driver with
       keys :=

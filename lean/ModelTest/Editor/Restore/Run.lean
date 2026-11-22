@@ -166,13 +166,13 @@ def framed : Option RestoreDriver :=
     fun begun =>
     let edited := keysFed (opened (edged begun) "a.txt") "C-<End> C-<Home> <ArrowDown> <Delete>"
     let tiled :=
-      [WindowCommands.splitName, WindowCommands.splitVerticallyName, WindowCommands.splitName,
-            WindowCommands.widerName, WindowCommands.edgeLeftName, WindowCommands.nextName,
-            WindowCommands.floatName].foldl
+      [Test.Windows.splitName, Test.Windows.splitVerticallyName, Test.Windows.splitName,
+            Test.Windows.widerName, Test.Windows.edgeLeftName, Test.Windows.focusNextName,
+            Test.Windows.floatName].foldl
         (fun driver name => ran driver name) edited
-    let tabbed := ran (ran tiled TabCommands.newName) "test-rename" [.str "notes"]
-    let zoomed := ran (ran tabbed WindowCommands.splitName) WindowCommands.zoomName
-    drained (ran zoomed TabCommands.previousName)
+    let tabbed := ran (ran tiled Test.Windows.newTabName) "test-rename" [.str "notes"]
+    let zoomed := ran (ran tabbed Test.Windows.splitName) Test.Windows.zoomName
+    drained (ran zoomed Test.Windows.previousTabName)
 
 /-- A second loop over the world `driver` left, with `change` made to its
 driver before its restore runs, and the checks' commands. -/
@@ -367,7 +367,7 @@ def restoreChecks : List Check :=
             match second before with
             | none => false
             | some again =>
-              let hidden := ran again TabCommands.nextName
+              let hidden := ran again Test.Windows.nextTabName
               (frameOf before).map canonical == (frameOf again).map canonical &&
                 (frameOf before).isSome &&
                 viewsOf before == viewsOf again &&
@@ -553,8 +553,7 @@ def restoreChecks : List Check :=
           | none => false
           | some begun =>
             let noted :=
-              drained
-                (ran (ran (keysFed begun (typing "kept")) WindowCommands.splitName) "test-note")
+              drained (ran (ran (keysFed begun (typing "kept")) Test.Windows.splitName) "test-note")
             match second noted with
             | none => false
             | some again =>
@@ -847,7 +846,7 @@ def restoreChecks : List Check :=
           | none => false
           | some begun =>
             let lines := keysFed begun "C-b o n e RET t w o RET t h r e e C-e <ArrowLeft>"
-            let split := ran lines WindowCommands.splitName
+            let split := ran lines Test.Windows.splitName
             let views := split.loop.state.frame.windows
             match views[0]?, views[1]? with
             | some one, some other =>
@@ -892,7 +891,7 @@ def restoreChecks : List Check :=
           | none => false
           | some begun =>
             -- Window 0 on b.txt, window 1 on a.txt, focused.
-            let split := ran (keysFed (opened begun "b.txt") "<Delete>") WindowCommands.splitName
+            let split := ran (keysFed (opened begun "b.txt") "<Delete>") Test.Windows.splitName
             let firstRun := drained (keysFed (opened split "a.txt") "<Delete>")
             let unframed (files : FileModel) : FileModel :=
               match indexOf firstRun 1 with
@@ -906,7 +905,7 @@ def restoreChecks : List Check :=
             | some phaseOne =>
               -- b.txt's place is kept under view 1; the split's window is 1,
               -- on a.txt.
-              let resplit := drained (ran phaseOne WindowCommands.splitName)
+              let resplit := drained (ran phaseOne Test.Windows.splitName)
               match second resplit with
               | none => false
               | some again =>

@@ -2159,7 +2159,9 @@ stores and the jobs, but compares three revisions (the host's cells', the
 table's and the config generation) with the ones last mirrored and runs a
 codec only when one moved, and a store's value is rendered only by the
 debounced write. With a state of two tabs, five windows, 100 jump entries
-and a 10,000-line `shell-history` whose codec the reconciler is handed,
+and a 10,000-line store of the shape of `shell-history`, whose codec the
+reconciler is handed (the bench's own since the shell's store left the
+core),
 `journal-bench` gave a median of 3.2 to 3.6 µs a key and a 99th percentile
 of 4.2 to 6.8 µs (`journal_order/4KiB/start` 3.3 / 6.6, `middle` 3.3 /
 6.3, `end` 3.3 / 6.2; `1MiB` 3.2 / 6.1, 3.4 / 4.3, 3.5 / 4.5; `10MiB` 3.3 /

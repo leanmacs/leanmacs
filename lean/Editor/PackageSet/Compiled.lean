@@ -8,9 +8,10 @@ import Editor.PackageSet.Edit
 
 The core package that edits a user's package set and builds it
 (`docs/design/packages.md`, "User package sets"): the job `package-build`
-(`Editor/PackageSet/Build.lean`), the commands its posts run, and three
-commands with ex names that edit the config's `lakefile.toml`
-(`Editor/PackageSet/Edit.lean`).
+and the two commands its posts run, which are the core's
+(`buildWork`, `startedCommand`, `outputCommand`,
+`Editor/PackageSet/Build.lean`), and three commands with ex names that edit
+the config's `lakefile.toml` (`Editor/PackageSet/Edit.lean`).
 
 - **`:package-install <name> <source> [<rev>]`** (`installName`) adds a
   require: a path (starting with `/`, `~` or `.`), a git repository (a url
@@ -45,8 +46,8 @@ changed since: `<command>: the lakefile changed since the last reload;
 build. A `lakefile.lean` is refused: the commands edit `lakefile.toml`
 only.
 
-Pinned by `ModelTest.packageSetBuildChecks`, on the loop's driver over the
-models.
+Pinned by `ModelTest.packageSetCommandChecks`, on the kit's hosted driver
+over the models; the build itself by `ModelTest.packageSetBuildChecks`.
 -/
 
 namespace Editor.PackageSet
@@ -218,31 +219,6 @@ def updateCommand (call : Call) : EditorM Unit := do
         message s!"{updateName}: {refusal.describe}"
       | .ok () =>
         message startedLine
-
-/-- The command of the build's first post: the build buffer made, or its
-text replaced by the header line, and shown ("The buffer" in
-`Editor/PackageSet/Build.lean`). -/
-def startedCommand (call : Call) : EditorM Unit := do
-  let .str line :: _ := call.arguments | return
-  let id ←
-    match ← findBuffer bufferName with
-    | some id =>
-      let .ok text ← id.text | return
-      id.writing do
-          text.replaceRange 0 (← text.byteLength) (line ++ "\n")
-      pure id
-    | none =>
-      let .ok id ← createBuffer bufferName (line ++ "\n") | return
-      discard <| id.setReadOnly true
-      pure id
-  discard <| id.display call.target.window.id opener (focus := false)
-
-/-- The command the build's output is posted to: its lines appended. -/
-def outputCommand (call : Call) : EditorM Unit :=
-  appendLines
-    (call.arguments.toArray.filterMap fun
-      | .str line => some line
-      | _ => none)
 
 /-- The job `package-edit`: the lakefile read again, and refused when it is
 not the text the edit was made from; else the edited text written beside

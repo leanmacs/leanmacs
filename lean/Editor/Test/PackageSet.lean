@@ -1,25 +1,57 @@
+import Editor.Package
+import Editor.PackageSet.Build
 import Editor.PackageSet.Edit
 import Editor.PackageSet.Running
+import Editor.Process.Model
 
 /-!
-# Model tests: support: PackageSet
+# The test kit: PackageSet
 
-What a running editor knows of its own package set, and the facts a reload
-reads of a config, as the package-set checks build them: the shipped
-default at `/w/packages`, its core at `/w/lean`, its config directory `/c`
-and data directory `/d`, and the generated lakefile (or the one generated
-before it required the core at its root) with more requires after its
-own, or a repaired lakefile with the core's require after them. Shared
-by the test modules of `Editor/PackageSet/Build.lean` and
-`Editor/Config/Reload.lean`; it holds no checks of its own.
+Two things the checks of a user's package set share.
+
+- **`buildPackage`**, a stand-in for the build half of the `package-set`
+  package that the core's tests, and a package's, may register: the job
+  `package-build` (`buildWork`), reported, and the two commands the job
+  posts to (`startedName`, `outputName`), all the core's
+  (`Editor/PackageSet/Build.lean`). The reload asks for a build and the
+  host starts that job by name, so a check of the build, whose subject is
+  the core, registers this and names no module of the package. It
+  registers no `:package-…` command and no edit job: those are the
+  package's.
+- **What a running editor knows of its own package set, and the facts a
+  reload reads of a config**, as the package-set checks build them: the
+  shipped default at `/w/packages`, its core at `/w/lean`, its config
+  directory `/c` and data directory `/d`, and the generated lakefile (or
+  the one generated before it required the core at its root) with more
+  requires after its own, or a repaired lakefile with the core's require
+  after them; a git package, and a process script that replies.
+
+It holds no checks. `buildPackage` is pinned by the checks that run on it
+(`ModelTest.packageSetBuildChecks`), and the package's own check holds the
+real package to it. The rest is shared by the test modules of
+`Editor/PackageSet/Build.lean` and `Editor/Config/Reload.lean` and by the
+package `package-set`'s tests.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import").
 -/
 
-namespace ModelTest
+namespace Editor.Test.PackageSet
 
 open Editor
 open Editor.PackageSet
 
-namespace PackageSetTest
+/-- The kit's stand-in for the build half of the package `package-set`
+(the module docs): the job `package-build`, reported, and the two commands
+it posts to. -/
+def buildPackage : Package :=
+  { name := "package-set"
+    setup := do
+      commandWith startedName startedCommand
+      commandWith outputName outputCommand
+      workJob buildJob buildWork (reported := true) }
 
 /-- The shipped set's directory. -/
 def setDirectory : String :=
@@ -80,6 +112,13 @@ def repairedLakefileWith (more : Array Require := #[]) : Facts :=
 def hello : Require :=
   { name := "hello", source := .path "/h" }
 
-end PackageSetTest
+/-- A git package. -/
+def gitPackage : Require :=
+  { name := "g", source := .git "https://example.invalid/g" (some "v1") none }
 
-end ModelTest
+/-- A run replying status `code` with `stdout`. -/
+def replied (command : Process.Command) (code : Nat := 0) (stdout : String := "") :
+    Process.Script :=
+  { command, reply := .ok { exit := .code code, stdout := stdout.toUTF8, stderr := .empty } }
+
+end Editor.Test.PackageSet

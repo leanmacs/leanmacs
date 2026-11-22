@@ -63,6 +63,7 @@ import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Shipped
+import Editor.Test.Restore
 import Editor.Text
 import Editor.Text.Model
 import Editor.Text.Real
@@ -2838,7 +2839,7 @@ def withRestoreHost (context : Context) (files : List (String × String))
     writeConfig directory files
     let stage ←
       Stage.new context context.elaborator (Config.Directory.source directory)
-          { packages := #[FilesApiTest.fake, Restore.package] }
+          { packages := #[FilesApiTest.fake, Test.Restore.package] }
     let fake ← Job.FakeFiles.new stage.collaborators.services.completions journalledModel
     let stage :=
       { stage with
@@ -2855,7 +2856,7 @@ with the real elaborator, the package `files` and the package `restore`
 that journal on disk, which the check is handed; and stops the host. -/
 def withRestoreFiles (context : Context) (files : List (String × String))
     (check : Headless.Host → IO.Ref (Array String) → System.FilePath → IO Bool)
-    (restore : Package := Restore.package) : IO Bool :=
+    (restore : Package := Test.Restore.package) : IO Bool :=
   IO.FS.withTempDir fun directory =>
     IO.FS.withTempDir fun state => do
       writeConfig directory files
@@ -2925,7 +2926,7 @@ def withStateHost (context : Context) (state : System.FilePath) (files : List (S
     writeConfig directory files
     let stage ←
       Stage.overFiles context (Config.Directory.source directory)
-          { packages := #[FilesApiTest.fake, Restore.package] ++ packages }
+          { packages := #[FilesApiTest.fake, Test.Restore.package] ++ packages }
     let stage :=
       { stage with
         collaborators :=
@@ -2983,7 +2984,7 @@ def withFailingJournal (context : Context) (files : List (String × String))
       writeConfig directory files
       let stage ←
         Stage.overFiles context (Config.Directory.source directory)
-            { packages := #[FilesApiTest.fake, Restore.package] }
+            { packages := #[FilesApiTest.fake, Test.Restore.package] }
       let running : System.FilePath := "/A.app/Contents/MacOS/editor"
       let processes ←
         Job.FakeProcesses.new stage.collaborators.services.completions

@@ -1,4 +1,3 @@
-import BuffersApi
 import ModelTest.Check
 import ModelTest.Support.Restore
 
@@ -226,7 +225,7 @@ def journalReconcileChecks : List Check :=
           match handedDriver with
           | none => false
           | some restored =>
-            let quit := invoked restored Ex.quitName
+            let quit := invoked restored Quit.name
             quit.stopped && bytesAt quit (recordPath stateDirectory) == none &&
               (indexOf quit 1).map (·.ended) == some true },
     { name :=
@@ -237,7 +236,7 @@ def journalReconcileChecks : List Check :=
           | none => false
           | some begun =>
             let lines := keysFed begun "C-b o n e RET t w o C-e <ArrowLeft> C-<Home>"
-            let quiet := drained (ran (ran lines WindowCommands.splitName) TabCommands.newName)
+            let quiet := drained (ran (ran lines Test.Windows.splitName) Test.Windows.newTabName)
             match indexOf quiet 1 with
             | none => false
             | some document =>
@@ -485,7 +484,7 @@ def journalReconcileChecks : List Check :=
           | some begun =>
             let noted := keysFed (ran begun "test-note") (typing "n")
             let index := indexNamed noted "note"
-            let closedNote := ran noted BuffersApi.closeName [.str "note"]
+            let closedNote := ran noted closeName [.str "note"]
             journalFiles noted == filesOf index 1 && journalFiles closedNote == #[] },
     { name := "read-only, excerpt and minibuffer buffers are never journalled"
       run :=
@@ -511,7 +510,7 @@ def journalReconcileChecks : List Check :=
           | none => false
           | some begun =>
             let typedIn := drained (keysFed begun (typing "abc"))
-            let left := ran typedIn Ex.quitName
+            let left := ran typedIn Quit.name
             journalFiles typedIn != #[] && left.stopped && journalFiles left == #[] &&
               (indexOf left 1).map (·.ended) == some true },
     { name := "the index write fires once for a burst of changes, and writes the state at its end"
@@ -537,7 +536,7 @@ def journalReconcileChecks : List Check :=
           | some begun =>
             let lines :=
               keysFed begun "C-b o n e RET t w o RET t h r e e RET f o u r C-e <ArrowLeft>"
-            let split := ran lines WindowCommands.splitName
+            let split := ran lines Test.Windows.splitName
             let views := split.loop.state.frame.windows
             match views[0]?, views[1]? with
             | some first, some second =>
@@ -546,7 +545,7 @@ def journalReconcileChecks : List Check :=
                   (ran split "test-place"
                     [.nat first.index, .nat 0, .nat 1, .nat 1, .nat 2, .nat 0])
                   "test-place" [.nat second.index, .nat 2, .nat 0, .nat 3, .nat 3, .nat 1]
-              let third := ran placed WindowCommands.splitName
+              let third := ran placed Test.Windows.splitName
               let focused := third.loop.state.frame.focused
               let opened :=
                 drained (invoked third FilesApi.openFileName [.str (root / "a.txt").toString])

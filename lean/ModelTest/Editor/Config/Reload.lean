@@ -41,6 +41,7 @@ import Editor.TabBar
 import Editor.Test.Config
 import Editor.Test.Keys
 import Editor.Test.Models
+import Editor.Test.PackageSet
 import Editor.Text
 import Editor.Text.Model
 import Editor.Value
@@ -48,7 +49,6 @@ import Editor.Window
 import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.Elaborator
-import ModelTest.Support.PackageSet
 
 /-!
 # Model tests: `Editor/Config/Reload.lean`
@@ -1158,9 +1158,9 @@ def reloadChecks : List Check :=
     { name :=
         "a reload whose package set differs from the running editor's starts one build after its report, keeping what it read; none while that build is in flight, one again once it ended, and none for a reload that matches"
       run :=
-        let facts := PackageSetTest.lakefileWith #[PackageSetTest.hello]
-        let generated := PackageSetTest.lakefileWith
-        let start : ModelState := { packageSet := PackageSetTest.runningWith {} }
+        let facts := Test.PackageSet.lakefileWith #[Test.PackageSet.hello]
+        let generated := Test.PackageSet.lakefileWith
+        let start : ModelState := { packageSet := Test.PackageSet.runningWith {} }
         let differing : ModelOutcome := { accepted ["a"] (pure ()) with facts }
         let matching : ModelOutcome := { accepted ["a"] (pure ()) with facts := generated }
         let builds (effects : Array Seen) : Array PackageSet.Order :=
@@ -1168,7 +1168,7 @@ def reloadChecks : List Check :=
             | .buildPackages order => some order
             | _ => none
         let order :=
-          match PackageSet.decide (PackageSetTest.runningWith facts) facts false with
+          match PackageSet.decide (Test.PackageSet.runningWith facts) facts false with
           | .build order => some order
           | _ => none
         let (first, firstEffects) := reduceFrom start [.requested, .finished differing]
@@ -1196,8 +1196,8 @@ def reloadChecks : List Check :=
     { name :=
         "what a reload has to say of the package set instead of building it is said once, and starts no build"
       run :=
-        let facts := PackageSetTest.lakefileWith #[PackageSetTest.hello]
-        let start : ModelState := { packageSet := PackageSetTest.runningWith {} (lake := none) }
+        let facts := Test.PackageSet.lakefileWith #[Test.PackageSet.hello]
+        let start : ModelState := { packageSet := Test.PackageSet.runningWith {} (lake := none) }
         let differing : ModelOutcome := { accepted ["a"] (pure ()) with facts }
         let said (effects : Array Seen) : Array String :=
           effects.filterMap fun

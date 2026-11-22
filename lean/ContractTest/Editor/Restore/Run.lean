@@ -3,8 +3,8 @@ import Editor.Api
 import Editor.Ffi.Files
 import Editor.InputScheme.Test
 import Editor.Loop
-import Editor.Restore.Compiled
 import Editor.Test.Linked.Rig
+import Editor.Test.Restore
 import Editor.Text.Model
 import FilesApiTest.Fake
 
@@ -25,7 +25,7 @@ open Editor.Test.Linked
 /-- The jobs of the restore checks: `files-api`'s fake's and the restore
 package's, as a host registers them. -/
 def restoreJobs : Array Config.JobRegistration :=
-  FilesApiTest.fake.registered.jobs ++ Restore.package.registered.jobs
+  FilesApiTest.fake.registered.jobs ++ Test.Restore.package.registered.jobs
 
 /-- The commands of the checks beside those: `start-restore` starts the job
 `restore` with its argument, as a host's first request does; `type-text`
@@ -53,7 +53,7 @@ def restoreExtras : Array Config.Registration :=
 registered. -/
 def restoreKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      ((FilesApiTest.fake.registered.commands ++ Restore.package.registered.commands ++
+      ((FilesApiTest.fake.registered.commands ++ Test.Restore.package.registered.commands ++
                 restoreExtras).find?
             (·.name == name)).bind
         fun registration =>

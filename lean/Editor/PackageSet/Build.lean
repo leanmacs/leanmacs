@@ -475,6 +475,33 @@ def appendLines (lines : Array String) : EditorM Unit := do
   for view in followers do
     Jumps.placeCursor view last
 
+/-- The command of the build's first post: the build buffer made, or its
+text replaced by the header line, and shown ("The buffer", in the module
+docs). It is here, beside the job that posts to it, so that whoever
+registers the job registers its commands: the package `package-set`, and
+the kit's stand-in (`Editor/Test/PackageSet.lean`). -/
+def startedCommand (call : Call) : EditorM Unit := do
+  let .str line :: _ := call.arguments | return
+  let id ←
+    match ← findBuffer bufferName with
+    | some id =>
+      let .ok text ← id.text | return
+      id.writing do
+          text.replaceRange 0 (← text.byteLength) (line ++ "\n")
+      pure id
+    | none =>
+      let .ok id ← createBuffer bufferName (line ++ "\n") | return
+      discard <| id.setReadOnly true
+      pure id
+  discard <| id.display call.target.window.id opener (focus := false)
+
+/-- The command the build's output is posted to: its lines appended. -/
+def outputCommand (call : Call) : EditorM Unit :=
+  appendLines
+    (call.arguments.toArray.filterMap fun
+      | .str line => some line
+      | _ => none)
+
 /-- What a failed build does ("The steps", in the module docs): its last
 line appended, and the failure said. -/
 def failed (how : String) (milliseconds : Nat) : EditorM Unit := do

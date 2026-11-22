@@ -1,3 +1,4 @@
+import Editor.Restore.Value
 import ModelTest.Check
 import ShellApi
 import ShellApiTest.Contract
@@ -8,7 +9,8 @@ import ShellApiTest.Fake
 
 `shellApiChecks`: the interface library `shell-api`'s names, its fake held
 to its contract, and the contract biting on implementations that leave a
-command out, register no codec for the history, or record nothing. The root
+command out, register no codec for the history, or record nothing, and the
+history's store round-tripping through the session index's JSON. The root
 module `ModelTest` runs them; its module doc says what each shows.
 -/
 
@@ -33,6 +35,15 @@ def forgetfulShell : Package :=
       for name in ShellApi.names do
         command name (message "forgets")
       Shell.historyStore.keptAcrossRestart }
+
+/-- Whether `value` written as JSON, rendered, parsed and read back is
+`value`: how the session index keeps a store's value
+(`Editor/Restore/Value.lean`), as the restore's own checks ask it
+(`RestoreValueTest.roundTrips`). -/
+def shellRoundTrips (value : Value) : Bool :=
+  match Json.parse (Json.render value.toJson).toUTF8 with
+  | .ok json => Value.ofJson? json == some value && Value.ofJson? value.toJson == some value
+  | .error _ => false
 
 /-- The checks of `shell-api` (`ShellApi.lean`). -/
 def shellApiChecks : List Check :=
@@ -74,6 +85,12 @@ def shellApiChecks : List Check :=
         pure <|
           Shell.remember "b" #["a", "b", "c"] == #["b", "a", "c"] &&
             (Shell.remember "new" ((List.range 100).map toString).toArray).size == 100 &&
-            (Shell.remember "new" ((List.range 100).map toString).toArray)[0]? == some "new" }]
+            (Shell.remember "new" ((List.range 100).map toString).toArray)[0]? == some "new" },
+    { name :=
+        "the shell's store that is kept across a restart round-trips, initial and populated: shell-history"
+      run :=
+        pure <|
+          shellRoundTrips (Shell.historyStore.encode Shell.historyStore.initial) &&
+            shellRoundTrips (Shell.historyStore.encode #[":!make", "ls -la", "echo é\x00"]) }]
 
 end ModelTest

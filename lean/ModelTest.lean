@@ -90,6 +90,7 @@ import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
 import ModelTest.Editor.ModuleLookup
 import ModelTest.Editor.PackageSet.Build
+import ModelTest.Editor.PackageSet.Compiled
 import ModelTest.Editor.PackageSet.Edit
 import ModelTest.Editor.PackageSet.Fingerprint
 import ModelTest.Editor.PackageSet.Running
@@ -834,8 +835,9 @@ The config session's decisions are tested here too, with no elaborator:
   lakefile a fixed point, a relative path to the running core taken for
   it as the fingerprint takes it, and `editor-core` refused to install,
   rev and remove through it;
-- `packageSetBuildChecks`: a user's package-set build and its commands
-  (`Editor/PackageSet/Build.lean`, `Editor/PackageSet/Compiled.lean`):
+- `packageSetBuildChecks`: a user's package-set build
+  (`Editor/PackageSet/Build.lean`), registered by the kit's stand-in
+  (`Test.PackageSet.buildPackage`) beside the kit's `restore`:
   when a reload starts it and when it says it cannot, an editor in a
   bundle starting none for the lakefile generated for it; the order carried
   as text; the requires resolved; the user's Lean, Lake and compiler
@@ -848,11 +850,15 @@ The config session's decisions are tested here too, with no elaborator:
   and lake build, decided in one place (`LakeFailure.of`); a failing
   probe; the core check, a relative entry resolved against the config
   directory; a success that writes the record, publishes version 1 and
-  restarts into it; what is pruned, never the running
-  editor's version; the three commands'
-  edits, their refusals and the reload after them; and `:package-update`
+  restarts into it; and what is pruned, never the running
+  editor's version;
+- `packageSetCommandChecks`: the `package-set` package's commands
+  (`Editor/PackageSet/Compiled.lean`), on the kit's hosted driver over the
+  package: the three commands'
+  edits, their refusals and the reload after them; `:package-update`
   with no rev repairing a lakefile without the core's require at its root
   first, through the edit job, and starting the build on a repaired one;
+  and the install's forms;
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
@@ -1033,7 +1039,9 @@ which were this driver's):
   commands over the core's API, `shell-command` recording its line) keeps
   its contract; the contract fails a package lacking `keyboard-quit`, one
   that registers no codec for the history, and one whose `shell-command`
-  records nothing; and `remember`'s rule;
+  records nothing; `remember`'s rule; and the history's store, which is
+  kept across a restart, round-tripping through the session index's JSON,
+  initial and populated;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1095,8 +1103,10 @@ Session restore is checked in Lean alone too:
   (`Editor/Restore/Value.lean`), pure: every kind round-trips through its
   JSON, rendered and parsed, nested, a record's fields in order and a name
   twice, negative integers and big naturals, a NUL, bytes that are not
-  UTF-8 and multi-byte characters; JSON that is no tree read as none; and
-  the shipped stores kept across a restart, initial and populated.
+  UTF-8 and multi-byte characters; and JSON that is no tree read as none
+  (a shipped store kept across a restart is round-tripped by its owner's
+  checks: the shell's history by `shellApiChecks`, version control's
+  reviews by `VersionControlTest.reviewRecordChecks`).
 - `restoreFrameChecks`: the frame as the session index records it
   (`Editor/Restore/Frame.lean`), pure and on the text model: its JSON
   round trip over every layout, anchor and a zoomed, named tab, a newer
@@ -1236,6 +1246,7 @@ def checks : List Check :=
     packageSetRunningChecks ++
     packageSetEditChecks ++
     packageSetBuildChecks ++
+    packageSetCommandChecks ++
     headlessCommandLineChecks ++
     executableModeChecks ++
     versionChecks ++

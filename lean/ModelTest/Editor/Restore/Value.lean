@@ -1,6 +1,5 @@
 import Editor.Restore.Value
 import ModelTest.Check
-import ShellApi
 
 /-!
 # Model tests: `Editor/Restore/Value.lean`
@@ -77,12 +76,6 @@ def restoreValueChecks : List Check :=
           [Json.Value.array #[], .object #[("other", .null)], .number "-1", .number "1.5",
                 .object #[("bytes", .array #[.number "256"])],
                 .object #[("record", .array #[.array #[.null, .null]])]].all
-            (Value.ofJson? · == none) },
-    { name :=
-        "the shell's store that is kept across a restart round-trips, initial and populated: shell-history"
-      run :=
-        pure <|
-          roundTrips (Shell.historyStore.encode Shell.historyStore.initial) &&
-            roundTrips (Shell.historyStore.encode #[":!make", "ls -la", "echo é\x00"]) }]
+            (Value.ofJson? · == none) }]
 
 end ModelTest

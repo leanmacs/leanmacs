@@ -48,7 +48,6 @@ import Editor.Text.Model
 import Editor.Text.Real
 import Editor.Watch
 import FilesApiTest.Fake
-import ShellApi
 
 /-!
 # Config tests: the benchmark
@@ -907,6 +906,19 @@ def journalText (size : Nat) : String :=
       line := line + 1
     return text
 
+/-- The store of lines the journal bench keeps across a restart, written
+here in the shape of the shell's history (an array of lines, as a list of
+strings), so the bench names no package's store. -/
+def journalStore : Store (Array String) :=
+  { name := "bench-history", version := 1, initial := #[]
+    encode := fun lines => .list (lines.toList.map .str)
+    decode := fun
+      | .list items =>
+        items.toArray.mapM fun
+          | .str line => some line
+          | _ => none
+      | _ => none }
+
 /-- The times of `inserts` one-character inserts into a file buffer of
 `size` bytes at `position` (`start`, `middle` or `end`), each timed from
 the reconciler (`Restore.journalOrders`) through handing its orders to the
@@ -915,8 +927,8 @@ editor thread's share of the journal. The buffer's journal is under
 `directory`; the loop's own work around an insert, its scene and its
 history, is not timed. The state is phase 2's: two tabs of five windows,
 four on the file, one of them with 100 jump entries, and an unscoped
-`shell-history` of 10,000 lines, whose codec the reconciler is handed, so
-what it keeps of the frame and the stores is there to cost. -/
+store of 10,000 lines (`journalStore`), whose codec the reconciler is
+handed, so what it keeps of the frame and the stores is there to cost. -/
 def journalTimes (directory : System.FilePath) (size : Nat) (position : String) (inserts : Nat) :
     IO (Array Nat) := do
   let published ← Snapshots.new
@@ -952,8 +964,7 @@ def journalTimes (directory : System.FilePath) (size : Nat) (position : String) 
             windows := #[⟨0⟩, ⟨1⟩, ⟨2⟩],
             tabsAfter := #[{ windows := #[⟨3⟩, ⟨4⟩], focused := ⟨3⟩ }] }
         workspaces :=
-          state.workspaces.setUnscopedValue Shell.historyStore.name
-            (Shell.historyStore.encode history)
+          state.workspaces.setUnscopedValue journalStore.name (journalStore.encode history)
         stateDirectory := some directory, restore := { run := some 1, restored := true } }
   let (made, texts) ← made.runReal (RealTexts.over published)
   let .ok first := made | throw (IO.userError "bench-journal: the state could not be made")
@@ -972,8 +983,7 @@ def journalTimes (directory : System.FilePath) (size : Nat) (position : String) 
       registered :=
         {
           codec? := fun name =>
-            if name == Shell.historyStore.name then some ("shell", Shell.historyStore.codec)
-            else none } }
+            if name == journalStore.name then some ("bench", journalStore.codec) else none } }
   let (reconciled, after) ← (Restore.journalOrders state true false context).runReal texts
   let .ok reconciled :=
     reconciled | throw (IO.userError "bench-journal: the first reconcile was refused")
