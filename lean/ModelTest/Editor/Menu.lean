@@ -47,8 +47,8 @@ import ModelTest.Support.Switching
 
 The model tests of `Editor/Menu.lean`, the core's menu mechanism:
 `menuChecks`, on a menu and a registry written here. The menu that ships
-is the `menu` package's, checked in `ModelTest/Editor/Menu/Compiled.lean`
-(`standardMenuChecks`). The root module `ModelTest` runs them; its module
+is the `menu` package's, checked there (`MenuTest.standardMenuChecks`,
+`packages/menu/`). The root module `ModelTest` runs them; its module
 doc says what each shows.
 -/
 
@@ -131,8 +131,8 @@ runs its command as an invocation, and the key equivalents the published
 menu shows are the chords the registry binds, on a menu and a registry
 written here (`MenuTest.sample`, `MenuTest.sampleRegistry`), so they name
 nothing of the menu that ships or of the frame commands. The menu that
-ships is the `menu` package's (`standardMenuChecks`,
-`ModelTest/Editor/Menu/Compiled.lean`). -/
+ships is the `menu` package's (`MenuTest.standardMenuChecks`,
+`packages/menu/`). -/
 def menuChecks : List Check :=
   [{  name :=
         "a menu's Undo runs the command registered as undo, as a key of that command does: after a delete over abc, both leave abc and the same selection"

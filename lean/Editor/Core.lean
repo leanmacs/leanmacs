@@ -15,7 +15,6 @@ import Editor.Indent
 import Editor.InputScheme.Contract
 import Editor.Jumps.Go
 import Editor.Main
-import Editor.Menu.Compiled
 import Editor.SearchRoot
 import Editor.Test.AtPoint
 import Editor.Test.Excerpt

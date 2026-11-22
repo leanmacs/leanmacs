@@ -11,10 +11,12 @@ constant, never the text ("Reaches by name"):
 - completion at point (`packages/at-point/AtPoint.lean`) runs
   `insert-newline` and `insert-tab` when its `RET` and `TAB` find no
   session open, and names `insertNewlineName` and `insertTabName`;
-- the Edit menu's Undo and Redo (`lean/Editor/Menu.lean`) run `undo` and
-  `redo`. The menu is in the core, and the core cannot import a package, so
-  it names the two as text, as the core's own at-point stand-in
-  (`lean/Editor/Test/AtPoint.lean`) names the first two.
+- the Edit menu's Undo and Redo, and `s-z` and `s-Z`
+  (`packages/menu/Menu/Compiled.lean`), run `undo` and `redo`: the default
+  package `menu` requires this package and names `undoName` and
+  `redoName`. The core's own at-point stand-in
+  (`lean/Editor/Test/AtPoint.lean`) names the first two as text, since the
+  core cannot import a package.
 
 It registers no behaviour. A package that supplies another input scheme
 implements it to answer those reaches in evil's place.

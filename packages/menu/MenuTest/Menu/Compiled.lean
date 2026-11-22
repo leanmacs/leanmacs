@@ -2,29 +2,30 @@ import Editor.Clipboard
 import Editor.Config.Packages
 import Editor.FrameCommands
 import Editor.Menu
-import Editor.Menu.Compiled
 import Editor.Test.Config
 import Editor.Test.Driver
 import Editor.Test.Frame
 import Editor.Test.Hosted
 import Editor.Test.Keys
-import ModelTest.Check
+import EvilApi
+import Menu.Compiled
+import MenuTest.Check
 
 /-!
-# Model tests: `Editor/Menu/Compiled.lean`
+# The tests of `Menu/Compiled.lean`
 
-The model tests of the `menu` package (`Editor/Menu/Compiled.lean`):
+The tests of the `menu` package (`Menu/Compiled.lean`):
 `standardMenuChecks`: the standard menu, its items and the chords the
 package binds to them, on the kit's frame driver (`Editor/Test/Frame.lean`)
 over a registry of the package's bindings and the two chords the frame
 commands' package binds to the Window menu's commands, written here. The
 core's menu mechanism (a chosen item runs its command, the key equivalents
 a registry gives a menu) is checked on a menu written in the test
-(`menuChecks`, `ModelTest/Editor/Menu.lean`). The root module `ModelTest`
-runs them; its module doc says what each shows.
+(`ModelTest.menuChecks`, in the core). The test driver
+`MenuTest/Model.lean` runs them; its module doc says what each shows.
 -/
 
-namespace ModelTest
+namespace MenuTest
 
 open Editor
 open Editor.Test
@@ -85,7 +86,7 @@ def keyShown (menu : Menu) (command : String) : Option (Option KeyEquivalent) :=
 end StandardMenuTest
 
 open StandardMenuTest in
-/-- The checks of the standard menu (`Editor/Menu/Compiled.lean`): its
+/-- The checks of the standard menu (`Menu/Compiled.lean`): its
 items, the names they run and the chords the package binds to them. -/
 def standardMenuChecks : List Check :=
   [{  name :=
@@ -139,6 +140,37 @@ def standardMenuChecks : List Check :=
             items "File" ==
               some
                 #[.item "Open…" none (.command "open-file"),
-                  .item "Save" none (.command "save-buffer")]) }]
+                  .item "Save" none (.command "save-buffer")]) },
+    { name := "the Edit menu's Undo and Redo, and s-z and s-Z, name evil-api's names"
+      run :=
+        let named := [("Undo", "s-z", EvilApi.undoName), ("Redo", "s-Z", EvilApi.redoName)]
+        let edit := (Menu.standard.menus.find? (·.title == "Edit")).map (·.items)
+        let registry := hostedRegistry #[Menu.package]
+        pure
+          (named.all fun (title, chord, name) =>
+            (edit.getD #[]).any
+                (fun
+                  | .item shown _ (.command command) => shown == title && command == name
+                  | _ => false) &&
+              boundTo registry chord == some { command := name }) },
+    { name :=
+        "the menu package registers the standard menu's four menus, each its own, so a host that is handed it publishes the standard menu bar with the chords its bindings give it, and the eight bindings s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a, to open-file, save-buffer, undo, redo, clipboard-cut, clipboard-copy, clipboard-paste and select-all, and nothing else: no command, ex name, source or job"
+      run :=
+        let registry := hostedRegistry #[Menu.package]
+        let menuKeys :=
+          (registry.bindings.filter (·.owner == Menu.package.owner)).map (·.binding.command)
+        pure
+          (Menu.package.name == "menu" &&
+            registry.menuBar? == some (registry.menuOf Menu.standard) &&
+            registry.menus.size == 4 &&
+            registry.menus.all (·.owner == Menu.package.owner) &&
+            registry.bindings.size == 8 &&
+            menuKeys ==
+              #["open-file", "save-buffer", "undo", "redo", "clipboard-cut", "clipboard-copy",
+                "clipboard-paste", "select-all"] &&
+            registry.entries.isEmpty &&
+            registry.exNames.isEmpty &&
+            registry.sources.isEmpty &&
+            registry.jobs.isEmpty) }]
 
-end ModelTest
+end MenuTest

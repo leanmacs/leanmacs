@@ -20,7 +20,7 @@ that runs while config binds them.
   Command on macOS, with `f`: the macOS shortcut for fullscreen) runs
   `toggle-fullscreen`, and `s-m` (Command-M) runs `minimise-window`. Both
   chords are the key equivalents of the Window menu's Enter Full Screen and
-  Minimise (`Editor/Menu/Compiled.lean`), which the menu bar takes from
+  Minimise (`packages/menu/Menu/Compiled.lean`), which the menu bar takes from
   these bindings: on macOS AppKit runs the item before the key reaches the
   window, and the item runs the same command.
 - **`s-q`** (Command-Q) runs `quit` (`Quit.name`), so Command-Q follows

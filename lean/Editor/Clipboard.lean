@@ -41,7 +41,7 @@ default, `Editor/Command/Real.lean`).
 `Clipboard.cutName` (`clipboard-cut`), `copyName` (`clipboard-copy`),
 `pasteName` (`clipboard-paste`) and `selectAllName` (`select-all`) are the
 names of the commands the Edit menu's Cut, Copy, Paste and Select All run,
-and `s-x`, `s-c`, `s-v` and `s-a` with them (`Editor/Menu/Compiled.lean`).
+and `s-x`, `s-c`, `s-v` and `s-a` with them (`packages/menu/Menu/Compiled.lean`).
 The core names them and registers no command under them: what cutting or
 pasting does depends on the input scheme (its selection's shape, its
 registers), so the package that supplies the scheme registers the four,

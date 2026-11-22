@@ -20,7 +20,8 @@ command by name, or a thing the system does itself (`SystemAction`).
 
 **A command item's key equivalent is the keymap's**: `Menu.withKeys` sets
 each from a lookup of its command, which a host makes from the registry's
-bindings (`Config.Registry.menuOf`, `Editor/Menu/Compiled.lean`). A system
+bindings (`Config.Registry.menuOf`; the menu that ships is the package
+`menu`'s, `packages/menu/Menu/Compiled.lean`). A system
 item's key is the menu's own, and `withKeys` leaves it; the lookup is told
 the system items' keys (`Menu.systemKeys`), so no command item shows one.
 
@@ -28,7 +29,7 @@ the system items' keys (`Menu.systemKeys`), so no command item shows one.
 
 | Addition | Lean | Rust |
 |---|---|---|
-| A new item, menu or title of the default menu | `Menu.standard` (`Editor/Menu/Compiled.lean`) | Nothing |
+| A new item, menu or title of the default menu | `Menu.standard` (`packages/menu/Menu/Compiled.lean`) | Nothing |
 | A new thing the system does from a menu | A constructor of `SystemAction`, its tag in `Display/Real.encode` and `Ffi.askedOf` | A variant of `editor_platform::menu::System`, its tag in `editor-ffi`'s `menu.rs` and its selector in `editor-platform-winit`'s `menu.rs` |
 | A new attribute of an item | A field here, in the encoding and in the asked words | A field of `editor_platform::menu::Item`, and both crossings |
 

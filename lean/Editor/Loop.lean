@@ -1548,7 +1548,7 @@ structure Loop.Keys (scheme : InputScheme) where
   tabBar : Option TabBar.Shown := none
   /-- The menu bar the scene names, its key equivalents filled from the
   registry's bindings as they are now (`Config.Registry.menuOf`,
-  `Editor/Menu/Compiled.lean`); `none` for a host with no menu bar, whose
+  `packages/menu/Menu/Compiled.lean`); `none` for a host with no menu bar, whose
   scenes name none. -/
   menu : Option Menu := none
   /-- The styles a prompt's candidates are listed with, chosen by its

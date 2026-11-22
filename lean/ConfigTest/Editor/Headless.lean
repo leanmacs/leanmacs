@@ -46,7 +46,6 @@ import Editor.Language
 import Editor.Layout
 import Editor.Loop
 import Editor.Menu
-import Editor.Menu.Compiled
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Package
@@ -2639,26 +2638,15 @@ def shippedChecks (_ : Unit) : List Check :=
             !registry.ownersByKind.flatten.contains ({ name := "themes" } : Config.Owner) &&
             Theme.defaultName == "default" },
     { name :=
-        "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a to open-file, save-buffer, undo, redo, clipboard-cut, clipboard-copy, clipboard-paste and select-all for the menu package"
+        "the executable's hosts start with nothing of the menu package: no menu bar, none of the chords s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a bound, and no entry of an owner menu, registered by a package of the core's Lake package"
       run := do
         let registry := shippedRegistry
         let bound (text : String) : Option Invocation :=
           (registry.keymap TestScheme.scheme).find? (keysOf text)
-        let menuKeys :=
-          (registry.bindings.filter (·.owner == Menu.package.owner)).map (·.binding.command)
-        return registry.menuBar? == some (registry.menuOf Menu.standard) &&
-            registry.menus.all (·.owner == Menu.package.owner) &&
-            menuKeys ==
-              #["open-file", "save-buffer", "undo", "redo", "clipboard-cut", "clipboard-copy",
-                "clipboard-paste", "select-all"] &&
-            bound "s-o" == some { command := "open-file" } &&
-            bound "s-s" == some { command := "save-buffer" } &&
-            bound "s-z" == some { command := "undo" } &&
-            bound "s-Z" == some { command := "redo" } &&
-            bound "s-x" == some { command := "clipboard-cut" } &&
-            bound "s-c" == some { command := "clipboard-copy" } &&
-            bound "s-v" == some { command := "clipboard-paste" } &&
-            bound "s-a" == some { command := "select-all" } },
+        return registry.menuBar? == none && registry.menus.isEmpty &&
+            ["s-o", "s-s", "s-z", "s-Z", "s-x", "s-c", "s-v", "s-a"].all
+              (fun text => bound text == none) &&
+            !(registry.ownersByKind.flatten.any (·.name == "menu")) },
     { name :=
         "the executable's hosts start with nothing of the evil package: no command move, normal, visual, visual-line, insert, append, insert-line-start, append-line-end, self-insert, operate, select-object, delete-char, put-after, put-before, open-below, open-above, undo, redo, repeat, scroll-down, scroll-up, scroll-page-down, scroll-page-up, scroll-line-to-top, scroll-line-to-center, scroll-line-to-bottom, insert-delete-backward, insert-delete-word-backward, insert-newline, insert-tab, insert-left, insert-right, insert-up, insert-down, clipboard-cut, clipboard-copy, clipboard-paste, select-all, jump-backward, jump-forward or set-mark, and no entry of an owner evil, registered by a package of the core's Lake package"
       run := do

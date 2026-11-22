@@ -3,7 +3,8 @@
 # implements it, and whatever reaches evil's commands by name: completion
 # at point, which runs `insert-newline` and `insert-tab` when no session is
 # open (packages/at-point/AtPoint.lean), and the Edit menu, whose Undo and
-# Redo run `undo` and `redo` (lean/Editor/Menu.lean). It declares the names
+# Redo run `undo` and `redo` (packages/menu/Menu/Compiled.lean, which
+# names the constants). It declares the names
 # those four commands are registered under (`EvilApi.insertNewlineName`,
 # `EvilApi.insertTabName`, `EvilApi.undoName`, `EvilApi.redoName`), as an
 # interface package declares every name another package may reach

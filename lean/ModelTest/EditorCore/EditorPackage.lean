@@ -23,7 +23,7 @@ open Editor
 /-- The names of the packages of the core's Lake package, in the order they
 register. -/
 def shippedPackageNames : Array String :=
-  #["ex", "frame-commands", "menu"]
+  #["ex", "frame-commands"]
 
 /-- The checks of the packages of the core's Lake package
 (`EditorCore/EditorPackage.lean`): the list a host is handed is whole,
@@ -41,15 +41,16 @@ def packageSetChecks : List Check :=
             (state.registry.jobs.filter (·.registration.restarted)).map (·.registration.name) ==
               #[] },
     { name :=
-        "every package of the shipped set is accepted, and their names are the 3 of the package table, each once, in its order, with no package of the shipped palettes and none of the window commands, the tab commands, session restore, the package-set commands, evil, the themes, the file commands, the buffer commands, the workspaces, project search, the working sets, the shell, version control and its gutter, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
+        "every package of the shipped set is accepted, and their names are the 2 of the package table, each once, in its order, with no package of the shipped palettes and none of the menu, the window commands, the tab commands, session restore, the package-set commands, evil, the themes, the file commands, the buffer commands, the workspaces, project search, the working sets, the shell, version control and its gutter, the compile mode, the languages, the mode line, the command prompt, the binding search, the completion styles and displays, completion at point or the minibuffer among them"
       run :=
         let (state, refused) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (refused == #[] &&
             EditorCore.EditorPackage.packages.map (·.name) == shippedPackageNames &&
-            shippedPackageNames.size == 3 &&
-            shippedPackageNames.toList.eraseDups.length == 3 &&
+            shippedPackageNames.size == 2 &&
+            shippedPackageNames.toList.eraseDups.length == 2 &&
+            !shippedPackageNames.contains "menu" &&
             !shippedPackageNames.contains "window-commands" &&
             !shippedPackageNames.contains "tab-commands" &&
             !shippedPackageNames.contains "restore" &&
@@ -77,7 +78,7 @@ def packageSetChecks : List Check :=
             EditorCore.EditorPackage.packages.all fun package =>
               package.collected.toOption.isSome) },
     { name :=
-        "in the state the shipped set makes, every entry's owner is a package of the set: of every kind there is an entry, and none is config's or the owner compiled's"
+        "in the state the shipped set makes, every entry's owner is a package of the set, and none is config's or the owner compiled's; it defines no menu: the menu bar that ships is the package `menu`'s, outside the core's Lake package"
       run :=
         let (state, _) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
@@ -87,7 +88,7 @@ def packageSetChecks : List Check :=
             !owners.contains .config &&
             !owners.contains .compiled &&
             state.registry.entries.size > 5 &&
-            (state.registry.menuBar?).isSome &&
+            state.registry.menuBar? == none &&
             state.cells.cells.all fun cell => shippedPackageNames.contains cell.owner.name) },
     { name :=
         "the shipped set binds the ex names in this order: the files', the ex line's and the buffers'; the restore's restart, the package set's three, version control's twelve and the compile mode's six are bound by packages outside the core's Lake package"

@@ -86,7 +86,6 @@ import ModelTest.Editor.Loop.Driver
 import ModelTest.Editor.Marks
 import ModelTest.Editor.Marks.Follow
 import ModelTest.Editor.Menu
-import ModelTest.Editor.Menu.Compiled
 import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
 import ModelTest.Editor.ModuleLookup
@@ -384,8 +383,8 @@ on a menu and a registry written in the test: a chosen item runs the
 command it names, config's command of that name in a package's place, an
 item that names no command says so, and the key equivalents a registry
 gives a menu's items, never a chord a system item shows. The menu that
-ships, its items and the chords the `menu` package binds to them are
-`standardMenuChecks`' (`ModelTest/Editor/Menu/Compiled.lean`), and the
+ships, its items and the chords the `menu` package binds to them are that
+package's (`MenuTest.standardMenuChecks`, `packages/menu/`), and the
 frame's commands and bindings `frameCommandChecks`', each on the kit's
 frame driver (`Editor/Test/Frame.lean`).
 
@@ -862,10 +861,10 @@ The config session's decisions are tested here too, with no elaborator:
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
-  list is the 3 packages, in order, each accepted, with no package of the
+  list is the 2 packages, in order, each accepted, with no package of the
   shipped palettes, of the compile mode, of the seven features phase 6
-  moved out, of the window or the tab commands, of session restore or of
-  the package-set commands among them, in the state they
+  moved out, of the menu, of the window or the tab commands, of session
+  restore or of the package-set commands among them, and no menu defined, in the state they
   make every entry's owner is one of them, the ex names are bound in the
   order the headless fixtures show, the `ex` package's first, and no theme
   is registered; and the set keeps no store across a restart (the shell's
@@ -1367,7 +1366,6 @@ def checks : List Check :=
     frameCommandChecks ++
     titleChecks ++
     menuChecks ++
-    standardMenuChecks ++
     workspaceDataChecks ++
     searchRootChecks ++
     workspaceGitChecks ++
