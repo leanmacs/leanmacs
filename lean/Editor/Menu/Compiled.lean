@@ -22,7 +22,7 @@ no menu bar:
   core's names, `Clipboard.cutName`, `copyName`, `pasteName` and
   `selectAllName` (`Editor/Clipboard.lean`, "The Edit menu's names"), under
   which the input scheme's package registers its commands, as evil does
-  in `Editor/Evil/Clipboard.lean`; Undo and Redo name evil's `undo` and
+  in `packages/evil/Evil/Clipboard.lean`; Undo and Redo name evil's `undo` and
   `redo` as text) and Window (Minimise, Enter Full Screen). Its command items carry no key: a host
   fills them from the registry as it is at each step
   (`Config.Registry.menuBar?`), so a menu item and its key run the same
@@ -48,7 +48,7 @@ shows its next chord, or none.
 Pinned by `ModelTest.menuChecks` and `ConfigTest.shippedChecks` (which runs
 in the `config-test` executable, under `mise run ci`, not under `lake test`
 alone), and what the clipboard items do by
-`ModelTest.clipboardCommandChecks`.
+`EvilTest.clipboardCommandChecks`.
 -/
 
 namespace Editor
@@ -83,7 +83,7 @@ def standard : Menu :=
             #[.item "Open…" none (.command FilesApi.openFileName),
               .item "Save" none (.command FilesApi.saveName)] },
         -- Undo and Redo are names of evil's commands
-        -- (`Editor/Evil/Compiled.lean`); the clipboard items' are the core's
+        -- (`packages/evil/Evil/Compiled.lean`); the clipboard items' are the core's
         -- (`Editor/Clipboard.lean`).
         { title := "Edit"
           items :=

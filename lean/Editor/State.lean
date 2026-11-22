@@ -556,7 +556,7 @@ the whole editor, as Vim keeps it and as the registers are kept.
   the one it had. It is never refused.
 - **A motion does not set it**: a motion changes nothing. It hands the
   find back as data (`Vocabulary.To.find`), and the command that ran it
-  keeps it (`Editor/Evil.lean`, `Editor/Evil/Operators.lean`).
+  keeps it (`packages/evil/Evil.lean`, `packages/evil/Evil/Operators.lean`).
 - **It is a field of the state, so a command that does not run to its end
   leaves it as it was.**
 
@@ -789,7 +789,7 @@ candidate list with no typed text (`EditorState.keyHints`, a
   shown buffer cannot be removed (`packages/buffers/Buffers.lean`, "Close").
 - `markRestored` marks a buffer as made or reopened by a session restore
   (`Buffer.historyRestored`): its undo tree starts at the restore, and
-  evil's `u` at its root says so (`Editor/Evil/Undo.lean`). It refuses
+  evil's `u` at its root says so (`packages/evil/Evil/Undo.lean`). It refuses
   `noSuchBuffer`.
 - `scratchName` is the editor's one name for its empty buffer with no file:
   the initial state's, and the one left after the last buffer is closed.

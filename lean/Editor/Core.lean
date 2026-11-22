@@ -9,17 +9,18 @@ import Editor.Completion.StyleContract
 import Editor.Config.Elaborator.Contract
 import Editor.Config.Elaborator.Model
 import Editor.Display.Contract
-import Editor.Evil.Kit
-import Editor.Evil.Theorems
 import Editor.Ex.Compiled
 import Editor.FrameCommands.Compiled
+import Editor.Indent
 import Editor.InputScheme.Contract
+import Editor.Jumps.Go
 import Editor.Main
 import Editor.Menu.Compiled
 import Editor.PackageSet.Compiled
 import Editor.Restore.Compiled
 import Editor.SearchRoot
 import Editor.TabCommands.Compiled
+import Editor.Test.AtPoint
 import Editor.Test.Ex
 import Editor.Test.Excerpt
 import Editor.Test.Hosted
@@ -28,17 +29,20 @@ import Editor.Test.Linked.Frames
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Rig
+import Editor.Test.Linked.Shipped
 import Editor.Test.Linked.Syntax
 import Editor.Test.Linked.Trees
-import Editor.Test.Linked.Vim
 import Editor.Test.Listing
 import Editor.Test.Modes
 import Editor.Test.Prompts
 import Editor.Test.Sources
 import Editor.Test.Views
+import Editor.Text.Word
 import Editor.Theme.Check
 import Editor.Theme.Picture
 import Editor.Themes.Compiled
+import Editor.UndoTree.Theorems
+import Editor.Vocabulary
 import Editor.Watch.Contract
 import Editor.WindowCommands.Compiled
 
@@ -71,7 +75,11 @@ The core modules no other core module imports: the modules that define
 the packages still in the core (`….Compiled`), the source a command
 filters (`Editor.Completion.Filtering`, which the workspace package's finder
 is built on), what a search covers (`Editor.SearchRoot`, which the project
-search package reads), the contracts, fakes, cases and theorems, the elaborator port's model
+search package reads), what evil, a package since phase 7, is written on
+and no core module imports (the indent primitives, `Editor.Indent`, going
+to a place, `Editor.Jumps.Go`, the word rule, `Editor.Text.Word`, the
+vocabularies, `Editor.Vocabulary`, and the undo tree's theorems,
+`Editor.UndoTree.Theorems`), the contracts, fakes, cases and theorems, the elaborator port's model
 (`Editor.Config.Elaborator.Model`), the executable's entry (`Editor.Main`, which brings the
 hosts, the executable's modes and `Editor.Command.Append`),
 and the test kit the core publishes for a package's tests: the model
@@ -81,11 +89,13 @@ hand-written minibuffer (`Editor.Test.Minibuffer`), and
 `Editor.Test.Shipped`, `Editor.Test.Sources` and the kit's hand-written
 at-point (`Editor.Test.AtPoint`), which no other kit module imports) and the
 linked tests' (`Editor.Test.Linked.…`, `Editor/Test/Linked/`: its rig, its
-services, its trees and its hosts over the real elaborator, which bring
-their listings); and the feature kits still in the core: none since phase
+services, its trees, its hosts over the real elaborator, which bring
+their listings, and its shipped host, `Editor.Test.Linked.Shipped`); and the feature kits still in the core: none since phase
 6, which moved the files feature's (`FilesTest.Kit`), the workspace's
 (`WorkspaceTest.Kit`, with the finder's model and contract) and the
-shell's (`ShellTest.Kit`) into their packages. Everything else comes with them: the kit is the support the
+shell's (`ShellTest.Kit`) into their packages, and phase 7, which moved
+evil's (`EvilTest.Kit`, with the linked kit's host of the Vim scheme,
+`EvilTest.Linked.Support.Vim`) into the package `evil`. Everything else comes with them: the kit is the support the
 core's own tests are written on, so it imports the driver of the loop that
 tests run it with (`Editor.Loop.Driver`) and the modules that define the
 packages its fixtures register, and those are not named here again. The theorem modules are also the config base's imports

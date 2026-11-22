@@ -39,9 +39,9 @@ that ship are a package outside the core (`packages/shipped-themes/`).
 
 Pinned by `ModelTest.themeChecks`, on the loop's driver over the editor's
 models and the test scheme; by `ConfigTest.themeChecks`, through a host over
-the real binding; and on the executable by the fixtures
-`tests/headless/core-themes` and, in the package of the shipped palettes,
-`packages/shipped-themes/tests/headless/themes`.
+the real binding; and on the executable by the fixture
+`packages/shipped-themes/tests/headless/themes`, in the package of the
+shipped palettes.
 -/
 
 namespace Editor.Themes

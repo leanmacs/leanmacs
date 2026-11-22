@@ -1,18 +1,14 @@
 import Editor.Api.Theorems
 import Editor.Command.Append
 import Editor.Completion.Filtering
-import Editor.Evil.Clipboard
-import Editor.Evil.Jumps
-import Editor.Evil.Operators
-import Editor.Evil.Repeat
-import Editor.Evil.Scroll
-import Editor.Evil.Theorems
-import Editor.Evil.TreeObjects
-import Editor.Evil.Undo
 import Editor.FrameCommands
-import Editor.InputScheme.Vim.Default
+import Editor.Indent
+import Editor.Jumps.Go
 import Editor.TabCommands
+import Editor.Text.Word
 import Editor.Themes
+import Editor.UndoTree.Theorems
+import Editor.Vocabulary
 
 /-!
 # The editor
@@ -143,52 +139,41 @@ How a key becomes an invocation is here too, so config can come to write
 bindings: input schemes (`Editor/InputScheme.lean`), with the keymaps they
 walk (`Editor/Keymap.lean`) and the invocations they yield
 (`Editor/Invocation.lean`), and key strings (`Editor/Key/Notation.lean`),
-with which a binding's keys are written (`Key.parse "C-x C-s"`). The Vim
-scheme is the scheme that ships (`Editor/InputScheme/Vim.lean`, with its
-default states and bindings in `Editor/InputScheme/Vim/Default.lean`), and
-config will bind against its parts of speech (`Vim.Bound`). That module
-is the one import here that brings all of these, the scheme interface and
-key strings with it. Modes come with `Editor/Setup.lean`, which defines
+with which a binding's keys are written (`Key.parse "C-x C-s"`). They come
+with `Editor/Setup.lean` and the editor API. Modes come with
+`Editor/Setup.lean`, which defines
 them (`defineMode`): the mode record (`Editor/Mode.lean`) and the roles a
 mode fills (`Editor/Role.lean`). The test
 scheme and the scheme contract (`Editor/InputScheme/Test.lean`,
 `Editor/InputScheme/Contract.lean`) are for tests, and are not imported.
 
-What the Vim scheme's invocations run is here as well: evil, Vim's states,
-motions and commands written on the editor API, so a command of config's
-can call them. The commands are in `Editor/Evil.lean`, and the motions and
-their table, `Evil.motions`, in `Editor/Evil/Motions.lean`: the move
-command is a function of the table it looks a name up in, so a command of
-config's hands it the vocabulary that ships, or that vocabulary with
-motions of its own added (`Evil.move (Evil.motions.push mine)`). The
-operators are here too (`Editor/Evil/Operators.lean`, with the registers
-they set in `Editor/Evil/Registers.lean`): the operate command is a
-function of the operators, the motions and the text objects it looks names
-up in (`Evil.operate Evil.operators Evil.motions Evil.objects`), and the
-text objects and their select command are in `Editor/Evil/Objects.lean`.
-That module brings the commands, the motions and the text objects with
-it. Undo and redo, which place the cursor a
-step of the history hands back, are in `Editor/Evil/Undo.lean`, and dot
-repeat, which replays the change the Vim scheme hands it with the command
-the registry holds for the change's name, in `Editor/Evil/Repeat.lean`:
-config's command of a name evil registers, such as `operate` registered
-again over a vocabulary with an operator of config's own, is what `.`
-replays. The commands that scroll a view are in `Editor/Evil/Scroll.lean`
-(`Evil.scroll`), over the policy by which a view follows its cursor and a
-scroll places its anchor (`Editor/Scroll.lean`, which comes with the
-editor API): a command of config's reads and places its window's scroll
-anchor with `Target.anchor` and `Target.scrollTo`, asks the display about
-its view with `Target.onArea`, and sets the scroll margin with
-`setScrollMargin` (`Editor/Api.lean`, "Scrolling"). The Edit menu's
-clipboard commands, Cut, Copy, Paste and Select All, are in
-`Editor/Evil/Clipboard.lean`. What is
-proved of evil on the text model is in `Editor/Evil/Theorems.lean`, with
-what it needs of the undo tree in `Editor/UndoTree/Theorems.lean`; they
-are imported so that the build checks the proofs.
-The
-commands' registrations (`Editor/Evil/Compiled.lean`) name the registry
-and are not imported.
-Pinned by `ConfigTest.evilChecks`, on a config the real elaborator loads.
+The Vim scheme and evil are not here: the scheme that ships, with its
+default states and bindings, and evil, Vim's states, motions, operators,
+text objects, registers, undo, dot repeat, scroll and clipboard commands
+written on the editor API, are the default package `evil`
+(`packages/evil/`) since the features-as-packages roadmap's phase 7, and
+the core requires no package, so this module cannot import them. Until
+then it imported nine of their modules. Config reaches them through the
+set's base, the package's entry module (`Evil.EditorPackage`) among it,
+which imports those nine: a command of config's hands evil's move command
+the vocabulary that ships, or that vocabulary with motions of its own added
+(`Evil.move (Evil.motions.push mine)`), runs the operate command over the
+shipped tables (`Evil.operate Evil.operators Evil.motions Evil.objects`),
+and will bind against the scheme's parts of speech (`Vim.Bound`), as it
+did. What is proved of evil on the text model is that package's too
+(`packages/evil/Evil/Theorems.lean`); what it needs of the undo tree is in
+`Editor/UndoTree/Theorems.lean`, which is the core's. An editor built from
+a set without that package elaborates config on a base that names none of
+them, and has no input scheme unless another package supplies one. What
+evil's modules brought of the core is imported here by name now, so the
+base holds what it held but evil: the indent primitives
+(`Editor/Indent.lean`), the jump list and going to a place
+(`Editor/Jumps.lean`, `Editor/Jumps/Go.lean`), the word rule
+(`Editor/Text/Word.lean`), the vocabularies a scheme's commands look names
+up in (`Editor/Vocabulary.lean`) and the undo tree's theorems.
+Pinned by `EvilTest.Linked.evilChecks`, on a config the real elaborator
+loads on the base `Editor` and `Evil.EditorPackage`
+(`packages/evil/EvilTest/Linked.lean`).
 
 The window layouts are here too, with the editor state that holds the
 frame's (`Editor/Layout.lean`): master-and-stack and monocle, as values a
@@ -208,7 +193,7 @@ edits that re-indent rows `TextId.reindentEdits`: primitives config's and
 evil's indent commands (`=`, `RET`, `o`, `O`) call, in a buffer's indent
 unit (`Target.indentUnit`, `Editor/Language/IndentUnit.lean`); and the syntax tree's
 text objects are entries of evil's vocabulary
-(`Editor/Evil/TreeObjects.lean`). Its model and contract are for tests, and
+(`packages/evil/Evil/TreeObjects.lean`). Its model and contract are for tests, and
 are not imported.
 
 Languages are here too (`Editor/Language.lean`, which comes with the file

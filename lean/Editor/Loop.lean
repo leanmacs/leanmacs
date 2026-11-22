@@ -188,7 +188,7 @@ registered"), so it is guarded, answered, rolled back and said with it.
   for a write gives the asking command up (`Loop.writesInside`), and the
   loop rolls both back: the write is not lost in silence.
 - **Why it exists.** Evil's dot repeat replays a change by the name the
-  change's keys compiled to (`Editor/Evil/Repeat.lean`). Looked up in a
+  change's keys compiled to (`packages/evil/Evil/Repeat.lean`). Looked up in a
   table of its own, the name could stand for another command than the one
   the key ran: config's command of a compiled command's name runs in its
   place, and a second table would not know.
@@ -272,7 +272,7 @@ loop has little of its own to do.
   scheme's report after the answer, and the scheme's state is kept as the
   state at rest when the command ran to its end, and put back to the state
   at rest when it did not. This is how Vim's `/` asks for its pattern and
-  then makes its edit (`Editor/InputScheme/Vim.lean`, "Motions that ask").
+  then makes its edit (`packages/evil/Evil/Vim.lean`, "Motions that ask").
 - **Keys pressed by an invocation** are one whose name is the reserved
   `InputScheme.keysName`, with a key string as its argument: `Loop.invoke`
   hands it to `Loop.pressed`, which feeds the keys to the scheme for the
@@ -1289,7 +1289,7 @@ session is one step of the history
   meanwhile. The loop keeps nothing of its own for a session. A command
   may still set a boundary inside one itself, with `BufferId.closeGroup`
   (`Editor/Api.lean`, "Undo"): evil's arrow keys of insert state do, once
-  they moved (`Editor/Evil.lean`, "Editing keys"), so the session is then
+  they moved (`packages/evil/Evil.lean`, "Editing keys"), so the session is then
   more than one step.
 - **A session with nothing edited makes no node**: closing a group with
   nothing pending makes none.

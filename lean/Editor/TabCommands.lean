@@ -10,7 +10,7 @@ each over the tab operations of the editor API (`ViewId.newTab`,
 `Frame.tabOf?`, `EditorState.tabLabel`, `Editor/State.lean`, "Tabs").
 Which key reaches a command is the bindings' business alone: the Vim
 scheme binds them under `C-w` with tmux's keys (`Vim.Default.tabKeys`,
-`Editor/InputScheme/Vim/Default.lean`).
+`packages/evil/Evil/Vim/Default.lean`).
 
 - **Each acts on its call's window's tab** (`tabOf`: the tab of
   `call.target.window.id`), never on the tab in view, as the window

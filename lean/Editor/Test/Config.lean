@@ -98,7 +98,7 @@ when `buffer` is, as the loop reads a plain buffer (`Loop.contextOf`). Its
 reported state is the badge `NORMAL` in `mode-line.state.normal`, the face
 the core's vocabulary declares for it (`Editor/Face/Vocabulary.lean`), so
 the kit names no module of evil; that the Vim scheme's normal state reports
-that face is pinned by `ModelTest.vimStateChecks`. -/
+that face is pinned by `EvilTest.vimStateChecks`. -/
 def loopContext (buffer : Buffer := loopLean) (selected : Bool := true) : ModeLine.Context :=
   { buffer, reported := #[{ text := "NORMAL", face := ⟨"mode-line.state.normal"⟩ }]
     cursor := some ⟨958, 4⟩, lines := 2338, selected, modified := buffer.isModified }

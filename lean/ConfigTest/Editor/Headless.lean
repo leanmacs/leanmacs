@@ -2633,13 +2633,11 @@ def shippedChecks (_ : Unit) : List Check :=
             registry.themes.map (fun entry => (entry.named.name, entry.owner.name)) ==
               #[("default", "themes")] },
     { name :=
-        "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a to open-file, save-buffer, undo, redo, clipboard-cut, clipboard-copy, clipboard-paste and select-all for the menu package, the edit commands the evil package's"
+        "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a to open-file, save-buffer, undo, redo, clipboard-cut, clipboard-copy, clipboard-paste and select-all for the menu package"
       run := do
         let registry := shippedRegistry
         let bound (text : String) : Option Invocation :=
           (registry.keymap TestScheme.scheme).find? (keysOf text)
-        let ownedBy (package : String) (name : String) : Bool :=
-          (registry.find? name).any (·.owner == ({ name := package } : Config.Owner))
         let menuKeys :=
           (registry.bindings.filter (·.owner == Menu.package.owner)).map (·.binding.command)
         return registry.menuBar? == some (registry.menuOf Menu.standard) &&
@@ -2654,9 +2652,22 @@ def shippedChecks (_ : Unit) : List Check :=
             bound "s-x" == some { command := "clipboard-cut" } &&
             bound "s-c" == some { command := "clipboard-copy" } &&
             bound "s-v" == some { command := "clipboard-paste" } &&
-            bound "s-a" == some { command := "select-all" } &&
-            ["undo", "redo", "clipboard-cut", "clipboard-copy", "clipboard-paste", "select-all"].all
-              (ownedBy "evil") }]
+            bound "s-a" == some { command := "select-all" } },
+    { name :=
+        "the executable's hosts start with nothing of the evil package: no command move, normal, visual, visual-line, insert, append, insert-line-start, append-line-end, self-insert, operate, select-object, delete-char, put-after, put-before, open-below, open-above, undo, redo, repeat, scroll-down, scroll-up, scroll-page-down, scroll-page-up, scroll-line-to-top, scroll-line-to-center, scroll-line-to-bottom, insert-delete-backward, insert-delete-word-backward, insert-newline, insert-tab, insert-left, insert-right, insert-up, insert-down, clipboard-cut, clipboard-copy, clipboard-paste, select-all, jump-backward, jump-forward or set-mark, and no entry of an owner evil, registered by a package of the core's Lake package"
+      run := do
+        let registry := shippedRegistry
+        return ["move", "normal", "visual", "visual-line", "insert", "append", "insert-line-start",
+                  "append-line-end", "self-insert", "operate", "select-object", "delete-char",
+                  "put-after", "put-before", "open-below", "open-above", "undo", "redo", "repeat",
+                  "scroll-down", "scroll-up", "scroll-page-down", "scroll-page-up",
+                  "scroll-line-to-top", "scroll-line-to-center", "scroll-line-to-bottom",
+                  "insert-delete-backward", "insert-delete-word-backward", "insert-newline",
+                  "insert-tab", "insert-left", "insert-right", "insert-up", "insert-down",
+                  "clipboard-cut", "clipboard-copy", "clipboard-paste", "select-all",
+                  "jump-backward", "jump-forward", "set-mark"].all
+              (fun name => (registry.find? name).isNone) &&
+            !registry.ownersByKind.flatten.contains ({ name := "evil" } : Config.Owner) }]
 
 /-- A config whose `setup` registers `greet` and the job `follow`, which
 watches the made-up file `/watched/f`, waits for its next delivery, and

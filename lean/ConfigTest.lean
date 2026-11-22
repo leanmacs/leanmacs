@@ -7,9 +7,6 @@ import ConfigTest.Editor.Config.Directory
 import ConfigTest.Editor.Config.Elaborate
 import ConfigTest.Editor.Config.Elaborator.Contract
 import ConfigTest.Editor.Config.Lakefile.Toml
-import ConfigTest.Editor.Evil
-import ConfigTest.Editor.Evil.Operators
-import ConfigTest.Editor.Evil.TreeObjects
 import ConfigTest.Editor.Ex
 import ConfigTest.Editor.Extension
 import ConfigTest.Editor.Face
@@ -242,25 +239,6 @@ show:
   fixture back, rows inside a string and a comment keeping their indent;
   `TextId.openingLevel` after an opening brace is the tree's level; and a
   buffer with no language or no indents query is refused, as a value;
-- `evilIndentChecks`: evil's `=` and its indented new lines through a host
-  of the Vim scheme that ships, over the library's Rust grammar: `gg=G` on
-  the mangled Rust indent fixture gives the fixture back, `=af`
-  re-indents one function, one `u` undoes it and `.` repeats it, rows
-  inside a string and a comment keep their indent, `RET` after an opening
-  brace and `o`/`O` in a body start at the tree's level, and a buffer with
-  no language or no indents query is as before;
-- `evilChecks`: evil from config through the host, with the test scheme:
-  a config that the real elaborator loads names the vocabulary the editor
-  ships (`Evil.motions`) and hands it to evil's move command, as it is and
-  with a motion of config's own added. It shows what `Editor.lean` lets
-  config name; where a motion of the editor's leads is not said here;
-- `evilLeaderChecks`: the Vim scheme's leader through a host of the Vim
-  scheme that ships: a config's `<leader> f f` binding runs on `SPC f f`
-  while config sets no leader, on `\ f f` once a reload sets the leader to
-  `\` (and `SPC f f` then does not run it), `SPC` typed in insert state is
-  a space while `SPC f f` after `<Escape>` runs the binding, and the
-  scene's `hint` lines after `SPC` and after `SPC f` hold what config named
-  and described;
 - `restoreOrderChecks`: the restore at start-up in the host, on the real
   elaborator: over the library's file service and a journal on disk, the
   restore's second half runs, and its buffer is there, before reload 1 is
@@ -337,6 +315,13 @@ The executable also holds the benchmark (`ConfigTest.Bench`,
 workspace finder's, which was here too, is the workspace package's
 (`WorkspaceTest.Linked.WorkspaceBench`, an opt-in argument of its linked
 test; `mise run find-file-bench`).
+
+Evil's checks through a host, `treeObjectChecks`, `treeObjectFixtureChecks`,
+`evilIndentChecks`, `evilChecks` and `evilLeaderChecks`, which were here,
+are the default package `evil`'s linked test's since the
+features-as-packages roadmap's phase 7
+(`packages/evil/EvilTest/Linked.lean`, whose module doc says what each
+shows): no check here runs a host of the Vim scheme.
 -/
 
 namespace ConfigTest
@@ -351,10 +336,7 @@ def checks (context : Context) : List Check :=
     hostChecks context ++
     threadChecks context ++
     jobChecks context ++
-    treeObjectChecks context ++
-    treeObjectFixtureChecks context ++
     indentChecks context ++
-    evilIndentChecks context ++
     watchReloadChecks context ++
     agreementChecks () ++
     shippedChecks () ++
@@ -365,8 +347,6 @@ def checks (context : Context) : List Check :=
     promptChecks context ++
     atPointChecks context ++
     exChecks context ++
-    evilChecks context ++
-    evilLeaderChecks context ++
     reloadEchoChecks context ++
     faceChecks context ++
     cursorResolutionChecks () ++

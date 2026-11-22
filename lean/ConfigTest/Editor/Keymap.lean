@@ -10,7 +10,7 @@ The tests of `Editor/Keymap.lean`: `hintChecks`, what the key hints list of
 a config's binding descriptions and prefix names (`Keymap.continuations`),
 through a host of the test scheme. The root module `ConfigTest` runs them; its
 module doc says what each shows. That the Vim scheme lists them after its
-leader is evil's (`evilLeaderChecks`, `ConfigTest/Editor/Evil.lean`).
+leader is evil's (`evilLeaderChecks`, `packages/evil/EvilTest/Linked/Evil.lean`).
 -/
 
 namespace ConfigTest

@@ -3550,7 +3550,7 @@ editing keys (`excerptDriver`, `ModelTest/Support/Excerpt.lean`): a session
 is typed between `C-b` and `C-e`, `C-z` and `C-Z` undo and redo, and `C-u`
 and `C-r` make one move in the history and say what it answered
 (`historyTold`). What a scheme's own undo and redo say of a refusal is the
-scheme package's (`evilUndoChecks`, `ModelTest/Editor/Evil/Undo.lean`). -/
+scheme package's (`evilUndoChecks`, `packages/evil/EvilTest/Evil/Undo.lean`). -/
 def excerptBufferChecks : List Check :=
   [{  name :=
         "an edit typed in an excerpt buffer changes the source buffer's text at the mapped position, as one revision of the source traced to the user, and the excerpt buffer shows it"

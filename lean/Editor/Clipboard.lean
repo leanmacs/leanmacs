@@ -45,11 +45,11 @@ and `s-x`, `s-c`, `s-v` and `s-a` with them (`Editor/Menu/Compiled.lean`).
 The core names them and registers no command under them: what cutting or
 pasting does depends on the input scheme (its selection's shape, its
 registers), so the package that supplies the scheme registers the four,
-as evil does (`Editor/Evil/Clipboard.lean`). They are here because the
+as evil does (`packages/evil/Evil/Clipboard.lean`). They are here because the
 menu, which is in the core, may not import a package's module, and
 because every scheme must answer these four items. Pinned by
 `ModelTest.menuChecks` (the menu's items and keys name them) and
-`ModelTest.clipboardCommandChecks` (evil registers them).
+`EvilTest.clipboardCommandChecks` (evil registers them).
 
 ## Where an addition goes
 

@@ -16,7 +16,7 @@ closing a buffer are the core's support's stand-ins (`jumpStandIns`).
 `Jumps.Go` is the core's, so this support is too: it names no module of the
 files feature, whose visit is held to the same contract
 (`FilesApiTest.contractChecks`). Shared by `ModelTest/Editor/Jumps/Go.lean`
-and `ModelTest/Editor/Evil/Marks.lean`; it holds no checks of its own.
+and `packages/evil/EvilTest/Evil/Marks.lean`; it holds no checks of its own.
 -/
 
 namespace ModelTest

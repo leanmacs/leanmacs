@@ -14,9 +14,9 @@ core's tests answer prompts through it, so none of them depends on the
 package that ships (`docs/design/keymaps-and-modes.md`, "The minibuffer").
 It registers nine commands under the names the core's reachers name as
 text: the seven the Vim scheme's minibuffer table binds
-(`Editor/InputScheme/Vim/Default.lean`, `minibufferCommands`), the one an
+(`packages/evil/Evil/Vim/Default.lean`, `minibufferCommands`), the one an
 input scheme yields when a key needs a text typed (`InputScheme.Vim.askCommand`,
-`Editor/InputScheme/Vim.lean`) and the one a completion source's job posts
+`packages/evil/Evil/Vim.lean`) and the one a completion source's job posts
 each batch as, whose name is the core's (`Completion.candidatesCommand`,
 `Editor/Completion/Later.lean`). `names` lists them in the order they are
 registered.

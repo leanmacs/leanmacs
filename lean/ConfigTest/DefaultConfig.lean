@@ -18,7 +18,7 @@ The tests of the default config `mise run install` ships (`config/default`):
 registry a host starts with: its bindings are written under `<leader>`, so
 they are read through the scheme's leader (`InputScheme.leaders`), whatever
 scheme that is. That the Vim scheme's leader is `SPC` is evil's
-(`ModelTest.vimDefaultChecks`), and what the default editor runs for its
+(`EvilTest.vimDefaultChecks`), and what the default editor runs for its
 keys under it the headless fixture `tests/headless/default-config`'s. The default config is config, not a Lean module,
 so this module mirrors none; it sits beside the mirrored ones under
 `ConfigTest/`. The root module `ConfigTest` runs them; its module doc says what

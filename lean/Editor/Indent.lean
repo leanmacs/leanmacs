@@ -8,7 +8,7 @@ The indent level of each row of a text, and of a line opened at a
 position, from the captures of the indents query its major mode's text
 keeps (`Mode.SyntaxTree.indents`, `Editor/Highlight.lean`), and the edits
 that turn levels into whitespace: what evil's `=` and its commands that
-open a line do (`Editor/Evil/Operators.lean`, `Editor/Evil.lean`). The
+open a line do (`packages/evil/Evil/Operators.lean`, `packages/evil/Evil.lean`). The
 rules are pure and live here alone; the library only answers the query's
 captures as plain rows (`SyntaxTree.capturesOf`), and has no indent rule of
 its own (`docs/design/rust-library.md`, "Injections, indentation and text

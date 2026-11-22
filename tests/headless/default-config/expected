@@ -16,8 +16,8 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 4 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
 status 4: minibuffer.prompt "Command: "
-view 2 0,0 0x0: "move\nnormal\nvisual             v\nvisual-line        V\ninsert             i\nappend             a\ninsert-line-start  I\nappend-line-end    A\nself-insert\noperate", scroll 0, selections , padding 8 0
-decorations 2: minibuffer.candidate 0..4 minibuffer.candidate 5..11 minibuffer.candidate 12..32 minibuffer.annotation 31..32 minibuffer.candidate 33..53 minibuffer.annotation 52..53 minibuffer.candidate 54..74 minibuffer.annotation 73..74 minibuffer.candidate 75..95 minibuffer.annotation 94..95 minibuffer.candidate 96..116 minibuffer.annotation 115..116 minibuffer.candidate 117..137 minibuffer.annotation 136..137 minibuffer.candidate 138..149 minibuffer.candidate 150..157
+view 2 0,0 0x0: "ex                       :\nquit                     s-q\nsave-and-quit\nreload-config\ntoggle-fullscreen        C-s-f\nminimise-window          s-m\nwindow-split             SPC w s, C-w s, C-w S, C-w C-s  Split window\nwindow-split-vertically  SPC w v, C-w v, C-w C-v  Split window vertically\nwindow-new               SPC w n, C-w C-n  New window\nwindow-close             SPC w c, C-w C-c  Close window", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..26 minibuffer.annotation 25..26 minibuffer.candidate 27..55 minibuffer.annotation 52..55 minibuffer.candidate 56..69 minibuffer.candidate 70..83 minibuffer.candidate 84..114 minibuffer.annotation 109..114 minibuffer.candidate 115..143 minibuffer.annotation 140..143 minibuffer.candidate 144..213 minibuffer.annotation 169..213 minibuffer.candidate 214..287 minibuffer.annotation 239..287 minibuffer.candidate 288..341 minibuffer.annotation 313..341 minibuffer.candidate 342..397 minibuffer.annotation 367..397
 status 2: -
 key arrived: <Escape> Escape -
 run search-bindings: ok

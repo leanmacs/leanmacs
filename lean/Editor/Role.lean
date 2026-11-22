@@ -26,7 +26,7 @@ cannot add a role.
 
 | Addition | Where |
 |---|---|
-| A new role | A constant here and an entry of `registered`, and a row in the role table of every scheme in the repository (the Vim scheme's, `Editor/InputScheme/Vim/Default.lean`, and the test scheme's, `Editor/InputScheme/Test.lean`), in one commit: the scheme contract fails a scheme without the row |
+| A new role | A constant here and an entry of `registered`, and a row in the role table of every scheme in the repository (the Vim scheme's, `packages/evil/Evil/Vim/Default.lean`, and the test scheme's, `Editor/InputScheme/Test.lean`), in one commit: the scheme contract fails a scheme without the row |
 | Renaming or removing a role | Here, the schemes' tables, and every mode that fills it |
 
 Pinned by `ModelTest.modeRecordChecks`.

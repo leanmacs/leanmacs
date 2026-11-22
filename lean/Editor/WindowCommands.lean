@@ -11,7 +11,7 @@ the state's readers (`EditorState.toward?`, `EditorState.cycled`,
 `Editor/State.lean`). Vim 9.1's behaviour is pinned on the commands, so
 which key reaches a command is the bindings' business alone: the Vim
 scheme binds them under `C-w` (`Vim.Default.windowKeys`,
-`Editor/InputScheme/Vim/Default.lean`).
+`packages/evil/Evil/Vim/Default.lean`).
 
 - **Each acts on its call's window** (`call.target.window.id`), never on
   the frame's focus, so a command a config runs on another window acts

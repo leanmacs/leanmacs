@@ -24,12 +24,10 @@ Lake would fetch every git dependency of it into each set's own
 its own, `tools/lean-fmt/lakefile.toml`, which nothing requires
 (`docs/design/packages.md`, "The package set and its build").
 
-It declares the keyword `editor-input-scheme`: its entry module supplies
-the editor's input scheme (`schemeKeyword`), the Vim scheme, until evil is
-a package of its own. -/
-package «editor-core» where
-  leanOptions := coreLeanOptions
-  keywords := #["editor-input-scheme"]
+It declares no keyword: it supplies no input scheme (`schemeKeyword`). The
+Vim scheme is the default package `evil`'s (`packages/evil/`), so an editor
+built from this package alone refuses to start. -/
+package «editor-core» where leanOptions := coreLeanOptions
 
 /-- The editor's modules. Its root `Editor` is what user config is elaborated
 on at runtime, and the build makes its `.olean` files for that. Its second

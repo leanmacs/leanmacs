@@ -14,13 +14,13 @@ names the constant, never the text ("Reaches by name"). The reached names
 are nine commands and one mode:
 
 - the seven commands the Vim scheme's minibuffer table binds (the core's
-  `lean/Editor/InputScheme/Vim/Default.lean`, `minibufferCommands`):
+  `packages/evil/Evil/Vim/Default.lean`, `minibufferCommands`):
   `minibuffer-accept`, `-cancel`, `-next`, `-previous`, `-insert`,
   `-delete-backward` and `-delete-to-start`. The core cannot import a
   package, so it names them as text;
 - `minibuffer-ask`, which the Vim scheme yields when a key needs a text
   typed in the minibuffer (`InputScheme.Vim.askCommand`, the core's
-  `lean/Editor/InputScheme/Vim.lean`), also as text;
+  `packages/evil/Evil/Vim.lean`), also as text;
 - `minibuffer-candidates`, which a completion source's job posts each
   batch as, whose name is the core's (`Completion.candidatesCommand`, the
   core's `lean/Editor/Completion/Later.lean`), declared from that constant;

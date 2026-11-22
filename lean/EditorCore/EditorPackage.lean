@@ -1,4 +1,3 @@
-import Editor.Evil.Compiled
 import Editor.Ex.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.Menu.Compiled
@@ -56,16 +55,15 @@ to live in a package's module, or the check would forbid the host that
 helper too. Tests import it for the list (`ModelTest.packageSetChecks`,
 `ConfigTest.shippedChecks`).
 
-## The scheme
+## No scheme
 
-`EditorCore.EditorPackage.scheme` is the input scheme the core's Lake
-package supplies: `Evil.scheme`, the Vim scheme (`Editor/Evil/Compiled.lean`,
-"The scheme"). The core's lakefile declares the keyword
-`editor-input-scheme`, so the generated root hands it to `Editor.Main.run`
-beside the packages (`docs/design/packages.md`, "Input schemes"), and the
-hosts run it. It adds no import here: the value is a package module's.
-When evil moves out into a Lake package of its own, the keyword and this
-declaration move to that package's lakefile and entry module.
+This module declares no `scheme`: the core's Lake package supplies no input
+scheme, and its lakefile does not declare the keyword `editor-input-scheme`
+(`docs/design/packages.md`, "Input schemes"). The Vim scheme is the default
+package `evil`'s (`packages/evil/`), whose entry module declares it, since
+the features-as-packages roadmap's phase 7; until then this module declared
+`scheme := Evil.scheme`. So an editor built from the core alone has no
+input scheme, and refuses to start (`Editor.Main.run`).
 
 ## The order
 
@@ -134,7 +132,11 @@ package here and before every other default package: their commands
 follow `package-set`'s in the command prompt, in their old order, and
 before the minibuffer's; the workspace finder's escape, its one binding,
 still follows the menu's; and version control's ex names still follow
-ex's and come before the compile mode's.
+ex's and come before the compile mode's. Evil's package, which
+was first here, is the default package `evil` (`packages/evil/`) since
+that roadmap's phase 7, and the first default package to register (its
+D6): its commands, which were the first registered, follow `package-set`'s
+in the command prompt now and come before the files'.
 -/
 
 namespace EditorCore.EditorPackage
@@ -144,12 +146,7 @@ open Editor
 /-- The packages of the core's Lake package, in the order a host registers
 them ("The order", in the module docs). -/
 def packages : Array Package :=
-  #[Evil.package, Ex.package, FrameCommands.package, Menu.package, WindowCommands.package,
-    TabCommands.package, Themes.package, Restore.package, PackageSet.package]
-
-/-- The input scheme the core's Lake package supplies ("The scheme", in the
-module docs): evil's, the Vim scheme. -/
-def scheme : SchemePackage :=
-  Evil.scheme
+  #[Ex.package, FrameCommands.package, Menu.package, WindowCommands.package, TabCommands.package,
+    Themes.package, Restore.package, PackageSet.package]
 
 end EditorCore.EditorPackage

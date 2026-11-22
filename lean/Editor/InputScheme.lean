@@ -118,7 +118,7 @@ A scheme is told when a menu item names an invocation for a view
 (`invoked`): the state, and the invocation to run in its place. A menu
 item is chosen with no key, so `step` never sees it, and a scheme whose
 keys can make a command name run as something else in a state, as the Vim
-scheme's run tables do (`Editor/InputScheme/Vim.lean`, "Vim states"),
+scheme's run tables do (`packages/evil/Evil/Vim.lean`, "Vim states"),
 does the same for the item. It defaults to both as they were. Whoever runs
 the scheme tells it once for each menu item chosen (the command loop), and
 runs what comes back with the report of the state that comes back. An
@@ -201,8 +201,8 @@ reset must keep, so the contract speaks of `pending` and of what the scheme
 then yields.
 
 The scheme that ships is not here: it is the Vim scheme
-(`Editor/InputScheme/Vim.lean`), over its default states and bindings
-(`Editor/InputScheme/Vim/Default.lean`). `Editor/InputScheme/Test.lean` is
+(`packages/evil/Evil/Vim.lean`), over its default states and bindings
+(`packages/evil/Evil/Vim/Default.lean`). `Editor/InputScheme/Test.lean` is
 the test scheme, published for other modules' tests.
 
 ## The scheme a package supplies
@@ -416,7 +416,7 @@ def InputScheme.leaders (scheme : InputScheme) (leader : Option (List Key) := no
 
 /-- A state of a scheme, by its name, as config names one for a binding
 that holds only there (`bindKey`'s `states`). The scheme says which states
-it has: the Vim scheme's are constants of `Editor/InputScheme/Vim/Default.lean`
+it has: the Vim scheme's are constants of `packages/evil/Evil/Vim/Default.lean`
 (`SchemeState.insert`). -/
 structure SchemeState where
   /-- The state's name, as the scheme registers it. -/

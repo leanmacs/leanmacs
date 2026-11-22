@@ -17,7 +17,7 @@ The model tests of `Editor/InputScheme/Contract.lean`: `schemeContractChecks`,
 `continuationsContractChecks` and `keyBindingsContractChecks`, on the test
 scheme and on schemes written here. The root module `ModelTest` runs them;
 its module doc says what each shows. That the Vim scheme keeps the contract
-is `vimContractChecks`, in `ModelTest/Editor/InputScheme/Vim/Contract.lean`.
+is `vimContractChecks`, in `packages/evil/EvilTest/Vim/Contract.lean`.
 -/
 
 namespace ModelTest

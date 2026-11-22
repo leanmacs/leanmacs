@@ -14,7 +14,7 @@ levels (`TextId.reindentEdits`, `TextId.openingLevel`). The root module
 `ConfigTest` runs them; its module doc says what each shows. What a
 scheme's keys do with those levels is that scheme's package's: evil's `=`,
 `RET`, `o` and `O` are pinned by `evilIndentChecks`
-(`ConfigTest/Editor/Evil/Operators.lean`).
+(`packages/evil/EvilTest/Linked/Evil/Operators.lean`).
 -/
 
 namespace ConfigTest

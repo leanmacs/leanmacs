@@ -11,7 +11,7 @@ The tests of `Editor/Setup.lean`: `leaderChecks`, the leader config sets
 the test scheme. The root module `ConfigTest` runs them; its module doc says
 what each shows. What the Vim scheme's leader is, and that it is kept out of
 the state where typing is text, are evil's (`evilLeaderChecks`,
-`ConfigTest/Editor/Evil.lean`).
+`packages/evil/EvilTest/Linked/Evil.lean`).
 -/
 
 namespace ConfigTest

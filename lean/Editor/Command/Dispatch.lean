@@ -109,7 +109,7 @@ A command also ends itself, with a reason, by a second control request
 that what its key stands for cannot be done, and what it did so far is to
 stay. Evil's operate command breaks off when its motion failed after it
 moved the cursor, as Vim cancels the operator and leaves the cursor where
-the motion got to (`Editor/Evil/Operators.lean`).
+the motion got to (`packages/evil/Evil/Operators.lean`).
 
 - **The program is finished at that request**, with `Guarded.brokeOff` of
   the reason and the state the command had reached, as one that gives up
@@ -257,7 +257,7 @@ from the next command.
     goes through (`Editor/Loop.lean`, "A command run inside another"), so
     a name is one command however it comes to run. It is how evil's dot
     repeat replays a change with the command the change's own keys ran
-    (`Editor/Evil/Repeat.lean`).
+    (`packages/evil/Evil/Repeat.lean`).
 - **Asking a completion source inside the asking command**
   (`ControlRequest.askSource`) is answered `none` for a name no source is
   registered under (`Loop.Registered.sources`), with nothing run.

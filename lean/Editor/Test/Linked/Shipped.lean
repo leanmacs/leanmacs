@@ -19,7 +19,7 @@ A host made as the executable's hosts are made (`withShippedHost`, over
 `Headless.shippedOver`), of the input scheme and the packages it is given
 (a test of the core or of a package hands it the test scheme,
 `TestScheme.scheme`; the Vim scheme's host is evil's,
-`Editor/Test/Linked/Vim.lean`), and the real
+`packages/evil/EvilTest/Linked/Support/Vim.lean`), and the real
 syntax tree binding as a check observes it: each request recorded
 (`recordingSyntaxTree`, `recordedRequest`), and the faces the library's
 shipped highlights query draws (`shippedFaces`). It holds no checks of its

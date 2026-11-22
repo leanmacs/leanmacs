@@ -16,7 +16,7 @@ import Editor.UndoTree
 # The kit's editing commands: a stand-in for a scheme's, on the test scheme
 
 A stand-in for the editing commands an input scheme's package registers,
-such as evil's (`Editor/Evil/Compiled.lean`), which no core test and no
+such as evil's (`packages/evil/Evil/Compiled.lean`), which no core test and no
 other package's test may import. It is written over the core's API alone
 (`Editor/Api.lean`), for the test scheme (`Editor/InputScheme/Test.lean`):
 a test whose subject is the core, or a feature that is not a scheme, types

@@ -7,7 +7,7 @@ import Editor.UndoTree
 What is proved of the undo tree (`Editor/UndoTree.lean`) on the text model.
 They are here and not beside the tree, which imports the text port and no
 model. `lake build` checks them, since `Editor.lean` imports this module
-through `Editor/Evil/Theorems.lean`.
+through `packages/evil/Evil/Theorems.lean`.
 
 - `UndoTree.undo_pending`: one undo by a tree whose open group holds an
   edit, on a model that accepts that group's inverse, is made: the tree
@@ -21,7 +21,7 @@ through `Editor/Evil/Theorems.lean`.
   handed back is the one the transaction carried as the selection before
   it.
 
-`Evil.deleteChar_undo` (`Editor/Evil/Theorems.lean`) is the second for the
+`Evil.deleteChar_undo` (`packages/evil/Evil/Theorems.lean`) is the second for the
 transaction evil's `x` makes.
 
 Nothing here is about the real binding: the text contract's inverse

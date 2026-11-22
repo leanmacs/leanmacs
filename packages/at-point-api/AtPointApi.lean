@@ -12,7 +12,7 @@ package, and a reacher names the constant, never the text ("Reaches by
 name"). The reached names are nine:
 
 - the seven the Vim scheme's insert table binds (the core's
-  `lean/Editor/InputScheme/Vim/Default.lean`, `insertCommands`):
+  `packages/evil/Evil/Vim/Default.lean`, `insertCommands`):
   `at-point-complete`, `-next`, `-previous`, `-tab`, `-backtab`, `-return`
   and `-quit`. The core cannot import a package, so it names them as text;
 - the two the core runs by itself, whose names are the core's

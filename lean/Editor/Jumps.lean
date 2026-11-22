@@ -9,7 +9,7 @@ The decisions about a window's jump list and the places it holds
 over the editor API: the list's rules are `Editor/JumpList.lean`'s, run on
 places of the editor state (`Editor/State.lean`, "The jump list and
 marks") whose lines are read from their markers. It names no scheme and no
-key: evil's commands (`Editor/Evil/Jumps.lean`, `Editor/Evil/Marks.lean`)
+key: evil's commands (`packages/evil/Evil/Jumps.lean`, `packages/evil/Evil/Marks.lean`)
 call it, and so do the file commands, since opening a file is a jump.
 
 This is the lower of two modules. It imports the editor API only, so the
@@ -62,7 +62,7 @@ commands, going to a place in a closed file, is the upper module's
   do: their markers go to where the deletion left them, the line's start,
   where Vim keeps their column (a recorded departure, task
   `global-mark-keeps-column-on-line-delete`). The linewise delete and
-  change call it (`Editor/Evil/Operators.lean`).
+  change call it (`packages/evil/Evil/Operators.lean`).
 - **Attach** (`attach`): once a buffer holds a file, the places of that
   file become places held by markers of its text again, at their row and
   column, clamped as a visit clamps (`Marks.offsetAt`).

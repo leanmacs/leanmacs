@@ -10,7 +10,7 @@ core's API: `package`, a package named `at-point`. The core's tests complete
 at point through it, so none of them depends on the package that ships
 (`docs/design/keymaps-and-modes.md`, "Completion at point"). It registers
 nine commands under the names the core's reachers name as text: the seven
-the Vim scheme's insert table binds (`Editor/InputScheme/Vim/Default.lean`,
+the Vim scheme's insert table binds (`packages/evil/Evil/Vim/Default.lean`,
 `insertCommands`) and the two the core runs by itself, whose names are the
 core's (`Completion.AtPoint.triggeredCommand`, `.pausedCommand`,
 `Editor/Completion/AtPoint.lean`). `names` lists them in the order they are

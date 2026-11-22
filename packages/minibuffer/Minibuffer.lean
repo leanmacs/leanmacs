@@ -62,7 +62,7 @@ every name another package reaches.
   buffer is made with the mode, which is not set through a view.
 - **Under the Vim scheme** the minibuffer's view is in a Vim state where
   typing is text, in which a mode's keys do not hold; that state binds the
-  commands by their names (the core's `lean/Editor/InputScheme/Vim/Default.lean`). The
+  commands by their names (the core's `packages/evil/Evil/Vim/Default.lean`). The
   names here and in that table are changed together.
 
 ## Deleting backward
@@ -97,7 +97,7 @@ whichever view it was run from:
 
 Nothing here inserts typed text: the command a key that prints runs is the
 scheme's self-insert. Under the Vim scheme that is evil's
-(`Evil.selfInsert`, the core's `lean/Editor/Evil.lean`), the same command as in insert
+(`Evil.selfInsert`, the core's `packages/evil/Evil.lean`), the same command as in insert
 state: the minibuffer's view is in a state where typing is text, and the
 loop runs the command with the focused window, which is the minibuffer's.
 
@@ -126,7 +126,7 @@ at-point session adds its own.
 
 `minibuffer-ask` (`askCommand`) is what an input scheme yields when a key
 needs a text typed in the minibuffer before its edit is complete, as Vim's
-`/` needs its pattern (the core's `lean/Editor/InputScheme/Vim.lean`, "Motions that ask").
+`/` needs its pattern (the core's `packages/evil/Evil/Vim.lean`, "Motions that ask").
 It opens a prompt with the label it is handed and the reserved continuation
 `InputScheme.answerName`, so the accepted answer is handed to the scheme
 (the core's `lean/Editor/Loop.lean`, "Prompts") and no command runs under that name.

@@ -23,7 +23,7 @@ here switch and close; and what a check reads of a window's jump list and
 cursor, written as text. The core's `ModelTest/Editor/Jumps.lean` runs on
 its driver; the files feature's support (`ModelTest/Support/JumpsGo.lean`)
 binds the same keys to the real commands, for `ModelTest/Editor/Jumps/Go.lean`
-and `ModelTest/Editor/Evil/Marks.lean`. It holds no checks of its own.
+and `packages/evil/EvilTest/Evil/Marks.lean`. It holds no checks of its own.
 -/
 
 namespace ModelTest

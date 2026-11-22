@@ -255,7 +255,7 @@ def Theme.defines (theme : Theme) (name : FaceName) : Bool :=
   theme.any (·.name == name)
 
 /-- The editing states of the shipped Vim scheme
-(`Editor/InputScheme/Vim/Default.lean`), whose cursors are drawn in the face
+(`packages/evil/Evil/Vim/Default.lean`), whose cursors are drawn in the face
 `cursor.` followed by the state's name (`Vim.cursorFace`). The palette
 mapping gives each a cursor face; the completeness check reads the states
 from the scheme itself, so a state added there and not here fails it. -/

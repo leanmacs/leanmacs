@@ -41,18 +41,6 @@ import ModelTest.Editor.Config.Stores
 import ModelTest.Editor.Display.Contract
 import ModelTest.Editor.Display.Model
 import ModelTest.Editor.DisplayRules
-import ModelTest.Editor.Evil
-import ModelTest.Editor.Evil.Clipboard
-import ModelTest.Editor.Evil.Jumps
-import ModelTest.Editor.Evil.Marks
-import ModelTest.Editor.Evil.Motions
-import ModelTest.Editor.Evil.Objects
-import ModelTest.Editor.Evil.Operators
-import ModelTest.Editor.Evil.Registers
-import ModelTest.Editor.Evil.Repeat
-import ModelTest.Editor.Evil.Scroll
-import ModelTest.Editor.Evil.TreeObjects
-import ModelTest.Editor.Evil.Undo
 import ModelTest.Editor.Ex
 import ModelTest.Editor.Ex.Compiled
 import ModelTest.Editor.Ex.Line
@@ -77,9 +65,6 @@ import ModelTest.Editor.Highlight
 import ModelTest.Editor.Indent
 import ModelTest.Editor.InputScheme
 import ModelTest.Editor.InputScheme.Contract
-import ModelTest.Editor.InputScheme.Vim
-import ModelTest.Editor.InputScheme.Vim.Contract
-import ModelTest.Editor.InputScheme.Vim.Default
 import ModelTest.Editor.Invocation
 import ModelTest.Editor.Job.Contract
 import ModelTest.Editor.Job.Jobs
@@ -923,163 +908,16 @@ need no model and no fake of a collaborator:
   a scheme lists reports a scheme that lists one its walk does not
   complete, and the test scheme lists those of its keymaps.
 
-The Vim scheme (`Editor/InputScheme/Vim.lean`) is checked the same way,
-with no model:
-
-- `vimEditChecks`: what an edit compiles to, the layout of each kind of
-  invocation, a command's with a character first, and what an edit says
-  of itself;
-- `vimRegistryChecks`: the registry of Vim states: looking a state up by
-  its name, and registering one. A record holds keymaps and so has no
-  equality: the checks compare records by their fields (`vimSeen`);
-- `vimGrammarChecks`: the grammar: which keymaps a key is looked up in,
-  and what a key sequence parses to and yields, a command that takes a
-  character (`m`) among them;
-- `vimStateChecks`: Vim states: which state a view is in, how one is
-  entered, what the scheme reports of a view in a state, what the grammar
-  reads of a state's record (typed text, an operator over the selection),
-  the last change, and a mode's keys under the Vim scheme: a hand-tuned
-  key is typed text in insert state, and `Mode.check` reads every state's
-  keymaps; and a command that takes a character awaiting it, and never
-  the last change;
-- `vimHintChecks`: what the Vim scheme lists as able to follow a keymap
-  prefix (`Vim.State.continuations`): keys of both tiers, an active prefix
-  over a state's binding, the pending keymaps while an operator waits, and
-  nothing after a count, an operator, the register prefix or a command
-  that takes a character alone;
-- `vimKeyBindingChecks`: the key bindings the Vim scheme lists
-  (`Vim.State.keyBindings`): the commands of the walk's tiers in the view's
-  state, an active binding first with its description, and no part of
-  speech, no command that takes a character by its key alone, no sequence
-  that begins with a count digit, no mode's binding
-  where typing is text and no binding an active prefix shadows;
-- `vimDefaultChecks`: the default states and bindings
-  (`Editor/InputScheme/Vim/Default.lean`), observed through the grammar:
-  what each default key parses to, and what the scheme reports of the view
-  after it. They restate no table and name no vocabulary or command name.
-  The scheme lists the cursor face of each of its states, each is a cursor
-  face of the face vocabulary, which every shipped theme is held to, and
-  every face it reports, with each state's badge, is in that vocabulary;
-- `vimDefaultHintChecks`: over every default state, every key the scheme
-  lists after a keymap prefix is what `Vim.parse` and the walk make of it,
-  and every chord of the defaults it leaves out walks to nothing;
-- `vimContractChecks`: the scheme contract holds of the Vim scheme, over
-  the registry written here and over the default states.
-
-The grammar's checks run on a registry and keymaps written here
-(`vimStates`), so that none of them names a default binding.
-
-Evil (`Editor/Evil.lean`), what the Vim scheme's invocations run, is
-checked on the editor's models. This is where Vim keys are pressed against
-a text, under the Vim scheme that ships with the commands compiled code
-registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
-
-- `evilRestChecks`: where a cursor rests under each rule, from every
-  position of a few small texts, on the text model alone;
-- `evilMotionChecks`: each motion's key in a text with the cursor written
-  into it as a bar (`evilKeys`, `evilRows`), with no count, a count of 1, a
-  count inside the text and a count past it; the wanted column, by keys
-  and by a command that calls the move command twice with one call; a
-  sweep of every motion of the vocabulary from every position a cursor may
-  rest at; and that every default motion key has a motion of its name;
-- `evilStateChecks`: `v`, `V` and `<Escape>`: the selection the scene
-  shows, its shape and what it covers, and the scene's cursor and status
-  field in each state; and, by the entering command called with a report
-  written by hand (`evilEntered`), a state that keeps both ends entered
-  from an exclusive selection, which no default key does: where the anchor
-  rests, and that the head steps back;
-- `evilInsertChecks`: `i a I A`, typed text and `<Escape>`; that an insert
-  session is one step of the history, by an undo request; a key typed into
-  a prompt; a committed text in normal state and inside a session; and
-  the reserved invocation that presses keys, which runs `i` and `x` as
-  pressing them does;
-- `evilOperatorChecks`: the operators (`Editor/Evil/Operators.lean`). An
-  operator's keys are pressed with a sentinel in the unnamed register
-  (`evilEdited`), so a register left as it was is seen, and a row
-  (`OperatorRow`, `operatorRows`) says the text, the cursor, the register
-  and whether it is line-wise, whether the view is left in insert state,
-  and whether the command gave up. `operatorTable` is every operator over
-  every motion that takes no argument in five situations; beside it are the
-  special cases, the calls of the operate command that give up, and that an
-  operator is one step of the history. `operatorSweep` presses every default
-  operator key with every default motion key from every resting position of
-  a few texts, a motion that takes a character with one;
-- `evilFindChecks`: `f`, `t`, `F`, `T`, `;` and `,` (`Editor/Evil/Motions.lean`)
-  as moves (`findRows`) and under each operator (`findOperatorRows`, which
-  `findOperatorPairs` holds to the default tables), and the last find they
-  keep;
-- `evilSelectionChecks`: the operators over a `v` and a `V` selection, by
-  the same rows, and that the operator's key leaves one cursor;
-- `evilRegisterChecks`: `x`, the registers a yank and a deletion set, the
-  clipboard register on the clipboard model (`evilClipped`), and `p` and
-  `P`, by the same rows;
-- `evilOpenChecks`: `o` and `O`, by the same rows, and their insert
-  session;
-- `evilIndentChecks`: `=` by key in a JSON language whose model tree
-  answers the indents query (`indentDriver`): `gg=G` over a mangled text,
-  `=af`, counts, `=j`, a visual selection, one undo step, `.` over another
-  range, a config entry's tab unit, and the give-up with no syntax tree, no
-  indents query, or a tree not delivered yet (`undeliveredDriver`); and the
-  new lines `RET`, `o` and `O` start at their level, at the row's own indent
-  while the tree is not delivered, and as before this phase with neither;
-- `evilUndoChecks`: `u` and `C-r` after one change of each kind
-  (`undoRows`): the text and the cursor from before the change, and those
-  the change left; `u` at the root of a buffer a restore made, which
-  says its history starts there; and, in an excerpt buffer
-  (`evilExcerptDriver`, on the kit's `excerptRegistrations`), what `u` and
-  `C-r` say of a step refused because a source moved or was removed
-  (`Evil.sourceMovedSays`, `sourceRemovedSays`), and of nothing left to
-  undo or redo after it. They are the phase's rule and are not compared with
-  Vim, which leaves the cursor at the start of the changed text;
-- `evilRepeatChecks`: `.` after a change of each kind (`repeatRows`), a
-  count before it, a change with an insert session and its typed and
-  committed text, the editing keys of insert state in a session
-  (`insertKeysRepeatRows`), and what is not repeated;
-- `evilJumpChecks`: `C-o`, `C-i` and `TAB` through the jumps that `gg`,
-  `G`, the searches and `%` record (`Editor/Evil/Jumps.lean`), to the
-  exact column, with a count, under an operator, as `:help jumplist`'s
-  example scaled to eight lines, an entry following lines inserted above
-  it, a failed search and the motions that are no jump recording nothing,
-  and a split's copy of the list moved through on its own;
-- `evilMarkChecks`: `m`, `` ` `` and `'` (`Editor/Evil/Marks.lean`): a
-  mark set and gone to, exactly and at its line's first non-blank, as a
-  jump, under an operator, after an insert above it, the marks not set or
-  not named, `''` back and forth, a jump that leaves the cursor in place
-  keeping `''`, `m '` and ``m` ``, a mark motion run in a window
-  that is not focused, and across buffers on the file model: a buffer's
-  own marks, a global mark in another buffer, under an operator, in a
-  closed buffer's file, reopened with one jump recorded, attached again to
-  the reopened buffer's text so that an edit above it carries it, and
-  dropped with a closed buffer that held no file; a mark erased when its
-  line is deleted, on the last line too, a global mark kept on the line
-  that takes its place, kept by a
-  deletion of part of its line, kept on the first line of `3cc` and of a
-  charwise delete across lines, kept on the first line of `cj` and `2cc`
-  above an empty line, erased by `3dd` on every line, by `dd` on
-  a text's only line and by `3cc` on the lines after the first, kept by
-  `cc` on the only line and by a redo of its `dd`, put back by undo at its line and column,
-  erased again by redo and put back again by undo, and put back step by
-  step by a counted undo and redo (`markUndoRows`); and
-  the recorded departures, one check each named for its task: a line's
-  marks erased by the edit's shape, text typed at a mark, a
-  global mark's column on a deleted line, the numbered marks, the change
-  marks, the visual marks, the marks of the last change and insert, the
-  mark of the last exit, the sentence and paragraph marks, `m` in the
-  visual states, `:marks` and `:delmarks` on the ex line, `g'` and
-  ``g` ``, `]'`, `['`, ``]` `` and ``[` ``, `:mark` and `:k`,
-  `:lockmarks` and `:keepmarks` on the ex line, global marks
-  kept in the session alone, a lowercase mark with its buffer closed, and
-  `` ` ` `` after a jump into another buffer;
-- `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
-  All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
-  item (`clipRan`), in each Vim state, on the clipboard model; and evil
-  registers the four under the core's names (`Editor/Clipboard.lean`).
-
-Each expected text of a row is written by hand from Vim's documented
-behaviour (`docs/design/keymaps-and-modes.md`, "Motions as built"). No
-check runs Vim. The word rule outside ASCII is the text port's and is not
-restated here: the word motions' rows are ASCII, and one text with letters
-Vim and the editor agree on.
+The Vim scheme and evil, what its invocations run, are not checked here:
+they are the default package `evil` (`packages/evil/`) since the
+features-as-packages roadmap's phase 7, and their checks, `vimEditChecks`
+through `vimContractChecks`, `evilRestChecks` through `evilScrollChecks`,
+`treeObjectRuleChecks`, `atPointRepeatChecks` and `clipboardCommandChecks`,
+moved with them, under their names, to that package's test driver
+(`packages/evil/EvilTest/Model.lean`, whose module doc says what each
+shows). No check here presses a Vim key: what is typed is typed on the test
+scheme, the kit's editing keys (`Editor/Test/Editing.lean`) or a scheme
+written in the check.
 
 A view that follows its cursor (`Editor/Loop.lean`, "Following the
 cursor") is checked on the loop's driver under the test scheme, with the
@@ -1093,7 +931,7 @@ acceptance criteria for following, the scroll margin among them, and what
 following costs in requests, as a difference between two frames. Evil's
 scroll commands by key, and the margin after every motion of its
 vocabulary, are checked the same way under the Vim scheme that ships
-(`evilScrollChecks`, `ModelTest/Editor/Evil/Scroll.lean`), as are its
+(`evilScrollChecks`, `packages/evil/EvilTest/Evil/Scroll.lean`), as are its
 scroll commands over the header blocks of an excerpt buffer.
 
 Modes are checked on the test scheme, by the roles and the leader it reports
@@ -1463,15 +1301,6 @@ def checks : List Check :=
     keyBindingsContractChecks ++
     dispatchChecks ++
     pressedChecks ++
-    vimEditChecks ++
-    vimRegistryChecks ++
-    vimGrammarChecks ++
-    vimStateChecks ++
-    vimHintChecks ++
-    vimKeyBindingChecks ++
-    vimDefaultChecks ++
-    vimDefaultHintChecks ++
-    vimContractChecks ++
     modeRecordChecks ++
     modeDescriptionChecks ++
     languageMatchChecks ++
@@ -1481,7 +1310,6 @@ def checks : List Check :=
     dispatchRegistryChecks ++
     highlightFaceChecks ++
     highlightEnterChecks ++
-    treeObjectRuleChecks ++
     indentRuleChecks ++
     indentOpeningChecks ++
     indentEditChecks ++
@@ -1510,7 +1338,6 @@ def checks : List Check :=
     atPointContractChecks ++
     atPointStateChecks ++
     keyHintStateChecks ++
-    atPointRepeatChecks ++
     atPointLoopChecks ++
     atPointAskChecks ++
     atPointByItselfChecks ++
@@ -1525,25 +1352,8 @@ def checks : List Check :=
     themeChecks ++
     appearanceChecks ++
     faceVocabularyChecks ++
-    evilRestChecks ++
-    evilMotionChecks ++
-    evilStateChecks ++
-    evilInsertChecks ++
-    evilOperatorChecks ++
-    evilFindChecks ++
-    evilSearchChecks ++
     searchDecorationChecks ++
-    evilSelectionChecks ++
-    evilObjectChecks ++
-    evilRegisterChecks ++
-    evilOpenChecks ++
-    evilIndentChecks ++
-    evilUndoChecks ++
-    evilRepeatChecks ++
-    evilJumpChecks ++
-    evilMarkChecks ++
     viewChecks ++
-    evilScrollChecks ++
     floatViewChecks ++
     tabBarChecks ++
     frameCommandChecks ++
@@ -1551,7 +1361,6 @@ def checks : List Check :=
     tabCommandChecks ++
     titleChecks ++
     menuChecks ++
-    clipboardCommandChecks ++
     workspaceDataChecks ++
     searchRootChecks ++
     workspaceGitChecks ++

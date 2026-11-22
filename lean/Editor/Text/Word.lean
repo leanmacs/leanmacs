@@ -11,7 +11,7 @@ that finds it as a whole word (`wholePattern`), and what is said when the
 line has none (`noneUnderCursor`).
 
 It is a core module because more than one feature asks it: evil's `*` and
-`#` (`Editor/Evil/Motions.lean`, whose `lineCells`, `isBlankCell`,
+`#` (`packages/evil/Evil/Motions.lean`, whose `lineCells`, `isBlankCell`,
 `isWordCell`, `starWord`, `starPattern` and `noStringUnderCursor` are these)
 and project search's search for the symbol under the cursor
 (`packages/project-search/ProjectSearch/Run.lean`). So a feature that asks it imports no

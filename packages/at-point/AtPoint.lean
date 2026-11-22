@@ -7,7 +7,7 @@ import Editor.Api
 The commands that ask for completion at point, move its choice, accept it
 and quit it (`docs/design/keymaps-and-modes.md`, "Completion at point"),
 after Doom Emacs's corfu module. The Vim scheme binds them in insert state
-(the core's `lean/Editor/InputScheme/Vim/Default.lean`); they work under any scheme. Each is
+(the core's `packages/evil/Evil/Vim/Default.lean`); they work under any scheme. Each is
 given what it was called with (`Action.call`), and acts on the session open
 in the target's window, if there is one (`EditorState.atPoint`), through
 the operations of the core's `lean/Editor/Api.lean`, "Completion at point".

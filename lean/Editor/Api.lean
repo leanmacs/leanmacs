@@ -131,9 +131,9 @@ with `noSuchWindow` for a view with no window.
   calls it, and none writes `"\n"` itself. A command whose edit must carry
   the selection from before the command, and so is made with
   `Target.replaceCarrying`, reads the buffer's line ending itself: evil's
-  commands that open a line (`Editor/Evil.lean`) and its line-wise put and
-  line-wise registers (`Editor/Evil/Registers.lean`,
-  `Editor/Evil/Operators.lean`). Nothing else is translated: a committed
+  commands that open a line (`packages/evil/Evil.lean`) and its line-wise put and
+  line-wise registers (`packages/evil/Evil/Registers.lean`,
+  `packages/evil/Evil/Operators.lean`). Nothing else is translated: a committed
   text and a text read from the clipboard are inserted as they are.
 
 Each is one transaction made by the user that carries the selection before
@@ -215,7 +215,7 @@ at, does its part, and records the tree that comes back as the buffer's
   is the same over the steps to redo, with nothing pending. Neither hands a
   selection back: the sources' transactions carried none, and a source's
   selection is in its own offsets, so the caller rests the cursor where
-  the window's marker moved (`Editor/Evil/Undo.lean`).
+  the window's marker moved (`packages/evil/Evil/Undo.lean`).
 - `BufferId.isModified` says whether the buffer's text is in another state
   than the one last saved. It tells the tree the text's revision first, so
   an edit made earlier in the same command counts. A question of the state
@@ -432,7 +432,7 @@ cannot be done (`docs/design/concurrency.md`, "Foreground: commands").
 found that what its key stands for cannot be done, after doing something
 that is to stay. It is how evil's operate command leaves the cursor where a
 motion got to before it failed, with the operator cancelled
-(`Editor/Evil/Operators.lean`).
+(`packages/evil/Evil/Operators.lean`).
 
 - **Its type is `EditorM α` for any `α`**, and it cannot be caught, as
   `giveUp` cannot: it makes one control request
@@ -475,10 +475,10 @@ is set as a register is: never refused, editor state that a command which
 does not run to its end leaves as it was, and no request of the library.
 A command reads it from the state (`EditorState.lastFind` on
 `editorState`). Pinned through evil's character finds by
-`ModelTest.evilFindChecks`. `setLastSearch search` keeps the last search
+`EvilTest.evilFindChecks`. `setLastSearch search` keeps the last search
 the same way (`Editor/State.lean`, "The last search"), which `n` and `N`
 repeat and the loop draws the matches of; pinned through evil's searches
-by `ModelTest.evilSearchChecks`.
+by `EvilTest.evilSearchChecks`.
 
 ## Ex bindings
 
@@ -519,7 +519,7 @@ registered"; `Editor/Loop.lean`, "A command run inside another").
   would be lost.
 - **`false`, with nothing run**, for a name no command is registered
   under, and where no loop runs the command.
-- It is how evil's dot repeat replays a change (`Editor/Evil/Repeat.lean`).
+- It is how evil's dot repeat replays a change (`packages/evil/Evil/Repeat.lean`).
   Pinned by `ModelTest.dispatchStateChecks` and
   `ModelTest.dispatchRunCommandChecks`.
 

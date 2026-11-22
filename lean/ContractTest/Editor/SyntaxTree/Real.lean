@@ -185,7 +185,7 @@ def rustSourceLevels (source : String) : IO (Option (Array (Option Nat))) := do
 `fixtures` (`tests/syntax`): the indent levels of a Rust fixture, before
 and after an edit, and the names the shipped Rust indents query captures.
 The tree's text objects over the binding are evil's
-(`ConfigTest.treeObjectFixtureChecks`, `ConfigTest/Editor/Evil/TreeObjects.lean`). -/
+(`EvilTest.Linked.treeObjectFixtureChecks`, `packages/evil/EvilTest/Linked/Evil/TreeObjects.lean`). -/
 def syntaxFixtureChecks (fixtures : System.FilePath) : List Check :=
   [{  name := "the shipped Rust indents query names only what the indent rule reads"
       run := do

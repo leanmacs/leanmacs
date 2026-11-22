@@ -10,7 +10,8 @@
 # from it (`mise run app`).
 #
 # It requires the core and each default package. A default package has a
-# directory here and a `require` below: the file commands (files/), the buffer commands
+# directory here and a `require` below: evil and the Vim scheme (evil/),
+# which supplies the editor's input scheme, the file commands (files/), the buffer commands
 # (buffers/), the workspaces (workspace/), project search (project-search/,
 # with its interface package project-search-api/, which it requires), the
 # working sets (working-set/,
@@ -40,11 +41,23 @@ name = "default-set"
 name = "editor-core"
 path = "../lean"
 
+# Evil and the Vim scheme: Vim's states, motions, operators and the rest of
+# its commands, and the scheme that turns keys into their invocations. The
+# first default package (features-as-packages phase 7, D6: evil registered
+# before every default package while it was the core's, so it registers
+# first of them). It declares the keyword `editor-input-scheme`, so its
+# entry module supplies the editor's input scheme: a set without it, and
+# with no other package that supplies one, builds an editor that refuses to
+# start.
+[[require]]
+name = "evil"
+path = "evil"
+
 # The file commands, `open-file`, `save-buffer`, `edit-file`,
-# `reload-buffer` and `auto-reload-mode`: the first default package
-# (features-as-packages phase 6, D5: the features that left the core's list
-# register first, in the core's order). It implements the core's interface
-# library files-api.
+# `reload-buffer` and `auto-reload-mode`: the first of the packages
+# features-as-packages phase 6 moved out (its D5: the features that left
+# the core's list register first, in the core's order). It implements the
+# core's interface library files-api.
 [[require]]
 name = "files"
 path = "files"

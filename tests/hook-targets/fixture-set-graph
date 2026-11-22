@@ -2,6 +2,7 @@ greeting-api	interface	-
 greeting	implementation	greeting-api
 greeting-loud	implementation	greeting greeting-api
 echo	implementation	-
+evil	implementation	-
 files	implementation	-
 buffers	implementation	-
 project-api	interface	-

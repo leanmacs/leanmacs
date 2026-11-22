@@ -5758,7 +5758,7 @@ loop's driver over the editor's models and the display recorder, under the
 test scheme, the last search kept by a command of the checks'
 (`decorationKeys`). That a scheme's own search keys keep the last search is
 the scheme's: evil's `/`, `?`, `*` and `#` are pinned by
-`ModelTest.evilSearchChecks`. -/
+`EvilTest.evilSearchChecks`. -/
 def searchDecorationChecks : List Check :=
   let fed (contents typed : String) : Option TestDriver :=
     (decorationDriver contents).map (keysFed · typed)
@@ -5887,7 +5887,7 @@ cursor's row is among the rows the display model answers for the next
 scene's view, `margin` rows from the first and from the last, except where
 the first is the text's first row or the last its last (`marginHolds`).
 That it holds after each motion of a scheme's own vocabulary is the
-scheme's package's to check: evil's is `ModelTest.evilScrollChecks`. -/
+scheme's package's to check: evil's is `EvilTest.evilScrollChecks`. -/
 def marginFailures (contents : String) (size : Size) (margin : Nat) (heads : List Nat) :
     List String :=
   let rows := allRows contents size.width
