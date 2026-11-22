@@ -1,5 +1,5 @@
 module-map-check: extension points (< the sources, > the map's rows):
-9a10
+20a21
 > sample	reads	Skipped.Gone
-13d13
+24d24
 < sample	registers	VcApi.Backend

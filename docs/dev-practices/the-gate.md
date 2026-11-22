@@ -1929,12 +1929,35 @@ prints what differs, each part under a line that names it, and exits 1.
 - **The gate holds that reading** by a fixture (`mise run lean-test`):
   `module-map-check.sh --points <packages dir> <map>` checks the third
   part alone, over the packages under a directory and a map it is given,
-  and asks Lake nothing. `tests/module-map/packages` holds two packages
-  written by hand, an interface package and an implementation package
-  with one line for each way the reader counts a registration or a read
-  and one for each text it skips. Over `tests/module-map/map.md`, whose
-  rows name exactly what those sources hold, it must print nothing and
-  exit 0, so a rule that is dropped or loosened fails there. Over
+  and asks Lake nothing. `tests/module-map/packages` holds seven packages
+  written by hand:
+  - `sample`, an implementation package, holds one line for each of the
+    four ways the reader counts a registration (an `Extension.add` whose
+    type is on the same line, one whose type is on a later line,
+    `compileContribution` and `projectCommands`), one for each of the
+    four operations it counts as a read (`Extension.values`, `.named`,
+    `.configValues` and `.workJob`), and one for each of the five texts
+    it skips (prose in backticks, a `def`'s first line, a test library's
+    root, a test library's module and a fixture's config).
+  - `buffers-api`, an interface package, reads its own two points, which
+    are not counted in it, and one of another namespace, which is.
+  - `readers` holds one call of each of the seven readers an interface
+    declares over one point (`FilesApi.runOpened`, `.runSaved` and
+    `.files?`, `BuffersApi.runClosing` and `.buffers?`,
+    `ProjectApi.workspaces?` and `VcApi.connect?`), each on a line of its
+    own and over a point nothing else in the package reads.
+  - `compile-hook`, `compile-listings`, `compile-markers` and
+    `compile-work` hold one each of the four readers of both of the
+    compile mode's points (`Compile.hook`, `refreshListings`,
+    `markerSettings` and `Compile.listWork`) and nothing else. The four
+    count the same two reads of a package, so in one package any three
+    would hide the fourth; a package each shows that each is counted.
+
+  Over `tests/module-map/map.md`, whose rows name exactly what those
+  sources hold, it must print nothing and exit 0, so each of the rules
+  above, dropped by itself, fails there: a registration or a read its
+  line holds is then one the map names and the sources lack, and a text
+  no longer skipped is a read the sources hold and the map lacks. Over
   `stale-map.md`, the same map with one registration dropped and one read
   added, it must exit 1 and print exactly `stale-expected`, the two lines
   that differ. A command line it does not take is exit 2.
@@ -1944,7 +1967,14 @@ prints what differs, each part under a line that names it, and exits 1.
   requires, and its last, the names it declares or reaches, are not
   checked. A way to register or read that the rules do not name is not
   seen, so a new one is added to the rules in the map's section, to the
-  script and to the fixture. And the pre-commit hook does not run it for a
+  script and to the fixture. The fixture holds the rules listed above and
+  no others. It has no `.lake/` directory; no declaration that starts
+  `abbrev`, `theorem` or `structure`; no interface package but
+  `buffers-api`; and no longer or qualified name that ends in one of the
+  four names the reader looks for bare (`compileContribution`,
+  `projectCommands`, `markerSettings`, `refreshListings`). So the script
+  can stop skipping or telling apart any of those and still pass the
+  fixture's lines. And the pre-commit hook does not run it for a
   commit that stages only the document or the script, which no Lean step
   reads ("The pre-commit hook", below); `mise run ci` always does.
 

@@ -17,7 +17,12 @@ its fourth and fifth columns. The row below is before that section.
 | Package | Layer | Requires | Registers at | Reads | What else |
 |---|---|---|---|---|---|
 | `buffers-api` | interface | none | none | `FilesApi.Files` | declares `BuffersApi.Buffers` and `BuffersApi.Closing` |
-| `sample` | implementation | `buffers-api` | `FilesApi.Opened`, `Compile.Contribution`, `Compile.ProjectCommands` | `FilesApi.Files`, `Skipped.Gone`, `ProjectApi.Workspaces`, `Sample.Choice`, `Sample.Work`, `FilesApi.Saved`, `BuffersApi.Closing`, `Compile.Contribution`, `Compile.ProjectCommands` | a last column that names `Skipped.Note` |
+| `compile-hook` | implementation | none | none | `Compile.Contribution`, `Compile.ProjectCommands` | one call of the reader `Compile.hook` and nothing else |
+| `compile-listings` | implementation | none | none | `Compile.Contribution`, `Compile.ProjectCommands` | one call of the reader `refreshListings` and nothing else |
+| `compile-markers` | implementation | none | none | `Compile.Contribution`, `Compile.ProjectCommands` | one call of the reader `markerSettings` and nothing else |
+| `compile-work` | implementation | none | none | `Compile.Contribution`, `Compile.ProjectCommands` | one use of the reader `Compile.listWork` and nothing else |
+| `readers` | implementation | `buffers-api` | none | `FilesApi.Opened`, `FilesApi.Saved`, `FilesApi.Files`, `BuffersApi.Closing`, `BuffersApi.Buffers`, `ProjectApi.Workspaces`, `VcApi.Backend` | one call of each reader an interface declares over one point |
+| `sample` | implementation | none | `FilesApi.Opened`, `Compile.Contribution`, `Compile.ProjectCommands` | `FilesApi.Files`, `Skipped.Gone`, `ProjectApi.Workspaces`, `Sample.Choice`, `Sample.Work` | a last column that names `Skipped.Note` |
 
 ### After the packages
 

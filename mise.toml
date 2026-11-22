@@ -202,10 +202,28 @@ run = [
   # (tests/module-map/). With `--points` it asks Lake nothing: it compares
   # the registrations and reads the library modules under
   # tests/module-map/packages hold with the rows of a map. Those sources
-  # hold one line for each way the reader counts a registration or a read
-  # and one for each text it skips, and `map.md` names exactly what they
-  # hold, so over it the check must print nothing and exit 0: a rule that
-  # is dropped or loosened fails here. Over `stale-map.md`, the same map
+  # are seven packages. `sample` holds one line for each of the four ways
+  # the reader counts a registration (an `Extension.add` with its type on
+  # the same line, one with it on a later line, `compileContribution`,
+  # `projectCommands`), one for each of the four operations it counts as
+  # a read (`Extension.values`, `.named`, `.configValues`, `.workJob`),
+  # and one for each of the five texts it skips (prose in backticks, a
+  # `def`'s first line, a test library's root, a test library's module, a
+  # fixture's config). `buffers-api` is an interface package: its own two
+  # points are not counted in it, and one of another namespace is.
+  # `readers` holds one call of each of the seven readers an interface
+  # declares over one point (`FilesApi.runOpened`, `.runSaved`, `.files?`,
+  # `BuffersApi.runClosing`, `.buffers?`, `ProjectApi.workspaces?`,
+  # `VcApi.connect?`), each on a line of its own. And `compile-hook`,
+  # `compile-listings`, `compile-markers` and `compile-work` hold one each
+  # of the four readers of both of the compile mode's points
+  # (`Compile.hook`, `refreshListings`, `markerSettings`,
+  # `Compile.listWork`) and nothing else: the four count the same two
+  # reads of a package, so in one package three would hide the fourth.
+  # `map.md` names exactly what the seven hold, so over it the check must
+  # print nothing and exit 0, and each of those rules, dropped by itself,
+  # fails here. What the fixture does not hold is listed in the-gate.md,
+  # under "What it does not claim". Over `stale-map.md`, the same map
   # with one registration dropped and one read added, it must exit 1 and
   # print exactly `stale-expected`, the two lines that differ. A command
   # line it does not take is exit 2. The real map is held to the tree and
