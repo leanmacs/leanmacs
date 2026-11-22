@@ -2227,7 +2227,7 @@ text requests. Config sees it through
   the two that names the registry: the default package `minibuffer`
   since the features-as-packages roadmap's phase 4, with its names in the
   interface package `minibuffer-api`.
-- **Evil is commands over the API** (`lean/Editor/Evil.lean`, built by the
+- **Evil is commands over the API** (`packages/evil/Evil.lean`, built by the
   command loop's phase 11; [keymaps-and-modes.md](keymaps-and-modes.md),
   "The Vim scheme"): the move command, the commands that enter a Vim state
   and begin an insert, and the one typed text runs. Each is given its
@@ -2236,18 +2236,21 @@ text requests. Config sees it through
   request to a port, so there is no new model and no new contract. A
   motion is a vocabulary entry (`lean/Editor/Vocabulary.lean`), a program
   over the text port alone. Config sees the commands, the motions and
-  their table through `Editor.lean`, which imports `lean/Editor/Evil.lean`
-  and `lean/Editor/Evil/Motions.lean`: the move command is a function of
+  their table through the set's config base, whose module
+  `Evil.EditorPackage`, the entry module of the default package `evil`,
+  brings `packages/evil/Evil.lean`
+  and `packages/evil/Evil/Motions.lean` (they were imports of `Editor.lean`
+  while evil was in the core): the move command is a function of
   the table it looks a name up in, so a command of config's hands it the
   vocabulary that ships (`Evil.motions`), or that vocabulary with motions
-  of its own added. The registrations (`lean/Editor/Evil/Compiled.lean`)
-  name the registry and are the one module of evil's that is not imported.
-  Pinned by `ConfigTest.evilChecks`, on a config the real elaborator
+  of its own added. The registrations (`packages/evil/Evil/Compiled.lean`)
+  name the registry, and are what the entry module lists as the package.
+  Pinned by `EvilTest.Linked.evilChecks`, on a config the real elaborator
   loads.
 - **Evil's editing commands** (the command loop's phase 13): the operators
   and the operate command, `x`, the registers and the two puts, the two
   commands that open a line, undo and redo, and dot repeat, each in a
-  module of its own beside `lean/Editor/Evil.lean`. They needed four state
+  module of its own beside `packages/evil/Evil.lean`. They needed four state
   requests (`giveUp`, `breakOff`, `setRegister`, `runCommand`), one operation of the API
   (`replaceCarrying`, with a case in `lean/Editor/Api/Cases.lean`), and
   one new sub-port, the clipboard's, with its model and its contract
@@ -2290,7 +2293,7 @@ text requests. Config sees it through
     the lowest module that has a command's type, which the API and the
     evil vocabulary both import. `Target.onArea` is the rectangle's lookup
     and that helper, and a motion that asks the display calls it with the
-    text it is handed (`j` and `k`, `lean/Editor/Evil/Motions.lean`). So
+    text it is handed (`j` and `k`, `packages/evil/Evil/Motions.lean`). So
     the release rule, and what an interrupted command leaves, is in one
     place.
   - The policy that says where a scroll anchor goes is
@@ -2302,8 +2305,8 @@ text requests. Config sees it through
     which asks the display about the scene's own snapshots. No request
     was added to a port: the display's two queries were there, and the
     margin is one state request (`setScrollMargin`).
-  - Evil's scroll commands are in `lean/Editor/Evil/Scroll.lean`, which
-    `Editor.lean` imports, so a command of config's calls `Evil.scroll`
+  - Evil's scroll commands are in `packages/evil/Evil/Scroll.lean`, which
+    the set's config base brings, so a command of config's calls `Evil.scroll`
     and `Evil.scrollLineTo`, or the API's operations.
 
 | Piece | Where |
@@ -2316,21 +2319,21 @@ text requests. Config sees it through
 | The commands that accept and cancel a prompt, and the minibuffer's mode | `packages/minibuffer/Minibuffer.lean` |
 | The package `minibuffer`: the minibuffer's commands and its mode | `packages/minibuffer/Minibuffer/Compiled.lean` |
 | The vocabulary: the motion record and the operator record | `lean/Editor/Vocabulary.lean` |
-| Evil: where a cursor rests, and the commands the Vim scheme's invocations run that are not below | `lean/Editor/Evil.lean` |
-| Evil's motions, as vocabulary entries, and their table | `lean/Editor/Evil/Motions.lean` |
-| Evil's operators, as vocabulary entries, their table, what an operator takes, the operate command and `x` | `lean/Editor/Evil/Operators.lean` |
-| Evil's registers, storing and fetching, and the two puts | `lean/Editor/Evil/Registers.lean` |
-| Evil's undo and redo, which place the selection a step hands back | `lean/Editor/Evil/Undo.lean` |
-| Evil's dot repeat: the repeat command | `lean/Editor/Evil/Repeat.lean` |
+| Evil: where a cursor rests, and the commands the Vim scheme's invocations run that are not below | `packages/evil/Evil.lean` |
+| Evil's motions, as vocabulary entries, and their table | `packages/evil/Evil/Motions.lean` |
+| Evil's operators, as vocabulary entries, their table, what an operator takes, the operate command and `x` | `packages/evil/Evil/Operators.lean` |
+| Evil's registers, storing and fetching, and the two puts | `packages/evil/Evil/Registers.lean` |
+| Evil's undo and redo, which place the selection a step hands back | `packages/evil/Evil/Undo.lean` |
+| Evil's dot repeat: the repeat command | `packages/evil/Evil/Repeat.lean` |
 | The scroll policy: how a view follows its cursor, the margin, and the anchors a scroll places | `lean/Editor/Scroll.lean` |
-| Evil's scroll commands: by half a view, by a view, and to the cursor's row | `lean/Editor/Evil/Scroll.lean` |
-| What is proved of evil on the text model, and of the undo tree | `lean/Editor/Evil/Theorems.lean`, `lean/Editor/UndoTree/Theorems.lean` |
-| The package `evil`: evil's commands | `lean/Editor/Evil/Compiled.lean` |
+| Evil's scroll commands: by half a view, by a view, and to the cursor's row | `packages/evil/Evil/Scroll.lean` |
+| What is proved of evil on the text model, and of the undo tree | `packages/evil/Evil/Theorems.lean`, `lean/Editor/UndoTree/Theorems.lean` |
+| The package `evil`: evil's commands | `packages/evil/Evil/Compiled.lean` |
 | An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |
 | The ex command, and the commands `quit`, `save-and-quit` and `reload-config`, with what they say in the echo area | `lean/Editor/Ex.lean` |
 | The package `ex`: the ex line's commands and the files', its own and the buffers' ex names | `lean/Editor/Ex/Compiled.lean` |
-| The command `load-theme`, which switches the theme in force with no reload, with what it says in the echo area | `lean/Editor/Themes.lean` |
-| The package `themes`: the command that loads a theme and the theme `default` | `lean/Editor/Themes/Compiled.lean` |
+| The command `load-theme`, which switches the theme in force with no reload, with what it says in the echo area | `packages/themes/Themes.lean` |
+| The package `themes`: the command that loads a theme and the theme `default` | `packages/themes/Themes/Compiled.lean` |
 | The package `shipped-themes`: the palettes that ship, a default package outside the core | `packages/shipped-themes/ShippedThemes.lean` |
 | The theme picture check, a test double: a theme drawn, held to its palette's colours and to a reference image | `lean/Editor/Theme/Picture.lean` |
 | The command prompt, `execute-command`, which lists every registered command's name and runs the one accepted, with its completion source `commands` and what it says in the echo area | `lean/Editor/ExecuteCommand.lean` |
@@ -2355,7 +2358,7 @@ text requests. Config sees it through
 | The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change, and the text typed in the insert session that change began) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
 | The registers: a text and whether it is line-wise, by name. Evil keeps the unnamed one, which every yank and deletion sets | Compiled Lean, a field of the editor state (`EditorState.Remembered.registers`, `lean/Editor/State.lean`), set by a command (`setRegister`), so it is rolled back with a command that does not run to its end | Untouched | Lost |
 | The system clipboard | Outside the editor: reached through the clipboard port. A host with no window keeps one of its own in the process (`lean/Editor/Clipboard/InProcess.lean`) | Untouched | The window system's is the system's; the in-process one is lost |
-| Packages' commands, jobs, key bindings, modes, ex bindings and themes | Compiled Lean, in the registry, each for the owner named after its package ("Packages", under "Config and reload"). The executable ships the command `load-theme` and the theme `default` (`lean/Editor/Themes/Compiled.lean`), the command prompt `execute-command` with its source `commands` (`lean/Editor/ExecuteCommand/Compiled.lean`), the binding search `search-bindings` with its source `bindings` (`lean/Editor/BindingSearch/Compiled.lean`), the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `w!`, `e`, `e!`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file`, `save-buffer`, `edit-file` and `reload-buffer`, and their jobs, `load-file`, `save-file` and `reload-file`, with the file prompt's source `files`, its job `files` and the style `path` as the category `file`'s compiled default (`packages/files/Files/Compiled.lean`, `lean/Editor/Completion/Paths.lean`), the minibuffer's commands, `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward` and `minibuffer-delete-to-start`, and its mode, `minibuffer` (`packages/minibuffer/Minibuffer/Compiled.lean`), and evil's thirty-seven commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end`, `self-insert`, `operate`, `select-object`, `delete-char`, `put-after`, `put-before`, `open-below`, `open-above`, `undo`, `redo` and `repeat`, over its compiled tables of motions, operators, text objects and changes, and the seven that scroll a view, `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`, `scroll-line-to-top`, `scroll-line-to-center` and `scroll-line-to-bottom`, the seven editing keys of insert state, `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up` and `insert-down`, and the four of the Edit menu, `clipboard-cut`, `clipboard-copy`, `clipboard-paste` and `select-all` (`lean/Editor/Evil/Clipboard.lean`) (`lean/Editor/Evil/Compiled.lean`), and `workspace-current` with the job `find-workspace`, and `find-file-in-workspace` with its source `workspace-files`, of the category `workspace-file`, and its job `workspace-files` (`packages/workspace/Workspace/Compiled.lean`), and the `project-search` package's `project-search`, `project-search-found` (which its job posts each delivery as), `project-search-symbol` and `project-search-visit`, its results buffer's mode `project-search`, and its jobs `project-search` and `project-search-load` (`packages/project-search/ProjectSearch/Compiled.lean`), and the `working-set` package's six commands, a set's buffer's mode `working-set` and its four jobs (`packages/working-set/WorkingSet/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
+| Packages' commands, jobs, key bindings, modes, ex bindings and themes | Compiled Lean, in the registry, each for the owner named after its package ("Packages", under "Config and reload"). The executable ships the command `load-theme` and the theme `default` (`packages/themes/Themes/Compiled.lean`), the command prompt `execute-command` with its source `commands` (`lean/Editor/ExecuteCommand/Compiled.lean`), the binding search `search-bindings` with its source `bindings` (`lean/Editor/BindingSearch/Compiled.lean`), the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `w!`, `e`, `e!`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file`, `save-buffer`, `edit-file` and `reload-buffer`, and their jobs, `load-file`, `save-file` and `reload-file`, with the file prompt's source `files`, its job `files` and the style `path` as the category `file`'s compiled default (`packages/files/Files/Compiled.lean`, `lean/Editor/Completion/Paths.lean`), the minibuffer's commands, `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward` and `minibuffer-delete-to-start`, and its mode, `minibuffer` (`packages/minibuffer/Minibuffer/Compiled.lean`), and evil's thirty-seven commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end`, `self-insert`, `operate`, `select-object`, `delete-char`, `put-after`, `put-before`, `open-below`, `open-above`, `undo`, `redo` and `repeat`, over its compiled tables of motions, operators, text objects and changes, and the seven that scroll a view, `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`, `scroll-line-to-top`, `scroll-line-to-center` and `scroll-line-to-bottom`, the seven editing keys of insert state, `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up` and `insert-down`, and the four of the Edit menu, `clipboard-cut`, `clipboard-copy`, `clipboard-paste` and `select-all` (`packages/evil/Evil/Clipboard.lean`) (`packages/evil/Evil/Compiled.lean`), and `workspace-current` with the job `find-workspace`, and `find-file-in-workspace` with its source `workspace-files`, of the category `workspace-file`, and its job `workspace-files` (`packages/workspace/Workspace/Compiled.lean`), and the `project-search` package's `project-search`, `project-search-found` (which its job posts each delivery as), `project-search-symbol` and `project-search-visit`, its results buffer's mode `project-search`, and its jobs `project-search` and `project-search-load` (`packages/project-search/ProjectSearch/Compiled.lean`), and the `working-set` package's six commands, a set's buffer's mode `working-set` and its four jobs (`packages/working-set/WorkingSet/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
 | An open prompt: its label, the minibuffer's view, the asking view and the continuation, its candidates with what it has listed of them and the choice, all plain data, with the minibuffer's buffer and window | Compiled Lean, a field of the editor state (`EditorState.prompt`, `lean/Editor/State.lean`) and a buffer and a window of it, from the command that asks until the one that accepts or cancels | Untouched: the prompt stays open, and its continuation is a name, looked up in the registry as it is when the answer arrives | Lost |
 | A save in flight: the snapshot a save writes and the state its text was in | Compiled Lean, with the buffer's file in the editor state, from the save command until the save's result is delivered | Untouched | Lost with the buffer |
 | Asked to quit: whether a command asked the editor to quit | Compiled Lean, a field of the editor state (`EditorState.quitting`), from the command that asks until the step that says stop, or until the scene that withdraws it because a buffer has unsaved changes | Untouched: a quit that is waiting for a save still waits | Not kept: the process has ended |

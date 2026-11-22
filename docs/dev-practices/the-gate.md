@@ -558,7 +558,8 @@ models, under a scheme written in the test that reports a session, the
 keys, the preview, the accept, the closing rules, one undo step, a trigger
 and a pause moved by `Loop.Driver.pass` (`atPointLoopChecks`,
 `atPointAskChecks`, `atPointByItselfChecks`), and, under the Vim scheme
-among evil's tests, the repeat (`atPointRepeatChecks`). The editor state's
+in the package `evil`'s tests (`packages/evil/EvilTest/Evil/Repeat.lean`),
+the repeat (`atPointRepeatChecks`). The editor state's
 side of a save in flight, the snapshot the loop releases once a save has ended and
 the saved mark a rollback takes back are checked with the state requests
 and the loop's dispatch.
@@ -642,7 +643,7 @@ so that a change to one breaks no other's checks:
   and with another buffer unsaved, and `reload`. Each message is read
   from the function that makes it.
 
-Evil, Vim's states and motions on the editor API (`lean/Editor/Evil.lean`),
+Evil, Vim's states and motions on the editor API (`packages/evil/Evil.lean`),
 is checked there in three layers, so that a change to one breaks no other's
 checks:
 
@@ -771,7 +772,7 @@ checks:
 The build checks the theorem that inserting at a
 position and deleting what was inserted leaves the text
 (`lean/Editor/Api/Theorems.lean`), and the theorem that `x` then `u`
-restores the text, with its lemmas (`lean/Editor/Evil/Theorems.lean`,
+restores the text, with its lemmas (`packages/evil/Evil/Theorems.lean`,
 `lean/Editor/UndoTree/Theorems.lean`, `lean/Editor/Text/Model.lean`). The task
 shows by behaviour
 that they build without the library. It puts a `cargo` that always fails
@@ -1018,8 +1019,9 @@ it; a `q` that is refused leaves the script running; and a wait on a host
 whose loop a command ended answers `ended`. No test of `config-test`
 spawns a process.
 
-`config-test` also loads a config that names evil's vocabulary
-(`ConfigTest.evilChecks`): a command of config's hands the move command
+The package `evil`'s linked test also loads a config that names evil's vocabulary
+(`EvilTest.Linked.evilChecks`, which was `config-test`'s until evil became
+a package): a command of config's hands the move command
 the table of motions the editor ships, as it is and with a motion of
 config's own added, and the cursor goes where config's motion says. That
 is the check of what the root module lets config name of evil: a config
@@ -1367,9 +1369,12 @@ and leaves its store as it was; the editor answers events while a file
 elaborates; reloads are serialised; a script that cannot run to its end
 says why; a job's command that sets a mode with a syntax tree reaches the
 host's syntax tree; a parse of a highlighted text the library delivers
-makes the host publish a scene, with no key pressed; and, in a Rust buffer
-of a host of the Vim scheme that ships, `v a f` selects the enclosing
-function and `d a f` deletes it. Its config directories are temporary directories of its own, and so is the directory the module data of the config files it elaborates is written to.
+makes the host publish a scene, with no key pressed. That `v a f` selects
+the enclosing function and `d a f` deletes it in a Rust buffer of a host of
+the Vim scheme is the package `evil`'s linked test's since the
+features-as-packages roadmap's phase 7 (`EvilTest.Linked.treeObjectChecks`,
+`packages/evil/EvilTest/Linked.lean`): no check of `config-test` runs a
+host of the Vim scheme. Its config directories are temporary directories of its own, and so is the directory the module data of the config files it elaborates is written to.
 Its fourth argument is the default config `mise run install` ships
 (`config/default`), which it reads and never writes: `defaultConfigChecks`
 pin that a reload of it installs with no diagnostic and `SPC f f` then
@@ -1808,7 +1813,7 @@ package's modules.
   `lake -d ../packages query :editorLayerImports` whose importer's layer
   is `core`, and requires more than none.
 - **The sets it is run over**, each required to pass: the default set,
-  `packages/`, so its sixteen default packages and nine interface packages
+  `packages/`, so its eighteen default packages and eleven interface packages
   import only the core, and the implementations besides only interface
   packages: `completion`, `minibuffer`, `execute-command`,
   `binding-search` and `at-point` each its own, and `execute-command`,
@@ -1962,26 +1967,25 @@ package's tests are by convention are in
   contract refuses a package that registers nothing, lacks a name or
   misspells one ([packages.md](../design/packages.md), "The default
   packages of the features-as-packages roadmap's phase 4").
-- **An editor without the default packages.** `mise run lean` also links
-  an editor from `tests/empty-set`, the default set with its packages
-  dropped, and `ffi-test` runs two of the core's fixtures on it.
-  `tests/headless/core-themes`: it starts in the theme `default`, and
-  its theme prompt lists `default` and the theme config defines and no
-  palette, drawn by the core's own display, each row after two spaces.
-  `tests/headless/core-ex-names`: it starts, loads config and opens its ex
-  line. The mode line's segments are a default package too, so each
-  scene's main status line there is empty, `-`; and so are the
-  minibuffer's commands, so `<Enter>` in either prompt says
-  `minibuffer-accept: no such command` and the prompt stays open: since
-  the features-as-packages roadmap's phase 4 neither fixture reaches a
-  palette's name answered or `compile` refused as an ex name, which
-  `ConfigTest.shippedChecks` holds of the core's list instead
-  ([packages.md](../design/packages.md), "Dropping `minibuffer` leaves
-  prompts that nothing answers"; the task `empty-set-prompts`). The
-  default set's editor prints other lines for each script. The gate also requires that set's config base to be
+- **An editor without the default packages refuses to start.** `mise run
+  lean` also links an editor from `tests/empty-set`, the default set with
+  its packages dropped. No package of that set supplies an input scheme,
+  since the Vim scheme is the default package `evil`'s, so `ffi-test` runs
+  that editor twice, in the headless mode on
+  `tests/headless/no-input-scheme` and with `--probe`, and requires exit 1
+  and exactly the line `editor: no input scheme is installed: no package
+  of this editor's package set supplies one` each time
+  ([packages.md](../design/packages.md), "Input schemes"). Until the
+  features-as-packages roadmap's phase 7 the core supplied the scheme and
+  two fixtures ran on this editor, `core-themes` and `core-ex-names`; they
+  are retired, and what they showed of an editor without the default
+  packages `ConfigTest.shippedChecks` holds of the core's list
+  ([packages.md](../design/packages.md), "Dropping evil or themes
+  leaves…"). The gate also requires that set's config base to be
   `Editor` alone (`lake -d ../tests/empty-set query :editorBase`), and the
-  default set's `Editor` and the entry modules of its sixteen default
-  packages, in the order they register (`Files.EditorPackage` …
+  default set's `Editor` and the entry modules of its eighteen default
+  packages, in the order they register (`Evil.EditorPackage`,
+  `Themes.EditorPackage`, `Files.EditorPackage` …
   `VersionControl.EditorPackage`, then `Completion.EditorPackage` …
   `Languages.EditorPackage`).
 - **`run` refuses a directory that is not a whole fixture.** A directory

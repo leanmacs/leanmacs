@@ -359,7 +359,7 @@ answer, as its first argument.
 | `minibuffer-previous` | The same, backward: from nothing chosen to the last, and from the first to nothing chosen. |
 | `minibuffer-insert` | Puts a candidate in the input: the chosen one, or the first listed when nothing is chosen, replaces the minibuffer's text, the bar at its end, and the prompt stays open. With nothing listed for the text it does nothing, and with no prompt open it says so. |
 
-One more compiled command switches the theme (`lean/Editor/Themes.lean`):
+One more compiled command switches the theme (`packages/themes/Themes.lean`):
 
 | Command | Does |
 |---|---|
@@ -398,7 +398,7 @@ cuts the matches: the minibuffer's place grows and never shrinks. Its view
 takes a view id the first time it is drawn, so every view made after it
 has one more.
 
-And it ships evil, compiled in (`lean/Editor/Evil.lean` and the modules
+And it ships evil, compiled in (`packages/evil/Evil.lean` and the modules
 beside it): the commands the Vim scheme's keys run, so the editor moves,
 edits, undoes, repeats and scrolls with no config.
 
@@ -1065,61 +1065,30 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-The core has a themes fixture of its own, `tests/headless/core-themes/script`,
-which `mise run ffi-test` runs on another editor: the one `mise run lean`
-links from the set `tests/empty-set`, which requires the core alone, the
-default set with its packages, `shipped-themes` among them, dropped. Its config defines
-one theme, `first`, and names none. The first scene is drawn in `default`,
-and the theme prompt lists `default` and `first`, and no palette. The mode
-line's segments are a default package too (`packages/mode-line/`), so the
-main window's status line is empty, `-`, in every scene; so are the
-completion styles and displays (`packages/completion/`), so the list is
-drawn by the core's own display, each row its text after two spaces with
-no faces; and so are the minibuffer's commands (`packages/minibuffer/`),
-so nothing answers the prompt: `<Enter>` says `minibuffer-accept: no such
-command`, the prompt stays open with `first` typed, the theme in force
-stays `default`, and the second `load-theme`'s `solarized-dark` is typed
-into the prompt still open. Until the features-as-packages roadmap's
-phase 4 this editor loaded `first` and answered `solarized-dark` as no
-theme of it; what the core's list registers, the one theme `default`, is
-held at the registry by `ConfigTest.shippedChecks`
-([packages.md](../design/packages.md), "Dropping `minibuffer` leaves
-prompts that nothing answers"). Its output must be exactly
-`tests/headless/core-themes/expected`:
+An editor whose set supplies no input scheme refuses to start, and
+`tests/headless/no-input-scheme` is the fixture of that. `mise run
+ffi-test` runs it on another editor: the one `mise run lean` links from the
+set `tests/empty-set`, which requires the core alone, the default set with
+its packages, `evil` among them, dropped. The Vim scheme is that package's
+([packages.md](../design/packages.md), "Input schemes"), so the editor
+prints one line on stderr and exits 1 before it reads the script or loads
+the config, and `editor --probe` does the same. Its output must be exactly
+`tests/headless/no-input-scheme/expected`:
 
 ```console
-$ ../tests/empty-set/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/core-themes/config ../tests/headless/core-themes/script
-reload 1: installed, 1 files, 0 commands
-key arrived: <Escape> Escape -
-scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0 in mode-line.active: -
-run load-theme: ok
-scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0 in mode-line.active: -
-view 1 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
-status 1: minibuffer.prompt "Theme: "
-view 2 0,0 0x0: "  default\n  first", scroll 0, selections , padding 8 0
-status 2: -
-key arrived: <Enter> Enter -
-scene 0x0, focused 1, echo "minibuffer-accept: no such command", echo padding 8, preedit -, published 6, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0 in mode-line.active: -
-view 1 0,0 0x0: "first", scroll 0, selections 5..5, padding 8 0
-status 1: minibuffer.prompt "Theme: "
-view 2 0,0 0x0: "  first", scroll 0, selections , padding 8 0
-status 2: -
-run load-theme: ok
-key arrived: <Enter> Enter -
-scene 0x0, focused 1, echo "minibuffer-accept: no such command", echo padding 8, preedit -, published 10, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0 in mode-line.active: -
-view 1 0,0 0x0: "firstsolarized-dark", scroll 0, selections 19..19, padding 8 0
-status 1: minibuffer.prompt "Theme: "
-view 2 0,0 0x0: "", scroll 0, selections , padding 8 0
-status 2: -
+$ ../tests/empty-set/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/no-input-scheme/config ../tests/headless/no-input-scheme/script
+editor: no input scheme is installed: no package of this editor's package set supplies one
+$ echo $?
+1
 ```
+
+Until the features-as-packages roadmap's phase 7 the core supplied the
+scheme, and this editor ran two fixtures, `core-themes` and
+`core-ex-names`, which showed an editor with no default package: the theme
+`default` and no palette, the core's own candidate display, a prompt
+nothing answers and an ex line with no `compile`. They are retired; those
+facts are held by `ConfigTest.shippedChecks`
+([packages.md](../design/packages.md), "Dropping evil or themes leaves…").
 
 A twelfth, the default package `mode-line`'s
 `packages/mode-line/tests/headless/mode-line/script` (the core's until
@@ -2330,9 +2299,9 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   directory's whole path: the package's linked test runs one in a headless
   host, in a temporary directory
   (`packages/compile/tests/linked/run/script`).
-- **An editor without the compile package**, the one linked from
-  `tests/empty-set`, runs the core's fixture
-  `tests/headless/core-ex-names`. It has no minibuffer package either, so
-  `<Enter>` on its ex line says `minibuffer-accept: no such command` and
-  the line stays open: `:compile` is never run there (until phase 4 it
-  was answered `compile: not an ex command`, as `:bogus` was).
+- **An editor without the compile package**: that a host of the core's
+  packages alone has nothing of the compile mode, and that `compile` as an
+  ex name is not bound there, is `ConfigTest.shippedChecks`'. The editor
+  linked from `tests/empty-set` ran a fixture of it,
+  `core-ex-names`, until the features-as-packages roadmap's phase 7, when
+  that editor lost its input scheme with evil and the fixture was retired.

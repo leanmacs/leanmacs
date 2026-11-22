@@ -29,8 +29,8 @@ The root module that names the packages is generated into
 `packages/.lake/build/root/EditorSetRoot.lean`; delete it and the next
 build writes it again. Beside the editor the build writes
 `editor.oleans`, the directories the `.olean` files of the set's packages
-are in, for the default set the core's and those of its twenty-five
-packages, the sixteen default packages and the nine interface packages,
+are in, for the default set the core's and those of its twenty-nine
+packages, the eighteen default packages and the eleven interface packages,
 which the editor run directly reads and searches, all of them, to find the
 modules config is elaborated on (`lean/Editor/ModuleLookup.lean`): its
 set's base, `Editor` and then the entry module of each default package. `editor demo` shows the build works:

@@ -29,16 +29,23 @@ buffer commands (`buffers`), the workspaces (`workspace`), project search
 and version control (`version-control`, two packages), with two
 names-only interface packages, `project-search-api` and `working-set-api`,
 and two interface libraries the core had staged, `project-api` and
-`vc-api`, as interface packages of their own. What a package is and how a
+`vc-api`, as interface packages of their own. Its phase 7 moved evil, with
+the Vim scheme, and the themes out (`evil`, `themes`), with two names-only
+interface packages, `evil-api` and `themes-api`: the input scheme is a
+package's since, and an editor whose set supplies none refuses to start
+("Input schemes", below). What a package is and how a
 host registers one are in [lean-runtime.md](lean-runtime.md), "Packages".
 
-Every feature but those sixteen is still in the core's Lake package
+Every feature but those eighteen is still in the core's Lake package
 (`lean/lakefile.lean`, the package `editor-core`), whose own list of
-packages (`EditorCore.EditorPackage`) holds nine: `evil`, `ex`,
-`frame-commands`, `menu`, `window-commands`, `tab-commands`, `themes`,
+packages (`EditorCore.EditorPackage`) holds seven: `ex`,
+`frame-commands`, `menu`, `window-commands`, `tab-commands`,
 `restore` and `package-set`. The default package set
-(`packages/lakefile.toml`) requires the core and sixteen default packages,
-in this order: `files` (`packages/files/`), `buffers` (`packages/buffers/`),
+(`packages/lakefile.toml`) requires the core and eighteen default packages,
+in this order: `evil` (`packages/evil/`, which requires
+`packages/evil-api/`, `packages/minibuffer-api/` and
+`packages/at-point-api/`), `themes` (`packages/themes/`, which requires
+`packages/themes-api/`), `files` (`packages/files/`), `buffers` (`packages/buffers/`),
 `workspace` (`packages/workspace/`, which requires `packages/project-api/`
 and `packages/vc-api/`), `project-search` (`packages/project-search/`,
 which requires `packages/project-search-api/`), `working-set`
@@ -53,7 +60,8 @@ which requires `packages/project-search-api/`), `working-set`
 (`packages/execute-command/`, which requires `packages/execute-command-api/`),
 `binding-search` (`packages/binding-search/`, which requires
 `packages/binding-search-api/`), `compile` (`packages/compile/`),
-`at-point` (`packages/at-point/`, which requires `packages/at-point-api/`)
+`at-point` (`packages/at-point/`, which requires `packages/at-point-api/`
+and `packages/evil-api/`)
 and `languages` (`packages/languages/`). This document draws the lines
 later moves cut along.
 
@@ -152,7 +160,9 @@ built from one:
 - **The default set is `packages/lakefile.toml`** (the Lake package
   `default-set`). It requires the core (`editor-core`, from `../lean`) and
   the default packages, each of which has a directory under `packages/`
-  and a `require` there. There are sixteen, required in this order:
+  and a `require` there. There are eighteen, required in this order:
+  `evil` and `themes` ("The default packages of the features-as-packages
+  roadmap's phase 7", below), then
   `files`, `buffers`, `workspace`, `project-search`, `working-set`,
   `shell` and `version-control` ("The default packages of the
   features-as-packages roadmap's phase 6", below), then `completion` ("The
@@ -161,8 +171,9 @@ built from one:
   phase 3", below), `minibuffer` (phase 4's), `shipped-themes` ("The first
   default package", below), `execute-command` and `binding-search` (phase
   3's), `compile` ("The default package `compile`", below), `at-point`
-  (phase 4's) and `languages` (phase 3's). Nine of them require an
-  interface package of their own or another's (`project-api` and `vc-api`
+  (phase 4's) and `languages` (phase 3's). Eleven of them require an
+  interface package of their own or another's (`project-api`, `vc-api`,
+  `minibuffer-api`, `at-point-api` and `evil-api`
   are each required by more than one), which is in the set through that
   `require`. It is the lakefile a user's set starts from.
 - **The core defines the build**, as Lake facets in `lean/lakefile.lean`.
@@ -231,9 +242,22 @@ end Greeting.EditorPackage
 - **The module declares `packages : Array Editor.Package`** in the
   namespace of its own name. A Lake package may hold several `Package`
   values, which register in the order the array lists them; the core's
-  holds 9, `version-control`'s two (`version-control` and
+  holds 7, `version-control`'s two (`version-control` and
   `version-control-gutter`), and each other default package's one. An interface package has no
   entry module and contributes no `Package`.
+- **A package that supplies the editor's input scheme also declares
+  `scheme : Editor.SchemePackage`** there, and its lakefile declares the
+  keyword `editor-input-scheme` (`keywords = ["editor-input-scheme"]`),
+  which is how the build knows to hand the declaration to the hosts. Lake
+  is asked for the keyword, as for `editor-interface`, so the build reads
+  no source; a keyword with no `scheme` fails the generated root's build,
+  naming `<P>.EditorPackage.scheme`. The default package `evil` is the one
+  that does ("Input schemes", below):
+
+  ```lean
+  def scheme : Editor.SchemePackage :=
+    Editor.Evil.scheme
+  ```
 - **A Lake package with no such module contributes nothing.** The build
   asks Lake whether a library of the package holds a module of that name
   (`Package.findModule?`) and whether its source file exists. It reads no
@@ -270,15 +294,23 @@ The set's packages are visited from the set, **each after the packages it
 - packages that do not depend on each other register in the order the
   set's lakefile names them.
 
-So the default set registers the core's nine packages, then the seven
+So the default set registers the core's seven packages, then `evil` and
+`themes`, which phase 7 moved out, then the seven
 features phase 6 moved out (`files`, `buffers`, `workspace`,
 `project-search`, `working-set`, `shell`, `version-control` and
 `version-control-gutter`, in the order the core's list held them), then
 the default packages that moved before them. Phase 6 put its seven first
 (its D5) because before it they registered before every default package:
 first, their order among themselves and against the default packages is
-unchanged, and only the core's nine packages now register before them
-("Registration order is visible", below).
+unchanged, and only the packages still in the core's list register before them
+("Registration order is visible", below). Phase 7 put `evil`, then
+`themes`, before those seven for the same reason (its D6): evil's package
+was the first of the core's list and the themes' its sixth, both before
+every default package, so requiring them first keeps their order against
+every default package and between them, and the one change is against the
+seven packages still in the core's list, which now register before them.
+That is the fewest fixture lines: neither binds a key, and no command name
+is registered twice in the default set.
 
 Lake's own list of a workspace's packages is not in that order: it holds a
 package reached only through another after the package that requires it,
@@ -318,6 +350,8 @@ and only when its text would change. For the default set it is:
 import Editor
 import Editor.Main
 import EditorCore.EditorPackage
+import Evil.EditorPackage
+import Themes.EditorPackage
 import Files.EditorPackage
 import Buffers.EditorPackage
 import Workspace.EditorPackage
@@ -336,7 +370,7 @@ import AtPoint.EditorPackage
 import Languages.EditorPackage
 
 def main (args : List String) : IO UInt32 :=
-  Editor.Main.run (EditorCore.EditorPackage.packages ++ Files.EditorPackage.packages ++ Buffers.EditorPackage.packages ++ Workspace.EditorPackage.packages ++ ProjectSearch.EditorPackage.packages ++ WorkingSet.EditorPackage.packages ++ Shell.EditorPackage.packages ++ VersionControl.EditorPackage.packages ++ Completion.EditorPackage.packages ++ ModeLine.EditorPackage.packages ++ Minibuffer.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages ++ ExecuteCommand.EditorPackage.packages ++ BindingSearch.EditorPackage.packages ++ Compile.EditorPackage.packages ++ AtPoint.EditorPackage.packages ++ Languages.EditorPackage.packages) #[EditorCore.EditorPackage.scheme] #[`Editor, `Files.EditorPackage, `Buffers.EditorPackage, `Workspace.EditorPackage, `ProjectSearch.EditorPackage, `WorkingSet.EditorPackage, `Shell.EditorPackage, `VersionControl.EditorPackage, `Completion.EditorPackage, `ModeLine.EditorPackage, `Minibuffer.EditorPackage, `ShippedThemes.EditorPackage, `ExecuteCommand.EditorPackage, `BindingSearch.EditorPackage, `Compile.EditorPackage, `AtPoint.EditorPackage, `Languages.EditorPackage] { setName := "default-set", pin := "leanprover/lean4:v4.35.0\n" } args
+  Editor.Main.run (EditorCore.EditorPackage.packages ++ Evil.EditorPackage.packages ++ Themes.EditorPackage.packages ++ Files.EditorPackage.packages ++ Buffers.EditorPackage.packages ++ Workspace.EditorPackage.packages ++ ProjectSearch.EditorPackage.packages ++ WorkingSet.EditorPackage.packages ++ Shell.EditorPackage.packages ++ VersionControl.EditorPackage.packages ++ Completion.EditorPackage.packages ++ ModeLine.EditorPackage.packages ++ Minibuffer.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages ++ ExecuteCommand.EditorPackage.packages ++ BindingSearch.EditorPackage.packages ++ Compile.EditorPackage.packages ++ AtPoint.EditorPackage.packages ++ Languages.EditorPackage.packages) #[Evil.EditorPackage.scheme] #[`Editor, `Evil.EditorPackage, `Themes.EditorPackage, `Files.EditorPackage, `Buffers.EditorPackage, `Workspace.EditorPackage, `ProjectSearch.EditorPackage, `WorkingSet.EditorPackage, `Shell.EditorPackage, `VersionControl.EditorPackage, `Completion.EditorPackage, `ModeLine.EditorPackage, `Minibuffer.EditorPackage, `ShippedThemes.EditorPackage, `ExecuteCommand.EditorPackage, `BindingSearch.EditorPackage, `Compile.EditorPackage, `AtPoint.EditorPackage, `Languages.EditorPackage] { setName := "default-set", pin := "leanprover/lean4:v4.35.0\n" } args
 ```
 
 with a module doc and a doc string, since it is built with the core's Lean
@@ -346,13 +380,14 @@ the core alone (`tests/empty-set`) passes the core's array as it is and
 the base `Editor` alone. The array after the packages holds the `scheme`
 of each entry module whose Lake package declares the keyword
 `editor-input-scheme`, in that order: the input schemes the set supplies,
-of which the editor runs the last ("Input schemes", below). The core's
-Lake package declares it while evil is in the core. The last value before the arguments is what the
+of which the editor runs the last ("Input schemes", below). The default
+package `evil` declares it, so the default set's array holds
+`Evil.EditorPackage.scheme`; the empty set's is `#[]`. The last value before the arguments is what the
 build says of the editor for the files it generates in a config directory
 ("A config directory requires the core and the set", below): the set's Lake name and the
 text of the core's `lean-toolchain`. The gate requires the default set's root to
-import exactly these nineteen modules (`lake -d ../packages query
-:editorRootImports`, in `ffi-test`), and its base to be the seventeen named
+import exactly these twenty-one modules (`lake -d ../packages query
+:editorRootImports`, in `ffi-test`), and its base to be the nineteen named
 (`:editorBase`). The interface packages have no entry module, so neither
 names them; their modules come with their implementations' libraries.
 
@@ -535,16 +570,17 @@ globs = ["Config.+"]
   alone was used. The gate starts the window mode's wiring for both sets'
   editors with that default and requires config to load (`ffi-test
   window-host-direct`), and checks each record: the default set's names
-  twenty-six directories, the core's, then those of its sixteen default
-  packages and nine interface packages in the order they register
-  (`files`', `buffers`', `project-api`'s, `vc-api`'s, `workspace`'s,
+  thirty directories, the core's, then those of its eighteen default
+  packages and eleven interface packages in the order they register
+  (`evil-api`'s, `minibuffer-api`'s, `at-point-api`'s, `evil`'s,
+  `themes-api`'s, `themes`', `files`', `buffers`', `project-api`'s, `vc-api`'s, `workspace`'s,
   `project-search-api`'s, `project-search`'s, `working-set-api`'s,
-  `working-set`'s, `shell`'s, `version-control`'s, `completion-api`'s, `completion`'s, `mode-line`'s, `minibuffer-api`'s,
+  `working-set`'s, `shell`'s, `version-control`'s, `completion-api`'s, `completion`'s, `mode-line`'s,
   `minibuffer`'s, `shipped-themes`', `execute-command-api`'s,
   `execute-command`'s, `binding-search-api`'s, `binding-search`'s,
-  `compile`'s, `at-point-api`'s, `at-point`'s and `languages`'), and the
-  fixture set's thirty-one, the core's, `greeting-api`'s, `greeting`'s,
-  `greeting-loud`'s, `echo`'s, the default set's twenty-five in that order,
+  `compile`'s, `at-point`'s and `languages`'), and the
+  fixture set's thirty-five, the core's, `greeting-api`'s, `greeting`'s,
+  `greeting-loud`'s, `echo`'s, the default set's twenty-nine in that order,
   and `word-count`'s, each holding its package's modules.
 - **A directory given on the command line is a search path**, one
   directory or several joined with `:`, and outside a bundle the recorded
@@ -625,7 +661,7 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
 - **The gate gives the steps the fixture set**, which requires the default
   set. So the default packages are tested, built, formatted and run through
   it, and `lean-test` requires the line the `test` step prints as it
-  reaches each of them, the sixteen default packages and the nine
+  reaches each of them, the eighteen default packages and the eleven
   interface packages. The default set's own
   `editor` is built beside it, for the standing fixtures under
   `tests/headless/`, and **`run` is also given the default set**, so the
@@ -728,9 +764,12 @@ set, holds its three themes.
   editor and on the fixture set's.
 - **Dropping the package leaves the core's themes.** The set
   `tests/empty-set` is the default set with its packages dropped: it
-  requires the core alone. `mise run lean` links an editor from it and
-  `ffi-test` runs the core's fixture `tests/headless/core-themes` on that
-  editor: it starts in the theme `default`, and `load-theme` offers
+  requires the core alone. `mise run lean` links an editor from it, and
+  until the features-as-packages roadmap's phase 7, when that editor lost
+  its input scheme with evil and the fixture was retired ("Dropping evil
+  or themes leaves…", below),
+  `ffi-test` ran the core's fixture `tests/headless/core-themes` on that
+  editor: it started in the theme `default`, and `load-theme` offered
   `default` and the theme config defines and no palette. Until the
   minibuffer moved out (features-as-packages phase 4) a palette's name
   was answered there with `load-theme: no theme is registered as …`; that
@@ -891,8 +930,11 @@ over the process service, a major mode, ex names and contributions.
   modes give a file's workspace and its modes on markers by the core
   kit's stand-ins (`Editor.Test.attachByPackage`,
   `Editor.Test.markersByPackage`), so no git is run and the copy is gone.
-- **Dropping the package leaves an editor that starts.** The editor of
-  `tests/empty-set` loads config and opens its ex line
+- **Dropping the package leaves an editor that starts.** Until the
+  features-as-packages roadmap's phase 7, when the empty set's editor lost
+  its input scheme with evil and its fixtures were retired ("Dropping evil
+  or themes leaves…", below), the editor of
+  `tests/empty-set` loaded config and opened its ex line
   (`tests/headless/core-ex-names`, in `ffi-test`). Until the minibuffer
   moved out (features-as-packages phase 4) it answered `:compile` with
   `compile: not an ex command`, the words it has for `:bogus`; it now has
@@ -1182,7 +1224,7 @@ by, shaped as `execute-command-api` is.
   `Editor.Test.AtPoint`, and the interface packages publish them as their
   fakes. One value to drift closes a chain of three checks: the core's
   Vim-table tests compare the tables' text with the kit's names
-  (`ModelTest.vimDefaultChecks`); the interface's tests run its contract
+  (evil's `vimDefaultChecks`, `EvilTest.vimDefaultChecks` since phase 7); the interface's tests run its contract
   over the kit's implementation; and the shipped implementation runs the
   same contract and is checked to register under the kit's names, in
   order (`MinibufferTest.promptModeChecks`, `AtPointTest.atPointChecks`).
@@ -1221,7 +1263,7 @@ display, so `fuzzy` and `minibuffer` are still the defaults.
 The Vim scheme's insert table binds `RET`, `TAB` and `C-g` to
 `at-point-return`, `at-point-tab` and `at-point-quit`, which, with no
 session open, run `insert-newline`, `insert-tab` and `keyboard-quit`
-(`lean/Editor/InputScheme/Vim/Default.lean`). In a set without `at-point`
+(`packages/evil/Evil/Vim/Default.lean` since phase 7). In a set without `at-point`
 nothing registers those names: nothing fails to build, but the three keys
 say `<name>: no such command` in the echo area and type nothing, and
 `C-SPC`, `C-n` and `C-p` open no session. No standing fixture of the empty
@@ -1415,11 +1457,191 @@ What each of the seven registered is gone from a set without it (D6):
   no gutter marks a line, and the working sets write their sets with no
   commit.
 
-The empty set (`tests/empty-set`, the core alone) shows what remains in its
-two fixtures, `core-themes` and `core-ex-names`. Neither changed in C9 to
-C15: `core-ex-names` shows the ex line's status and no candidate, since the
-empty set has no minibuffer to list them, and `core-themes` lists the one
-theme. So no line of the empty set's fixtures is recorded here.
+The empty set (`tests/empty-set`, the core alone) showed what remains in
+its two fixtures, `core-themes` and `core-ex-names`, until phase 7 retired
+them ("Dropping evil or themes leaves…", below). Neither changed in C9 to
+C15: `core-ex-names` showed the ex line's status and no candidate, since
+the empty set has no minibuffer to list them, and `core-themes` listed the
+one theme. So no line of the empty set's fixtures is recorded here.
+
+### The default packages of the features-as-packages roadmap's phase 7
+
+Phase 7 moved evil, with the Vim scheme, and the themes out of the core,
+each into a default package of its own, with a names-only interface
+package each. The input scheme is now a package's: the core's Lake package
+supplies none ("Input schemes", below). Every module keeps its
+declarations' names (`Editor.Evil.…`, `Editor.Vim.…`,
+`Editor.Vim.Default.…`, `Editor.Themes.…`); the modules drop `Editor.`
+from their names, and `InputScheme.Vim` becomes `Evil.Vim`.
+
+| Lake package | Library (from `lean/Editor/`) | Entry module | Test driver / linked root | Requires |
+|---|---|---|---|---|
+| `evil-api` (`packages/evil-api/`) | `EvilApi` (new) | none (interface) | `evil-api-test` | the core |
+| `evil` (`packages/evil/`) | `Evil` (`Evil.lean`), the 13 under it (`Evil.Clipboard`, `.Compiled`, `.Jumps`, `.Marks`, `.Motions`, `.Objects`, `.Operators`, `.Registers`, `.Repeat`, `.Scroll`, `.Theorems`, `.TreeObjects`, `.Undo`), `Evil.Vim` (`InputScheme/Vim.lean`), `Evil.Vim.Default` (`InputScheme/Vim/Default.lean`) | `packages := #[Editor.Evil.package]`, `scheme := Editor.Evil.scheme`; the lakefile declares `keywords = ["editor-input-scheme"]` | `evil-test` / `EvilTest.Linked` | `evil-api`, `minibuffer-api`, `at-point-api` |
+| `themes-api` (`packages/themes-api/`) | `ThemesApi` (new) | none (interface) | `themes-api-test` | the core |
+| `themes` (`packages/themes/`) | `Themes`, `Themes.Compiled` | `packages := #[Editor.Themes.package]` | `themes-test` / `ThemesTest.Linked` | `themes-api` |
+
+- **What the libraries import of the core** (`lake -d ../packages query
+  :editorPackageImports`, the package imports check's input, direct
+  imports alone). The themes': `Editor.Api`, `Editor.Command.Call` and
+  `Editor.Package`. Evil's: `Editor.Api`, `Editor.Command.Call`,
+  `Editor.Package`, the scheme's port and key strings
+  (`Editor.InputScheme`, `Editor.Key.Notation`), the vocabularies
+  (`Editor.Vocabulary`), the indent primitives (`Editor.Indent`), the
+  syntax tree port (`Editor.SyntaxTree`), the jump list and going to a
+  place (`Editor.Jumps`, `Editor.Jumps.Go`), the word rule
+  (`Editor.Text.Word`), the undo tree's theorems
+  (`Editor.UndoTree.Theorems`), the clipboard's names (`Editor.Clipboard`),
+  and the names its tables run of features still in the core:
+  `Editor.Ex`, `Editor.WindowCommands`, `Editor.TabCommands` and the
+  staged interface library `ShellApi`. No module of either imports an
+  internal module, and none imports the other package.
+- **Each entry module imports its `Compiled` module**, which brings the
+  library's other modules: a direct import of a module `Compiled` already
+  brings is redundant, and the formatter's check refuses it. Evil's also
+  imports `Evil.Theorems`, which nothing else of the library imports, so
+  the build checks the proofs. So the set's config base holds what
+  `Editor` held of both before the move, and config names
+  `Evil.move Evil.motions` and `Themes.loadThemeCommand` as it did. The
+  config base `Editor` imports by name the five core modules that only
+  evil's modules brought (`Editor.Indent`, `Editor.Jumps.Go`,
+  `Editor.Text.Word`, `Editor.UndoTree.Theorems`, `Editor.Vocabulary`), so
+  an editor without evil elaborates config on a base that lost evil's
+  modules and nothing else.
+- **The host imports check** (`tools/host-imports-check.sh`) passes for
+  both entry modules only because `lean/Editor.lean` dropped its nine evil
+  imports and `import Editor.Themes` in the commits that made them: no
+  host module reaches an entry module or a module one imports directly.
+- **The tests moved with them**, under their names, sentences and
+  assertions unchanged:
+  - evil's model tests (`evil-test`, `EvilTest/Model.lean`):
+    `vimEditChecks`, `vimRegistryChecks`, `vimGrammarChecks`,
+    `vimStateChecks`, `vimHintChecks`, `vimKeyBindingChecks`,
+    `vimDefaultChecks`, `vimDefaultHintChecks`, `vimContractChecks`,
+    `treeObjectRuleChecks`, `atPointRepeatChecks`, `evilRestChecks`,
+    `evilMotionChecks`, `evilStateChecks`, `evilInsertChecks`,
+    `evilOperatorChecks`, `evilFindChecks`, `evilSearchChecks`,
+    `evilSelectionChecks`, `evilObjectChecks`, `evilRegisterChecks`,
+    `evilOpenChecks`, `evilIndentChecks`, `evilUndoChecks`,
+    `evilRepeatChecks`, `evilJumpChecks`, `evilMarkChecks`,
+    `evilScrollChecks` and `clipboardCommandChecks`, in
+    `EvilTest/Vim.lean`, `EvilTest/Vim/Default.lean`,
+    `EvilTest/Vim/Contract.lean`, `EvilTest/Evil.lean` and
+    `EvilTest/Evil/*.lean`, on evil's kit (`EvilTest/Kit.lean`, which was
+    `Editor.Evil.Kit`) and the drivers of `EvilTest/Support/`; and the
+    package's own `evilPackageChecks` (`EvilTest/Evil/Compiled.lean`), the
+    contract of `evil-api`;
+  - evil's linked tests (`EvilTest.Linked`): `treeObjectChecks`,
+    `treeObjectFixtureChecks`, `evilIndentChecks`, `evilChecks` and
+    `evilLeaderChecks`, in `EvilTest/Linked/Evil.lean`,
+    `EvilTest/Linked/Evil/Operators.lean` and
+    `EvilTest/Linked/Evil/TreeObjects.lean`, on the host of the Vim scheme
+    (`withVimHost`, `EvilTest/Linked/Support/Vim.lean`, which was the
+    linked kit's `Editor.Test.Linked.Vim`). The root elaborates config on
+    the base `Editor` and `Evil.EditorPackage`, found in the core's
+    `.olean` directory, the package's own and those of the three
+    interface packages it requires, and reads the repository's syntax
+    fixtures (`tests/syntax`);
+  - the themes' model tests (`themes-test`): `themeChecks`, in
+    `ThemesTest/Themes.lean`, with the contract of `themes-api` and what
+    the package registers; and its linked tests (`ThemesTest.Linked`):
+    `themeChecks`, in `ThemesTest/Linked/Themes.lean`.
+- **The core's tests name no module of either** (the plan's C5 to C12):
+  what a core check typed under Vim keys it types on the test scheme, the
+  kit's editing keys (`Editor.Test.Editing`) or a scheme written in the
+  check, and a check whose subject was evil or the themes moved to their
+  tests. The theme completeness check and the picture check are the
+  core's (`Editor.Theme.Check`, `Editor.Theme.Picture`), since the shipped
+  palettes' tests run them.
+- **Neither package has a headless fixture of its own**: the standing
+  fixtures under `tests/headless/`, which run on the default set's editor,
+  press evil's keys, and the shipped palettes' fixtures load themes.
+
+#### The interface packages `evil-api` and `themes-api`
+
+| Package | Declares | Publishes for tests | Implemented by |
+|---|---|---|---|
+| `evil-api` (`packages/evil-api/`) | `EvilApi.insertNewlineName` = `"insert-newline"`, `.insertTabName` = `"insert-tab"`, `.undoName` = `"undo"`, `.redoName` = `"redo"`, `names` | `EvilApiTest.fake` (the four over the core's API: a line break and a tab at the selections, a step of the history undone and redone), `EvilApiTest.contractChecks` | `evil`: `Evil.Compiled` registers the four under the constants; `EvilTest.evilPackageChecks` runs the contract |
+| `themes-api` (`packages/themes-api/`) | `ThemesApi.loadName` = `"load-theme"`, `names` | `ThemesApiTest.fake`, `ThemesApiTest.contractChecks` | `themes`: `Themes.loadName := ThemesApi.loadName`; `ThemesTest.themeChecks` runs the contract |
+
+They are shaped as `working-set-api` ("The default packages of the
+features-as-packages roadmap's phase 6", above). Who reaches the names:
+
+- `insert-newline` and `insert-tab`: completion at point, whose `RET` and
+  `TAB` run them with no session open
+  (`packages/at-point/AtPoint.lean`). It requires `evil-api` and names the
+  constants, and its tests run on the fake. The core's at-point stand-in
+  (`Editor.Test.AtPoint`) names them as text.
+- `undo` and `redo`: the Edit menu, a core reacher, as text.
+- `load-theme`: the default config (`<leader> h t`), as text, since it is
+  in the core; `ConfigTest.DefaultConfig`'s `defaultPackageCommands` lists
+  it.
+
+Evil is itself a reacher that left the core, so its tables name other
+features' commands by constants ([extension-points.md](extension-points.md),
+"Reaches by name"): the minibuffer's from `MinibufferApi`, completion at
+point's from `AtPointApi`, `keyboard-quit` from the staged `ShellApi`,
+`ex` from `Editor.Ex.name`, the window and tab commands from
+`Editor.WindowCommands` and `Editor.TabCommands`, and the clipboard four
+from `Editor.Clipboard`, the core's names for the Edit menu's clipboard
+items, which a scheme's package registers commands under.
+
+#### Dropping evil or themes leaves…
+
+What each registered is gone from a set without it (the plan's D7):
+
+- **without `evil`**, the set has no input scheme unless another package
+  supplies one, and an editor with none refuses to start: the headless
+  mode, the window mode and `--probe` print the line below on stderr and
+  exit 1, so `:package-remove evil` builds a set whose restart is given up
+  before the session is handed over. With another scheme, none of evil's
+  41 commands exists: completion at point's `RET` and `TAB` with no
+  session name nothing (`insert-newline`, `insert-tab`), and the Edit
+  menu's Undo, Redo, Cut, Copy, Paste and Select All name commands no
+  package registers, unless that scheme's package implements `evil-api`
+  and registers under the core's clipboard names;
+- **without `themes`**, `load-theme`, the completion source `themes` and
+  the registered theme `default` are gone. The theme in force is still
+  named `default` (`Theme.defaultName`) and is the built-in theme, config
+  still defines and names themes, and the default config's `<leader> h t`
+  names a command no package registers.
+
+The empty set (`tests/empty-set`, the core alone) is the set without
+either, and without every other default package. Its editor refuses to
+start, so the two fixtures that ran on it while the core supplied the
+scheme are retired, and one fixture of the refusal replaces them:
+
+- `tests/headless/core-themes` is removed. It showed an editor with no
+  package but the core's: the theme `default` in force with no palette
+  listed, the candidate list drawn by the core's own display, `<Enter>`
+  running `minibuffer-accept`, which nothing registered, and empty status
+  lines. Those facts are held by `ConfigTest.shippedChecks`, over the
+  core's own list: "… nothing of the themes package … the theme in force
+  with none registered is still named default", "… nothing of the
+  completion package … drawn with the core's own display", "… nothing of
+  the minibuffer package …" and "… nothing of the mode-line package …";
+  by `ModelTest.packageSetChecks` ("the shipped set registers no theme
+  …"); and by `ThemesTest.themeChecks`, which holds that the themes
+  package registers `default`, the built-in theme.
+- `tests/headless/core-ex-names` is removed. It showed the ex line of the
+  same editor with no `compile` and no minibuffer to accept it. Those
+  facts are held by `ConfigTest.shippedChecks` ("… nothing of the compile
+  mode … and compile as an ex name is not bound", "… nothing of the
+  minibuffer package …") and `ModelTest.exChecks`; that the empty set's
+  config base is `Editor` alone is a pin of `ffi-test`
+  (`lake -d ../tests/empty-set query :editorBase`).
+- `tests/headless/no-input-scheme` is added: `ffi-test` runs the empty
+  set's editor in the headless mode on it, and with `--probe`, and each
+  must exit 1 having printed exactly its `expected`, the one line of the
+  block below.
+
+No line of a fixture that still exists changed as a leave-out effect in
+this phase: the lines that changed are registration order's ("Registration
+order is visible", below). The one line this phase's leave-out added:
+
+```text
+editor: no input scheme is installed: no package of this editor's package set supplies one
+```
 
 ### The fixture set
 
@@ -1436,7 +1658,7 @@ guide quotes.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the sixteen default packages and the nine interface packages, then `word-count` |
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the eighteen default packages and the eleven interface packages, then `word-count` |
 | `tests/packages/greeting-api/` | The interface package `greeting-api` (`keywords = ["editor-interface"]`): the name `greeting-reply` (`GreetingApi.replyName`) and every name it declares (`GreetingApi.names`); in its test library, the fake `GreetingApiTest.fake` and the contract check `GreetingApiTest.contractChecks`, and its test driver, which holds the fake to the contract and shows the contract refuse a package that lacks or misspells the name. It has no entry module and registers nothing |
 | `tests/packages/greeting/` | The Lake package `greeting`, an implementation of `greeting-api`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), the second under `GreetingApi.replyName`, its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean` and greeting-api's contract check), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting`, to register after it, and `greeting-api`, and registers `greeting-reply` again with another text, by the name `greeting-api` declares. It imports nothing of `greeting`; its tests use greeting-api's fake. Its test driver and the fixture `tests/headless/reply` |
@@ -1511,8 +1733,8 @@ user-side link's set and its package, the Rust bans check's set
 
 `lean/lean-toolchain` is the one pin every task reads: every Lake command
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
-`lean/` holds a copy of it** (the default set and its twenty-five packages,
-the sixteen default packages and the nine interface packages, the fixture set and its three packages, the
+`lean/` holds a copy of it** (the default set and its twenty-nine packages,
+the eighteen default packages and the eleven interface packages, the fixture set and its three packages, the
 writing guide's example package `word-count`, the empty set, the user-side link's set and its package, the Rust bans check's
 set and its two packages, and the formatter's host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file when Lake is run in that
@@ -1860,15 +2082,17 @@ an implementation package; a package may import interface packages. A
 package is an interface package when its lakefile declares
 `keywords = ["editor-interface"]`, and an implementation package
 otherwise. The rule holds for every module of a package, its tests
-included. The sixteen default packages are implementation packages: each
+included. The eighteen default packages are implementation packages: each
 imports the core and, but for `mode-line`, `shipped-themes`, `languages`,
 `files`, `buffers` and `shell`, an interface package of its own or
 another's (`completion-api`, `minibuffer-api`, `execute-command-api`,
-`binding-search-api`, `at-point-api`; `project-api` and `vc-api` for
+`binding-search-api`, `at-point-api`, `themes-api`; `evil-api`,
+`minibuffer-api` and `at-point-api` for `evil`, and `evil-api` for
+`at-point` too; `project-api` and `vc-api` for
 `workspace` and `version-control`, `project-search-api` for
 `project-search`, `working-set-api` and `vc-api` for `working-set`), and
 `execute-command`, `binding-search` and `compile` also `minibuffer-api`,
-whose names and fake their tests use. The nine interface packages import
+whose names and fake their tests use. The eleven interface packages import
 the core alone.
 
 - **A package may import any core module that is not internal.** The rule
@@ -2065,9 +2289,10 @@ fixture themes made with `Palette.theme` from palettes written in
 `lean/ConfigTest/Support/Themes.lean`, and the appearance checks define
 theirs. No copy of a palette's values is kept in the core, so no licence
 notice is either. `ConfigTest.shippedChecks` and
-`ModelTest.packageSetChecks` state the core's list alone: 9 packages
-since the features-as-packages roadmap's phase 6 (17 after its phase 4,
-20 after its phase 3, 24 when the palettes moved), the one theme `default`, and nothing of the
+`ModelTest.packageSetChecks` state the core's list alone: 7 packages
+since the features-as-packages roadmap's phase 7 (9 after its phase 6, 17 after its phase 4,
+20 after its phase 3, 24 when the palettes moved), no theme (the theme
+`default` is the themes package's since phase 7), and nothing of evil, the themes, the
 compile mode, the mode line, the command prompt, the binding search, the
 languages, the completion styles and displays, completion at point, the
 minibuffer, or the seven features of phase 6.
@@ -2316,6 +2541,36 @@ And to the core's test kit, each imported by `Editor.Core`:
   `languageOf` chooses, as files does, so `files-api`'s contract holds of
   the fake and of `files`.
 
+## What moving evil and themes added to the core's API
+
+The features-as-packages roadmap's phase 7 gave the core what a scheme's
+package and its tests need of it, so that no core module, and no other
+package, names a module of evil or of the themes:
+
+| Addition | What it is | Who uses it |
+|---|---|---|
+| `SchemePackage`, `SchemePackage.chosen?`, `SchemePackage.noneInstalled` (`lean/Editor/InputScheme.lean`) | The scheme a package supplies, as a name and an `InputScheme`; the one an editor runs of those its set supplies, the last; and the refusal's text | a scheme package's entry module (`scheme`); `Editor.Main.run`; "Input schemes", below |
+| `Executable.Mode.needsScheme` (`lean/Editor/Executable.lean`), and `Editor.Main.run`'s `schemes` | Which modes run a scheme (headless, window, probe), and the schemes the generated root hands `run` | the executable's entry; `ModelTest.executableModeChecks`, `schemePackageChecks` |
+| The hosts' scheme argument: `Headless.shippedOver`, `.shipped`, `.main`, `Window.host`, `.main` take `(scheme : InputScheme)` first | A host is typed by the scheme it is handed and names none | `Editor.Main.run`; every linked root and the linked kit |
+| `InputScheme.cursorFaces`, with the contract's `SchemeContract.cursorFacesReported` and `SchemeContract.failsOnly` (`lean/Editor/InputScheme/Contract.lean`) | The faces a scheme draws a cursor in, other than `cursor`, held to its reports; and a contract run that says which properties alone fail | the theme completeness check; evil's `vimContractChecks` |
+| `Face.Entry.cursor`, `Face.cursorNames` (`lean/Editor/Face/Vocabulary.lean`) | The vocabulary marks its cursor faces | `Themes.problems`' default; the shipped palettes' tests; evil's `vimDefaultChecks` |
+| `Editor.Theme.Check`, `Editor.Theme.Picture` (were `Editor.Themes.Check`, `.Picture`; the namespaces `Editor.Themes` and `Editor.Themes.Picture` are kept) | The completeness check, `Themes.problems theme (cursors := Face.cursorNames)` with `Themes.cursorFaces scheme`, and the picture check, which takes its faces' names; neither names a Vim state | the shipped palettes' tests; the core's `cursorResolutionChecks` and `pictureChecks` |
+| `Editor.Clipboard.cutName`, `copyName`, `pasteName`, `selectAllName` (`lean/Editor/Clipboard.lean`) | The names of the Edit menu's clipboard items, which a scheme's package registers commands under | the menu (`Editor.Menu.Compiled`); evil's clipboard commands and run tables |
+| `WindowCommands.names`, `TabCommands.names` | Every name the window and the tab commands register | evil's `vimDefaultChecks`, which holds its tables' rows to them |
+| The config base's imports by name: `Editor.Indent`, `Editor.Jumps.Go`, `Editor.Text.Word`, `Editor.UndoTree.Theorems`, `Editor.Vocabulary` (`lean/Editor.lean`) | Core modules only evil's modules brought into the base | config of a set without evil |
+| The model kit's `Editor.Test.Editing` | A stand-in for a scheme's editing commands on the test scheme, over the core's API: `self-insert`, `edit-newline`, `edit-delete-backward`, `edit-delete-forward`, `edit-left`, `-right`, `-up`, `-down`, `-line-start`, `-line-end`, `-buffer-start`, `-buffer-end`, `edit-select-left`, `-right`, `-up`, `-down`, `edit-undo` and `edit-redo`, on keys that print nothing (`editingCommands`, `editingKeys`, `editingBindings`, `editingDispatched`, `editingPackage`); the fixture notation of a cursor written as a bar (`barred`, `withBar`, `barState`, moved from evil's kit); and a driver over a fixture with what a check reads of it (`editingDriver`, `keysFed`, `selectionOf`, `shownOf`) | the core's tests that typed Vim keys; packages' tests (at-point, the working sets, files' linked test) |
+| The model kit's `Editor.Test.Views` | What a scene shows of a view, asked of the driver's models: `viewState`, `viewSeen`, `viewRan`, `viewPlaced`, `marginHolds` and the rest, of any scheme | the loop's `viewChecks`; evil's `evilScrollChecks` |
+| Additions to the model kit's modules | `Editor.Test.Excerpt`: `excerptStamp`, `excerptRegistrations`, `excerptInvoked`, `excerptFed`, `lastView`, `blockedSeen`; `Editor.Test.Modes`: `jsonIndents`; `Editor.Test.Files`: `jumpsPath`, `jumpFiles`; `Editor.Test.Ex`: `exLinePackage` | the core's excerpt and jump checks; evil's undo, scroll, indent, jump and mark checks |
+| The linked kit's `withShippedHost (scheme : InputScheme)` (`Editor.Test.Linked.Shipped`, which also holds `rustObjectsText`) | A host made as the executable's are, of the scheme it is given; it replaces a host that named the Vim scheme | every linked test; evil's `withVimHost` is `withShippedHost Vim.Default.scheme`, in evil's tests |
+| The linked kit's `Editor.Test.Linked.Syntax` | The real syntax binding as a check observes it with no host: `shippedCaptureNames`, `SyntaxText.over` and `.run`, `indentKept`, `mangledRust` | the core's `indentChecks`; evil's `evilIndentChecks` and `treeObjectFixtureChecks` |
+| The linked kit's `Editor.Test.Linked.Frames` | `withFramedHost`: a host on the real display, with the frame a second display lays the same scene out in under a given theme | the themes' linked `themeChecks` |
+| `Session.hints` (`Editor.Test.Linked.Host`), `showsText` (`Editor.Test.Linked.Lines`) | A scene's key hint lines, and whether a view line shows a text with a selection | the core's keymap and indent checks; evil's `evilLeaderChecks` and `evilIndentChecks` |
+
+Nothing was added for another package to reach evil or the themes
+through: what others reach of them is names, which `evil-api` and
+`themes-api` declare ("The interface packages `evil-api` and
+`themes-api`", above).
+
 ## The interfaces the core owns for the two features that moved
 
 Seven import edges led from a core module to a module of one of the two
@@ -2371,7 +2626,8 @@ cut none. What replaced each edge is an interface the core owns.
   in the order they had been; the compile package's are bound after
   version control's since it moved ("Registration order is visible").
 - **The `themes` package and `shipped-themes`.** The `themes` package
-  (`lean/Editor/Themes/Compiled.lean`) keeps `load-theme`, the theme
+  (`packages/themes/Themes/Compiled.lean`, a default package of its own
+  since the features-as-packages roadmap's phase 7) keeps `load-theme`, the theme
   `default` (`Theme.builtin`) and the theme source, and imports no
   palette. The package `shipped-themes` defines `solarized-dark`,
   `solarized-light` and `fairy-floss` and registers nothing else. Phase 3
@@ -2448,7 +2704,7 @@ roadmap's phase 6", above), and no core module imports them.
 | Library | Kept by | Why | Until |
 |---|---|---|---|
 | `FilesApi` | `Editor.Restore.Run` | session restore, which stays in the core, adopts a reopened file and reads the load limit through it, and runs `FilesApi.Opened` for a journaled buffer that holds a file | for good |
-| `FilesApi` | `Editor.Jumps.Go` | going to a place visits a file through it; evil's jumps and marks reach it | phase 7 (evil) |
+| `FilesApi` | `Editor.Jumps.Go` | going to a place visits a file through it; evil's jumps and marks reach it | for good: going to a place is the core's, and evil, a package since phase 7, reaches it |
 | `FilesApi` | `Editor.Ex` | `:wq` saves the buffer through `FilesApi.files?`'s `save`, and says there is no implementation when none is registered | phase 8 (ex) |
 | `FilesApi` | `Editor.Ex.Compiled` | ex binds `w`, `w!`, `e` and their kin to the names files-api declares | phase 8 (ex) |
 | `FilesApi` | `Editor.Menu.Compiled` | the menu binds `s-o` and `s-s` to the names files-api declares | phase 8 (the menu) |
@@ -2457,23 +2713,31 @@ roadmap's phase 6", above), and no core module imports them.
 | `BuffersApi` | `Editor.Ex.Compiled` | ex binds `b`, `ls` and `bd` to the names buffers-api declares | phase 8 (ex) |
 | `ShellApi` | `Editor.Ex` | ex hands a `:!` line to `shell-command` by shell-api's name and its prompt offers the shell's history | phase 8 (ex) |
 
-### Left for phase 7 and 8
+### Left for phase 8
 
-What the seven's moves leave for the next phases:
+What the moves of phases 6 and 7 leave for the next phase:
 
-- **The seven's tests that import evil's modules.** The working sets' model
-  tests and the workspace's `FindInProject` tests drive keys under the Vim
-  scheme through evil's kit (`Editor.Evil.Kit`) and import
-  `InputScheme.Vim` and `InputScheme.Vim.Default`, modules of evil, which
-  is still in the core. They change when evil moves (phase 7). Project
-  search's tests do not (criterion 3).
 - **Ex's and the menu's reach through the staged interfaces.** `ex` and
   `menu` stay in the core's list until phase 8, and with them the staged
   `buffers-api` and `shell-api` and three of `files-api`'s keepers (the
   table above); `buffers-api` and `shell-api` move to `packages/` when ex
   does.
-- **The default config** (`config/default`) names the seven's commands as
-  text, since the core cannot import a package.
+- **Evil's imports of features still in the core.** Evil's tables name
+  `Editor.Ex.name`, the window commands' names (`Editor.WindowCommands`)
+  and the tab commands' (`Editor.TabCommands`), core feature modules a
+  package may import, and `keyboard-quit` through the staged `ShellApi`.
+  Phase 8 cuts those edges when it moves them: each then needs an
+  interface package for its names.
+- **The menu's and the core stand-in's text.** The menu names `undo` and
+  `redo`, and the core's at-point stand-in (`Editor.Test.AtPoint`) names
+  `insert-newline` and `insert-tab`, as text, since a core module cannot
+  import `evil-api`. The menu switches to the constants when it moves.
+- **The default config** (`config/default`) names the default packages'
+  commands as text, `load-theme` among them, since the core cannot import
+  a package.
+
+The seven's tests that imported evil's modules, which this list held after
+phase 6, run on the test scheme since phase 7 (the plan's C12).
 
 ## Rust in a package
 
@@ -2703,9 +2967,12 @@ of `echo` outside the repository is refused with its reason
 
 ## The module map
 
-Every module under `lean/Editor/`, 274 of them
+Every module under `lean/Editor/`, 259 of them
 (`find lean/Editor -name '*.lean' | wc -l`, at the end of the
-features-as-packages roadmap's phase 6, which moved the seven features of
+features-as-packages roadmap's phase 7, which moved evil's 17 modules, its
+kit among them, and the themes' two out, renamed the two theme checks
+`Editor.Theme.Check` and `Editor.Theme.Picture`, and added four modules of
+the test kit; 274 at the end of its phase 6, which moved the seven features of
 the files cluster out, 48 modules with their kits and doubles, and added
 the core's `Editor.Text.Word` and `Editor.SearchRoot` and ten modules of
 the test kit; 308 at the end of its phase 5; 254 at `6ba99de5`, phase 4
@@ -2725,14 +2992,16 @@ model, the job names of the loop's two reconcilers (`Editor.FileJobs`,
 `Editor.Gutter.Track`), the kit's two (`Editor.Test.Hosted`, `.Opener`)
 and the files feature's kit (`Editor.Files.Kit`)), is
 **core** or part of a **feature that could become a package**. The counts
-below add up to 263: 231 core and 32 in 8 features. The rows were not
+below add up to 248: 237 core and 11 in 6 features. The rows were not
 counted again in full for phase 3, 4 or 6: at phase 3's start they added up
 to 304 against 315 modules, so 11 modules are in no row (the task
 `module-map-count-drift`); phase 4 took its eight moved modules' rows out
 and added the kit's two to the kit's row, phases 5 and 6 counted their own
 additions and removals into their rows (phase 6 took the seven's 19 rows
-out and counted the kit's two rows again, 23 and 10 modules), and the 11
-are still in no row. The interface libraries the core still stages
+out and counted the kit's two rows again, 23 and 10 modules; phase 7 took
+evil's three rows and the themes' three out, added the core's two rows for
+the theme checks, and counted the kit's two rows again, 25 and 12
+modules), and the 11 are still in no row. The interface libraries the core still stages
 (`FilesApi`, `BuffersApi`, `ShellApi`, each with its test library) are
 outside `lean/Editor/` and are in no row, and `ProjectApi` and `VcApi` are
 interface packages: "The interface libraries of the features-as-packages
@@ -2744,10 +3013,9 @@ roadmap's phase 5", above, describes them.
   any module a core module imports for a type it carries (`Editor.Ex.Line`,
   `Editor.Menu`, `Editor.ModeLine`, `Editor.Language`, `Editor.Workspace`,
   the three `Editor.ProjectMode` modules).
-- **A feature** is code reached through a package's registrations: the 9
-  packages of the core's list, as 9 features, with the Vim scheme counted
-  with evil. The table names 8 of them: `package-set` has no row (the task
-  `module-map-count-drift`).
+- **A feature** is code reached through a package's registrations: the 7
+  packages of the core's list, as 7 features. The table names 6 of them:
+  `package-set` has no row (the task `module-map-count-drift`).
 - **Every feature here is in the core's Lake package**,
   and is a core module in the sense of the section above and of the gate's
   check. The map guides later moves; it does not commit to them. The
@@ -2762,7 +3030,9 @@ roadmap's phase 5", above, describes them.
   `project-search`, `working-set`, `shell` and `version-control` ("The
   first default package", "The default package `compile`" and "The default
   packages of the features-as-packages roadmap's phase 3", "… phase 4" and
-  "… phase 6", above).
+  "… phase 6", above). Evil, with the Vim scheme, and the themes left the
+  map in phase 7: they are the Lake packages `evil` and `themes` ("The
+  default packages of the features-as-packages roadmap's phase 7", above).
 
 One row covers modules that share a class and a side of the import rule.
 "A package may import it" is `yes`, `in tests` (a test double) or `no`
@@ -2782,8 +3052,10 @@ One row covers modules that share a class and a side of the import rule.
 | The models: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Config.Elaborator.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Grep.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `.Model.Json`, `.Model.Query`, `Editor.Text.Model`, `Editor.Watch.Model` | 16 | core | in tests |
 | The contracts and cases: `Editor.Clipboard.Contract`, `Editor.Completion.Contract`, `.AtPointContract`, `.DisplayContract`, `.StyleContract`, `Editor.Config.Elaborator.Contract`, `Editor.Display.Contract`, `Editor.Fuzzy.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.SyntaxTree.Contract`, `Editor.Text.Contract`, `Editor.Watch.Contract`, `Editor.Api.Cases`, `Editor.File.Cases`, `Editor.UndoTree.Cases` | 16 | core | in tests |
 | The fakes, the test scheme and the loop's driver: `Editor.Completion.Fake`, `Editor.Job.Fake`, `Editor.InputScheme.Test`, `Editor.Loop.Driver` | 4 | core | in tests |
-| The model test kit: `Editor.Test.AtPoint`, `.Completion`, `.Config`, `.Driver`, `.Ex`, `.Excerpt`, `.Files`, `.Geometry`, `.Hosted`, `.Jobs`, `.Keys`, `.Listing`, `.Loop`, `.Minibuffer`, `.Models`, `.Modes`, `.Opener`, `.Prompts`, `.Shell`, `.Shipped`, `.Sources`, `.States`, `.Workspace` | 23 | core | in tests |
-| The linked test kit: `Editor.Test.Linked.Bench`, `.Host`, `.Jobs`, `.Keys`, `.Lines`, `.Listings`, `.Rig`, `.Services`, `.Shipped`, `.Trees` | 10 | core | in tests |
+| The model test kit: `Editor.Test.AtPoint`, `.Completion`, `.Config`, `.Driver`, `.Editing`, `.Ex`, `.Excerpt`, `.Files`, `.Geometry`, `.Hosted`, `.Jobs`, `.Keys`, `.Listing`, `.Loop`, `.Minibuffer`, `.Models`, `.Modes`, `.Opener`, `.Prompts`, `.Shell`, `.Shipped`, `.Sources`, `.States`, `.Views`, `.Workspace` | 25 | core | in tests |
+| The linked test kit: `Editor.Test.Linked.Bench`, `.Frames`, `.Host`, `.Jobs`, `.Keys`, `.Lines`, `.Listings`, `.Rig`, `.Services`, `.Shipped`, `.Syntax`, `.Trees` | 12 | core | in tests |
+| `Editor.Theme.Check`, the theme completeness check | 1 | core | yes |
+| `Editor.Theme.Picture`, the theme picture check | 1 | core | in tests |
 | The editor API and what is proved of it: `Editor.Api`, `.Api.Theorems`, `Editor.UndoTree`, `.UndoTree.Theorems` | 4 | core | yes |
 | The composite port and a command: `Editor.Command`, `.Call`, `.Control`, `.Registry`, `.Append`, `Editor.Program` | 6 | core | yes |
 | The ports: `Editor.Clipboard`, `Editor.Diff`, `.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Process`, `.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 14 | core | yes |
@@ -2798,9 +3070,6 @@ One row covers modules that share a class and a side of the import rule.
 | Languages and indentation: `Editor.Language`, `.Language.IndentUnit`, `Editor.Indent` | 3 | core | yes |
 | What a minor mode contributes: `Editor.ProjectMode`, `.ProjectMode.Format`, `.ProjectMode.Listing` | 3 | core | yes |
 | What the ex line and a typed path are as data: `Editor.Ex.Line`, `Editor.TypedPath` | 2 | core | yes |
-| `Editor.Evil.Compiled` | 1 | feature: evil | no |
-| `Editor.Evil` and 12 of the modules under it (all but `.Compiled` and `.Kit`); `Editor.InputScheme.Vim`, `.Vim.Default` | 15 | feature: evil | yes |
-| `Editor.Evil.Kit`, the driver of evil's checks under the Vim scheme | 1 | feature: evil | in tests |
 | `Editor.Ex` | 1 | feature: ex | yes |
 | `Editor.Ex.Compiled` | 1 | feature: ex | no |
 | `Editor.FrameCommands` | 1 | feature: frame-commands | yes |
@@ -2808,9 +3077,6 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Menu.Compiled` | 1 | feature: menu | no |
 | `Editor.TabCommands` | 1 | feature: tab-commands | yes |
 | `Editor.TabCommands.Compiled` | 1 | feature: tab-commands | no |
-| `Editor.Themes`, `Editor.Themes.Check` | 2 | feature: themes | yes |
-| `Editor.Themes.Compiled` | 1 | feature: themes | no |
-| `Editor.Themes.Picture`, the theme picture check | 1 | feature: themes | in tests |
 | `Editor.WindowCommands` | 1 | feature: window-commands | yes |
 | `Editor.WindowCommands.Compiled` | 1 | feature: window-commands | no |
 | `Editor.Restore.Run` | 1 | feature: restore | yes |
@@ -2919,15 +3185,18 @@ the set's base (`import Completion.Styles`, `import Completion.Displays`).
 
 #### `evil`
 
-- **Modules** (16): `Evil`, `Evil.Clipboard`, `Evil.Compiled`, `Evil.Jumps`, `Evil.Marks`, `Evil.Motions`, `Evil.Objects`, `Evil.Operators`, `Evil.Registers`, `Evil.Repeat`, `Evil.Scroll`, `Evil.Theorems`, `Evil.TreeObjects`, `Evil.Undo`, `InputScheme.Vim`, `InputScheme.Vim.Default`.
-- **Core modules that import it**: `Headless` (`InputScheme.Vim.Default`).
-- **The test kit's modules that import it**: `Test.Config` (`InputScheme.Vim`).
-- **Other features' modules that import it**: menu: `Menu.Compiled` (`Evil.Clipboard`); project-search: `ProjectSearch.Run` (`Evil.Motions`); themes: `Themes.Check` (`InputScheme.Vim.Default`), `Themes.Picture` (`InputScheme.Vim`).
-- **Other features it imports**: none. `Jumps.Go`, which `Evil` imports to go to a mark, is the core's since phase 6, and visits a closed file through `FilesApi`.
-- **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (27): `ModelTest`: `Api`, `AtPoint`, `ExcerptView`, `Face.Vocabulary`, `InputScheme.Contract`, `Loop`, `Menu`, `Minibuffer`, `State`, `TabBar`, `TabCommands`, `WindowCommands`, `Workspace.FindInProject`, `Support.AtPoint`, `Support.Evil`, `Support.Excerpt`, `Support.OperatorRows`, `Support.Views`, `Support.Vim`, `Support.Windows`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`, `Indent`, `Support.Syntax`; `FfiTest`: `ExcerptView`; `ContractTest`: `SyntaxTree.Real`.
-- **The config base imports**: `Evil.Clipboard`, `Evil.Jumps`, `Evil.Operators`, `Evil.Repeat`, `Evil.Scroll`, `Evil.Theorems`, `Evil.TreeObjects`, `Evil.Undo`, `InputScheme.Vim.Default`.
-- **Reaches by name** (not exhaustive): every command the Vim scheme's default tables name is looked up when its key is pressed, evil's own and other features'; the `menu` package names `undo` and `redo` as strings; the face vocabulary and the completeness check name the cursor face of each Vim state (`Themes/Check.lean`); the headless and window hosts are typed by `Vim.Default.scheme` (the section on input schemes, below).
+Moved out of the core by the features-as-packages roadmap's phase 7: the
+Lake package `evil` (`packages/evil/`; "The default packages of the
+features-as-packages roadmap's phase 7", above), with the Vim scheme, which
+it supplies an editor as its input scheme ("Input schemes", below). It has
+nothing left to cross. No core module and no test of a core module imports
+it: the hosts take their scheme as an argument, the menu names the core's
+clipboard names (`Editor.Clipboard`), the theme checks ask a scheme for its
+cursor faces, and the core's tests run on the test scheme. Its library
+imports the core's API alone, with the names of three features still in
+the core (`Editor.Ex`, `Editor.WindowCommands`, `Editor.TabCommands`) and
+the staged `ShellApi`, which phase 8 cuts. What others reach of it by name
+is declared by `evil-api`. Its tests moved with it, its kit among them.
 
 #### `ex`
 
@@ -3064,15 +3333,14 @@ the user asks `load-theme` for one.
 
 #### `themes`
 
-- **Modules** (4): `Themes`, `Themes.Check`, `Themes.Compiled`, `Themes.Picture`.
-- **Core modules that import it**: none.
-- **The test kit's modules that import it**: none.
-- **Other features' modules that import it**: none.
-- **Other features it imports**: evil (`InputScheme.Vim`, `InputScheme.Vim.Default`).
-- **Modules of packages outside the core that import it**: shipped-themes: `ShippedThemesTest.Linked.ShippedThemes` (`Themes.Picture`), `ShippedThemesTest.ShippedThemes` (`Themes.Check`).
-- **Test modules outside its own tests that import it** (9): `ModelTest`: `Appearance`, `Completion.Contract`, `ExecuteCommand`, `Face.Vocabulary`; `ConfigTest`: `ExecuteCommand`, `Headless`, `Minibuffer`; `FfiTest`: `ExcerptView`, `Support.Scenes`.
-- **The config base imports**: `Themes`.
-- **Reaches by name** (not exhaustive): the default config binds `load-theme`; the theme `default` is the one in force when config names none (`Theme.defaultName`); the package `shipped-themes`, outside the core, imports `Themes.Check` and `Themes.Picture` in its tests.
+Moved out of the core by the features-as-packages roadmap's phase 7: the
+Lake package `themes` (`packages/themes/`; "The default packages of the
+features-as-packages roadmap's phase 7", above). It has nothing left to
+cross. Its two checks stay in the core, as `Editor.Theme.Check` and
+`Editor.Theme.Picture`, since the shipped palettes' tests run them and
+they name no scheme. No core module and no test of a core module imports
+it; the default config's `load-theme` is declared by `themes-api`. Its
+tests moved with it.
 
 #### `version-control`
 
@@ -3158,12 +3426,22 @@ that opens and takes no input.
   Checking at the set's build that a set has a scheme is left to later
   ([extension-points.md](extension-points.md), "A required extension
   point").
-- **Today the core's Lake package supplies it**: evil is still in the
-  core, so `package «editor-core»` declares the keyword and
-  `EditorCore.EditorPackage.scheme` is `Evil.scheme`, the Vim scheme over
-  its default states and bindings (`lean/Editor/Evil/Compiled.lean`). The
-  keyword and the declaration move with evil when it becomes a package,
-  and the set of the core alone then has no scheme.
+- **The default package `evil` supplies it** (`packages/evil/`, the
+  features-as-packages roadmap's phase 7): its lakefile declares the
+  keyword, and `Evil.EditorPackage.scheme` is `Editor.Evil.scheme`, the Vim
+  scheme over its default states and bindings, named `vim`
+  (`packages/evil/Evil/Compiled.lean`). The value is in `Evil.Compiled` and
+  not in the entry module, which imports package modules and nothing else.
+  The core's Lake package declares no keyword and no `scheme`, so the set
+  of the core alone (`tests/empty-set`) has none: `ffi-test` runs its
+  editor in the headless mode and with `--probe` and requires exit 1 and
+  the refusal's line each time (`tests/headless/no-input-scheme`). Until
+  that phase's commit that moved evil, the core's Lake package declared the
+  keyword and `EditorCore.EditorPackage.scheme`.
+- **A test drives the loop on a scheme a package supplies**:
+  `ModelTest.schemePackageChecks` (`lean/ModelTest/Editor/InputScheme.lean`)
+  registers a scheme written in the test as a `SchemePackage`, takes the
+  one chosen and runs the loop on it, with no module of evil.
 - **What themes asks of a scheme** is `InputScheme.cursorFaces`: the faces
   the scheme draws a cursor in, other than `cursor`, which the scheme
   contract holds to its reports (`cursorFacesReported`). The completeness
@@ -3171,7 +3449,7 @@ that opens and takes no input.
   picture check `lean/Editor/Theme/Picture.lean`) and names no scheme: it
   holds a theme to the vocabulary's cursor faces (`Face.cursorNames`, the
   entries marked `cursor`), and a scheme's tests hold that each face it
-  draws a cursor in is one of them (`ModelTest.vimDefaultChecks`).
+  draws a cursor in is one of them (evil's `EvilTest.vimDefaultChecks`).
 
 ## The core imports check
 
@@ -3489,6 +3767,56 @@ are still the first registered.
   view 2 0,0 0x0: "move\nnormal\nvisual             v\nvisual-line        V\ninsert             i\nappend             a\ninsert-line-start  I\nappend-line-end    A\nself-insert\noperate", scroll 0, selections , padding 8 0
   decorations 2: minibuffer.candidate 0..4 minibuffer.candidate 5..11 minibuffer.candidate 12..32 minibuffer.annotation 31..32 minibuffer.candidate 33..53 minibuffer.annotation 52..53 minibuffer.candidate 54..74 minibuffer.annotation 73..74 minibuffer.candidate 75..95 minibuffer.annotation 94..95 minibuffer.candidate 96..116 minibuffer.annotation 115..116 minibuffer.candidate 117..137 minibuffer.annotation 136..137 minibuffer.candidate 138..149 minibuffer.candidate 150..157
   ```
+
+**The `commands:` lines and two lines of `SPC :`'s listing changed when evil
+and the themes moved** (the features-as-packages roadmap's phase 7), each
+by its D6 alone, and nothing else. Evil's package was first in the core's
+list and the themes' sixth, so both registered before every default
+package; the default set now requires `evil`, then `themes`, before every
+other default package, so their order against the default packages and
+between them is kept, and the one change is against the seven packages
+still in the core's list (`ex` … `package-set`), which register before
+every Lake package. So evil's 41 commands, `move` … `set-mark`, which were
+the first registered, follow `package-set`'s `package-build-output` and
+come before the files' `open-file`; and `load-theme`, which followed the
+tab commands' `tab-select-9`, follows evil's `set-mark`. Neither package
+binds a key, and no command name is registered twice in the default set,
+so nothing else can show the order. The theme `default` is still the
+first theme registered, before the shipped palettes', so no line of the
+shipped palettes' fixtures changed. The interface packages `evil-api` and
+`themes-api` register nothing. The lines, verbatim, each on a line of its
+own:
+
+- `tests/headless/expected`, lines 4 and 9 (the same line): before the
+  phase (as its first commit pinned them), after evil moved, and after the
+  themes moved:
+
+```text
+commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused greet
+commands: ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused greet
+commands: ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark load-theme open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused greet
+```
+
+- `tests/headless/bundle/expected`, line 3 (whose last name is config's
+  `greet`), in the same three states:
+
+```text
+commands: move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused squares
+commands: ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused squares
+commands: ex quit save-and-quit reload-config toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark load-theme open-file save-buffer edit-file reload-buffer auto-reload-mode switch-buffer list-buffers close-buffer workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh shell-command shell-filter keyboard-quit vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused squares
+```
+
+- `tests/headless/default-config/expected`, lines 19 and 20: the first ten
+  rows of `SPC :`'s listing and their decorations. They were evil's first
+  ten commands and are the core's first ten since evil moved; the themes'
+  move did not change them. Old, then new:
+
+```text
+view 2 0,0 0x0: "move\nnormal\nvisual             v\nvisual-line        V\ninsert             i\nappend             a\ninsert-line-start  I\nappend-line-end    A\nself-insert\noperate", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..4 minibuffer.candidate 5..11 minibuffer.candidate 12..32 minibuffer.annotation 31..32 minibuffer.candidate 33..53 minibuffer.annotation 52..53 minibuffer.candidate 54..74 minibuffer.annotation 73..74 minibuffer.candidate 75..95 minibuffer.annotation 94..95 minibuffer.candidate 96..116 minibuffer.annotation 115..116 minibuffer.candidate 117..137 minibuffer.annotation 136..137 minibuffer.candidate 138..149 minibuffer.candidate 150..157
+view 2 0,0 0x0: "ex                       :\nquit                     s-q\nsave-and-quit\nreload-config\ntoggle-fullscreen        C-s-f\nminimise-window          s-m\nwindow-split             SPC w s, C-w s, C-w S, C-w C-s  Split window\nwindow-split-vertically  SPC w v, C-w v, C-w C-v  Split window vertically\nwindow-new               SPC w n, C-w C-n  New window\nwindow-close             SPC w c, C-w C-c  Close window", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..26 minibuffer.annotation 25..26 minibuffer.candidate 27..55 minibuffer.annotation 52..55 minibuffer.candidate 56..69 minibuffer.candidate 70..83 minibuffer.candidate 84..114 minibuffer.annotation 109..114 minibuffer.candidate 115..143 minibuffer.annotation 140..143 minibuffer.candidate 144..213 minibuffer.annotation 169..213 minibuffer.candidate 214..287 minibuffer.annotation 239..287 minibuffer.candidate 288..341 minibuffer.annotation 313..341 minibuffer.candidate 342..397 minibuffer.annotation 367..397
+```
 
 ## Build times
 

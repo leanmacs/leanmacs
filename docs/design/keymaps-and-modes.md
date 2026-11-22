@@ -14,22 +14,22 @@ registers, undo and dot repeat, on the editor API:
 | Keymaps, a key's chord, the walk and its proof | `lean/Editor/Keymap.lean` |
 | Key strings, and the strokes `<leader>` and `<localleader>` (`Key.Stroke`, `Key.parseStrokes`, `Key.expand`) | `lean/Editor/Key/Notation.lean` |
 | The leader and the localleader: each scheme's (`InputScheme.leader`, `localLeader`, `leaders`), config's (`leaderKey`, `localLeaderKey`), the leaders in force and the keymap of bindings written with them | `lean/Editor/InputScheme.lean`, `lean/Editor/Setup.lean`, `lean/Editor/Config/Registry.lean` (`Registry.leaders`, `Registry.keymap`) |
-| A binding that holds only in some of a scheme's states (`bindKey … (states := …)`, `SchemeState`, `InputScheme.stateCommand`, `Vim.Bound.within`, `Vim.Bound.holdsIn`) | `lean/Editor/Setup.lean`, `lean/Editor/InputScheme.lean`, `lean/Editor/InputScheme/Vim.lean`; the Vim scheme's state names in `lean/Editor/InputScheme/Vim/Default.lean` |
-| Descriptions on bindings and names of prefixes, for the key hints (`Keymap.descriptions`, `bindKey`'s `desc`, `prefixName`, `Registry.prefixName?`, `Mode.roleDescs`, `Mode.localDescs`, `Vim.Default.keymap`'s `descs`) | `lean/Editor/Keymap.lean`, `lean/Editor/Setup.lean`, `lean/Editor/Config/Registry.lean`, `lean/Editor/Mode.lean`, `lean/Editor/InputScheme/Vim/Default.lean` |
-| What can follow a pending prefix, and its agreement with the walk (`Keymap.continuations`, `Keymap.continuationsOver`, `InputScheme.continuations`, `Vim.State.continuations`, `Scene.keyHints`, `Loop.keyHints`) | `lean/Editor/Keymap.lean`, `lean/Editor/InputScheme.lean`, `lean/Editor/InputScheme/Vim.lean`, `lean/Editor/Scene.lean`, `lean/Editor/Loop.lean` |
-| Every sequence the walk completes from rest, the bindings that run a command, and pressing a binding's keys (`Keymap.reachableOver`, `InputScheme.keyBindings`, `Vim.State.keyBindings`, `InputScheme.keysName`, `Loop.pressed`, `Loop.keyBindingsIn`) | `lean/Editor/Keymap.lean`, `lean/Editor/InputScheme.lean`, `lean/Editor/InputScheme/Vim.lean`, `lean/Editor/Loop.lean` ("Searching the bindings" below) |
+| A binding that holds only in some of a scheme's states (`bindKey … (states := …)`, `SchemeState`, `InputScheme.stateCommand`, `Vim.Bound.within`, `Vim.Bound.holdsIn`) | `lean/Editor/Setup.lean`, `lean/Editor/InputScheme.lean`, `packages/evil/Evil/Vim.lean`; the Vim scheme's state names in `packages/evil/Evil/Vim/Default.lean` |
+| Descriptions on bindings and names of prefixes, for the key hints (`Keymap.descriptions`, `bindKey`'s `desc`, `prefixName`, `Registry.prefixName?`, `Mode.roleDescs`, `Mode.localDescs`, `Vim.Default.keymap`'s `descs`) | `lean/Editor/Keymap.lean`, `lean/Editor/Setup.lean`, `lean/Editor/Config/Registry.lean`, `lean/Editor/Mode.lean`, `packages/evil/Evil/Vim/Default.lean` |
+| What can follow a pending prefix, and its agreement with the walk (`Keymap.continuations`, `Keymap.continuationsOver`, `InputScheme.continuations`, `Vim.State.continuations`, `Scene.keyHints`, `Loop.keyHints`) | `lean/Editor/Keymap.lean`, `lean/Editor/InputScheme.lean`, `packages/evil/Evil/Vim.lean`, `lean/Editor/Scene.lean`, `lean/Editor/Loop.lean` |
+| Every sequence the walk completes from rest, the bindings that run a command, and pressing a binding's keys (`Keymap.reachableOver`, `InputScheme.keyBindings`, `Vim.State.keyBindings`, `InputScheme.keysName`, `Loop.pressed`, `Loop.keyBindingsIn`) | `lean/Editor/Keymap.lean`, `lean/Editor/InputScheme.lean`, `packages/evil/Evil/Vim.lean`, `lean/Editor/Loop.lean` ("Searching the bindings" below) |
 | The key hints shown through the completion display after a delay, and the pending prefix's segment (`Completion.Keys`, `Loop.armedHints`, `Loop.keyHinted`, `EditorState.keyHints`, `keyHintDelay`, `ModeLine.pendingKeys`) | `lean/Editor/Completion/Keys.lean`, `lean/Editor/Loop.lean`, `lean/Editor/State.lean`, `lean/Editor/Setup.lean`, `lean/Editor/ModeLine.lean`, `lean/Editor/Headless.lean` ("The key hints (built)" below) |
 | Invocations | `lean/Editor/Invocation.lean` |
 | The scheme interface, and what a key prints | `lean/Editor/InputScheme.lean` |
 | The test scheme | `lean/Editor/InputScheme/Test.lean` |
 | The scheme contract | `lean/Editor/InputScheme/Contract.lean` |
-| The Vim scheme's grammar: parts of speech, edits, counts, registers, Vim states, the last change | `lean/Editor/InputScheme/Vim.lean` |
-| The Vim scheme's default states and bindings, and the scheme that ships | `lean/Editor/InputScheme/Vim/Default.lean` |
+| The Vim scheme's grammar: parts of speech, edits, counts, registers, Vim states, the last change | `packages/evil/Evil/Vim.lean` |
+| The Vim scheme's default states and bindings, and the scheme that ships | `packages/evil/Evil/Vim/Default.lean` |
 | The loop's one scheme, the keys it steps, running an invocation, rollback and the interrupt | `lean/Editor/Loop.lean` ("The loop runs one scheme" below) |
 | What a command is run with: its target, arguments and keys | `lean/Editor/Command/Call.lean` |
 | Compiled and config commands and key bindings, by owner, and the keymap of the bindings | `lean/Editor/Config/Registry.lean`, `lean/Editor/Setup.lean` (`bindKey`) |
 | The registered roles | `lean/Editor/Role.lean` |
-| Each scheme's role table, leader, hand-tuned keys and own keymaps, and what a mode's key is bound to | `lean/Editor/InputScheme.lean`; the test scheme's and the Vim scheme's tables in `lean/Editor/InputScheme/Test.lean` and `lean/Editor/InputScheme/Vim/Default.lean` |
+| Each scheme's role table, leader, hand-tuned keys and own keymaps, and what a mode's key is bound to | `lean/Editor/InputScheme.lean`; the test scheme's and the Vim scheme's tables in `lean/Editor/InputScheme/Test.lean` and `packages/evil/Evil/Vim/Default.lean` |
 | The mode record, the keymaps a mode makes for a scheme, `Mode.check` | `lean/Editor/Mode.lean` |
 | Modes by owner, a mode's lineage, the active keymaps of a view, setting a major mode through a view and its on-enter action | `lean/Editor/Config/Registry.lean` |
 | Defining a mode from `setup`, and its refusals | `lean/Editor/Setup.lean` (`defineMode`), `lean/Editor/Config/Registry.lean` (`Registrations.problem?`) |
@@ -38,22 +38,22 @@ registers, undo and dot repeat, on the editor API:
 | The notice a scheme is told when the minibuffer's view opens, and the contract's property that a key that prints is text there | `lean/Editor/InputScheme.lean` (`openMinibuffer`), `lean/Editor/InputScheme/Contract.lean` (`minibufferTakesText`), `lean/Editor/Loop.lean` (`Loop.toldViews`) |
 | The minibuffer's mode and its six commands (accept, cancel, the next and the previous candidate, delete backward, and delete to the input's start), and their registrations | The default package `minibuffer` (features-as-packages phase 4): `packages/minibuffer/Minibuffer.lean`, `packages/minibuffer/Minibuffer/Compiled.lean`; their names in its interface package, `packages/minibuffer-api/MinibufferApi.lean` |
 | The frame's commands (`toggle-fullscreen`, `minimise-window`) and their compiled bindings `C-s-f` and `s-m` | `lean/Editor/FrameCommands.lean`, `lean/Editor/FrameCommands/Compiled.lean` |
-| The Vim state of the minibuffer's view, and its default keys | `lean/Editor/InputScheme/Vim.lean` (`States.minibuffer`, `State.openMinibuffer`), `lean/Editor/InputScheme/Vim/Default.lean` (`minibufferCommands`) |
+| The Vim state of the minibuffer's view, and its default keys | `packages/evil/Evil/Vim.lean` (`States.minibuffer`, `State.openMinibuffer`), `packages/evil/Evil/Vim/Default.lean` (`minibufferCommands`) |
 | What a scheme reports of a view, and the contract's property that a key that yields nothing leaves it as it was | `lean/Editor/InputScheme.lean` (`InputScheme.Report`, `report`), `lean/Editor/InputScheme/Contract.lean` (`quietKeyKeepsReport`) |
-| A Vim state's selection shape, and the Vim scheme's report of a view's state | `lean/Editor/InputScheme/Vim.lean` (`StateRecord.shape`, `State.report`), `lean/Editor/InputScheme/Vim/Default.lean` |
+| A Vim state's selection shape, and the Vim scheme's report of a view's state | `packages/evil/Evil/Vim.lean` (`StateRecord.shape`, `State.report`), `packages/evil/Evil/Vim/Default.lean` |
 | What the loop does with a report: the scene's cursor and status field, the report a command is told, the first window's shape, insert sessions, and where a committed text is inserted | `lean/Editor/Loop.lean`, `lean/Editor/Command/Call.lean` (`Call.report`) |
 | A window's wanted column | `lean/Editor/State.lean` (`Window.wanted`), `lean/Editor/Api.lean` (`ViewId.setWanted`) |
 | The vocabulary's motion record, with how an operator takes a motion, and its operator record | `lean/Editor/Vocabulary.lean` |
-| Evil: where a cursor rests, the move command, entering a state, the keys that begin an insert, the two that open a line, typed text | `lean/Editor/Evil.lean` |
-| Evil's twenty-seven motions and their table | `lean/Editor/Evil/Motions.lean` |
-| Evil's three operators and their table, what an operator takes, the operate command, and `x` | `lean/Editor/Evil/Operators.lean` |
-| Evil's registers: the unnamed one and the clipboard's, storing, fetching, and `p` and `P` | `lean/Editor/Evil/Registers.lean` |
-| Evil's undo and redo | `lean/Editor/Evil/Undo.lean` |
-| Evil's dot repeat: the repeat command | `lean/Editor/Evil/Repeat.lean` |
-| Evil's scroll commands: by half a view, by a view, and to the cursor's row | `lean/Editor/Evil/Scroll.lean`, over the policy in `lean/Editor/Scroll.lean` |
-| What is proved of evil on the text model: `x` then `u` restores the text | `lean/Editor/Evil/Theorems.lean`, with `lean/Editor/UndoTree/Theorems.lean` |
+| Evil: where a cursor rests, the move command, entering a state, the keys that begin an insert, the two that open a line, typed text | `packages/evil/Evil.lean` |
+| Evil's twenty-seven motions and their table | `packages/evil/Evil/Motions.lean` |
+| Evil's three operators and their table, what an operator takes, the operate command, and `x` | `packages/evil/Evil/Operators.lean` |
+| Evil's registers: the unnamed one and the clipboard's, storing, fetching, and `p` and `P` | `packages/evil/Evil/Registers.lean` |
+| Evil's undo and redo | `packages/evil/Evil/Undo.lean` |
+| Evil's dot repeat: the repeat command | `packages/evil/Evil/Repeat.lean` |
+| Evil's scroll commands: by half a view, by a view, and to the cursor's row | `packages/evil/Evil/Scroll.lean`, over the policy in `lean/Editor/Scroll.lean` |
+| What is proved of evil on the text model: `x` then `u` restores the text | `packages/evil/Evil/Theorems.lean`, with `lean/Editor/UndoTree/Theorems.lean` |
 | The clipboard port, its model, its contract, and the clipboard of a host with no window | `lean/Editor/Clipboard.lean`, `lean/Editor/Clipboard/Model.lean`, `lean/Editor/Clipboard/Contract.lean`, `lean/Editor/Clipboard/InProcess.lean` |
-| Evil's commands as compiled code registers them | `lean/Editor/Evil/Compiled.lean` |
+| Evil's commands as compiled code registers them | `packages/evil/Evil/Compiled.lean` |
 | An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |
 | Ex bindings by owner, and binding one from `setup` | `lean/Editor/Config/Registry.lean` (`replaceEx`, `ex?`), `lean/Editor/Setup.lean` (`exCommand`) |
 | The ex command, and the commands `quit`, `save-and-quit` and `reload-config` | `lean/Editor/Ex.lean` |
@@ -314,6 +314,8 @@ structure InputScheme where
   tuned       : List (String × List Key × Binding) := []
   -- what a scheme says of one view ("What a scheme reports of a view")
   report      : State → ViewId → InputScheme.Report := fun _ _ => {}
+  -- the faces it draws a view's cursor in, other than `cursor`
+  cursorFaces : List FaceName := []
   -- notices, each the state once something happened
   closeView      : ViewId → State → State := fun _ s => s
   openMinibuffer : ViewId → State → State := fun _ s => s
@@ -324,6 +326,24 @@ structure InputScheme where
   continuations : (ViewId → List (Keymap Binding)) → (List Key → Option String)
                     → ViewId → State → List (Keymap.Continuation Binding) := fun _ _ _ _ => []
 ```
+
+- **The editor's scheme comes from a package of its set.** A Lake package
+  whose lakefile declares the keyword `editor-input-scheme` declares
+  `scheme : Editor.SchemePackage`, a name and an `InputScheme`, in its
+  entry module, and the package-set build hands the hosts the one the set
+  supplies, the last when several do (`SchemePackage.chosen?`,
+  `lean/Editor/InputScheme.lean`). The hosts take the scheme as an argument
+  and name none. The Vim scheme is the default package `evil`'s
+  (`packages/evil/`), and an editor whose set supplies no scheme refuses to
+  start ([packages.md](packages.md), "Input schemes").
+- **`cursorFaces` is what a theme is asked to draw.** It lists the faces
+  the scheme draws a view's cursor in, other than `cursor`: the Vim scheme
+  lists the cursor face of each of its states. The scheme contract holds
+  the list to the scheme's reports (`cursorFacesReported`), and the theme
+  completeness check, which is the core's and names no scheme
+  (`lean/Editor/Theme/Check.lean`), holds a theme to the vocabulary's
+  cursor faces (`Face.cursorNames`), which a scheme's tests hold its list
+  to.
 
 - **`continuations` is what can follow a pending prefix**, given the active
   keymaps and the prefix names. Only the scheme knows which of its pending
@@ -510,9 +530,10 @@ The simplest scheme there is, published for other modules' tests
 
 Status: built (`lean/Editor/Loop.lean`, whose module docs have the detail;
 pinned on the models by `ModelTest.dispatchChecks` and through the headless
-host by `ConfigTest.dispatchChecks`). The headless host takes the scheme as
-a parameter; the executable runs `Vim.Default.scheme` and the tests the test
-scheme.
+host by `ConfigTest.dispatchChecks`). The hosts take the scheme as
+a parameter; the executable runs the scheme its package set supplies, the
+default package `evil`'s `Vim.Default.scheme` in the default set, and the
+core's tests the test scheme.
 
 - **One scheme for the editor.** The loop is given its scheme when it
   starts, and the scheme is fixed for the loop's life. The loop holds the
@@ -740,12 +761,13 @@ structure Vocabulary.Motion where
   with a first argument that is not a string, says
   `move: no motion named (expects a motion's name, then an optional count)`,
   so a malformed call is not taken for a misspelt name.
-- **Config can name the table and its entries**: the root module imports
-  `lean/Editor/Evil/Motions.lean`, which names no registry. So a command
+- **Config can name the table and its entries**: the set's config base
+  brings `packages/evil/Evil/Motions.lean`, through the package's entry
+  module, and that module names no registry. So a command
   of config's runs the move command over the vocabulary that ships, or
   over that vocabulary with motions of its own added
   (`Evil.move (Evil.motions.push mine)`), without registering anything
-  (`ConfigTest.evilChecks`).
+  (`EvilTest.Linked.evilChecks`).
 - **Not built: registering a motion from `setup`.** Nothing needs it yet.
   When it is built, the registry holds motions by owner and hands the move
   command the table as it is when the command is looked up, which is how a
@@ -796,7 +818,7 @@ structure Vocabulary.Operator where
   `linesOverBlanks` is Vi's rule for `d`.
 - **The table is compiled** (`Evil.operators`: `delete`, `change`, `yank`).
   Config can name it and call `Evil.operate` with tables of its own, as it
-  calls `Evil.move` (`ConfigTest.evilChecks`). Registering an operator
+  calls `Evil.move` (`EvilTest.Linked.evilChecks`). Registering an operator
   from `setup` is not built, for the reason a motion's is not.
 - **An operator's `act` is a command's body**, so the vocabulary imports
   the editor's port and the call. It still names no scheme and no key.
@@ -826,11 +848,11 @@ structure Vocabulary.Operator where
 
 ## The Vim scheme
 
-Status: the grammar is built (`lean/Editor/InputScheme/Vim.lean`, namespace
+Status: the grammar is built (`packages/evil/Evil/Vim.lean`, namespace
 `Editor.Vim`), with the default states and bindings
-(`lean/Editor/InputScheme/Vim/Default.lean`). It is the grammar only: keys
+(`packages/evil/Evil/Vim/Default.lean`). It is the grammar only: keys
 in, an invocation out, in pure Lean on the scheme interface, checked with
-no editor API. What its invocations run is evil (`lean/Editor/Evil.lean`,
+no editor API. What its invocations run is evil (`packages/evil/Evil.lean`,
 namespace `Editor.Evil`): Vim's states, motions and commands written on
 the editor API, which name no key. Of evil, the motions, the four states
 and the keys that enter and leave them, and typed text are built (the
@@ -983,7 +1005,7 @@ after the name is the argument, and a number the count.
 The three command names are constants of the scheme (`Vim.moveCommand`,
 `Vim.operateCommand`, `Vim.repeatCommand`), and so is the name typed text
 runs (`Vim.selfInsertCommand`). The commands are registered with evil, not
-here (`lean/Editor/Evil/Compiled.lean`), and all four are built.
+here (`packages/evil/Evil/Compiled.lean`), and all four are built.
 
 - **`pending` is every key of the edit begun**, as chords: counts, the
   register prefix and the operator included, so `d 2` after `d2`. The
@@ -1044,7 +1066,7 @@ here (`lean/Editor/Evil/Compiled.lean`), and all four are built.
   already named.
 - Which registers exist and what they hold is not the scheme's: it is
   editor state, and built (`lean/Editor/State.lean`,
-  `lean/Editor/Evil/Registers.lean`):
+  `packages/evil/Evil/Registers.lean`):
   - **A register is a text and whether it is line-wise** (`Register`),
     kept by name in the editor state (`EditorState.Remembered.registers`), set by one
     state request (`setRegister`). So a command that sets one and then
@@ -1127,8 +1149,8 @@ here (`lean/Editor/Evil/Compiled.lean`), and all four are built.
 
 **How entering and leaving a visual state changes the selection.**
 Decided 2026-11-14 and built, by the command loop's phase 11
-(`Evil.enter`, `lean/Editor/Evil.lean`; pinned by
-`ModelTest.evilStateChecks`). It is the entering rule of "Vim states",
+(`Evil.enter`, `packages/evil/Evil.lean`; pinned by
+`EvilTest.evilStateChecks`). It is the entering rule of "Vim states",
 read for the three keys:
 
 - **`v` in normal state changes nothing but the view's state.** The
@@ -1184,7 +1206,7 @@ structure States where
 **A state's record says the shape of its selection, and entering a state
 reshapes the selection by that record.** Decided 2026-11-14 and built, by
 the command loop's phase 11 (`StateRecord.shape` and `State.report`,
-`lean/Editor/InputScheme/Vim.lean`; `Evil.enter`, `lean/Editor/Evil.lean`;
+`packages/evil/Evil/Vim.lean`; `Evil.enter`, `packages/evil/Evil.lean`;
 pinned by `vimRegistryChecks`, `vimStateChecks` and `vimDefaultChecks` for
 the record and the report, and by `evilStateChecks` and `evilInsertChecks`
 for the rule).
@@ -1359,7 +1381,7 @@ command.
 ### Motions that ask
 
 Status: built, by the daily-driver floor's phase 3
-(`lean/Editor/InputScheme/Vim.lean`, "Motions that ask"; pinned by
+(`packages/evil/Evil/Vim.lean`, "Motions that ask"; pinned by
 `vimGrammarChecks` and `evilSearchChecks`).
 
 `/` and `?` are `Bound.promptMotion`: their argument is a pattern typed in
@@ -1468,7 +1490,7 @@ for). Typed text is no edit, so the change alone would not hold it.
   the escape) and a key yields one invocation.
 
 **The repeat command replays the change as one command**
-(`Evil.repeat`, `lean/Editor/Evil/Repeat.lean`).
+(`Evil.repeat`, `packages/evil/Evil/Repeat.lean`).
 
 - **The change's command is the one the registry holds for its name**,
   as the change's own keys ran it. The repeat command has the loop run
@@ -1522,12 +1544,12 @@ for). Typed text is no edit, so the change alone would not hold it.
 Status: decided 2026-11-14 and built, by the command loop's phase 11
 (`Window.wanted` and `EditorState.setWanted`, `lean/Editor/State.lean`;
 `ViewId.setWanted`, `lean/Editor/Api.lean`; read and kept by `Evil.move`,
-`lean/Editor/Evil.lean`; pinned by `stateChecks`, `stateRequestChecks` and
+`packages/evil/Evil.lean`; pinned by `stateChecks`, `stateRequestChecks` and
 `apiStateChecks` for the state, and by `evilMotionChecks` for the keys).
 Its unit, a display column asked of the display, was decided 2026-11-14
 and built by the command loop's phase 16 (`WantedColumn.goal`,
 `lean/Editor/State.lean`; `Evil.down`, `Evil.up`, `Evil.unwrapped`,
-`lean/Editor/Evil/Motions.lean`; pinned by `displayColumnRows` in
+`packages/evil/Evil/Motions.lean`; pinned by `displayColumnRows` in
 `evilMotionChecks`, by three properties of the display contract, and on
 the executable by `tests/headless/column`).
 
@@ -1676,7 +1698,7 @@ character widths are layout's, and Lean keeps no copy of layout.
 ### Where a cursor rests
 
 Status: decided 2026-11-14 and built, by the command loop's phase 11
-(`Evil.Rest`, `Evil.restOf` and `Evil.rested`, `lean/Editor/Evil.lean`;
+(`Evil.Rest`, `Evil.restOf` and `Evil.rested`, `packages/evil/Evil.lean`;
 pinned by `evilRestChecks` from every position of a few small texts, and
 by the sweep of `evilMotionChecks`, which runs every motion of the table
 from every resting position of the sample texts, with no count and with
@@ -1820,7 +1842,7 @@ report says the view takes text** (`InputScheme.Report.takesText`,
 
 ### Insert state
 
-Status: built, by the command loop's phase 11 (`lean/Editor/Evil.lean`;
+Status: built, by the command loop's phase 11 (`packages/evil/Evil.lean`;
 pinned by `evilInsertChecks`).
 
 Four commands place the bar, one inserts typed text, and eight keys edit
@@ -1928,10 +1950,10 @@ options:
 
 #### Indenting a new line
 
-Status: built, by language-modes phase 3 (`lean/Editor/Evil.lean`,
+Status: built, by language-modes phase 3 (`packages/evil/Evil.lean`,
 `Evil.openingIndent`; `lean/Editor/Indent.lean`, "The opening rule"; pinned
 by `indentOpeningChecks`, `indentEditChecks`, `evilIndentChecks`,
-`ConfigTest.evilIndentChecks`, `ConfigTest.indentChecks` and
+`EvilTest.Linked.evilIndentChecks`, `ConfigTest.indentChecks` and
 `ContractTest`'s opening table).
 
 `RET`, `o` and `O` ask the level of the new row of the text the user sees,
@@ -1970,7 +1992,7 @@ that has no tree, and the syntax tree port gains nothing.
 ### Motions as built
 
 Status: built, by the command loop's phase 11
-(`lean/Editor/Evil/Motions.lean`; pinned by `evilMotionChecks`).
+(`packages/evil/Evil/Motions.lean`; pinned by `evilMotionChecks`).
 
 Twenty-eight motions are vocabulary entries. Fifteen are composed from the
 text port's motion primitives ([text-and-display.md](text-and-display.md),
@@ -2256,7 +2278,7 @@ its owner:
 ### Text objects as built
 
 Status: built, by daily-driver-floor phase 4
-(`lean/Editor/Evil/Objects.lean`, over the text port's two pair questions,
+(`packages/evil/Evil/Objects.lean`, over the text port's two pair questions,
 `lean/Editor/Text.lean`, "Pairs"; pinned by `evilObjectChecks`).
 
 Sixteen text objects are vocabulary entries (`Vocabulary.TextObject`): a
@@ -2275,7 +2297,7 @@ literal port of Vim 9.1's `textobject.c`:
 | `a(` `a)` `ab`, `a[` `a]`, `a{` `a}` `aB` | `a-paren`, `a-bracket`, `a-brace` | The same | The same | The pair with both brackets |
 
 - **Under an operator** an object is taken as a motion's target is, from
-  the span's start with the span's reach (`Editor/Evil/Operators.lean`, "A
+  the span's start with the span's reach (`packages/evil/Evil/Operators.lean`, "A
   text object under an operator"): Vim's exclusive-linewise rule and Vi's
   rule for a deletion over lines apply, as Vim applies them, so `d i {`
   over lines is line-wise and `d a w` of a word alone on its line takes the
@@ -2317,7 +2339,7 @@ literal port of Vim 9.1's `textobject.c`:
 #### The syntax tree's objects
 
 Status: built, by the syntax-tree-sitter roadmap's phase 3
-(`lean/Editor/Evil/TreeObjects.lean`; pinned by `treeObjectRuleChecks`,
+(`packages/evil/Evil/TreeObjects.lean`; pinned by `treeObjectRuleChecks`,
 `evilObjectChecks`, `ContractTest`'s rows over `tests/syntax/rust/objects.rs`
 and `ConfigTest`'s `v a f`, and `v i f` from a `fn` line, through a host of
 the Vim scheme).
@@ -2371,11 +2393,11 @@ library as plain rows (`SyntaxTree.capturesOf`), the rule Lean's:
 ### Operators as built
 
 Status: built, by the command loop's phase 13
-(`lean/Editor/Evil/Operators.lean`, `lean/Editor/Evil/Registers.lean`,
-`lean/Editor/Evil/Motions.lean`; pinned by `evilOperatorChecks`,
+(`packages/evil/Evil/Operators.lean`, `packages/evil/Evil/Registers.lean`,
+`packages/evil/Evil/Motions.lean`; pinned by `evilOperatorChecks`,
 `evilSelectionChecks`, `evilRegisterChecks` and `evilOpenChecks`). `=`
 is built by language-modes phase 3 (pinned by `evilIndentChecks` and
-`ConfigTest.evilIndentChecks`).
+`EvilTest.Linked.evilIndentChecks`).
 
 **The oracle is Vim's documented behaviour, written out case by case; no
 test runs Vim.** The reference is Vim 9.1's `motion.txt`, `change.txt`,
@@ -2478,7 +2500,7 @@ What each motion says of itself:
 | **`c`** | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive`, when it is the empty text. The selection is a bar at the head | The register is the lines, line-wise. The text from the first line's start to where the last line's content ends is deleted, so one line break stays. The selection is a bar at that line's start |
 
 **What `=` does** (`Evil.indent`, the operator `indent`; pinned by
-`evilIndentChecks` on the models and `ConfigTest.evilIndentChecks` over the
+`evilIndentChecks` on the models and `EvilTest.Linked.evilIndentChecks` over the
 library's Rust grammar):
 
 - **It acts on whole rows**, as Vim's `=` does: lines from `==` (with a
@@ -2622,7 +2644,7 @@ built":
 ### Undo and redo
 
 Status: built, by the command loop's phase 13
-(`lean/Editor/Evil/Undo.lean`, `Target.replaceCarrying` in
+(`packages/evil/Evil/Undo.lean`, `Target.replaceCarrying` in
 `lean/Editor/Api.lean`; pinned by `evilUndoChecks`, and the API's
 operation by a case of `lean/Editor/Api/Cases.lean`).
 
@@ -2678,7 +2700,7 @@ operation by a case of `lean/Editor/Api/Cases.lean`).
 ### Scrolling as built
 
 Status: built, by the command loop's phase 15
-(`lean/Editor/Evil/Scroll.lean`, over the policy in
+(`packages/evil/Evil/Scroll.lean`, over the policy in
 `lean/Editor/Scroll.lean` and `Target.anchor`, `Target.scrollTo` and
 `Target.onArea` in `lean/Editor/Api.lean`; pinned by `evilScrollChecks` and
 `scrollChecks`, by three cases of `lean/Editor/Api/Cases.lean`, and by the
@@ -2933,7 +2955,7 @@ over places are `lean/Editor/Jumps.lean`'s, and going to a closed file's
 place `lean/Editor/Jumps/Go.lean`'s; the rules by which marks follow line
 deletions and undo are `lean/Editor/Marks.lean`'s, run by the loop
 (`lean/Editor/Marks/Follow.lean`); the keys are evil's
-(`lean/Editor/Evil/Jumps.lean`, `lean/Editor/Evil/Marks.lean`).
+(`packages/evil/Evil/Jumps.lean`, `packages/evil/Evil/Marks.lean`).
 
 **Places are markers.** A jump list's entry, a mark and the
 previous-context mark are anchor markers of a buffer's text
@@ -2986,7 +3008,7 @@ builds one sets `jumps` on its entry.
   its own.
 - `:help jumplist`'s worked example is pinned step by step on the pure
   list (`ModelTest.jumpListChecks`) and, scaled to eight lines, by keys
-  (`ModelTest.evilJumpChecks`).
+  (`EvilTest.evilJumpChecks`).
 
 **Marks:**
 
@@ -3054,7 +3076,7 @@ and `'` do in Vim 9.1 and do not do here is a recorded departure (below).
 
 **Recorded departures**, where the editor differs from Vim on purpose for
 now. Each is pinned by a check of what the editor does today, named
-`recorded departure (task <slug>)` (`ModelTest.evilMarkChecks`, and
+`recorded departure (task <slug>)` (`EvilTest.evilMarkChecks`, and
 `ModelTest.dispatchRollbackChecks` for the rollback), so a fix that
 matches Vim changes that check deliberately:
 
@@ -3202,7 +3224,8 @@ table `edmacs` settled on (`tabKeys`, the table `tabCommands`):
 
 `Vim.Default` holds the scheme's default keys as data: tables of key string
 and `Bound`, the keymaps made from them, the five state records, and
-`Vim.Default.scheme`, the scheme that ships. The root module imports it, so
+`Vim.Default.scheme`, the scheme that ships. The package's entry module, a
+module of the set's config base, brings it, so
 config sees `Vim.Bound`. The grammar's module names no key.
 
 The names in the tables are the vocabulary names and command names that
@@ -3242,7 +3265,7 @@ Which names have something behind them:
 | The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right`, `window-float` | Built and registered (the `window-commands` package, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
 | The tab commands `tabKeys` names: `tab-next`, `tab-previous`, `tab-new`, `tab-close`, `tab-switch`, `tab-select-1` … `tab-select-9`; and `tab-rename`, `tab-move-right`, `tab-move-left`, with no key | Built and registered (the `tab-commands` package, `lean/Editor/TabCommands.lean`; "Tab commands as built") |
 | `jump-backward`, `jump-forward`, `set-mark` | Built and registered (the `evil` package; "The jump list and marks") |
-| `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (the `evil` package, `lean/Editor/Evil/Clipboard.lean`), under the names the core gives the Edit menu's clipboard items (`Clipboard.cutName` and the other three, `lean/Editor/Clipboard.lean`), which the menu names; the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
+| `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (the `evil` package, `packages/evil/Evil/Clipboard.lean`), under the names the core gives the Edit menu's clipboard items (`Clipboard.cutName` and the other three, `lean/Editor/Clipboard.lean`), which the menu names; the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
 
 | Table | Keys |
 |---|---|
@@ -3819,8 +3842,8 @@ phase 4 moved into the default package `minibuffer`, now
 `packages/minibuffer/Minibuffer.lean` and
 `packages/minibuffer/Minibuffer/Compiled.lean`; `lean/Editor/InputScheme.lean`,
 `lean/Editor/InputScheme/Contract.lean` and `lean/Editor/Loop.lean` for
-the notice; `lean/Editor/InputScheme/Vim.lean` and
-`lean/Editor/InputScheme/Vim/Default.lean` for the Vim state; the module
+the notice; `packages/evil/Evil/Vim.lean` and
+`packages/evil/Evil/Vim/Default.lean` for the Vim state; the module
 docs have the detail). How a command waits for a prompt's answer, and what
 accept and cancel do, is in [concurrency.md](concurrency.md), "Prompts".
 
@@ -3955,7 +3978,7 @@ The minibuffer's buffer is in an insert session for as long as its prompt
 is open, so its history has one step for the whole prompt, and is given
 up with it.
 
-Pinned by `ModelTest.evilInsertChecks` (a key typed into a prompt, under
+Pinned by `EvilTest.evilInsertChecks` (a key typed into a prompt, under
 the Vim scheme), `ModelTest.promptChecks` (the mode and its commands, on the
 models and the test scheme, with the accept key and the cancel key read
 from its role table), `dispatchMinibufferNoticeChecks` (the notice in the
@@ -4905,9 +4928,10 @@ fixture `packages/compile/tests/compile/three-lines`, and
 git and the trees beside them, and by a compile in a headless host, on the
 script `packages/compile/tests/linked/run/script`. That a host of the
 core's packages alone starts with nothing of the compile mode is
-`ConfigTest.shippedChecks`', and that an editor built without the package
-answers `:compile` as an unknown ex name is the fixture
-`tests/headless/core-ex-names`.
+`ConfigTest.shippedChecks`', which also holds that `compile` as an ex name
+is not bound there (the fixture `core-ex-names`, which showed it on an
+editor built without the package, was retired when evil became a package
+and that editor lost its input scheme).
 
 ## The ex command line
 
@@ -5720,7 +5744,7 @@ names a scheme's key:
 | `indentOpeningChecks`, `indentEditChecks` | The opening rule (`Indent.openingCounts`, `Indent.levelOf`) and the widening (`Indent.widenedStart`), pure, over hand-built nodes; and levels as edits, pure: a level's whitespace in spaces or tabs, the re-indent's edits (a row already right left, a blank row emptied, a kept row untouched), what a new line gets for each answer, and `RET`'s edit (`Indent.breakAt`) |
 | `evilIndentChecks` | `=` and the indented new lines by key, in a JSON language whose model tree answers the indents query (`indentDriver`): `gg=G` over a mangled text, `=af`, counts, `=j`, `V j =`, one undo step, `.` over another range and with a new count, not over a selection, a config entry's tab unit; `RET` after an opening bracket and before a closing one, between blanks and twice, `o` and `O`, and `.` replaying them; and with no language or no indents query, `=` giving up with its sentence and `RET`, `o` and `O` as before |
 | `ConfigTest.indentChecks` | Through a headless host of the test scheme and the library's Rust grammar, by commands of config's run by name: the edits `TextId.reindentEdits` answers of every row of the Rust indent fixture mangled in code, applied, give the fixture back, its string and comment rows kept; `TextId.openingLevel` after an unclosed brace, above a closing one, at the text's end and two deep; and a plain and a JSON buffer refused, as values |
-| `ConfigTest.evilIndentChecks` | Evil's linked check, through a headless host of the Vim scheme that ships and the library's Rust grammar: `gg=G` on the Rust indent fixture mangled in code gives the fixture back, its string and comment rows kept; `=af` on one of two functions, then `u` and `.`; `A RET` after an unclosed brace at the text's end and two deep, `o` then `if a {` and `RET`, `o` and `O` in a method; and a plain and a JSON buffer as before. The host waits for a text's tree before a question of its captures, so keys that edit and then ask are deterministic. `ContractTest` holds the opening rule's table over the real grammar through `TextId.openingLevel` |
+| `EvilTest.Linked.evilIndentChecks` | Evil's linked check, through a headless host of the Vim scheme that ships and the library's Rust grammar: `gg=G` on the Rust indent fixture mangled in code gives the fixture back, its string and comment rows kept; `=af` on one of two functions, then `u` and `.`; `A RET` after an unclosed brace at the text's end and two deep, `o` then `if a {` and `RET`, `o` and `O` in a method; and a plain and a JSON buffer as before. The host waits for a text's tree before a question of its captures, so keys that edit and then ask are deterministic. `ContractTest` holds the opening rule's table over the real grammar through `TextId.openingLevel` |
 | `ConfigTest.modeChecks` | Through the headless host and the real elaborator: a config mode's role runs its store command, and once a reload drops the mode the role's key runs the global binding; a compiled mode's role runs its command before any reload and after a reload of a config that defines no mode |
 
 Beside them, `stateChecks` pin the three state operations, `registryChecks`
@@ -5807,7 +5831,7 @@ maps.
 ### Keys against the model
 
 Built, for motions, the keys of insert state, the operators, the
-registers, undo and dot repeat (`ModelTest.evilMotionChecks`,
+registers, undo and dot repeat (`EvilTest.evilMotionChecks`,
 `evilInsertChecks`, `evilOperatorChecks`, `evilSelectionChecks`,
 `evilRegisterChecks`, `evilOpenChecks`, `evilUndoChecks`,
 `evilRepeatChecks`). The cursor is written into the fixture as a bar, and
@@ -5940,7 +5964,7 @@ ways, proved the same way: a listed key walks to what the list says
 resets the walk (`Keymap.walk_unlisted`, `Keymap.walkOver_unlisted`), over
 the shared lemmas `Keymap.resolve_ne_unbound` and
 `Keymap.resolveOver_ne_unbound`. The second is proved on the text model
-(`Evil.deleteChar_undo`, `lean/Editor/Evil/Theorems.lean`):
+(`Evil.deleteChar_undo`, `packages/evil/Evil/Theorems.lean`):
 
 - **What it says.** For every model in which a text holds some content,
   every extent, and every undo tree over that text that knew its revision

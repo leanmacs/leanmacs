@@ -162,6 +162,20 @@ end WordCount
   on each other in the order the set's lakefile names them
   ([packages.md](../design/packages.md), "The order packages register
   in"). Of two registrations of one name the later is found.
+- **A package may supply the editor's input scheme.** Its `lakefile.toml`
+  declares `keywords = ["editor-input-scheme"]`, and its entry module
+  declares `scheme : Editor.SchemePackage` beside `packages`: a name and an
+  `InputScheme` (`{ name := "mine", scheme := Mine.scheme }`). An editor
+  runs the scheme its set supplies, the last one when several packages
+  supply one, and refuses to start when none does. The default package
+  `evil` supplies the Vim scheme
+  ([packages.md](../design/packages.md), "Input schemes"; the interface a
+  scheme implements is in
+  [keymaps-and-modes.md](../design/keymaps-and-modes.md), "Input
+  schemes"). The commands the Edit menu and completion at point reach of a
+  scheme's package are declared by the interface package `evil-api` and by
+  the core's clipboard names (`Editor.Clipboard`): a scheme's package
+  registers its own under them.
 - **Config's registrations are found before any package's.** A command
   your config registers under a package's command's name runs in its
   place.

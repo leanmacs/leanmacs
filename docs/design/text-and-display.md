@@ -530,7 +530,7 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   (`TextModel.offsetOf_pointOf`, `TextModel.lineStart_idempotent`).
 - What the command loop has under each of the Vim scheme's motion names
   is a composition of these, built by its phase 11 as entries of the
-  vocabulary (`lean/Editor/Evil/Motions.lean`;
+  vocabulary (`packages/evil/Evil/Motions.lean`;
   [keymaps-and-modes.md](keymaps-and-modes.md), "Motions as built"):
   `left` and `right` are the previous and
   the next cell kept on the line by the line's start and end; `down` and
@@ -727,7 +727,7 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   and do not place it: whose cursor it becomes and in what shape is the
   input scheme's to say. A selection comes back only for an edit that
   carried one, which the API's selection edits do. **Evil places it**
-  (`lean/Editor/Evil/Undo.lean`, the command loop's phase 13;
+  (`packages/evil/Evil/Undo.lean`, the command loop's phase 13;
   [keymaps-and-modes.md](keymaps-and-modes.md), "Undo and redo"): `u`
   puts one range of the view's state's shape on the head of what an undo
   hands back, rested by that state's rule, and `C-r` places what a redo
@@ -1740,7 +1740,7 @@ checked.
 Themes are registered by name, by owner, as commands and modes are
 (`lean/Editor/Config/Registry.lean`, "Themes"): the `themes` package
 registers `Theme.builtin` as the one called `default`
-(`lean/Editor/Themes/Compiled.lean`), the `shipped-themes` package, a
+(`packages/themes/Themes/Compiled.lean`), the `shipped-themes` package, a
 default package outside the core, the palettes that ship
 (`ShippedThemes.themes`, `packages/shipped-themes/ShippedThemes.lean`), and
 `setup` registers
@@ -1767,7 +1767,7 @@ theme in force is state of the reload reducer (`Config.State.themeName`,
   registered as `<name>` ``. A theme of config's in force that a reload
   drops falls back to `default`.
 - **`load-theme` switches the theme live, with no reload**
-  (`lean/Editor/Themes.lean`): it asks for a name with the registered
+  (`packages/themes/Themes.lean`): it asks for a name with the registered
   themes as its candidates, and the host feeds the reducer the choice
   (`Config.Event.choose`). A name nobody registered is refused in the echo
   area, ``load-theme: no theme is registered as `<name>` ``, and changes

@@ -30,9 +30,10 @@ The packages roadmap moved two features out of the core, the shipped
 palettes and the compile mode. The other features are still in the core's
 Lake package, and they import one another: files, workspaces, version
 control, working sets and buffers import each other in a cycle, the ex line
-imports buffers, files and shell, and the core imports evil for the input
-scheme ([packages.md](packages.md), "What each feature would have to
-cross").
+imports buffers, files and shell, and the core imported evil for the input
+scheme until evil became a package, which supplies the scheme
+([packages.md](packages.md), "What each feature would have to
+cross", "Input schemes").
 
 Moving a feature is not enough. If the files feature imports the git
 package's modules, nobody can replace the git package without also changing
@@ -399,9 +400,9 @@ and it is not routed through an extension point.**
     unknown identifier at build time, the property extension points are
     keyed by type for.
   - **A reacher still inside the core keeps naming the reached command as
-    text**: the Vim scheme's default tables
-    (`lean/Editor/InputScheme/Vim/Default.lean`), the menu, the ex names and
-    the core's default config (`config/default`). It cannot import the
+    text**: the menu, the ex names and
+    the core's default config (`config/default`), as the Vim scheme's
+    default tables did until evil moved out. It cannot import the
     interface package, because the core imports no package. **The core →
     interface refusal of the layer imports check stays**: no exception is
     made for name constants.
@@ -409,7 +410,20 @@ and it is not routed through an extension point.**
     phase 7; the ex line, the menu and the default config's reaches in
     phase 8), it switches from text to the constant in the same move. It
     then requires and imports the interface package, which the rule
-    allows.
+    allows. Evil did so (`packages/evil/Evil/Vim/Default.lean`): its tables
+    name the minibuffer's commands by `MinibufferApi`'s constants,
+    completion at point's by `AtPointApi`'s, and `keyboard-quit` by the
+    staged `ShellApi`'s; for the features still in the core, the ex line
+    and the window and tab commands, it names the constants of their core
+    modules (`Editor.Ex.name`, `Editor.WindowCommands.…Name`,
+    `Editor.TabCommands.…Name`), which a package may import until phase 8
+    moves them.
+  - **A name the core itself must offer every implementation** is the
+    core's: the Edit menu's Cut, Copy, Paste and Select All are what any
+    input scheme must answer, so the core declares their names
+    (`Editor.Clipboard.cutName` and the rest, `lean/Editor/Clipboard.lean`),
+    the menu and evil both name those, and no interface package is
+    involved.
 - **How it is enforced.** The interface package publishes a contract check
   (`AGENTS.md`: the owner of a port publishes its fake and its contract
   check), which every implementation runs. It collects the
@@ -425,9 +439,16 @@ and it is not routed through an extension point.**
   replacement need not keep it.
 - **A user's config** is unaffected, and still names commands as text.
 - **Today.** No core module reaches `shipped-themes`, `compile`,
-  `mode-line` or `languages` by name (the default config binds
-  `load-theme`, a core command; the mode line's listing and the `code`
-  mode are names the core declares). The default config does reach two
+  `mode-line` or `languages` by name (the mode line's listing and the `code`
+  mode are names the core declares). Phase 7 built two more names-only
+  interface packages with the moves of evil and the themes
+  ([packages.md](packages.md), "The interface packages `evil-api` and
+  `themes-api`"): `themes-api` declares `load-theme`
+  (`ThemesApi.loadName`), which the default config binds, and `evil-api`
+  declares `insert-newline`, `insert-tab`, `undo` and `redo`
+  (`EvilApi.insertNewlineName` and the rest), which completion at point
+  runs with no session open, by the constants, and the Edit menu runs, as
+  text. The default config does reach two
   default packages' commands, `execute-command` (`SPC :`) and
   `search-bindings` (`SPC ?`), so the features-as-packages roadmap's
   phase 3 built the first two feature interface packages with those
@@ -533,4 +554,9 @@ and it is not routed through an extension point.**
   (`Config.Registrations.collect`). So the build of a package set could run
   every package's `setup` and fail when an extension point marked as
   required, such as the input scheme, has no value. The input scheme is
-  refused at start-up for now ([packages.md](packages.md), "Input schemes").
+  no extension point: it is a registration of the core's, a declaration
+  `scheme` of the entry module of a package whose lakefile declares the
+  keyword `editor-input-scheme`, since a scheme is in `Type 1` and an
+  extension point's values are in `Type`. A set that supplies none is
+  refused at start-up, and by the probe a restart runs, and not at the
+  set's build, for now ([packages.md](packages.md), "Input schemes").

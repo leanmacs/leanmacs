@@ -44,6 +44,16 @@ by hand").
 
 The default set requires the core, `editor-core`, and the default packages:
 
+- [`evil`](../../packages/evil/README.md): the Vim scheme and evil, Vim's
+  states, motions, operators and the rest of its commands. It supplies the
+  editor's input scheme, and requires the interface packages `evil-api`,
+  `minibuffer-api` and `at-point-api`. Without it, and with no other
+  package that supplies a scheme, the editor would refuse to start
+  ("Removing, default packages included", below).
+- [`themes`](../../packages/themes/README.md): `load-theme` and the theme
+  `default`. It requires its interface package, `themes-api`. Without it
+  the theme in force is still the built-in one, named `default`, and config
+  still defines and names themes.
 - [`files`](../../packages/files/README.md): the file commands,
   `open-file`, `save-buffer`, `edit-file`, `reload-buffer` and
   `auto-reload-mode`. Without it no file opens and none is saved.
@@ -173,6 +183,14 @@ which the lakefile already requires:
 name = "config"
 
 [[require]]
+name = "evil"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/evil"
+
+[[require]]
+name = "themes"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/themes"
+
+[[require]]
 name = "files"
 path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/files"
 
@@ -244,6 +262,15 @@ globs = ["Config.+"]
 The tables of packages you added stay as they were. `editor-core` cannot
 be removed, and a name the lakefile does not require is refused. By hand,
 make the same edit and `:reload`.
+
+**Removing `evil`** leaves a set with no input scheme, unless another
+package of yours supplies one. An editor of such a set refuses to start:
+it prints `editor: no input scheme is installed: no package of this
+editor's package set supplies one` and exits 1. So the set builds, but the
+restart is given up: before the session is handed over the new editor is
+probed, the probe is refused the same way, and the editor you are in keeps
+running and says why. Install a package that supplies a scheme, or put
+`evil`'s table back, and `:reload`.
 
 ## Editing the lakefile by hand
 

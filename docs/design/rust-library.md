@@ -2387,7 +2387,7 @@ crosses as a tag, 0 to 3. In Lean, entering a major mode with a syntax tree
 injects, gives a language for each grammar, and keeps the text objects and
 indents queries (`lean/Editor/Highlight.lean`); the indent rule
 (`lean/Editor/Indent.lean`) and the text-object rule
-(`lean/Editor/Evil/TreeObjects.lean`) are Lean's, over plain rows.
+(`packages/evil/Evil/TreeObjects.lean`) are Lean's, over plain rows.
 
 **Open questions:**
 
