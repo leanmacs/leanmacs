@@ -6,9 +6,9 @@ import Editor
 import Editor.Headless
 import Editor.InputScheme.Test
 import Editor.Test.AtPoint
+import Editor.Test.Ex
 import Editor.Test.Linked.Services
 import Editor.Test.Shipped
-import EditorCore.EditorPackage
 import FilesApiTest.Fake
 import MinibufferApiTest.Fake
 
@@ -38,8 +38,9 @@ mirrors the module it tests, and a check of its own:
   `compile-command` runs fills the compilation buffer, `next-error` visits
   the tool's location, mise's tasks are offered, and two worktrees keep
   separate error lists;
-- `hostCheck`, here: a compile in the headless host, handed the packages a
-  set that holds this package hands its editor, in a temporary working
+- `hostCheck`, here: a compile in the headless host, handed the core's
+  test kit's ex line, the stand-ins a set's other packages are replaced by
+  and this package's own (`setPackages`), in a temporary working
   directory. The script `tests/linked/run/script` starts a child that
   writes one error line and blocks, steps to its location, kills it and
   recompiles; the host's output holds that directory's path, so it is not
@@ -49,8 +50,8 @@ mirrors the module it tests, and a check of its own:
   then), and moved here byte for byte.
 
 **The check of the host is here, in the root, and not in a module under
-`CompileTest/Linked/`**: it names the headless host, the config base and
-the core's entry module, which only the root of a linked test may import
+`CompileTest/Linked/`**: it names the headless host and the config base,
+which only the root of a linked test may import
 (`docs/design/packages.md`, "What a package may import").
 
 **One table of waits.** The host makes the process's table of waits and
@@ -67,8 +68,13 @@ declaration of this package, so the host is told to elaborate it on
 `Editor` alone, found in the core's `.olean` directory.
 -/
 
-/-- The packages a set that holds this Lake package hands its editor: the
-core's, which this package requires, `files-api`'s fake
+/-- The packages the host of `hostCheck` is handed, in place of a set's:
+the core's test kit's ex line (`Editor.Test.exLinePackage`,
+`lean/Editor/Test/Ex.lean`), whose command `ex` the script runs by name
+to type each of this package's ex names, in place of the default package
+`ex` (the core's own list, which held that package and came first here,
+holds no package this check needs: the features-as-packages roadmap's
+phase 8), `files-api`'s fake
 (`FilesApiTest.fake`), whose `Files` value the visit of a location opens a
 file with, in place of the default package `files`, the core's test kit's
 stand-in for
@@ -80,9 +86,8 @@ its implementation of the default package `at-point`'s commands
 (`MinibufferApiTest.fake`), whose commands answer the compile prompt,
 then its own, the order the package-set build registers them in. -/
 def setPackages : Array Editor.Package :=
-  EditorCore.EditorPackage.packages ++
-    #[FilesApiTest.fake, Editor.Test.Shipped.modeLine, Editor.Test.AtPoint.package,
-      MinibufferApiTest.fake] ++
+  #[Editor.Test.exLinePackage, FilesApiTest.fake, Editor.Test.Shipped.modeLine,
+      Editor.Test.AtPoint.package, MinibufferApiTest.fake] ++
     Compile.EditorPackage.packages
 
 /-- The directory of the fixtures the checks over the real process service
@@ -114,7 +119,7 @@ def hostCheck {β σ : Type} {scheme : Editor.InputScheme}
     (host : Editor.Headless.Collaborators β σ scheme) (printed : IO.Ref (Array String)) :
     CompileTest.Check :=
   { name :=
-      "a compile in the headless host over the core's packages and this package's, in a temporary working directory: the script tests/linked/run/script runs to its end, and what the host prints holds each line of tests/linked/run/holds: the run job started, the child's error line in the compilation buffer, a compilation.error decoration, the visit's echo of a file that is not there, no earlier location, Compilation killed in the echo area and in the buffer, and the run job started again by recompile"
+      "a compile in the headless host over the kit's ex line and this package's, in a temporary working directory: the script tests/linked/run/script runs to its end, and what the host prints holds each line of tests/linked/run/holds: the run job started, the child's error line in the compilation buffer, a compilation.error decoration, the visit's echo of a file that is not there, no earlier location, Compilation killed in the echo area and in the buffer, and the run job started again by recompile"
     run := do
       let directives ←
         IO.ofExcept

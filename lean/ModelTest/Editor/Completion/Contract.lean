@@ -4,7 +4,6 @@ import Editor.Completion.Candidate
 import Editor.Completion.Contract
 import Editor.Completion.Fake
 import Editor.Completion.Keys
-import Editor.Ex
 import Editor.Program
 import Editor.Test.Completion
 import Editor.Test.Sources
@@ -25,11 +24,12 @@ open Editor.Test
 
 /-- The checks of the completion sources' contract
 (`Editor/Completion/Contract.lean`): it holds of the model, of the fake that
-answers what it was asked, of every source the core ships and of the key
+answers what it was asked, of a source of fixed candidates and of the key
 hints' source (`Completion.Keys.source`), and it reports a source that makes
 a text and one that is refused. The sources of the command prompt and the
 binding search are held to it by their own checks, on the same runner
-(`Editor.Test.sourceHolds`, `Editor/Test/Sources.lean`), and so are the
+(`Editor.Test.sourceHolds`, `Editor/Test/Sources.lean`), and so are the ex
+line's two, its `:!` history and its names (`exChecks`), the
 themes' source (`ThemesTest.themeChecks`), the tabs' source
 (`tabCommandChecks`), the files feature's file source
 (`FilesTest.pathsChecks`), the buffers
@@ -38,7 +38,6 @@ workspace's two (`WorkspaceTest.findFileChecks`, `WorkspaceTest.findInProjectChe
 def sourceContractChecks : List Check :=
   let subjects : List Completion.Source :=
     [.fixed "fixed" "test" (offered #["wq", "w"]), Completion.Fake.echo "echo" "test",
-      Ex.historySource, Ex.namesSource,
       Completion.Keys.source
         #[{ key := "s", leads := .binding (some "Save") }, { key := "f", leads := .prefix none 2 }]]
   let writes : Completion.Source :=
@@ -50,11 +49,7 @@ def sourceContractChecks : List Check :=
     Completion.Contract.properties.all (·.holds sourceRunner source)
   (subjects.flatMap fun source =>
       (sourceContract source).map fun (name, held) => { name, run := pure held }) ++
-    [{  name :=
-          "the contract reports a source that makes a text and one that is refused, and the shipped ones answer something on the fixture"
-        run :=
-          pure <|
-            !holds writes && !holds (Completion.Fake.refusing "no" "test") &&
-              [Ex.namesSource].all answersSomething }]
+    [{  name := "the contract reports a source that makes a text and one that is refused"
+        run := pure <| !holds writes && !holds (Completion.Fake.refusing "no" "test") }]
 
 end ModelTest

@@ -12,12 +12,12 @@ import Editor.State
 import Editor.Test.Completion
 import Editor.Test.Driver
 import Editor.Test.Keys
+import Editor.Test.Listings
 import Editor.Test.Loop
 import Editor.Test.Prompts
 import ModelTest.Check
 import ModelTest.Editor.Completion.Later
 import ModelTest.Support.Candidates
-import ModelTest.Support.Listings
 
 /-!
 # Model tests: `Editor/Completion/Filtering.lean`

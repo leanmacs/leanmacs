@@ -27,6 +27,7 @@ import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Shipped
 import Editor.Test.Linked.Syntax
 import Editor.Test.Linked.Trees
+import Editor.Test.Listings
 import Editor.Test.Modes
 import Editor.Test.PackageSet
 import Editor.Test.Prompts
@@ -88,7 +89,9 @@ at-point (`Editor.Test.AtPoint`), and `Editor.Test.Files`, `.Hosted`,
 listing's kit moved to `compile-api` in phase 8, the kit's stand-ins for
 session restore's and the package-set build's registrations and for the
 window and tab commands (`Editor.Test.Restore`, `.PackageSet`, `.Windows`,
-phase 8), with `Editor.File.Cases`
+phase 8), the frame driver (`Editor.Test.Frame`) and the style and
+display written for tests (`Editor.Test.Listings`, the core's test support
+until the ex line's tests needed it, phase 8), with `Editor.File.Cases`
 and `Editor.UndoTree.Cases`, which it brought) and the
 linked tests' (`Editor.Test.Linked.…`, `Editor/Test/Linked/`: its rig, its
 services, its trees, its hosts over the real elaborator, which bring

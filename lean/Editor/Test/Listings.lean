@@ -5,19 +5,29 @@ import Editor.Fuzzy
 import Editor.Scene
 
 /-!
-# Model tests: support: Listings
+# The test kit: Listings
 
 A completion style (`marking`) and a completion display (`windowed`)
-written for the core's tests, neither the ones that ship: the core's own
+written for tests, neither the ones that ship: the core's own
 style (`Completion.Style.unregistered`) gives no ranges, and its own
 display (`Completion.Display.unregistered`) draws no face and has no
 window, and a check of what the loop and the state do with a style's
 ranges or a display's rows, faces and window needs one that has them. Each
 rule is stated here and is no shipped one's. Shared by several test
-modules under `ModelTest/Editor/`; it holds no checks of its own.
+modules under `ModelTest/Editor/` and by the tests of the default package
+`ex` (`packages/ex/`), whose prompt's listing is matched and drawn by
+them; it holds no checks of its own. It was the core's test support
+`ModelTest/Support/Listings.lean` until the ex line's tests, which a
+package's tests may not import, needed it (the features-as-packages
+roadmap's phase 8).
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -116,4 +126,4 @@ every listing. -/
 def windowedDisplaying : Completion.Displaying :=
   { default := windowed }
 
-end ModelTest
+end Editor.Test

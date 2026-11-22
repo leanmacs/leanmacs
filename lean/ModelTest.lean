@@ -489,8 +489,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   display written here, neither shipped, registered in a registry the loop
   is handed, lists what the style keeps, draws the display's rows and
   accepts the chosen one; then, matched and drawn by the style and the
-  display written for the core's tests (`marking` and `windowed`,
-  `ModelTest/Support/Listings.lean`), the listing the loop makes before
+  display written for tests (`marking` and `windowed`, the kit's
+  `Editor/Test/Listings.lean`), the listing the loop makes before
   each scene, for the
   initial text and for the text typed so far, what a command that fails
   is rolled back to, what the listing costs in requests, and that a
@@ -529,13 +529,14 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   order kept with the style's ranges, and a missing filter said in the
   echo area;
 - `sourceContractChecks`: the completion sources' contract
-  (`Editor/Completion/Contract.lean`) on the model, the fake, each source
-  the core ships but the command prompt's and the binding search's, which
-  their own lists hold to it, and the key hints' source, run on the kit's
+  (`Editor/Completion/Contract.lean`) on the model, the fake and the key
+  hints' source, run on the kit's
   runner over `twoBuffers` and the editor's models
   (`Editor.Test.sourceRunner`, `Editor/Test/Sources.lean`), and seen to
-  report a source that writes and one that is refused. The tabs' source is
-  held to it by `tabCommandChecks`. The files package's
+  report a source that writes and one that is refused. The ex line's two
+  sources are held to it by `exChecks`, the tabs' source by
+  `tabCommandChecks`, and the command prompt's and the binding search's by
+  their own lists. The files package's
   file source is held to it by `FilesTest.pathsChecks` (in its package), the buffers package's
   buffer source by `BuffersTest.bufferCommandChecks` (in its package), and the workspace's find-file and
   find-in-project sources by `WorkspaceTest.findFileChecks` and `WorkspaceTest.findInProjectChecks` (in its package);
@@ -617,7 +618,10 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   after it said by `ShellApi.noCommand`, with a shell registered and with
   none, handing the shell nothing. Each message is read from the function
   that makes it. The ex package binds none of Vim's ex names for marks,
-  which evil's recorded departures type on the kit's ex line;
+  which evil's recorded departures type on the kit's ex line; and the
+  completion sources' contract over the ex line's two sources, its `:!`
+  history and its names, with that the names' source answers something on
+  the contract's fixture;
 - `faceVocabularyChecks`: the face vocabulary (`Editor/Face/Vocabulary.lean`)
   names each face once with its meaning, marks its cursor faces, and
   lists every face the mode line and the loop draw, layout's four and the

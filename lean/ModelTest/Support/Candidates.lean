@@ -33,6 +33,7 @@ import Editor.Test.Completion
 import Editor.Test.Config
 import Editor.Test.Driver
 import Editor.Test.Keys
+import Editor.Test.Listings
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Models
@@ -40,7 +41,6 @@ import Editor.Test.Prompts
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
-import ModelTest.Support.Listings
 
 /-!
 # Model tests: support: Candidates

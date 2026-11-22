@@ -64,6 +64,7 @@ import Editor.Test.Editing
 import Editor.Test.Files
 import Editor.Test.Geometry
 import Editor.Test.Keys
+import Editor.Test.Listings
 import Editor.Test.Loop
 import Editor.Test.Minibuffer
 import Editor.Test.Models
@@ -83,7 +84,6 @@ import ModelTest.Check
 import ModelTest.Support.AtPoint
 import ModelTest.Support.Candidates
 import ModelTest.Support.Display
-import ModelTest.Support.Listings
 import ModelTest.Support.Modes
 import ModelTest.Support.Switching
 

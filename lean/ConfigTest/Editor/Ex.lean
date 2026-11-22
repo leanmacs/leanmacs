@@ -1,10 +1,7 @@
 import ConfigTest.Check
-import ConfigTest.Support.Configs
 import Editor.Event
-import Editor.Event.Queue
 import Editor.Ex
-import Editor.Fuzzy.Real
-import Editor.Headless
+import Editor.Ex.Compiled
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
@@ -77,6 +74,10 @@ def greetExText (bound : Bool) : String :=
 " ++
     if bound then "  exCommand \"greet\" \"greet-named\" (takes := .text)\n" else ""
 
+/-- A config whose `setup` registers nothing. -/
+def noSetupText : String :=
+  "def setup : SetupM Unit := pure ()\n"
+
 /-- A config whose `setup` registers `mine`, which says `mine` in the echo
 area, and binds the ex name `w` to it. -/
 def ownWriteText : String :=
@@ -148,7 +149,7 @@ def exChecks (context : Context) : List Check :=
             unless ← session.exLine "w" do
               return false
             let own ← session.echo
-            session.write "init.lean" emptyText
+            session.write "init.lean" noSetupText
             unless ← session.exLine "reload" do
               return false
             unless ← session.exLine "w" do

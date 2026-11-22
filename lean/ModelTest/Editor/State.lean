@@ -40,6 +40,7 @@ import Editor.Test.Editing
 import Editor.Test.Frame
 import Editor.Test.Geometry
 import Editor.Test.Keys
+import Editor.Test.Listings
 import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Test.Opener
@@ -55,7 +56,6 @@ import Editor.Value
 import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.Excerpt
-import ModelTest.Support.Listings
 
 /-!
 # Model tests: `Editor/State.lean`
