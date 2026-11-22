@@ -1345,6 +1345,41 @@ def bracketChecks (context : Context) : List Check :=
         saw (started.size == 1 && started.all (· != mine) && ran && after == before)
             s!"started on {started}, the check on {mine}, real loops {before} then {after}" }]
 
+/-- `Headless.awaitIndexed` over a wait the check scripts: the waits answer
+`answers` in turn, and `unanswered` once they have run out, and each
+`working` reads `progress`. What it answered, and the kinds of the waits it
+asked for, in order. No host and no thread: the loop alone. -/
+def scriptedIndexed (answers : Array Headless.Wait) (progress : Headless.Progress)
+    (clock : Option Job.FakeClock) : IO (Headless.Wait × Array String) := do
+  let asked ← IO.mkRef (#[] : Array String)
+  let answer ←
+    Headless.awaitIndexed
+        (fun kind => do
+          let n ← asked.modifyGet fun asked => (asked.size, asked.push kind.what)
+          return answers.getD n .unanswered)
+        (pure progress) clock
+  return (answer, ← asked.get)
+
+/-- A fake clock with one wait in its sleep, due at `Restore.writeDelay`: an
+index write's sleep, as `awaitIndexed` sees it. -/
+def writeAsleep : IO Job.FakeClock := do
+  let clock ← Job.FakeClock.new (← Job.Completions.new)
+  clock.start 1 Restore.writeDelay
+  return clock
+
+/-- A config whose job `nap` sleeps 10 ms on the clock, and whose command
+`start-nap` starts it: a background job, one the script did not spawn. -/
+def napConfig : List (String × String) :=
+  [("init.lean",
+      "def nap : Unit → JobM Nat := fun _ => do
+  sleep 10
+  return 1
+
+def setup : SetupM Unit := do
+  job \"nap\" nap fun _ => pure ()
+  command \"start-nap\" (discard <| startJob \"nap\")
+")]
+
 /-- The checks of jobs through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue and the real text binding. The
 host's jobs wait on a fake clock the check moves, so a job ends when the
@@ -1486,6 +1521,57 @@ def jobChecks (context : Context) : List Check :=
             (failure == some (.working (some 4)) && said.isEmpty &&
               output == #["spawn count: job 1"])
             s!"failure={repr failure} said={said} output={output}" },
+    { name :=
+        "an indexed's wait at idle with a write of the index in its sleep and no other job running moves the clock past the write's delay once and waits again"
+      run := do
+        let clock ← writeAsleep
+        let (answer, asked) ←
+          scriptedIndexed #[.working, .settled] { indexing := true, background := 0 } (some clock)
+        let now ← clock.now
+        saw (answer == .settled && asked == #["indexed", "indexed"] && now == Restore.writeDelay)
+            s!"answer={repr answer} asked={asked} now={now}" },
+    { name :=
+        "an indexed's wait at idle with a background job running answers working, the clock not moved, even with a write of the index in its sleep"
+      run := do
+        let clock ← writeAsleep
+        let (answer, asked) ←
+          scriptedIndexed #[.working, .settled] { indexing := true, background := 1 } (some clock)
+        let now ← clock.now
+        saw (answer == .working && asked == #["indexed"] && now == 0)
+            s!"answer={repr answer} asked={asked} now={now}" },
+    { name := "an indexed's wait at idle on a host with no fake clock answers working"
+      run := do
+        let (answer, asked) ←
+          scriptedIndexed #[.working, .settled] { indexing := true, background := 0 } none
+        saw (answer == .working && asked == #["indexed"]) s!"answer={repr answer} asked={asked}" },
+    { name :=
+        "an indexed that cannot finish, a background job asleep on the fake clock no advance moves, fails at idle, it does not hang: the failure names the indexed's line as the editor idle with a job still running, and nothing is said as a hang"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeConfig directory napConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- The clock is never moved, so `nap` never ends: the indexed finds
+          -- the host idle with it asleep, and `run` ends its loop. The guard
+          -- is a hang guard only, and nothing reaches it.
+          let said ← IO.mkRef (#[] : Array String)
+          let failure ←
+            Headless.run stage.collaborators
+                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.run "start-nap")⟩,
+                  ⟨4, .indexed none⟩, ⟨5, .request .show⟩]
+                hangGuard (grace := some hangGuard) (waitHung := fun line =>
+                said.modify (·.push line))
+          let described := failure.map (Headless.Failure.describe hangGuard)
+          let withdrawn ← stage.clock.withdrawn
+          let said ← said.get
+          saw
+              (failure == some (.working (some 4)) &&
+                (described.map
+                    (·.startsWith
+                      "the join or indexed on line 4 of the script found the editor idle with a job still running")) ==
+                  some true &&
+                withdrawn.size == 1 &&
+                said.isEmpty)
+              s!"failure={repr failure} described={described} withdrawn={withdrawn} said={said}" },
     { name :=
         "spawn and join are directives of a script, join, restarted and indexed with an optional patience in seconds, a spawn with no name and a patience that is no number are refused, and a join that ran out is described with its line"
       run :=

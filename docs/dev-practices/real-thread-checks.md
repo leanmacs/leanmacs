@@ -35,9 +35,9 @@ plain names are the stepped helpers (`lean/ConfigTest/Support/Hosts.lean`).
 | A6 | The window mode's wiring (`Editor.Window.host` and its start-up wait) | It is the window mode's edge |
 | A7 | The library's watch service on real files (`Session.shownOn`, the scene asked at each job line) | Background deliveries on the library's clock |
 
-## config-test: 71 checks
+## config-test: 72 checks
 
-By adapter: A1 8, A2 11, A3 27, A4 5, A5 17, A6 1, A7 2. Each name is a
+By adapter: A1 8, A2 11, A3 28, A4 5, A5 17, A6 1, A7 2. Each name is a
 check's name exactly, one a line, inside a `checks` block, which is what
 the gate reads (below).
 
@@ -78,7 +78,7 @@ a wait that runs out says why: a reload is still running, or the editor thread h
 a stepped host publishes the scenes a real host does: a settle one, and a join's later rounds none
 ```
 
-### A3: 27 checks
+### A3: 28 checks
 
 The headless mode's script runner (`Headless.run`, `runAndDispose`, `runFrom`): the CLI's driver, defined over `Host`, which the headless fixtures share.
 
@@ -90,6 +90,7 @@ a script whose q is refused, for a file's buffer that was edited, runs its later
 criterion 1 through the host: a script that runs e on a file, joins, commits text, runs w, joins, runs q, and then has a show line: the script has no failure, the file holds the committed text before what it held, and the show line was not run
 criterion 2 through the host: the same script with wq in place of w, the join and q, and a join after it: the script has no failure, the file holds the buffer's text, and the show line was not run
 a join that cannot finish fails at idle, it does not hang: the failure names the join's line, nothing is said as a hang, and the loop cancels its jobs when it ends
+an indexed that cannot finish, a background job asleep on the fake clock no advance moves, fails at idle, it does not hang: the failure names the indexed's line as the editor idle with a job still running, and nothing is said as a hang
 an editor thread held inside an event when a join asks for its answer still makes the join answer working, at idle: the hold is let go when the join blocks on the answer, and nothing is said as a hang
 a headless run whose loop is held past its guard and its grace says the hang once and fails as hung, which exits 1, and hands the loop it left to `abandoned`
 a headless run whose loop is slow but ends within its grace succeeds, after saying the hang once

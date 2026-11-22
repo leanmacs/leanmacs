@@ -138,7 +138,12 @@ show:
   reported, and a join that cannot finish answering working at idle, with
   nothing said as a hang, also when the editor thread is held inside an
   event as the join asks for its answer (let go when the join blocks on
-  it, `meetingAnswer`);
+  it, `meetingAnswer`); and an `indexed`'s rounds (`Headless.awaitIndexed`):
+  over a scripted wait and a fake clock, idle with a write of the index in
+  its sleep and no other job moves the clock once and waits again, while
+  idle with a background job running, or with no fake clock, answers
+  working; and through the host, an `indexed` with a background job asleep
+  on the clock fails at idle, naming its line, and is not a hang;
 - `idleChecks`: a host's idle signal (`Editor/Headless.lean`, "The idle
   signal"): what holds a unit of a host's activity count, read through the
   host and waited for on the count's own changes, with the editor thread
