@@ -37,6 +37,7 @@ import Editor.TabBar
 import Editor.Test.Completion
 import Editor.Test.Driver
 import Editor.Test.Editing
+import Editor.Test.Frame
 import Editor.Test.Geometry
 import Editor.Test.Keys
 import Editor.Test.Loop
@@ -54,7 +55,6 @@ import Editor.Value
 import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.Excerpt
-import ModelTest.Support.Frame
 import ModelTest.Support.Listings
 
 /-!

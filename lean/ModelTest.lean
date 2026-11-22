@@ -86,6 +86,7 @@ import ModelTest.Editor.Loop.Driver
 import ModelTest.Editor.Marks
 import ModelTest.Editor.Marks.Follow
 import ModelTest.Editor.Menu
+import ModelTest.Editor.Menu.Compiled
 import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
 import ModelTest.Editor.ModuleLookup
@@ -377,6 +378,16 @@ The tab bar (`Editor/TabBar.lean`) is checked by `tabBarChecks`:
 its line, its strip, and the view a publish draws it in, the tabs made,
 named and closed by the kit's stand-ins for the tab commands
 (`Editor.Test.Windows`), so it names neither feature.
+
+The menu bar's mechanism (`Editor/Menu.lean`) is checked by `menuChecks`
+on a menu and a registry written in the test: a chosen item runs the
+command it names, config's command of that name in a package's place, an
+item that names no command says so, and the key equivalents a registry
+gives a menu's items, never a chord a system item shows. The menu that
+ships, its items and the chords the `menu` package binds to them are
+`standardMenuChecks`' (`ModelTest/Editor/Menu/Compiled.lean`), and the
+frame's commands and bindings `frameCommandChecks`', each on the kit's
+frame driver (`Editor/Test/Frame.lean`).
 
 The command loop (`Editor/Loop.lean`) is checked on the editor's models
 (`loopChecks`): events fed to `Loop.step` one by one, the state each leaves
@@ -1356,6 +1367,7 @@ def checks : List Check :=
     frameCommandChecks ++
     titleChecks ++
     menuChecks ++
+    standardMenuChecks ++
     workspaceDataChecks ++
     searchRootChecks ++
     workspaceGitChecks ++

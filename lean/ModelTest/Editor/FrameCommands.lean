@@ -1,21 +1,20 @@
 import Editor.Api
 import Editor.Command.Model
 import Editor.Config.Packages
-import Editor.Config.Registry
 import Editor.Display
 import Editor.Display.Model
 import Editor.Event
 import Editor.FrameCommands
 import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Test
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Quit
 import Editor.State
 import Editor.Test.Driver
+import Editor.Test.Ex
+import Editor.Test.Frame
 import Editor.Test.Keys
 import ModelTest.Check
-import ModelTest.Support.Frame
 
 /-!
 # Model tests: `Editor/FrameCommands.lean`
@@ -29,6 +28,29 @@ namespace ModelTest
 open Editor
 open Editor.Test
 
+namespace FrameCommandTest
+
+/-- The registry of the frame command checks: the frame's commands, and the
+kit's quit command (`quitPackage`, `Editor/Test/Ex.lean`), under the name
+the frame's `s-q` runs, and the frame's bindings, registered for the owner
+`compiled`, an owner that is not config, as a host registers a package's,
+and `config` as config's bindings. -/
+def frameRegistry (config : Array Config.KeyBinding := #[]) : Config.Registry :=
+  ((({} : Config.Registry).replace .compiled
+            (FrameCommands.package.registered.commands ++
+              quitPackage.registered.commands)).replaceBindings
+        .compiled FrameCommands.package.registered.bindings).replaceBindings
+    .config config
+
+/-- A driver of the frame command checks (the kit's `frameDriverOver`), over
+`frameRegistry` unless told otherwise. -/
+def frameDriver (registry : Config.Registry := frameRegistry) (held : Bool := false) :
+    Option TestDriver :=
+  frameDriverOver registry none held
+
+end FrameCommandTest
+
+open FrameCommandTest in
 /-- The checks of the frame's commands (`Editor/FrameCommands.lean`,
 `Editor/FrameCommands/Compiled.lean`) and of the frame's last reported
 fullscreen state, on the loop's driver over the editor's models and the

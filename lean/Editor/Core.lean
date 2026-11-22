@@ -19,6 +19,7 @@ import Editor.Menu.Compiled
 import Editor.SearchRoot
 import Editor.Test.AtPoint
 import Editor.Test.Excerpt
+import Editor.Test.Frame
 import Editor.Test.Hosted
 import Editor.Test.Linked.Bench
 import Editor.Test.Linked.Frames

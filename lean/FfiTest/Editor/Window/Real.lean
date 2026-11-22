@@ -3,18 +3,14 @@ import Editor
 import Editor.Clipboard.InProcess
 import Editor.Config.Directory
 import Editor.Config.LakePackage
-import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Session
-import Editor.DisplayRules
 import Editor.Ffi.Display
 import Editor.Ffi.Render
 import Editor.Ffi.Window
-import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Test
 import Editor.Menu
-import Editor.Menu.Compiled
 import Editor.Process.Environment
 import Editor.Test.AtPoint
 import Editor.Test.Editing
@@ -23,7 +19,6 @@ import Editor.Test.Restore
 import Editor.Test.Shipped
 import Editor.Window
 import Editor.Window.Real
-import Editor.Workspace
 import EditorCore.EditorPackage
 import FilesApiTest.Fake
 
@@ -52,11 +47,33 @@ set's packages.
 
 namespace FfiTest
 
+/-- The title of the menu the window checks write. -/
+def windowMenuTitle : String :=
+  "Window Test"
+
+/-- The command the window checks' menu item names; nothing registers it. -/
+def windowMenuCommand : String :=
+  "window-test-greet"
+
+/-- A package written for the window checks: a menu of one command item,
+and the chord `s-g` bound to the item's command, so the menu bar the host
+publishes holds a menu and a key equivalent that are no feature's. -/
+def windowMenuPackage : Editor.Package :=
+  { name := "window-menu"
+    setup := do
+      Editor.bindKeys
+          [Editor.Key.chord { logical := .character "g", modifiers := { superKey := true } }]
+          windowMenuCommand
+      Editor.defineMenu
+          { title := windowMenuTitle,
+            items := #[.item "Greet" none (.command windowMenuCommand)] } }
+
 /-- The packages the window host is handed in these scenarios, as the
 default editor's root hands them: the core's Lake package's, then the
 kit's stand-in for the default package `restore`
 (`Editor.Test.Restore.package`, `Editor/Test/Restore.lean`), through whose
-`restart` the restart check hands over, then `files-api`'s fake (`FilesApiTest.fake`), which opens the file in place of
+`restart` the restart check hands over, then the menu the checks write
+(`windowMenuPackage`), then `files-api`'s fake (`FilesApiTest.fake`), which opens the file in place of
 the default package `files`, then the kit's stand-ins for the default packages whose data the core keeps
 (`Editor.Test.Shipped`, `Editor/Test/Shipped.lean`), then the kit's
 implementation of the default package `at-point`'s commands
@@ -68,7 +85,8 @@ editing commands and keys (`Editor.Test.editingPackage`,
 `Editor/Test/Editing.lean`), with which a printable key of the test scheme
 the hosts run types. -/
 def shippedPackages : Array Editor.Package :=
-  EditorCore.EditorPackage.packages ++ #[Editor.Test.Restore.package, FilesApiTest.fake] ++
+  EditorCore.EditorPackage.packages ++
+    #[Editor.Test.Restore.package, windowMenuPackage, FilesApiTest.fake] ++
     Editor.Test.Shipped.packages ++
     #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package, Editor.Test.editingPackage]
 
@@ -151,20 +169,27 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
           s!"ffi-test window-host: the window was last asked for the title {titles.back?}, not scratch"
       return 1
     -- The menu bar crossed whole, from Lean through the scene to the
-    -- scripted window's record and back: the standard one, with the keys
-    -- the packages' bindings give it, asked once, since it never changed.
+    -- scripted window's record and back: the one the host's packages
+    -- register, with the keys their bindings give it, the menu written
+    -- here (`windowMenuPackage`) with its chord among it, asked once,
+    -- since it never changed.
     let menus :=
       ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
         | .menu menu => some menu
         | .request _ | .title _ => none
-    let compiled :=
-      ({} : Editor.Config.Registry).replaceBindings .compiled
-        (Editor.FrameCommands.package.registered.bindings ++
-          Editor.Menu.package.registered.bindings)
-    let expected := compiled.menuOf Editor.Menu.standard
-    unless menus == #[expected] do
+    let (state, _) : Editor.Config.State Unit Unit × Array String :=
+      Editor.Config.State.ofPackages shippedPackages
+    let expected := state.registry.menuBar?
+    let written :=
+      expected.any fun menu =>
+        menu.menus.any fun submenu =>
+          submenu.title == windowMenuTitle &&
+            submenu.items ==
+              #[.item "Greet" (some { character := 'g', modifiers := { superKey := true } })
+                  (.command windowMenuCommand)]
+    unless written && menus.map some == #[expected] do
       IO.eprintln
-          s!"ffi-test window-host: the window was asked for {menus.size} menu bars, not the standard one once: {repr menus}"
+          s!"ffi-test window-host: the window was asked for {menus.size} menu bars, not the host's packages' one once, the test's menu with its chord among it: {repr menus}"
       return 1
   IO.println "ffi-test window-host: the window ran and closed, and frames were drawn in it"
   return 0
