@@ -7,20 +7,20 @@ import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
 import Editor.Layout
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.ModeLine
 import Editor.Program
 import Editor.Scene
 import Editor.State
 import Editor.Test.Editing
+import Editor.Test.Ex
 import Editor.Test.States
+import Editor.Test.Windows
 import Editor.Text
 import Editor.Text.Model
 import Editor.WindowCommands
 import Editor.WindowCommands.Compiled
 import ModelTest.Check
-import ModelTest.Support.Windows
 
 /-!
 # Model tests: `Editor/WindowCommands.lean`
@@ -34,17 +34,71 @@ namespace ModelTest
 open Editor
 open Editor.Test
 
+namespace WindowCommandTest
+
+/-- The keys of the window checks: each key string, and the name of the
+window command (`Editor/WindowCommands.lean`) it runs. The spellings are
+Vim's `CTRL-W` commands', which the checks' names say. -/
+def windowTable : List (String × String) :=
+  [("C-w s", "window-split"), ("C-w S", "window-split"), ("C-w C-s", "window-split"),
+    ("C-w v", "window-split-vertically"), ("C-w C-v", "window-split-vertically"),
+    ("C-w C-n", "window-new"), ("C-w C-c", "window-close"), ("C-w q", "window-quit"),
+    ("C-w C-q", "window-quit"), ("C-w o", "window-only"), ("C-w C-o", "window-only"),
+    ("C-w h", "window-focus-left"), ("C-w C-h", "window-focus-left"),
+    ("C-w <ArrowLeft>", "window-focus-left"), ("C-w <Backspace>", "window-focus-left"),
+    ("C-w j", "window-focus-down"), ("C-w C-j", "window-focus-down"),
+    ("C-w <ArrowDown>", "window-focus-down"), ("C-w k", "window-focus-up"),
+    ("C-w C-k", "window-focus-up"), ("C-w <ArrowUp>", "window-focus-up"),
+    ("C-w l", "window-focus-right"), ("C-w C-l", "window-focus-right"),
+    ("C-w <ArrowRight>", "window-focus-right"), ("C-w C-w", "window-focus-next"),
+    ("C-w W", "window-focus-previous"), ("C-w t", "window-focus-top"),
+    ("C-w C-t", "window-focus-top"), ("C-w b", "window-focus-bottom"),
+    ("C-w C-b", "window-focus-bottom"), ("C-w C-p", "window-focus-last"),
+    ("C-w x", "window-exchange"), ("C-w C-x", "window-exchange"), ("C-w r", "window-rotate"),
+    ("C-w C-r", "window-rotate"), ("C-w R", "window-rotate-back"), ("C-w =", "window-balance"),
+    ("C-w +", "window-taller"), ("C-w -", "window-shorter"), ("C-w >", "window-wider"),
+    ("C-w <", "window-narrower"), ("C-w z", "window-zoom"), ("C-w m", "window-promote"),
+    ("C-w M", "window-demote"), ("C-w ,", "window-main-more"), ("C-w .", "window-main-fewer"),
+    ("C-w H", "window-edge-left"), ("C-w J", "window-edge-bottom"), ("C-w K", "window-edge-top"),
+    ("C-w L", "window-edge-right"), ("C-w F", "window-float")]
+
+/-- What a step of the window checks is handed (the kit's `handedOver`):
+the kit's ex line's commands, so that `C-x` opens a prompt, the kit's quit
+command, which `window-quit` runs on the last window, and the window
+commands, and the keys of `windowTable`, then `more`. -/
+def windowHanded (layout : Layout) (more : List (String × String) := []) :
+    Loop.Keys TestScheme.scheme :=
+  handedOver
+    (exLinePackage.registered.commands ++ quitPackage.registered.commands ++
+      WindowCommands.package.registered.commands)
+    layout (windowTable ++ more)
+
+/-- A driver of the window checks (the kit's `windowDriverOver`), handed
+`windowHanded layout` unless told otherwise. -/
+def windowDriver (count : Nat) (layout : Layout) (focus : Nat := 0)
+    (handed : Loop.Keys TestScheme.scheme := windowHanded layout) : Option TestDriver :=
+  windowDriverOver handed count layout focus
+
+/-- `driver` once the keys `typed` names were pressed, a count before a
+window key handed to its command (the kit's `countedFed`). -/
+def windowFed (driver : TestDriver) (typed : String) : TestDriver :=
+  countedFed windowTable driver typed
+
 /-- The state of the window driver over `count` windows under `layout`,
 `focus` focused, once the keys `typed` name were pressed. -/
 def windowsAfter (count : Nat) (layout : Layout) (typed : String) (focus : Nat := 0) :
     Option EditorState :=
   (windowDriver count layout focus).map fun driver => (windowFed driver typed).loop.state
 
+end WindowCommandTest
+
+open WindowCommandTest in
 /-- The checks of the window commands (`Editor/WindowCommands.lean`), by
 key, on the loop's driver over the editor's models, under the test scheme
-with the keys of the checks' own table (`windowTable`,
-`ModelTest/Support/Windows.lean`) and the kit's minibuffer's, the ex line's
-and the window commands handed; a count before a key is its command's
+with the keys of the checks' own table (`windowTable`) and the kit's
+minibuffer's, the kit's ex line's, the kit's quit command and the window
+commands handed (`windowHanded`, on the kit's `handedOver`,
+`Editor/Test/Windows.lean`); a count before a key is its command's
 first argument (`windowFed`): Vim 9.1's `C-w` behaviours under the manual split layout,
 resizes among them, the reorders, zoom and resizes under master-and-stack,
 focus by direction under the three layouts, and the refusals in the echo

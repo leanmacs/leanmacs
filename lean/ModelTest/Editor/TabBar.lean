@@ -5,7 +5,6 @@ import Editor.Floating
 import Editor.GeneratedView
 import Editor.InputScheme.Test
 import Editor.Layout
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Program
 import Editor.Scene
@@ -15,9 +14,9 @@ import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Test.States
 import Editor.Test.Views
+import Editor.Test.Windows
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Windows
 
 /-!
 # Model tests: `Editor/TabBar.lean`
@@ -33,7 +32,10 @@ open Editor.Test
 
 /-- The checks of the tab bar (`Editor/TabBar.lean`): the line it shows,
 its strip above the minibuffer's (`EditorState.tabBarRect?`), and, on the
-loop's driver over the editor's models, the view a publish draws it in. -/
+loop's driver over the editor's models, the view a publish draws it in,
+the tabs made, named and closed by the kit's stand-ins
+(`Editor/Test/Windows.lean`), so the checks name no module of the window
+or tab commands. -/
 def tabBarChecks : List Check :=
   let rect (x y width height : Nat) : Rect := { x, y, width, height }
   let chip (start stop : Nat) (selected : Bool := false) : Decoration :=
@@ -127,12 +129,12 @@ def tabBarChecks : List Check :=
         "criterion 5, in the loop: after C-w c the last view of the scene is the tab bar, its text the line of both tabs with the second's chip selected, in the bar's strip, padded across by the frame padding and not down, with no selection and no status field; after C-w p the chips' faces swap, the bar keeps its view, and the snapshot of the old line is released; it is never the focused view; after C-w & there is no bar and the tiled area is whole again"
       run :=
         pure <|
-          let handed : Loop.Keys TestScheme.scheme := { tabHanded Layout.default with padding := 8 }
-          match (windowDriver 1 Layout.default (handed := handed)).map (windowFed · "C-w c") with
+          let handed : Loop.Keys TestScheme.scheme := { Windows.handed with padding := 8 }
+          match (windowDriverOver handed 1 Layout.default).map (Windows.fed · "C-w c") with
           | none => false
           | some tabbed =>
-            let back := windowFed tabbed "C-w p"
-            let closed := windowFed back "C-w &"
+            let back := Windows.fed tabbed "C-w p"
+            let closed := Windows.fed back "C-w &"
             let barOf (driver : TestDriver) : Option View :=
               driver.model.display.scenes.back?.bind fun scene =>
                 scene.views.back?.bind fun view =>
@@ -161,10 +163,10 @@ def tabBarChecks : List Check :=
         "renaming a tab changes the bar's line, and the snapshot of the line before is released"
       run :=
         pure <|
-          match tabsAfter "C-w c" with
+          match (windowDriverOver Windows.handed 1 Layout.default).map (Windows.fed · "C-w c") with
           | none => false
           | some tabbed =>
-            let named := windowFed tabbed "C-c r n RET"
+            let named := Windows.ran tabbed Windows.renameTabName [.str "n"]
             let barOf (driver : TestDriver) : Option View :=
               driver.model.display.scenes.back?.bind (·.views.back?)
             match barOf tabbed, barOf named with
@@ -178,15 +180,15 @@ def tabBarChecks : List Check :=
       run :=
         pure <|
           let handed (shown : Option TabBar.Shown) : Loop.Keys TestScheme.scheme :=
-            { tabHanded Layout.default with tabBar := shown }
+            { Windows.handed with tabBar := shown }
           let barredDriver (shown : Option TabBar.Shown) (typed : String) : Option TestDriver :=
-            (windowDriver 1 Layout.default (handed := handed shown)).map (windowFed · typed)
+            (windowDriverOver (handed shown) 1 Layout.default).map (Windows.fed · typed)
           let barred (shown : Option TabBar.Shown) (typed : String) : Option EditorState :=
             (barredDriver shown typed).map (·.loop.state)
           -- Published once handed `shown`, then handed none.
           let kept (shown : TabBar.Shown) (typed : String) : Option EditorState :=
             (barredDriver (some shown) typed).map fun driver =>
-              (windowFed { driver with keys := handed none } "<Escape>").loop.state
+              (Windows.fed { driver with keys := handed none } "<Escape>").loop.state
           match barred (some .never) "C-w c", barred (some .always) "<Escape>", kept .never "C-w c",
             kept .always "<Escape>" with
           | some never, some always, some keptNever, some keptAlways =>

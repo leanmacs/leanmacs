@@ -19,7 +19,6 @@ import Editor.Menu.Compiled
 import Editor.SearchRoot
 import Editor.TabCommands.Compiled
 import Editor.Test.AtPoint
-import Editor.Test.Ex
 import Editor.Test.Excerpt
 import Editor.Test.Hosted
 import Editor.Test.Linked.Bench

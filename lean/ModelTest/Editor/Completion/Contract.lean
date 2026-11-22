@@ -6,7 +6,6 @@ import Editor.Completion.Fake
 import Editor.Completion.Keys
 import Editor.Ex
 import Editor.Program
-import Editor.TabCommands
 import Editor.Test.Completion
 import Editor.Test.Sources
 import Editor.Text
@@ -31,14 +30,15 @@ hints' source (`Completion.Keys.source`), and it reports a source that makes
 a text and one that is refused. The sources of the command prompt and the
 binding search are held to it by their own checks, on the same runner
 (`Editor.Test.sourceHolds`, `Editor/Test/Sources.lean`), and so are the
-themes' source (`ThemesTest.themeChecks`), the files feature's file source
+themes' source (`ThemesTest.themeChecks`), the tabs' source
+(`tabCommandChecks`), the files feature's file source
 (`FilesTest.pathsChecks`), the buffers
 feature's buffer source (`BuffersTest.bufferCommandChecks`) and the
 workspace's two (`WorkspaceTest.findFileChecks`, `WorkspaceTest.findInProjectChecks`). -/
 def sourceContractChecks : List Check :=
   let subjects : List Completion.Source :=
     [.fixed "fixed" "test" (offered #["wq", "w"]), Completion.Fake.echo "echo" "test",
-      Ex.historySource, Ex.namesSource, TabCommands.source,
+      Ex.historySource, Ex.namesSource,
       Completion.Keys.source
         #[{ key := "s", leads := .binding (some "Save") }, { key := "f", leads := .prefix none 2 }]]
   let writes : Completion.Source :=
@@ -55,6 +55,6 @@ def sourceContractChecks : List Check :=
         run :=
           pure <|
             !holds writes && !holds (Completion.Fake.refusing "no" "test") &&
-              [Ex.namesSource, TabCommands.source].all answersSomething }]
+              [Ex.namesSource].all answersSomething }]
 
 end ModelTest

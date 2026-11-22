@@ -353,8 +353,8 @@ The package of each registers the commands its list names
 (`WindowCommands.names`, `TabCommands.names`), which a scheme's key tables
 are held to. The window commands (`Editor/WindowCommands.lean`) are checked by key on
 the loop's driver over the editor's models, under the test scheme with the
-keys of the checks' own table (`windowTable`,
-`ModelTest/Support/Windows.lean`; `windowCommandChecks`): Vim 9.1's `C-w` behaviours under the manual split
+keys of the checks' own table (`windowTable`, in the test module, on the
+kit's `handedOver`, `Editor/Test/Windows.lean`; `windowCommandChecks`): Vim 9.1's `C-w` behaviours under the manual split
 layout, resizes among them, the reorders, zoom and resizes under
 master-and-stack, focus by direction under the three layouts, the refusals
 in the echo area. A config's `C-w` keys reached in the Vim scheme's insert
@@ -370,11 +370,15 @@ next view, chosen layout and most recent buffer set, what is frame-wide
 kept, a float at a position held by the marker handed, and each refusal,
 `malformed` for each break of `wellFormed` and `promptOpen`, leaving the
 state as it was. The tab commands (`Editor/TabCommands.lean`) are checked by
-key under the test scheme with the checks' own tables (`tabCommandChecks`): tmux's keys under
+key under the test scheme with the checks' own tables (`tabCommandChecks`), the
+windows split and zoomed by the kit's stand-ins: tmux's keys under
 `C-w`, the prompts of `tab-switch` and `tab-rename`, each command acting on
-the tab of its call's window, and a publish's layout reaching the tab in
-view alone. The tab bar (`Editor/TabBar.lean`) is checked by `tabBarChecks`:
-its line, its strip, and the view a publish draws it in.
+the tab of its call's window, a publish's layout reaching the tab in
+view alone, and the tabs' completion source held to the sources' contract.
+The tab bar (`Editor/TabBar.lean`) is checked by `tabBarChecks`:
+its line, its strip, and the view a publish draws it in, the tabs made,
+named and closed by the kit's stand-ins for the tab commands
+(`Editor.Test.Windows`), so it names neither feature.
 
 The command loop (`Editor/Loop.lean`) is checked on the editor's models
 (`loopChecks`): events fed to `Loop.step` one by one, the state each leaves
@@ -522,7 +526,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   their own lists hold to it, and the key hints' source, run on the kit's
   runner over `twoBuffers` and the editor's models
   (`Editor.Test.sourceRunner`, `Editor/Test/Sources.lean`), and seen to
-  report a source that writes and one that is refused. The files package's
+  report a source that writes and one that is refused. The tabs' source is
+  held to it by `tabCommandChecks`. The files package's
   file source is held to it by `FilesTest.pathsChecks` (in its package), the buffers package's
   buffer source by `BuffersTest.bufferCommandChecks` (in its package), and the workspace's find-file and
   find-in-project sources by `WorkspaceTest.findFileChecks` and `WorkspaceTest.findInProjectChecks` (in its package);

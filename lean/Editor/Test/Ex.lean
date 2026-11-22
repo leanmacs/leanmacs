@@ -2,6 +2,7 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Ex.Line
 import Editor.Package
+import Editor.Quit
 import FilesApi
 
 /-!
@@ -45,7 +46,8 @@ the packages `buffers`, `files`, `shell`, `compile` and `evil`, and the ex
 package's own check holds the real ex line to the same lines. Which ex
 names the ex package binds, and to what, is ex's (`ModelTest.exChecks`, the
 fixture `tests/headless/ex`); this module copies the ones its users type,
-and nothing else (no `q`, `wq` or `reload`).
+and nothing else (no `q`, `wq` or `reload`). The command `quit` alone is a
+package of its own, `quitPackage`, over the core's quit rule.
 -/
 
 namespace Editor.Test
@@ -158,5 +160,15 @@ def exLinePackage : Package :=
       Editor.exCommand "b" "switch-buffer" (takes := .text)
       Editor.exCommand "ls" "list-buffers"
       Editor.exCommand "bd" "close-buffer" (takes := .text) }
+
+/-- The kit's quit command: a package named `test-quit` that registers,
+under the core's name (`Quit.name`, `Editor/Quit.lean`), a command that
+runs the core's quit rule (`Quit.closeRequested`), as the ex package's
+`quit` does. For a check that runs `quit` by name, as the window commands'
+`window-quit` does on the last window; `exLinePackage` does not register
+it, so a driver that wants no `quit` gets none. -/
+def quitPackage : Package :=
+  { name := "test-quit"
+    setup := commandWith Quit.name fun _ => Quit.closeRequested }
 
 end Editor.Test
