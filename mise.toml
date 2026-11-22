@@ -196,6 +196,23 @@ run = [
   "for package in beta gamma; do out=$(sh ../tools/leave-out-check.sh --dry-run $package --root /repo/set ../tests/leave-out) && printf '%s\\n' \"$out\" | diff ../tests/leave-out/without-$package - || { echo \"lean-test: leave-out-check's dry run printed another lakefile without $package\"; exit 1; }; done",
   "status=0; out=$(sh ../tools/leave-out-check.sh --dry-run delta --root /repo/set ../tests/leave-out 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'has no [[require]] of delta'; } || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/leave-out-check.sh 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'usage:'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # The module map check's reading of the packages' sources
+  # (tools/module-map-check.sh; docs/dev-practices/the-gate.md, "The module
+  # map check"), held on packages and maps written by hand
+  # (tests/module-map/). With `--points` it asks Lake nothing: it compares
+  # the registrations and reads the library modules under
+  # tests/module-map/packages hold with the rows of a map. Those sources
+  # hold one line for each way the reader counts a registration or a read
+  # and one for each text it skips, and `map.md` names exactly what they
+  # hold, so over it the check must print nothing and exit 0: a rule that
+  # is dropped or loosened fails here. Over `stale-map.md`, the same map
+  # with one registration dropped and one read added, it must exit 1 and
+  # print exactly `stale-expected`, the two lines that differ. A command
+  # line it does not take is exit 2. The real map is held to the tree and
+  # to Lake in ffi-test.
+  "sh ../tools/module-map-check.sh --points ../tests/module-map/packages ../tests/module-map/map.md",
+  "status=0; out=$(sh ../tools/module-map-check.sh --points ../tests/module-map/packages ../tests/module-map/stale-map.md 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/module-map/stale-expected -; } || { echo \"lean-test: module-map-check passed a stale map (exit $status), or printed another difference\"; printf '%s\\n' \"$out\"; exit 1; }",
+  "status=0; out=$(sh ../tools/module-map-check.sh --points ../tests/module-map/packages 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'usage:'; } || { echo \"lean-test: module-map-check took a command line with no map (exit $status)\"; printf '%s\\n' \"$out\"; exit 1; }",
   'PATH="$PWD/no-cargo:$PATH" lake test --wfail',
   # The same for each package of the fixture set (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps"): its Lake test
@@ -361,7 +378,7 @@ description = "Build the app's launcher and its test helper, release (crates/edi
 run = "cargo build --quiet --locked --release -p editor-launch-std --bins"
 
 [tasks.ffi-test]
-description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh), that a package imports only the core's API (tools/package-imports-check.sh) and that the core imports no package and no package imports an implementation package (tools/layer-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, its restart through the launcher (tests/headless/restart), and the linked test and headless fixtures of each package of the fixture set and of the default set (tools/package-set.sh)"
+description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh), that a package imports only the core's API (tools/package-imports-check.sh) that the core imports no package and no package imports an implementation package (tools/layer-imports-check.sh) and that the module map of docs/design/packages.md agrees with the tree and with Lake (tools/module-map-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, its restart through the launcher (tests/headless/restart), and the linked test and headless fixtures of each package of the fixture set and of the default set (tools/package-set.sh)"
 depends = ["lean", "launcher"]
 dir = "lean"
 # Measured at 130 to 210 s on 2026-11-20 (Apple M5 Max), with
@@ -631,6 +648,19 @@ run = [
   # would miss the test module's import and fail here, and refuses on
   # Lake's graph.
   "status=0; out=$(sh ../tools/layer-imports-check.sh ../tests/layer-imports 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/layer-imports/graph-expected -; } || { echo \"ffi-test: the layer imports check exited $status on tests/layer-imports\"; exit 1; }",
+  # The module map of docs/design/packages.md, held to the tree and to
+  # Lake (tools/module-map-check.sh; docs/dev-practices/the-gate.md, "The
+  # module map check"): every module under lean/Editor/ is named in the
+  # map's first table, and no other; every package of the default set has
+  # a row with the layer Lake gives it (`lake -d ../packages query
+  # :editorPackageGraph`); and the extension points the library modules of
+  # each package under packages/ register at and read are the ones its row
+  # names. It prints nothing when they agree, and otherwise what differs,
+  # and exits 1. One `lake query`, which builds nothing, and a pass over
+  # the packages' sources: under two seconds on a developer's Mac. Its
+  # reading of the sources is held by the fixture tests/module-map/ in
+  # lean-test.
+  "sh ../tools/module-map-check.sh",
   # The package graph the pre-commit hook decides over
   # (tools/hook-targets.sh; the facet `editorPackageGraph`;
   # docs/dev-practices/the-gate.md, "The pre-commit hook"). On the fixture

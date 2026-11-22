@@ -3,6 +3,7 @@
 # against Lake (the section "The module map" there says what it lists).
 #
 #   tools/module-map-check.sh
+#   tools/module-map-check.sh --points <packages dir> <map>
 #
 # Run it in `lean/`. It prints nothing and exits 0 when all three hold, and
 # otherwise prints what differs, each part under a line that names it, and
@@ -32,48 +33,88 @@
 #    first lines are skipped, so prose and the readers' own definitions
 #    are not counted.
 #
-# It is not part of the gate. It reads source text, which no test of the
-# code does (AGENTS.md, "Test behaviour, never text"): it holds a document
-# to the sources it describes, and is run when that document's map or a
-# package's registrations change. The first two parts ask the tree and
-# Lake; the third is a reading of the sources by the rules above, which
-# the map states too, so a new way to register or read is added in both.
+# With `--points <packages dir> <map>` it checks the third part alone, and
+# asks Lake nothing: the library modules of the packages under `<packages
+# dir>` against the rows of the section "The packages" of the document
+# `<map>`. It exits 2 for a command line it does not take.
+#
+# The gate runs it over the tree (`mise run ffi-test`), and holds the third
+# part's reading by two runs with `--points` over sources and maps written
+# by hand (tests/module-map/, in `mise run lean-test`;
+# docs/dev-practices/the-gate.md, "The module map check"). It reads source
+# text, which no test of the code does (AGENTS.md, "Test behaviour, never
+# text"): it is no test of the code, and holds a document to the sources it
+# describes. The first two parts ask the tree and Lake; the third is a
+# reading of the sources by the rules above, which the map states too, so a
+# new way to register or read is added in both, and to the fixture.
 set -eu
 
+usage() {
+  echo "usage: tools/module-map-check.sh" >&2
+  echo "       tools/module-map-check.sh --points <packages dir> <map>" >&2
+  exit 2
+}
+
+points=
+packages=../packages
 doc=../docs/design/packages.md
+case ${1:-} in
+  --points)
+    [ "$#" -eq 3 ] || usage
+    points=1
+    packages=$2
+    doc=$3
+    ;;
+  *) [ "$#" -eq 0 ] || usage ;;
+esac
+if [ ! -d "$packages" ]; then
+  echo "module-map-check: no directory $packages" >&2
+  exit 2
+fi
+if [ ! -f "$doc" ]; then
+  echo "module-map-check: no file $doc" >&2
+  exit 2
+fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 failed=0
 
-# 1. The core's modules.
-find Editor -name '*.lean' | sed 's#/#.#g; s#\.lean$##' | sort >"$work/modules"
-awk '/^### The core.s modules$/{on=1;next} on&&/^##+ /{on=0} on' "$doc" |
-  grep -oE '`Editor(\.[A-Za-z0-9]+)+`' | tr -d '`' | sort -u >"$work/listed"
-if ! diff "$work/modules" "$work/listed" >"$work/diff"; then
-  echo "module-map-check: the core's modules (< the tree, > the map):"
-  cat "$work/diff"
-  failed=1
+# The first two parts, which the run over the tree alone makes.
+if [ -z "$points" ]; then
+  # 1. The core's modules.
+  find Editor -name '*.lean' | sed 's#/#.#g; s#\.lean$##' | sort >"$work/modules"
+  awk '/^### The core.s modules$/{on=1;next} on&&/^##+ /{on=0} on' "$doc" |
+    grep -oE '`Editor(\.[A-Za-z0-9]+)+`' | tr -d '`' | sort -u >"$work/listed"
+  if ! diff "$work/modules" "$work/listed" >"$work/diff"; then
+    echo "module-map-check: the core's modules (< the tree, > the map):"
+    cat "$work/diff"
+    failed=1
+  fi
+
+  # 2. The packages, each with its layer.
+  graph=$(lake -d ../packages query :editorPackageGraph) || {
+    echo "module-map-check: lake -d ../packages query :editorPackageGraph failed" >&2
+    exit 2
+  }
+  tab=$(printf '\t')
+  printf '%s\n' "$graph" | cut -f1,2 | while IFS=$tab read -r package layer; do
+    grep -qE "^\| \`$package\` \| $layer \|" "$doc" || echo "$package $layer"
+  done >"$work/missing"
+  if [ -s "$work/missing" ]; then
+    echo "module-map-check: packages of the default set with no row of their layer:"
+    cat "$work/missing"
+    failed=1
+  fi
 fi
 
-# 2. The packages, each with its layer.
-graph=$(lake -d ../packages query :editorPackageGraph) || {
-  echo "module-map-check: lake -d ../packages query :editorPackageGraph failed" >&2
-  exit 2
-}
-tab=$(printf '\t')
-printf '%s\n' "$graph" | cut -f1,2 | while IFS=$tab read -r package layer; do
-  grep -qE "^\| \`$package\` \| $layer \|" "$doc" || echo "$package $layer"
-done >"$work/missing"
-if [ -s "$work/missing" ]; then
-  echo "module-map-check: packages of the default set with no row of their layer:"
-  cat "$work/missing"
-  failed=1
-fi
-
-# 3. The extension points each package registers at and reads.
-for dir in ../packages/*/; do
+# 3. The extension points each package registers at and reads. A package's
+# files are found from its own directory, so that what is skipped (its
+# build, its fixtures and its test libraries) is decided by the path
+# within the package, wherever the packages are. Both sides are sorted by
+# byte, so what a difference prints is the same in every locale.
+for dir in "$packages"/*/; do
   package=$(basename "$dir")
-  find "$dir" -name '*.lean' -not -path '*/.lake/*' -not -path '*/tests/*' -not -path '*Test/*' -not -name '*Test.lean' | sort | while IFS= read -r file; do
+  (cd "$dir" && find . -name '*.lean' -not -path '*/.lake/*' -not -path '*/tests/*' -not -path '*Test/*' -not -name '*Test.lean') | sort | while IFS= read -r file; do
     awk -v package="$package" '
       BEGIN {
         own["buffers-api"] = "BuffersApi"; own["project-api"] = "ProjectApi"
@@ -111,9 +152,9 @@ for dir in ../packages/*/; do
         }
         for (name in reads) if (line ~ name) say("reads", reads[name])
         for (name in both) if (line ~ name) { say("reads", "Compile.Contribution"); say("reads", "Compile.ProjectCommands") }
-      }' "$file"
+      }' "$dir$file"
   done
-done | sort -u >"$work/sources"
+done | LC_ALL=C sort -u >"$work/sources"
 awk -F'|' '/^### The packages$/{on=1;next} on&&/^##+ /{on=0}
   on && /^\| `[a-z-]+` \| (interface|implementation) \|/ {
     package = $2; gsub(/[ `]/, "", package)
@@ -125,7 +166,7 @@ awk -F'|' '/^### The packages$/{on=1;next} on&&/^##+ /{on=0}
         rest = substr(rest, RSTART + RLENGTH)
       }
     }
-  }' "$doc" | sort -u >"$work/rows"
+  }' "$doc" | LC_ALL=C sort -u >"$work/rows"
 if ! diff "$work/sources" "$work/rows" >"$work/diff"; then
   echo "module-map-check: extension points (< the sources, > the map's rows):"
   cat "$work/diff"

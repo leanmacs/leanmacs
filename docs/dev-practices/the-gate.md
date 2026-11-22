@@ -1895,6 +1895,59 @@ every other package of the set and not that one.
   `mise run ci` or another build of the checkout runs. Everything else it
   writes is in a temporary directory it removes.
 
+## The module map check
+
+```sh
+cd lean && sh ../tools/module-map-check.sh
+```
+
+Part of `mise run ffi-test`. [packages.md](../design/packages.md), "The
+module map", lists every module of the core and every package of the
+default set with the extension points it registers at and reads, and this
+check holds that map to the tree and to Lake, so it cannot drift from what
+it describes. It prints nothing and exits 0 when they agree; otherwise it
+prints what differs, each part under a line that names it, and exits 1.
+
+- **What it checks**, in three parts:
+  1. the core's modules: every module under `lean/Editor/` is named in the
+     subsection "The core's modules", and that subsection names no module
+     that is not there;
+  2. the packages: every package of the default set (`lake -d ../packages
+     query :editorPackageGraph`) has a row that starts with its name and
+     its layer as its lakefile declares it;
+  3. the extension points: every registration and read the library
+     modules of the packages under `packages/` hold is in that package's
+     row, in its fourth column for a registration and its fifth for a
+     read, and no row names one the sources lack.
+- **The third part is a reading of the sources**, by the rules the map's
+  section states: what counts as a registration, what counts as a read,
+  and what is skipped (text in backticks, a declaration's first line, a
+  package's test libraries and fixtures, and in an interface package the
+  points of its own namespace). It reads source text, which no test of
+  the code does (AGENTS.md, "Test behaviour, never text"): it is no test
+  of the code, and holds a document to the sources it describes.
+- **The gate holds that reading** by a fixture (`mise run lean-test`):
+  `module-map-check.sh --points <packages dir> <map>` checks the third
+  part alone, over the packages under a directory and a map it is given,
+  and asks Lake nothing. `tests/module-map/packages` holds two packages
+  written by hand, an interface package and an implementation package
+  with one line for each way the reader counts a registration or a read
+  and one for each text it skips. Over `tests/module-map/map.md`, whose
+  rows name exactly what those sources hold, it must print nothing and
+  exit 0, so a rule that is dropped or loosened fails there. Over
+  `stale-map.md`, the same map with one registration dropped and one read
+  added, it must exit 1 and print exactly `stale-expected`, the two lines
+  that differ. A command line it does not take is exit 2.
+- **What it costs.** One `lake query` and an `awk` pass over each library
+  module of each package: under two seconds on a developer's Mac.
+- **What it does not claim.** A row's third column, what the package
+  requires, and its last, the names it declares or reaches, are not
+  checked. A way to register or read that the rules do not name is not
+  seen, so a new one is added to the rules in the map's section, to the
+  script and to the fixture. And the pre-commit hook does not run it for a
+  commit that stages only the document or the script, which no Lean step
+  reads ("The pre-commit hook", below); `mise run ci` always does.
+
 ## The package steps
 
 ```sh

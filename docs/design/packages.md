@@ -1596,10 +1596,17 @@ features-as-packages roadmap's phase 6", above). Who reaches the names:
   (`packages/at-point/AtPoint.lean`). It requires `evil-api` and names the
   constants, and its tests run on the fake. The core's at-point stand-in
   (`Editor.Test.AtPoint`) names them as text.
-- `undo` and `redo`: the Edit menu, a core reacher, as text.
+- `undo` and `redo`: the Edit menu, which is the default package `menu`
+  since phase 8 (`packages/menu/Menu/Compiled.lean`). It requires
+  `evil-api` and names the constants, `EvilApi.undoName` and
+  `EvilApi.redoName`, for its Undo and Redo items and for the chords `s-z`
+  and `s-Z`; `MenuTest.standardMenuChecks` holds the items and the chords
+  to them.
 - `load-theme`: the default config (`<leader> h t`), as text, since it is
-  in the core; `ConfigTest.DefaultConfig`'s `defaultPackageCommands` lists
-  it.
+  a config: it is elaborated at run time on whatever set the editor has,
+  as a user's config is, and imports only `Editor` ("The default config
+  keeps naming commands as text", under phase 8's interface packages,
+  below). `ConfigTest.DefaultConfig`'s `defaultPackageCommands` lists it.
 
 Evil is itself a reacher that left the core, so its tables name other
 features' commands by constants ([extension-points.md](extension-points.md),
@@ -3345,12 +3352,21 @@ package of the set has its row, with its layer as Lake says it, and every
 package's row, and no row names a pair the sources lack. It reads the
 library modules of each package (no test library, no fixture config) for
 the registrations and reads, and the table's fourth and fifth columns for
-the rows, and compares the two. It is not part of the gate: it holds a
-document to the sources it describes.
+the rows, and compares the two.
 
 ```sh
 cd lean && sh ../tools/module-map-check.sh
 ```
+
+The gate runs it, in `mise run ffi-test`, so the map cannot drift from the
+tree. It is no test of the code: it holds a document to the sources it
+describes. Its reading of the sources, the third part, is itself held by
+a fixture in `mise run lean-test`, packages and maps written by hand
+(`tests/module-map/`), where a map that agrees must pass and a stale one
+must fail with exactly the two lines that differ
+([the-gate.md](../dev-practices/the-gate.md), "The module map check"). A
+new way to register or read is added to the rules above, to the script
+and to that fixture.
 
 ### Where each feature went
 
