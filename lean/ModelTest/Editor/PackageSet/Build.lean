@@ -16,8 +16,8 @@ each command of the build scripted on the process model, the restart of
 the kit's stand-in for the `restore` package (`Test.Restore.package`)
 registered beside them and the state directory `/state`. So the module
 names nothing of the package `package-set`, whose `:package-…` commands
-and edit job are checked in `ModelTest/Editor/PackageSet/Compiled.lean`
-(`packageSetCommandChecks`). The root module `ModelTest` runs them; its
+and edit job are checked in that package
+(`PackageSetTest.packageSetCommandChecks`, `packages/package-set/`). The root module `ModelTest` runs them; its
 module doc says what each shows.
 -/
 

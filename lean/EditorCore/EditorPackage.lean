@@ -1,7 +1,6 @@
 import Editor.Ex.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.Menu.Compiled
-import Editor.PackageSet.Compiled
 import Editor.Restore.Compiled
 import Editor.TabCommands.Compiled
 import Editor.WindowCommands.Compiled
@@ -76,9 +75,6 @@ language table read as they did:
   then the menu's;
 - `restore` comes after the tab commands: it keeps state under the state
   directory, and what it registers follows theirs;
-- `package-set` comes right after `restore`: a user's package-set build
-  restarts the editor through the restore's restart, and its ex names
-  follow `restart`'s;
 - `ex` comes first of the packages that bind ex names: the ex names'
   completion lists them in the order they were bound, the `ex` package's
   first, and every Lake package's after the core's.
@@ -137,7 +133,12 @@ the theme `default`, is the default package `themes` (`packages/themes/`)
 since that phase too, and registers right after evil's (its D6): this list
 defines no theme, `load-theme` follows evil's `set-mark` in the command
 prompt and comes before the files', and `default` is still the first
-theme registered in the default set, before the shipped palettes'.
+theme registered in the default set, before the shipped palettes'. The
+package-set commands' package, which was last here, is the default
+package `package-set` (`packages/package-set/`) since that roadmap's phase
+8, and the first default package to register (its D2: the last of this
+list moves to the front of the set, so the order is what it was): its
+commands and ex names still follow the restore's and come before evil's.
 -/
 
 namespace EditorCore.EditorPackage
@@ -148,6 +149,6 @@ open Editor
 them ("The order", in the module docs). -/
 def packages : Array Package :=
   #[Ex.package, FrameCommands.package, Menu.package, WindowCommands.package, TabCommands.package,
-    Restore.package, PackageSet.package]
+    Restore.package]
 
 end EditorCore.EditorPackage

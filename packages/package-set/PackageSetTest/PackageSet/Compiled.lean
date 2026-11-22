@@ -1,24 +1,27 @@
-import Editor.PackageSet.Compiled
 import Editor.Test.Hosted
 import Editor.Test.PackageSet
-import ModelTest.Check
+import PackageSet.Compiled
+import PackageSetTest.Check
 
 /-!
-# Model tests: `Editor/PackageSet/Compiled.lean`
+# The tests of `PackageSet/Compiled.lean`
 
-The model tests of the `package-set` package's commands:
+The tests of the `package-set` package's commands and of what it
+registers:
 `packageSetCommandChecks`. `:package-install`, `:package-remove` and
 `:package-update` and the edit job they start run on the kit's hosted
 driver (`Editor/Test/Hosted.lean`) over the package itself, as a host
 installs it, the lakefile's read and the move scripted on the process
 model; the install's forms are pinned as a pure function. The build the
 commands start is the core's and is checked where it lives
-(`ModelTest.packageSetBuildChecks`); these hold only that it is started.
-The root module `ModelTest` runs them; its module doc says what each
+(`ModelTest.packageSetBuildChecks`, in the core); these hold only that it
+is started, and that the package registers it as the kit's stand-in does
+(`Editor.Test.PackageSet.buildPackage`). The test driver
+`PackageSetTest/Model.lean` runs them; its module doc says what each
 shows.
 -/
 
-namespace ModelTest
+namespace PackageSetTest
 
 open Editor
 open Editor.Test
@@ -65,7 +68,7 @@ end PackageSetCommandTest
 
 open PackageSetCommandTest in
 /-- The checks of the `package-set` package's commands
-(`Editor/PackageSet/Compiled.lean`). -/
+(`PackageSet/Compiled.lean`). -/
 def packageSetCommandChecks : List Check :=
   [{  name :=
         ":package-install edits the lakefile through the edit job, which writes it and asks for a reload; a lakefile.lean is refused"
@@ -225,6 +228,29 @@ def packageSetCommandChecks : List Check :=
               .ok { name := "g", source := .git "https://h/g" (some "v1") none } &&
             requireOf none ["lc/batteries", "v4"] ==
               .ok { name := "batteries", source := .reservoir "lc" (some "v4") } &&
-            requireOf none ["a"] == .error installUsage) }]
+            requireOf none ["a"] == .error installUsage) },
+    { name :=
+        "the package registers the job and the two commands the kit's stand-in for the build does, the build reported, and its own edit job and three commands with their ex names, each taking text; it keeps no store across a restart and leaves no job to its owner to start again"
+      run :=
+        let registered := PackageSet.package.registered
+        let standIn := buildPackage.registered
+        let registry := hostedRegistry #[PackageSet.package]
+        pure
+          (PackageSet.package.name == "package-set" &&
+            standIn.jobs.map (fun job => (job.name, job.reported, job.restarted)) ==
+              #[(buildJob, true, false)] &&
+            registered.jobs.map (fun job => (job.name, job.reported, job.restarted)) ==
+              #[(buildJob, true, false), (editJob, false, false)] &&
+            standIn.commands.map (·.name) == #[startedName, outputName] &&
+            registered.commands.map (·.name) ==
+              #[installName, removeName, updateName, startedName, outputName] &&
+            registered.ex.map (fun binding => (binding.name, binding.command, binding.takes)) ==
+              #[("package-install", "package-install", .text),
+                ("package-remove", "package-remove", .text),
+                ("package-update", "package-update", .text)] &&
+            (registry.jobs.filter (·.registration.reported)).map (·.registration.name) ==
+              #["package-build"] &&
+            (registry.jobs.filter (·.registration.restarted)).isEmpty &&
+            registry.codecs.isEmpty) }]
 
-end ModelTest
+end PackageSetTest

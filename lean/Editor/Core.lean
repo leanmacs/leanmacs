@@ -16,7 +16,6 @@ import Editor.InputScheme.Contract
 import Editor.Jumps.Go
 import Editor.Main
 import Editor.Menu.Compiled
-import Editor.PackageSet.Compiled
 import Editor.Restore.Compiled
 import Editor.SearchRoot
 import Editor.TabCommands.Compiled
@@ -91,7 +90,10 @@ hand-written minibuffer (`Editor.Test.Minibuffer`), and
 `Editor.Test.Shipped`, `Editor.Test.Sources`, the kit's hand-written
 at-point (`Editor.Test.AtPoint`), and `Editor.Test.Files`, `.Hosted`,
 `.Opener` and `.Workspace`, which no other kit module imports since the
-listing's kit moved to `compile-api` in phase 8, with `Editor.File.Cases`
+listing's kit moved to `compile-api` in phase 8, the kit's stand-ins for
+session restore's and the package-set build's registrations and for the
+window and tab commands (`Editor.Test.Restore`, `.PackageSet`, `.Windows`,
+phase 8), with `Editor.File.Cases`
 and `Editor.UndoTree.Cases`, which it brought) and the
 linked tests' (`Editor.Test.Linked.…`, `Editor/Test/Linked/`: its rig, its
 services, its trees, its hosts over the real elaborator, which bring

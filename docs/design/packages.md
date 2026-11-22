@@ -2051,8 +2051,10 @@ core, about 420 MB each, plus the running editor's own when it is older.
 
 ### The package commands
 
-The core package `package-set` (`lean/Editor/PackageSet/Compiled.lean`,
-the 24th, right after `restore`) registers `:package-install <name>
+The default package `package-set`
+(`packages/package-set/PackageSet/Compiled.lean`; a package of the core's
+Lake package until the features-as-packages roadmap's phase 8, and still
+registered right after `restore`) registers `:package-install <name>
 <path>|<git url> [<rev>]` or `<scope>/<name> [<version>]`,
 `:package-remove <name>` and `:package-update [<name> [<rev>]]`. Each edit
 ("The lakefile's edits") is computed from the lakefile as the last reload

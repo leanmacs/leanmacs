@@ -90,7 +90,6 @@ import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
 import ModelTest.Editor.ModuleLookup
 import ModelTest.Editor.PackageSet.Build
-import ModelTest.Editor.PackageSet.Compiled
 import ModelTest.Editor.PackageSet.Edit
 import ModelTest.Editor.PackageSet.Fingerprint
 import ModelTest.Editor.PackageSet.Running
@@ -852,26 +851,21 @@ The config session's decisions are tested here too, with no elaborator:
   directory; a success that writes the record, publishes version 1 and
   restarts into it; and what is pruned, never the running
   editor's version;
-- `packageSetCommandChecks`: the `package-set` package's commands
-  (`Editor/PackageSet/Compiled.lean`), on the kit's hosted driver over the
-  package: the three commands'
-  edits, their refusals and the reload after them; `:package-update`
-  with no rev repairing a lakefile without the core's require at its root
-  first, through the edit job, and starting the build on a repaired one;
-  and the install's forms;
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
-  list is the 9 packages, in order, each accepted, with no package of the
-  shipped palettes, of the compile mode or of the seven features phase 6
-  moved out among them, in the state they make every entry's owner is one
-  of them, the ex names are bound in the order the headless fixtures show,
-  the `ex` package's first, and the one theme is `default`; and the set
-  keeps no store across a restart (the shell's history is
-  `ShellTest.shellChecks`' and version control's reviews
+  list is the 6 packages, in order, each accepted, with no package of the
+  shipped palettes, of the compile mode, of the seven features phase 6
+  moved out or of the package-set commands among them, in the state they
+  make every entry's owner is one of them, the ex names are bound in the
+  order the headless fixtures show, the `ex` package's first, and no theme
+  is registered; and the set keeps no store across a restart (the shell's
+  history is `ShellTest.shellChecks`' and version control's reviews
   `VersionControlTest.versionControlPackageChecks`', each in its package),
-  reports exactly the package-set build, and leaves exactly the restore's
-  six to their owner to start again.
+  reports no job (the package-set build is reported by the package
+  `package-set`, `PackageSetTest.packageSetCommandChecks`, whose commands'
+  checks moved there with it, `packages/package-set/`), and leaves exactly
+  the restore's six to their owner to start again.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
@@ -1246,7 +1240,6 @@ def checks : List Check :=
     packageSetRunningChecks ++
     packageSetEditChecks ++
     packageSetBuildChecks ++
-    packageSetCommandChecks ++
     headlessCommandLineChecks ++
     executableModeChecks ++
     versionChecks ++

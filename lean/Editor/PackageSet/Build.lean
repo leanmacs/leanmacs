@@ -13,7 +13,7 @@ A user's package set is built by the job `package-build`
 (`docs/design/packages.md`, "User package sets"). A reload whose
 fingerprint differs from the running editor's starts it (`decide`, which
 the reload reducer asks as each reload finishes, `Config.State.packagesAfter`), and so does `:package-update`
-(`Editor/PackageSet/Compiled.lean`). It runs over the job port's process
+(the package `package-set`, `packages/package-set/`). It runs over the job port's process
 and file requests alone, so every decision it makes is pinned on the job
 and process models (`ModelTest.packageSetBuildChecks`), the exact commands,
 arguments and environments among them.
@@ -478,8 +478,9 @@ def appendLines (lines : Array String) : EditorM Unit := do
 /-- The command of the build's first post: the build buffer made, or its
 text replaced by the header line, and shown ("The buffer", in the module
 docs). It is here, beside the job that posts to it, so that whoever
-registers the job registers its commands: the package `package-set`, and
-the kit's stand-in (`Editor/Test/PackageSet.lean`). -/
+registers the job registers its commands: the package `package-set`
+(`packages/package-set/`), and the kit's stand-in
+(`Editor/Test/PackageSet.lean`). -/
 def startedCommand (call : Call) : EditorM Unit := do
   let .str line :: _ := call.arguments | return
   let id ←

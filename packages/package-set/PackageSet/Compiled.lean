@@ -6,12 +6,17 @@ import Editor.PackageSet.Edit
 /-!
 # The `package-set` package: a user's package set, from the editor
 
-The core package that edits a user's package set and builds it
-(`docs/design/packages.md`, "User package sets"): the job `package-build`
-and the two commands its posts run, which are the core's
-(`buildWork`, `startedCommand`, `outputCommand`,
-`Editor/PackageSet/Build.lean`), and three commands with ex names that edit
-the config's `lakefile.toml` (`Editor/PackageSet/Edit.lean`).
+The default package that edits a user's package set and builds it
+(`docs/design/packages.md`, "User package sets"), a module of the Lake
+package `package-set` (`packages/package-set/`) since the
+features-as-packages roadmap's phase 8; its declarations keep their names
+(`Editor.PackageSet.…`). It registers the job `package-build` and the two
+commands its posts run, which are the core's (`buildWork`,
+`startedCommand`, `outputCommand`, `lean/Editor/PackageSet/Build.lean`),
+and three commands with ex names that edit the config's `lakefile.toml`
+(`lean/Editor/PackageSet/Edit.lean`). The reload asks for a build and the
+hosts start that job by the name the core declares (`buildJob`), so an
+editor without this package builds no changed lakefile.
 
 - **`:package-install <name> <source> [<rev>]`** (`installName`) adds a
   require: a path (starting with `/`, `~` or `.`), a git repository (a url
@@ -25,14 +30,14 @@ the config's `lakefile.toml` (`Editor/PackageSet/Edit.lean`).
   with no edit of the lakefile: the manifest pins which revision. A
   lakefile without the core's require at its root, last (one an older
   editor generated, which requires the set alone), is repaired first
-  instead (`repair`, `Editor/PackageSet/Edit.lean`), through the edit job,
+  instead (`repair`, `lean/Editor/PackageSet/Edit.lean`), through the edit job,
   and nothing is updated: `lake update` would resolve the git core a
   package names, cloning it, before the build's core check refused it.
   The edit's line says to run it again.
 
 Every edit writes the core's require at the lakefile's root, as its last
 require, by the running editor's core directory (`withCoreEdit`,
-`Editor/PackageSet/Edit.lean`, "The core's require"), so each repairs a
+`lean/Editor/PackageSet/Edit.lean`, "The core's require"), so each repairs a
 lakefile without it; an editor that knows no core directory refuses
 them: `<command>: this editor knows no directory of its core, so it
 cannot write the lakefile's editor-core require`.
@@ -46,8 +51,9 @@ changed since: `<command>: the lakefile changed since the last reload;
 build. A `lakefile.lean` is refused: the commands edit `lakefile.toml`
 only.
 
-Pinned by `ModelTest.packageSetCommandChecks`, on the kit's hosted driver
-over the models; the build itself by `ModelTest.packageSetBuildChecks`.
+Pinned by `PackageSetTest.packageSetCommandChecks`, on the kit's hosted
+driver over the models; the build itself by the core's
+`ModelTest.packageSetBuildChecks`.
 -/
 
 namespace Editor.PackageSet
