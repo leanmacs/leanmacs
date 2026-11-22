@@ -27,9 +27,18 @@
 # which first ends the round's suite run and its limit guard, each with its
 # whole process group (tools/stress-probe.sh proves it).
 # Each suite runs in the foreground under `taskpolicy -c utility` on macOS
-# and `nice -n 19` elsewhere, so the hogs win the CPU. Each run's output goes
+# and `nice -n 5` elsewhere, so the hogs win the CPU. The Linux niceness is
+# measured, not the lowest there is: at `nice -n 19` against hogs at 0 the
+# suite's threads weigh 15 against 1024 each, config-test ran 200 to 400
+# times slower and could not end inside STRESS_LIMIT, so the loop proved
+# nothing; at 5 it runs about 7 times slower, near the 11 times of macOS's
+# utility class, which the hang guards are sized on
+# (docs/dev-practices/on-demand-checks.md, "The stress loop, on demand").
+# Each run's output goes
 # to `$STRESS_OUT/<suite>-<round>.log` (a fresh temporary directory when
-# STRESS_OUT is unset). A run that has not ended within STRESS_LIMIT seconds
+# STRESS_OUT is unset), and config-test's wall time for each check to
+# `config-<round>.timings` beside it (`config-test --timings`), which the
+# hang guards are sized from. A run that has not ended within STRESS_LIMIT seconds
 # (30 minutes) is killed with its whole process group and counts as failed,
 # its log ending `stress: a hang: ...`, so a hang shows as a failure (the
 # probe proves that too). At the end it prints `<suite>: <passed>/<rounds>`
@@ -68,6 +77,8 @@ root=$(git rev-parse --show-toplevel)
 if [ -z "$single" ]; then
   out=${STRESS_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/stress.XXXXXXXX")}
   mkdir -p "$out"
+  # Absolute: config-test is handed a file beside its log from `lean/`.
+  out=$(cd "$out" && pwd)
 fi
 
 if [ "$(uname -s)" = Darwin ]; then
@@ -75,7 +86,7 @@ if [ "$(uname -s)" = Darwin ]; then
   low() { taskpolicy -c utility "$@"; }
 else
   cores=$(nproc)
-  low() { nice -n 19 "$@"; }
+  low() { nice -n 5 "$@"; }
 fi
 hogs=${STRESS_HOGS:-$((2 * cores))}
 
@@ -119,7 +130,7 @@ run_suite() {
   log=$1
   case "$2" in
   config)
-    (cd "$root/lean" && low .lake/build/bin/config-test "$prefix" .lake/build/lib/lean ../tests/syntax ../config/default) >"$log" 2>&1 ;;
+    (cd "$root/lean" && low .lake/build/bin/config-test "$prefix" .lake/build/lib/lean ../tests/syntax ../config/default --timings "${log%.log}.timings") >"$log" 2>&1 ;;
   contract)
     (cd "$root/lean" && low .lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion) >"$log" 2>&1 ;;
   rust)

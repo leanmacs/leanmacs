@@ -15,7 +15,8 @@
 # into a work directory. `ci` runs `mise run ci` there, and its exit status is
 # the gate's. `stress` (`mise run linux-stress`) runs `mise run ci` there once
 # to build and gate, then the stress loop, `tools/stress.sh` with its
-# arguments, under `2 x nproc` hogs and `nice -n 19`, its logs in the copy's
+# arguments, under `2 x nproc` hogs and `nice -n 5` (tools/stress.sh says
+# why not 19), its logs and config-test's timings in the copy's
 # `stress-logs/`; its exit status is the loop's. `window` builds the editor there and runs seven things under
 # Xvfb, a display that needs no screen and no person, failing if any fails:
 # the winit adapter's example, which holds the real window to the window
