@@ -405,7 +405,10 @@ end ConfigTest
 runs the checks: exits 0 when all hold, and 1 after naming the ones that do
 not. With `--real-threads <file>` after them, it also writes to `<file>`
 the names of the checks that ran a real editor loop thread, one per line
-(`ConfigTest.inventory`). The third argument is the directory of the syntax fixtures
+(`ConfigTest.inventory`). With `--timings <file>`, it writes to `<file>`, as
+each ends, the wall time in milliseconds of the base's import and of each
+check, a tab and its name (`ConfigTest.run`): what the stress loop keeps of
+each round, to size the hang guards from. The third argument is the directory of the syntax fixtures
 (`tests/syntax`), which the indent checks read, and the fourth the directory
 of the default config (`config/default`), which `defaultConfigChecks` read.
 
@@ -487,15 +490,14 @@ def main (args : List String) : IO UInt32 := do
       IO.Process.exit status
     | none =>
       ConfigTest.usage
-  | [sysroot, oleanDir, syntaxFixtures, defaultConfig] =>
-    IO.Process.exit
-        (←
-          ConfigTest.run ConfigTest.checks sysroot oleanDir syntaxFixtures defaultConfig
-              ConfigTest.shippedPackages)
-  | [sysroot, oleanDir, syntaxFixtures, defaultConfig, "--real-threads", file] =>
-    IO.Process.exit
-        (←
-          ConfigTest.run ConfigTest.checks sysroot oleanDir syntaxFixtures defaultConfig
-              ConfigTest.shippedPackages (some file))
+  | sysroot :: oleanDir :: syntaxFixtures :: defaultConfig :: rest =>
+    match ConfigTest.options rest with
+    | some (realThreads, timings) =>
+      IO.Process.exit
+          (←
+            ConfigTest.run ConfigTest.checks sysroot oleanDir syntaxFixtures defaultConfig
+                ConfigTest.shippedPackages realThreads timings)
+    | none =>
+      ConfigTest.usage
   | _ =>
     ConfigTest.usage
