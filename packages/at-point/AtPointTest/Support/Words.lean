@@ -1,3 +1,4 @@
+import AtPoint
 import AtPoint.Compiled
 import AtPoint.Words
 import Editor.Api
@@ -8,41 +9,46 @@ import Editor.Completion.AtPoint
 import Editor.Completion.AtPointContract
 import Editor.Completion.Later
 import Editor.Config.Packages
-import Editor.InputScheme.Vim.Default
+import Editor.InputScheme.Test
+import Editor.Invocation
 import Editor.Job
+import Editor.Keymap
 import Editor.Loop.Driver
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Editing
 import Editor.Test.Keys
+import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
-import Editor.UndoTree
 
 /-!
 # Model tests: support: Words
 
 The fixture of the checks of the `at-point` package (`AtPointTest.atPointChecks`,
-`wordsChecks`): a driver of the Vim scheme that ships, over the models,
-running the commands the package registers (`AtPoint.package`,
+`wordsChecks`): a driver of the test scheme, over the models, with keys of
+the checks' own on the commands the package registers (`AtPoint.package`,
 `AtPoint/Compiled.lean`) and its source `words`, its job and its at-point
 source `words` beside the sources the checks complete from; the
 contract's runner of at-point sources; and what a check reads of the
 driver. It holds no checks of its own.
 
-These were the core's test support (`ModelTest/Support/Evil.lean`,
-`ModelTest/Support/AtPoint.lean` and this module, `ModelTest.…`) while
-completion at point was a module of the core. A package's tests may not
-import the core's own test modules (`docs/design/packages.md`, "What a
-package may import"), so what the package's checks use of them is copied
-here, each definition under its name, with two changes:
+The checks drive no key of a shipped scheme: which keys the Vim scheme puts
+at-point's commands on is evil's (`vimDefaultChecks`). Here each command is
+on a key that prints nothing, under the test scheme
+(`Editor/InputScheme/Test.lean`), with the kit's editing commands and keys
+(`Editor/Test/Editing.lean`), which also hold the fixture notation (a
+cursor written as a bar) and what a check reads of a driver (`keysFed`,
+`shownOf`):
 
-- **Evil's commands are not run.** Evil's package is the core's and is no
-  module a package may import, so a step is handed the at-point package's
-  commands, a stand-in for evil's `insert` (`insertStandIn`, which does
-  nothing) and the commands a check adds. The keys of the checks are `i`
-  and then at-point's: the Vim scheme enters insert state at `i` by itself,
-  and evil's `insert` only reshapes the selection for that state, which no
-  check reads.
+- **The keys** (`atPointBindings`): `C-SPC` on `at-point-complete`, `C-n`
+  on `at-point-next`, `C-p` on `at-point-previous`, `TAB` on `at-point-tab`,
+  `S-TAB` on `at-point-backtab`, `RET` on `at-point-return` and `C-g` on
+  `at-point-quit`, with the kit's editing keys but `RET`.
+- **The commands a scheme's package registers that at-point runs by name**,
+  `insert-newline` and `insert-tab`, are stand-ins written here
+  (`fallbackStandIns`), registered under those names as text.
 - **Listings are matched and drawn by the core's own style and display**
   (`Completion.Matching.unregistered`, `Completion.Displaying.unregistered`),
   the defaults of a step's keys, where the core's tests hand the style and
@@ -54,76 +60,15 @@ namespace AtPointTest
 open Editor
 open Editor.Test
 
-/-- A fixture of the checks, which writes the cursor into the text as a
-bar: the text without the bar, and the bar's byte offset. A fixture with no
-bar has its cursor at 0. -/
-def barred (fixture : String) : String × Nat :=
-  match fixture.splitOn "|" with
-  | [before, after] => (before ++ after, before.utf8ByteSize)
-  | _ => (fixture, 0)
-
-/-- `contents` with a bar written before the character at the byte offset
-`offset`, or at its end. An offset that is no character's start, and none
-past the end, writes no bar, so a fixture's expectation does not match. -/
-def withBar (contents : String) (offset : Nat) : String :=
-  let (shown, walked) :=
-    contents.foldl
-      (fun (shown, walked) char =>
-        ((if walked == offset then shown.push '|' else shown).push char, walked + char.utf8Size))
-      ("", 0)
-  if walked == offset then shown.push '|' else shown
-
-/-- The driver the checks run: one over the Vim scheme that ships. -/
-abbrev EvilDriver :=
-  Loop.Driver Vim.Default.scheme
-
-/-- A state of the checks: one buffer, `scratch`, over a text made holding
-`contents`, so that nothing is pending in its history, and one window on
-it, focused, in a frame of 640 by 480, whose selection is one cursor at the
-byte offset `head`, of the shape the Vim scheme that ships reports of a
-view before any key. -/
-def evilState (contents : String) (head : Nat) : TextM EditorState := do
-  let text ← createText contents
-  let scroll ← text.mark (.anchor { offset := 0, bias := .before })
-  let shape := (Vim.Default.scheme.report Vim.Default.scheme.init ⟨0⟩).shape
-  let selection ← text.mark (.selection { ranges := #[⟨head, head⟩], shape })
-  let history ← UndoTree.over text
-  return {
-      buffers := #[some { name := "scratch", text, history }]
-      windows := #[{ id := ⟨0⟩, buffer := ⟨0⟩, scroll, selection }]
-      frame := { size := ⟨640, 480⟩, windows := #[⟨0⟩], focused := ⟨0⟩ } }
-
-/-- `driver` fed a press of each key the key string `text` names, in
-order. -/
-def evilFed (driver : EvilDriver) (text : String) : EvilDriver :=
-  (keys text).foldl (fun driver key => (driver.feed { event := press key, stamp := 0 }).1) driver
-
-/-- The selection of the view `view` of `driver`, as the text model has
-it. -/
-def evilSelection (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option Selection := do
-  let target ← driver.loop.state.target? view
-  (target.selection.runModel driver.model.texts).1.toOption
-
-/-- What the view `view` of `driver` shows, as a fixture writes it: its
-buffer's text with a bar at the head of its selection's primary range. -/
-def evilShown (driver : EvilDriver) (view : ViewId := ⟨0⟩) : String :=
-  match driver.loop.state.target? view, evilSelection driver view with
-  | some target, some selection =>
-    match (driver.model.texts.texts[target.buffer.text.index]?).join,
-      selection.ranges[selection.primary]? with
-    | some content, some range => withBar content.contents range.head
-    | _, _ => "no text"
-  | _, _ => "no view"
-
 /-- The contract's runner of at-point sources on the editor's models
 (`Completion.AtPointContract.Runner`): the at-point source asked at
 `offset`, on `occasion`, from the one window of a state of one buffer over a
-text holding `text` (`evilState`), dispatched with no registry. `some` with
+text holding `text` (`barState`), dispatched with no registry. `some` with
 what it answered and whether the editor state and the texts the store holds
 were left as they were; `none` when it was refused, or the fixture could not
 be made. -/
 def atPointRunner : Completion.AtPointContract.Runner := fun text offset occasion atPoint =>
-  match (TextM.lift (evilState text offset)).runModel editorModel with
+  match (TextM.lift (barState text offset)).runModel editorModel with
   | (.error _, _) => none
   | (.ok start, model) =>
     let asking : EditorM (Guarded (Option Completion.Region) × EditorState) :=
@@ -143,30 +88,44 @@ and the shipped `words`. -/
 def shippedAtPointSources : List Completion.Source :=
   atPointSources ++ [Completion.Words.source]
 
-/-- The stand-in for evil's `insert`, which the Vim scheme's `i` runs: a
-command that does nothing. The scheme enters insert state at the key
-itself; evil's command only reshapes the selection for it. -/
-def insertStandIn : Config.Registration :=
-  { name := "insert", action := .call fun _ => pure () }
+/-- Stand-ins for the two commands a scheme's package registers that
+at-point runs by name with no session open: `insert-newline`, a line break
+at the selections, and `insert-tab`, a tab there. -/
+def fallbackStandIns : Array Config.Registration :=
+  #[{ name := "insert-newline", action := .call fun call => call.target.insertLineBreak },
+    { name := "insert-tab", action := .call fun call => call.target.insertAtSelections "\t" }]
 
-/-- What a step of at-point's checks is handed: told that a buffer's chain
-is `chain`, that the at-point sources are `atPoints` and the shipped
-`words`, and that the sources are `shippedAtPointSources`, by name and by
-category; the commands the `at-point` package registers, `insertStandIn`
-and those of `more`, each under the name it is registered under. A command
-of `more` runs in place of one of the same name, as the registry's latest
-entry of a name does. -/
+/-- The keys of at-point's checks under the test scheme: the kit's editing
+keys but `RET`, and each of at-point's commands a scheme's table of the
+state where typing is text binds, on a key that prints nothing. -/
+def atPointBindings : List (String × Invocation) :=
+  editingBindings.filter (·.1 != "RET") ++
+    [("C-SPC", invoke AtPoint.completeName), ("C-n", invoke AtPoint.nextName),
+      ("C-p", invoke AtPoint.previousName), ("TAB", invoke AtPoint.tabName),
+      ("S-TAB", invoke AtPoint.backtabName), ("RET", invoke AtPoint.returnName),
+      ("C-g", invoke AtPoint.quitName)]
+
+/-- What a step of at-point's checks is handed: the keys of
+`atPointBindings`; told that a buffer's chain is `chain`, that the at-point
+sources are `atPoints` and the shipped `words`, and that the sources are
+`shippedAtPointSources`, by name and by category; the commands the
+`at-point` package registers, `fallbackStandIns` and those of `more`, each
+under the name it is registered under, and the kit's editing commands. A
+command of `more` runs in place of one of the same name, as the registry's
+latest entry of a name does. -/
 def shippedAtPointHanded (chain : Array String) (atPoints : List Completion.AtPoint)
-    (more : Array Config.Registration := #[]) : Loop.Keys Vim.Default.scheme :=
+    (more : Array Config.Registration := #[]) : Loop.Keys TestScheme.scheme :=
   let sources := shippedAtPointSources
-  let commands := AtPoint.package.registered.commands ++ #[insertStandIn] ++ more
-  { command? := fun name =>
+  let commands := AtPoint.package.registered.commands ++ fallbackStandIns ++ more
+  { maps := fun _ _ =>
+      [Keymap.ofList (atPointBindings.map fun (text, invocation) => (keys text, invocation))]
+    command? := fun name =>
       match commands.findRev? (·.name == name) with
       | some { action := .call run, .. } =>
         some fun call => do
           run call
           return none
-      | _ => none
+      | _ => (editingDispatched.find? (·.1 == name)).map (·.2)
     registered :=
       { atPoint := fun name => (atPoints ++ [Completion.AtPoint.words]).find? (·.name == name)
         atPointNames := fun _ _ => chain
@@ -175,24 +134,24 @@ def shippedAtPointHanded (chain : Array String) (atPoints : List Completion.AtPo
           (sources.filter (·.category == category)).toArray.map (·.name) } }
 
 /-- A driver of at-point's checks over the fixture `fixture`
-(`evilState`), handed `shippedAtPointHanded chain atPoints more`, with the
-job `words` registered. -/
+(`barred`, `barState`), handed `shippedAtPointHanded chain atPoints more`,
+with the job `words` registered. -/
 def shippedAtPointDriver (fixture : String) (chain : Array String)
     (atPoints : List Completion.AtPoint) (more : Array Config.Registration := #[]) :
-    Option EvilDriver :=
+    Option TestDriver :=
   let jobs (name : String) : Option (List Argument → Work) :=
     if name == Completion.Words.job then some (Completion.answering Completion.Words.gather)
     else none
   let (contents, head) := barred fixture
-  (Loop.Driver.over (shippedAtPointHanded chain atPoints more) jobs (evilState contents head)
+  (Loop.Driver.over (shippedAtPointHanded chain atPoints more) jobs (barState contents head)
       editorModel).toOption
 
 /-- The open session's choice in `driver`. -/
-def sessionChosen (driver : EvilDriver) : Option Nat :=
+def sessionChosen (driver : TestDriver) : Option Nat :=
   driver.loop.state.atPoint.bind (·.candidates.chosen)
 
 /-- Whether the text model refuses the marker `id`: given up. -/
-def markerGone (driver : EvilDriver) (id : MarkerId) : Bool :=
+def markerGone (driver : TestDriver) (id : MarkerId) : Bool :=
   match ((id.text.marker id).runModel driver.model.texts).1 with
   | .error .noSuchMarker => true
   | _ => false

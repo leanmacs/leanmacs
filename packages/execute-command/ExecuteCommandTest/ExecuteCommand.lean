@@ -18,7 +18,6 @@ import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Test.Sources
-import Editor.Themes
 import Editor.Value
 import ExecuteCommand
 import ExecuteCommand.Compiled
@@ -37,9 +36,10 @@ The test driver's root, `ExecuteCommandTest/Model.lean`, runs them.
 They run on the core's test kit: the loop's driver (`Editor.Test.Driver`,
 `Editor.Test.Loop`), the minibuffer's package as the kit's prompts bring it
 (`Editor.Test.Prompts`), and the source contract's runner
-(`Editor.Test.Sources`). The command that loads a theme is registered here
-from the editor API (`Themes.loadThemeCommand`), as compiled code
-registers it.
+(`Editor.Test.Sources`). The command that asks in turn is one written
+here over the editor API (`loadThemeStandIn`), registered as `load-theme`:
+a prompting command as the themes package's is, which no other package's
+test may import.
 -/
 
 namespace ExecuteCommandTest
@@ -52,11 +52,37 @@ def saysMarked : Dispatched := fun _ => do
   message "marked"
   return none
 
+/-- The name the checks' prompting command is registered under, as text:
+the one the themes package registers its own under. -/
+def loadName : String :=
+  "load-theme"
+
+/-- The label of the prompt the checks' prompting command asks with. -/
+def loadLabel : String :=
+  "Theme: "
+
+/-- The prompting command of the checks, written here over the editor API
+as the themes package's `load-theme` is: with a string first it loads the
+theme of that name (`loadTheme`); with anything else, or nothing, it asks
+for the name with a prompt labelled `loadLabel`, whose continuation is the
+command itself and whose candidates are the names themes are registered
+under (`themeNames`). -/
+def loadThemeStandIn : Dispatched := fun call => do
+  match call.arguments with
+  | .str name :: _ =>
+    discard <| loadTheme name
+  | _ =>
+    let source : Completion.Source :=
+      { name := "themes", category := "theme"
+        candidates := fun _ => return (← themeNames).map Completion.Candidate.ofText }
+    discard <| prompt loadLabel { command := loadName } (sources := [.category "theme" [source]])
+  return none
+
 /-- The commands of the command prompt's checks, by name, in the order they
 are registered: the commands compiled code registers for the command prompt
-(`ExecuteCommand.package.registered.commands`), the command that loads a
-theme, as the themes package registers it (`Themes.loadName`,
-`Themes.loadThemeCommand`), and the commands of the fake of the interface
+(`ExecuteCommand.package.registered.commands`), the checks' prompting
+command under `load-theme` (`loadName`, `loadThemeStandIn`), and the
+commands of the fake of the interface
 package `minibuffer-api`, the core's test kit's minibuffer
 (`MinibufferApiTest.fake.registered.commands`), then `marked`, which says
 `marked`. -/
@@ -70,10 +96,7 @@ def executeCommands : List (String × Dispatched) :=
             run call
             return none)
       | _ => none
-  let loadTheme : Dispatched := fun call => do
-    Themes.loadThemeCommand call
-    return none
-  called ExecuteCommand.package.registered.commands ++ [(Themes.loadName, loadTheme)] ++
+  called ExecuteCommand.package.registered.commands ++ [(loadName, loadThemeStandIn)] ++
     called MinibufferApiTest.fake.registered.commands ++
     [("marked", saysMarked)]
 
@@ -141,7 +164,7 @@ def executeCommandChecks : List Check :=
               let (loaded, _) := fedTo themed (.commit "second" :: presses "C-e y")
               asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
                   some (ExecuteCommand.label, { command := ExecuteCommand.name }) &&
-                themed.loop.state.prompt.map (·.label) == some Themes.label &&
+                themed.loop.state.prompt.map (·.label) == some loadLabel &&
                 themed.themes == #[] &&
                 loaded.themes == #["second"] &&
                 loaded.loop.state.prompt == none },
@@ -154,7 +177,7 @@ def executeCommandChecks : List Check :=
             | some driver =>
               (candidatesOf (calling driver)).map (·.all.map (·.text)) == some names &&
                 names.contains ExecuteCommand.name &&
-                names.contains Themes.loadName &&
+                names.contains loadName &&
                 names.back? == some "marked" },
       { name :=
           "the command prompt's candidates are the names of the registry the loop is told of: with zz-mine registered by config they end with it, after compiled code's; once config's commands are replaced with none, as a reload whose config no longer registers zz-mine replaces them, it is no candidate and compiled code's are"
@@ -181,7 +204,7 @@ def executeCommandChecks : List Check :=
                   (candidates.all.find? (·.text == name)).map (·.annotation)
               annotated "marked" == some (some "C-c m, C-c n  Mark it") &&
                 annotated MinibufferApi.acceptName == some (some "C-e y") &&
-                annotated Themes.loadName == some none },
+                annotated loadName == some none },
       { name :=
           "a command's annotation is none with no binding, the keys of one with no description, and the keys then the description of a described one"
         run :=
@@ -199,7 +222,7 @@ def executeCommandChecks : List Check :=
             match executeDriver with
             | none => false
             | some driver =>
-              (accepting driver "load-th").loop.state.prompt.map (·.label) == some Themes.label },
+              (accepting driver "load-th").loop.state.prompt.map (·.label) == some loadLabel },
       { name :=
           "accepting a text no command matches says so in the echo area and runs nothing; an empty or blank answer says nothing and runs nothing"
         run :=
@@ -250,16 +273,16 @@ def executeCommandChecks : List Check :=
             | none => false
             | some driver =>
               let listed := calling driver
-              let themed := calling driver { command := Themes.loadName }
+              let themed := calling driver { command := loadName }
               let ran := accepting driver "x"
-              let exact := accepting driver Themes.loadName
-              let padded := accepting driver s!"  {Themes.loadName}  "
+              let exact := accepting driver loadName
+              let padded := accepting driver s!"  {loadName}  "
               (candidatesOf listed).map (·.listed.map (·.candidate.text)) == some names.reverse &&
                 (candidatesOf themed).map (·.listed.map (·.candidate.text)) ==
                   some #[Theme.defaultName, "second"] &&
                 promptEcho ran == "marked" &&
                 [exact, padded].all fun driver =>
-                  driver.loop.state.prompt.map (·.label) == some Themes.label &&
+                  driver.loop.state.prompt.map (·.label) == some loadLabel &&
                     promptEcho driver != "marked" },
       { name :=
           "pressing C-c x, a key bound to execute-command, or choosing execute-command from the menu, annotates each candidate with its keys as calling it by name does: marked with C-c m, C-c n  Mark it"

@@ -305,7 +305,7 @@ def vimDefaultChecks : List Check :=
               Test.AtPoint.names.contains &&
             Test.AtPoint.package.registered.commands.map (·.name) == Test.AtPoint.names) },
     { name :=
-        "every command the minibuffer's state's table runs, the one the Vim scheme yields to ask for a text and the one a source's job posts each batch as are each one of the kit's minibuffer names, which are what its package registers, in order"
+        "every command the minibuffer's state's table runs, the one the Vim scheme yields to ask for a text and the one a source's job posts each batch as are each one of the kit's minibuffer names, which are what its package registers, in order; the one the scheme yields to ask is the kit's minibuffer's asking command's name"
       run :=
         let bound :=
           Vim.Default.minibufferCommands.filterMap fun
@@ -315,7 +315,23 @@ def vimDefaultChecks : List Check :=
           (bound.length == 7 &&
             (bound ++ [Vim.askCommand, Completion.candidatesCommand]).all
               Test.Minibuffer.names.contains &&
+            Vim.askCommand == Test.Minibuffer.askName &&
             Test.Minibuffer.package.registered.commands.map (·.name) == Test.Minibuffer.names) },
+    { name :=
+        "phase 4 criterion 3 under the Vim scheme: C-x is unbound in the minibuffer state's own table; C-x C-d in the minibuffer state yields the command an active keymap binds it to, and with a keymap that does not bind it what it yields with no keymap"
+      run :=
+        let scheme := Vim.Default.scheme
+        let opened : Vim.State := scheme.openMinibuffer ⟨5⟩ scheme.init
+        let fed (maps : List (Keymap Vim.Bound)) : List (Option String) :=
+          ((scheme.feed (fun _ => maps) ⟨5⟩ opened (keys "C-x C-d")).2).map (·.map (·.command))
+        let own := Vim.Default.keymap Vim.Default.minibufferCommands
+        let escaping : Keymap Vim.Bound :=
+          Keymap.ofList [(keys "C-x C-d", .command { name := "escape" })]
+        let other : Keymap Vim.Bound := Keymap.ofList [(keys "C-o e", .command { name := "other" })]
+        pure
+          (own.find? (keys "C-x") == none && !own.continues (keys "C-x") &&
+            fed [escaping] == [none, some "escape"] &&
+            fed [other] == fed []) },
     { name :=
         "each of the default key sequences z t, z z and z b runs a command of its own that changes no text and enters no state, in the initial state and, the same command, in each visual state, which the view stays in; z alone yields nothing and is pending; and in the state i enters and in the minibuffer's state z is typed text"
       run :=

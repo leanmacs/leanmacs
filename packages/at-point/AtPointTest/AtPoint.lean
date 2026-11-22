@@ -9,10 +9,11 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Fake
-import Editor.InputScheme.Vim.Default
+import Editor.InputScheme.Test
 import Editor.Loop.Driver
 import Editor.State
 import Editor.Test.AtPoint
+import Editor.Test.Editing
 import Editor.Test.Models
 import Editor.Test.States
 import Editor.Text
@@ -21,12 +22,14 @@ import Editor.Text.Model
 /-!
 # Model tests: `AtPoint.lean`
 
-The model tests of `AtPoint.lean`: `atPointChecks`, on a driver of the Vim
-scheme that ships over the models (`AtPointTest/Support/Words.lean`). The
-test driver's root, `AtPointTest/Model.lean`, runs them. They were the
-core's (`ModelTest.atPointChecks`) while completion at point was a module
-of the core, and moved here with their sentences and assertions as they
-were.
+The model tests of `AtPoint.lean`: `atPointChecks`, on a driver of the test
+scheme over the models, with keys of the checks' own on the package's
+commands (`AtPointTest/Support/Words.lean`). The test driver's root,
+`AtPointTest/Model.lean`, runs them. They were the core's
+(`ModelTest.atPointChecks`) while completion at point was a module of the
+core, and moved here with their sentences and assertions; since evil
+became a package they type no key of the Vim scheme, whose table of
+at-point's keys is evil's to pin.
 -/
 
 namespace AtPointTest
@@ -36,7 +39,7 @@ open Editor.Test
 
 /-- The checks of asking for completion at point (the core's
 `lean/Editor/Api.lean`, "Completion at point", `AtPoint.lean`), on a driver
-of the Vim scheme that ships over the models. -/
+of the test scheme over the models. -/
 def atPointChecks : List Check :=
   let second : Completion.AtPoint :=
     .fixed "second" fun spot =>
@@ -50,8 +53,8 @@ def atPointChecks : List Check :=
           match shippedAtPointDriver "|" #["silent", "second", "refusing"] atPoints,
             shippedAtPointDriver "|" #["silent", "refusing"] atPoints with
           | some first, some refused =>
-            let opened := evilFed first "i C-n"
-            let failed := evilFed refused "i C-n"
+            let opened := keysFed first "C-n"
+            let failed := keysFed refused "C-n"
             opened.loop.state.atPoint.map (·.source) == some "second" &&
               (opened.loop.state.atPoint.map (·.candidates.all.map (·.text))) ==
                 some #["wq", "w"] &&
@@ -61,7 +64,7 @@ def atPointChecks : List Check :=
               failed.loop.state.echo == "at-point-next: refused: bad range"
           | _, _ => false },
     { name :=
-        "the at-point package registers its commands under the names the core's test kit registers, in its order: every command insert state's table runs that evil does not register, and the two the core runs at a trigger and a pause"
+        "the at-point package registers its commands under the names the core's test kit registers, in its order: every command a scheme's table of the state where typing is text runs that the scheme's package does not register, and the two the core runs at a trigger and a pause"
       run :=
         pure <|
           Editor.AtPoint.package.registered.commands.map (·.name) == Test.AtPoint.names &&
@@ -74,7 +77,7 @@ def atPointChecks : List Check :=
           -- `second` answers only on the chain of the buffer's major mode
           -- and minor mode together; every other pair of modes gets `silent`.
           let handed := shippedAtPointHanded #[] atPoints
-          let chained : Loop.Keys Vim.Default.scheme :=
+          let chained : Loop.Keys TestScheme.scheme :=
             { handed with
               registered :=
                 { handed.registered with
@@ -85,12 +88,12 @@ def atPointChecks : List Check :=
             { buffer with
               major := some "notes", minors := #["one"] }
           let moded : TextM EditorState := do
-            let state ← evilState "" 0
+            let state ← barState "" 0
             return { state with buffers := state.buffers.map (·.map notes) }
           match (Loop.Driver.over chained (fun _ => none) moded editorModel).toOption with
           | none => false
           | some driver =>
-            let opened := evilFed driver "i C-n"
+            let opened := keysFed driver "C-n"
             opened.loop.state.atPoint.map (·.source) == some "second" &&
               (opened.loop.state.atPoint.map (·.candidates.all.map (·.text))) ==
                 some #["wq", "w"] },
@@ -110,15 +113,15 @@ def atPointChecks : List Check :=
             shippedAtPointDriver "ab|c" #["away"] [away],
             shippedAtPointDriver "ab|c" #["missing"] [missing] with
           | some silent, some outside, some unknown =>
-            (evilFed silent "i C-SPC").loop.state.echo == AtPoint.nothing &&
-              (evilFed outside "i C-SPC").loop.state.echo ==
+            (keysFed silent "C-SPC").loop.state.echo == AtPoint.nothing &&
+              (keysFed outside "C-SPC").loop.state.echo ==
                 (AtPointRefusal.outside "away").describe &&
-              (evilFed unknown "i C-SPC").loop.state.echo ==
+              (keysFed unknown "C-SPC").loop.state.echo ==
                 (AtPointRefusal.source (.noSuchSource "nobody")).describe &&
-              evilShown (evilFed silent "i S-TAB") == "ab|c" &&
-              (evilFed silent "i S-TAB").loop.state.echo == "" &&
-              (evilFed silent "i C-g").loop.state.echo == "quit ran" &&
-              (evilFed silent "i C-g").loop.state.atPoint.isNone
+              shownOf (keysFed silent "S-TAB") == "ab|c" &&
+              (keysFed silent "S-TAB").loop.state.echo == "" &&
+              (keysFed silent "C-g").loop.state.echo == "quit ran" &&
+              (keysFed silent "C-g").loop.state.atPoint.isNone
           | _, _, _ => false },
     { name :=
         "a region that holds the cursor but starts or stops inside a character is refused outside, and no session opens"
@@ -133,8 +136,8 @@ def atPointChecks : List Check :=
           match shippedAtPointDriver "é|é" #["starting"] [starting],
             shippedAtPointDriver "é|é" #["stopping"] [stopping] with
           | some starts, some stops =>
-            let started := evilFed starts "i C-SPC"
-            let stopped := evilFed stops "i C-SPC"
+            let started := keysFed starts "C-SPC"
+            let stopped := keysFed stops "C-SPC"
             started.loop.state.echo == (AtPointRefusal.outside "starting").describe &&
               started.loop.state.atPoint.isNone &&
               stopped.loop.state.echo == (AtPointRefusal.outside "stopping").describe &&
@@ -147,12 +150,12 @@ def atPointChecks : List Check :=
           match shippedAtPointDriver "|" #["second"] atPoints with
           | none => false
           | some driver =>
-            let opened := evilFed driver "i C-n"
-            let again := evilFed opened "C-SPC"
+            let opened := keysFed driver "C-n"
+            let again := keysFed opened "C-SPC"
             match opened.loop.state.atPoint with
             | none => false
             | some session =>
-              let quit := evilFed opened "C-g"
+              let quit := keysFed opened "C-g"
               let state := opened.loop.state
               let (_, prompting) := prompted state
               again.loop.state.atPoint == opened.loop.state.atPoint &&

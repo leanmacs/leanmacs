@@ -11,13 +11,15 @@ import Editor.File.Model
 import Editor.InputScheme.Test
 import Editor.Language
 import Editor.Mode
+import Editor.Package
 import Editor.Program
 import Editor.Scene
+import Editor.Setup
+import Editor.Test.Editing
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Shipped
-import Editor.Test.Linked.Vim
 import Editor.Test.Minibuffer
 import Editor.Text
 import Editor.Text.Model
@@ -637,11 +639,38 @@ def listingsStarted (output : Array String) : Nat :=
   (output.filter fun line =>
       line.startsWith "job " && line.endsWith s!" {Completion.Paths.job}: started").size
 
-/-- Runs `check` on a host under the Vim scheme over `promptFiles`, with
-`open-file` run, its listing of `/` waited for, `w/` committed after its
-`/`, and the listing of `/w/` waited for. -/
+/-- The keys of the prompt checks under the test scheme, as a package
+handed last: the kit's editing commands (`Test.editingCommands`), so a
+printable key types its character, on the kit's editing keys but `RET`,
+which the minibuffer's mode has; and `TAB` on the minibuffer's command that
+puts a candidate in the input and `C-u` on the one that deletes to the
+input's start, the keys a scheme's table of a minibuffer's view binds them
+to. -/
+def promptTyping : Package :=
+  { name := "prompt-typing"
+    setup := do
+      for (name, run) in Test.editingCommands do
+        commandWith name run
+      for (text, name) in Test.editingKeys.filter (·.1 != "RET") do
+        bindKey text name
+      bindKey "TAB" Test.Minibuffer.insertName
+      bindKey "C-u" Test.Minibuffer.deleteToStartName }
+
+/-- Runs `check` against a host of the test scheme made as the executable's
+hosts are made (`withShippedHost TestScheme.scheme`, which says what each
+argument is), handed the harness's packages and then the checks' keys
+(`promptTyping`). -/
+def withPromptHost (context : HostContext) (files : List (String × String))
+    (check : Session → IO Bool) (fileModel : Option FileModel := none) (realFiles : Bool := false)
+    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none) : IO Bool :=
+  withShippedHost TestScheme.scheme context files check fileModel realFiles workingDirectory home
+    (context.packages.push promptTyping)
+
+/-- Runs `check` on a host of the test scheme (`withPromptHost`) over
+`promptFiles`, with `open-file` run, its listing of `/` waited for, `w/`
+committed after its `/`, and the listing of `/w/` waited for. -/
 def atW (context : HostContext) (check : Session → IO Bool) : IO Bool :=
-  withVimHost context [] (fileModel := some promptFiles) fun session => do
+  withPromptHost context [] (fileModel := some promptFiles) fun session => do
     session.ask [.run Files.openName]
     unless (← session.host.join patience) == .settled do
       return false
@@ -652,7 +681,9 @@ def atW (context : HostContext) (check : Session → IO Bool) : IO Bool :=
     check session
 
 /-- The checks of the file prompt and of putting a candidate into the
-minibuffer, over the recorder, under the Vim scheme that ships. -/
+minibuffer, over the recorder, under the test scheme with keys of the
+checks' own (`promptTyping`): which keys a shipped scheme puts the
+minibuffer's commands on is that scheme's. -/
 def filePromptChecks (context : HostContext) : List Check :=
   [{  name :=
         "AC 1 over the recorder: the file prompt at /w/ lists locked/, notes/, alpha.txt, alps.md, beta.txt, directories first, notes/ annotated directory and no .hidden; after a l it lists the library's order of alpha.txt and alps.md"
@@ -701,7 +732,7 @@ def filePromptChecks (context : HostContext) : List Check :=
         IO.FS.withTempDir fun directory => do
           IO.FS.writeFile (directory / "alpha.txt") "alpha\n"
           IO.FS.writeFile (directory / "alps.md") "alps\n"
-          withVimHost context [] (realFiles := true) fun session => do
+          withPromptHost context [] (realFiles := true) fun session => do
               session.ask [.run Files.openName]
               unless (← session.host.join patience) == .settled do
                 return false
@@ -732,8 +763,8 @@ def filePromptChecks (context : HostContext) : List Check :=
           IO.FS.writeFile (home / "alpha.txt") "alpha\n"
           IO.FS.createDir (home / "notes")
           IO.FS.writeFile (home / "notes" / "todo.md") "todo\n"
-          withVimHost context [] (realFiles := true) (workingDirectory := home / "notes") (home :=
-              some home) fun session => do
+          withPromptHost context [] (realFiles := true) (workingDirectory := home / "notes")
+              (home := some home) fun session => do
               session.ask [.run Files.openName]
               unless (← session.host.join patience) == .settled do
                 return false
@@ -757,7 +788,7 @@ def filePromptChecks (context : HostContext) : List Check :=
     { name :=
         "AC 6 over the recorder: committing w/locked/ says files: cannot list /w/locked/: the file system does not allow it in the echo area and lists nothing; RET then says the load's refusal, and no prompt is left open"
       run :=
-        withVimHost context [] (fileModel := some promptFiles) fun session => do
+        withPromptHost context [] (fileModel := some promptFiles) fun session => do
           session.ask [.run Files.openName]
           unless (← session.host.join patience) == .settled do
             return false
@@ -777,9 +808,9 @@ def filePromptChecks (context : HostContext) : List Check :=
               views.size == 1 &&
               !(← session.output.get).any (·.startsWith "loop: refused") },
     { name :=
-        "AC 5: under the Vim scheme, in a prompt that is not a file prompt, C-n C-n TAB puts the second listed candidate in the minibuffer with the bar at its end, not the first; e TAB puts the first listed for e; the prompt stays open, its status line and the list view still drawn, and nothing is refused"
+        "AC 5: in a prompt that is not a file prompt, the key of next-item twice and then the key of minibuffer-insert puts the second listed candidate in the minibuffer with the bar at its end, not the first; e and that key puts the first listed for e; the prompt stays open, its status line and the list view still drawn, and nothing is refused"
       run :=
-        withVimHost context [("init.lean", pickText)] fun session => do
+        withPromptHost context [("init.lean", pickText)] fun session => do
           session.ask [.reload]
           let listed ← realOrder "" #["wq", "edit", "w"]
           let some second := listed[1]? | return false

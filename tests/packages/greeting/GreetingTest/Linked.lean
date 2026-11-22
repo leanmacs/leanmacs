@@ -1,6 +1,7 @@
 import Editor
 import Editor.Command.Append
 import Editor.Headless
+import Editor.InputScheme.Test
 import Editor.Text.Real
 import EditorCore.EditorPackage
 import Greeting.EditorPackage
@@ -83,7 +84,7 @@ def configCheck (sysroot oleans : String) : IO Bool := do
   let printed ← IO.mkRef (#[] : Array String)
   let directives ← IO.ofExcept ((Editor.Headless.script configScript).mapError IO.userError)
   let shipped ←
-    Editor.Headless.shipped Editor.Vim.Default.scheme setPackages #[`Editor] sysroot [oleans]
+    Editor.Headless.shipped Editor.TestScheme.scheme setPackages #[`Editor] sysroot [oleans]
         configDirectory (fun line => printed.modify (·.push line)) .headless (fakeClock := true)
   let failure ←
     Editor.Headless.run

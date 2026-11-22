@@ -1,4 +1,5 @@
-import Editor.Evil.Kit
+import Editor.Test.Driver
+import Editor.Test.Editing
 import FilesApi
 import WorkingSet.Places
 import WorkingSetTest.Check
@@ -21,14 +22,15 @@ open WorkingSetTest.Support
 
 /-- A driver of the checks with `a.txt` open and its third line, `charlie
 three`, held in the set `demo`, the store read when `read`. -/
-def heldDriver (read : Bool := true) : Option EvilDriver :=
+def heldDriver (read : Bool := true) : Option TestDriver :=
   (driverWith).map fun driver =>
     invoked (opened driver "a.txt") "ws-hold" [.str "demo", .nat 20, .nat 33, .bool read]
 
 /-- `driver` once a line `new` is opened above the first, and `big ` typed
 before the third word of the line that was the third. -/
-def heldEdited (driver : EvilDriver) : EvilDriver :=
-  evilFed driver s!"g g O {typed "new"} <Escape> 4 G w i {typed "big "} <Escape>"
+def heldEdited (driver : TestDriver) : TestDriver :=
+  keysFed driver
+    s!"C-<Home> {typed "new"} RET {toLine 4} {" ".intercalate (List.replicate 8 "<ArrowRight>")} {typed "big "}"
 
 /-- The checks of where a working set's ranges are held
 (`WorkingSet/Places.lean`), on the loop's driver over the models. -/

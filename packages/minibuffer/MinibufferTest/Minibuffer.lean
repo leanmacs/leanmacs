@@ -5,7 +5,6 @@ import Editor.Config.Packages
 import Editor.Display.Model
 import Editor.Event
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim
 import Editor.Invocation
 import Editor.Loop.Driver
 import Editor.Mode
@@ -285,7 +284,7 @@ def promptModeChecks : List Check :=
             Editor.Minibuffer.package.registered.modes.map (fun mode => (mode.name, mode.roles)) ==
               Test.Minibuffer.package.registered.modes.map fun mode => (mode.name, mode.roles)) },
     { name :=
-        "the minibuffer's commands are registered under their nine names, each another, the one that asks for the input scheme under the name the Vim scheme yields and the one that takes a batch under the name a source's job posts; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
+        "the minibuffer's commands are registered under their nine names, each another, the one that asks for the input scheme under the name the core's test kit's minibuffer registers its own, which a scheme yields, and the one that takes a batch under the name a source's job posts; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
       run :=
         pure
           (Editor.Minibuffer.package.registered.commands.map (·.name) ==
@@ -296,7 +295,7 @@ def promptModeChecks : List Check :=
                 Editor.Minibuffer.candidatesName] &&
             (Editor.Minibuffer.package.registered.commands.map (·.name)).toList.eraseDups.length ==
               9 &&
-            Editor.Minibuffer.askName == Vim.askCommand &&
+            Editor.Minibuffer.askName == Test.Minibuffer.askName &&
             Editor.Minibuffer.candidatesName == Completion.candidatesCommand &&
             Editor.Minibuffer.package.registered.modes.map (·.name) == #[Prompt.mode] &&
             Editor.Minibuffer.package.registered.modes.map (·.roles) ==

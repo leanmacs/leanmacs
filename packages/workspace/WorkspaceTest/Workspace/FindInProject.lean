@@ -1,6 +1,5 @@
 import Editor.Config.Packages
-import Editor.InputScheme.Vim
-import Editor.InputScheme.Vim.Default
+import Editor.InputScheme.Test
 import Editor.Setup
 import Editor.Test.Driver
 import Editor.Test.Minibuffer
@@ -544,16 +543,14 @@ def findInProjectChecks : List Check :=
                   shown (drainedAfter (settledAfter without "C-o a") before) keys
             | _, _ => false },
       { name :=
-          "phase 4 criterion 3 under the Vim scheme: C-x is unbound in the minibuffer state's own table; C-x C-d in the minibuffer state yields the escape with the workspace finder's keymap active, and with another category's what it yields with no keymap"
+          "phase 4 criterion 3 under the test scheme: C-x C-d in a minibuffer's view yields the escape with the workspace finder's keymap active, and with another category's what it yields with no keymap"
         run :=
-          let scheme := Vim.Default.scheme
-          let opened : Vim.State := scheme.openMinibuffer ⟨5⟩ scheme.init
-          let fed (maps : List (Keymap Vim.Bound)) : List (Option String) :=
+          let scheme := TestScheme.scheme
+          let opened : TestScheme.State := scheme.openMinibuffer ⟨5⟩ scheme.init
+          let fed (maps : List (Keymap TestScheme.Binding)) : List (Option String) :=
             ((scheme.feed (fun _ => maps) ⟨5⟩ opened (keys "C-x C-d")).2).map (·.map (·.command))
-          let own := Vim.Default.keymap Vim.Default.minibufferCommands
           pure
-            (own.find? (keys "C-x") == none && !own.continues (keys "C-x") &&
-              fed [shipped.categoryKeymap scheme Workspace.FindFile.category] ==
+            (fed [shipped.categoryKeymap scheme Workspace.FindFile.category] ==
                 [none, some Workspace.FindInProject.escapeName] &&
               fed [shipped.categoryKeymap scheme Workspace.FindInProject.category] == fed []) },
       { name :=

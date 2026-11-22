@@ -1,4 +1,5 @@
-import Editor.Evil.Kit
+import Editor.Test.Driver
+import Editor.Test.Editing
 import Editor.Test.Excerpt
 import WorkingSet.Compiled
 import WorkingSetTest.Check
@@ -8,7 +9,8 @@ import WorkingSetTest.Support.WorkingSet
 # Model tests: `WorkingSet/Run.lean`
 
 The model tests of `WorkingSet/Run.lean`: `workingSetRunChecks`, on the
-loop's driver over the editor's models and the job model, with evil's keys.
+loop's driver over the editor's models and the job model, with the kit's
+editing keys on the test scheme (`WorkingSetTest/Support/WorkingSet.lean`).
 The test driver's root, `WorkingSetTest/Model.lean`, runs them; its module
 doc says what each shows.
 -/
@@ -23,7 +25,7 @@ namespace WorkingSetRunTest
 
 /-- A driver of the checks with the working sets' commands, mode and jobs,
 and `a.txt` open in its window. -/
-def withA : Option EvilDriver :=
+def withA : Option TestDriver :=
   (driverWith WorkingSet.package.registered.commands WorkingSet.package.registered.modes
         WorkingSet.package.registered.jobs).map
     (opened · "a.txt")
@@ -34,34 +36,34 @@ def setBuffer (name : String) : String :=
   WorkingSet.bufferName name "r@main"
 
 /-- The name of the buffer the view 0 of `driver` shows. -/
-def shown (driver : EvilDriver) : Option String := do
+def shown (driver : TestDriver) : Option String := do
   let state := driver.loop.state
   let window ← state.window? ⟨0⟩
   return (← state.buffer? window.buffer).name
 
 /-- The headers of the entries of the buffer called `name` that are not
 empty. -/
-def headersOf (driver : EvilDriver) (name : String) : Array String :=
+def headersOf (driver : TestDriver) (name : String) : Array String :=
   (((excerptBufferNamed driver name).bind (·.excerpts)).map fun excerpts =>
         (excerpts.entries.map (·.header)).filter (!·.isEmpty)).getD
     #[]
 
 /-- `driver` once `command` is invoked with `arguments` and everything it
 starts is settled. -/
-def ran (driver : EvilDriver) (command : String) (arguments : List Argument := []) : EvilDriver :=
+def ran (driver : TestDriver) (command : String) (arguments : List Argument := []) : TestDriver :=
   drained (invoked driver command arguments)
 
 /-- `driver` once its window's rows 2 and 3 of `a.txt` are selected
 linewise and added to `demo`, the selection still there. -/
-def addedDemo (driver : EvilDriver) : EvilDriver :=
-  ran (evilFed driver "j V j") WorkingSet.addName [.str "demo"]
+def addedDemo (driver : TestDriver) : TestDriver :=
+  ran (keysFed driver s!"<ArrowDown> {selectRows 2}") WorkingSet.addName [.str "demo"]
 
 /-- `driver` once `b.txt` and `c.txt`, each holding a match of `needle`, are
 open and the kit's stand-in for a project search's results is shown: an
 excerpt buffer of the two files' texts, `b.txt`'s first
 (`Editor.Test.excerptFiles`), its cursor at its start, as a search of
 `needle` shows its results. -/
-def searched (driver : EvilDriver) : EvilDriver :=
+def searched (driver : TestDriver) : TestDriver :=
   ran (opened (opened driver "b.txt") "c.txt") excerptFilesName [.str "b.txt", .str "c.txt"]
 
 end WorkingSetRunTest
@@ -72,14 +74,14 @@ open WorkingSetRunTest in
 first acceptance criterion of navigation-and-windows phase 5. -/
 def workingSetRunChecks : List Check :=
   [{  name :=
-        "criterion 1 (a): V over rows 2 and 3 of a.txt, working-set-add demo and working-set-open demo show the set's buffer in the window, its text the two rows under the header a.txt:2"
+        "criterion 1 (a): a selection of rows 2 and 3 of a.txt, working-set-add demo and working-set-open demo show the set's buffer in the window, its text the two rows under the header a.txt:2"
       run :=
         pure <|
           match withA with
           | none => false
           | some driver =>
             let added := addedDemo driver
-            let shownSet := ran (evilFed added "<Escape>") WorkingSet.openName [.str "demo"]
+            let shownSet := ran (keysFed added letGo) WorkingSet.openName [.str "demo"]
             added.loop.state.echo == s!"demo: added a.txt:2; {WorkingSet.memoryOnlySentence}" &&
               shown shownSet == some (setBuffer "demo") &&
               excerptRead shownSet (setBuffer "demo") == some "bravo two\ncharlie three\n" &&
@@ -94,15 +96,14 @@ def workingSetRunChecks : List Check :=
           match withA with
           | none => false
           | some driver =>
-            let shownSet :=
-              ran (evilFed (addedDemo driver) "<Escape>") WorkingSet.openName [.str "demo"]
-            let typedIn := evilFed shownSet "i x <Escape>"
-            let visited := evilFed typedIn "RET"
-            let back := evilFed visited "C-o"
+            let shownSet := ran (keysFed (addedDemo driver) letGo) WorkingSet.openName [.str "demo"]
+            let typedIn := keysFed shownSet "x <ArrowLeft>"
+            let visited := keysFed typedIn "RET"
+            let back := keysFed visited "C-o"
             excerptRead typedIn "a.txt" ==
                 some "alpha one\nxbravo two\ncharlie three\ndelta four\necho five\nfoxtrot six\n" &&
               shown visited == some "a.txt" &&
-              evilShown visited ==
+              shownOf visited ==
                 "alpha one\n|xbravo two\ncharlie three\ndelta four\necho five\nfoxtrot six\n" &&
               shown back == some (setBuffer "demo") },
     { name :=
@@ -113,7 +114,7 @@ def workingSetRunChecks : List Check :=
           | none => false
           | some driver =>
             let results := searched driver
-            let pinned := ran (evilFed results "j j") WorkingSet.addName [.str "pins"]
+            let pinned := ran (keysFed results (down 2)) WorkingSet.addName [.str "pins"]
             let shownSet := ran pinned WorkingSet.openName [.str "pins"]
             (rangesOf pinned "pins").map (fun range => (range.stored.path, range.stored.start)) ==
                 #[("b.txt", ⟨3, 1⟩)] &&
@@ -128,7 +129,7 @@ def workingSetRunChecks : List Check :=
           | none => false
           | some driver =>
             let results := searched driver
-            let refused := ran (evilFed results "V G") WorkingSet.addName [.str "pins"]
+            let refused := ran (keysFed results (selectRows 8)) WorkingSet.addName [.str "pins"]
             refused.loop.state.echo == WorkingSet.spansTwoFiles &&
               (rangesOf refused "pins").isEmpty },
     { name := "criterion 1 (d): a cursor's add takes its whole row, with its line break"
@@ -137,7 +138,7 @@ def workingSetRunChecks : List Check :=
           match withA with
           | none => false
           | some driver =>
-            let added := ran (evilFed driver "3 j") WorkingSet.addName [.str "solo"]
+            let added := ran (keysFed driver (down 3)) WorkingSet.addName [.str "solo"]
             (rangesOf added "solo").map (fun range => (range.stored.quote, range.stored.start)) ==
               #[("delta four\n", ⟨4, 1⟩)] },
     { name := "criterion 1 (e): adding the same range twice says already in demo and adds nothing"
@@ -146,7 +147,7 @@ def workingSetRunChecks : List Check :=
           match withA with
           | none => false
           | some driver =>
-            let twice := addedDemo (evilFed (addedDemo driver) "<Escape> g g")
+            let twice := addedDemo (keysFed (addedDemo driver) s!"{letGo} C-<Home>")
             twice.loop.state.echo == "already in demo" && (rangesOf twice "demo").size == 1 },
     { name :=
         "criterion 1 (f): two ranges on overlapping rows of one file are one excerpt, headed by the first row's line"
@@ -157,8 +158,10 @@ def workingSetRunChecks : List Check :=
           | some driver =>
             let first := addedDemo driver
             let second :=
-              evilFed (ran (evilFed first "<Escape> g g j j V j") WorkingSet.addName [.str "demo"])
-                "<Escape>"
+              keysFed
+                (ran (keysFed first s!"{letGo} C-<Home> {down 2} {selectRows 2}") WorkingSet.addName
+                  [.str "demo"])
+                letGo
             let shownSet := ran second WorkingSet.openName [.str "demo"]
             (rangesOf second "demo").size == 2 &&
               excerptRead shownSet (setBuffer "demo") ==
@@ -172,8 +175,9 @@ def workingSetRunChecks : List Check :=
           | none => false
           | some driver =>
             let other :=
-              ran (evilFed (addedDemo driver) "<Escape> 4 G") WorkingSet.addName [.str "other"]
-            let asked := ran (evilFed other "g g") WorkingSet.addName
+              ran (keysFed (addedDemo driver) s!"{letGo} {toLine 4}") WorkingSet.addName
+                [.str "other"]
+            let asked := ran (keysFed other "C-<Home>") WorkingSet.addName
             let index := ((asked.loop.state.findFile "/r/a.txt").map (·.index)).getD 0
             let answered :=
               ran asked WorkingSet.addName [.str "demo", .bool true, .nat index, .nat 0, .nat 10]
@@ -188,8 +192,7 @@ def workingSetRunChecks : List Check :=
           match withA with
           | none => false
           | some driver =>
-            let shownSet :=
-              ran (evilFed (addedDemo driver) "<Escape>") WorkingSet.openName [.str "demo"]
+            let shownSet := ran (keysFed (addedDemo driver) letGo) WorkingSet.openName [.str "demo"]
             let removed := ran shownSet WorkingSet.removeName
             (rangesOf removed "demo").isEmpty &&
               excerptRead removed (setBuffer "demo") == some "" &&
@@ -202,10 +205,12 @@ def workingSetRunChecks : List Check :=
           match withA with
           | none => false
           | some driver =>
-            let first := evilFed (addedDemo driver) "<Escape>"
+            let first := keysFed (addedDemo driver) letGo
             let second :=
-              evilFed (ran (evilFed first "g g j j V j") WorkingSet.addName [.str "demo"])
-                "<Escape>"
+              keysFed
+                (ran (keysFed first s!"C-<Home> {down 2} {selectRows 2}") WorkingSet.addName
+                  [.str "demo"])
+                letGo
             let shownSet := ran second WorkingSet.openName [.str "demo"]
             let asked := ran shownSet WorkingSet.noteName
             let one := ran shownSet WorkingSet.noteName [.str "one", .bool true, .nat 0]
@@ -221,13 +226,13 @@ def workingSetRunChecks : List Check :=
           match withA with
           | none => false
           | some driver =>
-            let added := ran (evilFed driver "2 j") WorkingSet.addName [.str "demo"]
+            let added := ran (keysFed driver (down 2)) WorkingSet.addName [.str "demo"]
             let gone := closed added "a.txt"
             let cut :=
               onDisk gone "a.txt" "alpha one\nbravo two\ndelta four\necho five\nfoxtrot six\n"
             let shownSet := ran (opened cut "b.txt") WorkingSet.openName [.str "demo"]
             let typedBack :=
-              evilFed (opened shownSet "a.txt") s!"2 G o {typed "charlie three"} <Escape>"
+              keysFed (opened shownSet "a.txt") s!"{toLine 2} <End> RET {typed "charlie three"}"
             let back := ran typedBack BuffersApi.switchName [.str (setBuffer "demo")]
             let refreshed := ran back WorkingSet.refreshName
             (rangesOf shownSet "demo").map (·.hold) == #[.drifted] &&
@@ -242,7 +247,7 @@ def workingSetRunChecks : List Check :=
           match withA with
           | none => false
           | some driver =>
-            let added := ran (evilFed driver "2 j") WorkingSet.addName [.str "demo"]
+            let added := ran (keysFed driver (down 2)) WorkingSet.addName [.str "demo"]
             let gone := opened (closed added "a.txt") "b.txt"
             let bare := { gone with keys := Test.withoutExtension FilesApi.Files gone.keys }
             let shownSet := ran bare WorkingSet.openName [.str "demo"]
@@ -256,8 +261,7 @@ def workingSetRunChecks : List Check :=
           match withA with
           | none => false
           | some driver =>
-            let none_ :=
-              ran (evilFed (addedDemo driver) "<Escape>") WorkingSet.openName [.str "nope"]
+            let none_ := ran (keysFed (addedDemo driver) letGo) WorkingSet.openName [.str "nope"]
             none_.loop.state.echo == WorkingSet.noSuchSet "nope" "r@main" &&
               (none_.loop.state.findBuffer (setBuffer "nope")).isNone }]
 

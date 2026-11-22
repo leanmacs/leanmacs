@@ -1,4 +1,5 @@
-import Editor.Evil.Kit
+import Editor.Test.Driver
+import Editor.Test.Editing
 import Editor.Test.Excerpt
 import FilesApi
 import VcApiTest.Fake
@@ -66,7 +67,7 @@ the write's repository `repository`, the state directory `state`, and
 `files` as its world when given. -/
 def diskDriver (repository : VersionControl.Model.Repository := repository)
     (state : Option System.FilePath := some "/state") (files : Option FileModel := none)
-    (backends : Array VcApi.Backend := #[VcApiTest.backend repository]) : Option EvilDriver :=
+    (backends : Array VcApi.Backend := #[VcApiTest.backend repository]) : Option TestDriver :=
   (driverWith WorkingSet.package.registered.commands WorkingSet.package.registered.modes
         (jobsOver repository backends)).map
     fun driver =>
@@ -78,29 +79,31 @@ def diskDriver (repository : VersionControl.Model.Repository := repository)
 
 /-- `driver` once `command` is invoked with `arguments` and everything it
 starts is settled. -/
-def ran (driver : EvilDriver) (command : String) (arguments : List Argument := []) : EvilDriver :=
+def ran (driver : TestDriver) (command : String) (arguments : List Argument := []) : TestDriver :=
   drained (invoked driver command arguments)
 
 /-- `driver` once `keys` are pressed and `working-set-add demo` runs, and
-everything it starts is settled; the selection is let go of. -/
-def addedOn (driver : EvilDriver) (keys : String) : EvilDriver :=
-  evilFed (ran (evilFed driver keys) WorkingSet.addName [.str "demo"]) "<Escape>"
+everything it starts is settled; a selection of whole rows, when `rows`,
+is let go of. -/
+def addedOn (driver : TestDriver) (keys : String) (rows : Bool := false) : TestDriver :=
+  keysFed (ran (keysFed driver keys) WorkingSet.addName [.str "demo"]) (if rows then letGo else "")
 
 /-- `driver` with `d.txt` open and r1, r2 and r3 added to `demo`, in that
 order. -/
-def threeAdded (driver : EvilDriver) : EvilDriver :=
-  addedOn (addedOn (addedOn (opened driver "d.txt") "2 G") "3 G V 2 j") "6 G"
+def threeAdded (driver : TestDriver) : TestDriver :=
+  addedOn (addedOn (addedOn (opened driver "d.txt") (toLine 2)) s!"{toLine 3} {selectRows 3}" true)
+    (toLine 6)
 
 /-- The bytes of the file at `path` in `driver`'s world. -/
-def bytesOn (driver : EvilDriver) (path : System.FilePath) : Option ByteArray :=
+def bytesOn (driver : TestDriver) (path : System.FilePath) : Option ByteArray :=
   (driver.jobs.files.file? path).map (·.bytes)
 
 /-- The document the store file holds in `driver`'s world. -/
-def storeOf (driver : EvilDriver) : Option WorkingSet.Document := do
+def storeOf (driver : TestDriver) : Option WorkingSet.Document := do
   (WorkingSet.Document.read (← bytesOn driver storePath)).toOption
 
 /-- The ranges of `demo` the store file holds in `driver`'s world. -/
-def storedDemo (driver : EvilDriver) : Array WorkingSet.Stored :=
+def storedDemo (driver : TestDriver) : Array WorkingSet.Stored :=
   (((storeOf driver).bind (·.sets.find? (·.name == "demo"))).map (·.ranges)).getD #[]
 
 /-- The name of the set `demo`'s buffer. -/
@@ -109,14 +112,14 @@ def demoBuffer : String :=
 
 /-- The headers of the entries of the buffer called `name` that are not
 empty. -/
-def headersOf (driver : EvilDriver) (name : String) : Array String :=
+def headersOf (driver : TestDriver) (name : String) : Array String :=
   (((excerptBufferNamed driver name).bind (·.excerpts)).map fun excerpts =>
         (excerpts.entries.map (·.header)).filter (!·.isEmpty)).getD
     #[]
 
 /-- A fresh driver over the world `driver` left, as after a restart: a new
 state, no buffers, the same files. -/
-def restarted (driver : EvilDriver) : Option EvilDriver :=
+def restarted (driver : TestDriver) : Option TestDriver :=
   diskDriver (files := some driver.jobs.files) |>.map fun fresh => onDisk fresh "d.txt" dEdited
 
 end WorkingSetDiskTest
@@ -177,7 +180,7 @@ def workingSetDiskChecks : List Check :=
             | none => false
             | some fresh =>
               let shownSet := ran (opened fresh "a.txt") WorkingSet.openName [.str "demo"]
-              let more := addedOn (evilFed shownSet "C-o") "g g"
+              let more := addedOn (keysFed shownSet "C-o") "C-<Home>"
               (storedDemo more).size == 4 && (storedDemo more)[2]? == (storedDemo before)[2]? },
     { name :=
         "with no state directory the sets live in memory: the first add says so once, and nothing is written"
@@ -187,8 +190,8 @@ def workingSetDiskChecks : List Check :=
           | none => false
           | some driver =>
             let first :=
-              ran (evilFed (opened driver "d.txt") "2 G") WorkingSet.addName [.str "demo"]
-            let second := ran (evilFed first "<Escape> 3 G") WorkingSet.addName [.str "demo"]
+              ran (keysFed (opened driver "d.txt") (toLine 2)) WorkingSet.addName [.str "demo"]
+            let second := ran (keysFed first (toLine 3)) WorkingSet.addName [.str "demo"]
             first.loop.state.echo == s!"demo: added d.txt:2; {WorkingSet.memoryOnlySentence}" &&
               second.loop.state.echo == "demo: added d.txt:3" &&
               (kept second).disk == .memoryOnly &&
@@ -205,7 +208,7 @@ def workingSetDiskChecks : List Check :=
               let world := driver.jobs.files.withFile storePath text.toUTF8
               let driver := { driver with jobs := { driver.jobs with files := world } }
               let added :=
-                ran (evilFed (opened driver "d.txt") "2 G") WorkingSet.addName [.str "demo"]
+                ran (keysFed (opened driver "d.txt") (toLine 2)) WorkingSet.addName [.str "demo"]
               let reason :=
                 match (WorkingSet.Document.read text.toUTF8) with
                 | .error why => why
@@ -228,7 +231,7 @@ def workingSetDiskChecks : List Check :=
           match diskDriver (repository := unborn) with
           | none => false
           | some driver =>
-            let added := addedOn (opened driver "d.txt") "2 G"
+            let added := addedOn (opened driver "d.txt") (toLine 2)
             (storedDemo added).map (·.commit) == #[""] },
     { name :=
         "with no version-control backend registered the write takes the case no repository: the commit written is empty, though the repository has HEAD's commit"
@@ -236,8 +239,9 @@ def workingSetDiskChecks : List Check :=
         pure <|
           match diskDriver (backends := #[]), diskDriver with
           | some bare, some backed =>
-            (storedDemo (addedOn (opened bare "d.txt") "2 G")).map (·.commit) == #[""] &&
-              (storedDemo (addedOn (opened backed "d.txt") "2 G")).map (·.commit) == #[headCommit]
+            (storedDemo (addedOn (opened bare "d.txt") (toLine 2))).map (·.commit) == #[""] &&
+              (storedDemo (addedOn (opened backed "d.txt") (toLine 2))).map (·.commit) ==
+                #[headCommit]
           | _, _ => false },
     { name :=
         "a save of a buffer holding a range writes the store with the range as edited, and closing the buffer writes its detached form"
@@ -246,8 +250,8 @@ def workingSetDiskChecks : List Check :=
           match diskDriver with
           | none => false
           | some driver =>
-            let added := addedOn (opened driver "d.txt") "2 G"
-            let edited := evilFed added s!"g g O {typed "top"} <Escape>"
+            let added := addedOn (opened driver "d.txt") (toLine 2)
+            let edited := keysFed added s!"C-<Home> {typed "top"} RET"
             let saved := ran edited FilesApi.saveName
             let gone := closed saved "d.txt"
             (storedDemo added).map (·.start.line) == #[2] &&

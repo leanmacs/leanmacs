@@ -4,6 +4,7 @@ import CompileTest.Linked.Compile
 import CompileTest.Linked.Compile.Shipped
 import Editor
 import Editor.Headless
+import Editor.InputScheme.Test
 import Editor.Test.AtPoint
 import Editor.Test.Linked.Services
 import Editor.Test.Shipped
@@ -155,7 +156,7 @@ def main (arguments : List String) : IO UInt32 := do
     -- The host first: it makes the process's one table of waits and starts
     -- its one pump, which the services of the other checks then share.
     let host ←
-      Editor.Headless.shipped Editor.Vim.Default.scheme setPackages #[`Editor] sysroot [oleans]
+      Editor.Headless.shipped Editor.TestScheme.scheme setPackages #[`Editor] sysroot [oleans]
           hostConfigDirectory (fun line => printed.modify (·.push line)) .headless (fakeClock :=
           true)
     let services ← Editor.Test.Linked.Services.over host.services.completions
