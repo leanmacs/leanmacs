@@ -454,7 +454,7 @@ struct State<C> {
     /// The ticket of each run whose completion has not been queued, or
     /// that was cancelled and whose child has not been reaped; and of each
     /// open not yet answered and its completion queued, or cancelled
-    /// before it was and its child not reaped. A run is kept, and an open
+    /// before that was done and its child not reaped. A run is kept, and an open
     /// answered, before its completion is queued, so a flush waits on
     /// these, not on `runs`.
     in_flight: HashSet<u64>,
@@ -1544,9 +1544,26 @@ impl<P: Processes + 'static> Inner<P> {
         } else {
             // A live child's open is answered once its completion is
             // queued, so a flush waits for it no longer; a cancelled one's
-            // waits for its reap.
+            // waits for its reap. A child cancelled while its completion
+            // was being queued is the second: its ticket stays until its
+            // reap, which settles it, so a flush asked after the cancel is
+            // not completed by the open's answer with the child still
+            // pending.
             (inner.complete)(id);
-            let flushed = inner.state().settle(ticket);
+            let mut state = inner.state();
+            let cancelled = matches!(
+                state.runs.get(&id),
+                Some(Run::Streaming {
+                    cancelled: true,
+                    ..
+                })
+            );
+            let flushed = if cancelled {
+                Vec::new()
+            } else {
+                state.settle(ticket)
+            };
+            drop(state);
             inner.complete_all(flushed);
         }
         for (output, which) in outputs.into_iter().zip([Stream::Out, Stream::Err]) {
@@ -3781,6 +3798,45 @@ mod streaming {
         assert!(readers_done(&fake, child));
         assert_eq!(completed.try_recv(), Err(TryRecvError::Empty));
         assert_eq!(service.take_stream(2), None);
+    }
+
+    /// The waiter is held inside the open's completion, before it marks the
+    /// open answered for the flushes; the child is cancelled and a flush
+    /// asked meanwhile, and the child's reap is held. The open's being
+    /// answered is not the cancelled child's reap: the flush is completed
+    /// only once the child is reaped, with nothing then pending. Seen to
+    /// bite once under load, on 2026-11-21, as
+    /// `a_cancel_of_a_child_in_a_pending_read_never_completes_the_read`
+    /// finding its flush completed with the child still pending.
+    #[test]
+    fn a_flush_asked_after_a_cancel_while_the_open_is_being_answered_waits_for_the_reap() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).step(Step::EchoLine(Stream::Out))),
+        )]);
+        fake.hold_reaps();
+        let (service, completed, entered, release) = super::tests::holding(&fake, 1);
+        assert!(service.open(1, command("x"), lines_with(Input::Pipe, ROOMY)));
+        assert_eq!(
+            entered.recv_timeout(DEADLINE),
+            Ok(()),
+            "the waiter completes the open"
+        );
+        assert!(matches!(service.take_stream(1), Some(StreamReply::Opened)));
+        assert!(service.read(1, 2));
+        assert!(service.cancel(1));
+        assert!(service.flush(FLUSH));
+        drop(release);
+
+        // The waiter is past the open, held in the reap: what it completed
+        // on the way is all queued.
+        assert!(fake.until(DEADLINE, |record| record.reaps_parked == 1));
+        let before_the_reap: Vec<_> = completed.try_iter().collect();
+        fake.release_reaps();
+
+        assert_eq!(before_the_reap, [1], "the flush waits for the reap");
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(FLUSH));
+        assert_eq!(service.pending(), 0);
     }
 
     #[test]
