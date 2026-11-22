@@ -70,9 +70,9 @@ def startsArrive {ρ : Type} (start : UInt64 → ρ → BaseIO Unit) (count : Na
 /-- Waits until `activity`, a count of a rig's own (`Job.Activity.counting`),
 reads 0: every job on it is parked in a wait only the check ends, or has
 ended. Waited for on the count's own changes, never by time; the bound is a
-hang guard. After a cancel, wait for the job's end first: a job parking
-gives back its unit just before it marks itself in the wait, so a cancel in
-between leaves it to withdraw its own wait with no unit held. -/
+hang guard. It is sound after a cancel too: a job parking gives back its
+unit only once its wait is recorded as its own or withdrawn (`Job.drive`),
+so a cancelled job holds a unit until it has ended. -/
 def untilIdle (activity : Job.Activity) : IO Unit := do
   unless activity.tracked do
     throw <| IO.userError "this count is not kept: it is never idle"

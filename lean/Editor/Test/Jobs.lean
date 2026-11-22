@@ -145,13 +145,12 @@ ends (the fake clock's sleep, a fake watch's next) or has ended, its
 itself. It stays so until the check acts: moves the clock, changes a watch,
 lets a fake go, spawns.
 
-A cancel is the exception: after one, wait for the cancelled jobs' ends
-first (`awaitEnded`), then for idle. A job parking gives back its unit just
-before it marks itself in the wait (`Job.drive`), so a cancel in between
-withdraws nothing, and the job withdraws its own wait a moment later with
-no unit held in the meantime: idle can read 0 then. Once a job's outcome is
-in, it holds a unit until its `finished` has run, so idle after it is
-sound.
+It is sound after a cancel too: a job parking gives back its unit only once
+its wait is recorded as its own or withdrawn (`Job.drive`), so a cancelled
+job holds a unit from the cancel, or from its own withdrawal, until its
+`finished` has run, and idle after a cancel means the job has ended. The
+checks that wait for a cancelled job's end first (`awaitEnded`) wait for
+an event that idle now implies.
 
 Waited for on the count's own changes, never by time; the bound is a hang
 guard (`changedAfter`). A rig whose services keep no count is refused: it

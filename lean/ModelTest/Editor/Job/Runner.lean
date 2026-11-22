@@ -1189,6 +1189,79 @@ def activityRunnerChecks : List Check :=
               (← activity.refused) == 0)
             s!"cancelled={cancelled} counts={counts} refused={← activity.refused}" },
     { name :=
+        "a job that has given its unit back for a sleep on the fake clock is in a wait a cancel withdraws: a cancel made as the unit is given back withdraws the sleep before it returns"
+      run := do
+        let rig ← Rig.new
+        let counted := rig.services.activity
+        -- The job's handle, for the count's `done`, which runs on the job's
+        -- thread: there once `known` is resolved.
+        let handle ← IO.mkRef (none : Option Job.Handle)
+        let known : IO.Promise Unit ← IO.Promise.new
+        -- What the clock had withdrawn as the cancel returned.
+        let noted ← IO.mkRef (none : Option (Array UInt64))
+        let activity : Job.Activity :=
+          { counted with
+            done := do
+              counted.done
+              -- The job's first `done` is its park's: the cancel is made
+              -- there, on the job's own thread, so the order is the runner's
+              -- alone.
+              if (← noted.get).isNone then
+                discard <| IO.wait known.result?
+                if let some handle← handle.get then
+                  handle.cancel
+                  noted.set (some (← rig.clock.withdrawn)) }
+        let rig := { rig with services := { rig.services with activity } }
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 10
+                return 0)
+        try
+          handle.set (some spawned.handle)
+          known.resolve ()
+          let cancelled ← spawned.endedAs .cancelled
+          let noted ← noted.get
+          let started := (← rig.clock.started).map (·.1)
+          saw (cancelled && started.size == 1 && noted == some started && (← activity.refused) == 0)
+              s!"cancelled={cancelled} started={started} withdrawn as the cancel returned={noted} refused={← activity.refused}"
+        finally
+          known.resolve ()
+          spawned.handle.cancel },
+    { name :=
+        "a job cancelled while the clock is being asked for its sleep keeps its unit until it has ended: it withdraws the sleep itself, and the count never reads 0 before its end"
+      run := do
+        let rig ← Rig.new
+        let counted := rig.services.activity
+        let log ← ActivityLog.new
+        let activity := recorded counted log
+        let rig := { rig with services := { rig.services with activity } }
+        let starting ← rig.clock.holdStarts
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 1000
+                return 0)
+        try
+          -- The job is asking the clock for the wait: the cancel finds no
+          -- wait to withdraw, and the job withdraws it once it is let go.
+          discard <|
+              awaitEvent "the job's call at the clock's hold"
+                (← rig.clock.arrivedAt (.held 1)).result?
+          spawned.handle.cancel
+          starting.resolve ()
+          let cancelled ← spawned.endedAs .cancelled
+          -- The spawn's step, the withdrawal's, the park's and the end's.
+          let counts := (← log.untilHolds 4).map (·.1)
+          let started := (← rig.clock.started).map (·.1)
+          saw
+              (cancelled && counts == #[1, 2, 1, 0] && (← rig.clock.withdrawn) == started &&
+                (← activity.refused) == 0)
+              s!"cancelled={cancelled} counts={counts} refused={← activity.refused}"
+        finally
+          starting.resolve ()
+          spawned.handle.cancel },
+    { name :=
         "a job's load on a file service that ends it by itself holds the job's unit while the service holds it, and none once it has been let go and the job has ended"
       run := do
         let (rig, files) ← Rig.withFiles twoFiles

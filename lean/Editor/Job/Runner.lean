@@ -112,9 +112,12 @@ while it can run, and none while it is in a wait only a test ends.
   takes a unit and then resolves the promise (`Handle.parkingWait`), so the
   unit is taken on the thread that ends the wait, the clock's `advance` or
   `start`, a withdrawal, before the job's continuation can run; and `drive`
-  gives the job's unit back once `answer` has returned, whether or not the
-  job entered the wait. A wait cancelled ends through the same action, so a
-  take and a give stay paired however the wait ends.
+  gives the job's unit back once `answer` has returned and the wait is
+  recorded as the job's, or withdrawn when the job was cancelled on its way
+  in. So at idle every parked job is in a wait a cancel withdraws
+  (`Handle.cancel`), and a job cancelled on its way in holds a unit until it
+  has ended. A wait cancelled ends through the same action, so a take and a
+  give stay paired however the wait ends.
 - **Any other wait** keeps the job's unit: a timer of the library, a real
   file, process, diff, grep or watch request, a fake one a test holds on
   purpose. The job is not idle while it waits on something that ends by
@@ -1071,11 +1074,6 @@ partial def drive (handle : Handle) (finished : BaseIO Unit) :
         return ← handle.conclude finished .cancelled
       drive handle finished (next reply)
     | .later id wait reply parks =>
-      -- A job in a wait only a test ends can no longer run by itself: it
-      -- gives back its unit, entered or not, and the wait's end, cancelled
-      -- included, takes one back before it resolves (`parkingWait`).
-      if parks then
-        handle.services.activity.done
       -- The job is in the wait from here, unless it was cancelled while the
       -- wait was being made: then nobody else will withdraw it.
       let entered ←
@@ -1083,6 +1081,15 @@ partial def drive (handle : Handle) (finished : BaseIO Unit) :
             if flags.cancelled then (false, flags) else (true, { flags with waiting := some id })
       unless entered do
         handle.withdraw id
+      -- A job in a wait only a test ends can no longer run by itself: it
+      -- gives back its unit, entered or not, and the wait's end, cancelled
+      -- included, takes one back before it resolves (`parkingWait`). Only
+      -- now, with the wait recorded or withdrawn: a host that reads idle
+      -- then finds every parked job in a wait a cancel withdraws, and a job
+      -- cancelled on its way in keeps a unit until it has ended, the wait's
+      -- end having taken one before this gives one back.
+      if parks then
+        handle.services.activity.done
       BaseIO.chainTask wait.result? fun completion => do
           let cancelled ←
             handle.flags.modifyGet fun flags => (flags.cancelled, { flags with waiting := none })
