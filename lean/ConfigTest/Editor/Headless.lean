@@ -963,12 +963,26 @@ def recordedStage (context : Context) (directory : System.FilePath) :
             syntaxTree, display } },
       asked, published, settleShown)
 
-/-- Runs `check` against a stepped host over `recordedStage`'s stage. -/
+/-- Runs `check` against a stepped host over `recordedStage`'s stage. The
+library's syntax service queues a `parsed` event on the library's editor
+queue for each delivery of a highlighted text's parse, which a stepped host
+never takes: once the check has run, while the host is still up, this
+waits for the shown text's tree (`syntaxSettle`, after which no delivery of
+it is still to come) and takes the `parsed` events off the queue, so the
+check leaves the library's queue as it found it (`leavingLibraryQueue`)
+whenever the parse is delivered. -/
 def withRecordedSyntaxTree (context : Context)
     (check : Session → IO.Ref (Array String) → IO Nat → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    let (stage, asked, published, _) ← recordedStage context directory
-    onStage stage fun drive stage => check (Session.ofStage drive directory stage) asked published
+    let (stage, asked, published, settleShown) ← recordedStage context directory
+    onStage stage fun drive stage => do
+        let held ← check (Session.ofStage drive directory stage) asked published
+        let settled ← settleShown
+        -- Every event the queue holds is taken: none is this host's, and
+        -- the queue held them, so no pull parks.
+        for _ in [0:(← Ffi.queued .editor).toNat] do
+          discard <| Ffi.takeQueued .editor
+        return held && settled
 
 /-- `withRecordedSyntaxTree` with a real host (`onRealStage`), handed the
 stage's wait for the shown text's tree too. -/
