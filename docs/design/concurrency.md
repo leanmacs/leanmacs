@@ -1233,8 +1233,10 @@ site in one of three forms (AGENTS.md, "Deterministic concurrency in
 tests"; `mise run wait-inventory` lists any site that says none): a **hang
 guard**, the bound on a wait for an event that must come, which only a hang
 reaches (`Editor.Test.Linked.hangGuard` and the other guards, set to ten times the
-slowest the event was seen to take under the stress loop's load, 120 000 ms
-for Lean where nothing slower was measured); a **hang guard run out on
+slowest the event was seen to take under the stress loop's load: 130 000 ms
+for `hangGuard`, from a config check of 12.1 s on macOS and 10.2 s in the
+Linux container, and 120 000 ms for the guards of events nothing slower
+was measured for); a **hang guard run out on
 purpose**, where a check holds something for good and pins the hang; and
 **real time under test**, where the timing is the subject: a lower bound
 ("not before the limit"), which load only makes pass more surely, or a

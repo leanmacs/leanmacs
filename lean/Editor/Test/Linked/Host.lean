@@ -249,14 +249,26 @@ reaches it fails, reported as a hang, never as a timing result; a check
 that pins a bound of the headless mode on purpose holds a reload or the
 editor thread for good and gives a short guard of its own.
 
-Set from a measurement (2026-11-21, an 18-core Mac under 36 CPU hogs, the
-`yes` processes of `docs/design/concurrency.md`'s stress loop, config-test
-run five times under `taskpolicy -c utility`): the slowest settle of the
-real reload whose root first imports `Lean` (`moduleHostChecks`) took
-6502 ms (the others 5408, 5728, 5816 and 5946). The guard is the larger of
-120 000 ms and ten times that. -/
+Set from measurements under the stress loop's load
+(`docs/dev-practices/on-demand-checks.md`, "The stress loop, on demand"):
+ten times the slowest, rounded up to the next ten seconds.
+
+- 2026-11-21, an 18-core Mac under 36 CPU hogs, config-test run five times
+  under `taskpolicy -c utility`: the slowest settle of the real reload
+  whose root first imports `Lean` (`moduleHostChecks`) took 6502 ms (the
+  others 5408, 5728, 5816 and 5946).
+- 2026-11-22, each check's wall time (`config-test --timings`), which
+  bounds any one wait in it, over the loop's ten rounds. The same Mac
+  under 36 hogs: the slowest check of each round took 8868 to 12 134 ms
+  ("the real elaborator: a handle is one version of a file…"), and the
+  check of the reload that first imports `Lean` 4048 to 6100 ms. The Linux
+  container (aarch64, 8 CPUs, 16 hogs, the suite at `nice -n 5`): 9760 to
+  10 211 ms, and 5096 to 7481 ms.
+
+Ten times 12 134 ms is past the 120 000 ms this was first set to, so it is
+130 000 ms. -/
 def hangGuard : Nat :=
-  120000
+  130000
 
 /-- Waits until the fake clock `clock` has reached `arrival`
 (`Job.FakeClock.arrivedAt`): on the step that makes it, on whichever thread
