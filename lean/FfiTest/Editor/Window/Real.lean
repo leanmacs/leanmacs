@@ -16,7 +16,6 @@ import Editor.InputScheme.Test
 import Editor.Menu
 import Editor.Menu.Compiled
 import Editor.Process.Environment
-import Editor.ProjectMode
 import Editor.Test.AtPoint
 import Editor.Test.Editing
 import Editor.Test.Minibuffer

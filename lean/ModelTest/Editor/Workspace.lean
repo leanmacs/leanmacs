@@ -338,27 +338,6 @@ def workspaceStateChecks : List Check :=
           | .ok (.finished answer, _) => answer == some 250
           | _ => false },
     { name :=
-        "a dispatched command that asks for the compile hook is answered what the loop was told, and the workspace settings carry the contributions' marker modes in registration order"
-      run :=
-        let hook : Compile.Hook :=
-          { contributions :=
-              #[{ mode := "b-mode", markers := #["b.toml"] },
-                { mode := "a-mode", markers := #["a.toml", "a2.toml"] }]
-            projects := #[{ project := .remote "github.com/o/r", mode := "b-mode" }] }
-        let asking : EditorM (Compile.Hook × Workspace.Settings) := do
-          return (← RegistryRequest.ask .compileHook, (← RegistryRequest.ask .workspaceSettings).1)
-        let program : EditorM (Guarded (Compile.Hook × Workspace.Settings) × EditorState) := do
-          asking.dispatched { compile := hook } (← twoBuffers)
-        pure <|
-          match (program.runModel editorModel).1 with
-          | .ok (.finished (told, settings), _) =>
-            told.contributions.map (·.mode) == #["b-mode", "a-mode"] &&
-              told.projects == hook.projects &&
-              settings.markerModes ==
-                #[{ mode := "b-mode", markers := #["b.toml"] },
-                  { mode := "a-mode", markers := #["a.toml", "a2.toml"] }]
-          | _ => false },
-    { name :=
         "a dispatched command that asks for the workspace settings is answered config's roots and the config generation the loop was told of"
       run :=
         let roots : Array Workspace.ConfigRoot := #[{ root := "/r/tools", project := some "tools" }]

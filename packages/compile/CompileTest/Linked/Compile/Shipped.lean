@@ -95,9 +95,11 @@ def projectKeys (base : System.FilePath) : Loop.Keys TestScheme.scheme :=
     registered :=
       { jobs := fun name => (projectJobs base).any (·.name == name)
         -- The hooks the fake runs once a buffer holds a file, as a host
-        -- installs them: the stand-ins for the workspace's.
-        extensions := (rigKeys (projectPackages base)).registered.extensions
-        compile := { contributions := Compile.shipped } } }
+        -- installs them: the stand-ins for the workspace's. And the shipped
+        -- contributions, which the compile package registers at their
+        -- extension point.
+        extensions :=
+          (rigKeys ((projectPackages base).push Compile.package)).registered.extensions } }
 
 /-- The loop, with its working directory `base`, once each of `invocations`
 has run and settled, in order: the rig's `runSettled`

@@ -237,27 +237,6 @@ loop is told the table (`registered`).
 A `setup` that defines a language name twice, or a language with a pattern
 no file name can be meant by (`Language.problems`), is refused.
 
-## Compile contributions
-
-A compile contribution (`Compile.Contribution`,
-`Editor/ProjectMode.lean`) is held by owner like a mode, in a
-`ContributionEntry`, and replaced as a set (`replaceContributions`).
-`compileContributions` is the registration order the compile mode uses,
-each mode once: config's contributions in the order its `setup` registered
-them, then the packages' whose modes config does not register, each mode
-at the place it was first registered, as its latest entry. So config's
-contribution of a package's one's name replaces it whole, markers, commands
-and formats, in config's place, until a reload drops it; and of two
-packages that contribute one mode the later package's is the one used,
-whole, where the first one's was. Config's project
-commands (`projectCommands`) are config's alone, replaced by each install.
-The loop is told both (`compileHook`, `Loop.Registered.compile`).
-
-A `setup` that registers a contribution twice, or one that names a command
-twice, or that gives project commands twice for one project and mode, or
-names a command twice in them, is refused (`Registrations.problem?`); one
-with no marker is refused by `compileContribution` itself.
-
 ## Sources
 
 A completion source (`Completion.Source`, `Editor/Completion.lean`) is held
@@ -400,7 +379,7 @@ registers nothing else.
 
 - **Each package is an owner**, named after it (`Package.owner`): its
   commands, jobs, key bindings, prefix names, modes, ex bindings, faces,
-  themes, segments, languages, compile contributions, sources, styles,
+  themes, segments, languages, sources, styles,
   displays, at-point sources and their uses and menus are registered for
   that owner (`replaceOwned`), and its stores are that owner's cells.
 - **The order is the array's.** Each package's entries come after those of
@@ -599,14 +578,6 @@ structure LanguageEntry where
   language : Language
   deriving DecidableEq, Repr
 
-/-- A contribution entry of the registry: a compile contribution and who
-registered it. -/
-structure ContributionEntry where
-  /-- Who registered it. -/
-  owner : Owner
-  /-- The contribution. -/
-  contribution : Compile.Contribution
-
 /-- A source entry of the registry: a completion source and who registered
 it. -/
 structure SourceEntry where
@@ -739,12 +710,6 @@ it did not, which a host reads as `auto`. -/
   (`localLeaderKey`, `Editor/Setup.lean`); `none` when it did not, which
   reads as the scheme's. -/
   localLeader : Option (List Key.Stroke) := none
-  /-- The compile contribution entries ("Compile contributions", in the
-  module docs). -/
-  contributions : Array ContributionEntry := #[]
-  /-- Config's project commands (`projectCommands`, `Editor/Setup.lean`), in
-  the order it gave them. -/
-  projectCommands : Array Compile.ProjectCommands := #[]
   /-- The completion source entries ("Sources", in the module docs). -/
   sources : Array SourceEntry := #[]
   /-- The completion style entries ("Styles", in the module docs). -/
@@ -925,34 +890,6 @@ place, and one of a new name comes after them. -/
 def sourcesIn (registry : Registry) (category : String) : Array String :=
   let names := (registry.sources.map (·.source.name)).toList.eraseDups.toArray
   names.filter fun name => (registry.source? name).any (·.category == category)
-
-/-- `registry` with every contribution entry of `owner` removed and
-`contributions` added as its entries, in their order. -/
-def replaceContributions (registry : Registry) (owner : Owner)
-    (contributions : Array Compile.Contribution) : Registry :=
-  { registry with
-    contributions :=
-      registry.contributions.filter (·.owner != owner) ++
-        contributions.map fun contribution => { owner, contribution } }
-
-/-- The compile contributions in registration order ("Compile
-contributions", in the module docs), each mode once: config's in its order,
-then the other owners' whose modes config does not register, each mode at
-the place it was first registered, as its latest entry. So of two packages
-that contribute one mode the later package's is the one used, as of two
-entries of any name, and what reads the list by a mode's first entry finds
-that one. -/
-def compileContributions (registry : Registry) : Array Compile.Contribution :=
-  let config := (registry.contributions.filter (·.owner == .config)).map (·.contribution)
-  let entries := (registry.contributions.filter (·.owner != .config)).map (·.contribution)
-  let modes := (entries.map (·.mode)).toList.eraseDups.toArray
-  let others := modes.filterMap fun mode => entries.findRev? (·.mode == mode)
-  config ++ others.filter fun contribution => !config.any (·.mode == contribution.mode)
-
-/-- What the loop is told of the compile contributions: them in
-registration order, and config's project commands. -/
-def compileHook (registry : Registry) : Compile.Hook :=
-  { contributions := registry.compileContributions, projects := registry.projectCommands }
 
 /-- `registry` with every ex binding of `owner` removed and `bindings` added
 as its ex bindings. -/
@@ -1345,7 +1282,7 @@ def unknownAtPoints (registry : Registry) : Array String :=
 /-- Who registered each entry, kind by kind: the owners of the commands, of
 the jobs, of the key bindings, of the prefix names, of the modes, of the ex
 bindings, of the faces, of the themes, of the segments, of the languages,
-of the compile contributions, of the completion sources, styles and
+of the completion sources, styles and
 displays, of the at-point sources, of their uses, of the menus, of the
 store codecs and of the values at extension points, each in the entries'
 order. A registry nothing is registered in has none. -/
@@ -1353,10 +1290,10 @@ def ownersByKind (registry : Registry) : Array (Array Owner) :=
   #[registry.entries.map (·.owner), registry.jobs.map (·.owner), registry.bindings.map (·.owner),
     registry.prefixNames.map (·.owner), registry.modes.map (·.owner), registry.ex.map (·.owner),
     registry.faces.map (·.owner), registry.themes.map (·.owner), registry.segments.map (·.owner),
-    registry.languages.map (·.owner), registry.contributions.map (·.owner),
-    registry.sources.map (·.owner), registry.styles.map (·.owner), registry.displays.map (·.owner),
-    registry.atPoints.map (·.owner), registry.atPointUses.map (·.owner),
-    registry.menus.map (·.owner), registry.codecs.map (·.1), registry.extensions.map (·.owner)]
+    registry.languages.map (·.owner), registry.sources.map (·.owner), registry.styles.map (·.owner),
+    registry.displays.map (·.owner), registry.atPoints.map (·.owner),
+    registry.atPointUses.map (·.owner), registry.menus.map (·.owner), registry.codecs.map (·.1),
+    registry.extensions.map (·.owner)]
 
 /-- What the loop is told of the registry for a command's state requests,
 its questions to the registry and its control requests
@@ -1372,8 +1309,7 @@ config's workspace roots and the config generation, for the finder;
 config's workspace listers, for what lists a workspace's files;
 config's display rules, for a command that displays a buffer; config's
 shell time limit, for `:!`; the language table (`languageTable`), for a
-file's open and a mode's entry; and the compile contributions and config's
-project commands (`compileHook`), for the compile mode; and the
+file's open and a mode's entry; and the
 completion source registered under a name (`source?`) and the names of
 those registered in a category (`sourcesIn`), for a prompt that asks for
 them; and the codec a store is kept across a restart with (`codec?`), with
@@ -1392,7 +1328,7 @@ def registered (registry : Registry) : Loop.Registered :=
     workspaceListers := registry.workspaceListers
     generation := registry.generation, displayRules := registry.displayRules
     shellTimeLimit := registry.shellTimeLimit, syntaxRefreshDelay := registry.syntaxRefreshDelay
-    languages := registry.languageTable, compile := registry.compileHook
+    languages := registry.languageTable
     sources := registry.source?, categorySources := registry.sourcesIn
     atPoint := registry.atPoint?, atPointNames := registry.atPointNames
     codec? := fun name => (registry.codec? name).map fun (owner, codec) => (owner.name, codec)
@@ -1482,10 +1418,6 @@ they were made: one at most, in a `setup` that is not refused. -/
   syntaxRefreshDelays : Array Nat := #[]
   /-- The languages, in the order they were defined. -/
   languages : Array Language := #[]
-  /-- The compile contributions, in the order they were registered. -/
-  contributions : Array Compile.Contribution := #[]
-  /-- The project commands, in the order they were given. -/
-  projectCommands : Array Compile.ProjectCommands := #[]
   /-- The completion sources, in the order they were defined. -/
   sources : Array Completion.Source := #[]
   /-- The completion styles, in the order they were defined. -/
@@ -1655,10 +1587,6 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with syntaxRefreshDelays := collected.syntaxRefreshDelays.push milliseconds })
   | .language language, collected =>
     ((), { collected with languages := collected.languages.push language })
-  | .compileContribution contribution, collected =>
-    ((), { collected with contributions := collected.contributions.push contribution })
-  | .projectCommands entry, collected =>
-    ((), { collected with projectCommands := collected.projectCommands.push entry })
   | .source source, collected => ((), { collected with sources := collected.sources.push source })
   | .style style, collected => ((), { collected with styles := collected.styles.push style })
   | .useStyle category name, collected =>
@@ -1700,26 +1628,6 @@ def workspaceTwice (root : System.FilePath) : String :=
 refused with: one root, or one project. -/
 def workspaceListerTwice (scope : Workspace.ListerScope) : String :=
   s!"a workspace lister is declared twice for {scope.describe}"
-
-/-- What a `setup` that registers the compile contribution of `mode` twice
-is refused with. -/
-def contributionTwice (mode : String) : String :=
-  s!"the compile contribution `{mode}` is registered twice"
-
-/-- What a `setup` whose compile contribution of `mode` names the command
-`name` twice is refused with. -/
-def contributionCommandTwice (mode name : String) : String :=
-  s!"the compile contribution `{mode}` names the command `{name}` twice"
-
-/-- What a `setup` that gives the project commands of `mode` for the
-project `project` twice is refused with. -/
-def projectCommandsTwice (mode : String) (project : Project.Identity) : String :=
-  s!"the project commands of `{mode}` for {project.describe} are given twice"
-
-/-- What a `setup` whose project commands of `mode` for the project
-`project` name the command `name` twice is refused with. -/
-def projectCommandTwice (mode : String) (project : Project.Identity) (name : String) : String :=
-  s!"the project commands of `{mode}` for {project.describe} name the command `{name}` twice"
 
 /-- What a `setup` that defines the completion source `name` twice is
 refused with. -/
@@ -1777,7 +1685,7 @@ theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
 twice, the layout chosen twice, the tab bar chosen twice, the title bar chosen twice, the leader set twice (`leaderTwice`), the localleader set twice (`localLeaderTwice`), a key sequence bound twice (compared as written, whatever states each binding names; `problemUnder?` compares the keys as they expand), a binding of
 no keys, an ex name bound twice, the process environment set twice,
-auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a compile contribution registered twice or naming a command twice, project commands given twice for one project and mode or naming a command twice, a command over a store that is not declared, a store kept across a restart twice, a mode name defined twice, a
+auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a command over a store that is not declared, a store kept across a restart twice, a mode name defined twice, a
 mode with a problem under any scheme (`Mode.problems`), of which the first
 is named, a language name defined twice, a language with a pattern no
 file name can be meant by (`Language.problems`), of which the first is
@@ -1842,17 +1750,6 @@ def problem? (collected : Registrations) : Option String := do
     return shellTimeLimitTwice
   if collected.syntaxRefreshDelays.size > 1 then
     return syntaxRefreshDelayTwice
-  if let some mode := repeated? (collected.contributions.map (·.mode)) then
-    return contributionTwice mode
-  for contribution in collected.contributions do
-    if let some name := repeated? (contribution.commands.map (·.name)) then
-      return contributionCommandTwice contribution.mode name
-  if let some (project, mode) :=
-      repeated? (collected.projectCommands.map fun entry => (entry.project, entry.mode)) then
-    return projectCommandsTwice mode project
-  for entry in collected.projectCommands do
-    if let some name := repeated? (entry.commands.map (·.name)) then
-      return projectCommandTwice entry.mode entry.project name
   if collected.leaders.size > 1 then
     return leaderTwice
   if collected.localLeaders.size > 1 then
@@ -1973,8 +1870,8 @@ end Registrations
 
 /-- `registry` with what `owner` registered replaced by what `registrations`
 holds of the kinds an owner holds: its commands, jobs, key bindings, prefix
-names, modes, ex bindings, faces, themes, segments, languages, compile
-contributions, completion sources, styles and displays, at-point sources
+names, modes, ex bindings, faces, themes, segments, languages,
+completion sources, styles and displays, at-point sources
 and their uses, menus, store codecs and values at extension points. Every
 other owner's entries are left, and so is
 what no owner holds: config's own settings, which an install sets
@@ -1985,16 +1882,15 @@ definition of what an owner's registrations are: an install calls it for
 def Registry.replaceOwned (registry : Registry) (owner : Owner) (registrations : Registrations) :
     Registry :=
   registry.replace owner registrations.commands |>.replaceJobs owner
-                                      registrations.jobs |>.replaceBindings
-                                    owner registrations.bindings |>.replacePrefixNames
-                                  owner registrations.prefixNames |>.replaceModes
-                                owner registrations.modes |>.replaceEx
-                              owner registrations.ex |>.replaceFaces
-                            owner registrations.faces |>.replaceThemes
-                          owner registrations.themes |>.replaceSegments
-                        owner registrations.segments |>.replaceLanguages
-                      owner registrations.languages |>.replaceContributions
-                    owner registrations.contributions |>.replaceSources
+                                    registrations.jobs |>.replaceBindings
+                                  owner registrations.bindings |>.replacePrefixNames
+                                owner registrations.prefixNames |>.replaceModes
+                              owner registrations.modes |>.replaceEx
+                            owner registrations.ex |>.replaceFaces
+                          owner registrations.faces |>.replaceThemes
+                        owner registrations.themes |>.replaceSegments
+                      owner registrations.segments |>.replaceLanguages
+                    owner registrations.languages |>.replaceSources
                   owner registrations.sources |>.replaceStyles
                 owner registrations.styles |>.replaceDisplays
               owner registrations.displays |>.replaceAtPoints

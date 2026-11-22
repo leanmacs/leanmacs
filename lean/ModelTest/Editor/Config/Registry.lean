@@ -29,8 +29,6 @@ import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
-import Editor.ProjectMode
-import Editor.ProjectMode.Format
 import Editor.Role
 import Editor.Scene
 import Editor.State
@@ -207,33 +205,6 @@ def registryChecks : List Check :=
             tuned.unknownAtPoints == #["gone", "lost"] &&
             ((tuned.registered.atPoint "words").bind (·.pause)) == some 100 &&
             tuned.registered.atPointNames (some "m") #[] == #["lost", "words", "gone"] },
-    { name :=
-        "the registry's compile contributions are config's in config's order, then the compiled ones config does not register; config's a-mode replaces the compiled a-mode whole, and replacing config's with none brings the compiled one back"
-      run :=
-        let compiledA : Compile.Contribution :=
-          { mode := "a-mode", markers := #["a.toml"]
-            commands :=
-              #[{ name := "build", line := "compiled-build" },
-                { name := "lint", line := "compiled-lint" }]
-            formats := #[Compile.Format.general] }
-        let compiledC : Compile.Contribution := { mode := "c-mode", markers := #["c.toml"] }
-        let configB : Compile.Contribution := { mode := "b-mode", markers := #["b.toml"] }
-        let configA : Compile.Contribution :=
-          { mode := "a-mode", markers := #["x.toml"]
-            commands := #[{ name := "build", line := "config-build" }] }
-        let compiled :=
-          ({} : Config.Registry).replaceContributions .compiled #[compiledA, compiledC]
-        let both := compiled.replaceContributions .config #[configB, configA]
-        let dropped := both.replaceContributions .config #[]
-        let shape (contributions : Array Compile.Contribution) :=
-          contributions.map fun contribution =>
-            (contribution.mode, contribution.markers, contribution.commands,
-              contribution.formats.map (·.name))
-        pure
-          (shape compiled.compileContributions == shape #[compiledA, compiledC] &&
-            shape both.compileContributions == shape #[configB, configA, compiledC] &&
-            shape dropped.compileContributions == shape #[compiledA, compiledC] &&
-            shape both.compileHook.contributions == shape #[configB, configA, compiledC]) },
     {
       name :=
         "replace for an owner leaves exactly the new commands of that owner, and a second replace does not add to the first",

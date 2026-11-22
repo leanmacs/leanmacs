@@ -19,7 +19,6 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.Test.Driver

@@ -13,7 +13,6 @@ import Editor.Job
 import Editor.Loop.Driver
 import Editor.Process.Environment
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.Test.Keys

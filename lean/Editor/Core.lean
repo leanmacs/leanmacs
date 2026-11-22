@@ -23,7 +23,6 @@ import Editor.TabCommands.Compiled
 import Editor.Test.AtPoint
 import Editor.Test.Ex
 import Editor.Test.Excerpt
-import Editor.Test.Hosted
 import Editor.Test.Linked.Bench
 import Editor.Test.Linked.Frames
 import Editor.Test.Linked.Keys

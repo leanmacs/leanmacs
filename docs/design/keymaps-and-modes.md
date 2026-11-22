@@ -4879,8 +4879,8 @@ buffer while editing goes on.
   location, and a mode's format finds nothing while the mode is off.
 - **Project commands.** Config gives one project, by its identity, its own
   named commands and settings for a mode (`projectCommands`). They have
-  one source, config's latest as the loop is told it
-  (`RegistryRequest.compileHook`), keyed by identity, and are copied into no
+  one source, config's latest at their extension point as the hook reads
+  it (`Compile.hook`), keyed by identity, and are copied into no
   store: `compile`, `compile-command` and `Compile.projectSettings` read
   them from there, so every worktree of the codebase has them, no other
   project does, and a reload's change is read at once, before any compile.

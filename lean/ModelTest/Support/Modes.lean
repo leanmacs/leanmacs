@@ -16,7 +16,6 @@ import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Role
 import Editor.Scene
 import Editor.State

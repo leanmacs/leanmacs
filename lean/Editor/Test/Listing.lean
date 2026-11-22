@@ -1,4 +1,3 @@
-import Editor.Config.Registry
 import Editor.Extension
 import Editor.File.Model
 import Editor.Job.Model
@@ -7,8 +6,8 @@ import Editor.Process
 import Editor.Process.Model
 import Editor.ProjectMode
 import Editor.ProjectMode.Listing
-import Editor.Setup
 import Editor.Test.Driver
+import Editor.Test.Hosted
 import Editor.Test.Keys
 import Editor.Test.Shell
 import Editor.Test.Workspace
@@ -64,12 +63,35 @@ def tContribution : Compile.Contribution :=
       #[{ name := "build", line := "t-fixed-build" }, { name := "check", line := "t-check" }]
     listing := some { program := "t-list", read := tRead } }
 
-/-- The registry of the listing checks: `t-mode` registered by config. -/
+/-- The registry of the listing checks: `t-mode` registered by config, at
+the contributions' extension point. -/
 def listingRegistry : Config.Registry :=
-  match Config.Registrations.ofSetup (compileContribution tContribution) with
-  | .ok registrations =>
-    ({} : Config.Registry).replaceContributions .config registrations.contributions
-  | .error _ => {}
+  hostedRegistry #[] (compileContribution tContribution)
+
+/-- The compile hook a loop told of `registry` answers (`Compile.hook`):
+what is registered at the two points, in the hook's order. -/
+def hookOf (registry : Config.Registry) : Compile.Hook :=
+  (hostedAsked registry Compile.hook).getD {}
+
+/-- `keys` with the loop told what `registry` holds at the two points of the
+compile hook, `Compile.Contribution` and `Compile.ProjectCommands`, config's
+values apart among it (`Extension.configValues`), and every other extension
+point answered as before: for a driver whose stand-ins are registered
+already and which is then told a config's or a package's contributions, as
+a reload tells the loop. -/
+def toldHook {scheme : InputScheme} (keys : Loop.Keys scheme) (registry : Config.Registry) :
+    Loop.Keys scheme :=
+  let ours (key : Lean.Name) : Bool :=
+    key == TypeName.typeName Compile.Contribution ||
+      key == TypeName.typeName Compile.ProjectCommands
+  { keys with
+    registered :=
+      { keys.registered with
+        extensions := fun key =>
+          if ours key then registry.extensionsAt key else keys.registered.extensions key
+        configExtensions := fun key =>
+          if ours key then registry.configExtensionsAt key
+          else keys.registered.configExtensions key } }
 
 /-- The listing `t-list` in `directory`. -/
 def tList (directory : System.FilePath) : Process.Command :=
@@ -155,7 +177,8 @@ def kubeOpened (id : BufferId) (path : System.FilePath) : EditorM Unit := do
 
 /-- Turns on, in the buffer `id` of the file at `path`, the on-modes the
 marker files `present` give by the core's rules (`Workspace.markerSearchPaths`,
-`Workspace.onModes`) for the marker modes registered now: looking from the
+`Workspace.onModes`) for the marker modes of the compile hook now
+(`Workspace.markerSettings`): looking from the
 file's directory up to the root of the workspace `found` answers for it, or
 in the directory alone when it answers none, as the workspace's marker
 search bounds its look. A stand-in for that search over a known set of
@@ -163,7 +186,7 @@ marker files, which stats none and starts no job. -/
 def markersBy (found : System.FilePath → Option Workspace.Found) (present : Array System.FilePath)
     (id : BufferId) (path : System.FilePath) : EditorM Unit := do
   let some directory := path.parent.map Process.trimmed | return
-  let (settings, _) ← RegistryRequest.ask .workspaceSettings
+  let (settings, _) ← Workspace.markerSettings
   let bound := ((found directory).map (·.root)).getD directory
   let searched :=
     Workspace.markerSearchPaths (Workspace.markersOf settings.markerModes) directory bound

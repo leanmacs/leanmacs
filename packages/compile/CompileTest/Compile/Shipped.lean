@@ -183,7 +183,7 @@ def projectDriver (registry : Config.Registry := projectRegistry) : Option TestD
   let keys :=
     compileKeysOf projectBindings
       #[attachByPackage projectFound, markersByPackage projectFound projectMarkers]
-  let keys := { keys with registered := { keys.registered with compile := registry.compileHook } }
+  let keys := toldHook keys registry
   (Loop.Driver.over keys compileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver =>
     { driver with

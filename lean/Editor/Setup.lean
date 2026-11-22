@@ -16,7 +16,6 @@ import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
-import Editor.ProjectMode
 import Editor.Store
 import Editor.TabBar
 import Editor.Window
@@ -501,25 +500,11 @@ that names a relative path (a project's own script runs as `sh` with the
 script as its argument), and one root or one project given a lister twice.
 A reload that installs replaces config's listers.
 
-Config gives the compile mode what fits a kind of project with
-`compileContribution` (`Editor/ProjectMode.lean`): a minor mode's
-marker files, which turn the mode on in a buffer whose file is under one of
-them inside its workspace, its named commands, and its error formats. And
-it gives one project, by its identity, its own commands and settings for a
-mode with `projectCommands`, so every worktree of that codebase has them:
-
-```lean
-def setup : SetupM Unit := do
-  compileContribution
-    { mode := "make-mode", markers := #["Makefile"]
-      commands := #[{ name := "build", line := "make" }, { name := "test", line := "make check" }] }
-  projectCommands (.remote "github.com/me/tool") "make-mode" [("lint", "make lint")]
-```
-
-Config's contribution of a mode's name replaces a package's of that name
-whole. A contribution with no marker is refused, and so is one registered
-twice or naming a command twice, and project commands given twice for one
-project and mode, or naming a command twice.
+What fits a kind of project, a minor mode's marker files, named commands
+and error formats, and one project's own commands for a mode, are no
+request of this port: `compileContribution` and `projectCommands` register
+values at two extension points (`Editor/ProjectMode.lean`,
+`Editor/Extension.lean`), so the port names nothing of the compile mode.
 
 A menu of the menu bar (`Editor/Menu.lean`) is defined with `defineMenu`,
 one menu at a time, by its title:
@@ -553,8 +538,8 @@ for the same reasons. Two things differ, both said in
   `modeLine`, `framePadding`, `keyHintDelay`, `layout`, `tabBar`,
   `titleBar`, `processEnvironment`, `autoReload`, `workspace`,
   `workspaceLister`, `projectLister`, `displayRule`, `shellTimeLimit`,
-  `syntaxRefreshDelay`, `leaderKey`, `localLeaderKey`, `projectCommands`,
-  `useStyle`, `useDisplay` and `useDisplayFor`. A package that calls one is
+  `syntaxRefreshDelay`, `leaderKey`, `localLeaderKey`, `useStyle`,
+  `useDisplay` and `useDisplayFor`. A package that calls one is
   refused whole, with a message that names it and the setting.
 - **A package's `useStyleFor` is a default**, not a choice: the style of
   the category unless config's `useStyleFor` chooses another.
@@ -677,12 +662,6 @@ inductive SetupRequest where
   for, how its text is parsed and drawn, and its indent unit
   (`Editor/Language.lean`). -/
   | language (language : Language)
-  /-- Register `contribution`, what its minor mode gives the compile mode
-  (`Editor/ProjectMode.lean`). -/
-  | compileContribution (contribution : Compile.Contribution)
-  /-- Give one project its own commands and settings for a mode
-  (`Compile.ProjectCommands`). -/
-  | projectCommands (entry : Compile.ProjectCommands)
   /-- Register `source` as a completion source, by its name
   (`Editor/Completion.lean`). -/
   | source (source : Completion.Source)
@@ -753,8 +732,6 @@ def SetupRequest.Reply : SetupRequest → Type
   | .shellTimeLimit _ => Unit
   | .syntaxRefreshDelay _ => Unit
   | .language _ => Unit
-  | .compileContribution _ => Unit
-  | .projectCommands _ => Unit
   | .source _ => Unit
   | .style _ => Unit
   | .useStyle .. => Unit
@@ -1325,38 +1302,5 @@ def projectLister (project : Project.Identity) (program : String) (arguments : A
   ExceptT.lift
       (Program.request (port := setupPort)
         (.workspaceLister { scope := .project project, program, arguments, nul }))
-
-/-- The message a compile contribution with no marker is refused with. -/
-def compileWithoutMarkers (mode : String) : String :=
-  s!"the compile contribution `{mode}` has no marker"
-
-/-- Registers `contribution`, what the minor mode `contribution.mode` gives
-the compile mode: its markers, which turn the mode on in a buffer whose
-file is under one of them inside its workspace, its named commands and its
-error formats (`Editor/ProjectMode.lean`). Config's contribution of
-a mode's name replaces a package's of that name whole. Refuses the
-`setup` for a contribution with no marker; the editor refuses one registered
-twice, or naming a command twice. -/
-def compileContribution (contribution : Compile.Contribution) : SetupM Unit := do
-  if contribution.markers.isEmpty then
-    throw (compileWithoutMarkers contribution.mode)
-  ExceptT.lift (Program.request (port := setupPort) (.compileContribution contribution))
-
-/-- Gives the project identified by `project` its own `commands`, each a name
-and a command line, and `settings` for the minor mode `mode`: the compile
-mode reads them by that project's identity from what the loop is told of
-config, so every worktree of the codebase has them while the mode is on
-there, and no other project does. A command
-of a name the mode's contribution gives replaces it; one of a new name comes
-after the contribution's. The editor refuses the `setup` for project
-commands given twice for one project and mode, or naming a command
-twice. -/
-def projectCommands (project : Project.Identity) (mode : String) (commands : List (String × String))
-    (settings : List (String × Value) := []) : SetupM Unit :=
-  ExceptT.lift
-    (Program.request (port := setupPort)
-      (.projectCommands
-        { project, mode, settings
-          commands := commands.toArray.map fun (name, line) => { name, line } }))
 
 end Editor

@@ -1060,8 +1060,7 @@ def hookFiles : List (String × String) :=
 /-- The keys of the hook checks (`hookBindings`), with the loop told of
 `registry`'s compile contributions. -/
 def hookKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
-  let keys := compileKeysOf hookBindings
-  { keys with registered := { keys.registered with compile := registry.compileHook } }
+  toldHook (compileKeysOf hookBindings) registry
 
 /-- The output both `a-build`s write: a line `a-mode`'s and `b-mode`'s `at`
 formats read, and one the general format reads. -/
@@ -1126,8 +1125,7 @@ def hookOverCompiled : Config.Registry :=
 `project` as its project commands, as a reload that changes them tells
 it. -/
 def toldProject (driver : TestDriver) (project : SetupM Unit) : TestDriver :=
-  let compile := (hookRegistry (hookSetup aCommands project)).compileHook
-  { driver with keys := { driver.keys with registered := { driver.keys.registered with compile } } }
+  { driver with keys := toldHook driver.keys (hookRegistry (hookSetup aCommands project)) }
 
 /-- The settings `Compile.projectSettings` gives the project of `identity`
 for the mode `mode`, run as the loop runs a command in `driver`; `none` if
@@ -1178,7 +1176,7 @@ def compileHookChecks : List Check :=
             asked.loop.state.prompt.map (·.label) == some Compile.promptLabel &&
               (showing asked asked.loop.state.frame.focused).bind (·.text) == some "a-build" &&
               locationsOf ran placeR == hookLocations &&
-              (Compile.formatsOf hookRegistry.compileContributions hookModes).map (·.name) ==
+              (Compile.formatsOf (hookOf hookRegistry).contributions hookModes).map (·.name) ==
                 #["a-at", "b-at", "b-general", "general"] },
     { name :=
         "hook criterion 5: on the process model, compile accepted with its default starts /bin/sh -c a-build in /r/hook/one/two, the header says r@main in /r/hook/one/two: a-build, and the output is in *compilation: r@main*, the workspace's buffer"
@@ -1514,7 +1512,7 @@ def compileHookChecks : List Check :=
           compileContribution
             { Compile.cargoMode with
               commands := #[{ name := "build", line := "cargo build --release" }] }
-        let hook := (hookRegistry setup Compile.shipped).compileHook
+        let hook := hookOf (hookRegistry setup Compile.shipped)
         pure
           (hook.contributions.map (·.mode) == #["cargo-mode", "lake-mode", "mise-mode"] &&
             (hook.contributions[0]?.map fun cargo =>
@@ -1536,7 +1534,7 @@ def compileHookChecks : List Check :=
                 commands := #[{ name := "build", line := "make" }], formats := #[atFormat] }
           projectCommands (.remote "github.com/o/r") "a-mode" [("lint", "make lint")]
               [("profile", .str "dev")]
-        let hook := (hookRegistry setup).compileHook
+        let hook := hookOf (hookRegistry setup)
         pure
           (hook.contributions.map (·.mode) == #["a-mode"] &&
             (hook.contributions.map fun contribution =>

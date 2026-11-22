@@ -364,7 +364,7 @@ def outcomeOf (order : ListOrder) (read : ByteArray → Except String (Array Nam
 module docs). -/
 def listed (order : ListOrder) (stamps : Array (Option File.Stamp))
     (ran : Except ProcessError Process.Ran) : EditorM Unit := do
-  let hook ← RegistryRequest.ask .compileHook
+  let hook ← Compile.hook
   let some contribution := hook.contributions.find? (·.mode == order.mode) | return
   let some listing := contribution.listing | return
   let entry : Listing.Entry :=
@@ -390,7 +390,7 @@ def listWork (arguments : List Argument) : Work := fun _ => do
 /-- Checks the listing of each of the on-modes `modes` in `place` ("A
 check", in the module docs). -/
 def refreshListings (place : Option Location) (modes : Array Workspace.OnMode) : EditorM Unit := do
-  let hook ← RegistryRequest.ask .compileHook
+  let hook ← Compile.hook
   let (_, generation) ← RegistryRequest.ask .workspaceSettings
   let entries := entriesOf (← editorState) place
   for on in modes do
@@ -410,6 +410,17 @@ def refreshListings (place : Option Location) (modes : Array Workspace.OnMode) :
 end Editor.Compile
 
 namespace Editor.Workspace
+
+/-- The workspace settings and the config generation the loop answers
+(`RegistryRequest.workspaceSettings`), with the settings' marker modes
+filled from the compile hook, in its order (`Compile.hook`): what the
+marker search is handed. The loop's own answer holds no marker mode, since
+the core's registry holds no compile contribution, so every reader of
+`Settings.markerModes` asks through this. -/
+def markerSettings : EditorM (Settings × Nat) := do
+  let (settings, generation) ← RegistryRequest.ask .workspaceSettings
+  let hook ← Compile.hook
+  return ({ settings with markerModes := hook.contributions.map (·.markerMode) }, generation)
 
 /-- The on-modes the buffer `id` keeps in `state`, nearest first; none when
 it keeps none. -/

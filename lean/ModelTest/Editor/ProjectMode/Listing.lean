@@ -71,7 +71,7 @@ checks (`listingRuns`), with the kit's opener's commands, and the loop told
 def listingDriver (registry : Config.Registry := listingRegistry)
     (opened : BufferId → System.FilePath → EditorM Unit := listingOpened) : Option TestDriver :=
   let keys := dispatchKeys listingBindings Opener.commands
-  let keys := { keys with registered := { keys.registered with compile := registry.compileHook } }
+  let keys := toldHook keys registry
   (Loop.Driver.over keys (listingJobs opened) (EditorState.initial ⟨640, 480⟩)
         editorModel).toOption.map
     fun driver => { driver with jobs := listingRuns }
@@ -97,8 +97,7 @@ def turningDriver (on : Array Workspace.OnMode) : Option TestDriver :=
   let keys :=
     dispatchKeys (listingBindings ++ [("C-p t", invoke "turn-on")])
       (Opener.commands ++ [("turn-on", turn)])
-  let keys :=
-    { keys with registered := { keys.registered with compile := listingRegistry.compileHook } }
+  let keys := toldHook keys listingRegistry
   (Loop.Driver.over keys (listingJobs) (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => { driver with jobs := listingRuns }
 
@@ -145,7 +144,35 @@ def turnOnModesChecks : List Check :=
                 { command := FilesApi.openFileName,
                   arguments := [.str (inFiles "note.txt").toString] }
             shownOnModes opened == some on &&
-              (showing opened).map (·.buffer.minors) == some #["t-mode", "u-mode"] }]
+              (showing opened).map (·.buffer.minors) == some #["t-mode", "u-mode"] },
+    { name :=
+        "the marker settings are the workspace settings and the config generation the loop answers, with the marker modes of the hook's contributions in the hook's order, config's before a package's; the loop's own answer holds no marker mode, and with no contribution the marker settings hold none"
+      run :=
+        let roots : Array Workspace.ConfigRoot := #[{ root := "/r/tools", project := some "tools" }]
+        let shipping : Package :=
+          { name := "shipping"
+            setup :=
+              compileContribution
+                { mode := "a-mode", markers := #["a.toml", "a2.toml"], outermost := true } }
+        let registry : Config.Registry :=
+          {
+            hostedRegistry #[shipping]
+              (compileContribution { mode := "b-mode", markers := #["b.toml"] }) with
+            workspaceRoots := roots, generation := 3 }
+        let plain : Config.Registry :=
+          { hostedRegistry #[] with
+            workspaceRoots := roots, generation := 3 }
+        pure
+          (hostedAsked registry Workspace.markerSettings ==
+              some ({
+                    roots
+                    markerModes :=
+                      #[{ mode := "b-mode", markers := #["b.toml"] },
+                        { mode := "a-mode", markers := #["a.toml", "a2.toml"],
+                          outermost := true }] },
+                  3) &&
+            hostedAsked registry (RegistryRequest.ask .workspaceSettings) == some ({ roots }, 3) &&
+            hostedAsked plain Workspace.markerSettings == some ({ roots }, 3)) }]
 
 /-- The checks of a contribution's computed commands
 (`Editor/ProjectMode/Listing.lean`), on the loop's driver over the editor's
@@ -232,11 +259,7 @@ def listingChecks : List Check :=
           | none => false
           | some driver =>
             let waiting := settledBut (fedTo driver (presses "C-p 1")).1 Compile.listJob
-            let dropped :=
-              { waiting with
-                keys :=
-                  { waiting.keys with
-                    registered := { waiting.keys.registered with compile := {} } } }
+            let dropped := { waiting with keys := toldHook waiting.keys {} }
             let listed :=
               match dropped.pending.find? (·.name == Compile.listJob) with
               | some job => (dropped.finish job.id).1

@@ -3,7 +3,6 @@ import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.InputScheme
 import Editor.Language.IndentUnit
-import Editor.ProjectMode
 import Editor.Store.Codec
 import Editor.Workspace
 
@@ -70,9 +69,6 @@ request of the editor's port (`EditorRequest.registry`,
 - `languageOf` is answered the name of the language the table chooses for
   a path (`Language.forPath`), and `indentUnitOf` the unit of the table's
   first entry of a name.
-- `compileHook` is answered the registered compile contributions in
-  registration order and config's project commands (`Compile.Hook`,
-  `Editor/ProjectMode.lean`).
 - `hasJob` is answered whether a job is registered under a name, as a
   start is checked.
 - `categorySources` is answered the names of the completion sources
@@ -142,9 +138,6 @@ inductive RegistryRequest where
   /-- The indent unit of the language called `language`, from the
   registry's table. -/
   | indentUnitOf (language : String)
-  /-- The compile contributions, in registration order, and config's
-  project commands. -/
-  | compileHook
   /-- Whether a job is registered under `name`. -/
   | hasJob (name : String)
   /-- Which completion sources are registered in `category`, by name, in
@@ -180,7 +173,6 @@ abbrev RegistryRequest.Reply : RegistryRequest → Type
   | .syntaxRefreshDelay => Option Nat
   | .languageOf _ => Option String
   | .indentUnitOf _ => Option Language.IndentUnit
-  | .compileHook => Compile.Hook
   | .hasJob _ => Bool
   | .categorySources _ => Array String
   | .atPointSources .. => Array String
@@ -204,7 +196,6 @@ def RegistryRequest.bare : (request : RegistryRequest) → request.Reply
   | .syntaxRefreshDelay => none
   | .languageOf _ => none
   | .indentUnitOf _ => none
-  | .compileHook => {}
   | .hasJob _ => true
   | .categorySources _ => #[]
   | .atPointSources .. => #[]

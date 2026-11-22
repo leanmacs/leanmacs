@@ -484,8 +484,11 @@ structure Settings where
   git : String := "git"
   /-- The marker files, in order. -/
   markers : Array String := defaultMarkers
-  /-- The minor modes markers turn on, in registration order: what the loop
-  says of the registered compile contributions. -/
+  /-- The minor modes markers turn on, in the compile hook's order. The loop
+  leaves it empty: who reads the settings for the marker search fills it
+  from the hook (`Workspace.markerSettings`,
+  `Editor/ProjectMode/Listing.lean`), since the core's registry holds no
+  compile contribution. -/
   markerModes : Array MarkerMode := #[]
   /-- The listers config declares, in the order it declared them
   (`packages/workspace/Workspace/Lister.lean`). -/

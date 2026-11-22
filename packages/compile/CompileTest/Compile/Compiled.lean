@@ -2,6 +2,7 @@ import Compile
 import Compile.Compiled
 import CompileTest.Check
 import Editor.Config.Packages
+import Editor.Test.Listing
 
 /-!
 # Model tests: `Compile/Compiled.lean`
@@ -59,9 +60,11 @@ def compilePackageChecks : List Check :=
             (registry.ex? "next-error").map (·.command) == some Compile.nextName &&
             (registry.ex? "previous-error").map (·.command) == some Compile.previousName &&
             registry.bindings.isEmpty &&
-            registry.contributions.map (fun entry => (entry.contribution.mode, entry.owner)) ==
-              #[("cargo-mode", Compile.package.owner), ("lake-mode", Compile.package.owner),
-                ("mise-mode", Compile.package.owner)]) },
+            (Test.hookOf registry).contributions.map (·.mode) ==
+              #["cargo-mode", "lake-mode", "mise-mode"] &&
+            (registry.extensions.filter (·.key == TypeName.typeName Compile.Contribution)).map
+                (·.owner) ==
+              #[Compile.package.owner, Compile.package.owner, Compile.package.owner]) },
     { name :=
         "the package compile's job compile-run is reported as stopped by a restart, and it registers no other reported job and none restarted by its owner"
       run :=

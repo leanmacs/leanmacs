@@ -199,8 +199,9 @@ from the next command.
     `packages/files/Files.lean`), a command's choice being the state's;
   - the workspace settings (`workspaceSettings`, from
     `Loop.Registered.workspaceSettings`: config's workspace roots, the git
-    program, the contributions' marker modes and config's workspace
-    listers) and the config generation
+    program and config's workspace
+    listers; the marker modes are filled by who reads the compile hook,
+    `Workspace.markerSettings`, `Editor/ProjectMode/Listing.lean`) and the config generation
     (`generation`): a file's open asks, for its directory's workspace
     (`packages/workspace/Workspace/Attach.lean`), and the version-control commands ask,
     for the git program; the gutter's reconciler is handed the same
@@ -220,8 +221,6 @@ from the next command.
     of that name in the table (config's entries first), or `none`; `=` and
     the commands that open a line ask (`Target.indentUnit`,
     `Editor/Api.lean`);
-  - the compile hook (`compileHook`, from `Loop.Registered.compile`): the
-    compile mode asks (`packages/compile/Compile.lean`, "The hook");
   - whether a job is registered (`hasJob`, from `Loop.Registered.jobs`, as
     a start is checked): `prompt` asks it of a source that answers later;
   - which sources a category has (`categorySources`, filled from
@@ -519,9 +518,6 @@ structure Loop.Registered where
   /-- The language table, in precedence order (`Language.forPath`): config's
   entries, then the compiled ones it did not replace by name. -/
   languages : List Language := []
-  /-- The compile contributions, in registration order, and config's
-  project commands (`Config.Registry.compileHook`). -/
-  compile : Compile.Hook := {}
   /-- The completion source registered under a name, for a prompt that asks
   for it by name (`ControlRequest.askSource`). `none` for a name no source is
   registered under. -/
@@ -566,14 +562,14 @@ structure Loop.Registered where
   configExtensions : Lean.Name → Array Dynamic := fun _ => #[]
 
 /-- The workspace settings `registered` says: config's workspace roots, the
-git program, the marker modes of the compile contributions, and config's
-workspace listers. What the workspace settings are asked for answers
+git program, and config's workspace listers. The marker modes are not the
+loop's to say: they are filled from the compile hook by who reads it
+(`Workspace.markerSettings`, `Editor/ProjectMode/Listing.lean`). What the workspace settings are asked for answers
 (`RegistryRequest.workspaceSettings`), and what the loop hands the
 version-control gutter, so that every reader of the git program reads the
 one. -/
 def Loop.Registered.workspaceSettings (registered : Loop.Registered) : Workspace.Settings :=
   { roots := registered.workspaceRoots, git := registered.git
-    markerModes := registered.compile.contributions.map (·.markerMode)
     listers := registered.workspaceListers }
 
 /-- The answer to `request`, a question to the registry or config, from what
@@ -593,7 +589,6 @@ def Loop.Registered.answer (registered : Loop.Registered) :
   | .syntaxRefreshDelay => registered.syntaxRefreshDelay
   | .languageOf path => (Language.forPath registered.languages path).map (·.name)
   | .indentUnitOf language => (registered.languages.find? (·.name == language)).map (·.indentUnit)
-  | .compileHook => registered.compile
   | .hasJob name => registered.jobs name
   | .categorySources category => registered.categorySources category
   | .atPointSources major minors occasion =>

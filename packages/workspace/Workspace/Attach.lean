@@ -1,5 +1,6 @@
 import Editor.Api
 import Editor.Command.Call
+import Editor.ProjectMode.Listing
 import ProjectApi
 import Workspace.Finder
 import Workspace.Modes
@@ -25,7 +26,9 @@ hook's value as compiled code registers them are in
 - **When a file opens** (`attach`, run at the hook `FilesApi.Opened`, which the files
   feature's `adopt` runs once the buffer
   holds the file), the workspace settings are asked of the loop
-  (`RegistryRequest.workspaceSettings`): config's roots and the config
+  (`RegistryRequest.workspaceSettings`, through `Workspace.markerSettings`,
+  `Editor/ProjectMode/Listing.lean`, which fills their marker modes from the
+  compile hook): config's roots and the config
   generation. A cached answer for the file's directory under that
   generation (`Workspace.Table.cached?`) is the buffer's at once, and
   starts no job: a second file of a directory asks git nothing.
@@ -119,7 +122,7 @@ refused is silent. -/
 def attach (id : BufferId) (path : System.FilePath) : EditorM Unit := do
   let some directory := path.parent | return
   let directory := Process.trimmed directory
-  let (settings, generation) ← RegistryRequest.ask .workspaceSettings
+  let (settings, generation) ← markerSettings
   match (← editorState).workspaces.cached? directory generation with
   | some (some location) =>
     setBufferWorkspace id location
@@ -147,7 +150,7 @@ def found (order : FindOrder) (answer : Option Found) : EditorM Unit := do
     return
   if let some answer := answer then
     setBufferWorkspace order.buffer (.local answer.root)
-  let (settings, _) ← RegistryRequest.ask .workspaceSettings
+  let (settings, _) ← markerSettings
   markModes order.buffer order.directory ((answer.map (·.root)).getD order.directory)
       settings.markerModes
 

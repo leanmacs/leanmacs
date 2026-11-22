@@ -1048,7 +1048,12 @@ has its own checks and no check of the core's names the compile mode:
 
 - `contributionChecks`: a contribution as data (`Editor/ProjectMode.lean`),
   pure: its defaults, its marker mode, and a hook's project commands and
-  settings by a project's identity;
+  settings by a project's identity; and the two extension points and the
+  hook that reads them, on the kit's hosted registry: config's
+  contributions before the packages', each mode once as its latest, what a
+  reload replaces, the three refusals, the later of two of one mode or of
+  one project and mode in one `setup`, a package's project commands after
+  config's, and the later of two packages' contributions of one mode;
 - `formatDataChecks`: an error format as data
   (`Editor/ProjectMode/Format.lean`), pure, with no matcher: the
   severities' names, a step and an optional step, a format's defaults, the
@@ -1065,7 +1070,9 @@ has its own checks and no check of the core's names the compile mode:
   `Editor/ProjectMode/Listing.lean`), on the same driver: the on-modes kept
   nearest first and read back, each a minor mode with the nearest first,
   the listing checked of one that has one, and none turned on leaving the
-  buffer as it was.
+  buffer as it was; and the marker settings (`Workspace.markerSettings`),
+  the loop's workspace settings with the marker modes of the hook's
+  contributions.
 
 What the compile mode makes of them is checked in its package
 (`packages/compile/CompileTest/`): `CompileTest.compileOfferChecks`,

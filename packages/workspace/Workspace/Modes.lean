@@ -23,8 +23,9 @@ and imports this module (`packages/compile/Compile.lean`).
   from attach's cached answer at once, or from the find job's command once
   the finder has answered. The bound is the workspace's root, or the file's
   directory when it has no workspace.
-- **Only with a contribution.** The marker modes are what the loop says of
-  the registered contributions (`Workspace.Settings.markerModes`); with
+- **Only with a contribution.** The marker modes are those of the compile
+  hook's contributions (`Workspace.Settings.markerModes`, filled by
+  `Workspace.markerSettings`, `Editor/ProjectMode/Listing.lean`); with
   none, no job starts, so a host that registers none sees nothing new.
 - **The job** (`find-mode-markers`, `markerJob`) is started with a marker
   order (`MarkerOrder`): the buffer, the file's directory, the bound and
@@ -109,7 +110,7 @@ while the buffer still holds a file in the order's directory, it keeps the
 modes the markers `present` turn on and has each as a minor mode. -/
 def modesFound (order : MarkerOrder) (present : Array (System.FilePath × String)) : EditorM Unit :=
   do
-  let (settings, _) ← RegistryRequest.ask .workspaceSettings
+  let (settings, _) ← markerSettings
   let some buffer := (← editorState).buffer? order.buffer | return
   let some file := buffer.file | return
   if (file.path.parent.map Process.trimmed) != some order.directory then

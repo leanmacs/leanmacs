@@ -239,9 +239,9 @@ Minor modes give the compile mode what fits a kind of project
 (`Compile.Contribution`, `Editor/ProjectMode.lean`). A buffer's
 on-modes (`Workspace.onModesOf`, `Editor/ProjectMode/Listing.lean`), nearest
 root first, then in registration order, decide where a run goes, what
-`compile` offers and how the output is read. The contributions are asked of
-the loop (`RegistryRequest.compileHook`), so a reload's change holds from the
-next command.
+`compile` offers and how the output is read. The contributions are read at their
+extension point through the hook (`Compile.hook`, `Editor/ProjectMode.lean`),
+so a reload's change holds from the next command.
 
 - **Where.** With on-modes, `compile` runs its line, typed or default, in
   the first on-mode's root; with none, in the scope's root.
@@ -266,9 +266,9 @@ next command.
   the contribution's own (`listedCommands`, `offers`).
 - **Formats.** A run's output is read with its modes' formats, then the
   general one ("Locations").
-- **Project commands.** Config's project commands (`projectCommands`,
-  `Editor/Setup.lean`) have one source: the hook the loop answers, which
-  holds config's latest, keyed by the project's identity. `compile` and
+- **Project commands.** Project commands (`projectCommands`,
+  `Editor/ProjectMode.lean`) have one source: the hook, which
+  holds config's latest and then a package's, keyed by the project's identity. `compile` and
   `compile-command` take the scope's project's from it (`hookOffers`), and
   `projectSettings` reads a mode's settings from it, so a reload's change
   holds at the next read in any open buffer, with or without a compile
@@ -584,13 +584,13 @@ def remember (scope : Scope) (line : String) : EditorM Unit := do
 docs); none when it gives none. -/
 def projectSettings (identity : Project.Identity) (mode : String) :
     EditorM (List (String × Value)) := do
-  return (← RegistryRequest.ask .compileHook).settingsOf identity mode
+  return (← Compile.hook).settingsOf identity mode
 
 /-- The commands the on-modes `modes` offer in `scope` ("The hook", in the
 module docs): the hook asked of the loop, with the commands the scope's
 listings last gave and, for a workspace scope, its project's commands. -/
 def hookOffers (scope : Scope) (modes : Array Workspace.OnMode) : EditorM (Array Offer) := do
-  let hook ← RegistryRequest.ask .compileHook
+  let hook ← Compile.hook
   let projects :=
     match scope with
     | .workspace _ project => hook.projectsOf project.identity
@@ -1072,7 +1072,7 @@ read with the run's modes' formats, then the general one (`formatsOf`). -/
 def noteSites (record : Record) (id : BufferId) (start : Nat × Nat) (lines : Array String) :
     EditorM Record := do
   let state ← editorState
-  let hook ← RegistryRequest.ask .compileHook
+  let hook ← Compile.hook
   let directory : System.FilePath := (record.last.map (·.2)).getD state.workingDirectory
   -- The row before the first appended one, when it is output and not the
   -- header line (row 0), may be a lead.

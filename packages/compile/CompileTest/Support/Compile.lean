@@ -340,15 +340,16 @@ def hookSetup (aCommands : Array Compile.NamedCommand := aCommands)
   project
 
 /-- The registry of the hook checks: `setup`'s contributions and project
-commands installed for config, over `compiled` for the owner `compiled`. -/
+commands installed for config, over `compiled` registered by a package, as
+the compile package registers its shipped modes. -/
 def hookRegistry (setup : SetupM Unit := hookSetup) (compiled : Array Compile.Contribution := #[]) :
     Config.Registry :=
-  let base := ({} : Config.Registry).replaceContributions .compiled compiled
-  match Config.Registrations.ofSetup setup with
-  | .ok registrations =>
-    { base.replaceContributions .config registrations.contributions with
-      projectCommands := registrations.projectCommands }
-  | .error _ => base
+  let shipping : Package :=
+    { name := "test-shipping"
+      setup :=
+        for contribution in compiled do
+          compileContribution contribution }
+  hostedRegistry #[shipping] setup
 
 /-- The bindings of the hook checks: the compile checks', `C-k i`
 (`compile-command`), and `C-o m`, `C-o u`, `C-o l`, `C-o 2`, `C-o h`, `C-o
@@ -401,7 +402,7 @@ default): the files and the listings' runs of the listing checks
 def compileListingDriver (registry : Config.Registry := listingRegistry)
     (opened : BufferId → System.FilePath → EditorM Unit := listingOpened) : Option TestDriver :=
   let keys := compileKeysOf compileListingBindings #[openedPackage opened]
-  let keys := { keys with registered := { keys.registered with compile := registry.compileHook } }
+  let keys := toldHook keys registry
   (Loop.Driver.over keys compileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => { driver with jobs := listingRuns compileListingStreams }
 

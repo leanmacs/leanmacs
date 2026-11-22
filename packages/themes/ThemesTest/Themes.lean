@@ -16,7 +16,6 @@ import Editor.Language
 import Editor.Loop.Driver
 import Editor.Mode
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.Test.Driver

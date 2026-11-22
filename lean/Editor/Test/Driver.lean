@@ -23,7 +23,6 @@ import Editor.Loop.Driver
 import Editor.Mode
 import Editor.Process
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.Test.Completion

@@ -327,7 +327,7 @@ def hostChecks (context : Context) : List Check :=
         let collaborators := { stage.collaborators with packages := #[] }
         let running ← Headless.Running.new collaborators
         let registry := running.config.registry
-        return registry.ownersByKind.size == 19 && registry.ownersByKind.all (·.isEmpty) &&
+        return registry.ownersByKind.size == 18 && registry.ownersByKind.all (·.isEmpty) &&
             registry.styleDefaults.isEmpty &&
             registry.menuBar? == none &&
             (Headless.Running.keys collaborators running 0).menu == none &&
@@ -2610,7 +2610,7 @@ def shippedChecks (_ : Unit) : List Check :=
             names.all (fun name => (registry.ex? name).isNone) &&
             (registry.findJob? "compile-run").isNone &&
             (registry.mode? "compilation").isNone &&
-            registry.contributions.isEmpty },
+            (registry.extensionsAt (TypeName.typeName Compile.Contribution)).isEmpty },
     { name :=
         "the executable's hosts start with nothing of the minibuffer package: no command minibuffer-accept, minibuffer-cancel, minibuffer-next, minibuffer-previous, minibuffer-insert, minibuffer-delete-backward, minibuffer-delete-to-start, minibuffer-ask or minibuffer-candidates, and no mode minibuffer, the one the minibuffer's buffer is made with, registered by a package of the core's Lake package"
       run := do

@@ -33,11 +33,40 @@ namespace Editor.Test
 
 open Editor
 
+/-- `registry` with what config owns replaced by what `config` registers,
+as a reload that installs replaces it (`Config.Registry.replaceOwned`):
+config's commands, bindings and the rest, and its values at extension
+points. A `config` that is refused installs nothing and leaves `registry`
+as it was, as a rejected reload does. -/
+def hostedReloaded (registry : Config.Registry) (config : SetupM Unit) : Config.Registry :=
+  match Config.Registrations.ofSetup config with
+  | .ok registrations => registry.replaceOwned .config registrations
+  | .error _ => registry
+
 /-- The registry `packages` make, installed in order as a host installs
-them; the refusals are dropped. -/
-def hostedRegistry (packages : Array Package) : Config.Registry :=
+them, and then `config`, when it registers anything, installed for config
+as a reload installs what config owns (`Config.Registry.replaceOwned`); the
+refusals are dropped, and a `config` that is refused installs nothing. -/
+def hostedRegistry (packages : Array Package) (config : SetupM Unit := pure ()) : Config.Registry :=
   let (state, _) : Config.State Unit Unit × Array String := Config.State.ofPackages packages
-  state.registry
+  hostedReloaded state.registry config
+
+/-- The message `setup` is refused with, a package's or config's, if it is:
+the one it threw, or what is wrong with what it registered
+(`Config.Registrations.ofSetup`). -/
+def hostedRefusal (setup : SetupM Unit) : Option String :=
+  match Config.Registrations.ofSetup setup with
+  | .error message => some message
+  | .ok _ => none
+
+/-- What `command` answers when a loop told of `registry` dispatches it in a
+state that holds nothing, run against the editor's model; `none` if it does
+not finish. For a check of what a command reads of the registry, an
+extension point's values among it. -/
+def hostedAsked {α : Type} (registry : Config.Registry) (command : EditorM α) : Option α :=
+  match ((command.dispatched registry.registered EditorState.none).runModel editorModel).1 with
+  | .ok (.finished answer, _) => some answer
+  | _ => none
 
 /-- The keys of a driver hosted over `registry`, with `bindings`: each
 command by name the registry's entry, and what the loop is told the

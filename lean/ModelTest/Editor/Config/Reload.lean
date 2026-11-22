@@ -31,8 +31,6 @@ import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
-import Editor.ProjectMode
-import Editor.ProjectMode.Format
 import Editor.Role
 import Editor.Scene
 import Editor.Setup
@@ -164,6 +162,12 @@ def themed : ModelState :=
 /-- The report of the reload that finishes with `outcome` from `state`. -/
 def reportFrom (state : ModelState) (outcome : ModelOutcome) : Config.Report :=
   (state.install outcome).2
+
+/-- A value of an extension point of the reload's checks: a name. -/
+structure ReloadValue where
+  /-- The name. -/
+  name : String
+  deriving TypeName
 
 /-- The checks of the reload reducer (`Editor/Config/Reload.lean`), with
 outcomes built by hand. -/
@@ -770,27 +774,29 @@ def reloadChecks : List Check :=
           (told (reduce []).1 == none && told loaded == some 250 && told kept == some 250 &&
             told bare == none) },
     { name :=
-        "an installed reload puts config's compile contributions and project commands in the registry, which tells the loop of them; a rejected reload leaves them, and a config that registers none leaves the compiled ones alone"
+        "an installed reload puts config's values at an extension point in the registry after a package's, and the registry tells the loop of them and of config's apart; a rejected reload leaves them, and a config that registers none leaves the package's alone"
       run :=
+        let key := TypeName.typeName ReloadValue
         let start : ModelState :=
           {
             registry :=
-              ({} : Config.Registry).replaceContributions .compiled
-                #[{ mode := "a-mode", markers := #["a.toml"] }] }
+              ({} : Config.Registry).replaceExtensions { name := "shipping" }
+                #[(key, .mk ({ name := "a" } : ReloadValue))] }
         let setup : SetupM Unit := do
-          compileContribution { mode := "b-mode", markers := #["b.toml"] }
-          projectCommands (.remote "github.com/o/r") "b-mode" [("lint", "b-lint")]
+          Extension.add ({ name := "b" } : ReloadValue)
+          Extension.add ({ name := "c" } : ReloadValue)
         let (loaded, _) := reduceFrom start [.requested, .finished (accepted ["a"] setup)]
         let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
         let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let names (values : Array Dynamic) : Array String :=
+          values.filterMap fun value => (value.get? ReloadValue).map (·.name)
         let told (state : ModelState) : Array String × Array String :=
-          let hook := state.registry.registered.compile
-          (hook.contributions.map (·.mode), hook.projects.map (·.mode))
+          (names (state.registry.registered.extensions key),
+            names (state.registry.registered.configExtensions key))
         pure
-          (told start == (#["a-mode"], #[]) &&
-            told loaded == (#["b-mode", "a-mode"], #["b-mode"]) &&
+          (told start == (#["a"], #[]) && told loaded == (#["a", "b", "c"], #["b", "c"]) &&
             told kept == told loaded &&
-            told bare == (#["a-mode"], #[])) },
+            told bare == (#["a"], #[])) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=

@@ -21,12 +21,12 @@ the model tests run it with outcomes built by hand
 - **Installing is the only place config changes anything.** An accepted
   outcome replaces the files, replaces the config's entries in the registry,
   commands, jobs, key bindings, modes, ex bindings, faces, themes,
-  segments, languages, compile contributions, completion sources,
+  segments, languages, completion sources,
   completion styles and completion displays
   (`Registry.replace`, `Registry.replaceJobs`, `Registry.replaceBindings`,
   `Registry.replaceModes`, `Registry.replaceEx`, `Registry.replaceFaces`,
   `Registry.replaceThemes`, `Registry.replaceSegments`,
-  `Registry.replaceLanguages`, `Registry.replaceContributions`,
+  `Registry.replaceLanguages`,
   `Registry.replaceSources`, `Registry.replaceStyles`, never an append),
   and its prefix names (`Registry.replacePrefixNames`; a binding's
   description is on the binding, so it is replaced with it),
@@ -155,10 +155,11 @@ the model tests run it with outcomes built by hand
   (`Registry.workspaceListers`): the next `find-file-in-workspace` lists
   with them (`packages/workspace/Workspace/Lister.lean`). A rejected outcome keeps
   them.
-- **An install replaces config's compile contributions and project
-  commands** (`Registry.replaceContributions`, `Registry.projectCommands`):
-  a file opened after it turns on the modes they give, and the compile mode
-  uses their commands at its next use. A rejected outcome changes neither.
+- **An install replaces config's values at every extension point**
+  (`Registry.replaceExtensions`), config's compile contributions and
+  project commands among them (`Editor/ProjectMode.lean`): a file opened
+  after it turns on the modes they give, and the compile mode uses their
+  commands at its next use. A rejected outcome changes neither.
 - **A reload cancels the old config's jobs when, and only when, it
   installs.** An accepted outcome's effects begin with `cancelJobs config`,
   before its report and before a follow-up job starts; a rejected outcome has
@@ -459,8 +460,7 @@ def install (state : State β σ) (outcome : Outcome β σ) : State β σ × Rep
             shellTimeLimit := built.registrations.shellTimeLimit
             leader := built.registrations.leader
             localLeader := built.registrations.localLeader
-            syntaxRefreshDelay := built.registrations.syntaxRefreshDelay
-            projectCommands := built.registrations.projectCommands },
+            syntaxRefreshDelay := built.registrations.syntaxRefreshDelay },
         cells, parked := #[], cellsRevision := state.cellsRevision + 1 }
     let (themeName, unknownTheme) :=
       chooseAt state.registry state.themeName built.registrations.theme

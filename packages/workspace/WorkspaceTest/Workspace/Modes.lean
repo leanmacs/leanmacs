@@ -44,8 +44,7 @@ loop told `t-mode` registered in config (`listingRegistry`); `none` if
 making the state was refused. -/
 def markerListingDriver : Option TestDriver :=
   let keys := dispatchKeys (listingFiles.map fun (key, path) => (key, opens path)) Opener.commands
-  let keys :=
-    { keys with registered := { keys.registered with compile := listingRegistry.compileHook } }
+  let keys := toldHook keys listingRegistry
   (Loop.Driver.over keys markerListingJobs (EditorState.initial ⟨640, 480⟩)
         editorModel).toOption.map
     fun driver => { driver with jobs := listingJobModel }
@@ -96,10 +95,7 @@ def markerRegistry : Config.Registry :=
     compileContribution { mode := "a-mode", markers := #["a.toml"] }
     compileContribution { mode := "marker-mode", markers := #["marker.toml"] }
     compileContribution { mode := "cargo-mode", markers := #["Cargo.toml"] }
-  match Config.Registrations.ofSetup setup with
-  | .ok registrations =>
-    ({} : Config.Registry).replaceContributions .config registrations.contributions
-  | .error _ => {}
+  hostedRegistry #[] setup
 
 /-- A driver of the marker checks over `registry`, `markerRegistry` by
 default: the world of `markerWorld`, the workspace's find job and mode
@@ -112,7 +108,7 @@ def markerDriver (registry : Config.Registry := markerRegistry) : Option TestDri
     markerFiles.foldl (fun (files : FileModel) (_, path, text) => files.withFile path text.toUTF8)
       model.files
   let keys := dispatchKeys (markerFiles.map fun (key, path, _) => (key, opens path)) Opener.commands
-  let keys := { keys with registered := { keys.registered with compile := registry.compileHook } }
+  let keys := toldHook keys registry
   (Loop.Driver.over keys workspaceJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => { driver with jobs := { model with files } }
 
