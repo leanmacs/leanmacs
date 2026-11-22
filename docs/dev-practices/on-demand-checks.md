@@ -1131,11 +1131,18 @@ hogs unless it says otherwise:
   loops not ended 30000 ms and 200 ms after they were asked to stop). Filed
   as linux-stress-config-hangs, to be fixed after this branch lands. It is
   evidence for the Linux code paths only, never for the ubuntu leg.
-- The ubuntu leg is open: `.github/workflows/stress.yml`, dispatched at
-  landing, closes it. A bound that a loaded run
-reaches on an event that does come is a hang guard set too short: it is
-raised to ten times the slowest that event was seen to take, and the
-measurement goes in its doc.
+- The ubuntu leg was not run. The owner decided on 2026-11-21 that no
+  GitHub CI runs while the roadmap is implemented, so it is deferred to
+  landing: `.github/workflows/stress.yml` is dispatched then, must print
+  `config: 50/50`, `contract: 50/50`, `rust: 50/50` and `open-file: 50/50`,
+  and its run id is recorded on the phase. Nothing yet shows it will pass:
+  the only Linux run, the supplementary one above, failed, and its hangs
+  are task linux-stress-config-hangs, which the owner chose on 2026-11-22
+  to fix after the branch lands.
+
+A bound that a loaded run reaches on an event that does come is a hang
+guard set too short: it is raised to ten times the slowest that event was
+seen to take, and the measurement goes in its doc.
 
 `mise run linux-stress` runs the same loop in the Linux container of
 `linux-ci` ([below](#the-gate-on-linux-on-demand)), after one `mise run ci`
