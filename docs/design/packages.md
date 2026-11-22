@@ -1593,13 +1593,18 @@ What each registered is gone from a set without it (the plan's D7):
 - **without `evil`**, the set has no input scheme unless another package
   supplies one, and an editor with none refuses to start: the headless
   mode, the window mode and `--probe` print the line below on stderr and
-  exit 1, so `:package-remove evil` builds a set whose restart is given up
-  before the session is handed over. With another scheme, none of evil's
-  41 commands exists: completion at point's `RET` and `TAB` with no
-  session name nothing (`insert-newline`, `insert-tab`), and the Edit
-  menu's Undo, Redo, Cut, Copy, Paste and Select All name commands no
-  package registers, unless that scheme's package implements `evil-api`
-  and registers under the core's clipboard names;
+  exit 1. So the build that `:package-remove evil` starts fails at its
+  own probe (step 6 of "The build, as a job", below), before the restart's:
+  the staging directory is removed, nothing is published, no restart is
+  asked for, and the echo area says `packages: the new editor did not
+  start: it exited with status 1; editor: no input scheme is installed: no
+  package of this editor's package set supplies one; this editor keeps
+  running`. With another scheme, none of evil's 41 commands exists:
+  completion at point's `RET` and `TAB` with no session name nothing
+  (`insert-newline`, `insert-tab`), and the Edit menu's Undo, Redo, Cut,
+  Copy, Paste and Select All name commands no package registers, unless
+  that scheme's package implements `evil-api` and registers under the
+  core's clipboard names;
 - **without `themes`**, `load-theme`, the completion source `themes` and
   the registered theme `default` are gone. The theme in force is still
   named `default` (`Theme.defaultName`) and is the built-in theme, config
@@ -3421,8 +3426,10 @@ that opens and takes no input.
   mode and `--probe` print `editor: no input scheme is installed: no
   package of this editor's package set supplies one` on stderr and exit 1
   (`Executable.Mode.needsScheme`, `lean/Editor/Main.lean`, "The input
-  scheme"). The probe refuses so that a restart into such a set is given up
-  before the session is handed over (`lean/Editor/Restore/Restart.lean`).
+  scheme"). The probe refuses so that the build of such a set fails at its
+  probe and publishes nothing ("The build, as a job", step 6), and a
+  `:restart` into such an editor is given up before the session is handed
+  over (`lean/Editor/Restore/Restart.lean`).
   Checking at the set's build that a set has a scheme is left to later
   ([extension-points.md](extension-points.md), "A required extension
   point").

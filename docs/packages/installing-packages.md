@@ -266,11 +266,17 @@ make the same edit and `:reload`.
 **Removing `evil`** leaves a set with no input scheme, unless another
 package of yours supplies one. An editor of such a set refuses to start:
 it prints `editor: no input scheme is installed: no package of this
-editor's package set supplies one` and exits 1. So the set builds, but the
-restart is given up: before the session is handed over the new editor is
-probed, the probe is refused the same way, and the editor you are in keeps
-running and says why. Install a package that supplies a scheme, or put
-`evil`'s table back, and `:reload`.
+editor's package set supplies one` and exits 1. So the build of the set
+fails: the new editor links, but the build probes it before it publishes
+it, and the probe is refused the same way. Nothing is published, there is
+no restart, and the editor you are in keeps running and says why:
+
+```
+packages: the new editor did not start: it exited with status 1; editor: no input scheme is installed: no package of this editor's package set supplies one; this editor keeps running
+```
+
+Install a package that supplies a scheme, or put `evil`'s table back, and
+`:reload`.
 
 ## Editing the lakefile by hand
 

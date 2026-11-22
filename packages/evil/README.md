@@ -81,7 +81,10 @@ names them as it did.
 ## Dropping it
 
 `:package-remove evil` rebuilds your editor without it. Unless your set
-holds another package that supplies an input scheme, that editor would
-refuse to start, so the restart is given up before the session is handed
-over, saying why, and the editor you are in keeps running
+holds another package that supplies an input scheme, that editor refuses
+to start, so the build fails when it probes the new editor: nothing is
+published, there is no restart, and the editor you are in keeps running
+and says `packages: the new editor did not start: it exited with status 1;
+editor: no input scheme is installed: no package of this editor's package
+set supplies one; this editor keeps running`
 ([installing-packages.md](../../docs/packages/installing-packages.md)).
