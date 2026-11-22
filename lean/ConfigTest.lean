@@ -8,6 +8,7 @@ import ConfigTest.Editor.Config.Elaborate
 import ConfigTest.Editor.Config.Elaborator.Contract
 import ConfigTest.Editor.Config.Lakefile.Toml
 import ConfigTest.Editor.Evil
+import ConfigTest.Editor.Evil.Operators
 import ConfigTest.Editor.Evil.TreeObjects
 import ConfigTest.Editor.Ex
 import ConfigTest.Editor.Extension
@@ -196,35 +197,35 @@ show:
   not run; a `q` that is refused leaves the script running; and a wait on
   a host whose loop a command ended answers `ended`. They are apart from
   `scriptChecks`, which are defined before what these hosts are handed;
-- `leaderChecks`: the leader through a host of the Vim scheme that ships:
-  a config's `<leader> f f` binding runs on `SPC f f` while config sets no
-  leader, on `\ f f` once a reload sets the leader to `\` (and `SPC f f`
-  then does not run it), and `SPC` typed in insert state is a space while
-  `SPC f f` after `<Escape>` runs the binding;
-- `hintChecks`: the key hints through a host of the Vim scheme that ships:
-  after a reload, a config's prefix name and a binding's description are
-  in the scene's `hint` lines after `SPC` and after `SPC f`, none are after
-  the binding runs, and a reload that drops the prefix name lists the
-  prefix unnamed (with a delay of 0, so they are shown at once);
+- `leaderChecks`: the leader through a host of the test scheme: a
+  config's `<leader> f f` binding runs on the scheme's leader and then
+  `f f` while config sets no leader, and on `\ f f` once a reload sets the
+  leader to `\`, when the scheme's leader no longer runs it;
+- `hintChecks`: the key hints through a host of the test scheme: after a
+  reload, a config's prefix name and a binding's description are in the
+  scene's `hint` lines after the scheme's leader and after the leader and
+  `f`, none are after the binding runs, and a reload that drops the prefix
+  name lists the prefix unnamed (with a delay of 0, so they are shown at
+  once);
 - `keyHintChecks`: when and where the key hints are shown, through a host
-  of the Vim scheme that ships, on the fake clock and the recorder: after
-  `SPC` and the default delay the scene lists the keys that can follow
-  with their descriptions and prefix names, drawn by the minibuffer
+  of the test scheme, on the fake clock and the recorder: after the
+  scheme's leader and the default delay the scene lists the keys that can
+  follow with their descriptions and prefix names, drawn by the minibuffer
   display above the bottom row, and none before; a sequence completed or
   reset before the delay withdraws it and shows none; a delay of 0 shows
   them in the first scene; the pending keys are drawn in the selected
   window's status line while pending and cleared once the sequence
   completes; a display config chooses for `key` draws them; `.never` arms
-  nothing; a reload while `SPC` is pending that sets `.never` closes hints
-  shown and withdraws a wait, one that keeps the delay keeps its wait,
-  and one that sets it again arms a new wait; and a reload refuses a delay
-  over a minute, one that is not a delay and one set twice;
+  nothing; a reload while the leader is pending that sets `.never` closes
+  hints shown and withdraws a wait, one that keeps the delay keeps its
+  wait, and one that sets it again arms a new wait; and a reload refuses a
+  delay over a minute, one that is not a delay and one set twice;
 - `defaultConfigChecks`: the default config `mise run install` ships, read
   from the directory the fourth argument names: a reload of it through a
-  host of the Vim scheme that ships installs with no diagnostic; each of
+  host of the test scheme installs with no diagnostic; each of
   its bindings names a registered command or one of the default packages'
-  commands, by name; and each prefix it binds under the leader has a prefix
-  name (`Registry.prefixName?`);
+  commands, by name; and each prefix it binds under the leader, read
+  through the scheme's leader, has a prefix name (`Registry.prefixName?`);
 - `extensionChecks`: extension points (`Editor/Extension.lean`) with the
   real elaborator, over the fixture `ExtensionFixture`, which declares an
   extension point and a compiled package that reads it: a config
@@ -233,10 +234,17 @@ show:
   reload without the registration replaces config's value and keeps the
   package's; and the package's job over the point is made, when it is
   started, from config's value after the package's;
-- `indentChecks`: `=` and the indented new lines through a host of the Vim
-  scheme that ships, over the library's Rust grammar: `gg=G` on the
-  mangled Rust indent fixture (`tests/syntax/rust/indent.rs`, read from the
-  directory the third argument names) gives the fixture back, `=af`
+- `indentChecks`: the core's indent levels through a host of the test
+  scheme, over the library's Rust grammar, each asked by a command of
+  config's run by name: the edits `TextId.reindentEdits` answers of every
+  row of the mangled Rust indent fixture (`tests/syntax/rust/indent.rs`,
+  read from the directory the third argument names), applied, give the
+  fixture back, rows inside a string and a comment keeping their indent;
+  `TextId.openingLevel` after an opening brace is the tree's level; and a
+  buffer with no language or no indents query is refused, as a value;
+- `evilIndentChecks`: evil's `=` and its indented new lines through a host
+  of the Vim scheme that ships, over the library's Rust grammar: `gg=G` on
+  the mangled Rust indent fixture gives the fixture back, `=af`
   re-indents one function, one `u` undoes it and `.` repeats it, rows
   inside a string and a comment keep their indent, `RET` after an opening
   brace and `o`/`O` in a body start at the tree's level, and a buffer with
@@ -246,6 +254,13 @@ show:
   ships (`Evil.motions`) and hands it to evil's move command, as it is and
   with a motion of config's own added. It shows what `Editor.lean` lets
   config name; where a motion of the editor's leads is not said here;
+- `evilLeaderChecks`: the Vim scheme's leader through a host of the Vim
+  scheme that ships: a config's `<leader> f f` binding runs on `SPC f f`
+  while config sets no leader, on `\ f f` once a reload sets the leader to
+  `\` (and `SPC f f` then does not run it), `SPC` typed in insert state is
+  a space while `SPC f f` after `<Escape>` runs the binding, and the
+  scene's `hint` lines after `SPC` and after `SPC f` hold what config named
+  and described;
 - `restoreOrderChecks`: the restore at start-up in the host, on the real
   elaborator: over the library's file service and a journal on disk, the
   restore's second half runs, and its buffer is there, before reload 1 is
@@ -335,7 +350,9 @@ def checks (context : Context) : List Check :=
     threadChecks context ++
     jobChecks context ++
     treeObjectChecks context ++
+    treeObjectFixtureChecks context ++
     indentChecks context ++
+    evilIndentChecks context ++
     watchReloadChecks context ++
     agreementChecks () ++
     shippedChecks () ++
@@ -347,6 +364,7 @@ def checks (context : Context) : List Check :=
     atPointChecks context ++
     exChecks context ++
     evilChecks context ++
+    evilLeaderChecks context ++
     reloadEchoChecks context ++
     faceChecks context ++
     cursorResolutionChecks () ++

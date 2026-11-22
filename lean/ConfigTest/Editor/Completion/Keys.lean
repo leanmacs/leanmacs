@@ -1,19 +1,19 @@
 import ConfigTest.Check
+import ConfigTest.Support.Shipped
 import Editor.Completion.Keys
 import Editor.ModeLine
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Listings
-import Editor.Test.Linked.Vim
 
 /-!
 # Config tests: `Editor/Completion/Keys.lean`
 
 The tests of `Editor/Completion/Keys.lean`: `keyHintChecks`, when and where
 the key hints' source is shown after its delay, and the pending keys drawn,
-through a host of the Vim scheme that ships. The root module `ConfigTest` runs
-them; its module doc says what each shows.
+through a host of the test scheme, under its leader (`schemeLeader`). The root
+module `ConfigTest` runs them; its module doc says what each shows.
 -/
 
 namespace ConfigTest
@@ -38,7 +38,7 @@ def delayText (delay : Option String) (display : Bool := false) : String :=
       "  defineDisplay (Completion.Display.plain \"plain\")\n  useDisplayFor \"key\" \"plain\"\n"
     else ""
 
-/-- The hints `delayText` gives after `SPC`, in the scheme's order. -/
+/-- The hints `delayText` gives after the leader, in the scheme's order. -/
 def leaderHints : Array KeyHint :=
   #[{ key := "f", leads := .prefix (some "file") 1 },
     { key := "s", leads := .binding (some "Save") }]
@@ -62,13 +62,15 @@ def pendingDrawn (lines : Array String) (text : String) : Bool :=
         2
 
 /-- Whether no status line of `lines` draws pending keys under the leader:
-none holds a field in `mode-line.secondary` that starts with `SPC`. -/
+none holds a field in `mode-line.secondary` that starts with the scheme's
+leader. -/
 def noPendingDrawn (lines : Array String) : Bool :=
   !lines.any fun line =>
-      line.startsWith "status " && (line.splitOn s!"{ModeLine.secondaryFace.name} \"SPC").length > 1
+      line.startsWith "status " &&
+        (line.splitOn s!"{ModeLine.secondaryFace.name} \"{schemeLeader}").length > 1
 
 /-- The checks of when and where the key hints are shown, and of the pending
-keys drawn, through a host of the Vim scheme that ships (`withVimHost`),
+keys drawn, through a host of the test scheme (`withTestHost`),
 with the real elaborator, the fake clock the host's waits are on and the
 recorder: the phase's five criteria, a delay of `.never`, a reload while a
 prefix is pending (the publish after an install, `Headless.Running.publish`),
@@ -76,12 +78,12 @@ and the delays a reload refuses. What the hints list is `hintChecks`'; how the d
 armed and the list placed, `ModelTest`'s. -/
 def keyHintChecks (context : Context) : List Check :=
   [{  name :=
-        "AC1: after SPC in normal state and the default delay on the fake clock, the scene lists the keys that can follow SPC with their descriptions and prefix names, drawn by the minibuffer display directly above the bottom row; none before the delay has passed"
+        "AC1: after the scheme's leader and the default delay on the fake clock, the scene lists the keys that can follow it with their descriptions and prefix names, drawn by the minibuffer display directly above the bottom row; none before the delay has passed"
       run :=
-        withVimHost context [("init.lean", delayText none)] fun session => do
+        withTestHost context [("init.lean", delayText none)] fun session => do
           session.host.resize 640 480
           session.ask [.reload]
-          session.typed "SPC"
+          session.typed schemeLeader
           let pending ← session.sceneLines
           let armed := (← session.clock.waiting) == 1
           session.clock.advance 499
@@ -104,16 +106,16 @@ def keyHintChecks (context : Context) : List Check :=
     { name :=
         "AC2: completing the sequence, or resetting it with an unbound key, before the delay passes withdraws the delay and leaves no hints in the scene after it"
       run :=
-        withVimHost context [("init.lean", delayText none)] fun session => do
+        withTestHost context [("init.lean", delayText none)] fun session => do
           session.ask [.reload]
           let withdrawnBefore := (← session.clock.withdrawn).size
-          session.typed "SPC f f"
+          session.typed s!"{schemeLeader} f f"
           let completed := (← session.echo) == "leader find".quote
           let afterCompleting := (← session.clock.waiting) == 0
           let withdrawnOnce := (← session.clock.withdrawn).size == withdrawnBefore + 1
           session.clock.advance 500
           let completedLines ← session.sceneLines
-          session.typed "SPC z"
+          session.typed s!"{schemeLeader} z"
           let afterReset := (← session.clock.waiting) == 0
           session.clock.advance 500
           let resetLines ← session.sceneLines
@@ -125,37 +127,37 @@ def keyHintChecks (context : Context) : List Check :=
     { name :=
         "AC3: a config that sets the delay to 0 shows the hints in the first scene after the prefix, with no wait on the clock"
       run :=
-        withVimHost context [("init.lean", delayText (some "0"))] fun session => do
+        withTestHost context [("init.lean", delayText (some "0"))] fun session => do
           session.ask [.reload]
-          session.typed "SPC"
+          session.typed schemeLeader
           let lines ← session.sceneLines
           return (← session.clock.waiting) == 0 &&
               lines.filter (·.startsWith "hint ") ==
                 #["hint f: prefix \"file\" 1", "hint s: binding \"Save\""] &&
               listViewShows lines (hintSheetRows leaderHints) },
     { name :=
-        "AC4: the pending prefix is drawn in the selected window's status line while a sequence is pending, SPC then SPC f, and cleared when it completes"
+        "AC4: the pending prefix is drawn in the selected window's status line while a sequence is pending, the scheme's leader then the leader and f, and cleared when it completes"
       run :=
-        withVimHost context [("init.lean", delayText none)] fun session => do
+        withTestHost context [("init.lean", delayText none)] fun session => do
           session.ask [.reload]
           let rest ← session.sceneLines
-          session.typed "SPC"
+          session.typed schemeLeader
           let leader ← session.sceneLines
           session.typed "f"
           let prefixed ← session.sceneLines
           session.typed "f"
           let completed ← session.sceneLines
-          return noPendingDrawn rest && pendingDrawn leader "SPC" &&
-              pendingDrawn prefixed "SPC f" &&
+          return noPendingDrawn rest && pendingDrawn leader schemeLeader &&
+              pendingDrawn prefixed s!"{schemeLeader} f" &&
               noPendingDrawn completed &&
               (← session.echo) == "leader find".quote },
     { name :=
         "AC5: a display config sets for the key category draws the hints: the fake display's rows, not the minibuffer display's"
       run :=
-        withVimHost context [("init.lean", delayText (some "0") (display := true))] fun session =>
+        withTestHost context [("init.lean", delayText (some "0") (display := true))] fun session =>
           do
           session.ask [.reload]
-          session.typed "SPC"
+          session.typed schemeLeader
           let lines ← session.sceneLines
           let plain := hintSheetRows leaderHints (Completion.Display.plain "plain")
           return plain == ["  f", "  s"] && listViewShows lines plain &&
@@ -163,22 +165,22 @@ def keyHintChecks (context : Context) : List Check :=
     { name :=
         "a config that sets the delay to .never arms no wait and shows no hints however long the prefix is pending, and the pending keys are still drawn"
       run :=
-        withVimHost context [("init.lean", delayText (some ".never"))] fun session => do
+        withTestHost context [("init.lean", delayText (some ".never"))] fun session => do
           session.ask [.reload]
-          session.typed "SPC"
+          session.typed schemeLeader
           let armed ← session.clock.waiting
           session.clock.advance 10000
           let joined := (← session.host.join patience) == .settled
           let lines ← session.sceneLines
           return armed == 0 && joined && (listViewId lines).isNone &&
               !lines.any (·.startsWith "hint ") &&
-              pendingDrawn lines "SPC" },
+              pendingDrawn lines schemeLeader },
     { name :=
-        "a reload that sets the delay to .never while SPC is pending with its hints shown closes them: the scene after it lists no hints and draws no list, and SPC is still drawn pending"
+        "a reload that sets the delay to .never while the scheme's leader is pending with its hints shown closes them: the scene after it lists no hints and draws no list, and the leader is still drawn pending"
       run :=
-        withVimHost context [("init.lean", delayText (some "0"))] fun session => do
+        withTestHost context [("init.lean", delayText (some "0"))] fun session => do
           session.ask [.reload]
-          session.typed "SPC"
+          session.typed schemeLeader
           let shown ← session.sceneLines
           session.write "init.lean" (delayText (some ".never"))
           session.ask [.reload]
@@ -186,13 +188,13 @@ def keyHintChecks (context : Context) : List Check :=
           return shown.any (·.startsWith "hint ") && (listViewId shown).isSome &&
               (listViewId lines).isNone &&
               !lines.any (·.startsWith "hint ") &&
-              pendingDrawn lines "SPC" },
+              pendingDrawn lines schemeLeader },
     { name :=
-        "a reload before the default delay has passed keeps its wait when the delay is still wanted, so the hints are shown 500 ms after SPC; one that sets .never withdraws the wait, and one that then sets the delay again arms a new wait of the whole delay, all with SPC still pending"
+        "a reload before the default delay has passed keeps its wait when the delay is still wanted, so the hints are shown 500 ms after the scheme's leader; one that sets .never withdraws the wait, and one that then sets the delay again arms a new wait of the whole delay, all with the leader still pending"
       run :=
-        withVimHost context [("init.lean", delayText none)] fun session => do
+        withTestHost context [("init.lean", delayText none)] fun session => do
           session.ask [.reload]
-          session.typed "SPC"
+          session.typed schemeLeader
           let armed := (← session.clock.waiting) == 1
           let withdrawnArmed := (← session.clock.withdrawn).size
           session.clock.advance 200
@@ -208,7 +210,7 @@ def keyHintChecks (context : Context) : List Check :=
           discard <| session.host.join patience
           let due ← session.sceneLines
           session.typed "<Escape>"
-          session.typed "SPC"
+          session.typed schemeLeader
           let withdrawnPending := (← session.clock.withdrawn).size
           -- A reload that sets `.never`: the wait is withdrawn.
           session.write "init.lean" (delayText (some ".never"))
@@ -232,13 +234,13 @@ def keyHintChecks (context : Context) : List Check :=
               closed &&
               rearmed &&
               !rearmedEarly.any (·.startsWith "hint ") &&
-              pendingDrawn rearmedEarly "SPC" &&
+              pendingDrawn rearmedEarly schemeLeader &&
               rearmedDue.filter (·.startsWith "hint ") ==
                 #["hint f: prefix \"file\" 1", "hint s: binding \"Save\""] },
     { name :=
         "a reload refuses a delay over a minute, saying keyHintDelayTooLong's sentence, a delay that is not one, and a delay set twice; the previous config's bindings keep working"
       run :=
-        withVimHost context [("init.lean", delayText (some "0"))] fun session => do
+        withTestHost context [("init.lean", delayText (some "0"))] fun session => do
           session.ask [.reload]
           -- The frame is made, so each refusal is said in its echo area.
           session.typed "<Escape>"
@@ -252,7 +254,7 @@ def keyHintChecks (context : Context) : List Check :=
           let (tooLong, tooLongEcho) ← refusedWith "60001"
           let (notADelay, _) ← refusedWith "0.5"
           let (twice, twiceEcho) ← refusedWith "0\n  keyHintDelay 250"
-          session.typed "SPC f f"
+          session.typed s!"{schemeLeader} f f"
           return tooLong &&
               (tooLongEcho.splitOn (Completion.Keys.keyHintDelayTooLong 60001)).length == 2 &&
               notADelay &&

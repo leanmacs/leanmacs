@@ -1,5 +1,10 @@
+import Editor.InputScheme
+import Editor.InputScheme.Test
+import Editor.Key.Notation
 import Editor.Package
 import Editor.Test.AtPoint
+import Editor.Test.Editing
+import Editor.Test.Linked.Shipped
 import Editor.Test.Minibuffer
 import Editor.Test.Shipped
 import EditorCore.EditorPackage
@@ -19,7 +24,9 @@ to completion at point's commands, type and quit as the default editor's
 do, then the kit's minibuffer (`Editor.Test.Minibuffer`,
 `Editor/Test/Minibuffer.lean`), so that a prompt is answered, and its
 candidates that answer later taken, as the default editor's are. A test
-whose subject is the core's list itself hosts that list alone. Shared by
+whose subject is the core's list itself hosts that list alone. And the host
+of the test scheme the config tests type on (`withTestHost`), with that
+scheme's leader as a key string (`schemeLeader`). Shared by
 several test modules; it holds no checks of its own.
 -/
 
@@ -45,5 +52,25 @@ made of them registers no at-point command, source, job or use of the
 package that ships, and the kit's commands. -/
 def withKitAtPoint (packages : Array Package) : Array Package :=
   (packages.filter (·.name != Test.AtPoint.package.name)).push Test.AtPoint.package
+
+/-- The test scheme's leader as a key string (`InputScheme.leaders`), read
+from the scheme, so no check names its key. -/
+def schemeLeader : String :=
+  Key.notations TestScheme.scheme.leaders.leader
+
+/-- Runs `check` against a host of the test scheme made as the executable's
+hosts are made (`Editor.Test.Linked.withShippedHost TestScheme.scheme`,
+which says what the host is made of and what each argument is), handed
+`packages` and then the kit's editing commands and keys
+(`Test.editingPackage`, `Editor/Test/Editing.lean`), so that a printable
+key types its character and the keys that print nothing move and edit: the
+host a config test whose subject is no scheme's keys runs on. -/
+def withTestHost (context : Test.Linked.HostContext) (files : List (String × String))
+    (check : Test.Linked.Session → IO Bool) (fileModel : Option FileModel := none)
+    (realFiles : Bool := false) (workingDirectory : System.FilePath := "/")
+    (home : Option System.FilePath := none) (packages : Array Package := context.packages) :
+    IO Bool :=
+  Test.Linked.withShippedHost TestScheme.scheme context files check fileModel realFiles
+    workingDirectory home (packages.push Test.editingPackage)
 
 end ConfigTest

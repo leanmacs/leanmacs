@@ -38,6 +38,12 @@ def offsetOf (text needle : String) : Option Nat :=
 def lastViewLine (lines : Array String) : String :=
   (lines.filter (·.startsWith "view 0 ")).back?.getD ""
 
+/-- Whether the view line `line` shows the text `text` and one selection
+from `anchor` to `head`. -/
+def showsText (line text : String) (anchor head : Nat) : Bool :=
+  (line.splitOn s!"{text.quote}, scroll").length == 2 &&
+    (line.splitOn s!"selections {anchor}..{head},").length == 2
+
 /-- The status line the host prints for the view `view`, selected, of a
 buffer called `name`, modified or not, opened from `file` or from none, of
 which the test scheme reports nothing, with its cursor at `cursor` (a row

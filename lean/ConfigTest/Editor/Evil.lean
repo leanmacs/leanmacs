@@ -9,13 +9,17 @@ import Editor.Headless
 import Editor.Language
 import Editor.Mode
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
+import Editor.Test.Linked.Vim
 
 /-!
 # Config tests: `Editor/Evil.lean`
 
-The tests of `Editor/Evil.lean`: `evilChecks`, through the headless host. The
-root module `ConfigTest` runs them; its module doc says what each shows.
+The tests of `Editor/Evil.lean`: `evilChecks`, through the headless host, and
+`evilLeaderChecks`, the Vim scheme's leader through a host of the Vim scheme
+that ships. The root module `ConfigTest` runs them; its module doc says what
+each shows.
 -/
 
 namespace ConfigTest
@@ -161,5 +165,99 @@ def evilChecks (context : Context) : List Check :=
                 lines.contains "run erase-word: ok" &&
                 lines.contains "run again: ok")
           { commands := Evil.package.registered.commands } }]
+
+/-- A config whose `setup` registers `leader-find`, which says `leader find`
+in the echo area, and `other`, which says `other`, binds `<leader> f f` to
+`leader-find`, described as `Find file`, names the prefix `<leader> f`
+`file` when `named`, sets the key hint delay to 0 when `hinted`, so the
+hints are in the scene after the prefix with no move of the clock, and,
+given `leader`, sets the leader to the key string `leader`. -/
+def vimLeaderText (leader : Option String := none) (hinted : Bool := false) (named : Bool := true) :
+    String :=
+  "def setup : SetupM Unit := do
+  command \"leader-find\" (message \"leader find\")
+  command \"other\" (message \"other\")
+  bindKey \"<leader> f f\" \"leader-find\" (desc := \"Find file\")
+" ++
+    (if hinted then "  keyHintDelay 0\n" else "") ++
+    (if hinted && named then "  prefixName \"<leader> f\" \"file\"\n" else "") ++
+    (leader.map fun keys => s!"  leaderKey {keys.quote}\n").getD ""
+
+/-- The checks of the Vim scheme's leader through a host of the Vim scheme
+that ships (`withVimHost`), with the real elaborator and the recorder: a
+config's binding written with `<leader>` is reached under the scheme's
+leader, `SPC`, in normal state, under the leader config sets once it is
+reloaded, and is kept out of insert state, where `SPC` types a space; and
+the key hints after `SPC` list what config described and named
+(`Editor/InputScheme/Vim/Default.lean`, the leader;
+`docs/design/keymaps-and-modes.md`, "Extending from config"). What a
+scheme's leader reaches and what the hints list under any scheme are the
+core's, pinned by `ConfigTest.leaderChecks` and `ConfigTest.hintChecks` on
+the test scheme. -/
+def evilLeaderChecks (context : Context) : List Check :=
+  [{  name :=
+        "under the Vim scheme with no leader set by config, a config binding of <leader> f f runs its command on SPC f f in normal state"
+      run :=
+        withVimHost context [("init.lean", vimLeaderText)] fun session => do
+          session.ask [.reload]
+          session.typed "SPC f f"
+          return (← session.echo) == "leader find".quote },
+    { name :=
+        "a config that sets the leader to \\ reaches its <leader> f f binding on \\ f f after a reload, and SPC f f no longer runs it"
+      run :=
+        withVimHost context [("init.lean", vimLeaderText)] fun session => do
+          session.ask [.reload]
+          session.write "init.lean" (vimLeaderText (some "\\"))
+          session.ask [.reload]
+          session.typed "\\ f f"
+          let moved ← session.echo
+          session.ask [.run "other"]
+          session.typed "SPC f f"
+          let spaced ← session.echo
+          return moved == "leader find".quote && spaced != "leader find".quote },
+    { name :=
+        "SPC typed in insert state inserts a space in a config that binds keys under <leader>, and SPC f f after <Escape> still runs the binding"
+      run :=
+        withVimHost context [("init.lean", vimLeaderText)] fun session => do
+          session.ask [.reload]
+          session.typed "i a SPC b <Escape>"
+          let line := lastViewLine (← session.sceneLines)
+          let before ← session.echo
+          session.typed "SPC f f"
+          let after ← session.echo
+          return (line.splitOn s!"{"a b".quote}, scroll").length == 2 &&
+              before != "leader find".quote &&
+              after == "leader find".quote },
+    { name :=
+        "criterion 4: after a reload, SPC lists f as the prefix config named, SPC f lists f as the binding config described, and SPC f f runs it and lists nothing"
+      run :=
+        withVimHost context [("init.lean", vimLeaderText (hinted := true))] fun session => do
+          session.ask [.reload]
+          session.typed "SPC"
+          let afterLeader ← session.hints
+          session.typed "<Escape>"
+          session.typed "SPC f"
+          let afterPrefix ← session.hints
+          session.typed "f"
+          let afterBinding ← session.hints
+          return afterLeader.contains "hint f: prefix \"file\" 1" &&
+              afterPrefix == #["hint f: binding \"Find file\""] &&
+              afterBinding.isEmpty &&
+              (← session.echo) == "leader find".quote },
+    { name :=
+        "criterion 5: a reload that drops a config's prefix name drops it from the hints, and the prefix is listed unnamed"
+      run :=
+        withVimHost context [("init.lean", vimLeaderText (hinted := true))] fun session => do
+          session.ask [.reload]
+          session.typed "SPC"
+          let named ← session.hints
+          session.typed "<Escape>"
+          session.write "init.lean" (vimLeaderText (hinted := true) (named := false))
+          session.ask [.reload]
+          session.typed "SPC"
+          let unnamed ← session.hints
+          return named.contains "hint f: prefix \"file\" 1" &&
+              unnamed.contains "hint f: prefix - 1" &&
+              !unnamed.any (·.startsWith "hint f: prefix \"file\"") }]
 
 end ConfigTest

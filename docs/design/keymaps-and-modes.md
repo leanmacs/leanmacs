@@ -1931,7 +1931,8 @@ options:
 Status: built, by language-modes phase 3 (`lean/Editor/Evil.lean`,
 `Evil.openingIndent`; `lean/Editor/Indent.lean`, "The opening rule"; pinned
 by `indentOpeningChecks`, `indentEditChecks`, `evilIndentChecks`,
-`ConfigTest.indentChecks` and `ContractTest`'s opening table).
+`ConfigTest.evilIndentChecks`, `ConfigTest.indentChecks` and
+`ContractTest`'s opening table).
 
 `RET`, `o` and `O` ask the level of the new row of the text the user sees,
 before the line break (`TextId.openingLevel`), at the offset the line opens
@@ -2374,7 +2375,7 @@ Status: built, by the command loop's phase 13
 `lean/Editor/Evil/Motions.lean`; pinned by `evilOperatorChecks`,
 `evilSelectionChecks`, `evilRegisterChecks` and `evilOpenChecks`). `=`
 is built by language-modes phase 3 (pinned by `evilIndentChecks` and
-`ConfigTest.indentChecks`).
+`ConfigTest.evilIndentChecks`).
 
 **The oracle is Vim's documented behaviour, written out case by case; no
 test runs Vim.** The reference is Vim 9.1's `motion.txt`, `change.txt`,
@@ -2477,7 +2478,7 @@ What each motion says of itself:
 | **`c`** | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive`, when it is the empty text. The selection is a bar at the head | The register is the lines, line-wise. The text from the first line's start to where the last line's content ends is deleted, so one line break stays. The selection is a bar at that line's start |
 
 **What `=` does** (`Evil.indent`, the operator `indent`; pinned by
-`evilIndentChecks` on the models and `ConfigTest.indentChecks` over the
+`evilIndentChecks` on the models and `ConfigTest.evilIndentChecks` over the
 library's Rust grammar):
 
 - **It acts on whole rows**, as Vim's `=` does: lines from `==` (with a
@@ -5718,7 +5719,8 @@ names a scheme's key:
 | `indentRuleChecks`, `indentLevelChecks` | The indent rule (`Indent.rule`), pure, over hand-built rows; and the indent primitive (`TextId.indentLevels`) on the editor's models, under a test mode of the model's JSON grammar with an indents query of its own, refused for a text with no syntax tree or no indents query |
 | `indentOpeningChecks`, `indentEditChecks` | The opening rule (`Indent.openingCounts`, `Indent.levelOf`) and the widening (`Indent.widenedStart`), pure, over hand-built nodes; and levels as edits, pure: a level's whitespace in spaces or tabs, the re-indent's edits (a row already right left, a blank row emptied, a kept row untouched), what a new line gets for each answer, and `RET`'s edit (`Indent.breakAt`) |
 | `evilIndentChecks` | `=` and the indented new lines by key, in a JSON language whose model tree answers the indents query (`indentDriver`): `gg=G` over a mangled text, `=af`, counts, `=j`, `V j =`, one undo step, `.` over another range and with a new count, not over a selection, a config entry's tab unit; `RET` after an opening bracket and before a closing one, between blanks and twice, `o` and `O`, and `.` replaying them; and with no language or no indents query, `=` giving up with its sentence and `RET`, `o` and `O` as before |
-| `ConfigTest.indentChecks` | Through a headless host of the Vim scheme that ships and the library's Rust grammar: `gg=G` on the Rust indent fixture mangled in code gives the fixture back, its string and comment rows kept; `=af` on one of two functions, then `u` and `.`; `A RET` after an unclosed brace at the text's end and two deep, `o` then `if a {` and `RET`, `o` and `O` in a method; and a plain and a JSON buffer as before. The host waits for a text's tree before a question of its captures, so keys that edit and then ask are deterministic. `ContractTest` holds the opening rule's table over the real grammar through `TextId.openingLevel` |
+| `ConfigTest.indentChecks` | Through a headless host of the test scheme and the library's Rust grammar, by commands of config's run by name: the edits `TextId.reindentEdits` answers of every row of the Rust indent fixture mangled in code, applied, give the fixture back, its string and comment rows kept; `TextId.openingLevel` after an unclosed brace, above a closing one, at the text's end and two deep; and a plain and a JSON buffer refused, as values |
+| `ConfigTest.evilIndentChecks` | Evil's linked check, through a headless host of the Vim scheme that ships and the library's Rust grammar: `gg=G` on the Rust indent fixture mangled in code gives the fixture back, its string and comment rows kept; `=af` on one of two functions, then `u` and `.`; `A RET` after an unclosed brace at the text's end and two deep, `o` then `if a {` and `RET`, `o` and `O` in a method; and a plain and a JSON buffer as before. The host waits for a text's tree before a question of its captures, so keys that edit and then ask are deterministic. `ContractTest` holds the opening rule's table over the real grammar through `TextId.openingLevel` |
 | `ConfigTest.modeChecks` | Through the headless host and the real elaborator: a config mode's role runs its store command, and once a reload drops the mode the role's key runs the global binding; a compiled mode's role runs its command before any reload and after a reload of a config that defines no mode |
 
 Beside them, `stateChecks` pin the three state operations, `registryChecks`

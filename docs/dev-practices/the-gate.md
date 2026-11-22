@@ -989,10 +989,11 @@ answer's command run before a key sent right after the accept key; and a
 continuation over a store reading the cell after the accepting command's
 write.
 
-`config-test` runs completion at point through headless hosts of the Vim
-scheme that ships (`ConfigTest.atPointChecks`, `withVimHost`), over the real
+`config-test` runs completion at point through headless hosts of the test
+scheme, on keys of the checks' own for the kit's at-point commands
+(`ConfigTest.atPointChecks`, `withAtPointHost`), over the real
 elaborator, queue, text binding and recorder and the stage's fake clock:
-`C-n` in insert state lists the words of open buffers, a config's trigger
+the key of `at-point-next` lists what a config's source answers, a config's trigger
 source opens a session on its character and no other, a pause of 240 ms
 after two characters opens one of `words`, a typed key arms one pause wait
 and starts no job, and the pause's event is queued before the clock's

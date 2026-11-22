@@ -7,7 +7,6 @@ import Editor.Command.Real
 import Editor.Display
 import Editor.Display.Real
 import Editor.Display.Recorder
-import Editor.Evil.TreeObjects
 import Editor.Face
 import Editor.Ffi.Display
 import Editor.Ffi.Document
@@ -182,154 +181,13 @@ def rustSourceLevels (source : String) : IO (Option (Array (Option Nat))) := do
         settling table real.handle) | return none
   rustIndentLevels table texts text
 
-/-- A row of the tree's text objects over the Rust fixture: where the
-cursor is, as the text it is at the start of (its first occurrence), the
-object, the count, where the anchor of a visual selection is, as a text
-whose first occurrence it is at the start of, or the end of when `atEnd`,
-and the text the object covers and how, or none for no object. -/
-structure ObjectRow where
-  /-- The text the cursor is at the start of. -/
-  needle : String
-  /-- The object. -/
-  object : Vocabulary.TextObject
-  /-- The count, if one was typed. -/
-  count : Option Nat := none
-  /-- The text the anchor is at, in a visual state. -/
-  anchor : Option (String × Bool) := none
-  /-- What it covers: its text and its reach; none for no object. -/
-  covers : Option (String × Vocabulary.Reach)
-
-/-- The rows of the tree's text objects over `tests/syntax/rust/objects.rs`,
-written by hand: all six objects; a count of 2, the method round a
-closure; a visual selection of the closure widened to the method; the
-inside of a unit struct, which is none; an argument first, last, alone and
-on lines of its own; the inside of a closure whose body is an expression;
-and the inside of a function, a struct, an impl and a closure from a cursor
-in the node but outside the inside, on its `fn`, `struct`, `impl` or
-parameters. -/
-def objectRows : List ObjectRow :=
-  [{  needle := "a + b", object := Evil.aFunction
-      covers := some ("fn free(a: u8, b: u8) -> u8 {\n    a + b\n}", .exclusive) },
-    { needle := "a + b", object := Evil.innerFunction, covers := some ("    a + b\n", .exclusive) },
-    { needle := "v + extra", object := Evil.aFunction,
-      covers := some ("|v| v + extra", .exclusive) },
-    { needle := "v + extra", object := Evil.innerFunction,
-      covers := some ("v + extra", .exclusive) },
-    { needle := "v + extra", object := Evil.aFunction, count := some 2
-      covers :=
-        some
-          ("fn sum(&self, extra: u8) -> u8 {\n        let add = |v| v + extra;\n        add(self.x) + call(\n            self.y,\n            extra,\n        )\n    }",
-            .exclusive) },
-    { needle := "|v|", object := Evil.aFunction, anchor := some ("v + extra", true)
-      covers :=
-        some
-          ("fn sum(&self, extra: u8) -> u8 {\n        let add = |v| v + extra;\n        add(self.x) + call(\n            self.y,\n            extra,\n        )\n    }",
-            .exclusive) },
-    { needle := "x: u8", object := Evil.aClass
-      covers := some ("struct Fields {\n    x: u8,\n    y: u8,\n}", .exclusive) },
-    { needle := "x: u8", object := Evil.innerClass
-      covers := some ("    x: u8,\n    y: u8,\n", .exclusive) },
-    { needle := "Unit", object := Evil.aClass, covers := some ("struct Unit;", .exclusive) },
-    { needle := "Unit", object := Evil.innerClass, covers := none },
-    { needle := "Circle", object := Evil.aClass
-      covers := some ("enum Shape {\n    Circle(f64),\n    Square(f64),\n}", .exclusive) },
-    { needle := "area(&self) -> f64;", object := Evil.aFunction
-      covers := some ("fn area(&self) -> f64;", .exclusive) },
-    { needle := "area(&self) -> f64;", object := Evil.innerFunction, covers := none },
-    { needle := "area(&self) -> f64;", object := Evil.aClass
-      covers := some ("trait Area {\n    fn area(&self) -> f64;\n}", .exclusive) },
-    { needle := "a: u8", object := Evil.anArgument, covers := some ("a: u8, ", .exclusive) },
-    { needle := "b: u8", object := Evil.anArgument, covers := some (", b: u8", .exclusive) },
-    { needle := "b: u8", object := Evil.innerArgument, covers := some ("b: u8", .exclusive) },
-    { needle := "self.x", object := Evil.anArgument, covers := some ("self.x", .exclusive) },
-    { needle := "self.y", object := Evil.anArgument
-      covers := some ("self.y,\n            ", .exclusive) },
-    { needle := "one: u8", object := Evil.anArgument, covers := some ("one: u8, ", .exclusive) },
-    { needle := "fn free", object := Evil.anArgument, covers := none },
-    { needle := "fn free", object := Evil.innerFunction,
-      covers := some ("    a + b\n", .exclusive) },
-    { needle := "struct Fields", object := Evil.innerClass
-      covers := some ("    x: u8,\n    y: u8,\n", .exclusive) },
-    { needle := "impl Fields", object := Evil.innerClass
-      covers :=
-        some
-          ("    fn sum(&self, extra: u8) -> u8 {\n        let add = |v| v + extra;\n        add(self.x) + call(\n            self.y,\n            extra,\n        )\n    }\n",
-            .exclusive) },
-    { needle := "|v|", object := Evil.innerFunction, covers := some ("v + extra", .exclusive) }]
-
-/-- The byte offset of the first occurrence of `needle` in `text`, or of
-its end when `atEnd`; none when `text` does not hold it. -/
-def offsetOfNeedle (text needle : String) (atEnd : Bool := false) : Option Nat :=
-  match text.splitOn needle with
-  | before :: _ :: _ => some (before.utf8ByteSize + if atEnd then needle.utf8ByteSize - 1 else 0)
-  | _ => none
-
-/-- What is wrong with each of `rows` over `text`, a text of the Rust
-fixture whose mode is the shipped Rust one, each row's covered text edited
-by `edited`, through the real syntax tree binding over `table`. -/
-def objectRowsWrong (table : Snapshots) (texts : RealTexts) (text : TextId) (source : String)
-    (edited : String → String) (rows : List ObjectRow) : IO (List String) := do
-  let real ← RealSyntaxTree.new table.reader
-  rows.filterMapM fun row => do
-      let some head := offsetOfNeedle source row.needle | return some s!"no {row.needle}"
-      let anchor := row.anchor.bind fun (needle, atEnd) => offsetOfNeedle source needle atEnd
-      let asked : EditorM (Option (String × Vocabulary.Reach)) := do
-        let some span ← row.object.span text { head, count := row.count, anchor } | return none
-        let stop ←
-          if span.reach == .inclusive then
-            text.motion .nextCell span.stop
-          else
-            pure span.stop
-        return some (← text.slice span.start stop, span.reach)
-      let (answer, _) ←
-        asked.runReal texts (← recorderOf table).handle (syntaxTree := settling table real.handle)
-      let expected := row.covers.map fun (covered, reach) => (edited covered, reach)
-      return match answer with
-        | .ok covers =>
-          if covers == expected then none
-          else some s!"{row.object.name} at {repr row.needle}: {repr covers}"
-        | .error refusal => some s!"{row.object.name} at {repr row.needle}: {repr refusal}"
-
 /-- What only the real syntax tree binding shows over the fixtures in
 `fixtures` (`tests/syntax`): the indent levels of a Rust fixture, before
-and after an edit, the tree's text objects of another, before and after
-edits, and the names the shipped Rust indents and text objects queries
-capture. -/
+and after an edit, and the names the shipped Rust indents query captures.
+The tree's text objects over the binding are evil's
+(`ConfigTest.treeObjectFixtureChecks`, `ConfigTest/Editor/Evil/TreeObjects.lean`). -/
 def syntaxFixtureChecks (fixtures : System.FilePath) : List Check :=
-  [{  name := "the shipped Rust text objects query names only what the text-object rule reads"
-      run := do
-        let some names ← shippedNames "rust" .textObjects | return false
-        return !names.isEmpty && names.all Evil.TreeObjects.names.contains },
-    { name :=
-        "the tree's text objects of the Rust fixture, through the Lean editor API, cover the ranges written by hand, and still do after a function is inserted above and a line added inside a method's body"
-      run := do
-        let source ← IO.FS.readFile (fixtures / "rust" / "objects.rs")
-        let table ← Snapshots.new
-        let real ← RealSyntaxTree.new table.reader
-        let entered : EditorM TextId := do
-          let text ← createText source
-          Highlight.enter "rust" text { grammar := "rust" }
-          return text
-        let (.ok text, texts) ←
-          entered.runReal (.over table) (← recorderOf table).handle (syntaxTree :=
-              settling table real.handle) | return false
-        let before ← objectRowsWrong table texts text source id objectRows
-        let line := "        let add = |v| v + extra;\n"
-        let added := line ++ "        let unused = 1;\n"
-        let inserted := "fn inserted() {}\n\n"
-        let some at_ := offsetOfNeedle source line | return false
-        let edit : EditorM Unit := do
-          text.insert (at_ + line.utf8ByteSize) "        let unused = 1;\n"
-          text.insert 0 inserted
-        let (.ok (), texts) ← edit.runReal texts (← recorderOf table).handle | return false
-        let edited := inserted ++ source.replace line added
-        let after ← objectRowsWrong table texts text edited (·.replace line added) objectRows
-        let read : EditorM String := text.read
-        let (.ok now, _) ← read.runReal texts (← recorderOf table).handle | return false
-        unless before.isEmpty && after.isEmpty do
-          throw (IO.userError ("; ".intercalate (before ++ after)))
-        return now == edited },
-    { name := "the shipped Rust indents query names only what the indent rule reads"
+  [{  name := "the shipped Rust indents query names only what the indent rule reads"
       run := do
         let some names ← shippedNames "rust" .indents | return false
         return !names.isEmpty && names.all Indent.names.contains },

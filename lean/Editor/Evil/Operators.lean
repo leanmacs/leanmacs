@@ -217,7 +217,7 @@ order:
 
 Pinned by `ModelTest.evilOperatorChecks`, by key, under the Vim scheme
 that ships, and `indent` by `ModelTest.evilIndentChecks` and, over the
-library's Rust grammar, `ConfigTest.indentChecks`.
+library's Rust grammar, `ConfigTest.evilIndentChecks`.
 -/
 
 namespace Editor.Evil

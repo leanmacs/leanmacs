@@ -27,6 +27,7 @@ import Editor.Test.Linked.Bench
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Rig
+import Editor.Test.Linked.Syntax
 import Editor.Test.Linked.Trees
 import Editor.Test.Linked.Vim
 import Editor.Test.Listing

@@ -493,6 +493,11 @@ def Session.sceneLines (session : Session) : IO (Array String) := do
   session.ask [.scene]
   return (← session.output.get).extract before
 
+/-- Asks the host for the scene, and returns its key hint lines: the lines
+that start with `hint `. -/
+def Session.hints (session : Session) : IO (Array String) := do
+  return (← session.sceneLines).filter (·.startsWith "hint ")
+
 /-- A stage for a host whose jobs reach real files: one over the real
 elaborator and `source`, with what `compiled` hands it, whose services have
 the library's file service, its diff service and its watch service, as the

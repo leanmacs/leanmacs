@@ -21,7 +21,6 @@ import Editor.Fuzzy
 import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Fake
@@ -42,7 +41,6 @@ import Editor.Test.Linked.Bench
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Listings
-import Editor.Test.Linked.Vim
 import Editor.Test.Minibuffer
 import Editor.Test.Shipped
 import Editor.Text
@@ -642,9 +640,9 @@ def makeWordBuffers : EditorM Unit := do
 /-- `bench-prompt`: what a key costs in a prompt with no candidates, over
 1,000, 10,000 and 100,000 candidates listed inline (the limit lifted), and
 over 100,000 matched off the editor thread, keys joined and back to back;
-and what a word key costs in insert state under the Vim scheme that ships,
-with no at-point source, and with `benchAtPoint`'s source popping up by
-itself over 20 open buffers; and what a key costs in `open-file`'s prompt over a
+and what a word key that types costs under the test scheme, on the kit's
+editing commands, with no at-point source, and with `benchAtPoint`'s source
+popping up by itself over 20 open buffers; and what a key costs in `open-file`'s prompt over a
 directory of 10,000 files; `samples` keys a row. -/
 def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   let pool := (← Job.Pool.warm Job.Pool.size 200).size
@@ -738,13 +736,17 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   let backToBack :=
     Row.of s!"100,000 on the worker, keys {cadence} ms apart"
       (← row 100000 Loop.inlineMatches false false).1
-  -- The insert rows: a host of the Vim scheme that ships, as `withVimHost`
+  -- The insert rows: a host of the test scheme, as `withShippedHost`
   -- builds one, on a fake clock of its own, with the real library, queue and
-  -- recorder, completing at point through the kit's package and
-  -- `benchAtPoint`; `atPoint` says whether its source is used in every
-  -- buffer. Each sample types two word keys, timed; with `atPoint`, moves the
-  -- clock past the pause and joins the source's job, untimed; types four more
-  -- word keys, timed; and leaves insert state and undoes, untimed.
+  -- recorder, typing through the kit's editing commands
+  -- (`Test.editingPackage`) and completing at point through the kit's
+  -- package and `benchAtPoint`; `atPoint` says whether its source is used in
+  -- every buffer. Each sample types two word keys, timed; with `atPoint`,
+  -- moves the clock past the pause and joins the source's job, untimed;
+  -- types four more word keys, timed; and quits the session, if one is open,
+  -- and undoes each key, untimed. What a key costs under the Vim scheme
+  -- that ships is `mise run milestone-bench`'s `type-insert`, on the
+  -- default editor.
   let insertRow (atPoint : Bool) : IO (Array Nat) := do
     let requests ← ids.modifyGet fun next => (next, next + 6)
     let waits ← Job.Completions.new
@@ -754,14 +756,14 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
       { completions := waits, timers := clock.timers, fuzzy := Fuzzy.real
         snapshots := Job.realSnapshots published.reader }
     let packages :=
-      (withKitAtPoint shippedPackages ++ #[benchAtPoint atPoint]).push
+      (withKitAtPoint shippedPackages ++ #[benchAtPoint atPoint, Test.editingPackage]).push
         (Compiled.package
           {
             commands :=
               #[{ name := "noop", action := .plain (pure ()) },
                 { name := "make-buffers", action := .plain makeWordBuffers }] })
     let shipped :=
-      Headless.shippedOver Vim.Default.scheme packages #[`Editor] sysroot
+      Headless.shippedOver TestScheme.scheme packages #[`Editor] sysroot
         (ModuleLookup.searchPath oleanDir) "" emit services published (← Job.HeldSnapshots.new)
         (← Config.Elaborate.ModuleFiles.temporary)
     let host ←
@@ -790,7 +792,6 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
           throw (IO.userError "the keys were not handled")
       let mut times := #[]
       for _ in [0:(samples + 5) / 6] do
-        untimed "i"
         for key in ["w", "o"] do
           times := times.push (← timed key)
         if atPoint then
@@ -801,7 +802,9 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             throw (IO.userError "the candidates were not delivered")
         for key in ["r", "d", "1", "_"] do
           times := times.push (← timed key)
-        untimed "<Escape> u"
+        if atPoint then
+          host.send (.run Test.AtPoint.quitName)
+        untimed "C-z C-z C-z C-z C-z C-z"
       return times
     finally
       discard <| host.halt patience

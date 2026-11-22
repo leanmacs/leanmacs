@@ -6,18 +6,20 @@ import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Reload
 import Editor.Headless
-import Editor.InputScheme.Vim.Default
+import Editor.InputScheme.Test
 import Editor.Test.Linked.Host
-import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
-import Editor.Test.Linked.Vim
 
 /-!
 # Config tests: the default config
 
 The tests of the default config `mise run install` ships (`config/default`):
-`defaultConfigChecks`, through a host of the Vim scheme that ships and on the
-registry a host starts with. The default config is config, not a Lean module,
+`defaultConfigChecks`, through a host of the test scheme and on the
+registry a host starts with: its bindings are written under `<leader>`, so
+they are read through the scheme's leader (`InputScheme.leaders`), whatever
+scheme that is. That the Vim scheme's leader is `SPC` is evil's
+(`ModelTest.vimDefaultChecks`), and what the default editor runs for its
+keys under it the headless fixture `tests/headless/default-config`'s. The default config is config, not a Lean module,
 so this module mirrors none; it sits beside the mirrored ones under
 `ConfigTest/`. The root module `ConfigTest` runs them; its module doc says what
 each shows.
@@ -30,12 +32,12 @@ open Editor.Test.Linked
 
 /-- The registrations of the default config (`config/default`, the
 directory `context.defaultConfig` names), built as a reload builds them
-(`Config.build`), under the Vim scheme that ships, with the real
+(`Config.build`), under the test scheme, with the real
 elaborator. Throws with the diagnostics when the build is rejected, so a
 check that fails says why. -/
 def defaultBuilt (context : Context) : IO Config.Registrations := do
   let outcome ←
-    Config.build Vim.Default.scheme context.elaborator
+    Config.build TestScheme.scheme context.elaborator
         (Config.Directory.source context.defaultConfig) Config.PackageFiles.none none none #[]
   match outcome.built with
   | some built =>
@@ -74,8 +76,9 @@ declare them: `execute-command-api` and `binding-search-api` the first two,
 `find-file-in-workspace` and `find-file-in-project`, `project-search-api`
 `project-search` and `project-search-symbol`, and `working-set-api`
 `working-set-add` and `working-set-open`. That the default editor runs them
-for their keys (`SPC :`, `SPC ?`, `SPC f f`, `SPC p f`, `SPC SPC`, `SPC p p`,
-`SPC s p`, `SPC /`, `SPC *`, `SPC k a`, `SPC k o`) is the headless fixture
+for their keys under the Vim scheme's leader (`SPC :`, `SPC ?`, `SPC f f`,
+`SPC p f`, `SPC SPC`, `SPC p p`, `SPC s p`, `SPC /`, `SPC *`, `SPC k a`,
+`SPC k o`) is the headless fixture
 `tests/headless/default-config`'s. -/
 def defaultPackageCommands : Array String :=
   #["execute-command", "search-bindings", "open-file", "save-buffer", "reload-buffer",
@@ -93,7 +96,7 @@ def defaultConfigChecks (context : Context) : List Check :=
   [{  name := "the default config: a reload installs it with no diagnostic"
       run := do
         let files ← configFiles context.defaultConfig
-        withVimHost context files fun session => do
+        withTestHost context files fun session => do
             session.ask [.reload]
             let output ← session.output.get
             let installed := output.any (·.startsWith "reload 1: installed")
@@ -161,11 +164,11 @@ def defaultConfigChecks (context : Context) : List Check :=
                 Key.strokeNotations binding.keys == keys && binding.command == "working-set-open" &&
                   binding.desc == some "Open working set" },
     { name :=
-        "the default config: every prefix it binds under the leader has a prefix name, and those prefixes are SPC f, SPC b, SPC w, SPC TAB, SPC h, SPC p, SPC s and SPC k, named project, search and working set"
+        "the default config: every prefix it binds under the leader has a prefix name, and those prefixes are <leader> f, <leader> b, <leader> w, <leader> TAB, <leader> h, <leader> p, <leader> s and <leader> k, the last three named project, search and working set"
       run := do
         let registrations ← defaultBuilt context
         let registry ← defaultRegistry registrations
-        let leaders := registry.leaders Vim.Default.scheme
+        let leaders := registry.leaders TestScheme.scheme
         let leader := leaders.leader.map Key.chord
         let mut prefixes : Array (List Key) := #[]
         for binding in registrations.bindings do
@@ -177,18 +180,21 @@ def defaultConfigChecks (context : Context) : List Check :=
             unless prefixes.contains begun do
               prefixes := prefixes.push begun
         let unnamed :=
-          prefixes.filter fun begun => (registry.prefixName? Vim.Default.scheme begun).isNone
+          prefixes.filter fun begun => (registry.prefixName? TestScheme.scheme begun).isNone
         unless unnamed.isEmpty do
           throw <| IO.userError s!"unnamed prefixes: {unnamed.toList.map Key.notations}"
+        -- A prefix as config writes it, under the leader in force.
+        let under (text : String) : List Key :=
+          ((Key.parseStrokes text).toOption.map fun strokes =>
+                (Key.expand leaders strokes).map Key.chord).getD
+            []
         let expected :=
-          ["SPC f", "SPC b", "SPC w", "SPC TAB", "SPC h", "SPC p", "SPC s", "SPC k"].map fun text =>
-            (keysOf text).map Key.chord
+          ["<leader> f", "<leader> b", "<leader> w", "<leader> TAB", "<leader> h", "<leader> p",
+                "<leader> s", "<leader> k"].map
+            under
         return prefixes.size == expected.length && expected.all prefixes.contains &&
-            registry.prefixName? Vim.Default.scheme ((keysOf "SPC p").map Key.chord) ==
-              some "project" &&
-            registry.prefixName? Vim.Default.scheme ((keysOf "SPC s").map Key.chord) ==
-              some "search" &&
-            registry.prefixName? Vim.Default.scheme ((keysOf "SPC k").map Key.chord) ==
-              some "working set" }]
+            registry.prefixName? TestScheme.scheme (under "<leader> p") == some "project" &&
+            registry.prefixName? TestScheme.scheme (under "<leader> s") == some "search" &&
+            registry.prefixName? TestScheme.scheme (under "<leader> k") == some "working set" }]
 
 end ConfigTest

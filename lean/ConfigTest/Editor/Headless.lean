@@ -21,7 +21,6 @@ import Editor.Display
 import Editor.DisplayRules
 import Editor.Event
 import Editor.Event.Queue
-import Editor.Evil.Compiled
 import Editor.Ex
 import Editor.Ex.Compiled
 import Editor.Ex.Line
@@ -36,7 +35,6 @@ import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.InputScheme
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Fake
@@ -2004,7 +2002,7 @@ wait 2" with
                 removed.modify (·.push made)
           let staged := stage.collaborators
           let shipped :=
-            Headless.shippedOver Vim.Default.scheme #[] #[`Editor] "" [] directory.toString
+            Headless.shippedOver TestScheme.scheme #[] #[`Editor] "" [] directory.toString
               staged.emit staged.services staged.published staged.held files
           shipped.dispose
           let before ← removed.get
@@ -2405,7 +2403,7 @@ def shippedChecks (_ : Unit) : List Check :=
         -- written, and no config is loaded here.
         let files ← Config.Elaborate.ModuleFiles.temporary
         let over (stateDirectory : Option System.FilePath) :=
-          (Headless.shippedOver Vim.Default.scheme #[] #[`Editor] "" [] "" (fun _ => pure ())
+          (Headless.shippedOver TestScheme.scheme #[] #[`Editor] "" [] "" (fun _ => pure ())
               services published held files stateDirectory).hosting
         let given := ((over (some "/state")).start.runModel {}).1
         let none_ := ((over none).start.runModel {}).1
@@ -2461,23 +2459,21 @@ def shippedChecks (_ : Unit) : List Check :=
             ex "ls" == some "list-buffers" &&
             ex "bd" == some "close-buffer" },
     { name :=
-        "the executable's hosts start with every window command registered by the window-commands package, every command the Vim scheme's C-w table names among them"
+        "the executable's hosts start with every window command registered by the window-commands package"
       run := do
         let registry := shippedRegistry
         let compiled (name : String) : Bool :=
           (registry.find? name).any (·.owner == WindowCommands.package.owner)
         return !WindowCommands.package.registered.commands.isEmpty &&
-            WindowCommands.package.registered.commands.all (compiled ·.name) &&
-            Vim.Default.windowKeys.all (compiled ·.2) },
+            WindowCommands.package.registered.commands.all (compiled ·.name) },
     { name :=
-        "the executable's hosts start with every tab command registered by the tab-commands package, every command the Vim scheme's tab table names among them"
+        "the executable's hosts start with every tab command registered by the tab-commands package"
       run := do
         let registry := shippedRegistry
         let compiled (name : String) : Bool :=
           (registry.find? name).any (·.owner == TabCommands.package.owner)
         return !TabCommands.package.registered.commands.isEmpty &&
-            TabCommands.package.registered.commands.all (compiled ·.name) &&
-            Vim.Default.tabKeys.all (compiled ·.2) },
+            TabCommands.package.registered.commands.all (compiled ·.name) },
     { name :=
         "the executable's hosts start with the completion sources that ship each registered by its package, so config can ask for each by name: the ex line's history and its names, the tabs and the themes"
       run := do
@@ -2644,8 +2640,8 @@ def shippedChecks (_ : Unit) : List Check :=
         let registry := shippedRegistry
         let bound (text : String) : Option Invocation :=
           (registry.keymap TestScheme.scheme).find? (keysOf text)
-        let ownedBy (package : Package) (name : String) : Bool :=
-          (registry.find? name).any (·.owner == package.owner)
+        let ownedBy (package : String) (name : String) : Bool :=
+          (registry.find? name).any (·.owner == ({ name := package } : Config.Owner))
         let menuKeys :=
           (registry.bindings.filter (·.owner == Menu.package.owner)).map (·.binding.command)
         return registry.menuBar? == some (registry.menuOf Menu.standard) &&
@@ -2662,7 +2658,7 @@ def shippedChecks (_ : Unit) : List Check :=
             bound "s-v" == some { command := "clipboard-paste" } &&
             bound "s-a" == some { command := "select-all" } &&
             ["undo", "redo", "clipboard-cut", "clipboard-copy", "clipboard-paste", "select-all"].all
-              (ownedBy Evil.package) }]
+              (ownedBy "evil") }]
 
 /-- A config whose `setup` registers `greet` and the job `follow`, which
 watches the made-up file `/watched/f`, waits for its next delivery, and
