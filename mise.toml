@@ -183,6 +183,19 @@ run = [
   "for case in impl-only interface core docs-only; do out=$(cd .. && sh tools/lean-hook.sh --dry-run --lines tests/hook-targets/graph --root /repo $(cat \"tests/hook-targets/cases/$case/paths\")) && printf '%s\\n' \"$out\" | diff \"../tests/hook-targets/cases/$case/hook-expected\" - || { echo \"lean-test: lean-hook would run otherwise on the case $case\"; exit 1; }; done",
   "for names in 'compile greeting' greeting; do out=$(sh ../tools/lean-packages.sh --dry-run $names) && printf '%s\\n' \"$out\" | diff \"../tests/hook-targets/lean-packages/${names%% *}-expected\" - || { echo \"lean-test: lean-packages would run otherwise for $names\"; exit 1; }; done",
   "status=0; out=$(sh ../tools/lean-packages.sh --dry-run 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'names no package'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # The leave-out check's edit of a set's lakefile (tools/leave-out-check.sh;
+  # docs/dev-practices/the-gate.md, "The leave-out check"), held on a
+  # lakefile written by hand (tests/leave-out/lakefile.toml): its dry run,
+  # which builds nothing and asks Lake nothing, prints the lakefile without
+  # the named package's `[[require]]`, the comment directly above it and one
+  # blank line, every relative `path` made absolute against the root it is
+  # given, exactly `without-beta` for a package in the middle and
+  # `without-gamma` for the last. A package the lakefile does not require
+  # is exit 2, and so is a command line it does not take. The builds
+  # themselves, one editor a package, are opt-in (`mise run leave-out`).
+  "for package in beta gamma; do out=$(sh ../tools/leave-out-check.sh --dry-run $package --root /repo/set ../tests/leave-out) && printf '%s\\n' \"$out\" | diff ../tests/leave-out/without-$package - || { echo \"lean-test: leave-out-check's dry run printed another lakefile without $package\"; exit 1; }; done",
+  "status=0; out=$(sh ../tools/leave-out-check.sh --dry-run delta --root /repo/set ../tests/leave-out 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'has no [[require]] of delta'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  "status=0; out=$(sh ../tools/leave-out-check.sh 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'usage:'; } || { printf '%s\\n' \"$out\"; exit 1; }",
   'PATH="$PWD/no-cargo:$PATH" lake test --wfail',
   # The same for each package of the fixture set (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps"): its Lake test
@@ -1343,6 +1356,25 @@ depends = ["lean", "launcher"]
 dir = "lean"
 timeout = "600s"
 run = "sh ../tools/user-sets-test.sh"
+
+# Opt-in, never part of `ci` or hk.pkl: the leave-out check
+# (tools/leave-out-check.sh; docs/dev-practices/the-gate.md, "The leave-out
+# check"). For each implementation package of the default set, it builds
+# an editor from the set without that package, in a temporary directory,
+# requires that editor's generated root to import every other entry module
+# and not that one, and prints `leave-out: <package>: built, …` with the
+# first line of the editor's `--probe`. It links one editor a package,
+# twenty-five of them, which is why it is not in the gate; the gate keeps
+# what makes it true, the layer imports check (no package imports an
+# implementation package's module), and the check's own edit of a
+# lakefile, by dry runs (`lean-test`). It builds the packages where they
+# are, so never run it while `ci` or another build of this checkout runs.
+[tasks.leave-out]
+description = "Opt-in, never part of ci: build an editor from the default package set without each implementation package, one at a time, and say what each one's --probe answers (tools/leave-out-check.sh)"
+depends = ["lean"]
+dir = "lean"
+env = { LEAN_CC = "/usr/bin/cc" }
+run = "sh ../tools/leave-out-check.sh ../packages"
 
 # Opt-in, never part of `ci`: the user package sets checks that need git,
 # Cargo or more builds than the gate's (tools/user-sets-check.sh;

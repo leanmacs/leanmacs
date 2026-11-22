@@ -1834,6 +1834,72 @@ package's modules.
   implementation package, as `greeting-loud`'s of `greeting`, which orders
   registration, is not refused yet (the task `layer-requires-check`).
 
+## The leave-out check
+
+```sh
+mise run leave-out        # cd lean && sh ../tools/leave-out-check.sh ../packages
+```
+
+**Opt-in, not part of `mise run ci` or of the pre-commit hook.** Anything
+moved out of the core can be left out of a set
+([extension-points.md](../design/extension-points.md), "Three layers"),
+and this check builds it: for each implementation package of the default
+set, an editor built from the set without that package builds, and holds
+every other package of the set and not that one.
+
+- **What it does, for each implementation package**, in the set's order
+  (`lake -d <set dir> query :editorPackageGraph`):
+  1. it writes, in a fresh temporary directory, the set's lakefile without
+     that package's `[[require]]` and with every relative `path` made
+     absolute, beside a copy of the set's `lean-toolchain`;
+  2. it runs `lake update --keep-toolchain` and `lake build --wfail
+     :editor` there: the set's root is generated, built and linked, and
+     the packages themselves are built where they are;
+  3. it requires the generated root's imports (`:editorRootImports`) to be
+     the set's own without that package's entry module, and no other;
+  4. it runs the editor it built with `--probe` and prints
+     `leave-out: <package>: built, <the probe's first line>`.
+- **A refusing probe is no failure.** The criterion is that the editor
+  builds. Every probe says `probe: ok` but `evil`'s: an editor without
+  `evil` has no input scheme and refuses to start, with the line of
+  `tests/headless/no-input-scheme/expected`
+  ([packages.md](../design/packages.md), "Input schemes").
+- **Exit 0** when every such editor built and held what it should, one
+  line a package. **Exit 1**, after `leave-out: <package>: …` on stderr
+  with why, at the first package whose set does not resolve or build, or
+  whose root is not the set's without it: a package that another package
+  of the set requires is still in the set once its own `[[require]]` is
+  gone, and fails there.
+- **It refuses to pass over nothing.** A command line it does not take, a
+  query Lake fails, a set with no implementation package, and a package
+  of the set that the set's lakefile does not require itself (it reaches
+  the set through another set, so no edit of this lakefile leaves it out)
+  are exit 2.
+- **Why it is not in the gate.** It links one editor a package,
+  twenty-five of them. The gate keeps what makes it true: the layer
+  imports check, above (no module of any package imports a module of an
+  implementation package, so no package fails to build for want of one),
+  and `user-sets-test`, which drops a default package from a user's set
+  end to end. And no implementation package of the default set requires
+  another, so leaving one out of the lakefile leaves it out of the set.
+- **The gate holds its edit of the lakefile**, which is of the text alone,
+  by dry runs (`mise run lean-test`): `leave-out-check.sh --dry-run
+  <package> [--root <dir>] <set dir>` builds nothing and asks Lake
+  nothing, and prints the lakefile it would write. Over a lakefile written
+  by hand (`tests/leave-out/lakefile.toml`) it must print exactly
+  `without-beta` for a package in the middle and `without-gamma` for the
+  last; a package the lakefile does not require is exit 2, and so is a
+  command line it does not take.
+  - A `[[require]]` is the line `[[require]]` and the `key = value` lines
+    after it. The comment lines directly above it, with no blank line
+    between, go with it, and so does one blank line after it, or, at the
+    end of the file, one before it.
+  - A relative `path` anywhere in what is left is resolved against the
+    root, `.` and `..` folded; an absolute one is kept.
+- **It builds the packages where they are**, so it is never run while
+  `mise run ci` or another build of the checkout runs. Everything else it
+  writes is in a temporary directory it removes.
+
 ## The package steps
 
 ```sh
