@@ -65,7 +65,8 @@ They are handed the context of a harness of hosts over the real elaborator
 this Lake package hands its editor (`setPackages`), on the base such a
 set's editor elaborates config on: `Editor`, found in the core's `.olean`
 directory, and then this package's entry module, `Evil.EditorPackage`,
-found in the package's own (`oleanDirectory`). The configs `evilChecks`
+found in the package's own, with the modules of the interface packages it
+imports found in theirs (`oleanDirectories`). The configs `evilChecks`
 load name evil's declarations (`Evil.move`, `Evil.motions`,
 `Evil.operators`), which reach config through that entry module alone
 since the config base `Editor` imports no module of evil. It imports the
@@ -92,11 +93,15 @@ def setPackages : Array Editor.Package :=
     Editor.Test.Shipped.packages ++
     #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package]
 
-/-- The directory of this package's `.olean` files, from the package's
-directory, where the gate runs this executable: where the elaborator finds
-the base's second module, `Evil.EditorPackage`, and what it imports. -/
-def oleanDirectory : String :=
-  ".lake/build/lib/lean"
+/-- The directories of the `.olean` files the base's second module,
+`Evil.EditorPackage`, and what it imports are found in, from the package's
+directory, where the gate runs this executable: this package's own, and
+those of the interface packages it requires, `evil-api`, `minibuffer-api`
+and `at-point-api`, at the paths its lakefile requires them by. A set's
+editor is handed each package's directory the same way (`editor.oleans`). -/
+def oleanDirectories : List String :=
+  [".lake/build/lib/lean", "../evil-api/.lake/build/lib/lean",
+    "../minibuffer-api/.lake/build/lib/lean", "../at-point-api/.lake/build/lib/lean"]
 
 /-- The directory of the syntax fixtures (`tests/syntax`), from the
 package's directory, where the gate runs this executable. -/
@@ -118,7 +123,8 @@ def main (arguments : List String) : IO UInt32 := do
   | [sysroot, oleans] =>
     let fixtures ← IO.FS.realPath syntaxFixtures
     let failed ←
-      Editor.Test.Linked.HostContext.run sysroot s!"{oleans}:{oleanDirectory}" setPackages
+      Editor.Test.Linked.HostContext.run sysroot (":".intercalate (oleans :: oleanDirectories))
+          setPackages
           (fun context => do
             let checks := EvilTest.Linked.checks context fixtures
             let failed ← EvilTest.failures checks

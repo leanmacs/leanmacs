@@ -1,5 +1,6 @@
 import AtPointApi
 import Editor.Api
+import EvilApi
 
 /-!
 # Completion at point's commands
@@ -135,7 +136,7 @@ def stepOrAsk (step : Candidates.Step) (call : Call) : EditorM Unit := do
 def tab (call : Call) : EditorM Unit := do
   if (← sessionOf call).isSome then
     discard <| previewAtPoint .next
-  else if ← runCommand "insert-tab" call then
+  else if ← runCommand EvilApi.insertTabName call then
     retype call.target.window.id "\t"
 
 /-- `at-point-backtab`: moves the choice up; nothing with no session. -/
@@ -155,7 +156,7 @@ def «return» (call : Call) : EditorM Unit := do
     discard endAtPoint
   | none =>
     pure ()
-  if ← runCommand "insert-newline" call then
+  if ← runCommand EvilApi.insertNewlineName call then
     retype call.target.window.id "\n"
 
 /-- `at-point-quit`: quits the open session, or with none runs

@@ -1,5 +1,13 @@
+import AtPointApi
+import Editor.Clipboard
+import Editor.Ex
 import Editor.Key.Notation
+import Editor.TabCommands
+import Editor.WindowCommands
 import Evil.Vim
+import EvilApi
+import MinibufferApi
+import ShellApi
 
 /-!
 # The Vim scheme's default states and bindings
@@ -277,9 +285,10 @@ def normalCommands : List (String × Bound) :=
   [("i", inserting "insert"), ("a", inserting "append"), ("I", inserting "insert-line-start"),
     ("A", inserting "append-line-end"), ("o", inserting "open-below"),
     ("O", inserting "open-above"), ("x", changing "delete-char"), ("p", changing "put-after"),
-    ("P", changing "put-before"), ("u", running "undo"), ("C-r", running "redo"), (".", .repeat),
-    (":", running "ex"), ("v", entering "visual"), ("V", entering "visual-line"), ("\"", .register),
-    ("C-g", running "keyboard-quit"), ("m", .charCommand { name := "set-mark" }),
+    ("P", changing "put-before"), ("u", running EvilApi.undoName),
+    ("C-r", running EvilApi.redoName), (".", .repeat), (":", running Ex.name),
+    ("v", entering "visual"), ("V", entering "visual-line"), ("\"", .register),
+    ("C-g", running ShellApi.interruptName), ("m", .charCommand { name := "set-mark" }),
     ("C-o", running "jump-backward"), ("C-i", running "jump-forward"),
     ("TAB", running "jump-forward")]
 
@@ -288,12 +297,12 @@ editing keys. -/
 def insertCommands : List (String × Bound) :=
   [("<Escape>", entering "normal"), ("<Backspace>", typing "insert-delete-backward" backspaceTyped),
     ("C-w", typing "insert-delete-word-backward" wordDeleteTyped),
-    ("RET", running "at-point-return"), ("TAB", running "at-point-tab"),
+    ("RET", running AtPointApi.returnName), ("TAB", running AtPointApi.tabName),
     ("<ArrowLeft>", restarting "insert-left"), ("<ArrowRight>", restarting "insert-right"),
     ("<ArrowUp>", restarting "insert-up"), ("<ArrowDown>", restarting "insert-down"),
-    ("C-SPC", running "at-point-complete"), ("C-n", running "at-point-next"),
-    ("C-p", running "at-point-previous"), ("S-TAB", running "at-point-backtab"),
-    ("C-g", running "at-point-quit")]
+    ("C-SPC", running AtPointApi.completeName), ("C-n", running AtPointApi.nextName),
+    ("C-p", running AtPointApi.previousName), ("S-TAB", running AtPointApi.backtabName),
+    ("C-g", running AtPointApi.quitName)]
 
 /-- The commands of the character-wise visual state, and the register
 prefix. -/
@@ -313,11 +322,11 @@ in the input, the key that deletes backward,
 the two that move the bar, and the key that deletes to the input's
 start. -/
 def minibufferCommands : List (String × Bound) :=
-  [("RET", running "minibuffer-accept"), ("<Escape>", running "minibuffer-cancel"),
-    ("TAB", running "minibuffer-insert"), ("C-n", running "minibuffer-next"),
-    ("C-p", running "minibuffer-previous"), ("<Backspace>", running "minibuffer-delete-backward"),
-    ("<ArrowLeft>", .motion "left"), ("<ArrowRight>", .motion "right"),
-    ("C-u", running "minibuffer-delete-to-start")]
+  [("RET", running MinibufferApi.acceptName), ("<Escape>", running MinibufferApi.cancelName),
+    ("TAB", running MinibufferApi.insertName), ("C-n", running MinibufferApi.nextName),
+    ("C-p", running MinibufferApi.previousName),
+    ("<Backspace>", running MinibufferApi.deleteBackwardName), ("<ArrowLeft>", .motion "left"),
+    ("<ArrowRight>", .motion "right"), ("C-u", running MinibufferApi.deleteToStartName)]
 
 /-- The window commands' keys, Vim 9.1's under `C-w` (`CTRL-W`): each key
 string, and the name of the window command it runs
@@ -327,27 +336,32 @@ control spellings, `C-w C-n`, `C-w C-p`, `C-w C-c` and `C-w C-w`. It is
 data a config can bind too: `for (keys, name) in Vim.Default.windowKeys do
 bindKey keys name` puts the window commands in every state. -/
 def windowKeys : List (String × String) :=
-  [("C-w s", "window-split"), ("C-w S", "window-split"), ("C-w C-s", "window-split"),
-    ("C-w v", "window-split-vertically"), ("C-w C-v", "window-split-vertically"),
-    ("C-w C-n", "window-new"), ("C-w C-c", "window-close"), ("C-w q", "window-quit"),
-    ("C-w C-q", "window-quit"), ("C-w o", "window-only"), ("C-w C-o", "window-only"),
-    ("C-w h", "window-focus-left"), ("C-w C-h", "window-focus-left"),
-    ("C-w <ArrowLeft>", "window-focus-left"), ("C-w <Backspace>", "window-focus-left"),
-    ("C-w j", "window-focus-down"), ("C-w C-j", "window-focus-down"),
-    ("C-w <ArrowDown>", "window-focus-down"), ("C-w k", "window-focus-up"),
-    ("C-w C-k", "window-focus-up"), ("C-w <ArrowUp>", "window-focus-up"),
-    ("C-w l", "window-focus-right"), ("C-w C-l", "window-focus-right"),
-    ("C-w <ArrowRight>", "window-focus-right"), ("C-w C-w", "window-focus-next"),
-    ("C-w W", "window-focus-previous"), ("C-w t", "window-focus-top"),
-    ("C-w C-t", "window-focus-top"), ("C-w b", "window-focus-bottom"),
-    ("C-w C-b", "window-focus-bottom"), ("C-w C-p", "window-focus-last"),
-    ("C-w x", "window-exchange"), ("C-w C-x", "window-exchange"), ("C-w r", "window-rotate"),
-    ("C-w C-r", "window-rotate"), ("C-w R", "window-rotate-back"), ("C-w =", "window-balance"),
-    ("C-w +", "window-taller"), ("C-w -", "window-shorter"), ("C-w >", "window-wider"),
-    ("C-w <", "window-narrower"), ("C-w z", "window-zoom"), ("C-w m", "window-promote"),
-    ("C-w M", "window-demote"), ("C-w ,", "window-main-more"), ("C-w .", "window-main-fewer"),
-    ("C-w H", "window-edge-left"), ("C-w J", "window-edge-bottom"), ("C-w K", "window-edge-top"),
-    ("C-w L", "window-edge-right"), ("C-w F", "window-float")]
+  [("C-w s", WindowCommands.splitName), ("C-w S", WindowCommands.splitName),
+    ("C-w C-s", WindowCommands.splitName), ("C-w v", WindowCommands.splitVerticallyName),
+    ("C-w C-v", WindowCommands.splitVerticallyName), ("C-w C-n", WindowCommands.newName),
+    ("C-w C-c", WindowCommands.closeName), ("C-w q", WindowCommands.quitName),
+    ("C-w C-q", WindowCommands.quitName), ("C-w o", WindowCommands.onlyName),
+    ("C-w C-o", WindowCommands.onlyName), ("C-w h", WindowCommands.leftName),
+    ("C-w C-h", WindowCommands.leftName), ("C-w <ArrowLeft>", WindowCommands.leftName),
+    ("C-w <Backspace>", WindowCommands.leftName), ("C-w j", WindowCommands.downName),
+    ("C-w C-j", WindowCommands.downName), ("C-w <ArrowDown>", WindowCommands.downName),
+    ("C-w k", WindowCommands.upName), ("C-w C-k", WindowCommands.upName),
+    ("C-w <ArrowUp>", WindowCommands.upName), ("C-w l", WindowCommands.rightName),
+    ("C-w C-l", WindowCommands.rightName), ("C-w <ArrowRight>", WindowCommands.rightName),
+    ("C-w C-w", WindowCommands.nextName), ("C-w W", WindowCommands.previousName),
+    ("C-w t", WindowCommands.topName), ("C-w C-t", WindowCommands.topName),
+    ("C-w b", WindowCommands.bottomName), ("C-w C-b", WindowCommands.bottomName),
+    ("C-w C-p", WindowCommands.lastName), ("C-w x", WindowCommands.exchangeName),
+    ("C-w C-x", WindowCommands.exchangeName), ("C-w r", WindowCommands.rotateName),
+    ("C-w C-r", WindowCommands.rotateName), ("C-w R", WindowCommands.rotateBackName),
+    ("C-w =", WindowCommands.balanceName), ("C-w +", WindowCommands.tallerName),
+    ("C-w -", WindowCommands.shorterName), ("C-w >", WindowCommands.widerName),
+    ("C-w <", WindowCommands.narrowerName), ("C-w z", WindowCommands.zoomName),
+    ("C-w m", WindowCommands.promoteName), ("C-w M", WindowCommands.demoteName),
+    ("C-w ,", WindowCommands.mainMoreName), ("C-w .", WindowCommands.mainFewerName),
+    ("C-w H", WindowCommands.edgeLeftName), ("C-w J", WindowCommands.edgeBottomName),
+    ("C-w K", WindowCommands.edgeTopName), ("C-w L", WindowCommands.edgeRightName),
+    ("C-w F", WindowCommands.floatName)]
 
 /-- The window commands' keys as a table of normal state's: each runs its
 command, which changes no text and enters no state. -/
@@ -365,9 +379,10 @@ after `C-w` is a key, not a count. Vim's commands of `C-w n`, `C-w p`,
 bind too: `for (keys, name) in Vim.Default.windowKeys ++ Vim.Default.tabKeys
 do bindKey keys name` puts the window and tab commands in every state. -/
 def tabKeys : List (String × String) :=
-  [("C-w n", "tab-next"), ("C-w p", "tab-previous"), ("C-w c", "tab-new"), ("C-w &", "tab-close"),
-      ("C-w w", "tab-switch")] ++
-    (List.range 9).map fun index => (s!"C-w {index + 1}", s!"tab-select-{index + 1}")
+  [("C-w n", TabCommands.nextName), ("C-w p", TabCommands.previousName),
+      ("C-w c", TabCommands.newName), ("C-w &", TabCommands.closeName),
+      ("C-w w", TabCommands.switchName)] ++
+    (List.range 9).map fun index => (s!"C-w {index + 1}", TabCommands.selectName (index + 1))
 
 /-- The tab commands' keys as a table of normal state's: each runs its
 command, which changes no text and enters no state. -/
@@ -385,12 +400,13 @@ def scrollCommands : List (String × Bound) :=
 /-- What Select All runs as in normal, insert and the visual states: the
 command `select-all`, entering `visual-line`. -/
 private def selectAllRun : String × Edit :=
-  ("select-all", .run { name := "select-all", enters := some "visual-line" } none none)
+  (Clipboard.selectAllName,
+    .run { name := Clipboard.selectAllName, enters := some "visual-line" } none none)
 
 /-- Normal state's run table: Paste is `"+P`, and Select All enters
 `visual-line`. -/
 def normalRuns : List (String × Edit) :=
-  [("clipboard-paste", .run { name := "put-before", changes := true } none (some "+")),
+  [(Clipboard.pasteName, .run { name := "put-before", changes := true } none (some "+")),
     selectAllRun]
 
 /-- Insert state's run table: Select All enters `visual-line`. -/
@@ -401,9 +417,9 @@ def insertRuns : List (String × Edit) :=
 the operator `replace` over the selection from `+`, and Select All enters
 `visual-line`. -/
 def visualRuns : List (String × Edit) :=
-  [("clipboard-copy", .operate { name := "yank", changes := false } .selection none (some "+")),
-    ("clipboard-cut", .operate { name := "delete" } .selection none (some "+")),
-    ("clipboard-paste", .operate { name := "replace" } .selection none (some "+")), selectAllRun]
+  [(Clipboard.copyName, .operate { name := "yank", changes := false } .selection none (some "+")),
+    (Clipboard.cutName, .operate { name := "delete" } .selection none (some "+")),
+    (Clipboard.pasteName, .operate { name := "replace" } .selection none (some "+")), selectAllRun]
 
 /-- The keymap that binds each key string of `table` to what is beside it,
 described by the row of `descs` whose key string parses to the same

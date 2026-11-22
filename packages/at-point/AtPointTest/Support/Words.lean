@@ -1,7 +1,6 @@
 import AtPoint
 import AtPoint.Compiled
 import AtPoint.Words
-import Editor.Api
 import Editor.Command
 import Editor.Command.Call
 import Editor.Completion
@@ -22,6 +21,7 @@ import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
+import EvilApiTest.Fake
 
 /-!
 # Model tests: support: Words
@@ -47,8 +47,8 @@ cursor written as a bar) and what a check reads of a driver (`keysFed`,
   `S-TAB` on `at-point-backtab`, `RET` on `at-point-return` and `C-g` on
   `at-point-quit`, with the kit's editing keys but `RET`.
 - **The commands a scheme's package registers that at-point runs by name**,
-  `insert-newline` and `insert-tab`, are stand-ins written here
-  (`fallbackStandIns`), registered under those names as text.
+  `insert-newline` and `insert-tab`, are those of the fake of the interface
+  package `evil-api` (`EvilApiTest.fake`), which declares the two names.
 - **Listings are matched and drawn by the core's own style and display**
   (`Completion.Matching.unregistered`, `Completion.Displaying.unregistered`),
   the defaults of a step's keys, where the core's tests hand the style and
@@ -88,13 +88,6 @@ and the shipped `words`. -/
 def shippedAtPointSources : List Completion.Source :=
   atPointSources ++ [Completion.Words.source]
 
-/-- Stand-ins for the two commands a scheme's package registers that
-at-point runs by name with no session open: `insert-newline`, a line break
-at the selections, and `insert-tab`, a tab there. -/
-def fallbackStandIns : Array Config.Registration :=
-  #[{ name := "insert-newline", action := .call fun call => call.target.insertLineBreak },
-    { name := "insert-tab", action := .call fun call => call.target.insertAtSelections "\t" }]
-
 /-- The keys of at-point's checks under the test scheme: the kit's editing
 keys but `RET`, and each of at-point's commands a scheme's table of the
 state where typing is text binds, on a key that prints nothing. -/
@@ -109,14 +102,17 @@ def atPointBindings : List (String × Invocation) :=
 `atPointBindings`; told that a buffer's chain is `chain`, that the at-point
 sources are `atPoints` and the shipped `words`, and that the sources are
 `shippedAtPointSources`, by name and by category; the commands the
-`at-point` package registers, `fallbackStandIns` and those of `more`, each
+`at-point` package registers, those of `evil-api`'s fake (`EvilApiTest.fake`:
+`insert-newline` and `insert-tab`, which at-point runs by name with no
+session open, among them) and those of `more`, each
 under the name it is registered under, and the kit's editing commands. A
 command of `more` runs in place of one of the same name, as the registry's
 latest entry of a name does. -/
 def shippedAtPointHanded (chain : Array String) (atPoints : List Completion.AtPoint)
     (more : Array Config.Registration := #[]) : Loop.Keys TestScheme.scheme :=
   let sources := shippedAtPointSources
-  let commands := AtPoint.package.registered.commands ++ fallbackStandIns ++ more
+  let commands :=
+    AtPoint.package.registered.commands ++ EvilApiTest.fake.registered.commands ++ more
   { maps := fun _ _ =>
       [Keymap.ofList (atPointBindings.map fun (text, invocation) => (keys text, invocation))]
     command? := fun name =>

@@ -10,7 +10,8 @@
 # from it (`mise run app`).
 #
 # It requires the core and each default package. A default package has a
-# directory here and a `require` below: evil and the Vim scheme (evil/),
+# directory here and a `require` below: evil and the Vim scheme (evil/,
+# with its interface package evil-api/, which it requires),
 # which supplies the editor's input scheme, the themes (themes/, with its
 # interface package themes-api/, which it requires), the file commands (files/), the buffer commands
 # (buffers/), the workspaces (workspace/), project search (project-search/,
@@ -49,7 +50,10 @@ path = "../lean"
 # first of them). It declares the keyword `editor-input-scheme`, so its
 # entry module supplies the editor's input scheme: a set without it, and
 # with no other package that supplies one, builds an editor that refuses to
-# start.
+# start. It requires its interface package, evil-api, and the interface
+# packages of the minibuffer and of completion at point, whose commands its
+# tables name: the three so are in the set, and an interface package
+# registers nothing.
 [[require]]
 name = "evil"
 path = "evil"

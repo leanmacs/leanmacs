@@ -1,3 +1,4 @@
+import AtPointApi
 import Editor.Completion.AtPoint
 import Editor.Config.Packages
 import Editor.Event
@@ -19,6 +20,7 @@ import Evil.Vim
 import Evil.Vim.Default
 import EvilTest.Check
 import EvilTest.Support.Vim
+import MinibufferApi
 import ShellApi
 
 /-!
@@ -256,10 +258,10 @@ def vimDefaultChecks : List Check :=
       run :=
         pure <|
           let bound :=
-            [("C-SPC", Test.AtPoint.completeName), ("C-n", Test.AtPoint.nextName),
-              ("C-p", Test.AtPoint.previousName), ("TAB", Test.AtPoint.tabName),
-              ("S-TAB", Test.AtPoint.backtabName), ("RET", Test.AtPoint.returnName),
-              ("C-g", Test.AtPoint.quitName)]
+            [("C-SPC", AtPointApi.completeName), ("C-n", AtPointApi.nextName),
+              ("C-p", AtPointApi.previousName), ("TAB", AtPointApi.tabName),
+              ("S-TAB", AtPointApi.backtabName), ("RET", AtPointApi.returnName),
+              ("C-g", AtPointApi.quitName)]
           (bound.all fun (key, name) =>
               (vimDefaultCommand s!"i {key}").any fun command =>
                 command.name == name && !command.changes && command.enters.isNone &&
@@ -275,10 +277,11 @@ def vimDefaultChecks : List Check :=
                     match bound with
                     | .command command => command.name
                     | _ => "")) ==
-              [("RET", "minibuffer-accept"), ("<Escape>", "minibuffer-cancel"),
-                ("TAB", "minibuffer-insert"), ("C-n", "minibuffer-next"),
-                ("C-p", "minibuffer-previous"), ("<Backspace>", "minibuffer-delete-backward"),
-                ("<ArrowLeft>", ""), ("<ArrowRight>", ""), ("C-u", "minibuffer-delete-to-start")] },
+              [("RET", MinibufferApi.acceptName), ("<Escape>", MinibufferApi.cancelName),
+                ("TAB", MinibufferApi.insertName), ("C-n", MinibufferApi.nextName),
+                ("C-p", MinibufferApi.previousName),
+                ("<Backspace>", MinibufferApi.deleteBackwardName), ("<ArrowLeft>", ""),
+                ("<ArrowRight>", ""), ("C-u", MinibufferApi.deleteToStartName)] },
     { name :=
         "every command a key of insert state's table or of the minibuffer's state's table runs is registered under its name by evil's commands, the minibuffer's or completion at point's"
       run :=
@@ -316,6 +319,7 @@ def vimDefaultChecks : List Check :=
             (bound ++ [Vim.askCommand, Completion.candidatesCommand]).all
               Test.Minibuffer.names.contains &&
             Vim.askCommand == Test.Minibuffer.askName &&
+            Vim.askCommand == MinibufferApi.askName &&
             Test.Minibuffer.package.registered.commands.map (·.name) == Test.Minibuffer.names) },
     { name :=
         "phase 4 criterion 3 under the Vim scheme: C-x is unbound in the minibuffer state's own table; C-x C-d in the minibuffer state yields the command an active keymap binds it to, and with a keymap that does not bind it what it yields with no keymap"

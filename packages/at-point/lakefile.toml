@@ -43,6 +43,13 @@ leanOptions = { linter.all = true, warningAsError = true }
 name = "at-point-api"
 path = "../at-point-api"
 
+# The interface package of evil: the names `insert-newline` and
+# `insert-tab`, which `at-point-return` and `at-point-tab` run with no
+# session open, and the fake this package's tests run them on.
+[[require]]
+name = "evil-api"
+path = "../evil-api"
+
 [[require]]
 name = "editor-core"
 path = "../../lean"

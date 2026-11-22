@@ -1,4 +1,5 @@
 import Editor.InputScheme
+import MinibufferApi
 
 /-!
 # The Vim scheme
@@ -677,9 +678,10 @@ structure Asking where
 
 /-- The name of the command a motion that asks yields, to open its prompt:
 the minibuffer's (`packages/minibuffer/Minibuffer.lean`, "Asking for the input
-scheme"). -/
+scheme"), by the constant its interface package declares
+(`MinibufferApi.askName`). -/
 def askCommand : String :=
-  "minibuffer-ask"
+  MinibufferApi.askName
 
 /-- The registry of Vim states the scheme is built over: an open set, with
 one state that a view is in before any key. -/

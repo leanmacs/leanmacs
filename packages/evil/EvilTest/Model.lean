@@ -1,6 +1,7 @@
 import EvilTest.Check
 import EvilTest.Evil
 import EvilTest.Evil.Clipboard
+import EvilTest.Evil.Compiled
 import EvilTest.Evil.Jumps
 import EvilTest.Evil.Marks
 import EvilTest.Evil.Motions
@@ -34,6 +35,13 @@ are in `EvilTest/Evil.lean`, those of `Evil/<X>.lean` in
 kit. They were the core's (`ModelTest.<name>`) while evil and the Vim
 scheme were modules of the core, and moved here with their sentences as
 they were, in the order the core ran them.
+
+- `evilPackageChecks` (`EvilTest/Evil/Compiled.lean`): the `Package` value
+  (`Evil/Compiled.lean`) held to the contract of the interface package
+  `evil-api` (`EvilApiTest.contractChecks`): it registers `insert-newline`,
+  `insert-tab`, `undo` and `redo`, the names completion at point and the
+  Edit menu reach; with a check that the contract bites. It is this
+  package's own, written when evil became a package.
 
 The Vim scheme (`Evil/Vim.lean`) is checked as the core checks an input
 scheme, with no model:
@@ -216,7 +224,8 @@ Vim and the editor agree on.
 
 /-- Every check of the test driver, in the order they run. -/
 def EvilTest.checks : List EvilTest.Check :=
-  EvilTest.vimEditChecks ++ EvilTest.vimRegistryChecks ++ EvilTest.vimGrammarChecks ++
+  EvilTest.evilPackageChecks ++ EvilTest.vimEditChecks ++ EvilTest.vimRegistryChecks ++
+    EvilTest.vimGrammarChecks ++
     EvilTest.vimStateChecks ++
     EvilTest.vimHintChecks ++
     EvilTest.vimKeyBindingChecks ++

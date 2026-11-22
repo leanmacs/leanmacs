@@ -23,7 +23,11 @@
 #   `Package` value and the scheme it supplies, and its entry module
 #   `Evil/EditorPackage.lean`, which the package-set build reads. Its
 #   `globs` hold every module under `Evil`, so the package imports check
-#   sees each one's imports. It requires no package but the core.
+#   sees each one's imports. It implements the interface package
+#   `evil-api`, and names the commands its tables run of the minibuffer and
+#   of completion at point by the constants of their interface packages,
+#   `minibuffer-api` and `at-point-api`; it requires the three, beside the
+#   core.
 # - `evil-test` is its test driver (`lake test`): the tests that need no
 #   Rust library, rooted at `EvilTest/Model.lean`. It is no default target,
 #   as the core's `model-test` is not: `mise run lean` links with the
@@ -54,6 +58,25 @@ keywords = ["editor-input-scheme"]
 testDriver = "«evil-test»"
 defaultTargets = ["Evil", "EvilTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+
+# The interface package of evil: the names `insert-newline`, `insert-tab`,
+# `undo` and `redo`, which completion at point and the Edit menu reach, its
+# fake and the contract check this package's tests run.
+[[require]]
+name = "evil-api"
+path = "../evil-api"
+
+# The interface package of the minibuffer: the names the minibuffer state's
+# table runs, and the one the scheme yields to ask for a text.
+[[require]]
+name = "minibuffer-api"
+path = "../minibuffer-api"
+
+# The interface package of completion at point: the names insert state's
+# table runs.
+[[require]]
+name = "at-point-api"
+path = "../at-point-api"
 
 [[require]]
 name = "editor-core"

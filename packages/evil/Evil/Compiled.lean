@@ -11,6 +11,7 @@ import Evil.TreeObjects
 import Evil.Undo
 import Evil.Vim
 import Evil.Vim.Default
+import EvilApi
 
 /-!
 # The `evil` package: evil's commands
@@ -54,6 +55,13 @@ when config fails to load, and a reload does not replace them.
   the command reshapes the selection for the state it is told of. Run by
   its name, each is told of the state the view is already in and enters
   none (`Evil.lean`, "Entering a state").
+
+Four of the names are the interface package `evil-api`'s
+(`packages/evil-api/EvilApi.lean`), which declares what another package
+reaches of evil by name: `insert-newline` and `insert-tab`, which
+completion at point runs with no session open, and `undo` and `redo`, which
+the Edit menu runs. They are registered under its constants, and
+`EvilTest.evilPackageChecks` holds this package to its contract.
 
 A name here and the name the Vim scheme's default tables give a key
 (`Evil/Vim/Default.lean`) are changed together: the scheme
@@ -105,8 +113,8 @@ def package : Package :=
       commandWith "put-before" putBefore
       commandWith "open-below" openBelow
       commandWith "open-above" openAbove
-      commandWith "undo" undo
-      commandWith "redo" redo
+      commandWith EvilApi.undoName undo
+      commandWith EvilApi.redoName redo
       commandWith Vim.repeatCommand «repeat»
       commandWith "scroll-down" (scroll .half true)
       commandWith "scroll-up" (scroll .half false)
@@ -117,8 +125,8 @@ def package : Package :=
       commandWith "scroll-line-to-bottom" (scrollLineTo .bottom)
       commandWith "insert-delete-backward" deleteBackward
       commandWith "insert-delete-word-backward" deleteWordBackward
-      commandWith "insert-newline" newline
-      commandWith "insert-tab" insertTab
+      commandWith EvilApi.insertNewlineName newline
+      commandWith EvilApi.insertTabName insertTab
       commandWith "insert-left" (insertMove motions left.name)
       commandWith "insert-right" (insertMove motions right.name)
       commandWith "insert-up" (insertMove motions up.name)

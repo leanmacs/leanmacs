@@ -185,6 +185,15 @@ def atPointChecks : List Check :=
               (model.texts.snapshots[id.index]?).join.map (·.contents)
             words.texts.size == 2 && words.texts.toList.map contents == [some "other", some ""] &&
               plain.texts.isEmpty
-          | _, _ => false }]
+          | _, _ => false },
+    { name :=
+        "with no session open, at-point-return runs the command evil-api declares for a line break and at-point-tab the one it declares for a tab: on evil-api's fake, RET breaks the line at the cursor and TAB types a tab there"
+      run :=
+        pure <|
+          match shippedAtPointDriver "ab|cd" #[] [] with
+          | some driver =>
+            shownOf (keysFed driver "RET") == "ab\n|cd" &&
+              shownOf (keysFed driver "TAB") == "ab\t|cd"
+          | none => false }]
 
 end AtPointTest
