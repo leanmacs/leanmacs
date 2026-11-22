@@ -1142,7 +1142,7 @@ run or post, and given back after:
 
 | Unit | Taken | Given back |
 |---|---|---|
-| A job while it can run | `Job.spawn`, before its task; and a parking wait's end, in the wait's action, on the thread that ends it (`Handle.parkingWait`) | When it parks in a wait only a test ends (`drive`), or after its `finished` (`spawn`) |
+| A job while it can run | `Job.spawn`, before its task; and a parking wait's end, in the wait's action, on the thread that ends it (`Handle.parkingWait`) | When it parks in a wait only a test ends, once the wait is recorded as the job's (`drive`), or after its `finished` (`spawn`) |
 | A wait on a service that ends it by itself (the real file, process, diff and grep services, real timers and watches) | Nothing of its own: the job keeps its unit through the wait | |
 | A handle's request (`Services.fileWorked`) | Before the port's start | In the wait's action, after `noted` and the resolve |
 | The reload job | `reduce`'s `.start`, before its task | `reloadJob`'s `finally`, after its counted post |
@@ -1154,6 +1154,23 @@ A wait that only a test can end holds no unit: the fake clock's
 why a job asleep on a clock nobody moves is idle, and one asleep on a real
 timer is not. A flush (`Services.flushed`) holds none either: it is its
 observer's, not the program's.
+
+**A parked job's wait can be withdrawn.** A job gives its unit back for
+such a wait only once the runner has recorded the wait as the job's
+(`Job.drive`), or has withdrawn it when the job was cancelled on its way in.
+So idle means more than that nothing can run: every parked job is in a wait
+a cancel withdraws (`Handle.cancel`), which is what the loop's end and an
+owner's removal rely on, and a job cancelled on its way into a wait holds a
+unit until it has ended. The order the other way round, the unit first, let
+a host read idle and end its loop while the job's thread was between the
+two steps: the cancel found no wait, and the job withdrew its own after the
+host's bracket had returned. Pinned by `ModelTest.activityRunnerChecks`, on
+one thread's order: a cancel made as the unit is given back withdraws the
+sleep, and a job cancelled while the clock is asked for its sleep never
+lets the count read 0 before its end. A test that needs the event itself,
+the wait recorded, waits on that `done`, never on the fake clock's arrival,
+which comes inside the clock's `start`, before the runner has its answer
+(`withdrawingHeld`, `lean/ConfigTest/Editor/Headless.lean`).
 
 **Why the epoch.** The count alone can be 0 at the marker's post, go to 1
 when an earlier event's handler starts a job, and be 0 again when that job
