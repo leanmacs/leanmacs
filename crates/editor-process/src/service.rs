@@ -1200,9 +1200,10 @@ impl<P: Processes + 'static> Service<P> {
     /// never takes a take's wake-up from a reader.
     ///
     /// `bound` is a hang guard: only a child whose readers never park
-    /// reaches it.
+    /// reaches it. A bound past what the clock can count is no bound.
     pub fn wait_held(&self, child: u64, bound: Duration) -> bool {
-        let until = Instant::now() + bound;
+        // A bound past what the clock can count is no bound.
+        let until = Instant::now().checked_add(bound);
         let stream = {
             let state = self.inner.state();
             let Some(Run::Streaming { stream, .. }) = state.runs.get(&child) else {
@@ -1220,14 +1221,23 @@ impl<P: Processes + 'static> Service<P> {
             if held {
                 return true;
             }
-            let left = until.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return false;
-            }
-            // hang guard: a reader's park on the bound; only a hang reaches
-            // the bound, and the caller's check then fails as a hang.
-            let waited = stream.held.wait_timeout(streamed, left);
-            streamed = waited.unwrap_or_else(PoisonError::into_inner).0;
+            streamed = match until {
+                None => stream
+                    .held
+                    .wait(streamed)
+                    .unwrap_or_else(PoisonError::into_inner),
+                Some(until) => {
+                    let left = until.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        return false;
+                    }
+                    // hang guard: a reader's park on the bound; only a hang
+                    // reaches the bound, and the caller's check then fails as
+                    // a hang.
+                    let waited = stream.held.wait_timeout(streamed, left);
+                    waited.unwrap_or_else(PoisonError::into_inner).0
+                }
+            };
         }
     }
 
@@ -3342,6 +3352,29 @@ mod streaming {
             Err(TryRecvError::Empty),
             "nothing read"
         );
+    }
+
+    #[test]
+    fn wait_held_takes_a_bound_past_what_the_clock_can_count_as_no_bound() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).stdout(numbered(400))),
+        )]);
+        let (service, completed) = service(&fake);
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            lines_with(Input::Closed, 1000),
+        );
+        assert!(comes_to_be_held(&service, 1));
+
+        // The child is already held, so neither wait blocks.
+        assert!(service.wait_held(1, Duration::MAX));
+        assert!(service.wait_held(1, Duration::from_millis(u64::MAX)));
+        assert!(service.cancel(1));
+        assert!(flushed(&service, &completed));
     }
 
     /// `count` numbered lines, each `{n:05}` and a line feed.
