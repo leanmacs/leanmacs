@@ -212,6 +212,16 @@ leave on the editor queue without parking a pull on an empty queue. -/
 @[extern "editor_glue_events_queued"]
 opaque queued (queue : Queue) : IO UInt64
 
+/-- The oldest event of `queue` if it holds one, `none` if it holds none:
+a pull that never parks. For a test that takes back an event it knows was
+posted (`postEvent` returns once the event is queued) while nothing else
+pulls the queue: a missing event is then a failure the test reports, never
+a pull that waits for good. -/
+def takeQueued (queue : Queue) : IO (Option Event) := do
+  if (← queued queue) == 0 then
+    return none
+  some <$> nextEvent queue
+
 /-- `feedScript` as it crosses: the feed's id, 0 when it was refused. -/
 @[extern "editor_glue_events_script_feed"]
 private opaque feedScriptRaw (queue : Queue) (sourceId count : UInt64) : IO UInt64

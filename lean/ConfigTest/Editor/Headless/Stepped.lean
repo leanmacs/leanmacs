@@ -55,17 +55,6 @@ def scenesOf (kept : IO.Ref (Option Headless.Host.Display)) : IO Nat := do
   | none =>
     return 0
 
-/-- The window event the library's editor queue holds next among those of
-a window, pulling past any other: a check that posted one by mistake takes
-it back, so no later host takes it. `none` once the queues are quit. -/
-partial def windowPulled : IO (Option Ffi.Event) := do
-  let event ← Ffi.nextEvent .editor
-  if event.kind == .quit then
-    return none
-  if event.source.kind == .window then
-    return some event
-  windowPulled
-
 /-- The checks of a host stepped on the check's own thread. -/
 def steppedChecks (context : Context) : List Check :=
   [{  name :=
@@ -84,6 +73,7 @@ def steppedChecks (context : Context) : List Check :=
     { name := "a check on a stepped stage that posts to the library's editor queue fails, saying so"
       run := do
         let stage ← Stage.new context context.elaborator (memorySource [])
+        let before ← Ffi.queued .editor
         let failed ←
           try
             discard <|
@@ -93,13 +83,14 @@ def steppedChecks (context : Context) : List Check :=
             pure none
           catch error =>
             pure (some (toString error))
-        -- Taken back, so no later host takes it.
-        let pulled ← windowPulled
-        saw
-            (failed.any
-                (·.startsWith "a stepped host's check posted to the library's editor queue") &&
-              pulled.any (·.text == "astray"))
-            s!"failed={failed} pulled={repr pulled}" },
+        -- The guard says what was posted, and has taken it back off the
+        -- queue, so no later host takes it.
+        let after ← Ffi.queued .editor
+        let named :=
+          failed.any fun error =>
+            error.startsWith "a stepped host's check posted to the library's editor queue" &&
+              (error.splitOn "\"astray\"").length == 2
+        saw (named && after <= before) s!"failed={failed} before={before} after={after}" },
     { name :=
         "a stepped host handles a run request and a commit on the check's own thread: every line it emits is the check's thread's, and no loop thread starts"
       run := do

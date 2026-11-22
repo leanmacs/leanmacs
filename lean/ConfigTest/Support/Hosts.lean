@@ -650,15 +650,24 @@ end Session
 
 /-- The number of events the library's editor queue holds, before and after
 `body`: a stepped host's check must leave none there, where the next real
-host would take them. Throws, naming them, when the queue grew. -/
+host would take them. Throws, naming them, when the queue grew, and takes
+every event the queue held off it, so no later host takes them. -/
 def leavingLibraryQueue {α : Type} (body : IO α) : IO α := do
   let before ← Ffi.queued .editor
   let result ← body
   let after ← Ffi.queued .editor
   if after > before then
+    -- Taken off the queue, so the failure says what they were and no later
+    -- host takes them; `takeQueued` never parks.
+    let mut held := #[]
+    for _ in [0:after.toNat] do
+      let some event ← Ffi.takeQueued .editor | break
+      held :=
+        held.push
+          s!"{repr event.source.kind} {event.source.id} {repr event.kind} {event.code} {event.text.quote}"
     throw <|
         IO.userError
-          s!"a stepped host's check posted to the library's editor queue: it held {before} events and then {after}"
+          s!"a stepped host's check posted to the library's editor queue: it held {before} events and then {after}: {held}"
   return result
 
 /-- Runs `check` against a host stepped on the check's own thread over

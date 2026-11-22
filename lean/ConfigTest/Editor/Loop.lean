@@ -88,7 +88,8 @@ def interruptPulled : IO (Option Ffi.Event) := do
   unless ← Event.post (.key Watch.interruptKey true "") do
     return none
   repeat
-    let event ← Ffi.nextEvent .editor
+    -- Never parks: the press was queued before this pull.
+    let some event ← Ffi.takeQueued .editor | return none
     if event.kind == .quit then
       return none
     if event.source.kind == .window && event.kind == .key then

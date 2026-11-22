@@ -49,7 +49,7 @@ queue. -/
 def pulledParsed : IO Bool := do
   unless (← Ffi.queued .editor) == 1 do
     return false
-  let event ← Ffi.nextEvent .editor
+  let some event ← Ffi.takeQueued .editor | return false
   return event.kind == .parsed && event.source.kind == .library
 
 /-- How many events the editor queue held, each pulled: what a mode set over
@@ -58,7 +58,7 @@ library's reports of parses. It never parks a pull on an empty queue. -/
 def drainedParsed : IO Nat := do
   let mut pulled := 0
   while (← Ffi.queued .editor) > 0 do
-    discard (Ffi.nextEvent .editor)
+    discard (Ffi.takeQueued .editor)
     pulled := pulled + 1
   return pulled
 

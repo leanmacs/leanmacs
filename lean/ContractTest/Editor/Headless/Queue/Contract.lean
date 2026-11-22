@@ -34,9 +34,13 @@ def queueMarker : UInt64 :=
   0xFFFF
 
 /-- The next event of the editor queue posted under `queueSource`, passing
-over any of another source. Called only once one has been posted. -/
+over any of another source. Called only once one has been posted; it never
+parks (`takeQueued`), so one that is not there throws, a failure, not a
+wait for good. -/
 partial def pullQueued : IO Ffi.Event := do
-  let event ← Ffi.nextEvent .editor
+  let some event ←
+    Ffi.takeQueued
+        .editor | throw (IO.userError "the editor queue holds no event posted under the queue checks' source")
   if event.source.kind == .lean && event.source.id == queueSource then
     return event
   pullQueued

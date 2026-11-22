@@ -37,7 +37,7 @@ def runOnWatch (timers : Job.Timers) (property : WatchContract.Property) : IO Bo
         posted := posted + 1
     let held ← Program.runM (port := watchPort) (Watch.real timers) property.holds
     for _ in [0:posted] do
-      discard <| Ffi.nextEvent .editor
+      discard <| Ffi.takeQueued .editor
       Ffi.interruptLower
     return held && posted == property.arrived && !(← Ffi.interruptRaised)
   finally

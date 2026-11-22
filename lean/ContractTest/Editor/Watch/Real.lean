@@ -154,7 +154,7 @@ def watchChecks (timers : Job.Timers) : List Check :=
                 return some (← document.read)
           let raised ← Ffi.interruptRaised
           -- The interrupt key is next on the queue, marked.
-          let pulled ← Ffi.nextEvent .editor
+          let some pulled ← Ffi.takeQueued .editor | return false
           let .ok received := Event.ofFfi pulled | return false
           let (lowered, texts) ← run texts (takes loop [received])
           let some loop := lowered | return false
