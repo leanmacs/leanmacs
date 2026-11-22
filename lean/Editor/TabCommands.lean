@@ -1,5 +1,4 @@
 import Editor.Api
-import Editor.WindowCommands
 
 /-!
 # The tab commands
@@ -20,7 +19,7 @@ scheme binds them under `C-w` with tmux's keys (`Vim.Default.tabKeys`,
   continuation may be called with: there it is the tab in view, whose
   window the prompt was asked from.
 - **Each reads a count from its call's first `.nat` argument**, as the
-  window commands do (`WindowCommands.countOf`), 0 for none.
+  window commands do (`Call.count`, `Editor/Command/Call.lean`), 0 for none.
 - **Each gives up with the refusal's sentence** (`LayoutRefusal.describe`),
   so the echo area says, for the last tab,
   `tab-close: the last tab cannot be closed`, and for a missing one
@@ -142,29 +141,29 @@ def resolve (state : EditorState) (text : String) : EditorM (Option Nat) := do
 
 /-- Selects the tab at `index`, or gives up with the refusal's sentence. -/
 def selecting (index : Nat) : EditorM Unit := do
-  WindowCommands.orGiveUp (← changeTab (.select index))
+  orGiveUp (← changeTab (.select index))
 
 /-- `tab-new`: a new tab right after the call's window's tab, its one window
 on that window's buffer, focused, which brings it into view. -/
 def new (call : Call) : EditorM Unit := do
   let state ← editorState
   let from_ := tabOf state call
-  let made ← WindowCommands.orGiveUp (← call.target.window.id.newTab)
+  let made ← orGiveUp (← call.target.window.id.newTab)
   -- The new tab is opened after the tab in view; it goes after the call's.
   if from_ != state.frame.tabIndex then
-    WindowCommands.orGiveUp (← changeTab (.move (state.frame.tabIndex + 1) (from_ + 1)))
-  WindowCommands.orGiveUp (← made.focus)
+    orGiveUp (← changeTab (.move (state.frame.tabIndex + 1) (from_ + 1)))
+  orGiveUp (← made.focus)
 
 /-- `tab-close`: the call's window's tab is closed, with every window of
 it. -/
 def close (call : Call) : EditorM Unit := do
-  WindowCommands.orGiveUp (← changeTab (.close (tabOf (← editorState) call)))
+  orGiveUp (← changeTab (.close (tabOf (← editorState) call)))
 
 /-- `tab-next`: the tab after the call's window's tab, wrapping, or with a
 count N, tab N. -/
 def next (call : Call) : EditorM Unit := do
   let state ← editorState
-  let count := WindowCommands.countOf call
+  let count := call.count
   if 0 < count then
     selecting (count - 1)
   else
@@ -175,7 +174,7 @@ tabs before it, wrapping. -/
 def previous (call : Call) : EditorM Unit := do
   let state ← editorState
   let size := state.frame.tabs.size
-  let back := WindowCommands.steps (WindowCommands.countOf call) % size
+  let back := call.steps % size
   selecting ((tabOf state call + size - back) % size)
 
 /-- `tab-select-n`: tab `n`, numbered from 1. -/
@@ -207,7 +206,7 @@ def rename (call : Call) : EditorM Unit := do
   let index := tabOf state call
   match call.arguments with
   | .str text :: _ =>
-    WindowCommands.orGiveUp (← changeTab (.rename index (if text.isEmpty then none else some text)))
+    orGiveUp (← changeTab (.rename index (if text.isEmpty then none else some text)))
   | _ =>
     let given := ((state.frame.tabs[index]?).bind (·.name)).getD ""
     if let .error refusal← prompt renamePrompt { command := renameName } given then
@@ -217,9 +216,9 @@ def rename (call : Call) : EditorM Unit := do
 place, or by the count, clamped at the ends. -/
 def moveBy (forward : Bool) (call : Call) : EditorM Unit := do
   let index := tabOf (← editorState) call
-  let steps := WindowCommands.steps (WindowCommands.countOf call)
+  let steps := call.steps
   let to := if forward then index + steps else index - steps
-  WindowCommands.orGiveUp (← changeTab (.move index to))
+  orGiveUp (← changeTab (.move index to))
 
 /-- The names of the commands the `tab-commands` package registers
 (`Editor/TabCommands/Compiled.lean`), in the order it registers them,

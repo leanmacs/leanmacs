@@ -568,4 +568,36 @@ def insertExcerptChecks : List Check :=
             let made := excerptInvoked driver "make-empty"
             excerptRead made "empty" == some "one\n" && headersOf made "empty" == some #["h"] }]
 
+/-- A driver of the checks of giving up on a layout refusal: `C-a` runs
+`give`, which gives up on the refusal of closing the last window and would
+then say `after`, and `C-b` runs `pass`, which says the value it was handed. -/
+def givingUpDriver : Option TestDriver :=
+  let keys :=
+    dispatchKeys [("C-a", invoke "give"), ("C-b", invoke "pass")]
+      [("give", fun _ => do
+          let _ : Unit ← orGiveUp (.error .onlyWindow)
+          message "after"
+          return none),
+        ("pass", fun _ => do
+          let value : Nat ← orGiveUp (.ok 3)
+          message s!"passed {value}"
+          return none)]
+  (Loop.Driver.over keys (fun _ => none) (EditorState.initial ⟨640, 480⟩) editorModel).toOption
+
+/-- The checks of giving up on a layout refusal (`orGiveUp`,
+`Editor/Api.lean`). -/
+def orGiveUpChecks : List Check :=
+  [{  name :=
+        "a layout refusal given up on ends the command with the refusal's sentence, under the command's name, and nothing after it runs; a value that is no refusal is handed on"
+      run :=
+        pure <|
+          match givingUpDriver with
+          | none => false
+          | some driver =>
+            echoOf (fedTo driver (presses "C-a")).1 ==
+                some s!"give: {LayoutRefusal.onlyWindow.describe}" &&
+              echoOf (fedTo driver (presses "C-a")).1 ==
+                some "give: the last window cannot be closed" &&
+              echoOf (fedTo driver (presses "C-b")).1 == some "passed 3" }]
+
 end ModelTest

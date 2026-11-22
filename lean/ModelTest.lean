@@ -18,6 +18,7 @@ import ModelTest.Editor.Clipboard.Contract
 import ModelTest.Editor.Clipboard.Model
 import ModelTest.Editor.Command
 import ModelTest.Editor.Command.Append
+import ModelTest.Editor.Command.Call
 import ModelTest.Editor.Command.Control
 import ModelTest.Editor.Command.Dispatch
 import ModelTest.Editor.Command.Registry
@@ -572,6 +573,12 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   when the save is refused and when the buffer is edited meanwhile. They
   name no ex name. They are apart from `dispatchChecks`, which are
   defined before the driver;
+- `callChecks`: what a command reads of its call
+  (`Editor/Command/Call.lean`): its count, the first argument when that is
+  a natural number, and its steps, at least one;
+- `orGiveUpChecks`: giving up on a layout refusal (`orGiveUp`,
+  `Editor/Api.lean`): the command ends with the refusal's sentence, and a
+  value is handed on;
 - `quitChecks`: the quit rule and its name, the core's (`Editor/Quit.lean`),
   on a driver whose `quit` runs the rule: with nothing unsaved the editor
   leaves, and a refusal is said under the core's name;
@@ -1300,6 +1307,8 @@ def checks : List Check :=
     indentEditChecks ++
     indentLevelChecks ++
     quitChecks ++
+    callChecks ++
+    orGiveUpChecks ++
     apiStateChecks ++
     insertExcerptChecks ++
     journalFormatChecks ++

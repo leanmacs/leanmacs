@@ -185,19 +185,16 @@ def floatName : String :=
 def alreadyOnly : String :=
   "already only one window"
 
-/-- The count the call carries: its first argument when that is a natural
+/-- The count the call carries: the core's (`Call.count`,
+`Editor/Command/Call.lean`), its first argument when that is a natural
 number, as the Vim scheme lays a count out, and 0 for none. -/
 def countOf (call : Call) : Nat :=
-  match call.arguments with
-  | .nat count :: _ => count
-  | _ => 0
+  call.count
 
 /-- The value of `result`, or the command given up with what its refusal
-says. -/
+says: the core's (`Editor.orGiveUp`, `Editor/Api.lean`). -/
 def orGiveUp {α : Type} (result : Except LayoutRefusal α) : EditorM α :=
-  match result with
-  | .ok value => pure value
-  | .error refusal => giveUp refusal.describe
+  Editor.orGiveUp result
 
 /-- Splits the call's window by `placement` and focuses the new window,
 which is handed back. -/
@@ -308,7 +305,9 @@ window (`ViewId.arrange`). -/
 def arranging (change : Nat → Arrange) (call : Call) : EditorM Unit := do
   orGiveUp (← call.target.window.id.arrange (change (countOf call)))
 
-/-- The count as a number of steps: 1 for none. -/
+/-- The count as a number of steps: 1 for none. The core says the same of a
+call (`Call.steps`, `Editor/Command/Call.lean`), which the tab commands
+use. -/
 def steps (count : Nat) : Nat :=
   max 1 count
 

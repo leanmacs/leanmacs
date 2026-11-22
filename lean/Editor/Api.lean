@@ -866,6 +866,15 @@ def giveUp {α : Type} (reason : String) : EditorM α := do
   ControlRequest.ask (.giveUp reason)
   throw .badSelection
 
+/-- The value of `result`, or the command given up with what its layout
+refusal says (`giveUp`, `LayoutRefusal.describe`): what a command that
+splits, closes, focuses or arranges windows and tabs does with a refusal it
+has nothing to add to. -/
+def orGiveUp {α : Type} (result : Except LayoutRefusal α) : EditorM α :=
+  match result with
+  | .ok value => pure value
+  | .error refusal => giveUp refusal.describe
+
 /-- Ends the command here, with `reason`, and keeps what it did ("Breaking
 off", in the module docs): the loop that runs the command rolls nothing
 back, says `<name>: <reason>` in the echo area and puts the input scheme

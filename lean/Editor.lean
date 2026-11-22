@@ -9,6 +9,7 @@ import Editor.TabCommands
 import Editor.Text.Word
 import Editor.UndoTree.Theorems
 import Editor.Vocabulary
+import Editor.WindowCommands
 
 /-!
 # The editor
