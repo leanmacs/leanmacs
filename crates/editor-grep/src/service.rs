@@ -254,6 +254,11 @@ struct Inner<F, E> {
     /// test lets the thread go on.
     #[cfg(test)]
     unfinished: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// Called, in a test, on a search's thread once it has taken the
+    /// flushes its end settles and before it completes them: where a test
+    /// holds the thread to see that shutdown does not return first.
+    #[cfg(test)]
+    settled: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 /// The search service, over the port `F` and the engine `E` its factory
@@ -307,6 +312,8 @@ where
             finished: Condvar::new(),
             #[cfg(test)]
             unfinished: std::sync::OnceLock::new(),
+            #[cfg(test)]
+            settled: std::sync::OnceLock::new(),
         });
         Self {
             handle: Arc::new(Handle { inner }),
@@ -321,6 +328,14 @@ where
             self.inner().unfinished.set(Box::new(told)).is_ok(),
             "set once"
         );
+    }
+
+    /// Has `told` called on a search's thread once it has taken the
+    /// flushes its end settles, before it completes them. Set once, by a
+    /// test.
+    #[cfg(test)]
+    pub(crate) fn when_settled(&self, told: impl Fn() + Send + Sync + 'static) {
+        assert!(self.inner().settled.set(Box::new(told)).is_ok(), "set once");
     }
 
     /// The service.
@@ -387,13 +402,16 @@ where
             .spawn(move || searching.search(id, ticket, &request, &cancelled))
             .is_ok();
         if !started {
-            let mut state = inner.state();
-            state.searches.remove(&id);
-            state.active -= 1;
-            let flushed = state.settle(ticket);
-            drop(state);
-            inner.finished.notify_all();
+            let flushed = {
+                let mut state = inner.state();
+                state.searches.remove(&id);
+                state.settle(ticket)
+            };
+            // Completed before the search is counted finished, as at a
+            // search's end: shutdown never returns before them.
             inner.complete_all(flushed);
+            inner.state().active -= 1;
+            inner.finished.notify_all();
         }
         started
     }
@@ -702,12 +720,17 @@ where
                 }
             }
         }
-        let mut state = self.state();
-        state.active -= 1;
-        let flushed = state.settle(ticket);
-        drop(state);
-        self.finished.notify_all();
+        // The flushes this end settles are completed before the thread
+        // counts itself finished, so a shutdown, which waits for that
+        // count, never returns before a flush it kept is completed.
+        let flushed = self.state().settle(ticket);
+        #[cfg(test)]
+        if let Some(told) = self.settled.get() {
+            told();
+        }
         self.complete_all(flushed);
+        self.state().active -= 1;
+        self.finished.notify_all();
     }
 }
 

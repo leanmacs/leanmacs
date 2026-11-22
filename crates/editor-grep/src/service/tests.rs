@@ -607,6 +607,77 @@ fn a_flush_waits_for_a_live_search_and_a_cancel_withdraws_it() {
 }
 
 #[test]
+fn shutdown_does_not_return_before_a_flush_a_search_thread_settled_is_completed() {
+    // The search's end takes the flush it settles out of the table, then
+    // completes it with no lock held. Held between the two, the thread has
+    // ended its search; a shutdown that returned then would return before
+    // the flush it promises is completed.
+    let gate = Gate::default();
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let made = gate.clone();
+    let files = five();
+    let service = Service::new(
+        move || {
+            (
+                Gated {
+                    files: files.clone(),
+                    gate: made.clone(),
+                },
+                Literal,
+            )
+        },
+        |c: char| c.is_ascii_alphanumeric() || c == '_',
+        {
+            let completions = Arc::clone(&completions);
+            move |id| {
+                completions
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(id);
+            }
+        },
+    );
+    let (reached, settled) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let hold = Mutex::new((reached, released));
+    service.when_settled(move || {
+        let hold = hold.lock().unwrap_or_else(PoisonError::into_inner);
+        let _ = hold.0.send(());
+        let _ = hold.1.recv_timeout(DEADLINE);
+    });
+    let release = Mutex::new(Some(release));
+    service.when_shutdown_waits(move || {
+        // Shutdown waits for the held thread: let it complete its flush.
+        if let Some(release) = release
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
+            let _ = release.send(());
+        }
+    });
+    assert!(service.start(1, request("/w", "x"), 10));
+    assert!(gate.until_entered(1));
+    assert!(service.flush(9));
+    gate.open();
+    settled
+        .recv_timeout(DEADLINE)
+        .expect("the search's thread settles its flush");
+
+    service.shutdown();
+
+    let completed = completions
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    assert_eq!(
+        completed.iter().filter(|&&id| id == 9).count(),
+        1,
+        "the flush is completed before shutdown returns: {completed:?}"
+    );
+}
+
+#[test]
 fn shutdown_completes_a_flush_once_and_only_after_the_search_thread_it_waited_for_has_returned() {
     let gate = Gate::default();
     let completions = Arc::new(Mutex::new(Vec::new()));
