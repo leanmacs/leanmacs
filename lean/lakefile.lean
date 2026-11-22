@@ -71,28 +71,6 @@ kit's opener with the interface's hooks (`FilesApiTest.Fake`), and its
 contract check (`FilesApiTest.Contract`). -/
 lean_lib FilesApiTest where globs := #[.submodules `FilesApiTest]
 
-/-- The interface library `buffers-api` (`BuffersApi.lean`): the hook before
-a buffer closes, what the buffer commands do for others, and the names
-others reach. Staged here as `FilesApi` is, until ex, which reaches it,
-moves out of the core (phase 8). -/
-lean_lib BuffersApi
-
-/-- The test library of `buffers-api` (`BuffersApiTest/`): its fake, a close
-over the core's API (`BuffersApiTest.Fake`), and its contract check
-(`BuffersApiTest.Contract`). -/
-lean_lib BuffersApiTest where globs := #[.submodules `BuffersApiTest]
-
-/-- The interface library `shell-api` (`ShellApi.lean`): the names of the
-shell's commands, which ex binds `:!` to, and the history of the lines run,
-which ex's prompt offers and the compile mode copies. Staged here as
-`FilesApi` is, until ex moves out of the core (phase 8). -/
-lean_lib ShellApi
-
-/-- The test library of `shell-api` (`ShellApiTest/`): its fake, the three
-commands over the core's API with a `shell-command` that records its line
-(`ShellApiTest.Fake`), and its contract check (`ShellApiTest.Contract`). -/
-lean_lib ShellApiTest where globs := #[.submodules `ShellApiTest]
-
 /-- Code that `ffi-test overflow` has Lean's interpreter run
 (`InterpretedFixture.lean`; `mise run ffi-overflow`). It is a library of its
 own that no executable imports, so it is compiled to an `.olean` and never
@@ -1198,7 +1176,7 @@ through the features still in the core, so the bundle ships them as it ships
 `Editor`. One moves out of this list when it moves to `packages/`, as
 `VcApi` and `ProjectApi` did in phase 6. -/
 def stagedInterfaceLibraries : List Lean.Name :=
-  [`FilesApi, `FilesApiTest, `BuffersApi, `BuffersApiTest, `ShellApi, `ShellApiTest]
+  [`FilesApi, `FilesApiTest]
 
 /-- Whether a library of `pkg` ships its modules built in the bundle
 (`editorShipped`): of the core, `Editor` and `EditorCore`, the libraries

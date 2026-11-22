@@ -1,19 +1,19 @@
 import BuffersApi
+import BuffersApiTest.Check
 import BuffersApiTest.Contract
 import BuffersApiTest.Fake
 import Editor.Extension
-import ModelTest.Check
 
 /-!
 # Model tests: `BuffersApi.lean`
 
 `buffersApiChecks`: the interface library `buffers-api`'s names, its fake
 held to its contract, and the contract biting on implementations that
-leave something out or close without the hook. The root module `ModelTest`
-runs them; its module doc says what each shows.
+leave something out or close without the hook. The test driver's root,
+`BuffersApiTest/Model.lean`, runs them; its module doc says what each shows.
 -/
 
-namespace ModelTest
+namespace BuffersApiTest
 
 open Editor
 
@@ -65,4 +65,4 @@ def buffersApiChecks : List Check :=
         "an implementation whose close runs no hook fails the contract: both closes' checks are false, and those of what it registers hold"
       run := pure ((buffersFailing hooklessBuffers).length == 2) }]
 
-end ModelTest
+end BuffersApiTest

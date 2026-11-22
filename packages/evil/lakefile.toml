@@ -28,7 +28,8 @@
 #   of completion at point by the constants of their interface packages,
 #   `minibuffer-api` and `at-point-api`, of the window and the tab
 #   commands by `window-commands-api`'s and `tab-commands-api`'s, and of
-#   the ex line by `ex-api`'s; it requires each, beside the core.
+#   the ex line and the shell by `ex-api`'s and `shell-api`'s; it requires
+#   each, beside the core, and `buffers-api` for its tests' fake.
 # - `evil-test` is its test driver (`lake test`): the tests that need no
 #   Rust library, rooted at `EvilTest/Model.lean`. It is no default target,
 #   as the core's `model-test` is not: `mise run lean` links with the
@@ -95,6 +96,18 @@ path = "../tab-commands-api"
 [[require]]
 name = "ex-api"
 path = "../ex-api"
+
+# The interface package of the buffer commands: its fake, which this
+# package's tests close a buffer with.
+[[require]]
+name = "buffers-api"
+path = "../buffers-api"
+
+# The interface package of the shell: the name `keyboard-quit`, which
+# `C-g` runs.
+[[require]]
+name = "shell-api"
+path = "../shell-api"
 
 [[require]]
 name = "editor-core"

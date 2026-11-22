@@ -7,7 +7,7 @@ in the echo area and more in an output buffer per workspace;
 `keyboard-quit` (`C-g`) interrupts the run in flight. Each workspace keeps
 the history of the lines run in it, which the ex prompt offers first, and
 which is kept across a restart. Ex hands its `:!` lines to it by the names
-of the core's staged interface library `shell-api`. An editor without it
+of the interface package `shell-api`. An editor without it
 runs no `:!` line, and `C-g` in normal state names nothing.
 
 Its design record is in [packages.md](../../docs/design/packages.md),
@@ -32,8 +32,8 @@ Its design record is in [packages.md](../../docs/design/packages.md),
 4. [`Shell.lean`](Shell.lean): the commands and the job, written over the
    core's editor API and its process port.
 
-The names and the history are the core's interface library `shell-api`'s
-(`lean/ShellApi.lean`), staged in the core until ex moves out. The
+The names and the history are the interface package `shell-api`'s
+(`ShellApi`, [`../shell-api/`](../shell-api/)). The
 declarations keep their names, `Editor.Shell.…`, from when they were
 modules of the core.
 

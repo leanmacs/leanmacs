@@ -2,8 +2,10 @@ greeting-api	interface	-
 greeting	implementation	greeting-api
 greeting-loud	implementation	greeting greeting-api
 echo	implementation	-
-ex-api	interface	-
-ex	implementation	ex-api
+shell-api	interface	-
+ex-api	interface	shell-api
+buffers-api	interface	-
+ex	implementation	ex-api buffers-api shell-api
 frame-commands-api	interface	-
 frame-commands	implementation	frame-commands-api
 evil-api	interface	-
@@ -16,11 +18,11 @@ restore	implementation	-
 package-set	implementation	-
 minibuffer-api	interface	-
 at-point-api	interface	-
-evil	implementation	evil-api minibuffer-api at-point-api window-commands-api tab-commands-api ex-api
+evil	implementation	evil-api minibuffer-api at-point-api window-commands-api tab-commands-api ex-api buffers-api shell-api
 themes-api	interface	-
 themes	implementation	themes-api
-files	implementation	-
-buffers	implementation	-
+files	implementation	buffers-api
+buffers	implementation	buffers-api
 compile-api	interface	-
 project-api	interface	compile-api
 vc-api	interface	-
@@ -28,9 +30,9 @@ workspace	implementation	project-api vc-api compile-api
 project-search-api	interface	-
 project-search	implementation	project-search-api
 working-set-api	interface	-
-working-set	implementation	working-set-api vc-api
-shell	implementation	-
-version-control	implementation	project-api vc-api
+working-set	implementation	working-set-api vc-api buffers-api
+shell	implementation	shell-api
+version-control	implementation	project-api vc-api buffers-api
 completion-api	interface	-
 completion	implementation	completion-api
 mode-line	implementation	-
@@ -40,7 +42,7 @@ execute-command-api	interface	-
 execute-command	implementation	execute-command-api minibuffer-api
 binding-search-api	interface	-
 binding-search	implementation	binding-search-api minibuffer-api
-compile	implementation	minibuffer-api compile-api
+compile	implementation	minibuffer-api compile-api shell-api
 at-point	implementation	at-point-api evil-api
 languages	implementation	-
 word-count	implementation	-

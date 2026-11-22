@@ -182,7 +182,8 @@ name = "files"
 path = "files"
 
 # The buffer commands, `switch-buffer`, `list-buffers` and
-# `close-buffer`. It implements the core's interface library buffers-api.
+# `close-buffer`. It implements the interface package buffers-api, which
+# it requires and which so is in the set too and registers nothing.
 [[require]]
 name = "buffers"
 path = "buffers"
@@ -212,8 +213,8 @@ name = "working-set"
 path = "working-set"
 
 # The shell: `shell-command`, `shell-filter` and `keyboard-quit`, and the
-# history of the lines run per workspace. It implements the core's interface
-# library shell-api, through which ex hands it a `:!` line.
+# history of the lines run per workspace. It implements the interface
+# package shell-api, through which ex hands it a `:!` line.
 [[require]]
 name = "shell"
 path = "shell"

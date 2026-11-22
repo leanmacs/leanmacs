@@ -44,7 +44,7 @@ made of, its parts, its ranges and a name's binding, stays the core's
 - **The prompt's candidates are the `:!` lines of the buffer's scope, then
   the ex names that are bound**: the history of the asking buffer's project,
   or the editor-wide one for a buffer outside any workspace, newest first
-  (`Shell.history`, `shell-api`'s, `ShellApi.lean`), then the bound names (`exNames`,
+  (`Shell.history`, `shell-api`'s, `packages/shell-api/ShellApi.lean`), then the bound names (`exNames`,
   `lean/Editor/Api.lean`), which the loop answers from the registry as it is
   when the line is asked for. So while a line is being typed the scene
   lists the lines and names it matches, a key of the minibuffer chooses
@@ -72,8 +72,8 @@ made of, its parts, its ranges and a name's binding, stays the core's
      runs; so is a range alone, which in Vim goes to a line
      (`rangeAlone`);
   2. **a line of the bang form** (`:!cmd`, `Line.bang`) is handed to the
-     shell, by the names of the interface library `shell-api`
-     (`ShellApi.lean`; the shell, `packages/shell/Shell.lean`, implements it). With
+     shell, by the names of the interface package `shell-api`
+     (`packages/shell-api/ShellApi.lean`; the shell, `packages/shell/Shell.lean`, implements it). With
      no range, the command
      `shell-command` is asked to run after this one with the text after
      the `!` and the line, trimmed (`invoke`). With a range, `:{range}!cmd`,

@@ -45,7 +45,7 @@ They are handed the context of a harness of hosts over the real elaborator
 (`Editor.Test.Linked.HostContext.run`), on the base a set that holds this
 Lake package elaborates config on, the config base `Editor` and this
 package's entry module, `Ex.EditorPackage`, found in the core's `.olean`
-directory, this package's and its interface package's
+directory, this package's and those of the interface packages it requires
 (`oleanDirectories`), with the packages this Lake package hands a set's
 editor (`setPackages`). Each check hands its host what it registers
 itself: the ex package's commands and ex names, `files-api`'s fake and
@@ -63,11 +63,12 @@ def setPackages : Array Editor.Package :=
 /-- The directories of the `.olean` files the base's second module,
 `Ex.EditorPackage`, and what it imports are found in, from the package's
 directory, where the gate runs this executable: this package's own, and
-that of the interface package it requires, `ex-api`, at the path its
-lakefile requires it by. A set's editor is handed each package's directory
+those of the interface packages it requires, `ex-api`, `shell-api` and
+`buffers-api`, at the paths its lakefile requires them by. A set's editor is handed each package's directory
 the same way (`editor.oleans`). -/
 def oleanDirectories : List String :=
-  [".lake/build/lib/lean", "../ex-api/.lake/build/lib/lean"]
+  [".lake/build/lib/lean", "../ex-api/.lake/build/lib/lean", "../shell-api/.lake/build/lib/lean",
+    "../buffers-api/.lake/build/lib/lean"]
 
 /-- Every check of the linked test, in the order they run, over `context`. -/
 def ExTest.Linked.checks (context : Editor.Test.Linked.HostContext) : List ExTest.Check :=

@@ -9,7 +9,6 @@ import Editor.SyntaxTree.Contract
 import Editor.Text.Contract
 import Editor.UndoTree.Cases
 import Editor.Watch.Contract
-import ModelTest.BuffersApi
 import ModelTest.Check
 import ModelTest.Editor.Api
 import ModelTest.Editor.Api.Cases
@@ -130,7 +129,6 @@ import ModelTest.Editor.WindowCheck
 import ModelTest.Editor.Workspace
 import ModelTest.EditorCore.EditorPackage
 import ModelTest.FilesApi
-import ModelTest.ShellApi
 
 /-!
 # The model tests
@@ -997,13 +995,15 @@ names a scheme's key:
   none. Evil's `*` and `#` hold the same through the keys
   (`evilSearchChecks`).
 
-The interface libraries the core stages are checked with no git, on the
+The interface library the core holds is checked with no git, on the
 core's kit (version control is the `version-control` package's,
 `packages/version-control/`; the interface packages `vc-api` and
 `project-api`, staged here until phase 6, check their own,
 `VcApiTest.vcApiChecks`, `.versionControlModelChecks`,
 `.versionControlContractFailures` and `ProjectApiTest.projectApiChecks`,
-which were this driver's):
+which were this driver's, and so do `buffers-api` and `shell-api`, staged
+here until phase 8: `BuffersApiTest.buffersApiChecks` and
+`ShellApiTest.shellApiChecks`):
 
 - `filesApiChecks`: the interface library `files-api` (`FilesApi.lean`):
   its names; its fake (`FilesApiTest.fake`, the kit's opener with the
@@ -1015,18 +1015,6 @@ which were this driver's):
   the language the registry's table chooses for a file it opens; and a set's own `Files` value of
   the name `files`,
   registered after the feature's, is the one `files?` answers;
-- `buffersApiChecks`: the interface library `buffers-api` (`BuffersApi.lean`):
-  its names; its fake (`BuffersApiTest.fake`, a close over the core's API)
-  keeps its contract; the contract fails a package lacking `close-buffer`
-  and one whose close runs no hook;
-- `shellApiChecks`: the interface library `shell-api` (`ShellApi.lean`): its
-  names and the history's store; its fake (`ShellApiTest.fake`, the three
-  commands over the core's API, `shell-command` recording its line) keeps
-  its contract; the contract fails a package lacking `keyboard-quit`, one
-  that registers no codec for the history, and one whose `shell-command`
-  records nothing; `remember`'s rule; and the history's store, which is
-  kept across a restart, round-tripping through the session index's JSON,
-  initial and populated;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1090,7 +1078,7 @@ Session restore is checked in Lean alone too:
   twice, negative integers and big naturals, a NUL, bytes that are not
   UTF-8 and multi-byte characters; and JSON that is no tree read as none
   (a shipped store kept across a restart is round-tripped by its owner's
-  checks: the shell's history by `shellApiChecks`, version control's
+  checks: the shell's history by `ShellApiTest.shellApiChecks`, version control's
   reviews by `VersionControlTest.reviewRecordChecks`).
 - `restoreFrameChecks`: the frame as the session index records it
   (`Editor/Restore/Frame.lean`), pure and on the text model: its JSON
@@ -1355,8 +1343,6 @@ def checks : List Check :=
     excerptViewedChecks ++
     jsonChecks ++
     filesApiChecks ++
-    buffersApiChecks ++
-    shellApiChecks ++
     gutterCarryChecks ++
     gutterTrackChecks
 

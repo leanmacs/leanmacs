@@ -137,7 +137,7 @@ resolves the range against the view it was asked from (`Range.resolve`,
 
 The names others reach the shell by, and its history (`Scope`,
 `historyStore`, `history`, `remember`, `record`), are the interface library
-`shell-api`'s (`ShellApi.lean`), in this namespace, so ex and the compile
+`shell-api`'s (`packages/shell-api/ShellApi.lean`), in this namespace, so ex and the compile
 mode reach them without this module.
 
 Pinned by `ShellTest.shellChecks`, on the loop's driver over the editor's

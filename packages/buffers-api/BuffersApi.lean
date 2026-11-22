@@ -3,11 +3,12 @@ import Editor.Extension
 /-!
 # The interface library `buffers-api`
 
-The interface library `buffers-api`, staged in the core's Lake package as
-its own `lean_lib` with the layout and names it will have as the package
-`packages/buffers-api/` (`lean/lakefile.lean`, `lean_lib BuffersApi`): the
-contract between the buffer commands (`packages/buffers/Buffers.lean`), which
-implement it, and what others ask of closing a buffer. It imports only the
+The interface package `buffers-api` (`packages/buffers-api/`), staged in
+the core's Lake package until features-as-packages phase 8, when its last
+user in the core, the ex line, moved out, and moved here with a `git mv`
+and a lakefile, no import line in it changed: the contract between the
+buffer commands (`packages/buffers/Buffers.lean`), which implement it, and
+what others ask of closing a buffer. It imports only the
 core's API, and its test library (`BuffersApiTest`) only that, this
 library and the core's test kit.
 

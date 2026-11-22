@@ -17,7 +17,7 @@ test kit (`ShellTest/Kit.lean`) and the core's. They were the core's
 moved here with their sentences as they were.
 
 - `shellChecks`: the `Package` value (`Shell/Compiled.lean`) held to the
-  contract of the core's staged interface library `shell-api`
+  contract of the interface package `shell-api`
   (`ShellApiTest.contractChecks`); what it keeps across a restart, its
   history whole and neither its output buffers nor its run in flight, and
   its run reported; and `shell-command`, `shell-filter` and `keyboard-quit`

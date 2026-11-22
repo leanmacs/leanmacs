@@ -16,9 +16,9 @@
 #   `globs` hold every module under `WorkingSet`, so the package imports
 #   check sees each one's imports. It implements the interface package
 #   `working-set-api`, which it requires, and reaches the files and the buffers
-#   through the core's interface libraries `files-api` and `buffers-api`,
-#   and version control through the interface package `vc-api`, which it
-#   requires.
+#   through the core's interface library `files-api` and the interface
+#   package `buffers-api`, and version control through the interface
+#   package `vc-api`, each of which it requires.
 # - `working-set-test` is its test driver (`lake test`): the tests that need
 #   no Rust library, rooted at `WorkingSetTest/Model.lean`. It is no default
 #   target, as the core's `model-test` is not: `mise run lean` links with the
@@ -62,6 +62,13 @@ path = "../working-set-api"
 [[require]]
 name = "vc-api"
 path = "../vc-api"
+
+# The interface package of the buffer commands: the hook before a buffer
+# closes, which the working sets register at, and its fake, which this
+# package's tests close buffers with.
+[[require]]
+name = "buffers-api"
+path = "../buffers-api"
 
 [[require]]
 name = "editor-core"

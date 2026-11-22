@@ -14,9 +14,9 @@
 #   run's job, `Shell/Compiled.lean`, the `Package` value, and its entry
 #   module `Shell/EditorPackage.lean`, which the package-set build reads. Its
 #   `globs` hold every module under `Shell`, so the package imports check
-#   sees each one's imports. It implements the core's staged interface
-#   library `shell-api` (`ShellApi`: the three names and the history, which
-#   ex reads), so it requires no package but the core.
+#   sees each one's imports. It implements the interface package
+#   `shell-api` (`ShellApi`: the three names and the history, which ex
+#   reads), which it requires, beside the core.
 # - `shell-test` is its test driver (`lake test`): the tests that need no
 #   Rust library, rooted at `ShellTest/Model.lean`. It is no default target,
 #   as the core's `model-test` is not: `mise run lean` links with the system
@@ -43,6 +43,13 @@ name = "shell"
 testDriver = "«shell-test»"
 defaultTargets = ["Shell", "ShellTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+
+# The interface package this one implements: the names of the shell's
+# commands, the history of the lines run, its fake and the contract check
+# this package's tests run.
+[[require]]
+name = "shell-api"
+path = "../shell-api"
 
 [[require]]
 name = "editor-core"

@@ -12,9 +12,10 @@
 #   `Buffers/Compiled.lean`, the `Package` value, and its entry module
 #   `Buffers/EditorPackage.lean`, which the package-set build reads. Its
 #   `globs` hold every module under `Buffers`, so the package imports check
-#   sees each one's imports. It implements the core's interface library
-#   `buffers-api` (`BuffersApi`, staged in the core while ex binds `b`, `ls`
-#   and `bd` to its names), so it requires no package but the core.
+#   sees each one's imports. It implements the interface package
+#   `buffers-api` (`BuffersApi`, staged in the core until the ex line,
+#   which binds `b`, `ls` and `bd` to its names, moved out), which it
+#   requires, beside the core.
 # - `buffers-test` is its test driver (`lake test`): the tests that need no
 #   Rust library, rooted at `BuffersTest/Model.lean`. It is no default
 #   target, as the core's `model-test` is not: `mise run lean` links with
@@ -40,6 +41,13 @@ name = "buffers"
 testDriver = "«buffers-test»"
 defaultTargets = ["Buffers", "BuffersTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+
+# The interface package this one implements: the hook before a buffer
+# closes, the close others ask for, the names the ex names `b`, `ls` and
+# `bd` run, its fake and the contract check this package's tests run.
+[[require]]
+name = "buffers-api"
+path = "../buffers-api"
 
 [[require]]
 name = "editor-core"

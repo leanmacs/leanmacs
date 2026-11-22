@@ -97,14 +97,14 @@ def setPackages : Array Editor.Package :=
 `Evil.EditorPackage`, and what it imports are found in, from the package's
 directory, where the gate runs this executable: this package's own, and
 those of the interface packages it requires, `evil-api`, `minibuffer-api`,
-`at-point-api`, `window-commands-api`, `tab-commands-api` and `ex-api`, at the paths
+`at-point-api`, `window-commands-api`, `tab-commands-api`, `ex-api` and `shell-api`, at the paths
 its lakefile requires them by. A set's
 editor is handed each package's directory the same way (`editor.oleans`). -/
 def oleanDirectories : List String :=
   [".lake/build/lib/lean", "../evil-api/.lake/build/lib/lean",
     "../minibuffer-api/.lake/build/lib/lean", "../at-point-api/.lake/build/lib/lean",
     "../window-commands-api/.lake/build/lib/lean", "../tab-commands-api/.lake/build/lib/lean",
-    "../ex-api/.lake/build/lib/lean"]
+    "../ex-api/.lake/build/lib/lean", "../shell-api/.lake/build/lib/lean"]
 
 /-- The directory of the syntax fixtures (`tests/syntax`), from the
 package's directory, where the gate runs this executable. -/

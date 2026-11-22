@@ -67,6 +67,13 @@ path = "../project-api"
 name = "vc-api"
 path = "../vc-api"
 
+# The interface package of the buffer commands: the hook before a buffer
+# closes, which the commit buffer registers at, and its fake, which this
+# package's tests close buffers with.
+[[require]]
+name = "buffers-api"
+path = "../buffers-api"
+
 [[require]]
 name = "editor-core"
 path = "../../lean"

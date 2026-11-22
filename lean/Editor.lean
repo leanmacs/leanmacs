@@ -223,10 +223,11 @@ reaches the three through the set's base, their entry modules
 `WorkingSet.EditorPackage`) among it.
 
 `:!` is not here: the shell is a default package outside the core
-(`packages/shell/`), and the ex line reaches it through the core's staged
-interface library `shell-api` (`ShellApi.lean`), whose names and history
-this base brings. Config reaches the shell's commands through the set's
-base, the package's entry module `Shell.EditorPackage` among it.
+(`packages/shell/`), and the ex line reaches it through the interface
+package `shell-api` (`packages/shell-api/`), whose names and history
+config reaches through the set's base, as it reaches the shell's
+commands: the entry modules `Ex.EditorPackage` and `Shell.EditorPackage`
+bring them.
 
 `compile` is not here: the compile mode is a package outside the core
 (`packages/compile/`), and the core requires no package, so this module

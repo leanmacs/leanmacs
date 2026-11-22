@@ -22,8 +22,8 @@
 #   core's (`lean/Editor/Ex/Line.lean`), and so do the quit rule and its
 #   name (`lean/Editor/Quit.lean`). It reaches the file commands through
 #   the core's interface library `files-api`, and the buffer commands and
-#   the shell through `buffers-api` and `shell-api`, libraries of the
-#   core's Lake package until that roadmap's phase 8 moves them out.
+#   the shell through the interface packages `buffers-api` and
+#   `shell-api`, which it requires too.
 # - `ex-test` is its test driver (`lake test`): the tests that need no Rust
 #   library, rooted at `ExTest/Model.lean`. It is no default target, as the
 #   core's `model-test` is not: `mise run lean` links with the system
@@ -58,6 +58,18 @@ leanOptions = { linter.all = true, warningAsError = true }
 [[require]]
 name = "ex-api"
 path = "../ex-api"
+
+# The interface package of the buffer commands: the names the ex names
+# `b`, `ls` and `bd` run.
+[[require]]
+name = "buffers-api"
+path = "../buffers-api"
+
+# The interface package of the shell: the names a `:!` line is handed to,
+# and the history of the lines run, which the ex prompt offers.
+[[require]]
+name = "shell-api"
+path = "../shell-api"
 
 [[require]]
 name = "editor-core"

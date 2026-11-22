@@ -40,21 +40,22 @@
 # them: a core module that is neither internal nor a test double is part of
 # the API.
 #
-# - A core interface (`is_core_interface`): the interface libraries the
-#   core's Lake package holds outside `Editor`, each of which is part of
-#   the API and may be imported by any module of a package, library or
-#   test. `FilesApi` is a core interface for good: session restore, a core
-#   module, adopts files and reads the load limit through it. `BuffersApi`
-#   and `ShellApi` are staged in the core until ex, which reaches them,
-#   moves out (the features-as-packages roadmap's phase 8). `ProjectApi` and
-#   `VcApi`, staged here until no core module imported them, left this list
-#   when they moved into interface packages of their own
-#   (`packages/project-api/`, `packages/vc-api/`), in its phase 6: an
+# - A core interface (`is_core_interface`): the interface library the
+#   core's Lake package holds outside `Editor`, which is part of the API
+#   and may be imported by any module of a package, library or test.
+#   `FilesApi` is a core interface for good: session restore, a core
+#   module, adopts files and reads the load limit through it. `ProjectApi`
+#   and `VcApi`, staged here until no core module imported them, left this
+#   list when they moved into interface packages of their own
+#   (`packages/project-api/`, `packages/vc-api/`), in the
+#   features-as-packages roadmap's phase 6, and `BuffersApi` and
+#   `ShellApi`, staged until ex, which reached them, moved out, in its
+#   phase 8 (`packages/buffers-api/`, `packages/shell-api/`): an
 #   interface package's modules are no modules of the core's Lake package,
 #   so the query names no import of them.
-#   Their test libraries (`<I>Test`, `FilesApiTest.Fake` and the like) are
-#   test doubles (`is_double`), and the linked support under them
-#   (`<I>Test.Linked…`) is of the linked test kit (`is_linked_kit`).
+#   Its test library (`FilesApiTest`, `FilesApiTest.Fake` and the like) is
+#   test doubles (`is_double`), and linked support under it
+#   (`FilesApiTest.Linked…`) is of the linked test kit (`is_linked_kit`).
 # - A test double (`is_double`): the pure models of the ports, the
 #   contracts and cases, the fakes, the test scheme, the loop's driver, the
 #   reading of what a package registers (`Editor.Config.Packages`), the
@@ -63,9 +64,9 @@
 #   the support its own model tests are written on, and a feature's test
 #   kit still in the core (`Editor.*.Kit`, such as `Editor.Files.Kit`, the
 #   drivers of the real file commands), which moves into that feature's
-#   test library when it moves out; and the test libraries of the core
-#   interfaces (`FilesApiTest`, `BuffersApiTest`, `ShellApiTest`: their
-#   fakes, contract checks and support) but what is under `<I>Test.Linked`. A test module, of any of
+#   test library when it moves out; and the test library of the core
+#   interface (`FilesApiTest`: its fake, contract check and support) but
+#   what is under `FilesApiTest.Linked`. A test module, of any of
 #   the three test kinds, may import one; a library module may not.
 # - The linked test kit (`is_linked_kit`): `Editor.Test.Linked` and
 #   everything under it, the rig of the core's checks over the real
@@ -151,7 +152,7 @@ is_double() {
     Editor.*.Kit) return 0 ;;
     Editor.*.Model | Editor.*.Model.*) return 0 ;;
     Editor.*Contract | Editor.*.Cases) return 0 ;;
-    FilesApiTest.* | BuffersApiTest.* | ShellApiTest.*) return 0 ;;
+    FilesApiTest.*) return 0 ;;
   esac
   return 1
 }
@@ -161,7 +162,7 @@ is_double() {
 # `internal_reason`, which would refuse it as no module of the editor.
 is_core_interface() {
   case $1 in
-    FilesApi | BuffersApi | ShellApi) return 0 ;;
+    FilesApi) return 0 ;;
   esac
   return 1
 }

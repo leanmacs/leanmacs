@@ -1,6 +1,6 @@
 import Editor.Restore.Value
-import ModelTest.Check
 import ShellApi
+import ShellApiTest.Check
 import ShellApiTest.Contract
 import ShellApiTest.Fake
 
@@ -10,11 +10,11 @@ import ShellApiTest.Fake
 `shellApiChecks`: the interface library `shell-api`'s names, its fake held
 to its contract, and the contract biting on implementations that leave a
 command out, register no codec for the history, or record nothing, and the
-history's store round-tripping through the session index's JSON. The root
-module `ModelTest` runs them; its module doc says what each shows.
+history's store round-tripping through the session index's JSON. The test driver's root,
+`ShellApiTest/Model.lean`, runs them; its module doc says what each shows.
 -/
 
-namespace ModelTest
+namespace ShellApiTest
 
 open Editor
 
@@ -93,4 +93,4 @@ def shellApiChecks : List Check :=
           shellRoundTrips (Shell.historyStore.encode Shell.historyStore.initial) &&
             shellRoundTrips (Shell.historyStore.encode #[":!make", "ls -la", "echo é\x00"]) }]
 
-end ModelTest
+end ShellApiTest

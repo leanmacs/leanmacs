@@ -48,6 +48,12 @@ testDriver = "«files-test»"
 defaultTargets = ["Files", "FilesTest"]
 leanOptions = { linter.all = true, warningAsError = true }
 
+# The interface package of the buffer commands: its fake, which this
+# package's test kit closes a buffer with.
+[[require]]
+name = "buffers-api"
+path = "../buffers-api"
+
 [[require]]
 name = "editor-core"
 path = "../../lean"

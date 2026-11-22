@@ -23,7 +23,8 @@ command line".
 ## Its source, in reading order
 
 1. [`lakefile.toml`](lakefile.toml): the Lake package `ex`. It requires
-   the core, `editor-core`, and its interface package, `ex-api`, by path,
+   the core, `editor-core`, its interface package, `ex-api`, and the
+   interface packages `buffers-api` and `shell-api`, by path,
    declares the library `Ex`, the test library `ExTest` and the test
    driver `ex-test`, and turns every Lean linter on with warnings as
    errors.

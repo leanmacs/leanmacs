@@ -34,9 +34,9 @@ Its design record is in [packages.md](../../docs/design/packages.md),
    the core's editor API: the order buffers were last used in is the
    core's state's, and the messages are functions here.
 
-The names are the core's interface library `buffers-api`'s
-(`lean/BuffersApi.lean`), staged in the core while ex binds `b`, `ls` and
-`bd` to them. The declarations keep their names, `Editor.Buffers.…`, from
+The names are the interface package `buffers-api`'s
+(`BuffersApi`, [`../buffers-api/`](../buffers-api/)), which the ex line
+binds `b`, `ls` and `bd` to. The declarations keep their names, `Editor.Buffers.…`, from
 when they were modules of the core.
 
 ## Its tests
