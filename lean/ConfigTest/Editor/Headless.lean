@@ -57,8 +57,6 @@ import Editor.Setup
 import Editor.State
 import Editor.SyntaxTree
 import Editor.TabBar
-import Editor.TabCommands
-import Editor.TabCommands.Compiled
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
@@ -2464,22 +2462,26 @@ def shippedChecks (_ : Unit) : List Check :=
         return !WindowCommands.package.registered.commands.isEmpty &&
             WindowCommands.package.registered.commands.all (compiled ·.name) },
     { name :=
-        "the executable's hosts start with every tab command registered by the tab-commands package"
+        "the executable's hosts start with nothing of the tab commands' package: no command tab-new, tab-close, tab-next, tab-previous, tab-switch, tab-rename, tab-move-right, tab-move-left or tab-select-1 to tab-select-9, no source tabs, no source in the category tab, and no entry of an owner tab-commands, registered by a package of the core's Lake package"
       run := do
         let registry := shippedRegistry
-        let compiled (name : String) : Bool :=
-          (registry.find? name).any (·.owner == TabCommands.package.owner)
-        return !TabCommands.package.registered.commands.isEmpty &&
-            TabCommands.package.registered.commands.all (compiled ·.name) },
+        let names :=
+          #["tab-new", "tab-close", "tab-next", "tab-previous", "tab-switch", "tab-rename",
+              "tab-move-right", "tab-move-left"] ++
+            (Array.range 9).map fun index => s!"tab-select-{index + 1}"
+        return names.all (fun name => (registry.find? name).isNone) &&
+            (registry.source? "tabs").isNone &&
+            registry.sourcesIn "tab" == #[] &&
+            !(registry.ownersByKind.flatten.any (·.name == "tab-commands")) },
     { name :=
-        "the executable's hosts start with the completion sources that ship each registered by its package, so config can ask for each by name: the ex line's history and its names, and the tabs"
+        "the executable's hosts start with the completion sources that ship each registered by its package, so config can ask for each by name: the ex line's history and its names"
       run := do
         let registry := shippedRegistry
         let ownedBy (package : String) (name : String) : Bool :=
           registry.sources.any fun entry =>
             entry.source.name == name && entry.owner == ({ name := package } : Config.Owner)
-        return [(Ex.package.name, Ex.historySource.name), (Ex.package.name, Ex.namesSource.name),
-                (TabCommands.package.name, TabCommands.source.name)].all
+        return [(Ex.package.name, Ex.historySource.name),
+                (Ex.package.name, Ex.namesSource.name)].all
             fun (package, name) => ownedBy package name && (registry.source? name).isSome },
     { name :=
         "the executable's hosts start with nothing of the files package: no command open-file, save-buffer, edit-file, reload-buffer or auto-reload-mode, no job load-file, save-file, reload-file, check-files or follow-file, no source files, no source in the category file, and no value of files-api's Files, registered by a package of the core's Lake package"
@@ -2596,8 +2598,7 @@ def shippedChecks (_ : Unit) : List Check :=
         "the executable's hosts start with the shipped sources of each shipped prompt's category the sources in the order of that prompt's defaults"
       run := do
         let registry := shippedRegistry
-        return registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] &&
-            registry.sourcesIn "tab" == #[TabCommands.source.name] },
+        return registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] },
     { name :=
         "the executable's hosts start with nothing of the compile mode: no command, ex name, job, mode or contribution of it is registered by a package of the core's Lake package, and compile as an ex name is not bound"
       run := do

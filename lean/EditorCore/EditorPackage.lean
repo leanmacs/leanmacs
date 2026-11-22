@@ -1,7 +1,6 @@
 import Editor.Ex.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.Menu.Compiled
-import Editor.TabCommands.Compiled
 import Editor.WindowCommands.Compiled
 
 /-!
@@ -140,7 +139,9 @@ Session restore's package, which was last here once that one had moved,
 is the default package `restore` (`packages/restore/`) since that phase
 too, and registers first, right before `package-set` (its D2): what it
 registers still follows the tab commands' and comes before the package
-set's.
+set's. The tab commands' package, which was last here then, is the
+default package `tab-commands` (`packages/tab-commands/`) since that phase
+too, and registers first, right before `restore`.
 -/
 
 namespace EditorCore.EditorPackage
@@ -150,6 +151,6 @@ open Editor
 /-- The packages of the core's Lake package, in the order a host registers
 them ("The order", in the module docs). -/
 def packages : Array Package :=
-  #[Ex.package, FrameCommands.package, Menu.package, WindowCommands.package, TabCommands.package]
+  #[Ex.package, FrameCommands.package, Menu.package, WindowCommands.package]
 
 end EditorCore.EditorPackage

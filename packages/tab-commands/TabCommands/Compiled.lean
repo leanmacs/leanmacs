@@ -1,19 +1,20 @@
 import Editor.Package
-import Editor.TabCommands
+import TabCommands
 
 /-!
 # The `tab-commands` package: the tab commands
 
 What a host registers so that the frame's tabs can be opened, closed,
-selected, renamed and moved (`Editor/TabCommands.lean`): the package
-`tab-commands` (`TabCommands.package`, `Editor/Package.lean`), whose
+selected, renamed and moved (`TabCommands.lean`): the package
+`tab-commands` (`TabCommands.package`, `lean/Editor/Package.lean`), whose
 `setup` registers the tab commands, each a command of its call
 (`commandWith`), so it acts on the tab of the call's window and reads the
 count the call carries, and the tab completion source. A host registers it
 for the owner `tab-commands` when its loop starts, before any config
-(`Editor/Config/Packages.lean`), so they hold when config fails to load,
-and config can call them and bind keys to them. Both of the executable's
-hosts are handed it (`EditorCore/EditorPackage.lean`).
+(`lean/Editor/Config/Packages.lean`), so they hold when config fails to
+load, and config can call them and bind keys to them. Both of the
+executable's hosts are handed it, through the entry module of the Lake
+package `tab-commands` (`TabCommands/EditorPackage.lean`).
 
 - **The commands**: every tab command, under its name. No binding
   comes with them here: the Vim scheme binds them under `C-w` with tmux's
@@ -21,10 +22,10 @@ hosts are handed it (`EditorCore/EditorPackage.lean`).
   binds that table with `bindKey`. `tab-rename` and the moves have no
   default key.
 
-This module is apart from `Editor/TabCommands.lean` because it is what a
-host is handed, not what config calls.
+This module is apart from `TabCommands.lean` because it is what a host is
+handed, not what config calls.
 
-Pinned by `ModelTest.tabCommandChecks`, on the models.
+Pinned by `TabCommandsTest.tabCommandChecks`, on the models.
 -/
 
 namespace Editor.TabCommands

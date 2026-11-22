@@ -5,7 +5,6 @@ import Editor.Ex
 import Editor.FrameCommands
 import Editor.Indent
 import Editor.Jumps.Go
-import Editor.TabCommands
 import Editor.Text.Word
 import Editor.UndoTree.Theorems
 import Editor.Vocabulary
@@ -109,9 +108,11 @@ imported. The window commands are here too (`Editor/WindowCommands.lean`):
 `window-split`, `window-close`, `window-focus-left` and the rest, which
 split, close, focus and arrange the frame's windows, so a config's command
 can call them; their registrations (`Editor/WindowCommands/Compiled.lean`)
-are not imported. So are the tab commands (`Editor/TabCommands.lean`):
-`tab-new`, `tab-close`, `tab-next`, `tab-switch` and the rest; their
-registrations (`Editor/TabCommands/Compiled.lean`) are not imported. The
+are not imported. The tab commands (`tab-new`, `tab-close`, `tab-next`,
+`tab-switch` and the rest) are not here: they are the default package
+`tab-commands` (`packages/tab-commands/`) since the features-as-packages
+roadmap's phase 8, and a command of config's calls them through the set's
+base, which holds that package's entry module. The
 command that switches the theme in force, `load-theme`, is not here: it
 is the default package `themes` (`packages/themes/`) since the
 features-as-packages roadmap's phase 7, with the theme `default` it

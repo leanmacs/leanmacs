@@ -1,25 +1,31 @@
 import Editor.Api
+import TabCommandsApi
 
 /-!
 # The tab commands
 
 The commands that open, close, select, rename and move the frame's tabs,
 each over the tab operations of the editor API (`ViewId.newTab`,
-`changeTab`, `Editor/Api.lean`) and the state's readers (`Frame.tabs`,
-`Frame.tabOf?`, `EditorState.tabLabel`, `Editor/State.lean`, "Tabs").
+`changeTab`, `lean/Editor/Api.lean`) and the state's readers (`Frame.tabs`,
+`Frame.tabOf?`, `EditorState.tabLabel`, `lean/Editor/State.lean`, "Tabs").
+A module of the Lake package `tab-commands` (`packages/tab-commands/`)
+since the features-as-packages roadmap's phase 8; its declarations keep
+their names (`Editor.TabCommands.…`). The commands' names are the
+interface package's (`TabCommandsApi`, `packages/tab-commands-api/`), which
+whoever reaches a tab command by name imports in this module's place.
 Which key reaches a command is the bindings' business alone: the Vim
 scheme binds them under `C-w` with tmux's keys (`Vim.Default.tabKeys`,
 `packages/evil/Evil/Vim/Default.lean`).
 
 - **Each acts on its call's window's tab** (`tabOf`: the tab of
   `call.target.window.id`), never on the tab in view, as the window
-  commands act on their call's window (`Editor/WindowCommands.lean`). So a
+  commands act on their call's window. So a
   config that runs `tab-close` on a hidden tab's window closes that tab.
   The one window of no tab is the minibuffer's, which a prompt's
   continuation may be called with: there it is the tab in view, whose
   window the prompt was asked from.
 - **Each reads a count from its call's first `.nat` argument**, as the
-  window commands do (`Call.count`, `Editor/Command/Call.lean`), 0 for none.
+  window commands do (`Call.count`, `lean/Editor/Command/Call.lean`), 0 for none.
 - **Each gives up with the refusal's sentence** (`LayoutRefusal.describe`),
   so the echo area says, for the last tab,
   `tab-close: the last tab cannot be closed`, and for a missing one
@@ -43,50 +49,50 @@ A prompt's continuation is called with the window the prompt was asked
 from, a window of the tab in view, so an answer acts on the tab in view.
 
 They are a package's: a host registers them for the owner `tab-commands`
-(`Editor/TabCommands/Compiled.lean`), so config can call them and bind
-keys to them. `Editor.lean` imports this module, and not that one, which
-is what a host is handed.
+(`TabCommands/Compiled.lean`), so config can call them and bind keys to
+them. The package's entry module brings this module into the set's config
+base (`TabCommands/EditorPackage.lean`).
 
-Pinned by `ModelTest.tabCommandChecks`.
+Pinned by `TabCommandsTest.tabCommandChecks`.
 -/
 
 namespace Editor.TabCommands
 
 /-- The name `new` is registered under. -/
 def newName : String :=
-  "tab-new"
+  TabCommandsApi.newName
 
 /-- The name `close` is registered under. -/
 def closeName : String :=
-  "tab-close"
+  TabCommandsApi.closeName
 
 /-- The name `next` is registered under. -/
 def nextName : String :=
-  "tab-next"
+  TabCommandsApi.nextName
 
 /-- The name `previous` is registered under. -/
 def previousName : String :=
-  "tab-previous"
+  TabCommandsApi.previousName
 
 /-- The name `selectNumbered n` is registered under, `tab-select-n`. -/
 def selectName (n : Nat) : String :=
-  s!"tab-select-{n}"
+  TabCommandsApi.selectName n
 
 /-- The name `switch` is registered under. -/
 def switchName : String :=
-  "tab-switch"
+  TabCommandsApi.switchName
 
 /-- The name `rename` is registered under. -/
 def renameName : String :=
-  "tab-rename"
+  TabCommandsApi.renameName
 
 /-- The name `moveBy true` is registered under. -/
 def moveRightName : String :=
-  "tab-move-right"
+  TabCommandsApi.moveRightName
 
 /-- The name `moveBy false` is registered under. -/
 def moveLeftName : String :=
-  "tab-move-left"
+  TabCommandsApi.moveLeftName
 
 /-- The label of the prompt `tab-switch` asks with. -/
 def switchPrompt : String :=
@@ -221,15 +227,12 @@ def moveBy (forward : Bool) (call : Call) : EditorM Unit := do
   orGiveUp (← changeTab (.move index to))
 
 /-- The names of the commands the `tab-commands` package registers
-(`Editor/TabCommands/Compiled.lean`), in the order it registers them,
-`tab-select-1` to `tab-select-9` among them. It is here, in the module a
-package may import, so that whoever binds keys to the tab commands, as the
-Vim scheme's tab table does, can hold its table to the commands that exist
-without importing the package's module. `ModelTest.tabCommandChecks` holds
-the package to it. -/
+(`TabCommands/Compiled.lean`), in the order it registers them,
+`tab-select-1` to `tab-select-9` among them: the interface package's
+(`TabCommandsApi.names`), which whoever binds keys to the tab commands, as
+the Vim scheme's tab table does, holds its table to.
+`TabCommandsTest.tabCommandChecks` holds the package to it. -/
 def names : List String :=
-  [newName, closeName, nextName, previousName, switchName, renameName, moveRightName,
-      moveLeftName] ++
-    (List.range 9).map fun index => selectName (index + 1)
+  TabCommandsApi.names.toList
 
 end Editor.TabCommands

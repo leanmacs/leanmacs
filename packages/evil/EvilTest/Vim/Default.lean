@@ -8,7 +8,6 @@ import Editor.InputScheme
 import Editor.Keymap
 import Editor.Role
 import Editor.Scene
-import Editor.TabCommands
 import Editor.Test.AtPoint
 import Editor.Test.Keys
 import Editor.Test.Minibuffer
@@ -22,6 +21,7 @@ import EvilTest.Check
 import EvilTest.Support.Vim
 import MinibufferApi
 import ShellApi
+import TabCommandsApi
 
 /-!
 # Model tests: `Evil/Vim/Default.lean`
@@ -582,18 +582,18 @@ def vimDefaultChecks : List Check :=
       run :=
         pure <|
           let rows : List (String × String) :=
-            [("C-w n", TabCommands.nextName), ("C-w p", TabCommands.previousName),
-                ("C-w c", TabCommands.newName), ("C-w &", TabCommands.closeName),
-                ("C-w w", TabCommands.switchName)] ++
+            [("C-w n", TabCommandsApi.nextName), ("C-w p", TabCommandsApi.previousName),
+                ("C-w c", TabCommandsApi.newName), ("C-w &", TabCommandsApi.closeName),
+                ("C-w w", TabCommandsApi.switchName)] ++
               (List.range 9).map fun index =>
-                (s!"C-w {index + 1}", TabCommands.selectName (index + 1))
+                (s!"C-w {index + 1}", TabCommandsApi.selectName (index + 1))
           rows.all fun (text, name) =>
             vimDefaultCommand text == some { name } && (vimDefault text).2.head? == some .nothing },
     { name :=
         "every row of the tab commands' table binds its keys in normal state to the command it names, and every command it names is a tab command that is registered"
       run :=
         pure <|
-          let registered := TabCommands.names
+          let registered := TabCommandsApi.names
           Vim.Default.tabKeys.length == 14 &&
             (Vim.Default.keymap Vim.Default.tabCommands).bindings.length ==
               Vim.Default.tabKeys.length &&

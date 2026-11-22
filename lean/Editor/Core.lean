@@ -17,7 +17,6 @@ import Editor.Jumps.Go
 import Editor.Main
 import Editor.Menu.Compiled
 import Editor.SearchRoot
-import Editor.TabCommands.Compiled
 import Editor.Test.AtPoint
 import Editor.Test.Excerpt
 import Editor.Test.Hosted

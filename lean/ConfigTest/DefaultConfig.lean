@@ -76,8 +76,11 @@ declare them: `execute-command-api` and `binding-search-api` the first two,
 `switch-buffer`, `list-buffers` and `close-buffer`, `project-api`
 `find-file-in-workspace` and `find-file-in-project`, `project-search-api`
 `project-search` and `project-search-symbol`, `working-set-api`
-`working-set-add` and `working-set-open`, and `themes-api` `load-theme`
-(bound to `<leader> h t`). That the default editor runs the first fourteen
+`working-set-add` and `working-set-open`, `themes-api` `load-theme`
+(bound to `<leader> h t`), and `tab-commands-api` the tab commands the
+config binds under `<leader> TAB`: `tab-switch`, `tab-new`, `tab-close`,
+`tab-rename`, `tab-next`, `tab-previous` and `tab-select-1` to
+`tab-select-9`. That the default editor runs the first fourteen
 for their keys under the Vim scheme's leader (`SPC :`, `SPC ?`, `SPC f f`,
 `SPC p f`, `SPC SPC`, `SPC p p`, `SPC s p`, `SPC /`, `SPC *`, `SPC k a`,
 `SPC k o`) is the headless fixture
@@ -86,7 +89,9 @@ def defaultPackageCommands : Array String :=
   #["execute-command", "search-bindings", "open-file", "save-buffer", "reload-buffer",
     "switch-buffer", "list-buffers", "close-buffer", "find-file-in-workspace",
     "find-file-in-project", "project-search", "project-search-symbol", "working-set-add",
-    "working-set-open", "load-theme"]
+    "working-set-open", "load-theme", "tab-switch", "tab-new", "tab-close", "tab-rename",
+    "tab-next", "tab-previous", "tab-select-1", "tab-select-2", "tab-select-3", "tab-select-4",
+    "tab-select-5", "tab-select-6", "tab-select-7", "tab-select-8", "tab-select-9"]
 
 /-- The checks of the default config `mise run install` ships
 (`config/default`), read from the directory the fourth argument names: it

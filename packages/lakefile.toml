@@ -10,8 +10,9 @@
 # from it (`mise run app`).
 #
 # It requires the core and each default package. A default package has a
-# directory here and a `require` below: session restore's registrations
-# (restore/), the package-set commands (package-set/), evil and the Vim
+# directory here and a `require` below: the tab commands (tab-commands/,
+# with its interface package tab-commands-api/, which it and evil/
+# require), session restore's registrations (restore/), the package-set commands (package-set/), evil and the Vim
 # scheme (evil/,
 # with its interface package evil-api/, which it requires),
 # which supplies the editor's input scheme, the themes (themes/, with its
@@ -47,12 +48,25 @@ name = "default-set"
 name = "editor-core"
 path = "../lean"
 
-# Session restore's registrations: the jobs that restore a session and
-# journal this one, `restart` and the report's mode. The first default
+# The tab commands: the commands that open, close, select, rename and move
+# the frame's tabs, and the tabs' completion source. The first default
 # package (features-as-packages phase 8, D2: it was the last package of
+# the core's list once session restore's had moved, and the core's
+# packages register before every default package, so moving it to the
+# front of the set keeps the order). It requires its interface package,
+# tab-commands-api, which declares the commands' names and which the Vim
+# scheme's tab table names; an interface package registers nothing.
+[[require]]
+name = "tab-commands"
+path = "tab-commands"
+
+# Session restore's registrations: the jobs that restore a session and
+# journal this one, `restart` and the report's mode. It registers right
+# after the tab commands, as it did in the core's list
+# (features-as-packages phase 8, D2: it was the last package of
 # the core's list once the package-set commands had moved, and the core's
 # packages register before every default package, so moving it to the
-# front of the set keeps the order). The work is the core's; the hosts
+# front of the set kept the order). The work is the core's; the hosts
 # start the restore by the job's name, which the core declares, and the
 # loop journals only where that job is registered, so a set without this
 # package restores and journals nothing.

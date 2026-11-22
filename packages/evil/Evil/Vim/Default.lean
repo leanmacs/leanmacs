@@ -2,12 +2,12 @@ import AtPointApi
 import Editor.Clipboard
 import Editor.Ex
 import Editor.Key.Notation
-import Editor.TabCommands
 import Editor.WindowCommands
 import Evil.Vim
 import EvilApi
 import MinibufferApi
 import ShellApi
+import TabCommandsApi
 
 /-!
 # The Vim scheme's default states and bindings
@@ -49,7 +49,7 @@ to the table's by its parsed chords. No table that ships has any yet.
 | `visualCommands`, `visualLineCommands` | A visual state's: the keys that return to normal state, the key that enters the other visual state, and the register prefix |
 | `minibufferCommands` | The minibuffer state's: `RET`, which accepts the prompt, `<Escape>`, which cancels it, `TAB`, which puts the chosen candidate, or the first listed, in the input (`minibuffer-insert`), as Doom's vertico does, `C-n`, which moves to the next of its candidates, `C-p`, which moves to the previous, `<Backspace>`, which deletes the character before the bar, and cancels the prompt when the minibuffer is empty, as Vim's command line does, `<ArrowLeft>` and `<ArrowRight>`, the motions `left` and `right`, and `C-u`, which deletes from the bar to the input's start |
 | `windowCommands` | Normal state's window commands under `C-w`, Vim 9.1's keys (`windowKeys`, a key string and a command name each, `Editor/WindowCommands.lean`): split (`s`, `S`, `C-s`), split vertically (`v`, `C-v`), new (`C-n`), close (`C-c`), quit (`q`, `C-q`), only (`o`, `C-o`), focus by direction (`h j k l`, their control spellings and the arrow keys, and `<Backspace>` left), next (`C-w`), previous (`W`), top (`t`, `C-t`), bottom (`b`, `C-b`), last (`C-p`), exchange (`x`, `C-x`), rotate (`r`, `C-r`) and back (`R`), balance (`=`), taller and shorter (`+`, `-`), wider and narrower (`>`, `<`), move to the left, bottom, top or right edge and back (`H`, `J`, `K`, `L`, which dock the window at that edge of an edge layout), float and back into the tiles (`F`, the capital of that family, which displaces Vim's `CTRL-W F`, not built here), and three keys Vim does not bind this way: zoom (`z`, which displaces Vim's preview close), promote and demote (`m`, `M`), and main's count up and down (`,`, `.`, xmonad's). `C-w n`, `C-w p`, `C-w c` and `C-w w` are tmux's tab keys (`tabKeys`), and Vim's commands of those keys keep their control spellings. Each changes no text and enters no state. It is not in the pending keymaps, so `d C-w s` resets |
-| `tabCommands` | Normal state's tab commands under `C-w`, tmux's keys (`tabKeys`, `Editor/TabCommands.lean`): next (`n`), previous (`p`), new (`c`), close (`&`), switch by name through the minibuffer (`w`), and the tab of that number (`1` to `9`), so a digit after `C-w` is a key and not a count. Each changes no text and enters no state |
+| `tabCommands` | Normal state's tab commands under `C-w`, tmux's keys (`tabKeys`, the names `TabCommandsApi`'s): next (`n`), previous (`p`), new (`c`), close (`&`), switch by name through the minibuffer (`w`), and the tab of that number (`1` to `9`), so a digit after `C-w` is a key and not a count. Each changes no text and enters no state |
 | `scrollCommands` | The commands that scroll a view, of normal state and the two visual states: `C-d` and `C-u`, by half a view, `C-f` and `C-b`, by a view, and `z t`, `z z` and `z b`, which put the cursor's row at the top, in the middle and at the bottom of the view (`Evil/Scroll.lean`). Each changes no text and enters no state, so none is the last change. They are commands and not motions, so an operator's key before one is dropped. `z` begins the three sequences and is bound to nothing itself, so it is a prefix in those states. Insert state and the minibuffer's do not have the table: there `C-d` and `C-u` are Vim's editing keys, and `z` is text. `C-u` is built in the minibuffer's state, which binds it in its own table; in insert state neither is built |
 
 ## The states
@@ -370,7 +370,8 @@ def windowCommands : List (String × Bound) :=
 
 /-- The tab commands' keys, tmux's under `C-w` (the table `edmacs` settled
 on): each key string, and the name of the tab command it runs
-(`Editor/TabCommands.lean`). `C-w n` and `C-w p` go to the next and the
+(the names are the interface package's, `TabCommandsApi`,
+`packages/tab-commands-api/`). `C-w n` and `C-w p` go to the next and the
 previous tab, `C-w c` makes one, `C-w &` closes one, `C-w w` switches to one
 by name, and `C-w 1` to `C-w 9` go to the tab of that number, so a digit
 after `C-w` is a key, not a count. Vim's commands of `C-w n`, `C-w p`,
@@ -379,10 +380,10 @@ after `C-w` is a key, not a count. Vim's commands of `C-w n`, `C-w p`,
 bind too: `for (keys, name) in Vim.Default.windowKeys ++ Vim.Default.tabKeys
 do bindKey keys name` puts the window and tab commands in every state. -/
 def tabKeys : List (String × String) :=
-  [("C-w n", TabCommands.nextName), ("C-w p", TabCommands.previousName),
-      ("C-w c", TabCommands.newName), ("C-w &", TabCommands.closeName),
-      ("C-w w", TabCommands.switchName)] ++
-    (List.range 9).map fun index => (s!"C-w {index + 1}", TabCommands.selectName (index + 1))
+  [("C-w n", TabCommandsApi.nextName), ("C-w p", TabCommandsApi.previousName),
+      ("C-w c", TabCommandsApi.newName), ("C-w &", TabCommandsApi.closeName),
+      ("C-w w", TabCommandsApi.switchName)] ++
+    (List.range 9).map fun index => (s!"C-w {index + 1}", TabCommandsApi.selectName (index + 1))
 
 /-- The tab commands' keys as a table of normal state's: each runs its
 command, which changes no text and enters no state. -/
