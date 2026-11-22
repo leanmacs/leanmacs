@@ -1139,11 +1139,12 @@ machine is passes on an idle laptop and fails on a loaded runner
 that many rounds under a load of `2 x cores` processes of `yes >/dev/null`
 (`sysctl -n hw.ncpu` on macOS, `nproc` on Linux; `STRESS_HOGS` overrides),
 each suite in the foreground under `taskpolicy -c utility` on macOS and
-`nice -n 19` on Linux, so the hogs win the CPU. The suites:
+`nice -n 5` on Linux, so the hogs win the CPU ("The load on Linux", below,
+says why 5). The suites:
 
 | Suite | Runs |
 |---|---|
-| `config` | `config-test`, as the gate runs it, from `lean/` |
+| `config` | `config-test`, as the gate runs it, from `lean/`, with `--timings` |
 | `contract` | `contract-test`, as the gate runs it |
 | `rust` | `cargo test --workspace --locked` |
 | `open-file` | the open-file headless fixture, exactly as `ffi-test` runs it |
@@ -1153,7 +1154,12 @@ With no suite named it runs the first four. Run it after `mise run ci` has
 built everything: it builds nothing, and `cargo test` would build a changed
 tree inside the loop. Each run's output goes to
 `$STRESS_OUT/<suite>-<round>.log` (a fresh temporary directory when it is
-unset). It prints `<suite>: <passed>/<rounds>` for each suite, then each
+unset). A config round also leaves `config-<round>.timings` there: the wall
+time in milliseconds of the base's import and of each check, a tab and its
+name, written as each ends (`config-test --timings`), which the hang guards
+are sized from. And what a check says on stderr is in the log after
+`config-test: during "<check>": `, so a hang line names the check it was
+said in. It prints `<suite>: <passed>/<rounds>` for each suite, then each
 failing run with the `FAILED:` lines of the Lean checks or the failing
 Rust tests' names, and exits 1 on any failure. Each suite's run is in a
 process group of its own (`setsid` on Linux, the shell's job control on
@@ -1218,15 +1224,18 @@ hogs unless it says otherwise:
   Lean installs ... the editor thread had not settled within 120000 ms", and
   loops not ended 30000 ms and 200 ms after they were asked to stop). Filed
   as linux-stress-config-hangs, to be fixed after this branch lands. It is
-  evidence for the Linux code paths only, never for the ubuntu leg.
+  evidence for the Linux code paths only, never for the ubuntu leg. What
+  it was is in "The load on Linux", below: the load, not a hang, and three
+  loop-end guards set too short.
 - The ubuntu leg was not run. The owner decided on 2026-11-21 that no
   GitHub CI runs while the roadmap is implemented, so it is deferred to
   landing: `.github/workflows/stress.yml` is dispatched then, must print
   `config: 50/50`, `contract: 50/50`, `rust: 50/50` and `open-file: 50/50`,
-  and its run id is recorded on the phase. Nothing yet shows it will pass:
-  the only Linux run, the supplementary one above, failed, and its hangs
-  are task linux-stress-config-hangs, which the owner chose on 2026-11-22
-  to fix after the branch lands.
+  and its run id is recorded on the phase. It is still not run
+  (2026-11-22): each shard gates with `mise run ci` first, and the gate
+  fails on both runners at the default-config headless fixture, which
+  needs fzf (task default-config-fixture-needs-fzf), so the loop would not
+  start.
 - Every run above was taken before `main` at 2df0ce08 was merged into the
   branch. That merge brought the features-as-packages roadmap, which moved
   most features' checks out of `config-test` and `contract-test` into the
@@ -1243,6 +1252,100 @@ hogs unless it says otherwise:
 A bound that a loaded run reaches on an event that does come is a hang
 guard set too short: it is raised to ten times the slowest that event was
 seen to take, and the measurement goes in its doc.
+
+### The load on Linux
+
+On Linux the loop first ran each suite at `nice -n 19`, the lowest there
+is. Against hogs at 0 that gives each of the suite's threads a scheduler
+weight of 15 against 1024, about half a percent of a CPU. Measured on
+2026-11-22 in the container of `linux-ci` (Docker Desktop, Debian 13 on
+aarch64, 8 CPUs, 7.75 GiB), `config-test` run as the gate runs it under 16
+hogs: the first three rows at c9949836 (280 checks), the fourth at
+683d69ce and the last two at 8ff52f1c (283 checks):
+
+| Load | Whole run | Against unloaded | "a reload whose root first imports Lean installs" | Slowest check | Result |
+|---|---|---|---|---|---|
+| none, 3 runs | 13.6, 13.6, 14.2 s | 1 | 2.1 s | 2.1 s | pass |
+| 16 hogs, suite at nice 0 | 33.7 s | 2.3x | 3.7 s | 3.7 s | 1 check failed: the hold of main's CI failure, below |
+| 16 hogs, suite at nice 10 | 317 s | 21x | 21.8 s | 33.4 s | pass |
+| 16 hogs, suite at nice 19, with `hangGuard` raised to 3 000 000 ms in the container's copy | 3486 s | 256x | 188 s | 414 s | pass; over the loop's 1800 s limit |
+| 16 hogs, suite at nice 0, 5 runs | 30.2 to 32.1 s | 2.3x | 2.4 to 3.4 s | 2.5 to 3.4 s | pass, 5 of 5 |
+| 16 hogs, suite at nice 5, the loop's 10 rounds | 90.0 to 96.5 s | 6.8x | 5.1 to 7.5 s | 9.8 to 10.2 s | pass, 10 of 10 |
+
+So at nice 19 the suite could not end inside `STRESS_LIMIT`, and the
+reload that first imports Lean took 188 s, past its 120 s hang guard: what
+the phase 6 run reported as a hang was the load. The loop now runs its
+suites at `nice -n 5`: 6.8 times slower than unloaded, the nearest
+measured level to macOS's 11 times (116 to 121 s a config run under 36
+hogs against 10.7 s), with the slowest check at 10.2 s, against 12.1 s on
+macOS, so ten times either is inside the 130 s of
+`Editor.Test.Linked.hangGuard`, which the macOS figure raised from 120 s
+(its doc has both). Nice 10 would need
+every guard near 340 s, past the 300 s limit `ffi-test` has in the gate,
+so a real hang there would be killed before it named itself. The peak
+memory of the container was 3.0 GB in every run: nothing was killed for
+memory.
+
+What that run's three loop-end lines were, each said by a check that
+passes (`config-test` names the check before each line it says):
+
+| Line | Check | Why its guard was short |
+|---|---|---|
+| `the editor loop had not ended 30000 ms after it was asked to stop` | "a host's bracket returns only once its reload job has ended…" (`bracketChecks`) | `Headless.withHost` with no `guard`, so `settlePatience` |
+| `… 200 ms …` | "a script whose settle cannot be satisfied…" (`scriptChecks`) | `Headless.run … 200`: the loop's guard defaulted to the wait's |
+| `… 200 ms …` | "a script that ends while a reload cannot finish…" (`scriptChecks`) | the same |
+
+In each, the loop's end lets a held reload go (`endWaits`) and then waits
+for its elaboration, which takes as long as the machine takes: no scope
+outlived its bracket, the guard was a hang guard set too short. The two
+200 ms lines were seen under those names at nice 19 (and the second on
+`ubuntu-24.04`, CI run 45067913272). The first check took 22.6 s and
+23.7 s at nice 19, under its 30 s, so its line was produced with that one
+bracket's guard set to 5000 ms in the container's copy, and it came under
+that name; that it was this bracket on the phase 6 run is by elimination,
+the other brackets with no guard of their own being three hosts whose loop
+ends by its own error and one that runs between the two 200 ms checks.
+Those brackets, and the others of `scriptChecks` that ended their loop
+under a wait's guard, now pass `hangGuard` and fail if their loop's end
+says a hang.
+
+Two races in the checks themselves were found on the way and fixed, each
+with a check that forces it:
+
+- **The hold that ended main's CI run 45060492603** on both legs
+  (`withdrawingHeld`, four checks): it took the fake clock's arrival for
+  the job being in its wait, which the clock says before the runner has
+  recorded the wait, so a loop that ended then was never held. The runner
+  now records a parked job's wait before it gives the job's unit back
+  (`docs/design/concurrency.md`, "The idle signal"), and the hold waits
+  for that unit.
+- **A cancelled job's wake-up arriving in the next check**: the loop's end
+  cancels its jobs and does not wait for them, and on a real host the
+  job's wake-up goes to the library's queue, which the next check shares.
+  At nice 0 it failed "a key a compiled binding binds runs its compiled
+  command…" in 3 of 5 runs, and at nice 5 in 1 of 4 rounds (`a stepped
+  host's check posted to the library's editor queue`). The four checks'
+  helper now waits for that post before it returns. Other real hosts that
+  end with a job in its wait can still leave theirs late (task
+  real-host-leaves-an-event-on-the-library-queue).
+
+Runs on the fixed tree (8ff52f1c with these docs, `hangGuard` still at
+120 s), 2026-11-22:
+
+- macOS, an 18-core Mac under 36 hogs, `mise run stress -- 10 config`:
+  `config: 10/10`, no `a hang` line in any log.
+- The Linux container, `tools/stress.sh 10 config` after `mise run lean`
+  and the probe, `STRESS_LIMIT=1800`, 16 hogs: `config: 10/10`, no `a
+  hang` line in any log. The container's gate was not run first: it stops
+  at bundle-test (linux-gate-bundle-test-wants-ld64-lld), and the Docker
+  VM's disk had 2.8 GB left.
+- `ubuntu-24.04` and `macos-26`, CI runs 45067913272 (683d69ce) and
+  45075679628 (408e2021): `config-test: 283 checks passed` on both legs of
+  both, where main's run had failed in it, and the second, which has the
+  loop-end guards, says no hang line. Both legs then fail the gate at the
+  default-config headless fixture,
+  which needs fzf on the `PATH` (task default-config-fixture-needs-fzf),
+  so no run of the branch is green and `stress.yml` was not dispatched.
 
 `mise run linux-stress` runs the same loop in the Linux container of
 `linux-ci` ([below](#the-gate-on-linux-on-demand)), after one `mise run ci`

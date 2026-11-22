@@ -320,7 +320,11 @@ trigger: it runs only when someone dispatches it, with the input `rounds`
 (50 by default, a multiple of 5). Five shards each check out, install the
 tools as the `ci` job does, run `mise run ci` once to build and gate, then
 `tools/stress.sh <rounds / 5> config contract rust open-file` under
-`2 x nproc` hogs at `nice -n 19`, and upload their logs and summary. The
+`2 x nproc` hogs, the suites at `nice -n 5`, and upload their logs,
+config-test's timings of each check and the summary. The niceness is the
+loop's own, measured: at `nice -n 19` config-test ran 200 to 400 times
+slower and could not end inside the loop's limit
+([why](on-demand-checks.md#the-stress-loop-on-demand)). The
 `summary` job adds the shards' counts and prints
 `stress: ubuntu-24.04, 5 shards x 10 rounds, 2 x nproc hogs` and each
 suite's `<passed>/<rounds>`, and fails on any count short of all of them.
