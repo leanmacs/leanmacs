@@ -5,6 +5,10 @@ executable (mode 100755). The workspace package's linked checks of the
 listers a workspace's files are listed with (workspaceListerChecks) run on
 a byte-for-byte copy of `filter` in packages/workspace/tests/completion/: a
 linked test runs in its package's directory, and reads its fixtures there.
+`mise run ffi-test` also copies `filter` as `fzf` into the temporary
+directory of the default-config headless fixture
+(tests/headless/default-config) and puts it first on that one editor's
+PATH, so the workspace finder's keys run there without fzf installed.
 
 - filter: stands for `fzf --filter`, so the checks pass where fzf is not
   installed. It accepts exactly `[--read0] [--print0] --filter <text>`: any

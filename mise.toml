@@ -849,8 +849,12 @@ run = [
   # the checkout, and the editor runs in an empty directory beside it, so
   # the prompts that start at the working directory, or search it, are the
   # same everywhere once the directory's path, taken physically, is written
-  # `@DIR@`.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && root=$(pwd) && prefix=$(lean --print-prefix) && cp -R ../config/default \"$dir/config\" && mkdir \"$dir/cwd\" && out=$(cd \"$dir/cwd\" && \"$root/../packages/.lake/build/bin/editor\" headless \"$prefix\" \"$root/.lake/build/lib/lean\" \"$dir/config\" \"$root/../tests/headless/default-config/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/default-config/expected -",
+  # `@DIR@`. The workspace finder's keys run the default source, whose
+  # filter is `fzf`, which the gate does not install: for this one run the
+  # fixture that stands in for it (tests/completion/filter) is first on the
+  # editor's `PATH` under that name, in the temporary directory, so the
+  # run is the same where fzf is installed and where it is not.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && root=$(pwd) && prefix=$(lean --print-prefix) && cp -R ../config/default \"$dir/config\" && mkdir \"$dir/cwd\" \"$dir/bin\" && cp ../tests/completion/filter \"$dir/bin/fzf\" && out=$(cd \"$dir/cwd\" && PATH=\"$dir/bin:$PATH\" \"$root/../packages/.lake/build/bin/editor\" headless \"$prefix\" \"$root/.lake/build/lib/lean\" \"$dir/config\" \"$root/../tests/headless/default-config/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/default-config/expected -",
   # An editor of a set with no input-scheme package refuses to start
   # (tests/headless/no-input-scheme), run on the editor built from the set
   # tests/empty-set, which is the default set with its packages dropped:

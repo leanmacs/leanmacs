@@ -879,7 +879,13 @@ mise in the checks of a child's environment), `tests/syntax` (the syntax
 fixtures, whose Rust fixtures the indent and text-object checks read) and
 `tests/completion` (the fixture that stands in for fzf in the checks of a
 source a command filters, so they pass where fzf is not installed); each
-fixture must stay executable. The workspace finder's and the mode marker
+fixture must stay executable. The same `filter` stands in for fzf in the
+default-config headless fixture (`tests/headless/default-config`), whose
+script opens the workspace finder on the default source: the run copies it
+into its temporary directory as `fzf` and puts that first on the editor's
+`PATH`, so the fixture reads the same where fzf is installed and where it
+is not (it failed on both CI runners, which install none, until it did).
+The workspace finder's and the mode marker
 search's contracts over the real services, git's lister and the fallback,
 `:!` over the real process service, project search, the working sets and
 version control over real git were `contract-test`'s until the seven
