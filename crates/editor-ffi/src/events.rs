@@ -219,7 +219,9 @@ pub extern "C" fn editor_ffi_events_waiting(queue: u8) -> u64 {
 /// no queue. A readout for tests, which use it to know a pull is parked
 /// before they post: it returns on the park, never by a poll.
 ///
-/// `bound_ms` is a hang guard: only a pull that never parks reaches it.
+/// `bound_ms` is a hang guard: only a pull that never parks reaches it. A
+/// bound past what the clock can count is no bound, so `u64::MAX` waits
+/// for the park however long it takes.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_events_await_waiting(queue: u8, pulls: u64, bound_ms: u64) -> bool {
     self::queue(queue).is_some_and(|queue| {

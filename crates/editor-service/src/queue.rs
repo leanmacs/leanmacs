@@ -361,9 +361,11 @@ impl Queue {
     /// count the pull is in its wait and a push reaches it. It waits on a
     /// Condvar of its own, so it never takes a push's wake-up from a pull.
     ///
-    /// `bound` is a hang guard: only a pull that never parks reaches it.
+    /// `bound` is a hang guard: only a pull that never parks reaches it. A
+    /// bound past what the clock can count is no bound.
     pub fn await_waiting(&self, pulls: usize, bound: Duration) -> bool {
-        let until = Instant::now() + bound;
+        // A bound past what the clock can count is no bound.
+        let until = Instant::now().checked_add(bound);
         let mut state = self.state();
         loop {
             #[cfg(test)]
@@ -373,17 +375,25 @@ impl Queue {
             if state.waiting >= pulls {
                 return true;
             }
-            let left = until.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return false;
-            }
-            state = self
-                .parked
-                // hang guard: a pull's park; only a pull that never parks
-                // reaches the bound, and the caller then fails as a hang.
-                .wait_timeout(state, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
+            state = match until {
+                None => self
+                    .parked
+                    .wait(state)
+                    .unwrap_or_else(PoisonError::into_inner),
+                Some(until) => {
+                    let left = until.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        return false;
+                    }
+                    self.parked
+                        // hang guard: a pull's park; only a pull that never
+                        // parks reaches the bound, and the caller then fails
+                        // as a hang.
+                        .wait_timeout(state, left)
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .0
+                }
+            };
         }
     }
 
@@ -742,6 +752,13 @@ mod tests {
         let queue = Queue::new();
         assert!(!queue.await_waiting(1, Duration::ZERO));
         assert!(queue.await_waiting(0, Duration::ZERO));
+    }
+
+    #[test]
+    fn await_waiting_takes_a_bound_past_what_the_clock_can_count_as_no_bound() {
+        let queue = Queue::new();
+        assert!(queue.await_waiting(0, Duration::MAX));
+        assert!(queue.await_waiting(0, Duration::from_millis(u64::MAX)));
     }
 
     #[test]
