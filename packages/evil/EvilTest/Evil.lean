@@ -3,7 +3,6 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Config.Packages
 import Editor.Event
-import Editor.Ex
 import Editor.File
 import Editor.InputScheme
 import Editor.Invocation
@@ -401,7 +400,7 @@ def evilPrompts : List (Option EvilDriver × String × (String → String)) :=
           (evilHanded
             (exLinePackage.registered.commands ++ Test.Minibuffer.package.registered.commands))).map
       (evilFed · ":")
-  [(asked, "greet", fun answer => s!"hello {answer}"), (ex, Ex.name, Ex.unknown)]
+  [(asked, "greet", fun answer => s!"hello {answer}"), (ex, ExLine.name, ExLine.unknown)]
 
 /-- Whether `check` holds of each prompt of `evilPrompts`, each opened as
 its continuation says, with the asking view left as it was. -/

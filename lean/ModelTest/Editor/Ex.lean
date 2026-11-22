@@ -609,6 +609,24 @@ def exChecks : List Check :=
               promptEcho refused == Ex.noArgument "reload" &&
               refused.reloads == 0 },
     { name :=
+        "the ex prompt offers the `:!` lines of its view's buffer's scope first, in the history's order, newest first, before the ex names that are bound: with two lines in the unscoped history the prompt's first candidates are those two, and the bound names follow; with no history it offers the names alone"
+      run :=
+        let seeding : Package :=
+          { name := "seeding"
+            setup :=
+              commandWith "seed-history" fun _ =>
+                Workspace.setUnscoped Shell.historyStore #["!make", "!echo hi"] }
+        let bindings := exTestBindings.push { name := "seed", command := "seed-history" }
+        pure <|
+          match exDriver bindings #[seeding] with
+          | none => false
+          | some driver =>
+            let names := bindings.map (·.name)
+            let texts (driver : TestDriver) : Option (Array String) :=
+              (candidatesOf (fedTo driver (presses "C-e e")).1).map (·.all.map (·.text))
+            let seeded := (fedTo driver (exLine "seed")).1
+            texts driver == some names && texts seeded == some (#["!make", "!echo hi"] ++ names) },
+    { name :=
         "the ex prompt's candidates are the ex names that are bound, each once, listed for the empty line when it opens; a typed letter lists the names the fuzzy model answers for it, and the scene shows them after the ex line's label"
       run :=
         pure <|

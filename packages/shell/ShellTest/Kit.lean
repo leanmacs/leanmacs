@@ -20,8 +20,8 @@ workspace driver that names no workspace module, the core kit's
 (`Editor/Test/Workspace.lean`): its jobs and the shell's run job
 (`shellJobs`), its keys and the shell checks' (`shellBindings`), and its
 commands, the kit's ex line's (`Editor.Test.exLinePackage`,
-`Editor/Test/Ex.lean`: ex's own command, the core's, which hands a `:!` line
-to `shell-api`'s names), the kit's minibuffer's and the shell's
+`Editor/Test/Ex.lean`: the kit's own ex command, which hands a `:!` line
+to the names `shell-api` declares, written there as text), the kit's minibuffer's and the shell's
 (`shellCommands`). A file's workspace is the core kit's stand-in for the
 finder's answer (`openAttach`). The shell's child and its replies, and
 what a check reads of a driver, are the core's kit's
@@ -53,10 +53,10 @@ def shellJobs (name : String) : Option (List Argument → Work) :=
 /-- The bindings of the shell checks (`shellKeys`). -/
 def shellBindings : List (String × Invocation) :=
   openBindings ++
-    [("C-e e", invoke Ex.name), ("C-e y", invoke Minibuffer.acceptName), ("C-e k", invoke "kube"),
-      ("C-e g", invoke Shell.interruptName), ("C-e u", invoke "undo"), ("C-e o", invoke "squat"),
-      ("C-e s", invoke "split"), ("C-e c", invoke "close"), ("C-e x", invoke "drop"),
-      ("C-o s", opens "/r/src/s.txt"), ("C-o t", opens "/r/src/t.txt")]
+    [("C-e e", invoke ExLine.name), ("C-e y", invoke Minibuffer.acceptName),
+      ("C-e k", invoke "kube"), ("C-e g", invoke Shell.interruptName), ("C-e u", invoke "undo"),
+      ("C-e o", invoke "squat"), ("C-e s", invoke "split"), ("C-e c", invoke "close"),
+      ("C-e x", invoke "drop"), ("C-o s", opens "/r/src/s.txt"), ("C-o t", opens "/r/src/t.txt")]
 
 /-- The commands of the shell checks (`shellKeys`) over the open driver's
 commands `workspace`. -/

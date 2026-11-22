@@ -218,7 +218,7 @@ def reloadDriver : Option TestDriver :=
         [("C-o n", opens (inFiles "note.txt")), ("C-o l", opens (inFiles "lf.txt")),
           ("C-o x", invoke "type-x"), ("C-o r", invoke Files.reloadName),
           ("C-o R", { command := Files.reloadName, arguments := [.bool true] }),
-          ("C-o u", invoke "undo"), ("C-o U", invoke "redo"), ("C-e e", invoke Ex.name),
+          ("C-o u", invoke "undo"), ("C-o U", invoke "redo"), ("C-e e", invoke ExLine.name),
           ("C-e y", invoke Minibuffer.acceptName)]
         reloadCommands with
       registered :=

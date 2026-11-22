@@ -1,7 +1,6 @@
 import Editor.Api
 import Editor.Command
 import Editor.Command.Model
-import Editor.Completion.Candidate
 import Editor.DisplayRules
 import Editor.Event
 import Editor.Ex.Line
@@ -288,7 +287,7 @@ def shellChecks : List Check :=
                 namedText inW "*shell output: r@feature*" == some "w1\nw2\n[exit 0]\n" &&
                 outputBuffers inW == #["*shell output: r@main*", "*shell output: r@feature*"] },
       { name :=
-          "criterion 9: a `:!` line run in one worktree is offered first by the ex prompt in the other worktree's buffer, before the bound ex names; the history is the project's, newest first, each line once"
+          "criterion 9: a `:!` line run in one worktree is in the history of the other worktree's buffer, which is what the ex prompt's source reads (`Shell.history`); the history is the project's, newest first, each line once"
         run :=
           pure <|
             match shellDriver with
@@ -296,9 +295,9 @@ def shellChecks : List Check :=
             | some driver =>
               let ran := shellRan (shellRan (settledAfter driver "C-o a") "!make") "!echo hi"
               let again := shellRan ran "!make"
-              let asked := (fedTo (settledAfter again "C-o w") (presses "C-e e")).1
-              (candidatesOf asked).map (·.all.toList.take 2 |>.map (·.text)) ==
-                  some ["!make", "!echo hi"] &&
+              let other := settledAfter again "C-o w"
+              ((showing other).map fun shown => Shell.history other.loop.state shown.id) ==
+                  some #["!make", "!echo hi"] &&
                 again.loop.state.workspaces.getOfProject Shell.historyStore
                     (.remote "github.com/o/r") ==
                   #["!make", "!echo hi"] },

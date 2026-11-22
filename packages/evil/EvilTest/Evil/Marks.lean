@@ -1,5 +1,4 @@
 import BuffersApiTest.Fake
-import Editor.Ex
 import Editor.Test.Driver
 import Editor.Test.Ex
 import Editor.Test.Files
@@ -202,7 +201,7 @@ def markInOtherWindow (mark : String) : Option (Nat × Nat) :=
 
 /-- What a step of the mark checks that type an ex line is handed: evil's
 commands and the ex line's (`evilHanded`), told of the ex names of the
-kit's ex line (`exLinePackage`, `Editor/Test/Ex.lean`: ex's own command,
+kit's ex line (`exLinePackage`, `Editor/Test/Ex.lean`: the kit's own ex command,
 with the names of files and the buffers), so `:` asks for a line and the
 accept key runs it. That the `ex` package binds none of the names these
 checks type is ex's (`ModelTest.exChecks`). -/
@@ -296,8 +295,8 @@ def evilMarkChecks : List Check :=
         "recorded departure (task marks-ex-commands): :marks and :delmarks are not built, so the ex line says neither is an ex command and leaves the text and cursor as they were, where Vim's list the marks and delete those named"
       run :=
         pure <|
-          markExSaid "marks" == some ("a|b", Ex.unknown "marks") &&
-            markExSaid "delmarks a" == some ("a|b", Ex.unknown "delmarks") },
+          markExSaid "marks" == some ("a|b", ExLine.unknown "marks") &&
+            markExSaid "delmarks a" == some ("a|b", ExLine.unknown "delmarks") },
     { name :=
         "recorded departure (task marks-go-without-jump): g ' and g ` are not bound, so after m a and G, g ' a and g ` a go nowhere and the a appends, where Vim's go to the mark as ' and ` do without recording a jump"
       run :=
@@ -316,14 +315,14 @@ def evilMarkChecks : List Check :=
         "recorded departure (task marks-ex-set-mark): :mark and :k are not built, so the ex line says neither is an ex command and leaves the text and cursor as they were, where Vim's set the mark named at the cursor's line"
       run :=
         pure <|
-          markExSaid "mark a" == some ("a|b", Ex.unknown "mark") &&
-            markExSaid "k a" == some ("a|b", Ex.unknown "k") },
+          markExSaid "mark a" == some ("a|b", ExLine.unknown "mark") &&
+            markExSaid "k a" == some ("a|b", ExLine.unknown "k") },
     { name :=
         "recorded departure (task marks-lockmarks-keepmarks): :lockmarks and :keepmarks are not built, so the ex line says neither is an ex command and runs none of the command that follows, where Vim's run it keeping the marks as they were or where they are"
       run :=
         pure <|
-          markExSaid "lockmarks ls" == some ("a|b", Ex.unknown "lockmarks") &&
-            markExSaid "keepmarks ls" == some ("a|b", Ex.unknown "keepmarks") },
+          markExSaid "lockmarks ls" == some ("a|b", ExLine.unknown "lockmarks") &&
+            markExSaid "keepmarks ls" == some ("a|b", ExLine.unknown "keepmarks") },
     { name :=
         "recorded departure (task marks-persist-across-restarts): global marks live in the session's state alone, which the editor starts with none of, where Vim reads the uppercase and numbered marks back from viminfo or shada"
       run :=

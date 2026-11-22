@@ -116,12 +116,12 @@ def placeR : Compile.Place :=
 
 /-- The bindings of the compile checks that answer a prompt and work on
 windows and buffers, by the shell checks' keys: `C-e e` opens the ex line
-(`Ex.name`, the kit's ex line's command), `C-e y` accepts the
+(`ExLine.name`, the kit's ex line's command), `C-e y` accepts the
 prompt, `C-e k` gives the window's buffer the reachable workspace `kube`,
 `C-e u` undoes, `C-e s` splits the window, `C-e c` closes it and `C-e x`
 shows a buffer `elsewhere` in it and removes the one it showed. -/
 def windowBindings : List (String × Invocation) :=
-  [("C-e e", invoke Ex.name), ("C-e y", invoke Editor.Test.Minibuffer.acceptName),
+  [("C-e e", invoke ExLine.name), ("C-e y", invoke Editor.Test.Minibuffer.acceptName),
     ("C-e k", invoke "kube"), ("C-e u", invoke "undo"), ("C-e s", invoke "split"),
     ("C-e c", invoke "close"), ("C-e x", invoke "drop")]
 

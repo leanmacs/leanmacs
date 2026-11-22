@@ -106,7 +106,7 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
         return none)]
   {
     dispatchKeys
-      [("C-e e", invoke Ex.name), ("C-e y", invoke Test.Minibuffer.acceptName),
+      [("C-e e", invoke ExLine.name), ("C-e y", invoke Test.Minibuffer.acceptName),
         ("C-e t", invoke Test.Minibuffer.nextName),
         ("C-b b", { command := Buffers.switchName, arguments := [.nat 0, .str ""] }),
         ("C-b n", { command := Buffers.switchName, arguments := [.str "note.txt"] }),
