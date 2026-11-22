@@ -1685,9 +1685,10 @@ run = "tools/user-link-check.sh lean"
 # passes. Run it after `mise run ci` has built everything.
 # `tools/stress-probe.sh` runs first, in under a second: it interrupts and
 # terminates the loop mid-round, on a stand-in suite, and proves that the
-# loop then leaves neither the suite's run nor its guard running.
+# loop then leaves neither the suite's run nor its guard running; and that a
+# run past the limit is killed with its group and fails as a hang.
 [tasks.stress]
-description = "Opt-in, never part of ci: run the thread-heavy suites over and over under a CPU load of twice the cores, and print each suite's passes (tools/stress.sh), after the probe that an interrupted loop leaves nothing running (tools/stress-probe.sh). Run after `mise run ci`"
+description = "Opt-in, never part of ci: run the thread-heavy suites over and over under a CPU load of twice the cores, and print each suite's passes (tools/stress.sh), after the probe that an interrupted loop leaves nothing running and that a run past its limit fails as a hang (tools/stress-probe.sh). Run after `mise run ci`"
 run = [
   "sh tools/stress-probe.sh",
   "sh tools/stress.sh",

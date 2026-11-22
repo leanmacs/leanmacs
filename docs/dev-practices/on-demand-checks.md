@@ -1105,7 +1105,16 @@ linux-stress` run first, proves it in under a second. It interrupts, then
 terminates, the loop mid-round on a stand-in suite, with the guard's
 `sleep` a stand-in too, and fails if a process of either group is still
 there to be released once the loop has exited. Run against the trap that
-killed only the hogs, it failed on both signals.
+killed only the hogs, it failed on both signals. Then, with `STRESS_LIMIT=1`
+and a guard's `sleep` that returns once the suite has started, it runs a
+suite that hangs, with a child that hangs too, and fails unless the loop
+exits 1, the run's log has the guard's line `stress: a hang: probe had not
+ended within 1 s and was killed`, the loop prints `probe: 0/1`, and nothing
+of the run is left to be released. Run against a guard that killed only the
+run's leader, it failed with the suite's run and its child still there; and
+against a guard slowed between its kill and its line, it found the loop
+ending the guard before the line was written, which the guard now prevents
+by ignoring TERM once its sleep has returned.
 
 The open-file fixture was the named case: it pinned the count of scenes
 published, which the syntax worker's deliveries vary under load (21 of 30

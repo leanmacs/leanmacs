@@ -30,9 +30,10 @@
 # and `nice -n 19` elsewhere, so the hogs win the CPU. Each run's output goes
 # to `$STRESS_OUT/<suite>-<round>.log` (a fresh temporary directory when
 # STRESS_OUT is unset). A run that has not ended within STRESS_LIMIT seconds
-# (30 minutes) is killed and counts as failed, so a hang shows as a failure.
-# At the end it prints `<suite>: <passed>/<rounds>` for
-# each suite, then each failing run with the names of the checks and tests
+# (30 minutes) is killed with its whole process group and counts as failed,
+# its log ending `stress: a hang: ...`, so a hang shows as a failure (the
+# probe proves that too). At the end it prints `<suite>: <passed>/<rounds>`
+# for each suite, then each failing run with the names of the checks and tests
 # that failed, and exits 1 on any failure. Nothing is left running.
 #
 # A failure is a bug in a check or in the code. It is fixed and the loop is
@@ -165,16 +166,19 @@ grouped() {
 # Runs one suite as run_suite does (this script's `--run`), in a process
 # group of its own, and kills that group if it has not ended within $limit
 # seconds, saying so in its log. The guard is killed with its own group once
-# the run ends, so no sleep is left behind. Both are in `run` and `guard`
-# while they run, for `stop`: an INT or TERM that comes while they start is
-# held until both are there, then acted on.
+# the run ends, so no sleep is left behind; once its sleep has returned it
+# ignores TERM, so the run it kills ending first does not cut its line from
+# the log (tools/stress-probe.sh's limit case, which a guard slowed between
+# its kill and its line failed). Both are in `run` and `guard` while they
+# run, for `stop`: an INT or TERM that comes while they start is held until
+# both are there, then acted on.
 bounded() {
   signalled=
   trap 'signalled=130' INT
   trap 'signalled=143' TERM
   grouped sh "$0" --run "$1" "$2"
   run=$started
-  grouped sh -c 'sleep "$1" && kill -TERM "-$2" 2>/dev/null &&
+  grouped sh -c 'sleep "$1" && trap "" TERM && kill -TERM "-$2" 2>/dev/null &&
     echo "stress: a hang: $3 had not ended within $1 s and was killed" >>"$4"' guard "$limit" "$run" "$2" "$1"
   guard=$started
   trap 'stop; exit 130' INT

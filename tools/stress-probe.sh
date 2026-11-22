@@ -2,7 +2,8 @@
 # Proves that the stress loop, interrupted or terminated mid-round, leaves
 # nothing running: neither the suite's run nor its limit guard, each of
 # which the loop starts in a process group of its own, out of reach of the
-# terminal's Ctrl-C:
+# terminal's Ctrl-C; and that a run past the loop's limit is killed with its
+# whole group and fails as a hang:
 #
 #   sh tools/stress-probe.sh    # run first by `mise run stress`
 #
@@ -18,6 +19,12 @@
 # it, or when the loop did not exit 130 on INT or 143 on TERM. Run against
 # a loop whose trap killed only its hogs, it failed on both signals with
 # all three stand-ins still running.
+#
+# Then the limit, on a suite that hangs and a guard's sleep that returns
+# once the suite has started (below). Run against a guard that killed only
+# the run's leader, it failed with the suite's run and its child still
+# running; against one that killed nothing, on every count, once its hang
+# guard had run out.
 #
 # The loop sends TERM to each group before it exits, so a process of it
 # never runs again and never reads the release. Nothing here waits for a
@@ -98,5 +105,59 @@ for signal in INT TERM; do
   fi
 done
 
+# The limit: `STRESS_LIMIT=1 tools/stress.sh 1 probe` on a suite that hangs,
+# a child of it hanging too: both wait for the release, which comes only
+# once the loop has exited. The guard's sleep is a stand-in that returns once
+# the suite has said it has started, so its group is there to be killed.
+# The loop must count the run as failed, as a hang: exit 1, the guard's line
+# in the run's log, `probe: 0/1`, and nothing of the run left to say it
+# outlived the loop. Read and judged as the INT and TERM cases are.
+mkdir "$work/limit-bin"
+cat >"$work/limit-bin/sleep" <<'EOF'
+#!/bin/sh
+read -r _ <"$STRESS_PROBE_GUARD"
+EOF
+chmod +x "$work/limit-bin/sleep"
+hung='
+{ read -r _ <&3 || true; echo "a child of the hung run outlived the loop" >&4; } &
+echo started >"$STRESS_PROBE_GUARD"
+read -r _ <&3 || true
+echo "the hung run outlived the loop" >&4
+wait'
+dir="$work/limit"
+mkdir "$dir"
+mkfifo "$dir/guard"
+# hang guard: the holder's sleep, as above. Only a guard that does not kill
+# the run's group reaches it: the run is then released and passes.
+{ sh -c 'echo "$$" && exec sleep 60'; } 2>/dev/null |
+  {
+    read -r holder
+    exec 3<&0 </dev/null 4>&1 >"$dir/output" 2>&1
+    status=0
+    STRESS_PROBE=$hung STRESS_PROBE_GUARD=$dir/guard STRESS_LIMIT=1 STRESS_HOGS=1 \
+      STRESS_OUT=$dir/out PATH="$work/limit-bin:$PATH" \
+      sh "$root/tools/stress.sh" 1 probe || status=$?
+    echo "$status" >"$dir/status"
+    kill "$holder" 2>/dev/null || true
+  } |
+  cat >"$dir/said"
+status=$(cat "$dir/status")
+if [ "$status" -ne 1 ]; then
+  fail "the loop whose run hung past its limit exited $status, not 1"
+  sed 's/^/  /' "$dir/output" >&2
+fi
+if ! grep -qx 'stress: a hang: probe had not ended within 1 s and was killed' "$dir/out/probe-1.log" 2>/dev/null; then
+  fail "the hung run's log does not say it was killed as a hang:"
+  sed 's/^/  /' "$dir/out/probe-1.log" >&2 2>/dev/null || true
+fi
+if ! grep -qx 'probe: 0/1' "$dir/output"; then
+  fail "the loop whose run hung past its limit did not count it failed:"
+  sed 's/^/  /' "$dir/output" >&2
+fi
+if [ -s "$dir/said" ]; then
+  fail "the loop whose run hung past its limit left processes running:"
+  sed 's/^/  /' "$dir/said" >&2
+fi
+
 [ -z "$failed" ] || exit 1
-echo "stress-probe: the loop sent INT or TERM ended its suite's run and its guard, each with its group"
+echo "stress-probe: the loop sent INT or TERM ended its suite's run and its guard, each with its group; a run past its limit was killed with its group and failed as a hang"
