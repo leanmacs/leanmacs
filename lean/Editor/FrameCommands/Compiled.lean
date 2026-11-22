@@ -1,6 +1,6 @@
-import Editor.Ex
 import Editor.FrameCommands
 import Editor.Package
+import Editor.Quit
 
 /-!
 # The `frame-commands` package: the frame's commands and their bindings
@@ -23,8 +23,8 @@ that runs while config binds them.
   Minimise (`Editor/Menu/Compiled.lean`), which the menu bar takes from
   these bindings: on macOS AppKit runs the item before the key reaches the
   window, and the item runs the same command.
-- **`s-q`** (Command-Q) runs `quit` (`Ex.quitName`), so Command-Q follows
-  the rule `:q` and the close button follow (`Editor/Ex.lean`, "A window's
+- **`s-q`** (Command-Q) runs `quit` (`Quit.name`), so Command-Q follows
+  the rule `:q` and the close button follow (`Editor/Quit.lean`; `Editor/Ex.lean`, "A window's
   close request"). On macOS it is the application menu's Quit, a system
   item AppKit runs before the key reaches the window: it reaches the loop
   as the system's quit, which runs the same command (`Editor/Loop.lean`,
@@ -61,6 +61,6 @@ def package : Package :=
       command minimiseName minimise
       bindKeys [fullscreenChord] toggleFullscreenName
       bindKeys [minimiseChord] minimiseName
-      bindKeys [quitChord] Ex.quitName }
+      bindKeys [quitChord] Quit.name }
 
 end Editor.FrameCommands

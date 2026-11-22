@@ -11,7 +11,6 @@ import Editor.Display
 import Editor.Display.Model
 import Editor.DisplayRules
 import Editor.Event
-import Editor.Ex
 import Editor.Ex.Line
 import Editor.FrameCommands
 import Editor.InputScheme
@@ -29,6 +28,7 @@ import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
+import Editor.Quit
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
@@ -191,7 +191,7 @@ def menuChecks : List Check :=
               | "noop" => some ran
               | "balk" => some refused
               | name =>
-                if name == FilesApi.openFileName || name == Ex.quitName then some ran else none }
+                if name == FilesApi.openFileName || name == Quit.name then some ran else none }
         let status : Array StatusField :=
           #[{ text := "All", face := ModeLine.secondaryFace, padding := 4 },
             { text := "scratch", face := ModeLine.bufferFace, side := .right, padding := 4 }]

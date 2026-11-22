@@ -1,6 +1,7 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.Ex.Line
+import Editor.Quit
 import FilesApi
 import ShellApi
 
@@ -98,7 +99,9 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
 
 - **`quit`** (`quitName`, `quitCommand`) asks the editor to quit (`quit`,
   `Editor/Api.lean`; `docs/design/concurrency.md`, "Quit"). The ex name
-  `q` is bound to it.
+  `q` is bound to it. The name and the rule are the core's
+  (`Editor/Quit.lean`), since the loop runs both; `quitName`, `notQuitting`
+  and `closeRequested` here are defined from them.
 - **It is refused while a buffer that holds a file has unsaved changes**,
   and says so in the echo area (`notQuitting`): `quit: <name> has unsaved
   changes`, with the first such buffer's name. The editor goes on.
@@ -306,23 +309,22 @@ def exCommand (call : Call) : EditorM Unit := do
           [.category "ex-line" [historySource, namesSource]]) then
       message (notAsking refusal)
 
-/-- The name the quit command is registered under. -/
+/-- The name the quit command is registered under: the core's
+(`Quit.name`, `Editor/Quit.lean`). -/
 def quitName : String :=
-  "quit"
+  Quit.name
 
 /-- What the echo area says when the quit command was refused: its name,
-then why. -/
-def notQuitting : QuitRefusal → String
-  | .unsaved name => s!"{quitName}: {name} has unsaved changes"
+then why. The core's (`Quit.notQuitting`). -/
+def notQuitting : QuitRefusal → String :=
+  Quit.notQuitting
 
 /-- The quit rule, as the quit command and a window's close request run it
-("A window's close request", in the module docs): asks the editor to quit
-(`quit`, `Editor/Api.lean`), and says a refusal in the echo area
-(`notQuitting`). The loop runs it for a close request (`Editor/Loop.lean`,
-"Quit"). -/
-def closeRequested : EditorM Unit := do
-  if let .error refusal← quit then
-    message (notQuitting refusal)
+("A window's close request", in the module docs): the core's
+(`Quit.closeRequested`, `Editor/Quit.lean`), which the loop runs for a
+close request (`Editor/Loop.lean`, "Quit"). -/
+def closeRequested : EditorM Unit :=
+  Quit.closeRequested
 
 /-- The quit command as it is called: asks the editor to quit (`quit`,
 `Editor/Api.lean`), and says a refusal in the echo area (`notQuitting`), by

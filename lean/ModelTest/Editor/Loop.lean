@@ -19,7 +19,6 @@ import Editor.Display
 import Editor.Display.Model
 import Editor.DisplayRules
 import Editor.Event
-import Editor.Ex
 import Editor.Ex.Line
 import Editor.Face
 import Editor.File
@@ -51,6 +50,7 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
+import Editor.Quit
 import Editor.Role
 import Editor.Scene
 import Editor.State
@@ -5340,7 +5340,7 @@ def dispatchQuitChecks : List Check :=
             let (after, _) := fedTo refused (presses "C-l o")
             next steps == #[some .continue] &&
               refused.model.display.scenes.size == edited.model.display.scenes.size + 1 &&
-              echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+              echoOf refused == some (Quit.notQuitting (.unsaved "note.txt")) &&
               !refused.loop.state.quitting &&
               !refused.stopped &&
               promptEcho after == "other" },
@@ -5479,28 +5479,29 @@ def dispatchQuitChecks : List Check :=
               failed.reloads == 0 &&
               failed.themes == #[] }]
 
-/-- The compiled quit command (`Ex.quitCommand`), as the system quit checks
+/-- The quit command as a package registers it over the core's rule
+(`Quit.closeRequested`, `Editor/Quit.lean`), as the system quit checks
 register it. -/
-def compiledQuit : Dispatched := fun call => do
-  Ex.quitCommand call
+def compiledQuit : Dispatched := fun _ => do
+  Quit.closeRequested
   return none
 
 /-- What a step of the system quit checks is handed: the open command with
 the path of `note.txt` (`C-o n`) and the save command (`C-o w`), as the
-quit checks have them, and `quit` (`Ex.quitName`), bound to `C-l q`, as
+quit checks have them, and `quit` (`Quit.name`), bound to `C-l q`, as
 `command` does it: the compiled one, or one config registered in its
 place. -/
 def systemQuitKeys (command : Dispatched := compiledQuit) : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Opener.saveName),
-      ("C-l q", invoke Ex.quitName)]
+      ("C-l q", invoke Quit.name)]
     [(FileJobs.openFileCommand, fun call => do
         Opener.openCommand call
         return none),
       (Opener.saveName, fun call => do
         Opener.saveCommand call
         return none),
-      (Ex.quitName, command)]
+      (Quit.name, command)]
 
 /-- A driver of the system quit checks, with `quit` as `command` does it
 and the file `note.txt` open in view 0, as `quitDriver` opens it. -/
@@ -5542,7 +5543,7 @@ def systemQuitChecks : List Check :=
             let (refused, steps) := fedTo driver [.commit "x", .quitRequested]
             let (edited, _) := fedTo refused [.commit "y"]
             next steps == #[some .continue, some .continue] && !refused.stopped &&
-              echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+              echoOf refused == some (Quit.notQuitting (.unsaved "note.txt")) &&
               echoOf refused == some "quit: note.txt has unsaved changes" &&
               keptRunning refused == 1 &&
               !refused.loop.state.systemQuit &&
@@ -5594,7 +5595,7 @@ def systemQuitChecks : List Check :=
           | none => false
           | some driver =>
             let (refused, _) := fedTo driver ([.commit "x"] ++ presses "C-l q")
-            !refused.stopped && echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+            !refused.stopped && echoOf refused == some (Quit.notQuitting (.unsaved "note.txt")) &&
               keptRunning refused == 0 }]
 
 /-- The text of the decoration checks: a hundred rows of `foo` and the row's

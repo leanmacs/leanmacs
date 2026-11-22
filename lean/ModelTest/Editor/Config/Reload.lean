@@ -17,6 +17,7 @@ import Editor.Config.Stores
 import Editor.DisplayRules
 import Editor.Event
 import Editor.Ex.Line
+import Editor.Extension
 import Editor.Face
 import Editor.Floating
 import Editor.InputScheme

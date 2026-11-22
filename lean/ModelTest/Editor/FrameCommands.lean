@@ -5,12 +5,12 @@ import Editor.Config.Registry
 import Editor.Display
 import Editor.Display.Model
 import Editor.Event
-import Editor.Ex
 import Editor.FrameCommands
 import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Test
 import Editor.Loop
 import Editor.Loop.Driver
+import Editor.Quit
 import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Keys
@@ -72,7 +72,7 @@ def frameCommandChecks : List Check :=
             let (refused, _) := fedTo driver ([.commit "x"] ++ presses "s-q")
             let (left, steps) := fedTo driver (presses "s-q")
             !refused.stopped && !refused.loop.state.quitting &&
-              echoOf refused == some (Ex.notQuitting (.unsaved "scratch")) &&
+              echoOf refused == some (Quit.notQuitting (.unsaved "scratch")) &&
               left.stopped &&
               steps.back?.join.map (·.next) == some .stop },
     { name :=
@@ -82,8 +82,7 @@ def frameCommandChecks : List Check :=
         pure
           (FrameCommands.package.registered.bindings ==
               #[.ofKeys (keys "C-s-f") FrameCommands.toggleFullscreenName,
-                .ofKeys (keys "s-m") FrameCommands.minimiseName,
-                .ofKeys (keys "s-q") Ex.quitName] &&
+                .ofKeys (keys "s-m") FrameCommands.minimiseName, .ofKeys (keys "s-q") Quit.name] &&
             FrameCommands.toggleFullscreenName == "toggle-fullscreen" &&
             FrameCommands.minimiseName == "minimise-window" &&
             FrameCommands.package.registered.commands.map (·.name) ==

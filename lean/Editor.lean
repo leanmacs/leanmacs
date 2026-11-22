@@ -1,6 +1,7 @@
 import Editor.Api.Theorems
 import Editor.Command.Append
 import Editor.Completion.Filtering
+import Editor.Ex
 import Editor.FrameCommands
 import Editor.Indent
 import Editor.Jumps.Go

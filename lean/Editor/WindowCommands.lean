@@ -1,5 +1,5 @@
 import Editor.Api
-import Editor.Ex
+import Editor.Quit
 
 /-!
 # The window commands
@@ -29,7 +29,7 @@ scheme binds them under `C-w` (`Vim.Default.windowKeys`,
 | `splitVertically` | `window-split-vertically` | The same side by side, the new one on the left (`nosplitright`): `CTRL-W v` |
 | `new` | `window-new` | Splits as `split` does, then shows a new empty buffer with no file in the new window, named `scratch` or the next free name, and focuses it: Vim's `:new` and `CTRL-W n` |
 | `close` | `window-close` | Closes the window (`ViewId.close`): `CTRL-W c` |
-| `quit` | `window-quit` | Closes the window, or on the last window runs `quit` (`Ex.quitName`), which asks the editor to quit: Vim's `:quit` and `CTRL-W q` |
+| `quit` | `window-quit` | Closes the window, or on the last window runs `quit` (`Quit.name`), which asks the editor to quit: Vim's `:quit` and `CTRL-W q` |
 | `only` | `window-only` | Closes every other window of the frame, the docked ones and the floats too, the floats first, and says `already only one window` when there is none, as Vim does: `CTRL-W o`. From a window docked at an edge it gives up with `atEdge`, as Emacs refuses a side window as the only window, and from a float with `floating` |
 | `focusToward side` | `window-focus-left`, `-down`, `-up`, `-right` | Focuses the window `count` steps that way (`EditorState.toward?`), and does nothing when none is there, as Vim is silent at an edge: `CTRL-W h j k l` |
 | `focusCycled forward` | `window-focus-next`, `window-focus-previous` | Focuses the next or the previous window of the frame, the tiles, the docked windows, then the floats, wrapping, or the Nth with a count (`EditorState.cycled`): `CTRL-W w` and `W` |
@@ -234,7 +234,7 @@ def quit (call : Call) : EditorM Unit := do
   | .ok () =>
     pure ()
   | .error .onlyWindow =>
-    discard <| runCommand Ex.quitName call
+    discard <| runCommand Quit.name call
   | .error refusal =>
     giveUp refusal.describe
 

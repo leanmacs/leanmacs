@@ -95,6 +95,7 @@ import ModelTest.Editor.PackageSet.Running
 import ModelTest.Editor.Process.Environment
 import ModelTest.Editor.Process.Model
 import ModelTest.Editor.Program
+import ModelTest.Editor.Quit
 import ModelTest.Editor.Restart.Handover
 import ModelTest.Editor.Restart.Launch
 import ModelTest.Editor.Restore
@@ -571,6 +572,9 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   when the save is refused and when the buffer is edited meanwhile. They
   name no ex name. They are apart from `dispatchChecks`, which are
   defined before the driver;
+- `quitChecks`: the quit rule and its name, the core's (`Editor/Quit.lean`),
+  on a driver whose `quit` runs the rule: with nothing unsaved the editor
+  leaves, and a refusal is said under the core's name;
 - `systemQuitChecks`: the system's quit (`Event.quitRequested`,
   `Editor/Loop.lean`, "Quit") on that driver, with the compiled `quit`
   registered: with nothing unsaved the step says stop; with unsaved
@@ -1295,6 +1299,7 @@ def checks : List Check :=
     indentOpeningChecks ++
     indentEditChecks ++
     indentLevelChecks ++
+    quitChecks ++
     apiStateChecks ++
     insertExcerptChecks ++
     journalFormatChecks ++
