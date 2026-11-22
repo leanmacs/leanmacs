@@ -1,9 +1,8 @@
 # Packages and the core
 
 What the core is, what a package may import of it, how an editor is built
-from the core and a set of packages, which modules are core and which are
-features that could become packages, and what each feature would have to
-cross to move out. Written by the packages roadmap: its phase 3 built the
+from the core and a set of packages, which modules are the core's, and
+which package each feature that was the core's is. Written by the packages roadmap: its phase 3 built the
 core's root module, cut every import from the core into the two features
 that move in that roadmap (the compile mode and the shipped palettes), and
 put a check of that in the gate; its phase 4 built the package set and its
@@ -33,37 +32,48 @@ and two interface libraries the core had staged, `project-api` and
 the Vim scheme, and the themes out (`evil`, `themes`), with two names-only
 interface packages, `evil-api` and `themes-api`: the input scheme is a
 package's since, and an editor whose set supplies none refuses to start
-("Input schemes", below). What a package is and how a
+("Input schemes", below). Its phase 8 moved the last features out: the
+ex line (`ex`), the frame, window and tab commands (`frame-commands`,
+`window-commands`, `tab-commands`) and the menu bar that ships (`menu`),
+and with them session restore's registrations (`restore`) and the
+package-set commands (`package-set`), with four names-only interface
+packages (`ex-api`, `frame-commands-api`, `window-commands-api`,
+`tab-commands-api`), the compile mode's contributions as extension points
+of a new interface package (`compile-api`), and the last two interface
+libraries the core had staged as interface packages of their own
+(`buffers-api`, `shell-api`). The core's Lake package lists no package
+since, and has no entry module. What a package is and how a
 host registers one are in [lean-runtime.md](lean-runtime.md), "Packages".
 
-Every feature but those eighteen is still in the core's Lake package
-(`lean/lakefile.lean`, the package `editor-core`), whose own list of
-packages (`EditorCore.EditorPackage`) holds seven: `ex`,
-`frame-commands`, `menu`, `window-commands`, `tab-commands`,
-`restore` and `package-set`. The default package set
-(`packages/lakefile.toml`) requires the core and eighteen default packages,
-in this order: `evil` (`packages/evil/`, which requires
-`packages/evil-api/`, `packages/minibuffer-api/` and
-`packages/at-point-api/`), `themes` (`packages/themes/`, which requires
-`packages/themes-api/`), `files` (`packages/files/`), `buffers` (`packages/buffers/`),
-`workspace` (`packages/workspace/`, which requires `packages/project-api/`
-and `packages/vc-api/`), `project-search` (`packages/project-search/`,
-which requires `packages/project-search-api/`), `working-set`
-(`packages/working-set/`, which requires `packages/working-set-api/` and
-`packages/vc-api/`), `shell` (`packages/shell/`), `version-control`
-(`packages/version-control/`, which requires `packages/project-api/` and
-`packages/vc-api/`), `completion` (`packages/completion/`, which requires
-`packages/completion-api/`), `mode-line` (`packages/mode-line/`),
-`minibuffer` (`packages/minibuffer/`, which requires
-`packages/minibuffer-api/`), `shipped-themes`
-(`packages/shipped-themes/`), `execute-command`
-(`packages/execute-command/`, which requires `packages/execute-command-api/`),
-`binding-search` (`packages/binding-search/`, which requires
-`packages/binding-search-api/`), `compile` (`packages/compile/`),
-`at-point` (`packages/at-point/`, which requires `packages/at-point-api/`
-and `packages/evil-api/`)
-and `languages` (`packages/languages/`). This document draws the lines
-later moves cut along.
+**No feature is in the core's Lake package** (`lean/lakefile.lean`, the
+package `editor-core`): it registers no `Package` and has no entry module
+("A package's entry module", below). The default package set
+(`packages/lakefile.toml`) requires the core and twenty-five default
+packages, in this order, each with the interface packages it requires:
+
+1. `ex` (`ex-api`, `buffers-api`, `shell-api`), `frame-commands`
+   (`frame-commands-api`), `menu` (`evil-api`, `frame-commands-api`),
+   `window-commands` (`window-commands-api`), `tab-commands`
+   (`tab-commands-api`), `restore` and `package-set`: the seven the core's
+   own list held last, which phase 8 moved out;
+2. `evil` (`evil-api`, `minibuffer-api`, `at-point-api`,
+   `window-commands-api`, `tab-commands-api`, `ex-api`, `buffers-api`,
+   `shell-api`) and `themes` (`themes-api`), phase 7's;
+3. `files` (`buffers-api`), `buffers` (`buffers-api`), `workspace`
+   (`project-api`, `vc-api`, `compile-api`), `project-search`
+   (`project-search-api`), `working-set` (`working-set-api`, `vc-api`,
+   `buffers-api`), `shell` (`shell-api`) and `version-control`
+   (`project-api`, `vc-api`, `buffers-api`), phase 6's;
+4. `completion` (`completion-api`), `mode-line`, `minibuffer`
+   (`minibuffer-api`), `shipped-themes`, `execute-command`
+   (`execute-command-api`, `minibuffer-api`), `binding-search`
+   (`binding-search-api`, `minibuffer-api`), `compile` (`minibuffer-api`,
+   `compile-api`, `shell-api`), `at-point` (`at-point-api`, `evil-api`)
+   and `languages`, the earlier phases'.
+
+Each has a directory under `packages/`, as each of the eighteen interface
+packages has. "The module map", below, lists them with what each
+registers at and reads.
 
 What a package author and a user read is in `docs/packages/`: the guide
 to writing a package ([writing-a-package.md](../packages/writing-a-package.md))
@@ -111,71 +121,31 @@ could move later.
   config names what a default package declares (`Compile.cargoMode`,
   `ShippedThemes.themes`), as it named the compile mode's declarations
   while that was in the core.
-- **The list of the core's packages is not a module of the editor.**
-  `EditorCore.EditorPackage` (`lean/EditorCore/EditorPackage.lean`) is the
-  entry module of the core's Lake package ("A package's entry module",
-  below): its `packages` names every package still in that Lake package,
-  in the one order the headless fixtures show
-  ("Registration order is visible", below). It is a module outside
-  `lean/Editor/` and outside the namespace `Editor`, in a library of its
-  own (`lean_lib EditorCore`), which the generated root and the tests that
-  need the list import. So it is no core module and no feature's, the
-  core's root does not import it, and the core imports check, which is of
-  the modules named `Editor.…`, exempts nothing by name. The Lake package
-  is named `editor-core` for this: named `editor`, its entry module would
-  be `Editor.EditorPackage`, under the namespace that check rules.
-- **The executable's body is a core module, `Editor.Main`**
-  (`lean/Editor/Main.lean`). `Editor.Main.run` takes the packages, the
-  input schemes the set supplies and the
-  config base as values and acts on the mode the command line selects; the
-  demonstration is there too. It is a module of the host, internal, and it
-  imports neither a package nor the config base. `Editor.Core` imports it,
-  and through it the hosts.
-- **The executable's root is generated, not written.** No module under
-  `lean/` defines `main` for the editor. The package-set build writes the
-  root from the set's Lake packages: it imports the core's base,
-  `Editor.Main` and each entry module, and its `main` is one call of
-  `Editor.Main.run`, with the packages, the schemes and the names of the base's modules
-  ("The package set and its build", below).
-- **A root that links the elaborator imports the config base.** The
-  elaborator adapter (`Editor.Config.Elaborate`) imports the base's modules
-  from their `.olean` files at runtime, and each must already be linked
-  into the executable ([lean-runtime.md](lean-runtime.md), "One shared
-  state"). The adapter used to import `Editor` to make that so, and through
-  that import it, the headless host and the window host reached the
-  compile mode. Now each root that links the adapter imports `Editor`
-  beside it: the generated root, which also imports every other module of
-  its base, the entry modules; `lean/ConfigTest/Check.lean`;
-  `lean/FfiTest/Editor/Window/Real.lean`; and the root of a package's
-  linked test that starts a host. The check below fails a root of the
-  core's build that does not, the generated root of the default set among
-  them.
-
-## The package set and its build
-
-**A package set is a Lake package whose `require`s are the set.** Its
-lakefile declares no target and it holds no Lean source. The editor is
-built from one:
+- **The core's Lake package lists no package.** It has no entry module
+  ("A package's entry module", below), so an editor of the core alone
+  hands its hosts no package (`tests/empty-set`). Until the
+  features-as-packages roadmap's phase 8 it had one,
+  `EditorCore.EditorPackage`, a library of its own outside `lean/Editor/`
+  whose `packages` named every package still in that Lake package. The
+  Lake package is still named `editor-core`, not `editor`: a package named
+  `editor` that did list packages would list them at
+  `Editor.EditorPackage`, under the namespace the core imports check
+  rules, and `editor-core` is the name the staged core of the user-side
+  link has.
 
 - **The default set is `packages/lakefile.toml`** (the Lake package
   `default-set`). It requires the core (`editor-core`, from `../lean`) and
   the default packages, each of which has a directory under `packages/`
-  and a `require` there. There are eighteen, required in this order:
-  `evil` and `themes` ("The default packages of the features-as-packages
-  roadmap's phase 7", below), then
-  `files`, `buffers`, `workspace`, `project-search`, `working-set`,
-  `shell` and `version-control` ("The default packages of the
-  features-as-packages roadmap's phase 6", below), then `completion` ("The
-  default packages of the features-as-packages roadmap's phase 4", below),
-  `mode-line` ("The default packages of the features-as-packages roadmap's
-  phase 3", below), `minibuffer` (phase 4's), `shipped-themes` ("The first
-  default package", below), `execute-command` and `binding-search` (phase
-  3's), `compile` ("The default package `compile`", below), `at-point`
-  (phase 4's) and `languages` (phase 3's). Eleven of them require an
-  interface package of their own or another's (`project-api`, `vc-api`,
-  `minibuffer-api`, `at-point-api` and `evil-api`
-  are each required by more than one), which is in the set through that
-  `require`. It is the lakefile a user's set starts from.
+  and a `require` there. There are twenty-five, required in the order the
+  top of this document lists: the seven of phase 8 ("The default packages
+  of the features-as-packages roadmap's phase 8", below), `evil` and
+  `themes` ("… phase 7"), the seven of phase 6 ("… phase 6"), then
+  `completion`, `mode-line`, `minibuffer`, `shipped-themes`,
+  `execute-command`, `binding-search`, `compile`, `at-point` and
+  `languages` ("The first default package", "The default package
+  `compile`", "… phase 3" and "… phase 4"). Twenty of them require an
+  interface package of their own or another's, which is in the set through
+  that `require`. It is the lakefile a user's set starts from.
 - **The core defines the build**, as Lake facets in `lean/lakefile.lean`.
   Run in `lean/`, `lake -d ../packages build :editor` writes a root module
   from the set's packages, builds it and links
@@ -199,7 +169,7 @@ built from one:
 | `editorRoot` | a package, the set | For `lake query`: writes the set's root module and prints its path; links and builds nothing |
 | `editorRootImports`, `editorRootTransImports` | a package, the set | For `lake query`: the generated root's direct and transitive imports, one module a line |
 | `editorBase` | a package, the set | For `lake query`: the set's config base, one module a line: `Editor`, then the entry module of each package of the set outside the core |
-| `editorShipped` | a package, the set | For `lake query`: what an app bundle ships of the set, built: one line `file<TAB><source><TAB><place>` a file (the core's `Editor` and `EditorCore` libraries and each other package's libraries but its tests, with their sources and every file Lake wrote; the lakefiles; the core's glue; the Rust archive), and one `oleans<TAB><place>` a `.olean` directory, for `tools/stage-bundle.sh` ([lean-runtime.md](lean-runtime.md), "The app ships the toolchain") |
+| `editorShipped` | a package, the set | For `lake query`: what an app bundle ships of the set, built: one line `file<TAB><source><TAB><place>` a file (the core's `Editor` library, its interface library `FilesApi` and each other package's libraries but its tests, with their sources and every file Lake wrote; the lakefiles; the core's glue; the Rust archive), and one `oleans<TAB><place>` a `.olean` directory, for `tools/stage-bundle.sh` ([lean-runtime.md](lean-runtime.md), "The app ships the toolchain") |
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
 | `editorPackageImports` | a package, the set | For `lake query`: each direct import of a core module by a module of those packages, one a line, with the module's kind (`library`, `test`, `linked`, `linked-test`); what the package imports check reads |
 | `editorLayerImports` | a package, the set | For `lake query`: each direct import of a workspace module by a module of the core or of those packages, one a line, with the layer of the importing and the imported package (`core`, `interface`, `implementation`); what the layer imports check reads |
@@ -223,8 +193,9 @@ object.
 **The convention: a Lake package named `p` lists its packages in the
 module `<P>.EditorPackage`, where `<P>` is `p` in upper camel case**, the
 name `lake new` gives the package's library (`Lake.toUpperCamelCase`):
-`shipped-themes` gives `ShippedThemes.EditorPackage`, and `editor-core`
-gives `EditorCore.EditorPackage`.
+`shipped-themes` gives `ShippedThemes.EditorPackage`. The core's Lake
+package, `editor-core`, has no such module ("The core has no entry
+module", at the end of this section).
 
 ```lean
 import Greeting
@@ -241,8 +212,8 @@ end Greeting.EditorPackage
 
 - **The module declares `packages : Array Editor.Package`** in the
   namespace of its own name. A Lake package may hold several `Package`
-  values, which register in the order the array lists them; the core's
-  holds 7, `version-control`'s two (`version-control` and
+  values, which register in the order the array lists them;
+  `version-control`'s holds two (`version-control` and
   `version-control-gutter`), and each other default package's one. An interface package has no
   entry module and contributes no `Package`.
 - **A package that supplies the editor's input scheme also declares
@@ -276,11 +247,39 @@ end Greeting.EditorPackage
   `<P>.EditorPackage` with no configuration. A shared prefix needs an
   explicit root in every package, and a library that claimed the whole
   prefix would shadow the others'.
-- **The core is not exempt**: its Lake package was renamed `editor-core`
-  so that the convention gives it a module outside `Editor/` ("The core
-  and its root", above). That is also the name the staged core of the
-  user-side link has, so one set lakefile can name the core built here and
-  the core the app ships.
+- **The core has no entry module** (the features-as-packages roadmap's
+  phase 8, its plan's D9). Its Lake package is one "with no such module"
+  and contributes nothing to a set's root, and the build writes `#[]` for
+  a set with no entry module at all (`rootSource` in `lean/lakefile.lean`),
+  so the build needs none for the core.
+  - **The choice was between removing the module and keeping it with an
+    empty list.** It was removed: an empty list that the generated root,
+    six linked roots and the core's own tests imported and appended would
+    read as if the core had packages, and it could not even name the type
+    `Package` without importing a module every host reaches, which the
+    host imports check forbids an entry module.
+  - **What says so**: `lean/EditorCore/` is gone; the gate requires the
+    empty set's root to import `Editor` and `Editor.Main` alone
+    (`:editorRootImports`, in `ffi-test`); and
+    `ModelTest.packageChecks` holds that a host handed no package starts
+    from a registry that holds nothing.
+  - **Session restore's registrations and the package-set commands are
+    default packages too** (that plan's D1), though the phase named five
+    features: the core's list held seven packages, `restore` and
+    `package-set` having joined it after the roadmap was written, and
+    "the core's Lake package registers no `Package`" reaches both. Only
+    the registrations moved. The machinery stays the core's, as modules a
+    package may import: the journal reconciler the loop runs, the restore
+    and the restart (`Editor.Restore.*`, `Editor.Restart.*`), and the
+    package set's data, edit and build (`Editor.PackageSet.*`). The hosts,
+    the loop and the config session start that work by names the core
+    declares, and each already treats "no such job registered" as an
+    ordinary case, as the loop's reconcilers treat the files' and the
+    gutter's jobs since phase 5. The other choices were to keep the two in
+    a list the core registers, which changes the criterion, or to have the
+    hosts install them outside any package list, a second mechanism that
+    is a `Package` in all but type. What a set without either does is
+    under "Dropping one of the seven leaves…", below.
 
 ### The order packages register in
 
@@ -289,28 +288,33 @@ The set's packages are visited from the set, **each after the packages it
 (`setPackages` in `lean/lakefile.lean`). So:
 
 - a package registers after every package it depends on;
-- the core's packages come first, since every package with an entry module
-  requires the core;
 - packages that do not depend on each other register in the order the
-  set's lakefile names them.
+  set's lakefile names them;
+- an interface package has no entry module and registers nothing, so a
+  `require` of one reorders nothing.
 
-So the default set registers the core's seven packages, then `evil` and
-`themes`, which phase 7 moved out, then the seven
-features phase 6 moved out (`files`, `buffers`, `workspace`,
-`project-search`, `working-set`, `shell`, `version-control` and
-`version-control-gutter`, in the order the core's list held them), then
-the default packages that moved before them. Phase 6 put its seven first
-(its D5) because before it they registered before every default package:
-first, their order among themselves and against the default packages is
-unchanged, and only the packages still in the core's list register before them
-("Registration order is visible", below). Phase 7 put `evil`, then
-`themes`, before those seven for the same reason (its D6): evil's package
-was the first of the core's list and the themes' its sixth, both before
-every default package, so requiring them first keeps their order against
-every default package and between them, and the one change is against the
-seven packages still in the core's list, which now register before them.
-That is the fewest fixture lines: neither binds a key, and no command name
-is registered twice in the default set.
+So the default set registers its twenty-five in the order its lakefile
+requires them. Each phase that moved features out of the core's own list
+put them first in the set, in the order that list held them, because the
+core's packages registered before every default package:
+
+- **Phase 6** put its seven first (`files`, `buffers`, `workspace`,
+  `project-search`, `working-set`, `shell`, `version-control` and
+  `version-control-gutter`; its D5): their order among themselves and
+  against the default packages is unchanged, and only the packages then
+  still in the core's list registered before them.
+- **Phase 7** put `evil`, then `themes`, before those seven (its D6):
+  evil's package was the first of the core's list and the themes' its
+  sixth, so requiring them first keeps their order against every default
+  package and between them. The one change was against the seven packages
+  then still in the core's list, which registered before them.
+- **Phase 8** moved those seven, `ex`, `frame-commands`, `menu`,
+  `window-commands`, `tab-commands`, `restore` and `package-set`, in the
+  reverse of that order, each to the front of the set (its D2). The
+  package that moved was each time the last still in the core's list, so
+  after every one of its commits the order was what it was before it, and
+  the phase changed no fixture line ("Registration order is visible",
+  below).
 
 Lake's own list of a workspace's packages is not in that order: it holds a
 package reached only through another after the package that requires it,
@@ -349,7 +353,13 @@ and only when its text would change. For the default set it is:
 ```lean
 import Editor
 import Editor.Main
-import EditorCore.EditorPackage
+import Ex.EditorPackage
+import FrameCommands.EditorPackage
+import Menu.EditorPackage
+import WindowCommands.EditorPackage
+import TabCommands.EditorPackage
+import Restore.EditorPackage
+import PackageSet.EditorPackage
 import Evil.EditorPackage
 import Themes.EditorPackage
 import Files.EditorPackage
@@ -370,14 +380,15 @@ import AtPoint.EditorPackage
 import Languages.EditorPackage
 
 def main (args : List String) : IO UInt32 :=
-  Editor.Main.run (EditorCore.EditorPackage.packages ++ Evil.EditorPackage.packages ++ Themes.EditorPackage.packages ++ Files.EditorPackage.packages ++ Buffers.EditorPackage.packages ++ Workspace.EditorPackage.packages ++ ProjectSearch.EditorPackage.packages ++ WorkingSet.EditorPackage.packages ++ Shell.EditorPackage.packages ++ VersionControl.EditorPackage.packages ++ Completion.EditorPackage.packages ++ ModeLine.EditorPackage.packages ++ Minibuffer.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages ++ ExecuteCommand.EditorPackage.packages ++ BindingSearch.EditorPackage.packages ++ Compile.EditorPackage.packages ++ AtPoint.EditorPackage.packages ++ Languages.EditorPackage.packages) #[Evil.EditorPackage.scheme] #[`Editor, `Evil.EditorPackage, `Themes.EditorPackage, `Files.EditorPackage, `Buffers.EditorPackage, `Workspace.EditorPackage, `ProjectSearch.EditorPackage, `WorkingSet.EditorPackage, `Shell.EditorPackage, `VersionControl.EditorPackage, `Completion.EditorPackage, `ModeLine.EditorPackage, `Minibuffer.EditorPackage, `ShippedThemes.EditorPackage, `ExecuteCommand.EditorPackage, `BindingSearch.EditorPackage, `Compile.EditorPackage, `AtPoint.EditorPackage, `Languages.EditorPackage] { setName := "default-set", pin := "leanprover/lean4:v4.35.0\n" } args
+  Editor.Main.run (Ex.EditorPackage.packages ++ FrameCommands.EditorPackage.packages ++ Menu.EditorPackage.packages ++ WindowCommands.EditorPackage.packages ++ TabCommands.EditorPackage.packages ++ Restore.EditorPackage.packages ++ PackageSet.EditorPackage.packages ++ Evil.EditorPackage.packages ++ Themes.EditorPackage.packages ++ Files.EditorPackage.packages ++ Buffers.EditorPackage.packages ++ Workspace.EditorPackage.packages ++ ProjectSearch.EditorPackage.packages ++ WorkingSet.EditorPackage.packages ++ Shell.EditorPackage.packages ++ VersionControl.EditorPackage.packages ++ Completion.EditorPackage.packages ++ ModeLine.EditorPackage.packages ++ Minibuffer.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages ++ ExecuteCommand.EditorPackage.packages ++ BindingSearch.EditorPackage.packages ++ Compile.EditorPackage.packages ++ AtPoint.EditorPackage.packages ++ Languages.EditorPackage.packages) #[Evil.EditorPackage.scheme] #[`Editor, `Evil.EditorPackage, `Themes.EditorPackage, `Files.EditorPackage, `Buffers.EditorPackage, `Workspace.EditorPackage, `ProjectSearch.EditorPackage, `WorkingSet.EditorPackage, `Shell.EditorPackage, `VersionControl.EditorPackage, `Completion.EditorPackage, `ModeLine.EditorPackage, `Minibuffer.EditorPackage, `ShippedThemes.EditorPackage, `ExecuteCommand.EditorPackage, `BindingSearch.EditorPackage, `Compile.EditorPackage, `AtPoint.EditorPackage, `Languages.EditorPackage] { setName := "default-set", pin := "leanprover/lean4:v4.35.0\n" } args
 ```
 
 with a module doc and a doc string, since it is built with the core's Lean
 options and a warning in it fails the build. It imports each entry module
 of the set in order and appends their `packages` in that order; a set of
-the core alone (`tests/empty-set`) passes the core's array as it is and
-the base `Editor` alone. The array after the packages holds the `scheme`
+the core alone (`tests/empty-set`), which has no entry module, passes
+`#[]` and the base `Editor` alone, and imports `Editor` and `Editor.Main`
+and nothing else, which the gate requires of it. The array after the packages holds the `scheme`
 of each entry module whose Lake package declares the keyword
 `editor-input-scheme`, in that order: the input schemes the set supplies,
 of which the editor runs the last ("Input schemes", below). The default
@@ -386,8 +397,8 @@ package `evil` declares it, so the default set's array holds
 build says of the editor for the files it generates in a config directory
 ("A config directory requires the core and the set", below): the set's Lake name and the
 text of the core's `lean-toolchain`. The gate requires the default set's root to
-import exactly these twenty-one modules (`lake -d ../packages query
-:editorRootImports`, in `ffi-test`), and its base to be the nineteen named
+import exactly these twenty-seven modules (`lake -d ../packages query
+:editorRootImports`, in `ffi-test`), and its base to be the twenty-six named
 (`:editorBase`). The interface packages have no entry module, so neither
 names them; their modules come with their implementations' libraries.
 
@@ -570,17 +581,22 @@ globs = ["Config.+"]
   alone was used. The gate starts the window mode's wiring for both sets'
   editors with that default and requires config to load (`ffi-test
   window-host-direct`), and checks each record: the default set's names
-  thirty directories, the core's, then those of its eighteen default
-  packages and eleven interface packages in the order they register
-  (`evil-api`'s, `minibuffer-api`'s, `at-point-api`'s, `evil`'s,
-  `themes-api`'s, `themes`', `files`', `buffers`', `project-api`'s, `vc-api`'s, `workspace`'s,
+  forty-four directories, the core's, then those of its twenty-five
+  default packages and eighteen interface packages in the order the build
+  visits them, each interface package before the first package that
+  requires it (`shell-api`'s, `ex-api`'s, `buffers-api`'s, `ex`',
+  `frame-commands-api`'s, `frame-commands`', `evil-api`'s, `menu`'s,
+  `window-commands-api`'s, `window-commands`', `tab-commands-api`'s,
+  `tab-commands`', `restore`'s, `package-set`'s, `minibuffer-api`'s,
+  `at-point-api`'s, `evil`'s, `themes-api`'s, `themes`', `files`',
+  `buffers`', `compile-api`'s, `project-api`'s, `vc-api`'s, `workspace`'s,
   `project-search-api`'s, `project-search`'s, `working-set-api`'s,
-  `working-set`'s, `shell`'s, `version-control`'s, `completion-api`'s, `completion`'s, `mode-line`'s,
-  `minibuffer`'s, `shipped-themes`', `execute-command-api`'s,
-  `execute-command`'s, `binding-search-api`'s, `binding-search`'s,
-  `compile`'s, `at-point`'s and `languages`'), and the
-  fixture set's thirty-five, the core's, `greeting-api`'s, `greeting`'s,
-  `greeting-loud`'s, `echo`'s, the default set's twenty-nine in that order,
+  `working-set`'s, `shell`'s, `version-control`'s, `completion-api`'s,
+  `completion`'s, `mode-line`'s, `minibuffer`'s, `shipped-themes`',
+  `execute-command-api`'s, `execute-command`'s, `binding-search-api`'s,
+  `binding-search`'s, `compile`'s, `at-point`'s and `languages`'), and the
+  fixture set's forty-nine, the core's, `greeting-api`'s, `greeting`'s,
+  `greeting-loud`'s, `echo`'s, the default set's forty-three in that order,
   and `word-count`'s, each holding its package's modules.
 - **A directory given on the command line is a search path**, one
   directory or several joined with `:`, and outside a bundle the recorded
@@ -661,7 +677,7 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
 - **The gate gives the steps the fixture set**, which requires the default
   set. So the default packages are tested, built, formatted and run through
   it, and `lean-test` requires the line the `test` step prints as it
-  reaches each of them, the eighteen default packages and the eleven
+  reaches each of them, the twenty-five default packages and the eighteen
   interface packages. The default set's own
   `editor` is built beside it, for the standing fixtures under
   `tests/headless/`, and **`run` is also given the default set**, so the
@@ -777,7 +793,7 @@ set, holds its three themes.
   longer reaches the answer ("The minibuffer", under "The default
   packages of the features-as-packages roadmap's phase 4", below), and
   that the core's list registers the one theme `default` is held by
-  `ConfigTest.shippedChecks` and `ModelTest.packageSetChecks`.
+  `ConfigTest.shippedChecks` and `ModelTest.packageSetChecks` (which went with the core's list in phase 8).
 - **The app bundle carries its module files since phase 6.** Config names
   a theme by its name, and the themes are in the executable, so the bundle
   needed nothing of this package while the config base was the core's
@@ -816,8 +832,8 @@ over the process service, a major mode, ex names and contributions.
 
 - **Its library imports the core's API alone**, eleven modules, with no
   addition to the API: `Editor.Api`, `Editor.Command.Call`, `Editor.File`,
-  `Editor.Json`, `Editor.Mode`, `Editor.Package`, `Editor.ProjectMode`,
-  `Editor.ProjectMode.Format`, `Editor.ProjectMode.Listing`,
+  `Editor.Json`, `Editor.Mode`, `Editor.Package`, `CompileApi`,
+  `CompileApi.Format`, `CompileApi.Listing`,
   `Editor.Shell` and `Editor.Workspace.Modes`, the same eleven recorded
   before the move. The package imports check holds that, over a library
   whose globs hold every module ("What a package may import", below).
@@ -838,10 +854,10 @@ over the process service, a major mode, ex names and contributions.
   core module uses it: the `compilation.*` faces
   (`lean/Editor/Face/Vocabulary.lean`, `lean/Editor/Face.lean`); the
   contribution vocabulary and the format data
-  (`lean/Editor/ProjectMode.lean`, `lean/Editor/ProjectMode/Format.lean`);
+  (`packages/compile-api/CompileApi.lean`, `packages/compile-api/CompileApi/Format.lean`);
   the listing, its store `compile-listings` and its job `compile-list`,
   which the `workspace` package registers
-  (`lean/Editor/ProjectMode/Listing.lean`); `compileContribution` and
+  (`packages/compile-api/CompileApi/Listing.lean`); `compileContribution` and
   `projectCommands` of the setup port; and the registry's hook with the
   loop being told the contributions ("The interfaces the core owns",
   below). No core module names a compile command: the default config, the
@@ -1016,7 +1032,7 @@ default packages of the features-as-packages roadmap's phase 4", below).
   phase 4 the kit's minibuffer and at-point too ("What moving the
   completion, at-point and minibuffer features added to the core's API",
   below); one whose
-  subject is the core's list (`ModelTest.packageSetChecks`,
+  subject is the core's list (`ModelTest.packageSetChecks` (which went with the core's list in phase 8),
   `ConfigTest.shippedChecks`) hosts the list alone, and states that it
   holds nothing of the four.
 - **`tests/headless/default-config`** runs the default config, copied into
@@ -1175,11 +1191,11 @@ and each implementation requires its interface package.
   `FfiTest.shippedPackages`). A test that read what only a shipped style
   or display makes, fuzzy's match ranges or the `minibuffer` display's
   rows and faces, now reads a style or display written in the test
-  (`lean/ModelTest/Support/Listings.lean`, and the package `listings` of
+  (`lean/Editor/Test/Listings.lean`, a module of the kit since phase 8, once `lean/ModelTest/Support/Listings.lean`, and the package `listings` of
   `lean/ConfigTest/Support/Listings.lean`, handed first to every config
   test's host; the linked kit's `lean/Editor/Test/Linked/Listings.lean`
   since phase 6), and the shipped value's own rule is held by the package's
-  tests. `ModelTest.packageSetChecks` and `ConfigTest.shippedChecks`
+  tests. `ModelTest.packageSetChecks` (which went with the core's list in phase 8) and `ConfigTest.shippedChecks`
   host the core's list alone, and state that it holds nothing of the
   three.
 - **Their fixtures moved with them.** `prompt` and `candidates` moved byte
@@ -1367,7 +1383,7 @@ the modules drop `Editor.` from their names.
   `Editor.Jumps`, `Editor.Package`; `workspace`'s `Editor.Api`,
   `Editor.Command.Call`, `Editor.Completion.Filtering`, `Editor.Extension`,
   `Editor.Invocation`, `Editor.Job`, `Editor.Package`, `Editor.Process`,
-  `Editor.Process.Environment`, `Editor.ProjectMode.Listing`,
+  `Editor.Process.Environment`, `CompileApi.Listing`,
   `Editor.SearchRoot`, `Editor.Workspace`, `FilesApi`; `project-search`'s
   `Editor.Api`, `Editor.Command.Call`, `Editor.Grep`, `Editor.Job`,
   `Editor.Jumps`, `Editor.Package`, `Editor.SearchRoot`, `Editor.Text.Word`,
@@ -1382,7 +1398,7 @@ the modules drop `Editor.` from their names.
   `Editor.Mode`, `Editor.ModeLine`, `Editor.Package`, `Editor.State`,
   `Editor.Store`, `Editor.Text`, `Editor.Value`, `Editor.Workspace`,
   `FilesApi`; `project-api`'s `Editor.Extension`, `Editor.Job`,
-  `Editor.ProjectMode.Listing`; `vc-api`'s `Editor.Diff.Script`,
+  `CompileApi.Listing`; `vc-api`'s `Editor.Diff.Script`,
   `Editor.Gutter.Track`, `Editor.Job`, `Editor.Program`. The interface
   packages' libraries import their own interface beside these, which the
   layer imports check allows; `project-search-api` and `working-set-api`
@@ -1417,7 +1433,7 @@ the modules drop `Editor.` from their names.
   each gained "the executable's hosts start with nothing of the <p>
   package", and their checks of what a moved package registers moved to
   that package's `<P>PackageChecks`, over the registry it makes alone
-  (`Config.State.ofPackages #[<package>]`). `ModelTest.packageSetChecks`
+  (`Config.State.ofPackages #[<package>]`). `ModelTest.packageSetChecks` (which went with the core's list in phase 8)
   pins the nine.
 - **No headless fixture moved** (D10): the fixtures that open, save, find
   and search files cross several of the seven, and run on the default set's
@@ -1625,14 +1641,14 @@ scheme are retired, and one fixture of the refusal replaces them:
   with none registered is still named default", "… nothing of the
   completion package … drawn with the core's own display", "… nothing of
   the minibuffer package …" and "… nothing of the mode-line package …";
-  by `ModelTest.packageSetChecks` ("the shipped set registers no theme
+  by `ModelTest.packageSetChecks` (which went with the core's list in phase 8) ("the shipped set registers no theme
   …"); and by `ThemesTest.themeChecks`, which holds that the themes
   package registers `default`, the built-in theme.
 - `tests/headless/core-ex-names` is removed. It showed the ex line of the
   same editor with no `compile` and no minibuffer to accept it. Those
   facts are held by `ConfigTest.shippedChecks` ("… nothing of the compile
   mode … and compile as an ex name is not bound", "… nothing of the
-  minibuffer package …") and `ModelTest.exChecks`; that the empty set's
+  minibuffer package …") and `ExTest.exChecks`; that the empty set's
   config base is `Editor` alone is a pin of `ffi-test`
   (`lake -d ../tests/empty-set query :editorBase`).
 - `tests/headless/no-input-scheme` is added: `ffi-test` runs the empty
@@ -1646,6 +1662,163 @@ order is visible", below). The one line this phase's leave-out added:
 
 ```text
 editor: no input scheme is installed: no package of this editor's package set supplies one
+```
+
+### The default packages of the features-as-packages roadmap's phase 8
+
+Phase 8 moved the last seven packages of the core's own list out, each
+into a Lake package of its own, and emptied that list: the ex line, the
+frame, window and tab commands and the menu bar that ships, which the
+phase names, and session restore's registrations and the package-set
+commands, which the list also held ("The core has no entry module",
+above). Each moved with `git mv`, and every declaration keeps its name and
+namespace (`Editor.Ex.…`, `Editor.WindowCommands.…`,
+`Editor.Restore.package`), so config and tests changed `import` lines
+only.
+
+| Lake package | Library modules (from `lean/Editor/`) | Its `packages` | Test driver / linked root | Requires, beside the core |
+|---|---|---|---|---|
+| `ex` (`packages/ex/`) | `Ex` (`Ex.lean`), `Ex.Compiled` | `#[Editor.Ex.package]` | `ex-test` / `ExTest.Linked` | `ex-api`, `buffers-api`, `shell-api` |
+| `frame-commands` (`packages/frame-commands/`) | `FrameCommands`, `FrameCommands.Compiled` | `#[Editor.FrameCommands.package]` | `frame-commands-test` | `frame-commands-api` |
+| `menu` (`packages/menu/`) | `Menu.Compiled` | `#[Editor.Menu.package]` | `menu-test` | `evil-api`, `frame-commands-api` |
+| `window-commands` (`packages/window-commands/`) | `WindowCommands`, `WindowCommands.Compiled` | `#[Editor.WindowCommands.package]` | `window-commands-test` | `window-commands-api` |
+| `tab-commands` (`packages/tab-commands/`) | `TabCommands`, `TabCommands.Compiled` | `#[Editor.TabCommands.package]` | `tab-commands-test` | `tab-commands-api` |
+| `restore` (`packages/restore/`) | `Restore.Compiled` | `#[Editor.Restore.package]` | `restore-test` | none |
+| `package-set` (`packages/package-set/`) | `PackageSet.Compiled` | `#[Editor.PackageSet.package]` | `package-set-test` | none |
+
+- **What each library imports of the core** (`lake -d ../packages query
+  :editorPackageImports`), every one a module of the API:
+  - `ex`: `Editor.Api`, `Editor.Command.Call`, `Editor.Ex.Line`,
+    `Editor.Quit`, `Editor.Package` and the core's interface library
+    `FilesApi`;
+  - `frame-commands`: `Editor.Api`, `Editor.Package`, `Editor.Quit`;
+  - `menu`: `Editor.Clipboard`, `Editor.Menu`, `Editor.Package`, `FilesApi`;
+  - `window-commands`: `Editor.Api`, `Editor.Quit`, `Editor.Package`;
+  - `tab-commands`: `Editor.Api`, `Editor.Package`;
+  - `restore`: `Editor.Package`, `Editor.Restore.Restart`,
+    `Editor.Restore.Run`;
+  - `package-set`: `Editor.Api`, `Editor.Package`,
+    `Editor.PackageSet.Build`, `Editor.PackageSet.Edit`.
+- **The edges that were cut first.** The loop imported the ex line for the
+  quit rule and its name, which are the core's now (`Editor.Quit`); the
+  frame commands and `window-quit` name the same. The tab commands
+  imported the window commands for a call's count and for giving up on a
+  layout refusal, which are the core's API now (`Call.count`,
+  `Call.steps`, `orGiveUp`). The menu names the frame commands, and evil's
+  Vim tables the ex line and the window and tab commands, by the
+  constants of the names-only interface packages below. No registration
+  changed.
+- **Their tests moved with them**, each list under the name it had:
+  `exChecks` and `exPackageChecks` (`ExTest`, once `ModelTest`), and
+  `exChecks` and `exScriptChecks` through the headless host
+  (`ExTest.Linked`, once `ConfigTest`); `frameCommandChecks`
+  (`FrameCommandsTest`); `standardMenuChecks` (`MenuTest`), the checks of
+  the menu that ships, while the checks of the core's menu mechanism stay
+  `ModelTest.menuChecks`, on a menu written in the test;
+  `windowCommandChecks` (`WindowCommandsTest`); `tabCommandChecks`
+  (`TabCommandsTest`); `restorePackageChecks` (`RestoreTest`); and
+  `packageSetCommandChecks` (`PackageSetTest`), the checks of the
+  `:package-…` commands, while the checks of the build job stay
+  `ModelTest.packageSetBuildChecks`. Each package's list also holds what
+  the core's own list's checks held of it: what it registers, and nothing
+  else.
+- **The core's tests run on the kit's stand-ins**: its own ex line over
+  the core's ex line data (`Editor.Test.exLinePackage`) and a `quit` that
+  runs the core's rule (`Editor.Test.quitPackage`), session restore's and
+  the build's registrations over the core's work
+  (`Editor.Test.Restore.package`, `Editor.Test.PackageSet.buildPackage`),
+  window and tab commands written over the API (`Editor.Test.Windows`),
+  the frame driver (`Editor.Test.Frame`) and the style and display written
+  for tests (`Editor.Test.Listings`). A stand-in holds no checks: it is
+  pinned by the checks that use it and by the package checks that hold
+  the real package to it.
+- **Their fixtures stay where they are.** `tests/headless/ex`, `tabs`,
+  `restore`, `restart` and the rest cross features, so no package gained a
+  `tests/headless/`, and the fixture counts did not change.
+- **The compile mode's registrations left the core's setup port.**
+  `SetupRequest` has no constructor that names the compile mode: a
+  contribution and a project's commands are values at the extension
+  points `Compile.Contribution` and `Compile.ProjectCommands`, declared
+  by the interface package `compile-api` (`packages/compile-api/`), which
+  also holds the vocabulary, the listing and their test kit
+  (`CompileApi`, `CompileApi.Format`, `CompileApi.Listing`, once
+  `Editor.ProjectMode` and the two modules under it). `compile`,
+  `workspace` and `project-api` require it. The setup operations keep
+  their names and signatures (`compileContribution`, `projectCommands`),
+  and the reader, `Compile.hook`, ranks config's contributions first, as
+  the registry did ("What moving the last seven added to the core's
+  API", below). Two refusals went: a `setup` that registers one mode's
+  contribution twice, or gives one project's commands for a mode twice,
+  is no longer refused, and the later is used, as at every choice point;
+  and a package may give project commands, which only config could.
+
+#### The interface packages `ex-api`, `frame-commands-api`, `window-commands-api`, `tab-commands-api`, `compile-api`, `buffers-api` and `shell-api`
+
+| Interface package | Declares | Implemented by | Named by |
+|---|---|---|---|
+| `ex-api` (`ExApi`) | `name` (`ex`), `quitName` (the core's `Quit.name`), `names` | `ex` | `evil` (`:`) |
+| `frame-commands-api` (`FrameCommandsApi`) | `toggleFullscreenName`, `minimiseName`, `names` | `frame-commands` | `menu` (the Window menu) |
+| `window-commands-api` (`WindowCommandsApi`) | the thirty-three names, `names` | `window-commands` | `evil` (`C-w`) |
+| `tab-commands-api` (`TabCommandsApi`) | the eight names, `selectName`, `names` | `tab-commands` | `evil` (`C-w`) |
+| `compile-api` (`CompileApi`, `CompileApi.Format`, `CompileApi.Listing`) | the points `Compile.Contribution` and `Compile.ProjectCommands`, the two setup operations, `Compile.hook`, the error formats as data, the listing and its job's name | `compile` reads; `compile` and config register | `workspace`, `project-api` |
+| `buffers-api` (`BuffersApi`), `shell-api` (`ShellApi`) | as they did while the core staged them ("The interface libraries of the features-as-packages roadmap's phase 5", below) | `buffers`, `shell` | as before, and `ex`; `shell-api` also by `ex-api` |
+
+- **Each names-only package is shaped as `evil-api`**: a library of
+  constants and `names`, a fake, a contract check and a driver. The
+  contract holds an implementation to registering a command under each
+  name, and each implementation's package check runs it and shows it bite.
+- **`ex-api`'s contract holds three more things** of the command `ex`,
+  which other packages rely on: handed a line whose name is bound, it
+  runs the bound command with the rest of the line; handed a bang line,
+  it runs `shell-api`'s `shell-command` with the text and the line; handed
+  no line, it asks for one, with itself as the continuation. Its fake is
+  the kit's ex line with the kit's quit command, as `minibuffer-api`'s is
+  the kit's minibuffer.
+- **Nothing reaches the menu, session restore's registrations or the
+  package-set commands by a name a package declares**, so those three
+  have no interface package: what a replacement of `restore` or
+  `package-set` must register is the core's names, and the kit's
+  stand-ins are the fakes the core's tests run on.
+- **The default config keeps naming commands as text.** It is a config,
+  elaborated at run time on whatever set the editor has, and a user's
+  config names commands as text; it is no core module and imports only
+  `Editor`. `ConfigTest.defaultConfigChecks` holds every name it binds to
+  a command the default set registers, the window and tab commands' as
+  text beside the two interface packages that declare them.
+
+#### Dropping one of the seven leaves…
+
+`mise run leave-out` builds the default set without each implementation
+package in turn, all twenty-five, and each editor builds
+([the-gate.md](../dev-practices/the-gate.md), "The leave-out check"). What
+an editor without one of this phase's seven has:
+
+- **without `ex`**: no ex line. `:` runs nothing, and the ex names other
+  packages bind have no line to run them. `quit` is no command, so the
+  system's quit, Command-Q and `window-quit` on the last window say there
+  is no such command; the window's close button still quits, by the rule
+  the core runs itself.
+- **without `frame-commands`**: no `toggle-fullscreen` or
+  `minimise-window`, and `C-s-f`, `s-m` and `s-q` are unbound; the Window
+  menu's two items name commands nobody registered.
+- **without `menu`**: no menu bar unless config defines one, and `s-o`,
+  `s-s`, `s-z`, `s-Z`, `s-x`, `s-c`, `s-v` and `s-a` are unbound.
+- **without `window-commands` or `tab-commands`**: none of their
+  commands, so the Vim scheme's keys under `C-w` and the default config's
+  under `SPC w` and `SPC TAB` run nothing; the frame still lays its
+  windows and tabs out, and a restored session still restores them.
+- **without `restore`**: nothing is journalled and no session is
+  restored, `restart` is no command, and a package-set build ends without
+  a restart.
+- **without `package-set`**: the three `:package-…` commands are gone,
+  and a changed lakefile is not built, since the job the reload asks for
+  is not registered.
+
+No fixture line records a leave-out of this phase: the fixtures run on
+the default set and the fixture set, which hold all seven. The block below
+is for a fixture line a leave-out changed, and is empty.
+
+```text
 ```
 
 ### The fixture set
@@ -1663,7 +1836,7 @@ guide quotes.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the eighteen default packages and the eleven interface packages, then `word-count` |
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the twenty-five default packages and the eleven interface packages, then `word-count` |
 | `tests/packages/greeting-api/` | The interface package `greeting-api` (`keywords = ["editor-interface"]`): the name `greeting-reply` (`GreetingApi.replyName`) and every name it declares (`GreetingApi.names`); in its test library, the fake `GreetingApiTest.fake` and the contract check `GreetingApiTest.contractChecks`, and its test driver, which holds the fake to the contract and shows the contract refuse a package that lacks or misspells the name. It has no entry module and registers nothing |
 | `tests/packages/greeting/` | The Lake package `greeting`, an implementation of `greeting-api`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), the second under `GreetingApi.replyName`, its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean` and greeting-api's contract check), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting`, to register after it, and `greeting-api`, and registers `greeting-reply` again with another text, by the name `greeting-api` declares. It imports nothing of `greeting`; its tests use greeting-api's fake. Its test driver and the fixture `tests/headless/reply` |
@@ -1738,8 +1911,8 @@ user-side link's set and its package, the Rust bans check's set
 
 `lean/lean-toolchain` is the one pin every task reads: every Lake command
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
-`lean/` holds a copy of it** (the default set and its twenty-nine packages,
-the eighteen default packages and the eleven interface packages, the fixture set and its three packages, the
+`lean/` holds a copy of it** (the default set and its forty-three packages,
+the twenty-five default packages and the eighteen interface packages, the fixture set and its three packages, the
 writing guide's example package `word-count`, the empty set, the user-side link's set and its package, the Rust bans check's
 set and its two packages, and the formatter's host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file when Lake is run in that
@@ -1765,8 +1938,7 @@ executable it links, besides `editor.oleans` and `editor.set`:
 
 - **`editor.core`**: the core's identity, one line, 16 hex digits
   (`coreIdentity` in `lean/lakefile.lean`). It mixes the traces of the
-  objects of every module of the core's two libraries (`Editor` and
-  `EditorCore`), the core's glue (`glue.o`), the core's Rust archive
+  objects of every module of the core's library `Editor`, the core's glue (`glue.o`), the core's Rust archive
   (`rustlib`) and the version of the Lean toolchain. Two sets over one
   core get the same identity, whatever their packages: `ffi-test` compares
   the default set's and the fixture set's. The whole libraries are hashed,
@@ -2089,32 +2261,29 @@ an implementation package; a package may import interface packages. A
 package is an interface package when its lakefile declares
 `keywords = ["editor-interface"]`, and an implementation package
 otherwise. The rule holds for every module of a package, its tests
-included. The eighteen default packages are implementation packages: each
-imports the core and, but for `mode-line`, `shipped-themes`, `languages`,
-`files`, `buffers` and `shell`, an interface package of its own or
-another's (`completion-api`, `minibuffer-api`, `execute-command-api`,
-`binding-search-api`, `at-point-api`, `themes-api`; `evil-api`,
-`minibuffer-api` and `at-point-api` for `evil`, and `evil-api` for
-`at-point` too; `project-api` and `vc-api` for
-`workspace` and `version-control`, `project-search-api` for
-`project-search`, `working-set-api` and `vc-api` for `working-set`), and
-`execute-command`, `binding-search` and `compile` also `minibuffer-api`,
-whose names and fake their tests use. The eleven interface packages import
-the core alone.
+included. The twenty-five default packages are implementation packages:
+each imports the core and, but for `mode-line`, `shipped-themes`,
+`languages`, `restore` and `package-set`, one or more interface packages,
+its own or another's ("The module map", below, lists each one's
+`require`s). The eighteen interface packages import the core alone, but
+for `ex-api`, whose contract names `shell-api`'s `shell-command`, and
+`project-api`, which names `compile-api`'s listing job.
 
 - **A package may import any core module that is not internal.** The rule
   is about `import` lines. Lean's imports are transitive, so a module an
   importable module imports is visible to the package's code whether or not
   the package may name it; what the rule limits is what a package depends
   on by name, which is what a later rename or move can break.
-- **The core's interface libraries are part of the API**, though the
-  core's Lake package holds them outside `Editor`: `FilesApi`,
-  `BuffersApi` and `ShellApi`, each importable by every module of a
-  package, library or test. `FilesApi` is a core interface for good:
-  session restore, a core module, adopts files and reads the load limit
-  through it. `BuffersApi` and `ShellApi` are staged until ex, which
-  reaches them, moves out (phase 8). `ProjectApi` and `VcApi` were on the
-  list until no core module imported them, and left it when they moved
+- **The core's interface library is part of the API**, though the
+  core's Lake package holds it outside `Editor`: `FilesApi`, importable
+  by every module of a package, library or test. It is a core interface
+  for good: session restore, a core module, adopts files and reads the
+  load limit through it. `BuffersApi` and `ShellApi` were staged beside
+  it until ex, which reached them, moved out (phase 8), and are the
+  interface packages `buffers-api` and `shell-api` since
+  (`packages/buffers-api/`, `packages/shell-api/`). `ProjectApi` and
+  `VcApi` were on the list until no core module imported them, and left
+  it when they moved
   into interface packages of their own (features-as-packages phase 6,
   `packages/project-api/`, `packages/vc-api/`), whose modules the layer
   imports check allows as any interface package's. The list is named,
@@ -2131,12 +2300,12 @@ the core alone.
   (`Editor.Theme.Picture`), and the core's model test kit, `Editor.Test`
   and every module under it but `Editor.Test.Linked`: the support the
   core's own model tests are written on (`Editor.Test.…`, 20 modules); and
-  a feature's test kit still in the core (`Editor.….Kit`, such as
-  `Editor.Files.Kit`, the drivers of the real file commands), which moves
-  into that feature's test library when the feature moves out; and the
-  test libraries of the core's interface libraries (`FilesApiTest`,
-  `BuffersApiTest`, `ShellApiTest`, `ProjectApiTest`, `VcApiTest`: their
-  fakes, contract checks and support, such as `VcApiTest.Fake`) but what
+  a feature's test kit in the core (`Editor.….Kit`; there is none since
+  every feature moved out with its kit); and the
+  test library of the core's interface library (`FilesApiTest`: its fake,
+  contract check and support; `BuffersApiTest`, `ShellApiTest`,
+  `ProjectApiTest` and `VcApiTest` were here until their libraries moved
+  to `packages/`) but what
   is under `<I>Test.Linked`. A package's tests are the modules under
   `<P>Test`.
 - **A package's linked test may also import the linked test kit, and only
@@ -2163,8 +2332,7 @@ the core alone.
   later work, filed as the task `package-test-kit-surface`.
 - **The root of a package's linked test may import a little more, and
   only it**: the real bindings of the ports (`….Real`), the headless host
-  (`Editor.Headless`), the config base (`Editor`) and the core's entry
-  module (`EditorCore.EditorPackage`). The module `<P>Test.Linked` is an
+  (`Editor.Headless`) and the config base (`Editor`). The module `<P>Test.Linked` is an
   executable's root, linked as the editor is, and running a port against
   the library or a host over a set's packages is what it is for. The raw
   bindings (`Editor.Ffi…`), the loop and the rest of the config session
@@ -2189,8 +2357,6 @@ the core alone.
     `Editor.Clipboard.InProcess`, `Editor.Display.Recorder`,
     `Editor.Job.Runner`, `Editor.Job.Jobs`, `Editor.Job.Table`,
     `Editor.Job.Pool`);
-  - the modules that define the packages still in the core
-    (`….Compiled`);
   - `Editor.Core`.
 
   A test double is asked about first, so a kit module is importable by a
@@ -2202,17 +2368,11 @@ the core alone.
   modules and every path the documents cite, and is filed as a task of its
   own (`internal-namespace-rename`).
 - **`Editor`, the config base, is not part of the API.** A package imports
-  the modules it uses, not the base. Nor is `EditorCore.EditorPackage`,
-  which is no module of the core: it imports the packages, and no package
-  imports it. Nor is any other module of the core's Lake package that is
+  the modules it uses, not the base. Nor is any module of the core's Lake package that is
   not named `Editor.…`, such as the core's own test modules (`ModelTest.Check`
   among them), but for the core's interface libraries and their test
-  libraries, above. The root of a linked test alone names the base and
-  the entry module, above.
-- **A feature still in the core is importable where its row says so.** The
-  compile mode imports `Editor.Shell` and `Editor.Workspace.Modes`, which
-  are features' modules; until those features move they are core modules a
-  package may import.
+  libraries, above. The root of a linked test alone names the base,
+  above.
 - **The package imports check enforces the rule**
   (`tools/package-imports-check.sh`, in `mise run ffi-test`;
   [the-gate.md](../dev-practices/the-gate.md), "The package imports
@@ -2243,8 +2403,8 @@ Checked against the graph at `6ba99de5`, before either feature moved:
 every core module the two features' modules imported directly was
 importable. The compile mode's modules imported
 `Editor.Api`, `Editor.Command.Call`, `Editor.File`, `Editor.Json`,
-`Editor.Mode`, `Editor.Package`, `Editor.ProjectMode`,
-`Editor.ProjectMode.Format`, `Editor.ProjectMode.Listing`, `Editor.Shell`
+`Editor.Mode`, `Editor.Package`, `CompileApi`,
+`CompileApi.Format`, `CompileApi.Listing`, `Editor.Shell`
 and `Editor.Workspace.Modes`; the shipped palettes' import `Editor.Face` and
 `Editor.Package`. `Editor.Themes.Check`, the completeness check the
 palettes' tests run, is importable. After each move the package's library
@@ -2267,9 +2427,9 @@ mode added to the core's API", below).
 another Lake package, which the core does not require. Phase 3 had made
 that so while it was still under `lean/Editor/`: the listing's checks
 build their host from core packages' commands and jobs
-(`lean/Editor/Test/Listing.lean`), the contribution and the format data
-have checks of their own (`ModelTest.contributionChecks`,
-`ModelTest.formatDataChecks`), and what the compile mode makes of them is
+(`packages/compile-api/CompileApiTest/Listing.lean`), the contribution and the format data
+have checks of their own (`CompileApiTest.contributionChecks`,
+`CompileApiTest.formatDataChecks`), and what the compile mode makes of them is
 checked in its own test modules, which moved with it. The three test
 modules outside the compile mode's own that still named it then went as
 follows:
@@ -2296,7 +2456,7 @@ fixture themes made with `Palette.theme` from palettes written in
 `lean/ConfigTest/Support/Themes.lean`, and the appearance checks define
 theirs. No copy of a palette's values is kept in the core, so no licence
 notice is either. `ConfigTest.shippedChecks` and
-`ModelTest.packageSetChecks` state the core's list alone: 7 packages
+`ModelTest.packageSetChecks` (which went with the core's list in phase 8) state the core's list alone: 7 packages
 since the features-as-packages roadmap's phase 7 (9 after its phase 6, 17 after its phase 4,
 20 after its phase 3, 24 when the palettes moved), no theme (the theme
 `default` is the themes package's since phase 7), and nothing of evil, the themes, the
@@ -2375,7 +2535,7 @@ those import them, and a kit that left them behind would not build.
 | `Editor.Test.Workspace` | The workspace a check sees settled, a store for the stores' checks, and since the features-as-packages roadmap's phase 6 the stand-in for the workspace's attach (`attachAt`, `attachPackage found`, and by a directory's answer `attachBy`, `attachByPackage`), and the half of the workspace driver that names no workspace module (`openBindings`, `openCommandsWith`, `openJobs`, `openDriver`, with the stand-in for the finder's answer `openFound`), which the shell's and version control's checks are built on; the workspace's world, finder jobs, commands, keys and driver are the workspace feature's kit (`Editor.Workspace.Kit`) |
 | `Editor.Test.Shell` | A shell command's child and its replies on the process model, compiled commands as a driver dispatches them, and what a check reads of a driver; since phase 6 the shell checks' jobs, bindings and commands are the shell feature's kit (`Editor.Shell.Kit`) |
 | `Editor.Test.Prompts` | Prompts and the minibuffer: their bindings, registry and driver, over a minibuffer package a check hands in, the kit's own (`Editor.Test.Minibuffer`) when it hands none |
-| `Editor.Test.Listing` | A contribution with a listing, its listings' runs and files, which names core modules only, and since phase 6 the stand-in for modes on markers (`markedPackage`), and the listing checks' stand-ins for the finder's answer and the marker search over the core's rules (`listingFound`, `listingOn`, `listingOpened`, `kubeOpened`, `markersBy`, `markersByPackage`), which the compile package's tests run on; the world it is found in (`listingWorld`, `listingJobModel`) is the workspace package's kit's (`WorkspaceTest.Kit`) |
+| `CompileApiTest.Listing` (`packages/compile-api/`; `Editor.Test.Listing` in the core until phase 8) | A contribution with a listing, its listings' runs and files, which names core modules only, and since phase 6 the stand-in for modes on markers (`markedPackage`), and the listing checks' stand-ins for the finder's answer and the marker search over the core's rules (`listingFound`, `listingOn`, `listingOpened`, `kubeOpened`, `markersBy`, `markersByPackage`), which the compile package's tests run on; the world it is found in (`listingWorld`, `listingJobModel`) is the workspace package's kit's (`WorkspaceTest.Kit`) |
 | `Editor.Test.Sources` | Added in the features-as-packages roadmap's phase 3: the completion sources' contract runner over the editor's models (`sourceRunner`), and the contract's properties over one source as sentences (`sourceHolds`) |
 | `Editor.Test.Shipped` | Added in the same phase: stand-ins for the default packages whose data the core keeps, `modeLine` and `languages` |
 | `Editor.Test.Minibuffer` | Added in the features-as-packages roadmap's phase 4: a minibuffer written over the core's prompt API, the package `minibuffer` with its nine commands and the mode `Prompt.mode`, and `names`, the nine in registration order; `minibuffer-api`'s fake |
@@ -2428,8 +2588,9 @@ The linked kit:
   `CompileTest.compileHookChecks`, of what the hook makes of those
   registrations.
 - **The linked test's root uses the allowance phase 5 settled**:
-  `CompileTest.Linked` imports `Editor`, `Editor.Headless` and
-  `EditorCore.EditorPackage` for its check of a host, and
+  `CompileTest.Linked` imports `Editor` and `Editor.Headless` for its
+  check of a host (and imported the core's entry module while the core
+  had one), and
   `Editor.Test.Linked.Services` for the services and the shutdown, so it
   names no raw binding.
 - **The core's own tests are written on the same modules**: `model-test`
@@ -2506,7 +2667,10 @@ second rule requires (`Editor.Test.AtPoint` imported by it,
   displays written for them (`lean/ModelTest/Support/Listings.lean`,
   `lean/ConfigTest/Support/Listings.lean`) are core test modules, which no
   package imports. (Phase 6 moved the second into the linked kit, as
-  `Editor.Test.Linked.Listings`, with the hosts that hand it.)
+  `Editor.Test.Linked.Listings`, with the hosts that hand it, and phase 8
+  the first into the model kit, as `Editor.Test.Listings`, when the ex
+  line's tests, which match and draw their prompt's listing with it,
+  moved out.)
 
 ## What moving the files cluster added to the core's API
 
@@ -2519,10 +2683,10 @@ no core module imports a moved one:
 | `Editor.Text.Word` (`lean/Editor/Text/Word.lean`) | The word under the cursor over the text port: a line's cells (`Word.cells`), blanks and word characters (`isBlank`, `isWord`), the word under the cursor (`underCursor`), its whole-word pattern (`wholePattern`) and Vim's E348 (`noneUnderCursor`); evil's six names are defined from these | evil's `*` and `#`; project search's `project-search-symbol` |
 | `Workspace.SearchRoot`, `Workspace.searchRoot` (`lean/Editor/SearchRoot.lean`) | What a search covers: the root, its label, the text typed after a location and the workspace, from the buffer, the call's arguments and the command's name | project search; the workspace's `FindFile.searched`, which adds its lister |
 | `Workspace.typedOf`, `noSuchWorkspace`, `cannotList` (`lean/Editor/Workspace.lean`) | The text typed after a location, and the two refusals a search says | the same |
-| `Workspace.onModesOf`, `Workspace.turnOnModes` (`lean/Editor/ProjectMode/Listing.lean`) | A buffer's on-modes on markers, and turning them on: the value `modesLocal`, the minor modes farthest first, the listings refreshed | the workspace's mode marker search; the kit's stand-in for it (`Editor.Test.markedPackage`) |
+| `Workspace.onModesOf`, `Workspace.turnOnModes` (`packages/compile-api/CompileApi/Listing.lean`) | A buffer's on-modes on markers, and turning them on: the value `modesLocal`, the minor modes farthest first, the listings refreshed | the workspace's mode marker search; the kit's stand-in for it (`Editor.Test.markedPackage`) |
 | `Jumps.Go` (`lean/Editor/Jumps/Go.lean`), a core module now | Going to a place: a file's case visits it through `FilesApi.files?` with `record := false`, and says `FilesApi.noImplementation "jump"` with none | evil's jumps and marks; project search's visit |
 | `FilesApi.Files.visit`'s `record` flag, and `FilesApi.notOpened` | Whether a visit records a jump, and the text files says of a load it refused | every visit but `Jumps.go` passes `true`; the compile mode's tests |
-| `ShellApi` (`lean/ShellApi.lean`, staged) | The shell's names (`commandName`, `filterName`, `interruptName`, `names`, `noCommand`) and its history (`Editor.Shell.historyStore`, `remember`, `Scope`, `history`, `record`), with a fake and a contract | ex hands a `:!` line to the shell by name and its prompt offers the history; the compile mode copies a scope's history |
+| `ShellApi` (`packages/shell-api/ShellApi.lean`, an interface package since phase 8; `lean/ShellApi.lean`, staged, until then) | The shell's names (`commandName`, `filterName`, `interruptName`, `names`, `noCommand`) and its history (`Editor.Shell.historyStore`, `remember`, `Scope`, `history`, `record`), with a fake and a contract | ex hands a `:!` line to the shell by name and its prompt offers the history; the compile mode copies a scope's history |
 
 And to the core's test kit, each imported by `Editor.Core`:
 
@@ -2578,6 +2742,39 @@ through: what others reach of them is names, which `evil-api` and
 `themes-api` declare ("The interface packages `evil-api` and
 `themes-api`", above).
 
+## What moving the last seven added to the core's API
+
+What the features-as-packages roadmap's phase 8 added so that the last
+seven packages of the core's list, and the compile mode's registrations,
+could leave the core:
+
+| Addition | Where | Why |
+|---|---|---|
+| `Extension.configValues` | `lean/Editor/Extension.lean` | The values config registered at a point, in order, apart from the packages': `Extension.values` holds the packages' and then config's. The compile hook ranks config's contributions first, which is visible in the order of a buffer's on-modes, so its reader asks for config's. This decides, for the one hook that needs it, the open question "Order within a hook" of [extension-points.md](extension-points.md) |
+| `Quit.name`, `Quit.notQuitting`, `Quit.closeRequested` | `lean/Editor/Quit.lean` | The loop runs the quit rule for a window's close request whether or not any command is registered, and the command named `quit` for the system's quit. Both are the core's behaviour, and the core imports no package, so the rule and the name are the core's; the package `ex` registers the command under it |
+| `Call.count`, `Call.steps` | `lean/Editor/Command/Call.lean` | A call's count, which the window and the tab commands both read |
+| `orGiveUp` | `lean/Editor/Api.lean` | Giving up on a layout refusal with the refusal's sentence, beside `giveUp` |
+| `PackageSet.startedCommand`, `PackageSet.outputCommand` | `lean/Editor/PackageSet/Build.lean` | The two commands the build job posts, beside their names, so the kit can register the build without the package |
+| The kit's stand-ins: `Editor.Test.Restore`, `Editor.Test.PackageSet`, `Editor.Test.Windows`, `Editor.Test.Frame`, `Editor.Test.Listings`, and its own ex line and quit command in `Editor.Test.Ex` | `lean/Editor/Test/` | The core's tests register session restore, the build, window and tab commands and an ex line without importing a package |
+
+What left it:
+
+- **The contribution vocabulary, its listing and their kit**
+  (`Editor.ProjectMode`, `Editor.ProjectMode.Format`,
+  `Editor.ProjectMode.Listing`, `Editor.Test.Listing`): the interface
+  package `compile-api`'s.
+- **`SetupRequest.compileContribution` and `SetupRequest.projectCommands`**,
+  the registry's hold of them by owner and its four refusal texts, and
+  **`RegistryRequest.compileHook`** with `Loop.Registered.compile`: the
+  registry holds contributions as it holds any extension value.
+- **The core's filling of `Workspace.Settings.markerModes`**: the
+  workspace package fills the settings it asks for from the hook
+  (`Workspace.markerSettings`, in `compile-api`). The field stays in the
+  core's type.
+- **`EditorCore.EditorPackage` and its library** ("The core has no entry
+  module", above), and the interface libraries `BuffersApi` and
+  `ShellApi`, which are interface packages.
+
 ## The interfaces the core owns for the two features that moved
 
 Seven import edges led from a core module to a module of one of the two
@@ -2592,8 +2789,12 @@ cut none. What replaced each edge is an interface the core owns.
 | `Editor.Themes.Compiled` → `Editor.Themes.Solarized`, `Editor.Themes.FairyFloss` | The `themes` package, with the palettes in a package of their own, which phase 5 moved out as `ShippedThemes.…` |
 | `Editor.Config.Elaborate` → `Editor` | The base imported at the executables' roots ("The core and its root", above) |
 
-- **The contribution vocabulary** (`lean/Editor/ProjectMode.lean`,
-  `lean/Editor/ProjectMode/Format.lean`). The setup port registers
+- **The contribution vocabulary** (`lean/Editor/ProjectMode.lean` and
+  `lean/Editor/ProjectMode/Format.lean` then; the interface package
+  `compile-api`'s `packages/compile-api/CompileApi.lean` and
+  `CompileApi/Format.lean` since the features-as-packages roadmap's phase
+  8, which made a contribution a value at an extension point: "What
+  moving the last seven added to the core's API", below). The setup port registered
   contributions, the registry holds them by owner, the loop is told them
   and the workspace turns a contribution's minor mode on from its markers,
   so the types were the core's in everything but their module. The first
@@ -2610,7 +2811,8 @@ cut none. What replaced each edge is an interface the core owns.
   and the formats in use (`packages/compile/Compile/Contribution.lean`). No general
   "contribute to a named point" operation was built: it would be a new
   mechanism with owner, reload and refusal rules of its own.
-- **The listing** (`lean/Editor/ProjectMode/Listing.lean`). Running a
+- **The listing** (`lean/Editor/ProjectMode/Listing.lean` then,
+  `packages/compile-api/CompileApi/Listing.lean` since phase 8). Running a
   contribution's listing and keeping what it gave is upkeep of the core's
   own data, and the workspace starts it when a mode turns on. The module
   moved whole, names unchanged (`Compile.refreshListings`,
@@ -2625,10 +2827,10 @@ cut none. What replaced each edge is an interface the core owns.
 - **Ex names by owning package.** A package binds the ex names of its own
   commands (`exCommand`): the `compile` package its six
   (`packages/compile/Compile/Compiled.lean`) and the `version-control`
-  package its twelve (`lean/Editor/VersionControl/Compiled.lean`). The `ex`
-  package keeps the files', its own and the buffers', which are features
-  still in the core, and imports neither the compile mode nor version
-  control. Version control's names moved with compile's in phase 3
+  package its twelve (`packages/version-control/VersionControl/Compiled.lean`). The `ex`
+  package (`packages/ex/Ex/Compiled.lean`) keeps the files', its own and
+  the buffers', each bound to a name an interface declares, and imports
+  neither the compile mode nor version control. Version control's names moved with compile's in phase 3
   although version control stays in the core, so that the names were bound
   in the order they had been; the compile package's are bound after
   version control's since it moved ("Registration order is visible").
@@ -2671,7 +2873,7 @@ features move.
 | Library | Declares | Publishes for tests | Its own tests | Implemented by | Used by | Moves |
 |---|---|---|---|---|---|---|
 | `FilesApi` (`lean/FilesApi.lean`) | The hooks `FilesApi.Opened` and `.Saved`, run when a file opens into a buffer and when one is saved; the choice `FilesApi.Files` (`adopt`, `visit`, `save`) under the name `files`, answered by `files?`; `loadLimit` and `diffLineLimit`; the commands' and jobs' names (`names`, `jobs`) | `FilesApiTest.fake`, the kit's opener with the hooks as its runners; `FilesApiTest.contractChecks` | `ModelTest.filesApiChecks` | `files` (`Files.Compiled`, `packages/files/`), whose `filesPackageChecks` run the contract | buffers, working-set, workspace, version-control; the kit (`Editor.Test.Workspace`) | Stays a core interface: the core's file-opening is the files feature's, and every feature that opens a file reaches it |
-| `BuffersApi` (`lean/BuffersApi.lean`) | The hook `BuffersApi.Closing`, run before a buffer closes; the choice `BuffersApi.Buffers` under the name `buffers`, answered by `buffers?`; the commands' names | `BuffersApiTest.fake`, a close over the core's API; `BuffersApiTest.contractChecks` | `ModelTest.buffersApiChecks` | `buffers` (`Buffers.Compiled`, `packages/buffers/`), whose `buffersPackageChecks` run the contract | working-set (its ranges' detaching), version-control (`vc-commit`) | Until phase 8 |
+| `BuffersApi` (`packages/buffers-api/BuffersApi.lean`, once `lean/BuffersApi.lean`) | The hook `BuffersApi.Closing`, run before a buffer closes; the choice `BuffersApi.Buffers` under the name `buffers`, answered by `buffers?`; the commands' names | `BuffersApiTest.fake`, a close over the core's API; `BuffersApiTest.contractChecks` | `BuffersApiTest.buffersApiChecks`, once `ModelTest.buffersApiChecks` | `buffers` (`Buffers.Compiled`, `packages/buffers/`), whose `buffersPackageChecks` run the contract | working-set (its ranges' detaching), version-control (`vc-commit`) | Moved in phase 8, when ex, its last user in the core, moved out |
 | `ProjectApi` (`packages/project-api/ProjectApi.lean`, once `lean/ProjectApi.lean`) | The order and the continuation of a reach (`Reach.Order`, `Reach.Continuation`) and the roots a command names (`rootArguments`, `rootsOf?`); the choice `ProjectApi.Workspaces` (`reach`, `work`) under the name `workspace`, answered by `workspaces?`, and a job over it (`workOver`); its names | `ProjectApiTest.fake`, a `Workspaces` value that hands every continuation a given workspace; `ProjectApiTest.contractChecks` | `ProjectApiTest.projectApiChecks` (once `ModelTest.projectApiChecks`) | `workspace` (`Workspace.Compiled`), whose `workspacePackageChecks` run the contract | version-control (`vc-worktrees-visit`); the kit | Moved in phase 6: the interface package `project-api` |
 | `VcApi` (`packages/vc-api/VcApi.lean`, once `lean/VcApi.lean` and before that `lean/Editor/VersionControl.lean`) | The interface a version-control system answers and its hunks; the backend point `VcApi.Backend`, a choice by the name `git`, connected by `connect?`, which takes the latest backend of that name; the backend `git`, the gutter's jobs and the mode line's segment `review` by name | `VcApiTest.Fake`, the model (once `Editor.VersionControl.Model`) and a backend over it; `VcApiTest.Contract`, the contract (once `Editor.VersionControl.Contract`), and `registrationChecks` | `VcApiTest.vcApiChecks`, `.versionControlModelChecks` and `.versionControlContractFailures` (once `ModelTest`'s) | `version-control` (`VersionControl.Compiled`), whose `versionControlPackageChecks` run the registration check; git's half of the model is its test double `VersionControlTest.Git.Model` | working-set, workspace | Moved in phase 6: the interface package `vc-api` |
 
@@ -2698,53 +2900,23 @@ for the cut:
   file commands are the files feature's kit, `Editor.Files.Kit`, a test
   double, which moves into its test library when it moves out.
 
-### Interface libraries left in the core after phase 6
+### Interface libraries left in the core
 
 Each row is an interface library the core still holds and a core module
 that imports it, by Lake's module graph, leaving out the core's test roots
-and the interfaces' own test libraries; the phase's acceptance criterion 4
-diffs this table against that graph. `project-api` and `vc-api` are
-interface packages since phase 6 (`packages/project-api/`,
-`packages/vc-api/`, "The default packages of the features-as-packages
-roadmap's phase 6", above), and no core module imports them.
+and the interface's own test library. `FilesApi` is the one left, for
+good. `project-api` and `vc-api` are interface packages since phase 6
+(`packages/project-api/`, `packages/vc-api/`), and `buffers-api` and
+`shell-api` since phase 8 (`packages/buffers-api/`,
+`packages/shell-api/`), when the ex line and the menu, the last core
+modules that imported them or `FilesApi` for a feature's sake, moved out.
 
 | Library | Kept by | Why | Until |
 |---|---|---|---|
 | `FilesApi` | `Editor.Restore.Run` | session restore, which stays in the core, adopts a reopened file and reads the load limit through it, and runs `FilesApi.Opened` for a journaled buffer that holds a file | for good |
 | `FilesApi` | `Editor.Jumps.Go` | going to a place visits a file through it; evil's jumps and marks reach it | for good: going to a place is the core's, and evil, a package since phase 7, reaches it |
-| `FilesApi` | `Editor.Ex` | `:wq` saves the buffer through `FilesApi.files?`'s `save`, and says there is no implementation when none is registered | phase 8 (ex) |
-| `FilesApi` | `Editor.Ex.Compiled` | ex binds `w`, `w!`, `e` and their kin to the names files-api declares | phase 8 (ex) |
-| `FilesApi` | `Editor.Menu.Compiled` | the menu binds `s-o` and `s-s` to the names files-api declares | phase 8 (the menu) |
-| `FilesApi` | `Editor.Test.Listing` | the kit's stand-in: its on-modes stand-in registers at `FilesApi.Opened` | the kit's stand-in, while the core's tests use it |
-| `FilesApi` | `Editor.Test.Workspace` | the kit's stand-in: its attach registers at `FilesApi.Opened` in place of the workspace's | the kit's stand-in, while the core's tests use it |
-| `BuffersApi` | `Editor.Ex.Compiled` | ex binds `b`, `ls` and `bd` to the names buffers-api declares | phase 8 (ex) |
-| `ShellApi` | `Editor.Ex` | ex hands a `:!` line to `shell-command` by shell-api's name and its prompt offers the shell's history | phase 8 (ex) |
-
-### Left for phase 8
-
-What the moves of phases 6 and 7 leave for the next phase:
-
-- **Ex's and the menu's reach through the staged interfaces.** `ex` and
-  `menu` stay in the core's list until phase 8, and with them the staged
-  `buffers-api` and `shell-api` and three of `files-api`'s keepers (the
-  table above); `buffers-api` and `shell-api` move to `packages/` when ex
-  does.
-- **Evil's imports of features still in the core.** Evil's tables name
-  `Editor.Ex.name`, the window commands' names (`Editor.WindowCommands`)
-  and the tab commands' (`Editor.TabCommands`), core feature modules a
-  package may import, and `keyboard-quit` through the staged `ShellApi`.
-  Phase 8 cuts those edges when it moves them: each then needs an
-  interface package for its names.
-- **The menu's and the core stand-in's text.** The menu names `undo` and
-  `redo`, and the core's at-point stand-in (`Editor.Test.AtPoint`) names
-  `insert-newline` and `insert-tab`, as text, since a core module cannot
-  import `evil-api`. The menu switches to the constants when it moves.
-- **The default config** (`config/default`) names the default packages'
-  commands as text, `load-theme` among them, since the core cannot import
-  a package.
-
-The seven's tests that imported evil's modules, which this list held after
-phase 6, run on the test scheme since phase 7 (the plan's C12).
+| `FilesApi` | `Editor.Test.Ex` | the kit's ex line binds `w`, `e` and their kin to the names files-api declares | the kit's stand-in, while tests use it |
+| `FilesApi` | `Editor.Test.Workspace` | the kit's stand-in: its attach registers at `FilesApi.Opened` in place of the workspace's | the kit's stand-in, while tests use it |
 
 ## Rust in a package
 
@@ -2974,426 +3146,209 @@ of `echo` outside the repository is refused with its reason
 
 ## The module map
 
-Every module under `lean/Editor/`, 259 of them
-(`find lean/Editor -name '*.lean' | wc -l`, at the end of the
-features-as-packages roadmap's phase 7, which moved evil's 17 modules, its
-kit among them, and the themes' two out, renamed the two theme checks
-`Editor.Theme.Check` and `Editor.Theme.Picture`, and added four modules of
-the test kit; 274 at the end of its phase 6, which moved the seven features of
-the files cluster out, 48 modules with their kits and doubles, and added
-the core's `Editor.Text.Word` and `Editor.SearchRoot` and ten modules of
-the test kit; 308 at the end of its phase 5; 254 at `6ba99de5`, phase 4
-added `Editor.Main`, phase 5 added `Editor.Themes.Picture` and moved
-the three modules of the shipped palettes out, phase 6 moved the five
-of the compile mode out and added the 18 of the test kit, phase 7 added
-six to the config session, and the merge of
-`main` that brought the working sets, project search, the jump list and
-marks added 19, session-restore phase 1 added six, and phase 2 six more,
-the store codec and five of the reconciler's records and formats, and
-features-as-packages phase 1 added `Editor.Extension`; its phase 3 moved
-the six modules of four features out and added the kit's two, and its
-phase 4 the eight of three features and added the kit's two more; its
-phase 5 moved the interface of version control and its model and contract
-out of `lean/Editor/`, into the library `VcApi`, added git's half of the
-model, the job names of the loop's two reconcilers (`Editor.FileJobs`,
-`Editor.Gutter.Track`), the kit's two (`Editor.Test.Hosted`, `.Opener`)
-and the files feature's kit (`Editor.Files.Kit`)), is
-**core** or part of a **feature that could become a package**. The counts
-below add up to 248: 237 core and 11 in 6 features. The rows were not
-counted again in full for phase 3, 4 or 6: at phase 3's start they added up
-to 304 against 315 modules, so 11 modules are in no row (the task
-`module-map-count-drift`); phase 4 took its eight moved modules' rows out
-and added the kit's two to the kit's row, phases 5 and 6 counted their own
-additions and removals into their rows (phase 6 took the seven's 19 rows
-out and counted the kit's two rows again, 23 and 10 modules; phase 7 took
-evil's three rows and the themes' three out, added the core's two rows for
-the theme checks, and counted the kit's two rows again, 25 and 12
-modules), and the 11 are still in no row. The interface libraries the core still stages
-(`FilesApi`, `BuffersApi`, `ShellApi`, each with its test library) are
-outside `lean/Editor/` and are in no row, and `ProjectApi` and `VcApi` are
-interface packages: "The interface libraries of the features-as-packages
-roadmap's phase 5", above, describes them.
+The end state of the features-as-packages roadmap: the core's modules,
+and the packages of the default set with what each registers at and reads.
+Written by its phase 8 so that commands can check it against the tree and
+against Lake (the commands are below each table).
 
-- **Core** is what a host with no packages needs to start and run: the
-  ports with their models and bindings, the state, the scene and display
-  types, the loop, the setup port, the config session and the hosts; and
-  any module a core module imports for a type it carries (`Editor.Ex.Line`,
-  `Editor.Menu`, `Editor.ModeLine`, `Editor.Language`, `Editor.Workspace`,
-  the three `Editor.ProjectMode` modules).
-- **A feature** is code reached through a package's registrations: the 7
-  packages of the core's list, as 7 features. The table names 6 of them:
-  `package-set` has no row (the task `module-map-count-drift`).
-- **Every feature here is in the core's Lake package**,
-  and is a core module in the sense of the section above and of the gate's
-  check. The map guides later moves; it does not commit to them. The
-  shipped palettes, the compile mode, the mode line's segments, the command
-  prompt, the binding search, the languages, the completion styles and
-  displays, completion at point, the minibuffer, and the files cluster's
-  seven (the files, the buffers, the workspaces, project search, the
-  working sets, the shell and version control) are no longer in the map:
-  they are the Lake packages `shipped-themes`, `compile`, `mode-line`,
-  `execute-command`, `binding-search`, `languages`, `completion`,
-  `at-point`, `minibuffer`, `files`, `buffers`, `workspace`,
-  `project-search`, `working-set`, `shell` and `version-control` ("The
-  first default package", "The default package `compile`" and "The default
-  packages of the features-as-packages roadmap's phase 3", "… phase 4" and
-  "… phase 6", above). Evil, with the Vim scheme, and the themes left the
-  map in phase 7: they are the Lake packages `evil` and `themes` ("The
-  default packages of the features-as-packages roadmap's phase 7", above).
+### The core's modules
 
-One row covers modules that share a class and a side of the import rule.
-"A package may import it" is `yes`, `in tests` (a test double) or `no`
-(internal).
-"Under it" counts the modules below a name, not the module of that name.
+Every module under `lean/Editor/`, each named in full once, by class.
+None is a feature's: a **feature** is a Lake package under `packages/`,
+and the core's Lake package registers no `Package`.
+
+- **Core** is what a host with no packages needs to start and run, and
+  what a package is written over: the ports with their models and
+  bindings, the state, the scene and display types, the loop, the setup
+  port, the config session and the hosts; the data a core module carries
+  for a feature that is a package (an ex line's parts, the menu's types,
+  the mode line's, a language, a workspace); and the work the hosts, the
+  loop and the config session start by a name the core declares, which a
+  default package registers under: session restore's and the package
+  set's build.
+- **"A package may import it"** is what the package imports check allows
+  ("What a package may import", above): `yes` for a module of the API,
+  `in tests` for a test double, `in a linked test` for the linked test
+  kit, and `no` for an internal module.
 
 | Modules | Count | Class | A package may import it |
 |---|---|---|---|
-| `Editor.Core` | 1 | core | no |
-| The hosts and the executable's modules: `Editor.Main`, `Editor.Headless`, `.Headless.CommandLine`, `Editor.Window`, `.Window.Real`, `Editor.WindowCheck`, `.WindowCheck.Real`, `Editor.Executable`, `Editor.Version`, `Editor.ModuleLookup` | 10 | core | no |
-| The loop and its dispatch: `Editor.Loop`, `Editor.Command.Dispatch`, `Editor.Event.Queue`, `Editor.State.Outbox` | 4 | core | no |
-| The session's journal reconciler, which the loop runs after each publish, and the data and formats it keeps: `Editor.Restore`, `.Restore.Kept`, `.Restore.Journal`, `.Restore.Document`, `.Restore.Records`, `.Restore.Indexed`, `.Restore.Frame`, `.Restore.Workspaces`, `.Restore.Value` | 9 | core | no |
-| The config session: `Editor.Config.Diagnostic`, `.Directory`, `.Display`, `.Elaborate`, `.ExactPath`, `.LakePackage`, `.Lakefile`, `.Lakefile.Toml`, `.Owner`, `.Registry`, `.Reload`, `.Session`, `.Stores` | 13 | core | no |
-| What a package registers, read by a test: `Editor.Config.Packages` | 1 | core | in tests |
-| The raw bindings: `Editor.Ffi` and the 27 modules under it | 28 | core | no |
-| The real bindings of ports and what runs them: `Editor.Clipboard.Real`, `.Clipboard.InProcess`, `Editor.Command.Real`, `Editor.Display.Real`, `.Display.Recorder`, `Editor.Fuzzy.Real`, `Editor.Job.Real`, `.Job.Runner`, `.Job.Jobs`, `.Job.Table`, `.Job.Pool`, `Editor.SyntaxTree.Real`, `Editor.Text.Real`, `Editor.Watch.Real` | 14 | core | no |
-| The models: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Config.Elaborator.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Grep.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `.Model.Json`, `.Model.Query`, `Editor.Text.Model`, `Editor.Watch.Model` | 16 | core | in tests |
-| The contracts and cases: `Editor.Clipboard.Contract`, `Editor.Completion.Contract`, `.AtPointContract`, `.DisplayContract`, `.StyleContract`, `Editor.Config.Elaborator.Contract`, `Editor.Display.Contract`, `Editor.Fuzzy.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.SyntaxTree.Contract`, `Editor.Text.Contract`, `Editor.Watch.Contract`, `Editor.Api.Cases`, `Editor.File.Cases`, `Editor.UndoTree.Cases` | 16 | core | in tests |
-| The fakes, the test scheme and the loop's driver: `Editor.Completion.Fake`, `Editor.Job.Fake`, `Editor.InputScheme.Test`, `Editor.Loop.Driver` | 4 | core | in tests |
-| The model test kit: `Editor.Test.AtPoint`, `.Completion`, `.Config`, `.Driver`, `.Editing`, `.Ex`, `.Excerpt`, `.Files`, `.Geometry`, `.Hosted`, `.Jobs`, `.Keys`, `.Listing`, `.Loop`, `.Minibuffer`, `.Models`, `.Modes`, `.Opener`, `.Prompts`, `.Shell`, `.Shipped`, `.Sources`, `.States`, `.Views`, `.Workspace` | 25 | core | in tests |
-| The linked test kit: `Editor.Test.Linked.Bench`, `.Frames`, `.Host`, `.Jobs`, `.Keys`, `.Lines`, `.Listings`, `.Rig`, `.Services`, `.Shipped`, `.Syntax`, `.Trees` | 12 | core | in tests |
-| `Editor.Theme.Check`, the theme completeness check | 1 | core | yes |
-| `Editor.Theme.Picture`, the theme picture check | 1 | core | in tests |
-| The editor API and what is proved of it: `Editor.Api`, `.Api.Theorems`, `Editor.UndoTree`, `.UndoTree.Theorems` | 4 | core | yes |
-| The composite port and a command: `Editor.Command`, `.Call`, `.Control`, `.Registry`, `.Append`, `Editor.Program` | 6 | core | yes |
-| The ports: `Editor.Clipboard`, `Editor.Diff`, `.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Process`, `.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 14 | core | yes |
-| The word under the cursor, over the text port, which evil's `*` and project search's symbol search ask: `Editor.Text.Word` | 1 | core | yes |
-| The setup port, packages, extension points and stores: `Editor.Setup`, `Editor.Package`, `Editor.Extension`, `Editor.Store`, `.Store.Codec`, `Editor.Value`, `Editor.Json` | 7 | core | yes |
-| The state, and the names of the jobs the loop's reconcilers run: `Editor.State`, `.State.Request`, `Editor.Event`, `Editor.DisplayRules`, `Editor.Floating`, `Editor.Layout`, `Editor.GeneratedView`, `Editor.ExcerptView`, `Editor.Gutter`, `.Gutter.Track`, `Editor.FileJobs`, `Editor.Workspace` | 12 | core | yes |
-| What a search of a workspace's files covers, which the finder and project search decide by: `Editor.SearchRoot` (in `Editor.Workspace`, outside the workspace feature's modules under `Editor.Workspace.`, because it takes the state and a call, which `Editor.Workspace` sits below) | 1 | core | yes |
-| Places, jump lists and marks, which the state holds and the loop follows through edits: `Editor.JumpList`, `Editor.Marks`, `.Marks.Follow`, `Editor.Jumps`, and going to a place, `Editor.Jumps.Go`, which visits a closed file through `files-api` (`FilesApi.files?`) since the features-as-packages roadmap's phase 6 | 5 | core | yes |
-| The scene and display types: `Editor.Scene`, `Editor.Scroll`, `Editor.Face`, `.Face.Vocabulary`, `Editor.Appearance`, `Editor.Highlight`, `Editor.TabBar`, `Editor.ModeLine`, `Editor.Menu` | 9 | core | yes |
-| Keys and modes: `Editor.InputScheme`, `Editor.Invocation`, `Editor.Keymap`, `Editor.Key.Notation`, `Editor.Mode`, `Editor.Role`, `Editor.Vocabulary` | 7 | core | yes |
-| Completion: `Editor.Completion`, `.Candidate`, `.Display`, `.Style`, `.AtPoint`, `.Keys`, `.Later`, `.Filtering` | 8 | core | yes |
-| Languages and indentation: `Editor.Language`, `.Language.IndentUnit`, `Editor.Indent` | 3 | core | yes |
-| What a minor mode contributes: `Editor.ProjectMode`, `.ProjectMode.Format`, `.ProjectMode.Listing` | 3 | core | yes |
-| What the ex line and a typed path are as data: `Editor.Ex.Line`, `Editor.TypedPath` | 2 | core | yes |
-| `Editor.Ex` | 1 | feature: ex | yes |
-| `Editor.Ex.Compiled` | 1 | feature: ex | no |
-| `Editor.FrameCommands` | 1 | feature: frame-commands | yes |
-| `Editor.FrameCommands.Compiled` | 1 | feature: frame-commands | no |
-| `Editor.Menu.Compiled` | 1 | feature: menu | no |
-| `Editor.TabCommands` | 1 | feature: tab-commands | yes |
-| `Editor.TabCommands.Compiled` | 1 | feature: tab-commands | no |
-| `Editor.WindowCommands` | 1 | feature: window-commands | yes |
-| `Editor.WindowCommands.Compiled` | 1 | feature: window-commands | no |
-| `Editor.Restore.Run` | 1 | feature: restore | yes |
-| `Editor.Restore.Compiled` | 1 | feature: restore | no |
+| The core's root: `Editor.Core` | 1 | core | no |
+| The hosts and the executable's modules: `Editor.Executable`, `Editor.Headless`, `Editor.Headless.CommandLine`, `Editor.Main`, `Editor.ModuleLookup`, `Editor.Version`, `Editor.Window`, `Editor.Window.Real`, `Editor.WindowCheck`, `Editor.WindowCheck.Real` | 10 | core | no |
+| The loop and its dispatch: `Editor.Command.Dispatch`, `Editor.Event.Queue`, `Editor.Loop`, `Editor.State.Outbox` | 4 | core | no |
+| The models of the ports: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Config.Elaborator.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Grep.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `Editor.SyntaxTree.Model.Json`, `Editor.SyntaxTree.Model.Query`, `Editor.Text.Model`, `Editor.Watch.Model` | 16 | core | in tests |
+| The contracts and cases: `Editor.Api.Cases`, `Editor.Clipboard.Contract`, `Editor.Completion.AtPointContract`, `Editor.Completion.Contract`, `Editor.Completion.DisplayContract`, `Editor.Completion.StyleContract`, `Editor.Config.Elaborator.Contract`, `Editor.Display.Contract`, `Editor.File.Cases`, `Editor.Fuzzy.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.SyntaxTree.Contract`, `Editor.Text.Contract`, `Editor.UndoTree.Cases`, `Editor.Watch.Contract` | 16 | core | in tests |
+| The fakes, the test scheme, the loop's driver, the reading of what a package registers and the theme picture check: `Editor.Completion.Fake`, `Editor.Config.Packages`, `Editor.InputScheme.Test`, `Editor.Job.Fake`, `Editor.Loop.Driver`, `Editor.Theme.Picture` | 6 | core | in tests |
+| The linked test kit: `Editor.Test.Linked.Bench`, `Editor.Test.Linked.Frames`, `Editor.Test.Linked.Host`, `Editor.Test.Linked.Jobs`, `Editor.Test.Linked.Keys`, `Editor.Test.Linked.Lines`, `Editor.Test.Linked.Listings`, `Editor.Test.Linked.Rig`, `Editor.Test.Linked.Services`, `Editor.Test.Linked.Shipped`, `Editor.Test.Linked.Syntax`, `Editor.Test.Linked.Trees` | 12 | core | in a linked test |
+| The model test kit: `Editor.Test.AtPoint`, `Editor.Test.Completion`, `Editor.Test.Config`, `Editor.Test.Driver`, `Editor.Test.Editing`, `Editor.Test.Ex`, `Editor.Test.Excerpt`, `Editor.Test.Files`, `Editor.Test.Frame`, `Editor.Test.Geometry`, `Editor.Test.Hosted`, `Editor.Test.Jobs`, `Editor.Test.Keys`, `Editor.Test.Listings`, `Editor.Test.Loop`, `Editor.Test.Minibuffer`, `Editor.Test.Models`, `Editor.Test.Modes`, `Editor.Test.Opener`, `Editor.Test.PackageSet`, `Editor.Test.Prompts`, `Editor.Test.Restore`, `Editor.Test.Shell`, `Editor.Test.Shipped`, `Editor.Test.Sources`, `Editor.Test.States`, `Editor.Test.Views`, `Editor.Test.Windows`, `Editor.Test.Workspace` | 29 | core | in tests |
+| The config session: `Editor.Config.Diagnostic`, `Editor.Config.Directory`, `Editor.Config.Display`, `Editor.Config.Elaborate`, `Editor.Config.ExactPath`, `Editor.Config.LakePackage`, `Editor.Config.Lakefile`, `Editor.Config.Lakefile.Toml`, `Editor.Config.Owner`, `Editor.Config.Registry`, `Editor.Config.Reload`, `Editor.Config.Session`, `Editor.Config.Stores` | 13 | core | no |
+| The raw bindings: `Editor.Ffi`, `Editor.Ffi.Clipboard`, `Editor.Ffi.Counter`, `Editor.Ffi.Diffs`, `Editor.Ffi.Display`, `Editor.Ffi.Document`, `Editor.Ffi.Events`, `Editor.Ffi.Excerpts`, `Editor.Ffi.Files`, `Editor.Ffi.Fuzzy`, `Editor.Ffi.Grep`, `Editor.Ffi.Interrupt`, `Editor.Ffi.Inverse`, `Editor.Ffi.Launch`, `Editor.Ffi.Log`, `Editor.Ffi.MainThread`, `Editor.Ffi.Marker`, `Editor.Ffi.Pair`, `Editor.Ffi.Processes`, `Editor.Ffi.Render`, `Editor.Ffi.Search`, `Editor.Ffi.Snapshot`, `Editor.Ffi.Syntax`, `Editor.Ffi.Text`, `Editor.Ffi.Timers`, `Editor.Ffi.Transaction`, `Editor.Ffi.Watches`, `Editor.Ffi.Window`, `Editor.Ffi.Words` | 29 | core | no |
+| The real bindings of the ports and what runs them: `Editor.Clipboard.InProcess`, `Editor.Clipboard.Real`, `Editor.Command.Real`, `Editor.Display.Real`, `Editor.Display.Recorder`, `Editor.Fuzzy.Real`, `Editor.Job.Jobs`, `Editor.Job.Pool`, `Editor.Job.Real`, `Editor.Job.Runner`, `Editor.Job.Table`, `Editor.Restart.Real`, `Editor.SyntaxTree.Real`, `Editor.Text.Real`, `Editor.Watch.Real` | 15 | core | no |
+| The editor API and what is proved of it: `Editor.Api`, `Editor.Api.Theorems`, `Editor.UndoTree`, `Editor.UndoTree.Theorems` | 4 | core | yes |
+| The composite port and a command: `Editor.Command`, `Editor.Command.Append`, `Editor.Command.Call`, `Editor.Command.Control`, `Editor.Command.Registry`, `Editor.Program` | 6 | core | yes |
+| The ports: `Editor.Clipboard`, `Editor.Diff`, `Editor.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Process`, `Editor.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 14 | core | yes |
+| The word under the cursor, over the text port: `Editor.Text.Word` | 1 | core | yes |
+| The setup port, packages, extension points and stores: `Editor.Extension`, `Editor.Json`, `Editor.Package`, `Editor.Setup`, `Editor.Store`, `Editor.Store.Codec`, `Editor.Value` | 7 | core | yes |
+| The state, what a search of a workspace's files covers, and the names of the jobs the loop's reconcilers run: `Editor.DisplayRules`, `Editor.Event`, `Editor.ExcerptView`, `Editor.FileJobs`, `Editor.Floating`, `Editor.GeneratedView`, `Editor.Gutter`, `Editor.Gutter.Track`, `Editor.Layout`, `Editor.SearchRoot`, `Editor.State`, `Editor.State.Request`, `Editor.Workspace` | 13 | core | yes |
+| Places, jump lists and marks, and going to a place: `Editor.JumpList`, `Editor.Jumps`, `Editor.Jumps.Go`, `Editor.Marks`, `Editor.Marks.Follow` | 5 | core | yes |
+| The scene and display types: `Editor.Appearance`, `Editor.Face`, `Editor.Face.Vocabulary`, `Editor.Highlight`, `Editor.Menu`, `Editor.ModeLine`, `Editor.Scene`, `Editor.Scroll`, `Editor.TabBar` | 9 | core | yes |
+| Keys and modes: `Editor.InputScheme`, `Editor.Invocation`, `Editor.Key.Notation`, `Editor.Keymap`, `Editor.Mode`, `Editor.Role`, `Editor.Vocabulary` | 7 | core | yes |
+| Completion: `Editor.Completion`, `Editor.Completion.AtPoint`, `Editor.Completion.Candidate`, `Editor.Completion.Display`, `Editor.Completion.Filtering`, `Editor.Completion.Keys`, `Editor.Completion.Later`, `Editor.Completion.Style` | 8 | core | yes |
+| Languages and indentation: `Editor.Indent`, `Editor.Language`, `Editor.Language.IndentUnit` | 3 | core | yes |
+| What an ex line and a typed path are as data: `Editor.Ex.Line`, `Editor.TypedPath` | 2 | core | yes |
+| The quit rule and its name, which the loop runs and the package `ex` registers a command under: `Editor.Quit` | 1 | core | yes |
+| Session restore: the journal reconciler the loop runs after each publish, and the data and formats it keeps: `Editor.Restore`, `Editor.Restore.Document`, `Editor.Restore.Frame`, `Editor.Restore.Indexed`, `Editor.Restore.Journal`, `Editor.Restore.Kept`, `Editor.Restore.Records`, `Editor.Restore.Value`, `Editor.Restore.Workspaces` | 9 | core | yes |
+| Session restore's run and restart, which the package `restore` registers: `Editor.Restore.Restart`, `Editor.Restore.Run` | 2 | core | yes |
+| The package set's data, edit and build, which the reload, the hosts and the package `package-set` use: `Editor.PackageSet.Build`, `Editor.PackageSet.Edit`, `Editor.PackageSet.Fingerprint`, `Editor.PackageSet.Layout`, `Editor.PackageSet.Running` | 5 | core | yes |
+| The restart's hand-over: `Editor.Restart.Handover`, `Editor.Restart.Launch` | 2 | core | yes |
+| The theme completeness check: `Editor.Theme.Check` | 1 | core | yes |
 
-### What each feature would have to cross
+The check below, its first part, prints nothing when every module under
+`lean/Editor/` is in the table and the table names no module that is not
+there.
 
-For each feature, from each module's `import` lines, which are Lake's
-direct imports (`lake query +<module>:imports`), at the head of the
-packages roadmap's phase 6, with the compile mode moved out and the test
-kit published (the lists were first computed at `6ba99de5`, and computed
-again for this section then). The merge of `main` that brought the working
-sets, project search, the jump list and marks added the entries
-`project-search` and `working-set` and amended `buffers`, `evil`, `files`,
-`version-control` and `workspace` for the modules it added and the imports
-of them; the rest were not computed again for it:
+The rows are generated from `find`, so no module is in no row, which
+closes the task `module-map-count-drift`. Beside `lean/Editor/` the core's
+Lake package holds one interface library, `FilesApi` (`lean/FilesApi.lean`,
+with its test library `FilesApiTest`), which declares the extension points
+of files and which the core keeps because session restore and going to a
+place, core modules, reach files through it ("Interface libraries left in
+the core", above); the config base, `lean/Editor.lean`; and the core's own
+test roots.
 
-- its modules;
-- the core modules that import one of them, each with what it imports (the
-  core's root, `Editor.Core`, imports every feature's `Compiled` module
-  and is left out, as is the list of the core's packages,
-  `EditorCore.EditorPackage`, which is outside `lean/Editor/`);
-- the modules of the core's test kit that import one of them
-  (`Editor.Test.…`), which are core modules too, and a test double: a
-  feature that moved out would take its part of the kit with it, or the
-  kit would be split;
-- the other features' modules that import one of them;
-- the other features it imports;
-- the modules of a package outside the core that import one of them, its
-  tests' among them (`packages/`, with the Lake package's name first);
-- the core's test modules that import one of them, other than its own
-  tests, which are the test modules that mirror its modules' paths (a
-  `Support` module is listed even where it is that feature's own helper,
-  since it would move or be split with it); names are written without the
-  `Editor.` after the test root, and "the root" is the test executable's
-  root module;
-- which of its modules the core's config base (`Editor`) imports, so that
-  config can call them;
-- the reaches by name it is known to have, which the import graph does not
-  show: a command named in the Vim scheme's default tables, in a menu, by
-  an ex name or in the default config. **These are not exhaustive.**
+### The packages
 
-#### `at-point`
+One row a package of the default set, in the order the build visits them
+(`lake -d ../packages query :editorPackageGraph`): its layer as its
+lakefile declares it, what it requires beside the core, the extension
+points it registers at and reads, and the names it declares or reaches.
 
-Moved out of the core by the features-as-packages roadmap's phase 4: the
-Lake package `at-point` (`packages/at-point/`; "The default packages of
-the features-as-packages roadmap's phase 4", above). It has nothing left
-to cross. No core module and no test of a core module imports it. Its one
-core importer, the loop, which asked it whether a typed character
-triggers a source and said `no completions` for it, now runs commands by
-names the core declares (`Completion.AtPoint.triggeredCommand`,
-`.pausedCommand`), and the core's tests run on the kit's own at-point
-(`Editor.Test.AtPoint`). It imports the core's API alone and its interface
-package, `at-point-api`, which declares the nine names the core reaches it
-by: the seven the Vim scheme's insert table binds and the two the loop and
-the hosts run. The Vim table, still in the core, names them as text, and
-binds `RET`, `TAB` and `C-g` in insert state to three of them (the task
-`at-point-insert-keys`).
+- **The extension points** are the types that derive `TypeName`:
+  `FilesApi.Opened`, `FilesApi.Saved` and `FilesApi.Files` (the core's
+  interface library), `BuffersApi.Closing` and `BuffersApi.Buffers`,
+  `ProjectApi.Workspaces`, `VcApi.Backend`, and `Compile.Contribution`
+  and `Compile.ProjectCommands` (`compile-api`'s).
+- **A registration** is an `Extension.add` of a value of the point's type,
+  or a call of a setup operation that is one: `compileContribution`
+  (`Compile.Contribution`) and `projectCommands` (`Compile.ProjectCommands`),
+  both `compile-api`'s.
+- **A read** is an `Extension.values`, `Extension.named`,
+  `Extension.configValues` or `Extension.workJob` over the point, or a
+  call of a function that is one:
 
-#### `binding-search`
+  | Reader | Point | Declared in |
+  |---|---|---|
+  | `FilesApi.runOpened` | `FilesApi.Opened` | `lean/FilesApi.lean` |
+  | `FilesApi.runSaved` | `FilesApi.Saved` | `lean/FilesApi.lean` |
+  | `FilesApi.files?` | `FilesApi.Files` | `lean/FilesApi.lean` |
+  | `BuffersApi.runClosing` | `BuffersApi.Closing` | `packages/buffers-api/BuffersApi.lean` |
+  | `BuffersApi.buffers?` | `BuffersApi.Buffers` | `packages/buffers-api/BuffersApi.lean` |
+  | `ProjectApi.workspaces?` | `ProjectApi.Workspaces` | `packages/project-api/ProjectApi.lean` |
+  | `VcApi.connect?`, which chooses among the backends a job over the point is handed | `VcApi.Backend` | `packages/vc-api/VcApi.lean` |
+  | `Compile.hook` | `Compile.Contribution`, `Compile.ProjectCommands` | `packages/compile-api/CompileApi.lean` |
+  | `Workspace.markerSettings`, `Compile.refreshListings`, `Compile.listWork`, each through `Compile.hook` | `Compile.Contribution`, `Compile.ProjectCommands` | `packages/compile-api/CompileApi/Listing.lean` |
+- **An interface package declares its points and registers at and reads
+  none**: what uses a point in the package that declares it is the body of
+  one of the functions above, and the package that calls the function is
+  the one that reads. A names-only interface package declares names alone.
+- **The core reads `FilesApi.Files`** itself, in session restore
+  (`lean/Editor/Restore/Run.lean`) and in going to a place
+  (`lean/Editor/Jumps/Go.lean`), and its test kit registers stand-ins at
+  the files' points; the core's Lake package is no row.
 
-Moved out of the core by the features-as-packages roadmap's phase 3: the
-Lake package `binding-search` (`packages/binding-search/`; "The default packages of the
-features-as-packages roadmap's phase 3", above). It has nothing left to
-cross. No core module and no test of a core module imports it. It imports the core's API alone and its interface package, `binding-search-api`, which declares the name the default config reaches it by (`search-bindings`); the default config, still in the core, names that name as text.
+| Package | Layer | Requires, beside the core | Extension points it registers at | Extension points it reads | Names it declares, or reaches |
+|---|---|---|---|---|---|
+| `shell-api` | interface | none | none | none | declares `shell-command`, `shell-filter` and `keyboard-quit`, and the history of the lines run (`Shell.history`, its store and its rule) |
+| `ex-api` | interface | `shell-api` | none | none | declares `ex` and `quit`, which is the core's quit name; its contract names `shell-api`'s `shell-command` |
+| `buffers-api` | interface | none | none | none | declares the points `BuffersApi.Closing` and `BuffersApi.Buffers`, and `switch-buffer`, `list-buffers` and `close-buffer` |
+| `ex` | implementation | `ex-api`, `buffers-api`, `shell-api` | none | `FilesApi.Files` | registers `ex-api`'s two names; its ex names reach the files' commands by `files-api`'s constants, the buffers' by `buffers-api`'s and the shell's by `shell-api`'s |
+| `frame-commands-api` | interface | none | none | none | declares `toggle-fullscreen` and `minimise-window` |
+| `frame-commands` | implementation | `frame-commands-api` | none | none | registers `frame-commands-api`'s two names; binds `s-q` to the core's `quit` |
+| `evil-api` | interface | none | none | none | declares `insert-newline`, `insert-tab`, `undo` and `redo` |
+| `menu` | implementation | `evil-api`, `frame-commands-api` | none | none | reaches `open-file` and `save-buffer` by `files-api`'s constants, the clipboard four by the core's, `undo` and `redo` by `evil-api`'s, and `minimise-window` and `toggle-fullscreen` by `frame-commands-api`'s |
+| `window-commands-api` | interface | none | none | none | declares the thirty-three window commands' names, `window-split` to `window-float` |
+| `window-commands` | implementation | `window-commands-api` | none | none | registers `window-commands-api`'s names; `window-quit` runs the core's `quit` |
+| `tab-commands-api` | interface | none | none | none | declares the eight tab commands' names and `tab-select-1` to `tab-select-9` |
+| `tab-commands` | implementation | `tab-commands-api` | none | none | registers `tab-commands-api`'s names |
+| `restore` | implementation | none | none | none | registers under names the core declares: the jobs `restore`, `restore-files`, `restore-write`, `restore-save`, `restart-probe` and `restart-save`, and `restart` |
+| `package-set` | implementation | none | none | none | registers under names the core declares: the job `package-build` and the two commands it posts; its own `package-install`, `package-remove` and `package-update` |
+| `minibuffer-api` | interface | none | none | none | declares the minibuffer's nine commands' names and its mode's name |
+| `at-point-api` | interface | none | none | none | declares completion at point's nine commands' names |
+| `evil` | implementation | `evil-api`, `minibuffer-api`, `at-point-api`, `window-commands-api`, `tab-commands-api`, `ex-api`, `buffers-api`, `shell-api` | none | none | registers `evil-api`'s names and the core's clipboard four; its Vim tables reach `minibuffer-api`'s, `at-point-api`'s, `window-commands-api`'s, `tab-commands-api`'s and `ex-api`'s names and `shell-api`'s `keyboard-quit` by their constants; supplies the input scheme |
+| `themes-api` | interface | none | none | none | declares `load-theme` |
+| `themes` | implementation | `themes-api` | none | none | registers `themes-api`'s name |
+| `files` | implementation | `buffers-api` | `FilesApi.Files` | `FilesApi.Opened`, `FilesApi.Saved` | registers `files-api`'s names (`open-file`, `save-buffer`, `edit-file`, `reload-buffer`, `auto-reload-mode`), an interface the core holds, and the jobs the loop starts under the core's names |
+| `buffers` | implementation | `buffers-api` | `BuffersApi.Buffers` | `BuffersApi.Closing` | registers `buffers-api`'s names |
+| `compile-api` | interface | none | none | none | declares the points `Compile.Contribution` and `Compile.ProjectCommands`, the setup operations that register at them, the hook that reads them, and the listing job's name, `compile-list` |
+| `project-api` | interface | `compile-api` | none | none | declares the point `ProjectApi.Workspaces`, and `find-file-in-workspace` and `find-file-in-project`; names `compile-api`'s listing job |
+| `vc-api` | interface | none | none | none | declares the point `VcApi.Backend`, the version-control port, its model and its contract, and the backend's name `git` |
+| `workspace` | implementation | `project-api`, `vc-api`, `compile-api` | `FilesApi.Opened`, `ProjectApi.Workspaces` | `Compile.Contribution`, `Compile.ProjectCommands`, `VcApi.Backend` | registers `project-api`'s names and the listing job under `compile-api`'s name |
+| `project-search-api` | interface | none | none | none | declares `project-search` and `project-search-symbol` |
+| `project-search` | implementation | `project-search-api` | none | `FilesApi.Files` | registers `project-search-api`'s names |
+| `working-set-api` | interface | none | none | none | declares `working-set-add` and `working-set-open` |
+| `working-set` | implementation | `working-set-api`, `vc-api`, `buffers-api` | `BuffersApi.Closing`, `FilesApi.Opened`, `FilesApi.Saved` | `FilesApi.Files`, `VcApi.Backend` | registers `working-set-api`'s names |
+| `shell` | implementation | `shell-api` | none | none | registers `shell-api`'s names and keeps its history |
+| `version-control` | implementation | `project-api`, `vc-api`, `buffers-api` | `VcApi.Backend` | `BuffersApi.Buffers`, `FilesApi.Files`, `ProjectApi.Workspaces` | registers the `vc-…` commands and their twelve ex names, and the gutter's jobs under the core's names; two packages, `version-control` and `version-control-gutter` |
+| `completion-api` | interface | none | none | none | declares the path style's name, `path` |
+| `completion` | implementation | `completion-api` | none | none | registers the styles `fuzzy`, `orderless` and `path` and the display `minibuffer` |
+| `mode-line` | implementation | none | none | none | registers the mode line's segments |
+| `minibuffer` | implementation | `minibuffer-api` | none | none | registers `minibuffer-api`'s names and mode |
+| `shipped-themes` | implementation | none | none | none | registers the Solarized and Fairy Floss themes |
+| `execute-command-api` | interface | none | none | none | declares `execute-command` |
+| `execute-command` | implementation | `execute-command-api`, `minibuffer-api` | none | none | registers `execute-command-api`'s name; reaches `minibuffer-api`'s names |
+| `binding-search-api` | interface | none | none | none | declares `search-bindings` |
+| `binding-search` | implementation | `binding-search-api`, `minibuffer-api` | none | none | registers `binding-search-api`'s name; reaches `minibuffer-api`'s names |
+| `compile` | implementation | `minibuffer-api`, `compile-api`, `shell-api` | `Compile.Contribution` | `Compile.Contribution`, `Compile.ProjectCommands`, `FilesApi.Files` | registers the compile mode's commands and its six ex names; reaches `minibuffer-api`'s names and `shell-api`'s history |
+| `at-point` | implementation | `at-point-api`, `evil-api` | none | none | registers `at-point-api`'s names; reaches `insert-newline` and `insert-tab` by `evil-api`'s constants |
+| `languages` | implementation | none | none | none | registers the `code` mode and the languages that ship |
 
-#### `buffers`
+`tools/module-map-check.sh`, run in `lean/`, holds this table and the one
+above to the tree and to Lake, and prints nothing when they agree: every
+package of the set has its row, with its layer as Lake says it, and every
+(package, point) pair the sources hold, by the rules above, is in that
+package's row, and no row names a pair the sources lack. It reads the
+library modules of each package (no test library, no fixture config) for
+the registrations and reads, and the table's fourth and fifth columns for
+the rows, and compares the two. It is not part of the gate: it holds a
+document to the sources it describes.
 
-Moved out of the core by the features-as-packages roadmap's phase 6: the
-Lake package `buffers` (`packages/buffers/`; "The default packages of the
-features-as-packages roadmap's phase 6", above). It has nothing left to
-cross. No core module and no test of a core module imports it: its library imports the core's API alone, and it implements the core's staged interface library `buffers-api`, through which ex binds `b`, `ls` and `bd`, version control's `vc-commit` closes the message buffer and the working sets detach a closing buffer's ranges (`BuffersApi.Closing`).
-Its tests moved with it, its kit and doubles among them.
-#### `compile`
+```sh
+cd lean && sh ../tools/module-map-check.sh
+```
 
-Moved out of the core by phase 6: the Lake package `compile`
-(`packages/compile/`; "The default package `compile`", above). It has
-nothing left to cross. No core module and no test of a core module
-imports it, and Lake would refuse the import: the core requires no
-package. It imports two features' modules that are still the core's,
-`Shell` and `Workspace.Modes`, and when either feature moves into a
-package it requires that package. What reaches it by name: config names
-its declarations through the set's base (`Compile.cargoMode`); the face
-vocabulary lists `compilation.error`, `compilation.warning` and
-`compilation.note` (`Face/Vocabulary.lean`), which every palette defines;
-it reads the store `compile-listings` and starts the job `compile-list`,
-both the core's; and its six ex names need the `ex` package for a line to
-run them.
+### Where each feature went
 
-#### `completion`
+Each feature that was a package of the core's own list, the Lake package
+it is now, and the phase that moved it. What each had to cross to move is
+in its phase's section, above.
 
-Moved out of the core by the features-as-packages roadmap's phase 4: the
-Lake package `completion` (`packages/completion/`; "The default packages
-of the features-as-packages roadmap's phase 4", above). It has nothing
-left to cross. No core module and no test of a core module imports it.
-The core's importers, the dispatch, the loop, the setup port, the
-registry's fallbacks and the kit, read the styles and displays a set
-registers and fall back to the core's own (`Completion.Style.unregistered`,
-`Completion.Display.unregistered`), and the core's tests read styles and
-displays written in them. It imports the core's API alone and its
-interface package, `completion-api`, which declares the one name another
-feature reaches it by, `path`; the files package, still in the core, gives
-the file prompt's category that style as text. Config names `fuzzy`,
-`orderless`, `path` and `minibuffer` as text, and the declarations through
-the set's base (`import Completion.Styles`, `import Completion.Displays`).
-
-#### `evil`
-
-Moved out of the core by the features-as-packages roadmap's phase 7: the
-Lake package `evil` (`packages/evil/`; "The default packages of the
-features-as-packages roadmap's phase 7", above), with the Vim scheme, which
-it supplies an editor as its input scheme ("Input schemes", below). It has
-nothing left to cross. No core module and no test of a core module imports
-it: the hosts take their scheme as an argument, the menu names the core's
-clipboard names (`Editor.Clipboard`), the theme checks ask a scheme for its
-cursor faces, and the core's tests run on the test scheme. Its library
-imports the core's API alone, with the names of three features still in
-the core (`Editor.Ex`, `Editor.WindowCommands`, `Editor.TabCommands`) and
-the staged `ShellApi`, which phase 8 cuts. What others reach of it by name
-is declared by `evil-api`. Its tests moved with it, its kit among them.
-
-#### `ex`
-
-- **Modules** (2): `Ex`, `Ex.Compiled`.
-- **Core modules that import it**: `Loop` (`Ex`).
-- **The test kit's modules that import it**: `Test.Files` (`Ex`, `Ex.Compiled`); `Test.Shell` (`Ex`, `Ex.Compiled`).
-- **Other features' modules that import it**: frame-commands: `FrameCommands.Compiled` (`Ex`); window-commands: `WindowCommands` (`Ex`).
-- **Other features it imports**: buffers (`Buffers`); files (`Files`); shell (`Shell`).
-- **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (11): `ModelTest`: `Completion.Contract`, `Evil`, `FrameCommands`, `Loop`, `Menu`, `Support.Buffers`, `Support.Frame`, `Support.Windows`; `ConfigTest`: `Headless`, `Support.Configs`; `ContractTest`: `Shell`.
-- **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the Vim scheme's default tables name `ex`; `frame-commands` binds a key to `quit` and `window-quit` runs it, both by its name; the `version-control` package and, outside the core, the `compile` package bind ex names, which need this package for a line to run them.
-
-#### `execute-command`
-
-Moved out of the core by the features-as-packages roadmap's phase 3: the
-Lake package `execute-command` (`packages/execute-command/`; "The default packages of the
-features-as-packages roadmap's phase 3", above). It has nothing left to
-cross. No core module and no test of a core module imports it. It imports the core's API alone and its interface package, `execute-command-api`, which declares the name the default config reaches it by (`execute-command`); the default config, still in the core, names that name as text.
-
-#### `files`
-
-Moved out of the core by the features-as-packages roadmap's phase 6: the
-Lake package `files` (`packages/files/`; "The default packages of the
-features-as-packages roadmap's phase 6", above). It has nothing left to
-cross. No core module and no test of a core module imports it: its library imports the core's API alone, and it implements the core's interface library `files-api`, a core interface for good, through which session restore adopts files, the jumps visit them, ex and the menu save and open them, and the workspaces and the working sets hear a file open (`FilesApi.Opened`) and save (`FilesApi.Saved`).
-Its tests moved with it, its kit and doubles among them.
-#### `frame-commands`
-
-- **Modules** (2): `FrameCommands`, `FrameCommands.Compiled`.
-- **Core modules that import it**: none.
-- **The test kit's modules that import it**: none.
-- **Other features' modules that import it**: menu: `Menu.Compiled` (`FrameCommands`).
-- **Other features it imports**: ex (`Ex`).
-- **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (4): `ModelTest`: `Menu`, `Support.Frame`; `ConfigTest`: `Headless`; `FfiTest`: `Window.Real`.
-- **The config base imports**: `FrameCommands`.
-- **Reaches by name** (not exhaustive): the `menu` package's Minimise and Enter Full Screen.
-
-#### `languages`
-
-Moved out of the core by the features-as-packages roadmap's phase 3: the
-Lake package `languages` (`packages/languages/`; "The default packages of the
-features-as-packages roadmap's phase 3", above). It has nothing left to
-cross. No core module and no test of a core module imports it. It imports the core's API alone. What reaches it by name stays the core's: the mode `code` (`Language.codeName`) and the languages' data (`Language.shipped`), which it registers.
-
-#### `menu`
-
-- **Modules** (1): `Menu.Compiled`.
-- **Core modules that import it**: none.
-- **The test kit's modules that import it**: none.
-- **Other features' modules that import it**: none.
-- **Other features it imports**: evil (`Evil.Clipboard`); files (`Files`); frame-commands (`FrameCommands`).
-- **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (5): `ModelTest`: `Evil.Clipboard`, `Menu`, `Support.Frame`; `ConfigTest`: `Headless`; `FfiTest`: `Window.Real`.
-- **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): none known.
-
-#### `minibuffer`
-
-Moved out of the core by the features-as-packages roadmap's phase 4 (the
-task `minibuffer-as-package`): the Lake package `minibuffer`
-(`packages/minibuffer/`; "The default packages of the features-as-packages
-roadmap's phase 4", above). It has nothing left to cross. No core module
-and no test of a core module imports it. Phase 3 had found four things in
-the way (checked on `lake -d ../packages query :editorLayerImports`), and
-phase 4 cut each:
-
-- the core's test kit imported it (`Editor.Test.Files`, `.Prompts`,
-  `.Shell`): the kit now holds a minibuffer of its own, written over the
-  core's prompt API (`Editor.Test.Minibuffer`), and registers that;
-- about two dozen core test modules imported it, among them
-  `ConfigTest.Support.Configs`, whose hosts registered
-  `Minibuffer.package`: they run on the kit's minibuffer, and the facts
-  only the shipped commands make moved to the package's own tests
-  (`MinibufferTest.promptModeChecks`);
-- an implementation package imported it (`compile`'s
-  `CompileTest.Support.Compile`, and the command prompt's and the binding
-  search's tests): `compile`, `execute-command` and `binding-search`
-  require the interface package `minibuffer-api` and name its constants
-  and its fake;
-- the core reaches it by name (`Completion.Later.candidatesCommand`,
-  `minibuffer-candidates`; `InputScheme.Vim.askCommand`, `minibuffer-ask`;
-  the seven `minibuffer-*` names of the Vim scheme's minibuffer table):
-  `minibuffer-api` declares all nine, with the mode's name `Prompt.mode`,
-  the core's reachers keep the text, and the kit's names close the chain
-  between the two ("The interface packages `completion-api`,
-  `at-point-api` and `minibuffer-api`", above). The phase decided
-  `minibuffer-candidates` is the minibuffer's, so a set without it gets
-  no candidate that answers later.
-
-#### `mode-line`
-
-Moved out of the core by the features-as-packages roadmap's phase 3: the
-Lake package `mode-line` (`packages/mode-line/`; "The default packages of the
-features-as-packages roadmap's phase 3", above). It has nothing left to
-cross. No core module and no test of a core module imports it. It imports the core's API alone. What reaches it by name stays the core's: the default listing names its segments (`ModeLine.Order.standard`) over the shipped segments' data (`ModeLine.shipped`), which it registers.
-
-#### `project-search`
-
-Moved out of the core by the features-as-packages roadmap's phase 6: the
-Lake package `project-search` (`packages/project-search/`; "The default packages of the
-features-as-packages roadmap's phase 6", above). It has nothing left to
-cross. No core module and no test of a core module imports it: its library imports the core's API alone, with what a search covers (`Editor.SearchRoot`) and the word under the cursor (`Editor.Text.Word`), and its interface package `project-search-api`, which declares the names the default config reaches it by; no module of it, library or tests, reaches evil.
-Its tests moved with it, its kit and doubles among them.
-#### `shell`
-
-Moved out of the core by the features-as-packages roadmap's phase 6: the
-Lake package `shell` (`packages/shell/`; "The default packages of the
-features-as-packages roadmap's phase 6", above). It has nothing left to
-cross. No core module and no test of a core module imports it: its library imports the core's API alone, and it implements the core's staged interface library `shell-api`, through which ex hands it a `:!` line and reads its history.
-Its tests moved with it, its kit and doubles among them.
-#### `shipped-themes`
-
-Moved out of the core by phase 5: the Lake package `shipped-themes`
-(`packages/shipped-themes/`; "The first default package", above). It has
-nothing left to cross. No core module and no test of a core module
-imports it, and Lake would refuse the import: the core requires no
-package. What reaches it by name: config names a palette (`useTheme` with
-`solarized-light`, as the package's fixture `shipped-themes` does), and
-the user asks `load-theme` for one.
-
-#### `tab-commands`
-
-- **Modules** (2): `TabCommands`, `TabCommands.Compiled`.
-- **Core modules that import it**: none.
-- **The test kit's modules that import it**: none.
-- **Other features' modules that import it**: none.
-- **Other features it imports**: window-commands (`WindowCommands`).
-- **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (4): `ModelTest`: `Completion.Contract`, `InputScheme.Vim.Default`, `Support.Windows`; `ConfigTest`: `Headless`.
-- **The config base imports**: `TabCommands`.
-- **Reaches by name** (not exhaustive): the Vim scheme's tab table and the default config name its commands (`tab-new`, `tab-close`, `tab-next` and the rest).
-
-#### `themes`
-
-Moved out of the core by the features-as-packages roadmap's phase 7: the
-Lake package `themes` (`packages/themes/`; "The default packages of the
-features-as-packages roadmap's phase 7", above). It has nothing left to
-cross. Its two checks stay in the core, as `Editor.Theme.Check` and
-`Editor.Theme.Picture`, since the shipped palettes' tests run them and
-they name no scheme. No core module and no test of a core module imports
-it; the default config's `load-theme` is declared by `themes-api`. Its
-tests moved with it.
-
-#### `version-control`
-
-Moved out of the core by the features-as-packages roadmap's phase 6: the
-Lake package `version-control` (`packages/version-control/`; "The default packages of the
-features-as-packages roadmap's phase 6", above). It has nothing left to
-cross. No core module and no test of a core module imports it: its library imports the core's API alone and the interface packages `vc-api`, which it implements (the backend `git`, the gutter's jobs, the segment `review`), and `project-api`, through which the worktree list's visit reaches a workspace; git's half of the repository model is its test double. Its two packages, `version-control` and `version-control-gutter`, are listed by its entry module.
-Its tests moved with it, its kit and doubles among them.
-#### `window-commands`
-
-- **Modules** (2): `WindowCommands`, `WindowCommands.Compiled`.
-- **Core modules that import it**: none.
-- **The test kit's modules that import it**: none.
-- **Other features' modules that import it**: tab-commands: `TabCommands` (`WindowCommands`).
-- **Other features it imports**: ex (`Ex`).
-- **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (3): `ModelTest`: `InputScheme.Vim.Default`, `Support.Windows`; `ConfigTest`: `Headless`.
-- **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the Vim scheme's `C-w` table and the default config name its commands (`window-split`, `window-close` and the rest).
-
-#### `working-set`
-
-Moved out of the core by the features-as-packages roadmap's phase 6: the
-Lake package `working-set` (`packages/working-set/`; "The default packages of the
-features-as-packages roadmap's phase 6", above). It has nothing left to
-cross. No core module and no test of a core module imports it: its library imports the core's API alone, `files-api` and `buffers-api`, and the interface packages `working-set-api`, which declares the names the default config reaches it by, and `vc-api`, whose backend gives the commit a set is written with.
-Its tests moved with it, its kit and doubles among them.
-#### `restore`
-
-- **Modules** (2): `Restore.Compiled`, `Restore.Run`. The journal's reconciler, `Restore`, with `Restore.Kept`, `Restore.Journal`, `Restore.Document` and phase 2's `Restore.Records`, `Restore.Indexed`, `Restore.Frame`, `Restore.Workspaces` and `Restore.Value`, is core: the loop runs it after each publish and the state holds what it keeps.
-- **Core modules that import it**: none.
-- **The test kit's modules that import it**: none.
-- **Other features' modules that import it**: none.
-- **Other features it imports**: files (`Files`, for `Files.adopt` and `Files.limit`).
-- **Modules of packages outside the core that import it**: none.
-- **Test modules outside its own tests that import it** (2): `ConfigTest`: `Headless`, `Bench` (through `EditorCore.EditorPackage`); `ContractTest`: `Restore.Run`.
-- **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the hosts start its job `restore` by name (`Headless.Request.restore`), and the loop journals only where that job is registered.
-
-#### `workspace`
-
-Moved out of the core by the features-as-packages roadmap's phase 6: the
-Lake package `workspace` (`packages/workspace/`; "The default packages of the
-features-as-packages roadmap's phase 6", above). It has nothing left to
-cross. No core module and no test of a core module imports it: its library imports the core's API alone, `files-api`, at whose `Opened` hook it attaches a file's workspace, and the interface packages `project-api`, which it implements, and `vc-api`; the workspace data (`Editor.Workspace`) and what a search covers (`Editor.SearchRoot`) are the core's.
-Its tests moved with it, its kit and doubles among them.
+| Feature | Lake package | Moved in |
+|---|---|---|
+| The shipped palettes | `shipped-themes` | the packages roadmap's phase 5 ("The first default package: `shipped-themes`") |
+| The compile mode | `compile` | the packages roadmap's phase 6 ("The default package `compile`") |
+| The mode line's segments | `mode-line` | features-as-packages phase 3 |
+| The command prompt | `execute-command` | features-as-packages phase 3 |
+| The binding search | `binding-search` | features-as-packages phase 3 |
+| The languages | `languages` | features-as-packages phase 3 |
+| The completion styles and displays | `completion` | features-as-packages phase 4 |
+| Completion at point | `at-point` | features-as-packages phase 4 |
+| The minibuffer's commands and mode | `minibuffer` | features-as-packages phase 4 |
+| The file commands | `files` | features-as-packages phase 6 |
+| The buffer commands | `buffers` | features-as-packages phase 6 |
+| The workspaces | `workspace` | features-as-packages phase 6 |
+| Project search | `project-search` | features-as-packages phase 6 |
+| The working sets | `working-set` | features-as-packages phase 6 |
+| The shell | `shell` | features-as-packages phase 6 |
+| Version control and its gutter | `version-control` (two `Package` values) | features-as-packages phase 6 |
+| Evil and the Vim scheme | `evil` | features-as-packages phase 7 |
+| The themes | `themes` | features-as-packages phase 7 |
+| The package-set commands | `package-set` | features-as-packages phase 8 |
+| Session restore's registrations | `restore` | features-as-packages phase 8 |
+| The tab commands | `tab-commands` | features-as-packages phase 8 |
+| The window commands | `window-commands` | features-as-packages phase 8 |
+| The menu bar that ships | `menu` | features-as-packages phase 8 |
+| The frame commands | `frame-commands` | features-as-packages phase 8 |
+| The ex command line | `ex` | features-as-packages phase 8 |
 
 ## Input schemes
 
@@ -3497,8 +3452,10 @@ are cut before it moves, and for one whose modules keep the name
 
 The moving names are arguments, not derived from the graph: "everything the
 root does not reach" would pass whatever the core imported. The gate runs
-the check again to see each rule bite: told that a feature still in the
-core, the shell, is moving (`Editor.Core Editor.Shell`, exit 1), pointed
+the check again to see each rule bite: told that a module of the core,
+the ex line's data, is moving (`Editor.Core Editor.Ex.Line`, exit 1; a
+feature still in the core was named here until the last, the ex line,
+moved out in the features-as-packages roadmap's phase 8), pointed
 at `Editor.Setup` (exit 3), and told a config base no executable's root
 imports (`--base Editor.Core`, exit 4). Until phase 6 the first of these
 pointed the check at the root `Editor`, the config base, which imported
@@ -3528,15 +3485,20 @@ so it is part of what the fixtures pin:
   `version-control`, the third and the sixteenth packages of the core's
   list, then by `compile`, which registers after the core's seventeen.
 
-`ModelTest.packageSetChecks` pins what a model test can see of the core's
-list: its 17 names in order, with no package of the palettes, the compile
+`ModelTest.packageSetChecks` pinned what a model test could see of the
+core's list while the core had one, at the end of the packages roadmap:
+its 17 names in order, with no package of the palettes, the compile
 mode, the mode line, the command prompt, the binding search, the
 languages, the completion styles and displays, completion at point or the
 minibuffer among them; the ex names in bound order, the `ex` package's
 and then version control's twelve; and that the one theme it registers is
-`default`. It is the test of the core's entry module
+`default`. It was the test of the core's entry module
 (`lean/ModelTest/EditorCore/EditorPackage.lean`), over
-`EditorCore.EditorPackage.packages`.
+`EditorCore.EditorPackage.packages`, and went with that module in the
+features-as-packages roadmap's phase 8: what each default package
+registers, and in what order, is held by that package's own checks, and
+`ModelTest.packageChecks` holds that a host handed no package starts from
+a registry that holds nothing.
 
 **Packages register by dependency, which puts a default package after the
 core's.** The default set holds nine, so the generated root registers the
@@ -3825,6 +3787,25 @@ view 2 0,0 0x0: "move\nnormal\nvisual             v\nvisual-line        V\ninser
 decorations 2: minibuffer.candidate 0..4 minibuffer.candidate 5..11 minibuffer.candidate 12..32 minibuffer.annotation 31..32 minibuffer.candidate 33..53 minibuffer.annotation 52..53 minibuffer.candidate 54..74 minibuffer.annotation 73..74 minibuffer.candidate 75..95 minibuffer.annotation 94..95 minibuffer.candidate 96..116 minibuffer.annotation 115..116 minibuffer.candidate 117..137 minibuffer.annotation 136..137 minibuffer.candidate 138..149 minibuffer.candidate 150..157
 view 2 0,0 0x0: "ex                       :\nquit                     s-q\nsave-and-quit\nreload-config\ntoggle-fullscreen        C-s-f\nminimise-window          s-m\nwindow-split             SPC w s, C-w s, C-w S, C-w C-s  Split window\nwindow-split-vertically  SPC w v, C-w v, C-w C-v  Split window vertically\nwindow-new               SPC w n, C-w C-n  New window\nwindow-close             SPC w c, C-w C-c  Close window", scroll 0, selections , padding 8 0
 decorations 2: minibuffer.candidate 0..26 minibuffer.annotation 25..26 minibuffer.candidate 27..55 minibuffer.annotation 52..55 minibuffer.candidate 56..69 minibuffer.candidate 70..83 minibuffer.candidate 84..114 minibuffer.annotation 109..114 minibuffer.candidate 115..143 minibuffer.annotation 140..143 minibuffer.candidate 144..213 minibuffer.annotation 169..213 minibuffer.candidate 214..287 minibuffer.annotation 239..287 minibuffer.candidate 288..341 minibuffer.annotation 313..341 minibuffer.candidate 342..397 minibuffer.annotation 367..397
+```
+
+### Phase 8 changed no fixture line
+
+The features-as-packages roadmap's phase 8 moved the seven packages the
+core's own list still held to the front of the default set, in the order
+that list held them, and moved them in the reverse of that order (its
+plan's D2): the package that moved was each time the last still in the
+core's list, and the core's packages registered before every default
+package, so after each commit every package registered where it had. The
+compile mode's contributions became values at extension points, and their
+reader keeps the registry's order, config's first (`Compile.hook`). In the
+fixture set the seven register after the fixture packages, as every
+feature the earlier phases moved does, and no fixture of that set shows
+it. So no line of any headless fixture changed between the phase's first
+commit and its last, and none was added or removed; the block below, which
+would quote a changed line, is empty.
+
+```text
 ```
 
 ## Build times

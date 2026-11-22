@@ -533,7 +533,7 @@ Long work belongs in a job.
 
 Status: decided 2026-11-14 and built, by the command loop's phase 12
 (`lean/Editor/State.lean`, "Quit"; `lean/Editor/Api.lean`, `quit`;
-`lean/Editor/Loop.lean`, "Quit"; `lean/Editor/Ex.lean` for the commands
+`lean/Editor/Loop.lean`, "Quit"; `packages/ex/Ex.lean` for the commands
 `quit` and `save-and-quit`; `lean/Editor/Headless.lean` for the host).
 
 A command asks the editor to quit, and the editor quits once it can. A
@@ -707,7 +707,7 @@ Pinned by `ModelTest.stateChecks`, `stateRequestChecks` and
 `apiStateChecks` (the state's rules and the API's `quit`, which also has a
 case on the real binding), `dispatchQuitChecks` (the loop: stop, the wait
 and the withdrawn quit, with commands written in the test), `exChecks`
-(the commands and the ex names `q` and `wq`), `ConfigTest.exScriptChecks`
+(the commands and the ex names `q` and `wq`), `ExTest.Linked.exScriptChecks`
 (through the host, on real files), and the two process checks of the
 `ffi-test` task, which read the executable's exit status and the file's
 bytes.
@@ -1133,7 +1133,7 @@ sources a command filters by project navigation's phase 1.
 | `minibuffer-accept`, `minibuffer-cancel` and the minibuffer's mode | `packages/minibuffer/Minibuffer.lean`, `packages/minibuffer/Minibuffer/Compiled.lean` |
 | `open-file` asking for its path | `packages/files/Files.lean` (`openCommand`) |
 | An invocation a command asks to be run after it, with no prompt | `lean/Editor/State/Request.lean` (`StateRequest.invoke`), `lean/Editor/Api.lean` (`invoke`) |
-| `ex` asking for its line, and running the answer's command | `lean/Editor/Ex.lean` (`exCommand`, `run`) |
+| `ex` asking for its line, and running the answer's command | `packages/ex/Ex.lean` (`exCommand`, `run`) |
 | A prompt's candidates, records, their listing and the choice; setting them and choosing | `lean/Editor/State.lean` ("Prompts": `Candidates`), `lean/Editor/State/Request.lean` |
 | Completion sources, the query and the candidate record; their model, fake and contract | `lean/Editor/Completion.lean`, `lean/Editor/Completion/Candidate.lean`, `lean/Editor/Completion/Fake.lean`, `lean/Editor/Completion/Contract.lean` |
 | Sources registered by name; a named source run inside the asking command; the names of the sources registered in a category, for a prompt that asks for one | `lean/Editor/Config/Registry.lean` ("Sources": `sourcesIn`), `lean/Editor/Setup.lean` (`defineSource`), `lean/Editor/Command/Dispatch.lean` (`ControlRequest.askSource`, `RegistryRequest.categorySources`) |
@@ -1149,7 +1149,7 @@ sources a command filters by project navigation's phase 1.
 | A run that keeps the head of its standard output | `lean/Editor/Process.lean` (`ProcessRequest.runHead`, `Process.Head`), `lean/Editor/Job.lean` (`Process.runHead`), `crates/editor-process/src/service.rs` (`Service::start_head`, `RunResult::Cut`) |
 | Displays: the interface, its model and contract, the minibuffer display and its rows; their registration and config's choice by category | `lean/Editor/Completion/Display.lean`, `packages/completion/Completion/Displays.lean`, `lean/Editor/Completion/DisplayContract.lean`, `lean/Editor/Config/Registry.lean` ("Displays"), `lean/Editor/Setup.lean` (`defineDisplay`, `useDisplay`, `useDisplayFor`) |
 | The candidate list: the sheet shown in the publish, kept on the prompt, the place that grows and never shrinks, and the list's view above the minibuffer's | `lean/Editor/State.lean` ("The minibuffer's place": `displayed`, `Prompt.tallest`, `cutStrip`, `candidateListRect?`), `lean/Editor/Loop.lean` (`Loop.candidateListView`, `Loop.Keys.displaying`) |
-| The `:!` history and the ex names as the ex line's candidates, from two sources | `lean/Editor/Ex.lean` (`exCommand`, `historySource`, `namesSource`), `lean/Editor/Api.lean` (`exNames`) |
+| The `:!` history and the ex names as the ex line's candidates, from two sources | `packages/ex/Ex.lean` (`exCommand`, `historySource`, `namesSource`), `lean/Editor/Api.lean` (`exNames`) |
 | An answer for the input scheme: `minibuffer-ask`, the reserved continuation `InputScheme.answerName`, and the loop handing the answer to the scheme | `packages/minibuffer/Minibuffer.lean`, `lean/Editor/InputScheme.lean` (`answered`), `lean/Editor/Loop.lean` ("Prompts": `Loop.answer`) |
 | Keys pressed by an invocation: the reserved name `InputScheme.keysName`, which the binding search invokes with the keys of the binding accepted, and the loop feeding them to the scheme from rest | `lean/Editor/BindingSearch.lean`, `lean/Editor/InputScheme.lean` (`keysInvocation`), `lean/Editor/Loop.lean` ("Prompts": `Loop.pressed`) |
 
@@ -1377,7 +1377,7 @@ prompt.** Built by the command loop's phase 12.
 - **Set aside: one request that looks an ex name up and records its
   command.** The rule for an argument a name does not take would then be
   in the dispatcher. With two requests the dispatcher answers a question,
-  and the ex line's rules are in `lean/Editor/Ex.lean`.
+  and the ex line's rules are in `packages/ex/Ex.lean`.
 
 **Rollback and the interrupt around a prompt.**
 
@@ -2337,7 +2337,7 @@ As built (`lean/Editor/Config/Reload.lean`, `lean/Editor/Headless.lean`):
   report in the echo area: the headless host prints it. On the models the
   loop's driver counts the requests, since it has no config session
   (`ModelTest.dispatchQuitChecks`, `exChecks`); through the host,
-  `ConfigTest.exChecks` rewrites a config's file, runs the ex line
+  `ExTest.Linked.exChecks` rewrites a config's file, runs the ex line
   `reload`, and sees the key run the new command.
 
 `config-test` shows the editor answering while a file elaborates: with a

@@ -3751,7 +3751,7 @@ window is still run with nothing drawing in it. The threads are in
   that is the system's. Following the system's own appearance is not
   built: the roadmap leaves it out.
 - **Fullscreen and minimise are commands too.** `toggle-fullscreen` and
-  `minimise-window` (`lean/Editor/FrameCommands.lean`), bound by default
+  `minimise-window` (`packages/frame-commands/FrameCommands.lean`), bound by default
   to `C-s-f` (Ctrl-Cmd-F) and `s-m` (Cmd-M), ask the window through the
   display interface (`Display.askFrame`), which the real binding sends
   with `editor_ffi_window_request`. Whether the window is in fullscreen

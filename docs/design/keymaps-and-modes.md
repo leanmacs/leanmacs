@@ -37,7 +37,7 @@ registers, undo and dot repeat, on the editor API:
 | The language entry, the shipped table, the rule that chooses a path's language, and the `code` mode | `lean/Editor/Language.lean`; a buffer's language in `lean/Editor/State.lean`, chosen when a file opens in `packages/files/Files.lean` |
 | The notice a scheme is told when the minibuffer's view opens, and the contract's property that a key that prints is text there | `lean/Editor/InputScheme.lean` (`openMinibuffer`), `lean/Editor/InputScheme/Contract.lean` (`minibufferTakesText`), `lean/Editor/Loop.lean` (`Loop.toldViews`) |
 | The minibuffer's mode and its six commands (accept, cancel, the next and the previous candidate, delete backward, and delete to the input's start), and their registrations | The default package `minibuffer` (features-as-packages phase 4): `packages/minibuffer/Minibuffer.lean`, `packages/minibuffer/Minibuffer/Compiled.lean`; their names in its interface package, `packages/minibuffer-api/MinibufferApi.lean` |
-| The frame's commands (`toggle-fullscreen`, `minimise-window`) and their compiled bindings `C-s-f` and `s-m` | `lean/Editor/FrameCommands.lean`, `lean/Editor/FrameCommands/Compiled.lean` |
+| The frame's commands (`toggle-fullscreen`, `minimise-window`) and their compiled bindings `C-s-f` and `s-m` | `packages/frame-commands/FrameCommands.lean`, `packages/frame-commands/FrameCommands/Compiled.lean` |
 | The Vim state of the minibuffer's view, and its default keys | `packages/evil/Evil/Vim.lean` (`States.minibuffer`, `State.openMinibuffer`), `packages/evil/Evil/Vim/Default.lean` (`minibufferCommands`) |
 | What a scheme reports of a view, and the contract's property that a key that yields nothing leaves it as it was | `lean/Editor/InputScheme.lean` (`InputScheme.Report`, `report`), `lean/Editor/InputScheme/Contract.lean` (`quietKeyKeepsReport`) |
 | A Vim state's selection shape, and the Vim scheme's report of a view's state | `packages/evil/Evil/Vim.lean` (`StateRecord.shape`, `State.report`), `packages/evil/Evil/Vim/Default.lean` |
@@ -56,8 +56,8 @@ registers, undo and dot repeat, on the editor API:
 | Evil's commands as compiled code registers them | `packages/evil/Evil/Compiled.lean` |
 | An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |
 | Ex bindings by owner, and binding one from `setup` | `lean/Editor/Config/Registry.lean` (`replaceEx`, `ex?`), `lean/Editor/Setup.lean` (`exCommand`) |
-| The ex command, and the commands `quit`, `save-and-quit` and `reload-config` | `lean/Editor/Ex.lean` |
-| The ex line's commands and the files', the ex line's own and the buffers' ex names, as the `ex` package registers them; the compile mode's and version control's ex names are bound by their own packages | `lean/Editor/Ex/Compiled.lean`, `packages/compile/Compile/Compiled.lean`, `packages/version-control/VersionControl/Compiled.lean` |
+| The ex command, and the commands `quit`, `save-and-quit` and `reload-config` | `packages/ex/Ex.lean` |
+| The ex line's commands and the files', the ex line's own and the buffers' ex names, as the `ex` package registers them; the compile mode's and version control's ex names are bound by their own packages | `packages/ex/Ex/Compiled.lean`, `packages/compile/Compile/Compiled.lean`, `packages/version-control/VersionControl/Compiled.lean` |
 
 The command loop steps every key press through its one scheme and runs the
 invocation it yields, as a command looked up by name in the registry. The
@@ -2793,7 +2793,7 @@ and `gk`; the mouse wheel; smooth scrolling; `scrolljump` and `sidescroll`.
 ### Window commands as built
 
 Status: built, by window management's phases 2, 3 and 4
-(`lean/Editor/WindowCommands.lean`, `lean/Editor/WindowCommands/Compiled.lean`;
+(`packages/window-commands/WindowCommands.lean`, `packages/window-commands/WindowCommands/Compiled.lean`;
 pinned by `windowCommandChecks`, and over the recorder by
 `tests/headless/manual-splits`, `insert-window-keys`,
 `insert-word-delete`, `edge-sidebar` and `float-rule`).
@@ -2806,7 +2806,7 @@ lays one out, 0 for none; and gives up with what its refusal says
 (`LayoutRefusal.describe`), so closing the last window says
 `window-close: the last window cannot be closed` in the echo area. They are
 registered by the `window-commands` package, which both hosts are handed
-(`lean/Editor/WindowCommands/Compiled.lean`).
+(`packages/window-commands/WindowCommands/Compiled.lean`).
 
 The Vim scheme binds them under `C-w` in normal state (`windowKeys`, the
 table `windowCommands`):
@@ -3168,7 +3168,7 @@ matches Vim changes that check deliberately:
 ### Tab commands as built
 
 Status: built, by window management's phase 5
-(`lean/Editor/TabCommands.lean`, `lean/Editor/TabCommands/Compiled.lean`;
+(`packages/tab-commands/TabCommands.lean`, `packages/tab-commands/TabCommands/Compiled.lean`;
 pinned by `tabCommandChecks`, and over the recorder by
 `tests/headless/tabs`).
 
@@ -3262,8 +3262,8 @@ Which names have something behind them:
 | `find-file-in-another-workspace`, which no table names | Built and registered (the `workspace` package). Compiled code binds `C-x C-d` to it in the prompt category `workspace-file` (the `workspace` package), not in a state's table, so it holds in the `minibuffer` state while the workspace finder is open and nowhere else ("The minibuffer", under Modes) |
 | `keyboard-quit` | Built and registered (the `shell` package): `C-g` in normal state cancels the `:!` or filter running in the focused buffer's workspace, and says `<line>: interrupted`, or `Quit` with nothing running ("The ex command line"). `C-g` is also the interrupt key, which lowers the flag before the key is stepped ([concurrency.md](concurrency.md), "Interrupt") |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (the `evil` package; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
-| The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right`, `window-float` | Built and registered (the `window-commands` package, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
-| The tab commands `tabKeys` names: `tab-next`, `tab-previous`, `tab-new`, `tab-close`, `tab-switch`, `tab-select-1` … `tab-select-9`; and `tab-rename`, `tab-move-right`, `tab-move-left`, with no key | Built and registered (the `tab-commands` package, `lean/Editor/TabCommands.lean`; "Tab commands as built") |
+| The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right`, `window-float` | Built and registered (the `window-commands` package, `packages/window-commands/WindowCommands.lean`; "Window commands as built") |
+| The tab commands `tabKeys` names: `tab-next`, `tab-previous`, `tab-new`, `tab-close`, `tab-switch`, `tab-select-1` … `tab-select-9`; and `tab-rename`, `tab-move-right`, `tab-move-left`, with no key | Built and registered (the `tab-commands` package, `packages/tab-commands/TabCommands.lean`; "Tab commands as built") |
 | `jump-backward`, `jump-forward`, `set-mark` | Built and registered (the `evil` package; "The jump list and marks") |
 | `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (the `evil` package, `packages/evil/Evil/Clipboard.lean`), under the names the core gives the Edit menu's clipboard items (`Clipboard.cutName` and the other three, `lean/Editor/Clipboard.lean`), which the menu names; the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
 
@@ -3605,7 +3605,7 @@ contributes nothing.
   ("Languages and the code mode").
 - **Adding a minor mode runs no action** yet (left open).
 - **Minor modes turned on by markers.** A compile contribution
-  (`lean/Editor/ProjectMode.lean`; "The compile mode, as built")
+  (`packages/compile-api/CompileApi.lean`; "The compile mode, as built")
   names marker files. When a buffer's file opens and its workspace is
   known, the job `find-mode-markers` looks for every registered
   contribution's markers from the file's directory up to and including the
@@ -4697,12 +4697,12 @@ a minor mode contributes is the core's vocabulary, in three core modules
 the packages roadmap's phase 3 split off, every name unchanged
 ([packages.md](packages.md), "The interfaces the core owns for the two
 features that moved"): the contribution, its named commands, config's project
-commands and the hook the loop is told (`lean/Editor/ProjectMode.lean`);
-an error format as data (`lean/Editor/ProjectMode/Format.lean`), which the
+commands and the hook the loop is told (`packages/compile-api/CompileApi.lean`);
+an error format as data (`packages/compile-api/CompileApi/Format.lean`), which the
 compile mode's matcher reads output with
 (`packages/compile/Compile/Errors.lean`);
 and the listing of computed commands
-(`lean/Editor/ProjectMode/Listing.lean`). The compile mode's ex names are
+(`packages/compile-api/CompileApi/Listing.lean`). The compile mode's ex names are
 bound by its own package (`packages/compile/Compile/Compiled.lean`). An
 editor built from a set without the package has none of the commands
 below, and answers `:compile` as it answers any ex name nobody bound.
@@ -4819,8 +4819,16 @@ buffer while editing goes on.
   packages' config does not register, each mode once, at the place it was
   first registered; config's contribution of a
   package's one's name replaces it whole, and of two packages that
-  contribute one mode the later package's is the one used. A contribution with no marker,
-  one registered twice and one naming a command twice refuse the `setup`.
+  contribute one mode the later package's is the one used. A contribution
+  with no marker and one naming a command twice refuse the `setup`. A
+  contribution is a value at an extension point, `Compile.Contribution`,
+  which the interface package `compile-api` declares with the operation
+  that registers it and the hook that reads it
+  (`packages/compile-api/CompileApi.lean`), since the features-as-packages
+  roadmap's phase 8; until then it was a constructor of the core's setup
+  port. Values at a point are registered one at a time, so one mode's
+  contribution registered twice in a `setup` is no longer refused: the
+  later is used, as at every choice point.
 - **On-modes.** A buffer's markers turn their modes on inside its
   workspace, each with its root ("A buffer's modes"): its nearest marker's
   directory, or, for an outermost mode, the farthest directory within the
@@ -4847,7 +4855,7 @@ buffer while editing goes on.
     through `cargo-mode`.
 - **Computed commands.** A contribution's listing is a program run in its
   mode's root, whose output it reads into named commands. It runs as a job
-  (`compile-list`, `lean/Editor/ProjectMode/Listing.lean`, registered by
+  (`compile-list`, `packages/compile-api/CompileApi/Listing.lean`, registered by
   the `workspace` package) when the mode turns on in a buffer, and at each use,
   `compile`'s prompt and `compile-command`, but only when its markers'
   stamps in the root differ from those read before it last ran, or after a
@@ -4877,8 +4885,11 @@ buffer while editing goes on.
 - **Formats in use** are the on-modes' contributions' formats, in on-mode
   order, then `general`, so a line two modes read is the nearest mode's
   location, and a mode's format finds nothing while the mode is off.
-- **Project commands.** Config gives one project, by its identity, its own
-  named commands and settings for a mode (`projectCommands`). They have
+- **Project commands.** Config, or a package since the
+  features-as-packages roadmap's phase 8, gives one project, by its
+  identity, its own named commands and settings for a mode
+  (`projectCommands`), config's ranked before the packages'; of two given
+  for one project and mode the later is used. They have
   one source, config's latest at their extension point as the hook reads
   it (`Compile.hook`), keyed by identity, and are copied into no
   store: `compile`, `compile-command` and `Compile.projectSettings` read
@@ -4910,9 +4921,11 @@ Pinned, in the package's test driver (`compile-test`,
 `projectFormatChecks`, `miseTaskChecks`, `compileListedChecks`,
 `compileOfferChecks`, `projectModeChecks` and `compilePackageChecks`, on
 the models, through the core's test kit; in the core's `model-test`, by
-`ModelTest.jsonChecks`, `listingChecks`, `contributionChecks`,
-`formatDataChecks`, `modeMarkerChecks` and `readOnlyChecks`, of what stays
-the core's; by the package's headless fixtures, on the editor built from a
+`ModelTest.jsonChecks`, `modeMarkerChecks` and `readOnlyChecks`, of what
+stays the core's, and in `compile-api`'s test driver by
+`CompileApiTest.listingChecks`, `contributionChecks` and
+`formatDataChecks`, of the vocabulary and the listing, which are that
+interface package's since the features-as-packages roadmap's phase 8; by the package's headless fixtures, on the editor built from a
 set that holds it: `ex-names`, each of its six ex names reaching its
 command, `config`, a real config that overrides a field of a shipped
 contribution and builds a format of its own (what the hook makes of such a
@@ -4936,10 +4949,14 @@ and that editor lost its input scheme).
 ## The ex command line
 
 Status: decided 2026-11-14 and built, by the command loop's phase 12
-(`lean/Editor/Ex/Line.lean` for a line and a binding as data,
-`lean/Editor/Ex.lean` for the commands, `lean/Editor/Ex/Compiled.lean` for
-their registrations and the files', the ex line's and the buffers' names;
-the module docs have the detail). A feature with ex names of its own binds
+(`lean/Editor/Ex/Line.lean` for a line and a binding as data, which is
+the core's; `packages/ex/Ex.lean` for the commands and
+`packages/ex/Ex/Compiled.lean` for their registrations and the files',
+the ex line's and the buffers' names, in the default package `ex` since
+the features-as-packages roadmap's phase 8; the module docs have the
+detail). The quit rule and the name `quit` are the core's
+(`lean/Editor/Quit.lean`): the loop runs the rule for a window's close
+request, and the package registers the command under the name. A feature with ex names of its own binds
 them in its own package: the compile mode's
 (`packages/compile/Compile/Compiled.lean`, a package outside the core) and version control's
 (`packages/version-control/VersionControl/Compiled.lean`). How quitting and reloading reach the host is in
@@ -5224,8 +5241,8 @@ bound),
 `registryChecks`, `setupChecks` and `reloadChecks` (ex bindings by owner,
 from `setup`, and across an install), `exChecks` (the ex line and the
 first five names, and `bufferCommandChecks` the last three, on the loop's driver over the editor's models and the model of
-files, with the test scheme), `ConfigTest.exChecks` and
-`ConfigTest.exScriptChecks` (through the headless host, with the real
+files, with the test scheme), `ExTest.Linked.exChecks` and
+`ExTest.Linked.exScriptChecks` (through the headless host, with the real
 elaborator and the library's file service), the fixture
 `tests/headless/ex`, and the two process checks of the `ffi-test` task,
 which run the executable on a real file.
@@ -5786,8 +5803,8 @@ and two through the host:
 |---|---|
 | `exLineChecks` | Pure: what a line parses to, and the invocation a binding makes of an argument, by what it takes |
 | `exChecks` | On the loop's driver over the editor's models and the model of files, with the test scheme: the ex command opens a prompt and runs the accepted line's command as a step of its own; a name nobody bound, an argument a name does not take, an empty line, a bound command that is not registered or is refused, a cancelled line; and the five names that ship, with `w` then `q` and `wq` while the save is in flight |
-| `ConfigTest.exChecks` | Through the headless host and the real elaborator, with the test scheme: the ex line `reload` reloads the config, an ex name config binds runs config's command until a reload drops the binding, config's binding of a shipped name runs in its place, and a name nobody bound is said in the scene's echo |
-| `ConfigTest.exScriptChecks` | Through `Headless.run` over the library's file service, on a file in a temporary directory: `e`, an edit, `w` and `q`, and the same with `wq`, leave the file with the buffer's text and end the script with no failure |
+| `ExTest.Linked.exChecks` | Through the headless host and the real elaborator, with the test scheme: the ex line `reload` reloads the config, an ex name config binds runs config's command until a reload drops the binding, config's binding of a shipped name runs in its place, and a name nobody bound is said in the scene's echo |
+| `ExTest.Linked.exScriptChecks` | Through `Headless.run` over the library's file service, on a file in a temporary directory: `e`, an edit, `w` and `q`, and the same with `wq`, leave the file with the buffer's text and end the script with no failure |
 
 - **The lists on the models name no Vim key**: the ex command and the
   accept and cancel commands are on keys of the test scheme, and a line is

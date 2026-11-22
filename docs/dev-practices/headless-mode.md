@@ -308,8 +308,9 @@ save answered, no file, or whatever is there. A save that finds another
 file than it expects is refused, with what is there, and writes nothing.
 
 Everything the editor ships is registered by a **package**: the headless
-host is handed the packages of the executable's package set (the core's
-are listed in `lean/EditorCore/EditorPackage.lean`; the executable's
+host is handed the packages of the executable's package set (each Lake
+package of the set lists its own in its entry module, and the core's Lake
+package lists none; the executable's
 generated root passes them to it through `Editor.Main.run`) and registers
 them in order as its loop
 starts, before any config, each for the owner named after it
@@ -470,7 +471,7 @@ that enters it runs them:
 Why the command cannot do it, or say that it did not, is in
 `docs/design/keymaps-and-modes.md`, "What a scheme reports of a view".
 
-And it ships the ex command line, compiled in (`lean/Editor/Ex.lean`): a
+And it ships the ex command line, compiled in (`packages/ex/Ex.lean`): a
 prompt labelled `:`, whose answer is run as a named ex command.
 
 | Command | Does |

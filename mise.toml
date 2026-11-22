@@ -385,9 +385,10 @@ run = [
   # when it does not.
   "status=0; out=$(sh ../tools/host-imports-check.sh ConfigTest Editor.Test.Shipped 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
   # The same check on the root generated for the fixture set
-  # (tests/packages/), with `--set`: that root imports fourteen entry
-  # modules, the core's, the three fixture packages', the nine default
-  # packages' and the writing guide's example package's, and the host's
+  # (tests/packages/), with `--set`: that root imports twenty-nine entry
+  # modules, the three fixture packages', the twenty-five default
+  # packages' and the writing guide's example package's (the core's Lake
+  # package has none), and the host's
   # modules must reach none of them, nor what they import (`Greeting`,
   # `GreetingLoud`, `Echo.Packages`, `ShippedThemes`, `Compile.Compiled`,
   # `ExecuteCommand.Compiled` and the rest).
@@ -413,17 +414,17 @@ run = [
   # `lean` that exits 1 first on the PATH. Everything it writes is in its
   # temporary directory.
   "t=$(mktemp -d) && trap 'rm -rf \"$t\"' EXIT && mkdir \"$t/no-lean\" && printf '#!/bin/sh\\nexit 1\\n' >\"$t/no-lean/lean\" && chmod +x \"$t/no-lean/lean\" && cp lean-toolchain \"$t/lean-toolchain\" && printf 'name = \"probe\"\\n\\n[[require]]\\nname = \"default-set\"\\npath = \"%s/packages\"\\n' \"$(cd .. && pwd -P)\" >\"$t/lakefile.toml\" && { root=$(PATH=\"$t/no-lean:$PATH\" lake -d \"$t\" query :editorRoot 2>\"$t/err\") && test -f \"$root\"; } || { cat \"$t/err\"; exit 1; }",
-  # The nine default packages are Lake packages in the default set, and no
-  # packages of the core: the root generated for the default set
-  # (packages/) imports the config base, the executable's entry, the core's
-  # entry module and then each default package's entry module, in the order
+  # The twenty-five default packages are Lake packages in the default set,
+  # and no packages of the core, whose Lake package lists none: the root
+  # generated for the default set (packages/) imports the config base, the
+  # executable's entry and then each default package's entry module, in the order
   # the set's lakefile requires them, and nothing else; and the record
   # beside the default set's editor names the core's `.olean` directory and
   # then, one a line and no more, each package's, which is under packages/
   # and holds the package's entry module, or for an interface package,
   # which has none, its library's root (the loop over `<dir>:<module>`
-  # pairs, which a later move adds a pair to). That the core's own list
-  # holds none of them is `ModelTest.packageSetChecks`', and that the
+  # pairs, which a later move adds a pair to). That a host handed no
+  # package registers nothing is `ModelTest.packageChecks`', and that the
   # core's hosts start with nothing of them `ConfigTest.shippedChecks`'.
   "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main Ex.EditorPackage FrameCommands.EditorPackage Menu.EditorPackage WindowCommands.EditorPackage TabCommands.EditorPackage Restore.EditorPackage PackageSet.EditorPackage Evil.EditorPackage Themes.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage ProjectSearch.EditorPackage WorkingSet.EditorPackage Shell.EditorPackage VersionControl.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage '",
   "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../packages/shell-api:ShellApi ../packages/ex-api:ExApi ../packages/buffers-api:BuffersApi ../packages/ex:Ex/EditorPackage ../packages/frame-commands-api:FrameCommandsApi ../packages/frame-commands:FrameCommands/EditorPackage ../packages/evil-api:EvilApi ../packages/menu:Menu/EditorPackage ../packages/window-commands-api:WindowCommandsApi ../packages/window-commands:WindowCommands/EditorPackage ../packages/tab-commands-api:TabCommandsApi ../packages/tab-commands:TabCommands/EditorPackage ../packages/restore:Restore/EditorPackage ../packages/package-set:PackageSet/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/at-point-api:AtPointApi ../packages/evil:Evil/EditorPackage ../packages/themes-api:ThemesApi ../packages/themes:Themes/EditorPackage ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/compile-api:CompileApi ../packages/project-api:ProjectApi ../packages/vc-api:VcApi ../packages/workspace:Workspace/EditorPackage ../packages/project-search-api:ProjectSearchApi ../packages/project-search:ProjectSearch/EditorPackage ../packages/working-set-api:WorkingSetApi ../packages/working-set:WorkingSet/EditorPackage ../packages/shell:Shell/EditorPackage ../packages/version-control:VersionControl/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the default set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans",
@@ -1202,11 +1203,12 @@ run = [
   # And the record of the fixture set's editor names the `.olean` directory
   # of each of the set's Lake packages that holds a library, one a line,
   # the core's first and each package after the ones it requires:
-  # twenty directories and no more, each holding its package's modules,
+  # forty-nine directories and no more, each holding its package's modules,
   # the second the interface package `greeting-api`'s, which has no entry
   # module but whose modules `greeting` and `greeting-loud` import, the
-  # fifth `echo`'s, the next fourteen the default set's, which the set
-  # reaches through it (its five interface packages each before the
+  # fifth `echo`'s, the next forty-three the default set's, which the set
+  # reaches through it (its eighteen interface packages each before the
+  # first
   # package that requires it), and last the writing guide's example package
   # `word-count`'s, which the set requires after the default set.
   "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../tests/packages/greeting-api:GreetingApi ../tests/packages/greeting:Greeting/EditorPackage ../tests/packages/greeting-loud:GreetingLoud/EditorPackage ../tests/packages/echo:Echo/EditorPackage ../packages/shell-api:ShellApi ../packages/ex-api:ExApi ../packages/buffers-api:BuffersApi ../packages/ex:Ex/EditorPackage ../packages/frame-commands-api:FrameCommandsApi ../packages/frame-commands:FrameCommands/EditorPackage ../packages/evil-api:EvilApi ../packages/menu:Menu/EditorPackage ../packages/window-commands-api:WindowCommandsApi ../packages/window-commands:WindowCommands/EditorPackage ../packages/tab-commands-api:TabCommandsApi ../packages/tab-commands:TabCommands/EditorPackage ../packages/restore:Restore/EditorPackage ../packages/package-set:PackageSet/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/at-point-api:AtPointApi ../packages/evil:Evil/EditorPackage ../packages/themes-api:ThemesApi ../packages/themes:Themes/EditorPackage ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/compile-api:CompileApi ../packages/project-api:ProjectApi ../packages/vc-api:VcApi ../packages/workspace:Workspace/EditorPackage ../packages/project-search-api:ProjectSearchApi ../packages/project-search:ProjectSearch/EditorPackage ../packages/working-set-api:WorkingSetApi ../packages/working-set:WorkingSet/EditorPackage ../packages/shell:Shell/EditorPackage ../packages/version-control:VersionControl/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage ../docs/packages/word-count:WordCount/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the fixture set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans",

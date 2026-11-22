@@ -42,12 +42,43 @@ editor never rewrites a lakefile that is there, but each package command
 writes the core's require back as the last one (see "Editing the lakefile
 by hand").
 
-The default set requires the core, `editor-core`, and the default packages:
+The default set requires the core, `editor-core`, and the default
+packages. The core itself registers no package: every feature of the
+editor is one of these, and each can be removed.
 
+- [`ex`](../../packages/ex/README.md): the ex command line, `quit`,
+  `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`,
+  `wq`, `reload`, `b`, `ls`, `bd` and their kin. It requires the interface
+  packages `ex-api`, `buffers-api` and `shell-api`. Without it there is no
+  ex line, so no `:package-…` command can be typed either, and `quit` is
+  no command; the window's close button still quits.
+- [`frame-commands`](../../packages/frame-commands/README.md):
+  `toggle-fullscreen` and `minimise-window`, with `C-s-f`, `s-m` and
+  `s-q`. It requires `frame-commands-api`.
+- [`menu`](../../packages/menu/README.md): the menu bar that ships and the
+  keys of its File and Edit items. It requires `evil-api` and
+  `frame-commands-api`. Without it there is no menu bar unless your config
+  defines one.
+- [`window-commands`](../../packages/window-commands/README.md) and
+  [`tab-commands`](../../packages/tab-commands/README.md): the commands
+  that split, close, focus and arrange windows, and that open, close and
+  select tabs. Each requires its interface package, `window-commands-api`
+  and `tab-commands-api`.
+- [`restore`](../../packages/restore/README.md): session restore's
+  registrations. The work is the editor's own, but it runs only where
+  this package registers it: without it nothing is journalled, no session
+  is restored, `restart` is no command, and a package-set build ends
+  without a restart.
+- [`package-set`](../../packages/package-set/README.md): `:package-install`,
+  `:package-remove` and `:package-update`, and the registration of the
+  build that follows a changed lakefile. Without it those three commands
+  are gone and a changed lakefile is not built: edit the lakefile by hand
+  to put it back, and restart.
 - [`evil`](../../packages/evil/README.md): the Vim scheme and evil, Vim's
   states, motions, operators and the rest of its commands. It supplies the
   editor's input scheme, and requires the interface packages `evil-api`,
-  `minibuffer-api` and `at-point-api`. Without it, and with no other
+  `minibuffer-api`, `at-point-api`, `window-commands-api`,
+  `tab-commands-api`, `ex-api`, `buffers-api` and `shell-api`. Without it, and with no other
   package that supplies a scheme, the editor would refuse to start
   ("Removing, default packages included", below).
 - [`themes`](../../packages/themes/README.md): `load-theme` and the theme
@@ -181,6 +212,34 @@ which the lakefile already requires:
 
 ```toml
 name = "config"
+
+[[require]]
+name = "ex"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/ex"
+
+[[require]]
+name = "frame-commands"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/frame-commands"
+
+[[require]]
+name = "menu"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/menu"
+
+[[require]]
+name = "window-commands"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/window-commands"
+
+[[require]]
+name = "tab-commands"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/tab-commands"
+
+[[require]]
+name = "restore"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/restore"
+
+[[require]]
+name = "package-set"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/package-set"
 
 [[require]]
 name = "evil"

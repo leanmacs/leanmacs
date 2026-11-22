@@ -606,7 +606,7 @@ its root's namespace, so `FfiTest.<name>Checks`, `ConfigTest.<name>Checks`
 and `ContractTest.<name>Checks` name it wherever it lives. Put a new check
 in the test module of the module it tests.
 
-The ex command line (`lean/Editor/Ex.lean`) is checked there in layers,
+The ex command line (`packages/ex/Ex.lean`) is checked there in layers,
 so that a change to one breaks no other's checks:
 
 - **A line and a binding, as data** (`exLineChecks`): what a typed line
@@ -1002,7 +1002,7 @@ move returns, so a `join` after an `advance` finds the session.
 
 `config-test` runs the ex command line through headless hosts too, with
 the test scheme and the ex line's commands and the ex names that ship as
-compiled code registers them. `ConfigTest.exChecks`, over the real
+compiled code registers them. `ExTest.Linked.exChecks`, over the real
 elaborator: a config binds a key to a command, its file is rewritten to
 bind the key to another, the ex line `reload` is run, and the key runs the
 other command, with no restart; an ex name config binds runs config's
@@ -1010,7 +1010,7 @@ command with the rest of the line, and is not an ex command after a
 reload of a config without the binding; config's binding of a shipped
 name runs in its place until a reload drops it; and a name nobody bound
 is said in the scene's echo, with the editor going on.
-`ConfigTest.exScriptChecks`, with `Headless.run` on scripts built in the
+`ExTest.Linked.exScriptChecks`, with `Headless.run` on scripts built in the
 check, over the library's file service on a file each check writes in a
 temporary directory of its own: `e`, a commit, `w`, a join and `q` leave
 the file with the buffer's text and end the script with no failure, with
@@ -1505,9 +1505,8 @@ cd lean && sh ../tools/host-imports-check.sh
 
 Part of `mise run ffi-test`. A host registers features only from the
 packages it is handed, and the modules that list them, the entry modules
-of the Lake packages of a package set (`<P>.EditorPackage`; the core's is
-`lean/EditorCore/EditorPackage.lean`, a library of its own outside
-`lean/Editor/`), are outside the host
+of the Lake packages of a package set (`<P>.EditorPackage`; the core's
+Lake package has none), are outside the host
 ([lean-runtime.md](../design/lean-runtime.md), "Packages";
 [packages.md](../design/packages.md), "The package set and its build").
 This check shows the import half of that on Lake's module graph, with both
@@ -1536,13 +1535,14 @@ each one the host reaches and exits 1.
   any form. The queries build nothing and write nothing under `lean/`.
 - **The gate runs it on the fixture set too**
   (`host-imports-check.sh --set ../tests/packages`), whose root imports
-  seven entry modules, the core's, the three fixture packages', the two
-  default packages' and the writing guide's example package's: the form a
-  set with packages outside the core takes.
+  an entry module for each fixture package, each default package and the
+  writing guide's example package: the form a set with packages outside
+  the core takes.
 - **The user-side link's set is asked for its root.** `ffi-test` also
   requires `lake -d ../tests/user-link query :editorRoot` to give a file,
   and that root's imports to be the config base, the executable's entry,
-  the core's entry module and the fixture package's, in that order. The
+  the default packages' entry modules and the fixture package's, in that
+  order. The
   opt-in check that links an editor as a user's Mac would stages that
   generated root ([on-demand-checks.md](on-demand-checks.md), "The
   user-side link, on demand"), so the gate keeps its generation working
@@ -1559,18 +1559,17 @@ each one the host reaches and exits 1.
   for a finding; so is a root with no list module among its imports.
 - **An entry module imports package modules and nothing else**,
   since its direct imports are what the check forbids a host.
-- **What it does not claim.** The core loop still imports feature code
-  that defines no package, such as `Editor.Files` and `Editor.Ex`
-  (`lean/Editor/Loop.lean`). Those features are still the core's, and
-  this check says nothing of them; the module map of
-  [packages.md](../design/packages.md) lists what each would have to cross
-  to move out. That the core imports no module of a feature that does
-  move out is the next check's.
+- **What it does not claim.** It is of the modules that define packages.
+  That the core imports no module of a package is Lake's own rule, since
+  the core requires none, and the next check's for a module still in the
+  core that is moving out; the module map of
+  [packages.md](../design/packages.md) lists which package each feature
+  that was the core's is.
 
 What a host registers from the list is checked by behaviour, not imports:
 a host handed no packages starts with an empty registry and no menu bar
-(`ConfigTest.hostChecks`), and in the state the core's packages make every
-entry's owner is one of them (`ModelTest.packageSetChecks`).
+(`ConfigTest.hostChecks`, `ModelTest.packageChecks`), which is what an
+editor of the core alone is handed.
 
 ## The core imports check
 
@@ -1621,12 +1620,9 @@ stops at the first that fails:
   root imports them to list the packages.
 - **The moving names are named, never derived.** "Every module the root
   does not reach" would pass whatever the core imported.
-- **No module is exempt by name.** The list of the core's packages
-  imports every package still in the core, and it is not a module of the
-  editor:
-  `EditorCore.EditorPackage` is outside `lean/Editor/` and the namespace
-  `Editor`, so the second rule, which is of the modules named `Editor.…`,
-  does not meet it.
+- **No module is exempt by name.** The core's Lake package lists no
+  package and has no entry module, so there is no list for the second
+  rule to step around.
 - **The editor's own root is one of the roots.** It is generated by the
   package-set build and no library declares it, so its transitive imports
   are asked of the default set
@@ -1659,10 +1655,9 @@ stops at the first that fails:
   a list of roots that has fallen behind the build, would look
   like. `ffi-test` sees that too: told with `--elaborator Editor.Core` that
   the adapter is a module no root reaches, it must exit 2 and say why.
-- **What it does not claim.** It names the feature that still moves in
-  this roadmap. A feature that is still the core's (the ex line, files,
-  version control and the rest) is imported by core modules, and the
-  module map records by which. And it says nothing of what a package
+- **What it does not claim.** It names a module that is moving, while one
+  is. No feature is the core's any more, so none is imported by a core
+  module; the module map records which package each is. And it says nothing of what a package
   imports: that is the package imports check, below.
 
 ## The package imports check
@@ -1818,11 +1813,11 @@ package's modules.
   `lake -d ../packages query :editorLayerImports` whose importer's layer
   is `core`, and requires more than none.
 - **The sets it is run over**, each required to pass: the default set,
-  `packages/`, so its eighteen default packages and eleven interface packages
-  import only the core, and the implementations besides only interface
-  packages: `completion`, `minibuffer`, `execute-command`,
-  `binding-search` and `at-point` each its own, and `execute-command`,
-  `binding-search` and `compile` `minibuffer-api`;
+  `packages/`, so its twenty-five default packages and eighteen interface
+  packages import only the core, and the implementations besides only
+  interface packages, their own or another's
+  ([packages.md](../design/packages.md), "The module map", lists each
+  one's);
   the fixture set, `tests/packages/`, where `greeting-loud` reaches
   `greeting`'s command through `greeting-api`; the user-side link's set,
   `tests/user-link/`; and `tests/empty-set/`, the core alone.
@@ -1928,12 +1923,9 @@ package's tests are by convention are in
   fixture interface package `greeting-api`, the fixture package `echo`,
   which holds Rust, the default set, and the example package of the guide
   to writing a package, `word-count` (`docs/packages/word-count/`). So the
-  default packages, `completion`, `mode-line`, `minibuffer`,
-  `shipped-themes`, `execute-command`, `binding-search`, `compile`,
-  `at-point` and `languages`, with the interface packages
-  `completion-api`, `minibuffer-api`, `execute-command-api`,
-  `binding-search-api` and `at-point-api`, and the code the guide
-  quotes are tested, built, format-checked and run through it. `run`
+  default packages, all twenty-five, with the eighteen interface
+  packages ([packages.md](../design/packages.md), "The module map"), and
+  the code the guide quotes are tested, built, format-checked and run through it. `run`
   is also given the default set itself, `packages/`, so those packages'
   linked tests and fixtures hold of the default set's editor, the one
   that is shipped.
@@ -1949,10 +1941,8 @@ package's tests are by convention are in
 - **The default packages' tests are required to have run.** `lean-test`
   keeps the `test` step's output and requires the line the step prints as
   it reaches each of them, `package-set: test <name> (<its directory>)`
-  for `completion-api`, `completion`, `mode-line`, `minibuffer-api`,
-  `minibuffer`, `shipped-themes`, `execute-command-api`,
-  `execute-command`, `binding-search-api`, `binding-search`, `compile`,
-  `at-point-api`, `at-point` and `languages`, and the same line for
+  for each default package and each interface package of the default set
+  (the names are listed in the task), and the same line for
   `word-count`, matched on what
   comes before the directory. The step stops at the first driver
   that fails, so those lines and exit 0 say each package's driver ran and
@@ -1980,10 +1970,11 @@ package's tests are by convention are in
   of `execute-command`, `binding-search` of `binding-search` and
   `at-point` and `at-point-tuned` of `at-point`, the three fixtures of
   `word-count`, `as-config`, `count` and `from-config`, and `package-set:
-  ran 5 linked tests and 20 headless fixtures over 19 packages`; and over
-  the default set, the default packages' three linked tests and fifteen
-  fixtures and `package-set: ran 3 linked tests and 15 headless fixtures
-  over 14 packages`. A fixture or a linked test that is
+  ran 14 linked tests and 20 headless fixtures over 48 packages`, with the
+  line of each linked test, `ex`'s, `evil`'s, `themes`' and the files
+  cluster's among them; and over the default set, the default packages'
+  twelve linked tests and fifteen fixtures and `package-set: ran 12
+  linked tests and 15 headless fixtures over 43 packages`. A fixture or a linked test that is
   renamed, moved or no longer found by the naming convention fails that
   line.
 - **The default packages' own checks.** `shipped-themes`: sixteen checks
@@ -2054,11 +2045,15 @@ package's tests are by convention are in
   ([packages.md](../design/packages.md), "Dropping evil or themes
   leaves…"). The gate also requires that set's config base to be
   `Editor` alone (`lake -d ../tests/empty-set query :editorBase`), and the
-  default set's `Editor` and the entry modules of its eighteen default
-  packages, in the order they register (`Evil.EditorPackage`,
+  default set's `Editor` and the entry modules of its twenty-five default
+  packages, in the order they register (`Ex.EditorPackage` …
+  `PackageSet.EditorPackage`, `Evil.EditorPackage`,
   `Themes.EditorPackage`, `Files.EditorPackage` …
   `VersionControl.EditorPackage`, then `Completion.EditorPackage` …
-  `Languages.EditorPackage`).
+  `Languages.EditorPackage`), and that set's root to import `Editor` and
+  `Editor.Main` alone (`:editorRootImports`): the core's Lake package has
+  no entry module, so an editor of the core alone hands its hosts no
+  package.
 - **`run` refuses a directory that is not a whole fixture.** A directory
   under a package's `tests/headless/` with no `config/`, no `script` or no
   `expected` is exit 2, naming what is missing, and so is a set whose
