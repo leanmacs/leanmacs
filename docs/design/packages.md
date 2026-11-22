@@ -792,8 +792,10 @@ set, holds its three themes.
   editor now has no command to accept a prompt with, so the fixture no
   longer reaches the answer ("The minibuffer", under "The default
   packages of the features-as-packages roadmap's phase 4", below), and
-  that the core's list registers the one theme `default` is held by
-  `ConfigTest.shippedChecks` and `ModelTest.packageSetChecks` (which went with the core's list in phase 8).
+  that the core's list registers the one theme `default` was held by
+  `ConfigTest.shippedChecks` and `ModelTest.packageSetChecks` (both checks
+  went with the core's list in phase 8, when the theme became the themes
+  package's own to pin, `ThemesTest.themeChecks`).
 - **The app bundle carries its module files since phase 6.** Config names
   a theme by its name, and the themes are in the executable, so the bundle
   needed nothing of this package while the config base was the core's
@@ -957,7 +959,8 @@ over the process service, a major mode, ex names and contributions.
   no command to accept the line with, so the line is never run ("The
   minibuffer", under "The default packages of the features-as-packages
   roadmap's phase 4", below), and that `compile` is bound as no ex name
-  there is held by `ConfigTest.shippedChecks`. The listing job stays
+  there was held by `ConfigTest.shippedChecks` until the core's list
+  emptied ("The empty registry's checks", below). The listing job stays
   registered there and lists a contribution's commands, which nothing
   then reads.
 - **The app bundle carries its modules**, built, in this package's own
@@ -1032,9 +1035,10 @@ default packages of the features-as-packages roadmap's phase 4", below).
   phase 4 the kit's minibuffer and at-point too ("What moving the
   completion, at-point and minibuffer features added to the core's API",
   below); one whose
-  subject is the core's list (`ModelTest.packageSetChecks` (which went with the core's list in phase 8),
-  `ConfigTest.shippedChecks`) hosts the list alone, and states that it
-  holds nothing of the four.
+  subject was the core's list (`ModelTest.packageSetChecks` and the checks
+  of `ConfigTest.shippedChecks` over it, which all went with the core's
+  list in phase 8) hosted the list alone, and stated that it held nothing
+  of the four.
 - **`tests/headless/default-config`** runs the default config, copied into
   a temporary directory, on the default set's editor: the binding search
   lists `SPC f f  open-file`, and `SPC :` and `SPC ?`, accepted from the
@@ -1059,8 +1063,9 @@ default packages of the features-as-packages roadmap's phase 4", below).
   no standing fixture: no fixture of the empty set's editor opens a file
   with a language or runs either command. That editor registers no `code`
   mode, no language, no command `execute-command` or `search-bindings`,
-  and no source in the categories `command` or `binding`
-  (`ConfigTest.shippedChecks`, over the core's list).
+  and no source in the categories `command` or `binding`: it is handed
+  no package, and a host handed none registers nothing
+  (`ModelTest.packageChecks` and `ConfigTest.hostChecks`).
 - **The compile mode's linked test appends the mode-line stand-in** to
   the packages its host is handed ("The default package `compile`",
   above), rather than requiring the package.
@@ -1195,9 +1200,10 @@ and each implementation requires its interface package.
   `lean/ConfigTest/Support/Listings.lean`, handed first to every config
   test's host; the linked kit's `lean/Editor/Test/Linked/Listings.lean`
   since phase 6), and the shipped value's own rule is held by the package's
-  tests. `ModelTest.packageSetChecks` (which went with the core's list in phase 8) and `ConfigTest.shippedChecks`
-  host the core's list alone, and state that it holds nothing of the
-  three.
+  tests. `ModelTest.packageSetChecks` and the checks of
+  `ConfigTest.shippedChecks` over the core's list (which all went with
+  that list in phase 8) hosted the list alone, and stated that it held
+  nothing of the three.
 - **Their fixtures moved with them.** `prompt` and `candidates` moved byte
   for byte. `at-point` ran on the shared config `tests/headless/config`,
   which moved into it as its `config/`, byte for byte. `completion-choices`
@@ -1309,8 +1315,9 @@ commands.
   comments say what the core alone does. Past their first `<Enter>` they
   no longer show what they were written for, no shipped palette loaded and
   no compile ex name refused; that the core's list registers the one theme
-  `default` and binds no ex name `compile` is held by
-  `ConfigTest.shippedChecks`. Filed as the task `empty-set-prompts`, which
+  `default` and binds no ex name `compile` was held by
+  `ConfigTest.shippedChecks` while the core had a list. Filed as the task
+  `empty-set-prompts`, which
   names the other way: a config of those fixtures that registers a
   `minibuffer-accept` of its own would keep their subjects.
   - `tests/headless/core-themes/expected`, after `first` is typed and
@@ -1434,7 +1441,8 @@ the modules drop `Editor.` from their names.
   package", and their checks of what a moved package registers moved to
   that package's `<P>PackageChecks`, over the registry it makes alone
   (`Config.State.ofPackages #[<package>]`). `ModelTest.packageSetChecks` (which went with the core's list in phase 8)
-  pins the nine.
+  pinned the nine. The "start with nothing of" checks went with the list
+  too ("The empty registry's checks", below).
 - **No headless fixture moved** (D10): the fixtures that open, save, find
   and search files cross several of the seven, and run on the default set's
   editor.
@@ -1636,19 +1644,21 @@ scheme are retired, and one fixture of the refusal replaces them:
   package but the core's: the theme `default` in force with no palette
   listed, the candidate list drawn by the core's own display, `<Enter>`
   running `minibuffer-accept`, which nothing registered, and empty status
-  lines. Those facts are held by `ConfigTest.shippedChecks`, over the
-  core's own list: "… nothing of the themes package … the theme in force
-  with none registered is still named default", "… nothing of the
-  completion package … drawn with the core's own display", "… nothing of
-  the minibuffer package …" and "… nothing of the mode-line package …";
-  by `ModelTest.packageSetChecks` (which went with the core's list in phase 8) ("the shipped set registers no theme
-  …"); and by `ThemesTest.themeChecks`, which holds that the themes
-  package registers `default`, the built-in theme.
+  lines. Those facts were held by `ConfigTest.shippedChecks` and
+  `ModelTest.packageSetChecks`, over the core's own list, until that list
+  emptied in phase 8. Since then a host of the core alone is handed no
+  package and so registers nothing (`ModelTest.packageChecks` and
+  `ConfigTest.hostChecks`); the theme in force before any is registered
+  is `default`
+  (`ModelTest.reloadChecks`); with no style or display registered a prompt
+  is matched and drawn with the core's own (`ModelTest.registryChecks`);
+  and `ThemesTest.themeChecks` holds that the themes package registers
+  `default`, the built-in theme.
 - `tests/headless/core-ex-names` is removed. It showed the ex line of the
   same editor with no `compile` and no minibuffer to accept it. Those
-  facts are held by `ConfigTest.shippedChecks` ("… nothing of the compile
-  mode … and compile as an ex name is not bound", "… nothing of the
-  minibuffer package …") and `ExTest.exChecks`; that the empty set's
+  facts are held by the checks of a host handed no package, which
+  registers nothing (`ModelTest.packageChecks` and
+  `ConfigTest.hostChecks`), and by `ExTest.exChecks`; that the empty set's
   config base is `Editor` alone is a pin of `ffi-test`
   (`lake -d ../tests/empty-set query :editorBase`).
 - `tests/headless/no-input-scheme` is added: `ffi-test` runs the empty
@@ -1722,6 +1732,30 @@ only.
   `ModelTest.packageSetBuildChecks`. Each package's list also holds what
   the core's own list's checks held of it: what it registers, and nothing
   else.
+- **The empty registry's checks.** While the core had a list,
+  `ConfigTest.shippedChecks` held what its hosts registered, and as each
+  feature moved out it gained a check that the hosts "start with nothing
+  of the <p> package", twenty-two by the end. With the list empty those
+  checks read the registry `Config.State.ofPackages` makes of no package
+  and asserted that it lacked names other packages own: they could not
+  fail, and they pinned other packages' names in a core test (AGENTS.md,
+  "Crate coupling"). They are removed. What they stood for is held where
+  it can fail:
+  - the core's Lake package has no entry module, so the root of the set
+    with no package imports `Editor` and `Editor.Main` alone, a pin of
+    `ffi-test` beside that set's base (`lake -d ../tests/empty-set query
+    :editorRootImports`);
+  - a host handed no package starts from a registry with no entry of any
+    kind: `ModelTest.packageChecks`, on the model, beside a package of
+    every kind that fills each one, and `ConfigTest.hostChecks`, through
+    the headless host;
+  - what the core falls back to there, its own style and display, owned
+    by `compiled`, and the theme `default`, is `ModelTest.registryChecks`'
+    and `ModelTest.reloadChecks`';
+  - what each package registers is its own `<P>Test.<p>PackageChecks`.
+
+  `shippedChecks` keeps its one check of the host itself, the state
+  directory it is handed.
 - **The core's tests run on the kit's stand-ins**: its own ex line over
   the core's ex line data (`Editor.Test.exLinePackage`) and a `quit` that
   runs the core's rule (`Editor.Test.quitPackage`), session restore's and
@@ -2437,8 +2471,9 @@ follows:
 - `ModelTest.Support.Compile`, the compile checks' own support, moved with
   them (`packages/compile/CompileTest/Support/Compile.lean`);
 - `ConfigTest.Editor.Headless`, which holds `ConfigTest.shippedChecks`,
-  the test of the core's list as the executable's hosts register it,
-  states that the list holds nothing of the compile mode;
+  then the test of the core's list as the executable's hosts registered
+  it, stated that the list held nothing of the compile mode (until the
+  list emptied in phase 8 and that check went with it);
 - `ContractTest.Support.Projects`, the rig of the project-mode contract
   checks over the real services, registered the compile package, and
   three version-control contract checks built on it. The rig is the linked
@@ -2456,8 +2491,9 @@ fixture themes made with `Palette.theme` from palettes written in
 `lean/ConfigTest/Support/Themes.lean`, and the appearance checks define
 theirs. No copy of a palette's values is kept in the core, so no licence
 notice is either. `ConfigTest.shippedChecks` and
-`ModelTest.packageSetChecks` (which went with the core's list in phase 8) state the core's list alone: 7 packages
-since the features-as-packages roadmap's phase 7 (9 after its phase 6, 17 after its phase 4,
+`ModelTest.packageSetChecks` stated the core's list alone while the core
+had one (their checks of it went with the list in phase 8): 7 packages
+after the features-as-packages roadmap's phase 7 (9 after its phase 6, 17 after its phase 4,
 20 after its phase 3, 24 when the palettes moved), no theme (the theme
 `default` is the themes package's since phase 7), and nothing of evil, the themes, the
 compile mode, the mode line, the command prompt, the binding search, the

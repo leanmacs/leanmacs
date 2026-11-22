@@ -424,8 +424,9 @@ run = [
   # and holds the package's entry module, or for an interface package,
   # which has none, its library's root (the loop over `<dir>:<module>`
   # pairs, which a later move adds a pair to). That a host handed no
-  # package registers nothing is `ModelTest.packageChecks`', and that the
-  # core's hosts start with nothing of them `ConfigTest.shippedChecks`'.
+  # package registers nothing is `ModelTest.packageChecks`' and
+  # `ConfigTest.hostChecks`', and that the core hands its hosts none is
+  # the pin of tests/empty-set's root imports in ffi-test.
   "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main Ex.EditorPackage FrameCommands.EditorPackage Menu.EditorPackage WindowCommands.EditorPackage TabCommands.EditorPackage Restore.EditorPackage PackageSet.EditorPackage Evil.EditorPackage Themes.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage ProjectSearch.EditorPackage WorkingSet.EditorPackage Shell.EditorPackage VersionControl.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage '",
   "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../packages/shell-api:ShellApi ../packages/ex-api:ExApi ../packages/buffers-api:BuffersApi ../packages/ex:Ex/EditorPackage ../packages/frame-commands-api:FrameCommandsApi ../packages/frame-commands:FrameCommands/EditorPackage ../packages/evil-api:EvilApi ../packages/menu:Menu/EditorPackage ../packages/window-commands-api:WindowCommandsApi ../packages/window-commands:WindowCommands/EditorPackage ../packages/tab-commands-api:TabCommandsApi ../packages/tab-commands:TabCommands/EditorPackage ../packages/restore:Restore/EditorPackage ../packages/package-set:PackageSet/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/at-point-api:AtPointApi ../packages/evil:Evil/EditorPackage ../packages/themes-api:ThemesApi ../packages/themes:Themes/EditorPackage ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/compile-api:CompileApi ../packages/project-api:ProjectApi ../packages/vc-api:VcApi ../packages/workspace:Workspace/EditorPackage ../packages/project-search-api:ProjectSearchApi ../packages/project-search:ProjectSearch/EditorPackage ../packages/working-set-api:WorkingSetApi ../packages/working-set:WorkingSet/EditorPackage ../packages/shell:Shell/EditorPackage ../packages/version-control:VersionControl/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the default set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans",
   # The two records the package-set build writes beside a set's editor for
@@ -804,9 +805,9 @@ run = [
   # the session over, so that a restart into such a set is given up. Any
   # other status or text fails. It touches no file. The two fixtures that
   # ran on this editor while the core supplied the scheme, core-themes and
-  # core-ex-names, are retired: what they showed of an editor without the
-  # default packages is held by `ConfigTest.shippedChecks`
-  # (docs/design/packages.md, "Dropping evil or themes leaves…").
+  # core-ex-names, are retired: where what they showed of an editor
+  # without the default packages is held is in docs/design/packages.md,
+  # "Dropping evil or themes leaves…".
   "status=0; out=$(../tests/empty-set/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/no-input-scheme/config ../tests/headless/no-input-scheme/script 2>&1) || status=$?; test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/headless/no-input-scheme/expected -",
   "status=0; out=$(../tests/empty-set/.lake/build/bin/editor --probe 2>&1) || status=$?; test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/headless/no-input-scheme/expected -",
   # The frame padding (tests/headless/padding): a config that sets it to 12

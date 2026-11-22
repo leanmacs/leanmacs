@@ -2040,10 +2040,10 @@ package's tests are by convention are in
   ([packages.md](../design/packages.md), "Input schemes"). Until the
   features-as-packages roadmap's phase 7 the core supplied the scheme and
   two fixtures ran on this editor, `core-themes` and `core-ex-names`; they
-  are retired, and what they showed of an editor without the default
-  packages `ConfigTest.shippedChecks` holds of the core's list
-  ([packages.md](../design/packages.md), "Dropping evil or themes
-  leaves…"). The gate also requires that set's config base to be
+  are retired, and where what they showed of an editor without the
+  default packages is held is in
+  [packages.md](../design/packages.md), "Dropping evil or themes
+  leaves…". The gate also requires that set's config base to be
   `Editor` alone (`lake -d ../tests/empty-set query :editorBase`), and the
   default set's `Editor` and the entry modules of its twenty-five default
   packages, in the order they register (`Ex.EditorPackage` …

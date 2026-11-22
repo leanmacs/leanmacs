@@ -4312,8 +4312,9 @@ category's defaults, its other sources after them, and a default
 replaced by name; a filtered source's candidates after the matches,
 marked by the style where it matches them, and a prompt of filtered
 sources alone, which asks the style only for those ranges),
-`registryChecks` (`sourcesIn`), `ConfigTest.shippedChecks` (the shipped
-sources in each shipped category, in the defaults' order), and the fixture
+`registryChecks` (`sourcesIn`), each default package's own
+`<P>Test.<p>PackageChecks` (the sources it registers, each in its
+category), and the fixture
 `tests/headless/candidates`, whose config registers its source with
 `defineSource` and asks for it by name, and which is where `<Tab>` and
 `<Enter>` are pressed under the Vim scheme the executable runs, with the
@@ -4346,8 +4347,8 @@ grow-only strip), `tabBarChecks` (the tab bar's strip above the list's),
 `registryChecks` and `reloadChecks` (`defineDisplay`, `displayTwice`,
 `displayChosenTwice`, the resolution, `unknownDisplays`),
 `ConfigTest.promptChecks` (the phase's five criteria through the headless
-host and the real elaborator), `ConfigTest.shippedChecks` (the shipped
-display) and the fixtures `tests/headless/candidates`, `ex`, `mode-line`,
+host and the real elaborator), `CompletionTest.completionPackageChecks`
+(the shipped display) and the fixtures `tests/headless/candidates`, `ex`, `mode-line`,
 `monocle` and `padding`.
 
 **A prompt's matching styles** (completion's phase 2). Which of a
@@ -4534,7 +4535,7 @@ real elaborator, a style config defines, and a typed text of two
 components accepted in `switch-buffer` under orderless showing the first
 listed buffer), `tabCommandChecks` (the same of `tab-switch`, on the
 model), `dispatchStateChecks` and `stateRequestChecks`
-(`matchCandidates`), `ConfigTest.shippedChecks`
+(`matchCandidates`), `CompletionTest.completionPackageChecks`
 (the shipped styles) and `ContractTest.styleFailures` (the contract on the
 real matcher). The fixtures `tests/headless/candidates`, `ex` and `tabs`
 are unchanged: criterion 1 on the executable, under the Vim scheme with
@@ -4555,8 +4556,9 @@ style), `completionDisplayChecks` (ranges on a label that ends the text),
 `registryChecks` (a category's compiled default), `fileModelChecks` and
 the job contract's listing property (`File.list` on the model, the fake and
 real files), `FilesTest.Linked.filePromptChecks` (criteria 1, 2, 4, 5 and 6 over
-the recorder under the Vim scheme), `ConfigTest.shippedChecks` (the
-shipped file source, its job and style) and the fixture
+the recorder under the Vim scheme), `FilesTest.filesPackageChecks` and
+`CompletionTest.completionPackageChecks` (the shipped file source and its
+job, and the shipped style) and the fixture
 `tests/headless/open-file` (the prompt on real files).
 
 ### Completion at point
@@ -4678,8 +4680,9 @@ Doom Emacs's corfu module (owner decisions, 2026-11-17).
   `atPointStateChecks`, `atPointChecks`, `atPointRepeatChecks`,
   `atPointLoopChecks`, `atPointAskChecks`, `atPointByItselfChecks`,
   `registryChecks`, `setupChecks`, `reloadChecks`, `dispatchStateChecks`,
-  `stateRequestChecks` and `vimDefaultChecks`; `ConfigTest.atPointChecks`
-  and `shippedChecks`; and the fixture `tests/headless/at-point`.
+  `stateRequestChecks` and `vimDefaultChecks`; `ConfigTest.atPointChecks`;
+  `AtPointTest.atPointPackageChecks`; and the fixture
+  `tests/headless/at-point`.
 
 ### The compile mode, as built
 
@@ -4939,12 +4942,16 @@ fixture `packages/compile/tests/compile/three-lines`, and
 `CompileTest.projectRunChecks`, with the programs in
 `packages/compile/tests/compile/bin` standing in for cargo, lake, mise and
 git and the trees beside them, and by a compile in a headless host, on the
-script `packages/compile/tests/linked/run/script`. That a host of the
-core's packages alone starts with nothing of the compile mode is
-`ConfigTest.shippedChecks`', which also holds that `compile` as an ex name
-is not bound there (the fixture `core-ex-names`, which showed it on an
-editor built without the package, was retired when evil became a package
-and that editor lost its input scheme).
+script `packages/compile/tests/linked/run/script`. A host of the core
+alone starts with nothing of the compile mode, and `compile` as an ex name
+is not bound there, because the core's Lake package registers no package:
+the root of the set with no package imports no entry module (a pin of
+`ffi-test`, `lake -d ../tests/empty-set query :editorRootImports`), and a
+host handed no package starts from a registry that holds nothing
+(`ModelTest.packageChecks`, `ConfigTest.hostChecks`). The fixture
+`core-ex-names`, which showed it on an editor built without the package,
+was retired when evil became a package and that editor lost its input
+scheme.
 
 ## The ex command line
 
@@ -5236,7 +5243,7 @@ Pinned by `ModelTest.exLineChecks` (the parser, ranges and the binding),
 `shellChecks` (`:!` on the models, in the workspaces of a main checkout,
 a linked worktree and a directory in none), `ShellTest.Linked.shellChecks`
 (over the real process service), `compileChecks` (`:compile` and the
-compile mode on the models) and `ConfigTest.shippedChecks` (the names
+compile mode on the models) and `ExTest.exPackageChecks` (the names
 bound),
 `registryChecks`, `setupChecks` and `reloadChecks` (ex bindings by owner,
 from `setup`, and across an install), `exChecks` (the ex line and the
@@ -5310,8 +5317,8 @@ the source's contract on the kit's runner (in `executeCommandChecks`, as
 `tests/headless/command-prompt` (config's commands listed under its own
 style, a command config binds to `SPC f f` shown with `SPC f f`, and
 `load-theme` run through the prompt, on the default editor),
-`ConfigTest.shippedChecks` (registered compiled, with its source in
-`command`) and the headless fixture `tests/headless/default-config`
+`ExecuteCommandTest.executeCommandPackageChecks` (registered by the
+package, with its source in `command`) and the headless fixture `tests/headless/default-config`
 (`SPC :` under the default config).
 
 ## Searching the bindings

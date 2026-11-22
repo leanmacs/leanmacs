@@ -1556,9 +1556,11 @@ def package : Package :=
   owner of what the core falls back to when no package registered it: the
   fuzzy style and the minibuffer display of a registry that holds none.
 
-Pinned by `ModelTest.packageChecks`, on the models, with each default
-package's own checks of what it registers, and by `ConfigTest.hostChecks`, `ConfigTest.hostLoopChecks` and
-`ConfigTest.shippedChecks`, through the headless host.
+Pinned by `ModelTest.packageChecks` and `ModelTest.registryChecks` (what
+the core falls back to with no style or display registered), on the
+models, with each default package's own checks of what it registers, and
+by `ConfigTest.hostChecks` and `ConfigTest.hostLoopChecks`, through the
+headless host.
 
 ### One shared state
 

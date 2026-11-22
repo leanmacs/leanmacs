@@ -107,14 +107,13 @@ show:
   that such a script settles a real reload with a patience of its own,
   so a reload slower than the join's patience still leaves the join to
   run out as working;
-- `shippedChecks`: what the executable's hosts start with, the registry the
-  core's Lake package makes, which registers no package and has no entry
-  module (the registry a host handed no package starts from): it holds nothing
-  of the compile mode, no command, ex name, job, mode or contribution,
-  that mode being a package outside the core's Lake package, and nothing
-  of the default packages that were the core's (the files, the buffer
-  commands, the workspaces, the ex line, the frame, window and tab
-  commands and the menu among them). The ex line through the host
+- `shippedChecks`: what the executable's host starts its loop with, the
+  state directory it is handed. What its registry holds is not this
+  list's: the core's Lake package registers no package and has no entry
+  module, so a host starts from what its set's packages register, which
+  is nothing when it is handed none (`hostChecks`, above, and
+  `ModelTest.packageChecks`), and what each default package registers is
+  that package's own tests'. The ex line through the host
   (`exChecks`, `exScriptChecks`) is the package `ex`'s linked test's
   (`ExTest.Linked`, `packages/ex/`);
 - `scriptChecks`: the headless mode's script (its `indexed` and

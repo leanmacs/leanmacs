@@ -40,8 +40,7 @@ handed, not what config calls: the set's base, through the package's entry
 module (`Buffers/EditorPackage.lean`), brings both to config.
 
 Pinned by `BuffersTest.bufferCommandChecks` and
-`BuffersTest.buffersPackageChecks`, on the models, and by
-`ConfigTest.shippedChecks`, which reads what the hosts are handed.
+`BuffersTest.buffersPackageChecks`, on the models.
 -/
 
 namespace Editor.Buffers

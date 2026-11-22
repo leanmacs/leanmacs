@@ -6,8 +6,6 @@ import Editor.Clipboard.InProcess
 import Editor.Command
 import Editor.Command.Call
 import Editor.Completion
-import Editor.Completion.Display
-import Editor.Completion.Style
 import Editor.Config.Diagnostic
 import Editor.Config.Directory
 import Editor.Config.Elaborate
@@ -38,7 +36,6 @@ import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Runner
 import Editor.Job.Table
-import Editor.Keymap
 import Editor.Language
 import Editor.Layout
 import Editor.Loop
@@ -2359,27 +2356,13 @@ def reloadEchoChecks (context : Context) : List Check :=
           let made ← session.echo
           return before == ("", #[]) && isGreetError made }]
 
-/-- The registry a host of the executable starts with before its set's
-packages register: the one a host handed no package makes
-(`Config.State.ofPackages` of none), which is what `Headless.Running.new`
-starts from. The core's Lake package has no entry module and registers no
-package, so this is all the core itself registers. -/
-def shippedRegistry : Config.Registry :=
-  let (state, _) : Config.State Config.Elaborate.Base Config.Elaborate.Handle × Array String :=
-    Config.State.ofPackages #[]
-  state.registry
-
-/-- The owner of what the package called `name` registers, by its name as
-text (`Package.owner`): what the shipped checks compare an entry's owner
-with for the features that are moving out of the core, so this module
-imports none of their modules. -/
-def owned (name : String) : Config.Owner :=
-  { name }
-
-/-- The checks of what the executable's hosts start with: the registry the
-packages that ship make (`shippedRegistry`), each entry for the owner named
-after its package, and the test scheme's keymap of its bindings. Nothing
-here starts a host or a job. -/
+/-- The checks of what the executable's host (`Headless.shippedOver`) starts
+its loop with: the state directory it is handed. What its registry holds is
+not this list's. The core's Lake package registers no package, so a host
+starts from what `Config.State.ofPackages` makes of the packages its set
+hands it: that it makes nothing of none is `hostChecks`' here and
+`ModelTest.packageChecks`', and what a package registers is that package's
+own tests'. Nothing here starts a host or a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
         "the headless host handed a state directory starts its loop with it, as its working directory and home, and one handed none starts with none"
@@ -2401,252 +2384,7 @@ def shippedChecks (_ : Unit) : List Check :=
           | .ok given, .ok none_ =>
             given.state.stateDirectory == some "/state" && none_.state.stateDirectory == none &&
               given.state.workingDirectory == "/"
-          | _, _ => false) },
-    { name :=
-        "the executable's hosts start with nothing of the at-point package: no command at-point-complete, at-point-next, at-point-previous, at-point-tab, at-point-backtab, at-point-return, at-point-quit, at-point-triggered or at-point-paused, no source words and none in the category word, no job words, no at-point source, and a modeless buffer's at-point chain is empty, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        return ["at-point-complete", "at-point-next", "at-point-previous", "at-point-tab",
-                  "at-point-backtab", "at-point-return", "at-point-quit", "at-point-triggered",
-                  "at-point-paused"].all
-              (fun name => (registry.find? name).isNone) &&
-            !registry.sources.any (·.source.name == "words") &&
-            registry.sourcesIn "word" == #[] &&
-            !registry.jobs.any (·.registration.name == "words") &&
-            registry.atPoints.isEmpty &&
-            registry.atPointNames none #[] == #[] &&
-            registry.unknownAtPoints == #[] },
-    { name :=
-        "the executable's hosts start with nothing of the languages package: no mode code and no language is registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        return (registry.mode? "code").isNone && registry.languages.isEmpty },
-    { name :=
-        "the executable's hosts start with nothing of the mode-line package: of the segments the default listing names, the packages of the core's Lake package register none, none of state, buffer, modified, changed, directory, pending-keys, major-mode, line-column and position, and not version control's review either, which is the version-control package's"
-      run := do
-        let registry := shippedRegistry
-        return registry.segments.isEmpty },
-    { name :=
-        "the executable's hosts start with nothing of the frame commands' package: no command toggle-fullscreen or minimise-window, none of the chords C-s-f, s-m and s-q bound, and no entry of an owner frame-commands, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        let bound (text : String) : Option Invocation :=
-          (registry.keymap TestScheme.scheme).find? (keysOf text)
-        return ["toggle-fullscreen", "minimise-window"].all
-              (fun name => (registry.find? name).isNone) &&
-            ["C-s-f", "s-m", "s-q"].all (fun chord => (bound chord).isNone) &&
-            !(registry.bindings.any (·.owner == owned "frame-commands")) &&
-            !(registry.ownersByKind.flatten.any (·.name == "frame-commands")) },
-    { name :=
-        "the executable's hosts start with nothing of the ex package: no command ex, quit, save-and-quit or reload-config, no ex name bound, w, w!, e, e!, autoread, noautoread, q, wq, reload, b, ls and bd among them, no source ex-history or ex-names and none in the category ex-line, and no entry of an owner ex, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        return ["ex", "quit", "save-and-quit", "reload-config"].all
-              (fun name => (registry.find? name).isNone) &&
-            registry.exNames == #[] &&
-            ["w", "w!", "e", "e!", "autoread", "noautoread", "q", "wq", "reload", "b", "ls",
-                  "bd"].all
-              (fun name => (registry.ex? name).isNone) &&
-            (registry.source? "ex-history").isNone &&
-            (registry.source? "ex-names").isNone &&
-            registry.sourcesIn "ex-line" == #[] &&
-            !(registry.ownersByKind.flatten.any (·.name == "ex")) },
-    { name :=
-        "the executable's hosts start with nothing of the window commands' package: none of its thirty-three commands, window-split to window-float, and no entry of an owner window-commands, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        let names :=
-          #["window-split", "window-split-vertically", "window-new", "window-close", "window-quit",
-            "window-only", "window-focus-left", "window-focus-down", "window-focus-up",
-            "window-focus-right", "window-focus-next", "window-focus-previous", "window-focus-top",
-            "window-focus-bottom", "window-focus-last", "window-exchange", "window-rotate",
-            "window-rotate-back", "window-balance", "window-taller", "window-shorter",
-            "window-wider", "window-narrower", "window-zoom", "window-promote", "window-demote",
-            "window-main-more", "window-main-fewer", "window-edge-left", "window-edge-bottom",
-            "window-edge-top", "window-edge-right", "window-float"]
-        return names.size == 33 && names.all (fun name => (registry.find? name).isNone) &&
-            !(registry.ownersByKind.flatten.any (·.name == "window-commands")) },
-    { name :=
-        "the executable's hosts start with nothing of the tab commands' package: no command tab-new, tab-close, tab-next, tab-previous, tab-switch, tab-rename, tab-move-right, tab-move-left or tab-select-1 to tab-select-9, no source tabs, no source in the category tab, and no entry of an owner tab-commands, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        let names :=
-          #["tab-new", "tab-close", "tab-next", "tab-previous", "tab-switch", "tab-rename",
-              "tab-move-right", "tab-move-left"] ++
-            (Array.range 9).map fun index => s!"tab-select-{index + 1}"
-        return names.all (fun name => (registry.find? name).isNone) &&
-            (registry.source? "tabs").isNone &&
-            registry.sourcesIn "tab" == #[] &&
-            !(registry.ownersByKind.flatten.any (·.name == "tab-commands")) },
-    { name :=
-        "the executable's hosts start with nothing of the files package: no command open-file, save-buffer, edit-file, reload-buffer or auto-reload-mode, no job load-file, save-file, reload-file, check-files or follow-file, no source files, no source in the category file, and no value of files-api's Files, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        return ["open-file", "save-buffer", "edit-file", "reload-buffer", "auto-reload-mode"].all
-              (fun name => (registry.find? name).isNone) &&
-            ["load-file", "save-file", "reload-file", "check-files", "follow-file"].all
-              (fun name => (registry.findJob? name).isNone) &&
-            (registry.source? "files").isNone &&
-            registry.sourcesIn "file" == #[] &&
-            !(registry.extensions.any (·.owner == owned "files")) },
-    { name :=
-        "the executable's hosts start with nothing of the version-control packages: no command named vc-, no ex name vc-, no job vc-status-apply, vc-hunk-apply, vc-commit-run, vc-gutter-head, vc-gutter-diff or vc-gutter-refs, no codec vc-review, no segment review, and no value of an interface, vc-api's backend among them, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        let owners := [owned "version-control", owned "version-control-gutter"]
-        return !registry.entries.any (fun entry => entry.registration.name.startsWith "vc-") &&
-            !registry.exNames.any (·.startsWith "vc-") &&
-            ["vc-status-apply", "vc-hunk-apply", "vc-commit-run", "vc-gutter-head",
-                  "vc-gutter-diff", "vc-gutter-refs"].all
-              (fun name => (registry.findJob? name).isNone) &&
-            !registry.codecs.any
-                (fun (owner, codec) => owners.contains owner || codec.name == "vc-review") &&
-            !registry.segments.any (fun entry => owners.contains entry.owner) &&
-            !(registry.extensions.any fun entry => owners.contains entry.owner) },
-    { name :=
-        "the executable's hosts start with nothing of the shell package: no command shell-command, shell-filter or keyboard-quit, no job shell-run, no codec shell-history, and no codec or value of an interface registered by the shell, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        return ["shell-command", "shell-filter", "keyboard-quit"].all
-              (fun name => (registry.find? name).isNone) &&
-            (registry.findJob? "shell-run").isNone &&
-            !registry.codecs.any
-                (fun (owner, codec) => owner == owned "shell" || codec.name == "shell-history") &&
-            !(registry.extensions.any (·.owner == owned "shell")) },
-    { name :=
-        "the executable's hosts start with nothing of the project-search package: no command project-search, project-search-found, project-search-symbol or project-search-visit, no mode project-search, no job project-search or project-search-load, and no value of an interface, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        return ["project-search", "project-search-found", "project-search-symbol",
-                  "project-search-visit"].all
-              (fun name => (registry.find? name).isNone) &&
-            (registry.mode? "project-search").isNone &&
-            ["project-search", "project-search-load"].all
-              (fun name => (registry.findJob? name).isNone) &&
-            !(registry.extensions.any (·.owner == owned "project-search")) },
-    { name :=
-        "the executable's hosts start with nothing of the working-set package: no command working-set-add, working-set-open, working-set-visit, working-set-remove, working-set-note or working-set-refresh, no mode working-set, no job working-set-files, working-set-load, working-set-write or working-set-save, and no value of an interface, files-api's Opened and Saved and buffers-api's Closing among them, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        return ["working-set-add", "working-set-open", "working-set-visit", "working-set-remove",
-                  "working-set-note", "working-set-refresh"].all
-              (fun name => (registry.find? name).isNone) &&
-            (registry.mode? "working-set").isNone &&
-            ["working-set-files", "working-set-load", "working-set-write", "working-set-save"].all
-              (fun name => (registry.findJob? name).isNone) &&
-            !(registry.extensions.any (·.owner == owned "working-set")) },
-    { name :=
-        "the executable's hosts start with nothing of the workspace package: no command workspace-current, find-file-in-workspace, find-file-in-project or find-file-in-another-workspace, no job find-workspace, find-mode-markers, compile-list, workspace-files, project-workspaces, project-workspace-choose or project-workspace-find, no source workspace-files or project-workspaces, no source in the category workspace-file or project-workspace, no binding of find-file-in-another-workspace and none of C-x in the global keymap, and no value of an interface, project-api's Workspaces or files-api's Opened among them, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        let global : Keymap Invocation := registry.keymap TestScheme.scheme
-        return ["workspace-current", "find-file-in-workspace", "find-file-in-project",
-                  "find-file-in-another-workspace"].all
-              (fun name => (registry.find? name).isNone) &&
-            ["find-workspace", "find-mode-markers", "compile-list", "workspace-files",
-                  "project-workspaces", "project-workspace-choose", "project-workspace-find"].all
-              (fun name => (registry.findJob? name).isNone) &&
-            (registry.source? "workspace-files").isNone &&
-            (registry.source? "project-workspaces").isNone &&
-            registry.sourcesIn "workspace-file" == #[] &&
-            registry.sourcesIn "project-workspace" == #[] &&
-            !registry.bindings.any (·.binding.command == "find-file-in-another-workspace") &&
-            global.find? (keysOf "C-x") == none &&
-            !global.continues (keysOf "C-x") &&
-            !(registry.extensions.any (·.owner == owned "workspace")) },
-    { name :=
-        "the executable's hosts start with nothing of the buffers package: no command switch-buffer, list-buffers or close-buffer, no source buffers, no source in the category buffer, and no value of buffers-api's Buffers, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        return ["switch-buffer", "list-buffers", "close-buffer"].all
-              (fun name => (registry.find? name).isNone) &&
-            (registry.source? "buffers").isNone &&
-            registry.sourcesIn "buffer" == #[] &&
-            !(registry.extensions.any (·.owner == owned "buffers")) },
-    { name :=
-        "the executable's hosts start with nothing of the execute-command package: no command execute-command, no source commands, and no source in the category command, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        return (registry.find? "execute-command").isNone && (registry.source? "commands").isNone &&
-            registry.sourcesIn "command" == #[] },
-    { name :=
-        "the executable's hosts start with nothing of the binding-search package: no command search-bindings, no source bindings, and no source in the category binding, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        return (registry.find? "search-bindings").isNone && (registry.source? "bindings").isNone &&
-            registry.sourcesIn "binding" == #[] },
-    { name :=
-        "the executable's hosts start with nothing of the completion package: no style, fuzzy, orderless or path among them, and no display, minibuffer among them, registered by a package of the core's Lake package, so every prompt, the file prompt's among them, is matched with the core's own style and drawn with the core's own display, the owner compiled's"
-      run := do
-        let registry := shippedRegistry
-        let style := registry.styleEntry (some "file")
-        let display := registry.displayEntry (some "file")
-        return registry.styles.isEmpty && registry.displays.isEmpty &&
-            ["fuzzy", "orderless", "path"].all (fun name => (registry.style? name).isNone) &&
-            (registry.display? "minibuffer").isNone &&
-            style.style.name == Completion.Style.unregistered.name &&
-            style.owner == .compiled &&
-            (registry.styleEntry none).style.name == Completion.Style.unregistered.name &&
-            display.display.name == Completion.Display.unregistered.name &&
-            display.owner == .compiled },
-    { name :=
-        "the executable's hosts start with nothing of the compile mode: no command, ex name, job, mode or contribution of it is registered by a package of the core's Lake package, and compile as an ex name is not bound"
-      run := do
-        let registry := shippedRegistry
-        let names :=
-          ["compile", "compile-command", "recompile", "compile-confirm", "kill-compilation",
-            "compilation-output", "next-error", "previous-error", "compile-goto-error"]
-        return names.all (fun name => (registry.find? name).isNone) &&
-            names.all (fun name => (registry.ex? name).isNone) &&
-            (registry.findJob? "compile-run").isNone &&
-            (registry.mode? "compilation").isNone &&
-            (registry.extensionsAt `Editor.Compile.Contribution).isEmpty },
-    { name :=
-        "the executable's hosts start with nothing of the minibuffer package: no command minibuffer-accept, minibuffer-cancel, minibuffer-next, minibuffer-previous, minibuffer-insert, minibuffer-delete-backward, minibuffer-delete-to-start, minibuffer-ask or minibuffer-candidates, and no mode minibuffer, the one the minibuffer's buffer is made with, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        return ["minibuffer-accept", "minibuffer-cancel", "minibuffer-next", "minibuffer-previous",
-                  "minibuffer-insert", "minibuffer-delete-backward", "minibuffer-delete-to-start",
-                  "minibuffer-ask", "minibuffer-candidates"].all
-              (fun name => (registry.find? name).isNone) &&
-            (registry.mode? "minibuffer").isNone &&
-            (registry.mode? Prompt.mode).isNone },
-    { name :=
-        "the executable's hosts start with nothing of the themes package: no command load-theme, no theme, default among them, no source themes, no source in the category theme, and no entry of an owner themes, registered by a package of the core's Lake package; the theme in force with none registered is still named default"
-      run := do
-        let registry := shippedRegistry
-        return (registry.find? "load-theme").isNone && registry.themes.isEmpty &&
-            registry.themeNames == #[] &&
-            (registry.theme? Theme.defaultName).isNone &&
-            (registry.source? "themes").isNone &&
-            registry.sourcesIn "theme" == #[] &&
-            !registry.ownersByKind.flatten.contains ({ name := "themes" } : Config.Owner) &&
-            Theme.defaultName == "default" },
-    { name :=
-        "the executable's hosts start with nothing of the menu package: no menu bar, none of the chords s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a bound, and no entry of an owner menu, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        let bound (text : String) : Option Invocation :=
-          (registry.keymap TestScheme.scheme).find? (keysOf text)
-        return registry.menuBar? == none && registry.menus.isEmpty &&
-            ["s-o", "s-s", "s-z", "s-Z", "s-x", "s-c", "s-v", "s-a"].all
-              (fun text => bound text == none) &&
-            !(registry.ownersByKind.flatten.any (·.name == "menu")) },
-    { name :=
-        "the executable's hosts start with nothing of the evil package: no command move, normal, visual, visual-line, insert, append, insert-line-start, append-line-end, self-insert, operate, select-object, delete-char, put-after, put-before, open-below, open-above, undo, redo, repeat, scroll-down, scroll-up, scroll-page-down, scroll-page-up, scroll-line-to-top, scroll-line-to-center, scroll-line-to-bottom, insert-delete-backward, insert-delete-word-backward, insert-newline, insert-tab, insert-left, insert-right, insert-up, insert-down, clipboard-cut, clipboard-copy, clipboard-paste, select-all, jump-backward, jump-forward or set-mark, and no entry of an owner evil, registered by a package of the core's Lake package"
-      run := do
-        let registry := shippedRegistry
-        return ["move", "normal", "visual", "visual-line", "insert", "append", "insert-line-start",
-                  "append-line-end", "self-insert", "operate", "select-object", "delete-char",
-                  "put-after", "put-before", "open-below", "open-above", "undo", "redo", "repeat",
-                  "scroll-down", "scroll-up", "scroll-page-down", "scroll-page-up",
-                  "scroll-line-to-top", "scroll-line-to-center", "scroll-line-to-bottom",
-                  "insert-delete-backward", "insert-delete-word-backward", "insert-newline",
-                  "insert-tab", "insert-left", "insert-right", "insert-up", "insert-down",
-                  "clipboard-cut", "clipboard-copy", "clipboard-paste", "select-all",
-                  "jump-backward", "jump-forward", "set-mark"].all
-              (fun name => (registry.find? name).isNone) &&
-            !registry.ownersByKind.flatten.contains ({ name := "evil" } : Config.Owner) }]
+          | _, _ => false) }]
 
 /-- A config whose `setup` registers `greet` and the job `follow`, which
 watches the made-up file `/watched/f`, waits for its next delivery, and

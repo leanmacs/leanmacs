@@ -1087,9 +1087,9 @@ Until the features-as-packages roadmap's phase 7 the core supplied the
 scheme, and this editor ran two fixtures, `core-themes` and
 `core-ex-names`, which showed an editor with no default package: the theme
 `default` and no palette, the core's own candidate display, a prompt
-nothing answers and an ex line with no `compile`. They are retired; those
-facts are held by `ConfigTest.shippedChecks`
-([packages.md](../design/packages.md), "Dropping evil or themes leaves…").
+nothing answers and an ex line with no `compile`. They are retired; where
+those facts are held now is in
+[packages.md](../design/packages.md), "Dropping evil or themes leaves…".
 
 A twelfth, the default package `mode-line`'s
 `packages/mode-line/tests/headless/mode-line/script` (the core's until
@@ -2300,9 +2300,11 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   directory's whole path: the package's linked test runs one in a headless
   host, in a temporary directory
   (`packages/compile/tests/linked/run/script`).
-- **An editor without the compile package**: that a host of the core's
-  packages alone has nothing of the compile mode, and that `compile` as an
-  ex name is not bound there, is `ConfigTest.shippedChecks`'. The editor
+- **An editor without the compile package**: a host of the core alone is
+  handed no package, so it has nothing of the compile mode and `compile`
+  as an ex name is not bound there (`ModelTest.packageChecks` and
+  `ConfigTest.hostChecks`: a host handed no package registers nothing).
+  The editor
   linked from `tests/empty-set` ran a fixture of it,
   `core-ex-names`, until the features-as-packages roadmap's phase 7, when
   that editor lost its input scheme with evil and the fixture was retired.
