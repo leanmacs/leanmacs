@@ -7,9 +7,7 @@ demo	Demo	library	Editor.Test.Keys
 demo	Demo	library	Editor.Files.Kit
 demo	Demo	library	FilesApiTest.Fake
 demo	Demo	library	Editor.Test.Linked.Rig
-demo	Demo	library	EditorCore.EditorPackage
 demo	Demo	library	ModelTest.Check
-demo	Demo.Commands	library	Editor.Shell.Compiled
 demo	DemoTest.Demo	test	Editor.Text.Model
 demo	DemoTest.Demo	test	Editor.Completion.AtPointContract
 demo	DemoTest.Demo	test	Editor.Theme.Picture
@@ -38,7 +36,6 @@ demo	DemoTest.Linked	linked	FilesApiTest.Linked.Support
 demo	DemoTest.Linked	linked	Editor.Text.Real
 demo	DemoTest.Linked	linked	Editor.Headless
 demo	DemoTest.Linked	linked	Editor
-demo	DemoTest.Linked	linked	EditorCore.EditorPackage
 demo	DemoTest.Linked	linked	Editor.Theme.Picture
 demo	DemoTest.Linked	linked	Editor.Ffi.Display
 demo	DemoTest.Linked	linked	Editor.Loop

@@ -311,6 +311,26 @@ def packageChecks : List Check :=
             refused.isEmpty && model.texts.contents == #["was 0"] &&
               (once.cells.find? counting.owner "counter").map (·.value) == some (.nat 5) &&
               stored once "counter" == none &&
-              (runs once "bump").map (·.2.texts.contents) == some #["was 5"] }]
+              (runs once "bump").map (·.2.texts.contents) == some #["was 5"] },
+    { name :=
+        "a host handed no package starts from a registry that holds no command, binding, mode, ex name, job, source, menu or extension value: no entry of any of the eighteen kinds a package of every kind fills, no menu bar, no theme, no store's cell, no package's name, and nothing refused"
+      run :=
+        let (state, refused) := packaged #[]
+        let (full, _) := packaged #[everyKind "one"]
+        pure
+          (refused.isEmpty && state.packages == #[] && state.registry.ownersByKind.size == 18 &&
+            state.registry.ownersByKind.all (·.isEmpty) &&
+            full.registry.ownersByKind.all (!·.isEmpty) &&
+            state.registry.entries.isEmpty &&
+            state.registry.bindings.isEmpty &&
+            state.registry.modes.isEmpty &&
+            state.registry.exNames == #[] &&
+            state.registry.jobs.isEmpty &&
+            state.registry.sources.isEmpty &&
+            state.registry.menus.isEmpty &&
+            state.registry.menuBar? == none &&
+            state.registry.extensions.isEmpty &&
+            state.registry.themeNames == #[] &&
+            state.cells.cells.isEmpty) }]
 
 end ModelTest

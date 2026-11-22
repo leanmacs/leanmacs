@@ -53,8 +53,8 @@ host started over a stage or over files, and polling with a bound
 Published for a package's linked tests: it is a module of the core's linked
 test kit, a test double in the namespace `Editor.Test.Linked`, which a
 package's linked test modules may import and its library may not
-(`docs/design/packages.md`, "What a package may import"). It imports neither
-the config base `Editor` nor `EditorCore.EditorPackage`: a host is handed
+(`docs/design/packages.md`, "What a package may import"). It does not import
+the config base `Editor`: a host is handed
 its packages (`Compiled.packages`), and the harness that runs it imports the
 base for the link. The core's config tests (`ConfigTest`) are written on it.
 -/

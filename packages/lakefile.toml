@@ -39,9 +39,9 @@
 # package compile-api/, which it, workspace/ and project-api/ require),
 # completion at point
 # (at-point/, with at-point-api/), then the languages (languages/). They register in that order. The core's Lake package
-# registers no package: its own list (lean/EditorCore/EditorPackage.lean)
-# is empty since the ex line, the last feature it held, moved out
-# (features-as-packages phase 8). This is also the lakefile a user's
+# registers no package and has no entry module, since the ex line, the
+# last feature it held, moved out (features-as-packages phase 8). This is
+# also the lakefile a user's
 # package set starts from.
 #
 # After changing a `require`, run in lean/:

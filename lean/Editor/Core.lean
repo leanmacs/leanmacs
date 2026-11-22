@@ -50,12 +50,11 @@ through another, and declares nothing. The core is every module under
 `lean/Editor/`: no feature is between having its edges from the core cut
 and moving out. The two that were have moved, the shipped palettes
 (`packages/shipped-themes/`) and the compile mode (`packages/compile/`),
-and are Lake packages that require the core. The
-list of the packages of the core's Lake package, its entry module, is not
-under `lean/Editor/` (`EditorCore/EditorPackage.lean`, a library of its
-own), and this module does not import it. `docs/design/packages.md` says
-which modules those are, what a package may import of the core, and what
-each feature still in the core would have to cross to move out.
+and are Lake packages that require the core. The core's Lake package
+lists no package of its own and has no entry module since the
+features-as-packages roadmap's phase 8. `docs/design/packages.md` says
+which modules the core's are, what a package may import of the core, and
+which package each feature that was the core's is.
 
 It is a root of the `Editor` library beside `Editor` (`lakefile.lean`), so
 the build makes it and with it every core module. It is not the config

@@ -19,7 +19,6 @@ import Editor.Test.Restore
 import Editor.Test.Shipped
 import Editor.Window
 import Editor.Window.Real
-import EditorCore.EditorPackage
 import FilesApiTest.Fake
 
 /-!
@@ -69,7 +68,7 @@ def windowMenuPackage : Editor.Package :=
             items := #[.item "Greet" none (.command windowMenuCommand)] } }
 
 /-- The packages the window host is handed in these scenarios, as the
-default editor's root hands them: the core's Lake package's, then the
+default editor's root hands them: the
 kit's stand-in for the default package `restore`
 (`Editor.Test.Restore.package`, `Editor/Test/Restore.lean`), through whose
 `restart` the restart check hands over, then the menu the checks write
@@ -85,8 +84,7 @@ editing commands and keys (`Editor.Test.editingPackage`,
 `Editor/Test/Editing.lean`), with which a printable key of the test scheme
 the hosts run types. -/
 def shippedPackages : Array Editor.Package :=
-  EditorCore.EditorPackage.packages ++
-    #[Editor.Test.Restore.package, windowMenuPackage, FilesApiTest.fake] ++
+  #[Editor.Test.Restore.package, windowMenuPackage, FilesApiTest.fake] ++
     Editor.Test.Shipped.packages ++
     #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package, Editor.Test.editingPackage]
 

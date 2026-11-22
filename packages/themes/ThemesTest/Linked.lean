@@ -1,7 +1,6 @@
 import Editor
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Services
-import EditorCore.EditorPackage
 import Themes.EditorPackage
 import ThemesTest.Check
 import ThemesTest.Linked.Themes
@@ -44,10 +43,10 @@ be linked into the executable. The config the hosts load names no
 declaration of this package.
 -/
 
-/-- The packages a set that holds this Lake package hands its editor: the
-core's, which this package requires, then its own. -/
+/-- The packages this Lake package hands a set's editor: its own. The
+core's Lake package, which it requires, hands a set none. -/
 def setPackages : Array Editor.Package :=
-  EditorCore.EditorPackage.packages ++ Themes.EditorPackage.packages
+  Themes.EditorPackage.packages
 
 /-- Runs the checks (the module docs). -/
 def main (arguments : List String) : IO UInt32 := do

@@ -108,8 +108,8 @@ show:
   so a reload slower than the join's patience still leaves the join to
   run out as working;
 - `shippedChecks`: what the executable's hosts start with, the registry the
-  packages of the core's Lake package make
-  (`EditorCore.EditorPackage.packages`), which is none: it holds nothing
+  core's Lake package makes, which registers no package and has no entry
+  module (the registry a host handed no package starts from): it holds nothing
   of the compile mode, no command, ex name, job, mode or contribution,
   that mode being a package outside the core's Lake package, and nothing
   of the default packages that were the core's (the files, the buffer

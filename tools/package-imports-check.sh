@@ -81,16 +81,17 @@
 # - An internal module (`internal_reason`): the hosts and the executable's
 #   modules, the loop and its dispatch, the config session, the raw
 #   bindings, the real bindings of the ports and what runs them, the
-#   modules that define the packages still in the core, the core's root,
-#   everything under `Editor.Internal`, and every module of the core's Lake
-#   package that is not named `Editor.…` and is no core interface nor of
-#   one's test library: the config base, `Editor`, the core's entry module
-#   and the core's own test modules. No library module and no test module
-#   may import one.
+#   core's root, everything under `Editor.Internal`, and every module of
+#   the core's Lake package that is not named `Editor.…` and is no core
+#   interface nor of one's test library: the config base, `Editor`, and
+#   the core's own test modules. No library module and no test module may
+#   import one. (No module of the core defines a package: the core's Lake
+#   package registers none and has no entry module, since the
+#   features-as-packages roadmap's phase 8.)
 # - What the root of the linked test may import beyond the test doubles
 #   and the linked kit (`linked_may`): the real bindings of the ports
-#   (`….Real`), the headless host (`Editor.Headless`), the config base and
-#   the core's entry module. It is an executable's root, linked as the
+#   (`….Real`), the headless host (`Editor.Headless`) and the config
+#   base. It is an executable's root, linked as the
 #   editor is, and running a port against the library or a host over a set
 #   is what it is for. The raw bindings, the loop and the config session
 #   stay refused by name. A module under the root (`linked-test`) has none
@@ -185,7 +186,6 @@ is_linked_kit() {
 internal_reason() {
   case $1 in
     Editor) echo "the config base, which is not part of the API" ;;
-    EditorCore.EditorPackage) echo "the core's entry module, which no package imports" ;;
     Editor.Internal | Editor.Internal.*) echo "internal: it is under Editor.Internal" ;;
     Editor.Core) echo "internal: the core's root" ;;
     Editor.Main | Editor.Headless | Editor.Headless.CommandLine | Editor.Window | \
@@ -202,7 +202,6 @@ internal_reason() {
       Editor.Job.Jobs | Editor.Job.Table | Editor.Job.Pool)
       echo "internal: a real binding of a port, or what runs one"
       ;;
-    Editor.*.Compiled) echo "internal: it defines a package still in the core" ;;
     Editor.*) return 1 ;;
     *) echo "no module of the editor: the core's Lake package holds it outside Editor" ;;
   esac
@@ -211,7 +210,7 @@ internal_reason() {
 # Whether the root of a linked test may import the internal module `$1`.
 linked_may() {
   case $1 in
-    Editor | EditorCore.EditorPackage | Editor.Headless) return 0 ;;
+    Editor | Editor.Headless) return 0 ;;
     Editor.Window.Real | Editor.WindowCheck.Real) return 1 ;;
     Editor.*.Real) return 0 ;;
   esac

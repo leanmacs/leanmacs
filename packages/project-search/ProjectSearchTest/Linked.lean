@@ -28,9 +28,8 @@ the core:
   a closed file's on-disk match, not an ignored file's, and a change typed
   over a match in the results changes that file's buffer and not the file.
 
-This root imports neither the config base `Editor`, nor `Editor.Headless`,
-nor `EditorCore.EditorPackage`, each of which reaches evil until evil moves
-out: its one list runs on the rig alone, so no module of the package,
+This root imports neither the config base `Editor` nor `Editor.Headless`,
+each of which reached evil until evil moved out: its one list runs on the rig alone, so no module of the package,
 library or tests, reaches a module of evil (the phase's acceptance
 criterion 3).
 -/

@@ -4,7 +4,6 @@ import Editor.Test.Linked.Host
 import Editor.Test.Linked.Services
 import Editor.Test.Minibuffer
 import Editor.Test.Shipped
-import EditorCore.EditorPackage
 import Files.EditorPackage
 import FilesTest.Check
 import FilesTest.Linked.Files
@@ -47,15 +46,14 @@ config the hosts load names no declaration of this package.
 -/
 
 /-- The packages a set that holds this Lake package hands its editor, as
-the config tests' hosts were handed them: the core's, which this package
-requires, then its own, then the core's test kit's stand-ins for the
+the config tests' hosts were handed them: its own (the core's Lake
+package, which it requires, hands a set none), then the core's test kit's stand-ins for the
 default packages `mode-line` and `languages` (`Editor.Test.Shipped.packages`,
 whose segments the host's status lines print and whose languages a file
 opens in), and its implementations of the default packages `at-point`'s and
 `minibuffer`'s commands, which answer the open prompt. -/
 def setPackages : Array Editor.Package :=
-  EditorCore.EditorPackage.packages ++ Files.EditorPackage.packages ++
-    Editor.Test.Shipped.packages ++
+  Files.EditorPackage.packages ++ Editor.Test.Shipped.packages ++
     #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package]
 
 /-- Every check of the linked test, in the order they run, over `context`. -/

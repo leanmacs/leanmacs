@@ -127,7 +127,6 @@ import ModelTest.Editor.Watch.Model
 import ModelTest.Editor.Window
 import ModelTest.Editor.WindowCheck
 import ModelTest.Editor.Workspace
-import ModelTest.EditorCore.EditorPackage
 import ModelTest.FilesApi
 
 /-!
@@ -774,7 +773,10 @@ The config session's decisions are tested here too, with no elaborator:
   replace a package's until a reload drops them; a package's
   `useStyleFor` is a default config's `useStyleFor` overrides; and of two
   packages that contribute one compile mode the later package's is the one
-  listed, once, where the mode was first registered;
+  listed, once, where the mode was first registered; and a host handed no
+  package starts from a registry that holds nothing, no entry of any kind
+  a package of every kind fills, which is what the core's Lake package
+  registers, having no entry module;
 - `extensionChecks`: extension points (`Editor/Extension.lean`), laid out
   as an interface package, two implementation packages and a consumer:
   values two packages register at a point come back typed, in
@@ -836,25 +838,10 @@ The config session's decisions are tested here too, with no elaborator:
   directory; a success that writes the record, publishes version 1 and
   restarts into it; and what is pruned, never the running
   editor's version;
-- `packageSetChecks`: the packages of the core's Lake package, its entry
-  module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
-  whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
-  list is empty, with no package of the
-  shipped palettes, of the compile mode, of the seven features phase 6
-  moved out, of the ex line, of the frame commands, of the menu, of the
-  window or the tab commands, of session restore or of the package-set
-  commands in it, and the state it makes holds no command, no entry of
-  any owner, no menu, no ex name (the files', the ex line's and the
-  buffers' are bound by the package `ex`, `ExTest.exPackageChecks`,
-  `packages/ex/`) and no theme; and the set keeps no store across a restart (the shell's
-  history is `ShellTest.shellChecks`' and version control's reviews
-  `VersionControlTest.versionControlPackageChecks`', each in its package),
-  reports no job (the package-set build is reported by the package
-  `package-set`, `PackageSetTest.packageSetCommandChecks`, whose commands'
-  checks moved there with it, `packages/package-set/`), and leaves no job
-  to its owner to start again (the restore's six are restarted by the
-  package `restore`, `RestoreTest.restorePackageChecks`,
-  `packages/restore/`).
+- the core's Lake package registers no package and has no entry module
+  (the features-as-packages roadmap's phase 8): `packageChecks` holds that
+  a host handed no package starts from a registry that holds nothing, and
+  what each default package registers is its own tests'.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
@@ -1208,7 +1195,6 @@ def checks : List Check :=
     restartChecks ++
     restartHandoverChecks ++
     restartLaunchChecks ++
-    packageSetChecks ++
     windowTallyChecks ++
     windowLoopChecks ++
     windowArgumentChecks ++

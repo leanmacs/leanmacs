@@ -35,9 +35,8 @@
 #    unless it is a moving module. Otherwise it prints each one outside, one a line, and
 #    exits 3. This is what makes the first a statement about every core
 #    module: a core module the root does not import would be checked by
-#    nothing. No module is exempt by name: the list of the core's
-#    packages, which names every package still in the core, is
-#    `EditorCore.EditorPackage`, outside `Editor/` and its namespace.
+#    nothing. No module is exempt by name: the core's Lake package lists
+#    no package and has no entry module.
 # 3. A root of the build that reaches the elaborator adapter (`elaborator`)
 #    reaches the config base (`base`): an executable that can elaborate
 #    config links every module config may import. Otherwise it prints each

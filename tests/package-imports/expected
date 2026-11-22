@@ -4,9 +4,7 @@ package-imports-check: demo: Demo (library) imports Editor.Test.Keys: a test dou
 package-imports-check: demo: Demo (library) imports Editor.Files.Kit: a test double, which only a package's tests may import
 package-imports-check: demo: Demo (library) imports FilesApiTest.Fake: a test double, which only a package's tests may import
 package-imports-check: demo: Demo (library) imports Editor.Test.Linked.Rig: a module of the linked test kit, which only a package's linked test and the modules under it may import
-package-imports-check: demo: Demo (library) imports EditorCore.EditorPackage: the core's entry module, which no package imports
 package-imports-check: demo: Demo (library) imports ModelTest.Check: no module of the editor: the core's Lake package holds it outside Editor
-package-imports-check: demo: Demo.Commands (library) imports Editor.Shell.Compiled: internal: it defines a package still in the core
 package-imports-check: demo: DemoTest.Demo (test) imports Editor.Test.Linked.Rig: a module of the linked test kit, which only a package's linked test and the modules under it may import
 package-imports-check: demo: DemoTest.Demo (test) imports FilesApiTest.Linked.Support: a module of the linked test kit, which only a package's linked test and the modules under it may import
 package-imports-check: demo: DemoTest.Demo (test) imports Editor.Loop: internal: the loop or its dispatch

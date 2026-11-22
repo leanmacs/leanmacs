@@ -4,7 +4,6 @@ import Editor.Test.Linked.Host
 import Editor.Test.Linked.Services
 import Editor.Test.Minibuffer
 import Editor.Test.Shipped
-import EditorCore.EditorPackage
 import FilesApiTest.Fake
 import VersionControl.EditorPackage
 import VersionControlTest.Check
@@ -59,15 +58,13 @@ root that links the elaborator does.
 -/
 
 /-- The packages a set that holds this Lake package hands its editor, as
-the config tests' hosts were handed them: the core's, then this package's
-two, then `files-api`'s fake for the file commands, the core's test kit's
+the config tests' hosts were handed them: this package's two (the core's
+Lake package hands a set none), then `files-api`'s fake for the file commands, the core's test kit's
 stand-ins for the default packages `mode-line` and `languages`
 (`Editor.Test.Shipped.packages`), and its implementations of `at-point`'s
 and `minibuffer`'s commands. -/
 def setPackages : Array Editor.Package :=
-  EditorCore.EditorPackage.packages ++ VersionControl.EditorPackage.packages ++
-    #[FilesApiTest.fake] ++
-    Editor.Test.Shipped.packages ++
+  VersionControl.EditorPackage.packages ++ #[FilesApiTest.fake] ++ Editor.Test.Shipped.packages ++
     #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package]
 
 /-- Runs the checks (the module docs). -/

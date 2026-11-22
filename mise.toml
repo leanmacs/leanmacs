@@ -359,17 +359,17 @@ run = [
   # (tools/host-imports-check.sh; docs/dev-practices/the-gate.md, "The host
   # imports check"), checked on the root the package-set build generates for
   # the default set (packages/): the modules that root imports, other than
-  # the entry modules that list the packages (`EditorCore.EditorPackage`
-  # and the default packages', `ShippedThemes.EditorPackage` and
-  # `Compile.EditorPackage`), reach neither an entry module nor a module one
+  # the entry modules that list the packages (the default packages',
+  # `Ex.EditorPackage` to `Languages.EditorPackage`; the core's Lake
+  # package has none), reach neither an entry module nor a module one
   # imports. Three `lake query` calls, about half a second each.
   "sh ../tools/host-imports-check.sh",
   # And the check bites: pointed at the core's module `ConfigTest`, a root
   # that imports modules that define packages, with the test kit's
   # stand-ins for default packages (`Editor.Test.Shipped`) as the list
-  # module, it must find them and exit 1. The core's entry module, the
-  # list module until its own list emptied, imports nothing now, so it
-  # names nothing to forbid. Its output is shown only when it does not.
+  # module, it must find them and exit 1. The core has no entry module to
+  # name: its Lake package registers no package. Its output is shown only
+  # when it does not.
   "status=0; out=$(sh ../tools/host-imports-check.sh ConfigTest Editor.Test.Shipped 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
   # The same check on the root generated for the fixture set
   # (tests/packages/), with `--set`: that root imports fourteen entry
@@ -385,11 +385,11 @@ run = [
   # generates for that set, written by the facet `editorRoot`, which writes
   # a set's root and links nothing. Here the facet must give a file, and
   # the root's imports, as Lake resolves them, must be the config base, the
-  # executable's entry, the core's entry module, the default packages' and
-  # then the fixture package's: the root the check compiles is generated,
-  # lists the fixture package after the core and the default set's
-  # packages, and its modules are found.
-  "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage Ex.EditorPackage FrameCommands.EditorPackage Menu.EditorPackage WindowCommands.EditorPackage TabCommands.EditorPackage Restore.EditorPackage PackageSet.EditorPackage Evil.EditorPackage Themes.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage ProjectSearch.EditorPackage WorkingSet.EditorPackage Shell.EditorPackage VersionControl.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage UserLink.EditorPackage '",
+  # executable's entry, the default packages' entry modules and then the
+  # fixture package's (the core's Lake package has none): the root the
+  # check compiles is generated, lists the fixture package after the
+  # default set's packages, and its modules are found.
+  "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main Ex.EditorPackage FrameCommands.EditorPackage Menu.EditorPackage WindowCommands.EditorPackage TabCommands.EditorPackage Restore.EditorPackage PackageSet.EditorPackage Evil.EditorPackage Themes.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage ProjectSearch.EditorPackage WorkingSet.EditorPackage Shell.EditorPackage VersionControl.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage UserLink.EditorPackage '",
   # The core's lakefile is elaborated against the toolchain of the `lake`
   # that runs it, never a `lean` found on the PATH (`leanSystemLibDir` in
   # lean/lakefile.lean; docs/design/lean-runtime.md, "Build"): an app
@@ -412,7 +412,7 @@ run = [
   # pairs, which a later move adds a pair to). That the core's own list
   # holds none of them is `ModelTest.packageSetChecks`', and that the
   # core's hosts start with nothing of them `ConfigTest.shippedChecks`'.
-  "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage Ex.EditorPackage FrameCommands.EditorPackage Menu.EditorPackage WindowCommands.EditorPackage TabCommands.EditorPackage Restore.EditorPackage PackageSet.EditorPackage Evil.EditorPackage Themes.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage ProjectSearch.EditorPackage WorkingSet.EditorPackage Shell.EditorPackage VersionControl.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage '",
+  "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main Ex.EditorPackage FrameCommands.EditorPackage Menu.EditorPackage WindowCommands.EditorPackage TabCommands.EditorPackage Restore.EditorPackage PackageSet.EditorPackage Evil.EditorPackage Themes.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage ProjectSearch.EditorPackage WorkingSet.EditorPackage Shell.EditorPackage VersionControl.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage '",
   "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../packages/shell-api:ShellApi ../packages/ex-api:ExApi ../packages/buffers-api:BuffersApi ../packages/ex:Ex/EditorPackage ../packages/frame-commands-api:FrameCommandsApi ../packages/frame-commands:FrameCommands/EditorPackage ../packages/evil-api:EvilApi ../packages/menu:Menu/EditorPackage ../packages/window-commands-api:WindowCommandsApi ../packages/window-commands:WindowCommands/EditorPackage ../packages/tab-commands-api:TabCommandsApi ../packages/tab-commands:TabCommands/EditorPackage ../packages/restore:Restore/EditorPackage ../packages/package-set:PackageSet/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/at-point-api:AtPointApi ../packages/evil:Evil/EditorPackage ../packages/themes-api:ThemesApi ../packages/themes:Themes/EditorPackage ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/compile-api:CompileApi ../packages/project-api:ProjectApi ../packages/vc-api:VcApi ../packages/workspace:Workspace/EditorPackage ../packages/project-search-api:ProjectSearchApi ../packages/project-search:ProjectSearch/EditorPackage ../packages/working-set-api:WorkingSetApi ../packages/working-set:WorkingSet/EditorPackage ../packages/shell:Shell/EditorPackage ../packages/version-control:VersionControl/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the default set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans",
   # The two records the package-set build writes beside a set's editor for
   # a user's set build (docs/design/packages.md, "User package sets"):
@@ -477,6 +477,10 @@ run = [
   # editor without the packages still loads config.
   "test \"$(lake -d ../packages query :editorBase | tr '\\n' ' ')\" = 'Editor Ex.EditorPackage FrameCommands.EditorPackage Menu.EditorPackage WindowCommands.EditorPackage TabCommands.EditorPackage Restore.EditorPackage PackageSet.EditorPackage Evil.EditorPackage Themes.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage ProjectSearch.EditorPackage WorkingSet.EditorPackage Shell.EditorPackage VersionControl.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage '",
   "test \"$(lake -d ../tests/empty-set query :editorBase | tr '\\n' ' ')\" = 'Editor '",
+  # And the root of that set imports the config base and the executable's
+  # entry alone: the core's Lake package has no entry module, so an editor
+  # of the core alone hands its hosts no package.
+  "test \"$(lake -d ../tests/empty-set query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main '",
   # The Rust crates of a set (the facet `editorRustCrates`;
   # docs/design/packages.md, "Rust in a package"): the package-set build
   # finds a package's crate through the target `editorRustCrate` its

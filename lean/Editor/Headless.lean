@@ -173,9 +173,8 @@ as before, so reload and job completion work as they did.
     repeated name, one whose `setup` is refused, or one that sets what only
     config may choose. The others register and the loop starts.
   - **The executable's hosts are handed the packages of its package set**:
-    those of the core's Lake package (`EditorCore.EditorPackage.packages`,
-    `EditorCore/EditorPackage.lean`), then those of each package of the
-    set, which the executable's generated root passes through
+    those of each package of the set (the core's Lake package lists
+    none), which the executable's generated root passes through
     `Editor.Main.run` to `main` here and to the window mode's
     (`docs/design/packages.md`, "The package set and its build"). The
     core's are 23, each in
@@ -992,8 +991,7 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   source and menu the host has before config is one of theirs. The default
   is none, and a host handed none starts with an empty registry and
   publishes no menu bar; the executable's hosts are handed the packages
-  of its package set, the core's first
-  (`EditorCore/EditorPackage.lean`). -/
+  of its package set. -/
   packages : Array Package := #[]
   /-- Where a log entry goes: a command that took longer than `slowAfter`,
   and a package the host refused as its loop started (`Running.new`).
@@ -3283,8 +3281,7 @@ display is the recorder and its clipboard its own, as a host's are by
 default.
 
 It names no package: the executable passes the packages of its package
-set, the core's first (`EditorCore/EditorPackage.lean`), and what those
-register is said there and in each package's module.
+set, and what those register is said in each package's module.
 
 It is apart from `shipped`, which makes what it is over, so that the
 collaborators can be made with no pump started. -/

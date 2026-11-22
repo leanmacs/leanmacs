@@ -16,11 +16,10 @@ The data and its names are the core's: the segments, the mode and the
 languages stay in core modules, which the core's loop, its picture and its
 tests read. The Lake packages `mode-line` and `languages` (`packages/`)
 register exactly this, which their own tests pin; the core cannot import
-them, so a core test that hosts the core's list and is to show what the
-default editor draws appends these (`EditorCore.EditorPackage.packages ++
-Test.Shipped.packages`). A package's test that hosts the core's list and
-prints what the default editor prints, as the compile mode's linked test
-does, appends the one it needs, without requiring that package. They are
+them, so a core test that is to show what the default editor draws hosts
+these (`Test.Shipped.packages`). A package's test that prints what the
+default editor prints, as the compile mode's linked test does, hosts the
+one it needs, without requiring that package. They are
 no fake of another package's behaviour.
 
 Published for a package's tests: it is a module of the core's test kit, a

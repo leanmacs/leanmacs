@@ -64,7 +64,6 @@ import Editor.Text.Real
 import Editor.Watch
 import Editor.Window
 import Editor.Workspace
-import EditorCore.EditorPackage
 import FilesApiTest.Fake
 
 /-!
@@ -2360,13 +2359,14 @@ def reloadEchoChecks (context : Context) : List Check :=
           let made ← session.echo
           return before == ("", #[]) && isGreetError made }]
 
-/-- The registry a host of the executable starts with: the one the packages
-of the core's Lake package make (`Config.State.ofPackages` of
-`EditorCore.EditorPackage.packages`), which is what `Headless.Running.new`
-starts from for a host handed them. -/
+/-- The registry a host of the executable starts with before its set's
+packages register: the one a host handed no package makes
+(`Config.State.ofPackages` of none), which is what `Headless.Running.new`
+starts from. The core's Lake package has no entry module and registers no
+package, so this is all the core itself registers. -/
 def shippedRegistry : Config.Registry :=
   let (state, _) : Config.State Config.Elaborate.Base Config.Elaborate.Handle × Array String :=
-    Config.State.ofPackages EditorCore.EditorPackage.packages
+    Config.State.ofPackages #[]
   state.registry
 
 /-- The owner of what the package called `name` registers, by its name as
