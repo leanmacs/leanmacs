@@ -73,7 +73,7 @@ def runScripted (composition : Bool) (platform : Editor.Ffi.Platform := .scripte
     events := events.push event
   -- The run parked for its close, with nothing more to report: it has not
   -- returned, and it waits, on the park itself, not after a moment.
-  let parked ← Editor.Ffi.windowAwaitParked platform patience.toUInt64
+  let parked ← Editor.Ffi.windowAwaitParked platform patience
   let waited := parked && !(← IO.hasFinished run)
   Editor.Ffi.windowClose platform
   let result ← (← Editor.Job.awaitWithin patience run).mapM IO.ofExcept

@@ -76,7 +76,7 @@ def queueChecks (_ : Unit) : List Check :=
       run := do
         let task ← IO.asTask (prio := .dedicated) (Editor.Ffi.nextEvent .completion)
         -- The park itself, not a poll of the count, ends this wait.
-        let parked ← Editor.Ffi.awaitWaiting .completion 1 patience.toUInt64
+        let parked ← Editor.Ffi.awaitWaiting .completion 1 patience
         let othersParked ← Editor.Ffi.waiting .editor
         let finishedEarly ← IO.hasFinished task
         let posted ← Editor.Ffi.postEvent .completion 6 1 "wake"
@@ -87,7 +87,7 @@ def queueChecks (_ : Unit) : List Check :=
         return (← IO.ofExcept woken) == message 6 1 "wake" },
     { name := "a script fed from a Rust thread arrives in order, tagged with its source"
       run := do
-        let some fed ← Editor.Ffi.feedScript .completion 9 3 patience.toUInt64 | return false
+        let some fed ← Editor.Ffi.feedScript .completion 9 3 patience | return false
         for code in ([0, 1, 2] : List UInt64) do
           let some event ← pull .completion | return false
           unless
@@ -99,7 +99,7 @@ def queueChecks (_ : Unit) : List Check :=
     { name :=
         "an event's words cross whole and in order: each scripted event carries its code and the largest word less its code"
       run := do
-        let some fed ← Editor.Ffi.feedScript .completion 9 2 patience.toUInt64 | return false
+        let some fed ← Editor.Ffi.feedScript .completion 9 2 patience | return false
         let first ← pull .completion
         let second ← pull .completion
         return (first.map (·.words)) == some #[0, 0xFFFFFFFFFFFFFFFF] &&
@@ -119,8 +119,8 @@ def shutdownChecks (_ : Unit) : List Check :=
        let editor ← IO.asTask (prio := .dedicated) (Editor.Ffi.nextEvent .editor)
        let completion ← IO.asTask (prio := .dedicated) (Editor.Ffi.nextEvent .completion)
        let parked :=
-         (← Editor.Ffi.awaitWaiting .editor 1 patience.toUInt64) &&
-           (← Editor.Ffi.awaitWaiting .completion 1 patience.toUInt64)
+         (← Editor.Ffi.awaitWaiting .editor 1 patience) &&
+           (← Editor.Ffi.awaitWaiting .completion 1 patience)
        Editor.Ffi.quit
        let editorWoken ← Editor.Job.awaitWithin patience editor
        let completionWoken ← Editor.Job.awaitWithin patience completion
@@ -140,6 +140,6 @@ def shutdownChecks (_ : Unit) : List Check :=
 it is parked. -/
 def blockForGood : IO Bool := do
   discard <| IO.asTask (prio := .dedicated) (Editor.Ffi.nextEvent .editor)
-  Editor.Ffi.awaitWaiting .editor 1 patience.toUInt64
+  Editor.Ffi.awaitWaiting .editor 1 patience
 
 end FfiTest

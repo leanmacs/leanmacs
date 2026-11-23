@@ -122,12 +122,11 @@ afterwards. -/
 def pendingChildren : IO UInt64 :=
   Ffi.processesPending
 
-/-- hang guard: a flush's end (`childrenReapedTo`, `flushedAll`,
+/-- The guard of a flush's end (`childrenReapedTo`, `flushedAll`,
 `filesFlushed`, `withFiles`), which comes once the work before it has been
-worked; only a hang reaches the bound, and the check then fails as a hang.
-How long each waits for it, in milliseconds. -/
-def reapPatience : Nat :=
-  10000
+worked; only a hang reaches it, and the check then fails as a hang. -/
+def reapPatience : HangGuard :=
+  .on "the flush's end" 10000
 
 /-- Whether a flush of each of `targets` among `jobs`, asked in turn, is
 completed: each service has then finished the work handed to it before. -/
@@ -164,22 +163,21 @@ private def serviceName : Job.Service → String
   | .greps => "grep"
 
 /-- Waits for a flush of each of `targets` among `jobs`, asked in turn, with no
-deadline: one not completed `guard` milliseconds after it was asked is said
+deadline: one not completed within `guard` after it was asked is said
 through `hung` as a hang, once, and still waited for, and one the service
 refuses is said through `hung` too, since nothing more will be worked. -/
-private def workedBefore (jobs : Job.Services) (targets : List Job.Service) (guard : Nat)
+private def workedBefore (jobs : Job.Services) (targets : List Job.Service) (guard : HangGuard)
     (hung : String → IO Unit) : IO Unit := do
   for target in targets do
     let flushed ← jobs.flushed target
     let completion ←
-      -- hang guard: the flush's end; past the bound the hang is said, and
-      -- the flush still waited for.
+      -- Past the guard the hang is said, and the flush still waited for.
       match ← Job.awaitWithin guard flushed with
       | some completion =>
         pure completion
       | none =>
         hung
-            s!"a hang: the {serviceName target} service had not completed a flush {guard} ms after it was asked; waiting for it"
+            s!"a hang: the {serviceName target} service had not completed a flush {guard.ms} ms after it was asked; waiting for it"
         IO.wait flushed
     if completion == .cancelled then
       hung
@@ -189,7 +187,7 @@ private def workedBefore (jobs : Job.Services) (targets : List Job.Service) (gua
 library's services have worked what was handed to them before: whether `body`
 returned or threw, a flush of each of `targets` through `jobs`
 (`Job.Services.flushed`) is waited for, in turn, with no deadline. A flush not
-completed `guard` milliseconds after it was asked is said through `hung` as a
+completed within `guard` after it was asked is said through `hung` as a
 hang, once, and still waited for. A flush the service refuses (the queues are
 quit) is said through `hung` too, since nothing more will be worked.
 
@@ -202,7 +200,7 @@ loop has ended, so it hands out nothing more, before the flushes are asked,
 and each flush is behind every request the loop's jobs handed out,
 cancelled ones included. -/
 def withFiles {α : Type} (jobs : Job.Services) (body : System.FilePath → IO α)
-    (targets : List Job.Service := [.files]) (guard : Nat := reapPatience)
+    (targets : List Job.Service := [.files]) (guard : HangGuard := reapPatience)
     (hung : String → IO Unit := IO.eprintln) : IO α := do
   let directory ← IO.FS.createTempDir
   try

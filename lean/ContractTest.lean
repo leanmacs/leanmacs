@@ -357,7 +357,7 @@ def main (arguments : List String) : IO UInt32 := do
       return 2
   let some pool ← Editor.Job.Pool.holdAll (← Editor.Job.Pool.expected) ContractTest.warmPatience |
     IO.eprintln
-        s!"contract-test: a hang: the pool's tasks had not all started within {ContractTest.warmPatience} ms"
+        s!"contract-test: a hang: the pool's tasks had not all started within {ContractTest.warmPatience.ms} ms"
     return 1
   -- The real services, over a table of waits of their own, with the pump
   -- started (`Editor/Test/Linked/Services.lean`). No command of this run

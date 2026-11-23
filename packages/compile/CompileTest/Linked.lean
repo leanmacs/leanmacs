@@ -141,7 +141,7 @@ def hostCheck {β σ : Type} {scheme : Editor.InputScheme}
           required.filter fun part => !lines.any fun line => (line.splitOn part).length > 1
         if let some failure := failure then
           IO.eprintln
-              s!"compile linked test: the host's script did not run to its end: {failure.describe Editor.Headless.settlePatience}"
+              s!"compile linked test: the host's script did not run to its end: {failure.describe Editor.Headless.settlePatience.ms}"
         for part in missing do
           IO.eprintln s!"compile linked test: the host printed no line holding: {part}"
         unless missing.isEmpty do

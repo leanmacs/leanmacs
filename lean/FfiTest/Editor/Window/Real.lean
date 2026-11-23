@@ -57,13 +57,13 @@ and still waited for. A scenario whose state directory is a temporary one
 of its own waits so before the window mode's shutdown, whose own wait is
 bounded by `Headless.drainPatience` and gives up, so that its directory is
 removed only once every journal order has been written.
-hang guard: the drain's flush completed; only a hang reaches `guard`, which
-is then said once and still waited on. -/
-def journalDrained (drained : Task Bool) (guard : Nat := Editor.Headless.drainPatience)
+Only a hang reaches `guard`, the drain's flush completed, which is then
+said once and still waited on. -/
+def journalDrained (drained : Task Bool) (guard : Editor.HangGuard := Editor.Headless.drainPatience)
     (hung : String → IO Unit := IO.eprintln) : IO Bool := do
   if (← Editor.Job.awaitWithin guard drained).isNone then
     hung
-        s!"ffi-test: a hang: the journal had not drained {guard} ms after it was asked; waiting for it"
+        s!"ffi-test: a hang: the journal had not drained {guard.ms} ms after it was asked; waiting for it"
   IO.wait drained
 
 /-- The checks of `journalDrained`, on a drain the check ends: with a guard of
@@ -77,7 +77,8 @@ def windowRealChecks (_ : Unit) : List Check :=
         let said ← IO.mkRef (#[] : Array String)
         let drained := drain.result?.map (sync := true) (·.getD false)
         let answered ←
-          journalDrained drained (guard := 0) (hung := fun line => do
+          journalDrained drained (guard := .held "the drain the check ends from the hang report" 0)
+              (hung := fun line => do
               said.modify (·.push line)
               drain.resolve true)
         let ended ← IO.hasFinished drained
@@ -497,7 +498,7 @@ def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 :
       -- shutdown first waits for the window's run to park for its close, on
       -- the park itself. Its minimise is then recorded before the close only
       -- when the shutdown runs first (`shutBeforeClose`).
-      discard <| Editor.Ffi.windowAwaitParked .scripted patience.toUInt64
+      discard <| Editor.Ffi.windowAwaitParked .scripted patience
       Editor.Ffi.windowRequest .scripted .minimise
       -- The journal writes into `state`, under the directory removed below:
       -- its drain is waited for with no deadline (`journalDrained`), and the

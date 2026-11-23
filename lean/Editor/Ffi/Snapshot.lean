@@ -1,3 +1,4 @@
+import Editor.Bound
 import Editor.Ffi.Document
 
 /-!
@@ -194,13 +195,13 @@ opaque Snapshot.live : IO UInt64
 private opaque Snapshot.liveAwaitRaw (kind : UInt8) (target boundMs : UInt64) : IO Bool
 
 /-- Waits until at most `target` snapshots the Rust library holds are not freed
-(`Snapshot.live`), and says whether that came: false once `boundMs`
-milliseconds have passed first. A readout for tests, which use it to see a
+(`Snapshot.live`), and says whether that came: false once `guard` has
+run out first. A readout for tests, which use it to see a
 finaliser run on another thread: it returns on the free, never by a poll of
-`Snapshot.live`. `boundMs` is a hang guard: only a handle that is never freed
-reaches it. -/
-def Snapshot.awaitLive (target boundMs : UInt64) : IO Bool :=
-  Snapshot.liveAwaitRaw 1 target boundMs
+`Snapshot.live`. Only a handle that is never freed
+reaches the guard. -/
+def Snapshot.awaitLive (target : UInt64) (guard : HangGuard) : IO Bool :=
+  Snapshot.liveAwaitRaw 1 target guard.ms.toUInt64
 
 /-- A new document holding what `snapshot` holds: a text of its own, at
 revision 0, with an empty log, no markers and no kept inverses, whatever the

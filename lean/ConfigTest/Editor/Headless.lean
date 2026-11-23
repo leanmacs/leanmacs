@@ -756,7 +756,7 @@ def threadChecks (context : Context) : List Check :=
               -- and stays there until the gate opens.
               unless (← Job.awaitWithin hangGuard gate.arrived.result?).isSome do
                 return false
-              let some fed ← Ffi.feedScript .editor 77 100 hangGuard.toUInt64 | return false
+              let some fed ← Ffi.feedScript .editor 77 100 hangGuard | return false
               -- The feed's thread has pushed its last event once it is joined:
               -- all 100 are on the editor queue, and the run is sent after
               -- them, so a wait that only asks the editor thread to answer
@@ -834,9 +834,9 @@ def threadChecks (context : Context) : List Check :=
               -- The base and the handles of three files. A finished job's
               -- task may still be going away, so its free is waited on, and
               -- the count then read once.
-              return (← Ffi.Counter.awaitLive (before + 4) hangGuard.toUInt64) &&
+              return (← Ffi.Counter.awaitLive (before + 4) hangGuard) &&
                   (← Ffi.Counter.live) == before + 4
-        let freed ← Ffi.Counter.awaitLive before hangGuard.toUInt64
+        let freed ← Ffi.Counter.awaitLive before hangGuard
         return loaded && freed }]
 
 /-- A config with three jobs, and the `setup` that registers them beside
@@ -922,7 +922,7 @@ def recordedStage (context : Context) (directory : System.FilePath) :
     let some scene ← shown.last? | return false
     let some view := scene.views[0]? | return false
     let some found ← snapshots.find? view.snapshot | return false
-    Ffi.syntaxSettle found hangGuard.toUInt64
+    Ffi.syntaxSettle found hangGuard
   return ({ stage with
         collaborators :=
           { stage.collaborators with
@@ -1135,14 +1135,14 @@ def withdrawingHeld {α β σ : Type} (stage : Stage β σ) (hold : BaseIO Unit)
               unless ← clockReaches stage.clock (.waiting 1) do
                 throw <|
                     IO.userError
-                      s!"a hang: the job's sleep had not reached the clock within {hangGuard} ms"
+                      s!"a hang: the job's sleep had not reached the clock within {hangGuard.ms} ms"
               entering.resolve ()
               -- hang guard: the job's `done` as it parks, its wait recorded;
               -- only a hang reaches the bound, and the check then fails as a hang.
               unless (← Job.awaitWithin hangGuard parked.result?).isSome do
                 throw <|
                     IO.userError
-                      s!"a hang: the job had not given its unit back within {hangGuard} ms of its sleep's start"
+                      s!"a hang: the job had not given its unit back within {hangGuard.ms} ms of its sleep's start"
             staged.emit line
           services :=
             { staged.services with
@@ -1182,7 +1182,7 @@ def bracketChecks (context : Context) : List Check :=
         let entered ← IO.Promise.new
         let finished ←
           holdingUntil fun hold letGo => do
-              Headless.withHost (heldAtCommands stage hold entered) (guard := 0) (hung :=
+              Headless.withHost (heldAtCommands stage hold entered) (guard := heldAtOnce) (hung :=
                   fun line => do
                   said.modify (·.push line)
                   letGo) fun host => do
@@ -1213,8 +1213,8 @@ def bracketChecks (context : Context) : List Check :=
           holdingUntil fun hold letGo => do
               let thrown ←
                 try
-                  Headless.withHost (heldAtCommands stage hold entered) (guard := 0) (hung :=
-                      fun line => do
+                  Headless.withHost (heldAtCommands stage hold entered) (guard := heldAtOnce)
+                      (hung := fun line => do
                       said.modify (·.push line)
                       letGo) fun host => do
                       kept.set (some host.thread)
@@ -1331,9 +1331,9 @@ def bracketChecks (context : Context) : List Check :=
                 let thrown ←
                   try
                     withdrawingHeld stage hold withdrew order fun collaborators =>
-                        Headless.withHost collaborators (guard := 0) (grace := some 0) (hung :=
-                          fun line => said.modify (·.push line)) (abandoned := fun task =>
-                          left.set (some task)) fun host => do
+                        Headless.withHost collaborators (guard := heldAtOnce) (grace :=
+                          some heldAtOnce) (hung := fun line => said.modify (·.push line))
+                          (abandoned := fun task => left.set (some task)) fun host => do
                           host.send .reload
                           unless ← settled host do
                             throw (IO.userError "the reload did not settle")
@@ -1613,7 +1613,7 @@ def jobChecks (context : Context) : List Check :=
                   ⟨4, .indexed none⟩, ⟨5, .request .show⟩]
                 hangGuard (grace := some hangGuard) (waitHung := fun line =>
                 said.modify (·.push line))
-          let described := failure.map (Headless.Failure.describe hangGuard)
+          let described := failure.map (Headless.Failure.describe hangGuard.ms)
           let withdrawn ← stage.clock.withdrawn
           let said ← said.get
           saw
@@ -1714,7 +1714,7 @@ def countReaches (host : Headless.Host) (running : Nat) : IO Job.Activity.Seen :
     let some () ← Job.awaitWithin hangGuard (← host.activity.changedSince seen.epoch) |
       throw <|
           IO.userError
-            s!"a hang: the host's count stayed at {seen.running}, not {running}, for {hangGuard} ms"
+            s!"a hang: the host's count stayed at {seen.running}, not {running}, for {hangGuard.ms} ms"
   throw <| IO.userError "unreachable"
 
 /-- `collaborators`, with the editor thread held (`hold`) inside the first line
@@ -1735,7 +1735,7 @@ past `hangGuard`. -/
 def reached (entered : IO.Promise Unit) (what : String) : IO Unit := do
   let some _ ←
     Job.awaitWithin hangGuard
-        entered.result? | throw <| IO.userError s!"a hang: {what} had not been reached within {hangGuard} ms"
+        entered.result? | throw <| IO.userError s!"a hang: {what} had not been reached within {hangGuard.ms} ms"
 
 /-- A job that sleeps 10 ms on the clock, reads the clock, and ends: `once`
 makes a text of its reading. -/
@@ -2417,7 +2417,7 @@ wait 2" with
               let hung ← IO.mkRef (#[] : Array String)
               let failure ←
                 Headless.run { stage.collaborators with endWaits := fun _ => gate.open }
-                    #[⟨3, .request .reload⟩, ⟨7, .settle⟩, ⟨8, .request .show⟩] 200 (guard :=
+                    #[⟨3, .request .reload⟩, ⟨7, .settle⟩, ⟨8, .request .show⟩] heldShort (guard :=
                     hangGuard) (hung := fun line => hung.modify (·.push line)) (waitHung :=
                     fun line => said.modify (·.push line))
               -- The reload was held at the gate, which is why nothing settled,
@@ -2452,9 +2452,9 @@ wait 2" with
               let hung ← IO.mkRef (#[] : Array String)
               let failure ←
                 Headless.run { stage.collaborators with endWaits := fun _ => gate.open }
-                    #[⟨3, .request .reload⟩, ⟨7, .settleWithin 200⟩, ⟨8, .request .show⟩] 60000
-                    (guard := hangGuard) (hung := fun line => hung.modify (·.push line))
-                    (waitHung := fun line => said.modify (·.push line))
+                    #[⟨3, .request .reload⟩, ⟨7, .settleWithin 200⟩, ⟨8, .request .show⟩]
+                    (.on "the run's other waits" 60000) (guard := hangGuard) (hung := fun line =>
+                    hung.modify (·.push line)) (waitHung := fun line => said.modify (·.push line))
               let said ← said.get
               let hung ← hung.get
               saw
@@ -2519,8 +2519,8 @@ wait 2" with
           let said ← IO.mkRef (#[] : Array String)
           let failure ←
             hosted fun collaborators =>
-                Headless.run collaborators #[⟨1, .request (.spawn "load")⟩, ⟨2, wait⟩] 200 (guard :=
-                  hangGuard) (hung := fun line => hung.modify (·.push line)) (waitHung :=
+                Headless.run collaborators #[⟨1, .request (.spawn "load")⟩, ⟨2, wait⟩] heldShort
+                  (guard := hangGuard) (hung := fun line => hung.modify (·.push line)) (waitHung :=
                   fun line => said.modify (·.push line))
           return (failure, ← said.get)
         let (joined, joinSaid) ← ran .join
@@ -2531,7 +2531,7 @@ wait 2" with
               Headless.withHost collaborators (guard := hangGuard) (hung := fun line =>
                 hung.modify (·.push line)) fun host => do
                 host.send (.spawn "load")
-                host.join 200 (waitHung := fun line => hostSaid.modify (·.push line))
+                host.join heldShort (waitHung := fun line => hostSaid.modify (·.push line))
         let hostSaid ← hostSaid.get
         let hung ← hung.get
         saw
@@ -2561,7 +2561,7 @@ wait 2" with
               let hung ← IO.mkRef (#[] : Array String)
               let failure ←
                 Headless.run { stage.collaborators with endWaits := fun _ => gate.open }
-                    #[⟨1, .request .reload⟩] 200 (guard := hangGuard) (hung := fun line =>
+                    #[⟨1, .request .reload⟩] heldShort (guard := hangGuard) (hung := fun line =>
                     hung.modify (·.push line)) (waitHung := fun line => said.modify (·.push line))
               let said ← said.get
               let hung ← hung.get
@@ -2583,7 +2583,7 @@ wait 2" with
                 session.host.send .reload
                 let before ← IO.setStderr (IO.FS.Stream.ofBuffer caught)
                 try
-                  Window.awaitConfig session.host (some 200)
+                  Window.awaitConfig session.host (some heldShort)
                 finally
                   discard <| IO.setStderr before
               finally
@@ -2605,7 +2605,8 @@ wait 2" with
                 unless (← Job.awaitWithin hangGuard gate.arrived.result?).isSome do
                   return false
                 return (←
-                      session.host.await 200 (waitHung := fun line => said.modify (·.push line))) ==
+                      session.host.await heldShort (waitHung := fun line =>
+                          said.modify (·.push line))) ==
                     .reloading
               finally
                 gate.open
@@ -2630,7 +2631,7 @@ wait 2" with
               said.set #[]
               -- The editor thread is held for good inside the show: only the
               -- answer's guard ends the wait, said as a hang once.
-              let wait ← host.await 200 (waitHung := fun line => said.modify (·.push line))
+              let wait ← host.await heldShort (waitHung := fun line => said.modify (·.push line))
               let saidUnanswered ← said.get
               block.resolve ()
               let after ← host.await hangGuard
@@ -2954,7 +2955,7 @@ wait 2" with
               Headless.runAndDispose
                 (heldAtLine stage.collaborators (·.startsWith "commands:") hold)
                 #[⟨1, .request .show⟩, ⟨2, .advance 5⟩] hangGuard (grace := some hangGuard)
-                (guard := 0) (hung := fun _ => do
+                (guard := heldAtOnce) (hung := fun _ => do
                 printedAtStall.set (some ((← stage.output.get).any (·.startsWith "commands:")))
                 letGo) (waitHung := fun line => said.modify (·.push line)) (waitBlocked := blocked)
         let disposed ← stage.disposed.get
@@ -2983,8 +2984,8 @@ wait 2" with
           holdingUntil fun hold letGo =>
               Headless.runAndDispose
                 (heldAtLine stage.collaborators (·.startsWith "commands:") hold) script hangGuard
-                (grace := some hangGuard) (answer := 200) (guard := 0) (hung := fun _ => letGo)
-                (waitHung := fun line => said.modify (·.push line))
+                (grace := some hangGuard) (answer := heldShort) (guard := heldAtOnce) (hung :=
+                fun _ => letGo) (waitHung := fun line => said.modify (·.push line))
         let disposed ← stage.disposed.get
         let output ← stage.output.get
         let said ← said.get
@@ -3012,7 +3013,7 @@ wait 2" with
                 withdrawingHeld stage hold withdrew order fun collaborators => do
                   let (failure, _) ←
                     Headless.runAndDispose collaborators jobScript hangGuard (grace :=
-                        some hangGuard) (guard := 0) (hung := fun _ => letGo)
+                        some hangGuard) (guard := heldAtOnce) (hung := fun _ => letGo)
                   -- The loop has ended: nothing of the cancelled job is
                   -- still to come, its wake-up is on the editor queue, since
                   -- the loop's end waited for it (`withdrawingHeld`, which
@@ -3054,8 +3055,8 @@ wait 2" with
             holdingUntil fun hold letGo => do
                 let (failure, _) ←
                   withdrawingHeld stage hold withdrew order fun collaborators =>
-                      Headless.runAndDispose collaborators jobScript hangGuard (guard := 0)
-                        (grace := some 0) (hung := fun line => said.modify (·.push line))
+                      Headless.runAndDispose collaborators jobScript hangGuard (guard := heldAtOnce)
+                        (grace := some heldAtOnce) (hung := fun line => said.modify (·.push line))
                         (abandoned := fun task => left.set (some task))
                 letGo
                 return failure
@@ -3065,7 +3066,7 @@ wait 2" with
             discard <| IO.wait task
           let said ← said.get
           let withdrawn ← stage.clock.withdrawn
-          let described := Headless.Failure.describe Headless.settlePatience (.hung 0 0)
+          let described := Headless.Failure.describe Headless.settlePatience.ms (.hung 0 0)
           saw
               (failure == some (.hung 0 0) && said.size == 1 &&
                 said.all (·.startsWith "editor: a hang:") &&
@@ -3088,8 +3089,8 @@ wait 2" with
           let (failure, _) ←
             holdingUntil fun hold letGo =>
                 withdrawingHeld stage hold withdrew order fun collaborators =>
-                  Headless.runAndDispose collaborators jobScript hangGuard (guard := 0) (grace :=
-                    some hangGuard) (hung := fun line => do
+                  Headless.runAndDispose collaborators jobScript hangGuard (guard := heldAtOnce)
+                    (grace := some hangGuard) (hung := fun line => do
                     said.modify (·.push line)
                     letGo) (abandoned := fun task => left.set (some task))
           let abandoned := (← left.get).isSome
@@ -4270,7 +4271,7 @@ def holdFiles (completions : Job.Completions) : IO UInt64 := do
     discard <| Ffi.filesCancel id
     throw <|
         IO.userError
-          s!"a hang: the file service's worker had not reached the hold within {hangGuard} ms"
+          s!"a hang: the file service's worker had not reached the hold within {hangGuard.ms} ms"
   return id
 
 /-- The checks of the host's journal over the library's file service

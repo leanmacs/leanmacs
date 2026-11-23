@@ -45,11 +45,10 @@ namespace Editor.HandleContract
 
 open Editor.Job
 
-/-- hang guard: the task's end, a handle's or a flush's, which must come; only
-a hang reaches the bound, and the property then fails as a hang. How long a
-property waits for it, in milliseconds. -/
-def patience : Nat :=
-  10000
+/-- The guard of the task's end, a handle's or a flush's, which must come;
+only a hang reaches it, and the property then fails as a hang. -/
+def patience : HangGuard :=
+  .on "the task's end, a handle's or a flush's" 10000
 
 /-- The file port a handle is made over, as the contract runs it. -/
 structure HandleRig where
@@ -84,7 +83,7 @@ structure Property where
 def awaited {α : Type} (what : String) (task : Task α) : IO α := do
   let some value ←
     awaitWithin patience
-        task | throw <| IO.userError s!"a hang: {what} had not ended within {patience} ms"
+        task | throw <| IO.userError s!"a hang: {what} had not ended within {patience.ms} ms"
   return value
 
 /-- Flushes the rig's file service and waits for the flush: every request

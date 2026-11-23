@@ -1,3 +1,4 @@
+import Editor.Bound
 import Editor.Ffi.Snapshot
 import Editor.Ffi.Words
 
@@ -472,13 +473,23 @@ def syntaxKeptCaptures (snapshot : Snapshot) (kind : UInt8) (start stop : USize)
   | none =>
     throw (IO.userError s!"the library answered kept captures with the status {raw.status}")
 
-/-- For tests: waits up to `boundMs` milliseconds for the library to deliver
-a tree of `snapshot`'s revision, or a newer one, with layers found with the
-injections as they are now, and returns whether it did.
-It blocks in the library and does not sleep; `false` at once for a document
-that is not attached. -/
+/-- The guard of a snapshot's tree's delivery, for a test kit that waits on
+it (`syntaxSettle`) before it forwards a question; only a hang reaches it,
+and the question is then forwarded with the tree not yet delivered. -/
+def treeGuard : HangGuard :=
+  .on "the snapshot's tree" 5000
+
+/-- `syntaxSettle` as it crosses: its guard in milliseconds. -/
 @[extern "editor_glue_syntax_settle"]
-opaque syntaxSettle (snapshot : @& Snapshot) (boundMs : UInt64) : IO Bool
+private opaque syntaxSettleRaw (snapshot : @& Snapshot) (boundMs : UInt64) : IO Bool
+
+/-- For tests: waits, within the hang guard `guard`, for the library to
+deliver a tree of `snapshot`'s revision, or a newer one, with layers found
+with the injections as they are now, and returns whether it did. It blocks
+in the library and does not sleep; `false` at once for a document that is
+not attached. -/
+def syntaxSettle (snapshot : Snapshot) (guard : HangGuard) : IO Bool :=
+  syntaxSettleRaw snapshot guard.ms.toUInt64
 
 /-- Has the syntax service parse a text whole once it has gone
 `milliseconds` unchanged after an edit, from now on, for every text: an

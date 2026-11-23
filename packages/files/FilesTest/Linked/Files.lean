@@ -403,7 +403,7 @@ def fileChecks (context : HostContext) : List Check :=
                 -- buffer's text, which is text 0.
                 -- Waited on the free itself, then read once.
                 let freed :=
-                  (← Ffi.Snapshot.awaitLive (snapshots + 1) hangGuard.toUInt64) &&
+                  (← Ffi.Snapshot.awaitLive (snapshots + 1) hangGuard) &&
                     (← Ffi.Snapshot.live) == snapshots + 1
                 let wait ← host.await hangGuard
                 let stopped := wait == .settled || wait == .ended

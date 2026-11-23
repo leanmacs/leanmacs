@@ -1,3 +1,4 @@
+import Editor.Bound
 import Editor.Ffi.Words
 
 /-!
@@ -222,14 +223,17 @@ yes, 2 no such child. A readout for tests. -/
 @[extern "editor_glue_processes_held"]
 opaque processesHeld (child : UInt64) : IO UInt64
 
+/-- `processesAwaitHeld` as it crosses: its guard in milliseconds. -/
+@[extern "editor_glue_processes_await_held"]
+private opaque processesAwaitHeldRaw (child : UInt64) (boundMs : UInt64) : IO Bool
+
 /-- Waits until the readers of the child `child` are held at its bound, and
 says whether they were: false at once for a child the service does not hold
-as streaming, and once `boundMs` milliseconds have passed first. A readout
-for tests: it returns on the reader's park, never by a poll of
-`processesHeld`. `boundMs` is a hang guard: only readers that never park
-reach it. -/
-@[extern "editor_glue_processes_await_held"]
-opaque processesAwaitHeld (child : UInt64) (boundMs : UInt64) : IO Bool
+as streaming, and once `guard` has run out first. A readout for tests: it
+returns on the reader's park, never by a poll of `processesHeld`. Only
+readers that never park reach the guard. -/
+def processesAwaitHeld (child : UInt64) (guard : HangGuard) : IO Bool :=
+  processesAwaitHeldRaw child guard.ms.toUInt64
 
 /-- A process result as the glue builds it, in one call: the object fields
 first and the `UInt64` field after them, so the order here is the layout the

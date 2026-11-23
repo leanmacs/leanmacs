@@ -12,15 +12,15 @@ own.
 
 namespace FfiTest
 
-/-- hang guard: the event each wait of a check ends on (a pull's return, a
-task's end, a park, a rest, a free); only a hang reaches the bound, and the
-check then fails as a hang. In milliseconds: 120 000, what the config
+/-- The guard of the event each wait of a check ends on (a pull's return, a
+task's end, a park, a rest, a free); only a hang reaches it, and the check
+then fails as a hang. It is 120 000 ms, what the config
 tests' `hangGuard` was first measured as, far over ten times the slowest
 such event seen under the stress load. A check waits on the event itself (`Job.awaitWithin`, or a
 readout that returns on it, such as `Ffi.awaitWaiting`), never on time, so
 the bound decides no result. -/
-def patience : Nat :=
-  120000
+def patience : Editor.HangGuard :=
+  .on "the event the check's wait ends on" 120000
 
 /-- The pull of each queue that ran out its guard (`pull`), still parked in
 the library, if there is one. -/

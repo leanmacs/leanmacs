@@ -238,12 +238,12 @@ config file: with its header (`headed`). -/
 def writeConfig (directory : System.FilePath) (files : List (String × String)) : IO Unit :=
   writeFiles directory (files.map fun (path, text) => (path, headed text))
 
-/-- hang guard: the event each of a check's waits ends on (its host's
+/-- The guard of the event each of a check's waits ends on (its host's
 answer, a reload's or a job's end, idle, a promise a hold resolves); only a
-hang reaches the bound, and the check then fails as a hang.
+hang reaches it, and the check then fails as a hang.
 
 The guard of a check's waits for its host (`Headless.Host.waitWhile`), its
-brackets and its `Job.awaitWithin`s, in milliseconds: only a real hang
+brackets and its `Job.awaitWithin`s: only a real hang
 trips it, even under heavy load. A check that
 reaches it fails, reported as a hang, never as a timing result; a check
 that pins a bound of the headless mode on purpose holds a reload or the
@@ -266,8 +266,20 @@ is one version of a file…":
 
 Ten times 25 080 ms, rounded up, is 260 000 ms. It was 120 000 ms, then
 130 000 ms, while only the first two had been measured. -/
-def hangGuard : Nat :=
-  260000
+def hangGuard : HangGuard :=
+  .on "the event the check's wait ends on" 260000
+
+/-- A guard of 0 ms run out on purpose: what the check holds for good (a
+reload, the editor thread, the loop's end), so the hang is said at once and
+is what lets it go. -/
+def heldAtOnce : HangGuard :=
+  .held "what the check holds for good, whose hang is said at once" 0
+
+/-- A short guard run out on purpose: a check that pins a bound of the
+headless mode holds a reload or the editor thread for good, and its wait
+runs out after 200 ms. -/
+def heldShort : HangGuard :=
+  .held "the reload or the editor thread the check holds for good" 200
 
 /-- Waits until the fake clock `clock` has reached `arrival`
 (`Job.FakeClock.arrivedAt`): on the step that makes it, on whichever thread
@@ -461,7 +473,7 @@ def Stage.new {β σ : Type} (context : HostContext) (elaborator : Config.Elabor
               unless (← Job.awaitWithin hangGuard job).isSome do
                 throw <|
                     IO.userError
-                      s!"a hang: a job the loop's end cancelled had not ended within {hangGuard} ms"
+                      s!"a hang: a job the loop's end cancelled had not ended within {hangGuard.ms} ms"
           loopStarted := context.realLoops.modify (· + 1)
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
@@ -490,9 +502,9 @@ structure Driven where
   hang is said, and what is called before a block. What each kind waits
   for is the core's, never this record's. -/
   waitWhile :
-    Nat →
+    HangGuard →
       Headless.Wait.Kind →
-      Nat → Option Nat → (String → IO Unit) → (String → IO Unit) → IO Headless.Wait
+      HangGuard → Option Nat → (String → IO Unit) → (String → IO Unit) → IO Headless.Wait
   /-- The host's activity count and its epoch, read in one step. -/
   activitySeen : BaseIO Job.Activity.Seen
   /-- How far the host's loop has got, as it published after its last
@@ -548,43 +560,38 @@ def resize (driven : Driven) (width height : Nat) : IO Unit :=
 
 /-- `Headless.Host.await` on the driven host: a `settle`'s wait
 (`Headless.Wait.Kind.settle`).
-hang guard: `waitGuard`, the caller's, on the event the wait ends on. -/
-def await (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard)
+ -/
+def await (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
-  -- hang guard: the caller's `waitGuard`; only a hang reaches it.
   driven.waitWhile waitGuard .settle answer line waitHung waitBlocked
 
 /-- `Headless.Host.join` on the driven host: a `join`'s wait
 (`Headless.Wait.Kind.join`).
-hang guard: `waitGuard`, the caller's, on the event the wait ends on. -/
-def join (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard) (line : Option Nat := none)
-    (waitHung : String → IO Unit := IO.eprintln)
+ -/
+def join (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
+    (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
-  -- hang guard: the caller's `waitGuard`; only a hang reaches it.
   driven.waitWhile waitGuard .join answer line waitHung waitBlocked
 
 /-- `Headless.Host.settle` on the driven host.
-hang guard: `waitGuard`, the caller's, on the event the wait ends on. -/
-def settle (driven : Driven) (waitGuard : Nat) (answer : Nat := waitGuard)
+ -/
+def settle (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
-  -- hang guard: the caller's `waitGuard`; only a hang reaches it.
   return (← driven.await waitGuard answer line waitHung waitBlocked) == .settled
 
 /-- A wait only until the host has handled everything sent so far
 (`Headless.Wait.Kind.handled`), publishing nothing.
-hang guard: `waitGuard`, the caller's, on the event the wait ends on. -/
-def handled (driven : Driven) (waitGuard : Nat) : IO Headless.Wait :=
-  -- hang guard: the caller's `waitGuard`; only a hang reaches it.
+ -/
+def handled (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
   driven.waitWhile waitGuard .handled waitGuard none IO.eprintln fun _ => pure ()
 
 /-- A `join`'s wait that publishes nothing (its marker is a probe): what
 replaces a poll for a state the host reaches by itself, such as a job in
 its sleep, so the scene count stays the poll's.
-hang guard: `waitGuard`, the caller's, on the event the wait ends on. -/
-def idle (driven : Driven) (waitGuard : Nat) : IO Headless.Wait :=
-  -- hang guard: the caller's `waitGuard`; only a hang reaches it.
+ -/
+def idle (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
   driven.waitWhile waitGuard { Headless.Wait.Kind.join with marker := false } waitGuard none
     IO.eprintln fun _ => pure ()
 
@@ -593,9 +600,8 @@ signal": everything sent handled, nothing that can end by itself running,
 no fake-clock wait due), publishing nothing: what it waits for always
 holds, so it answers only at idle, `settled`. What replaces a poll for a
 state work reaches by itself after the jobs table has let it go, such as a
-cancelled job's end. hang guard: `waitGuard`, the caller's, on idle. -/
-def quiet (driven : Driven) (waitGuard : Nat) : IO Headless.Wait :=
-  -- hang guard: the caller's `waitGuard`; only a hang reaches it.
+cancelled job's end. -/
+def quiet (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
   driven.waitWhile waitGuard
     { what := "idle", busy := fun _ => pure true, still := some .settled, hung := .busy
       marker := false } waitGuard none IO.eprintln fun _ => pure ()
@@ -700,7 +706,7 @@ def ask (session : Session) (requests : List Headless.Request) : IO Unit := do
   for request in requests do
     session.drive.send request
   unless ← settled session.drive session.waitHung session.waitBlocked do
-    throw (IO.userError s!"a hang: the editor thread had not settled within {hangGuard} ms")
+    throw (IO.userError s!"a hang: the editor thread had not settled within {hangGuard.ms} ms")
 
 /-- Asks the host to do `request`, after everything asked before, and does
 not wait. -/

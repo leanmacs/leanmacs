@@ -1,3 +1,4 @@
+import Editor.Bound
 import Editor.Ffi.Events
 import Editor.Ffi.Words
 import Editor.Menu
@@ -139,16 +140,19 @@ and `windowRun` returns. -/
 @[extern "editor_glue_window_close"]
 opaque windowClose (platform : Platform) : IO Unit
 
+/-- `windowAwaitParked` as it crosses: its guard in milliseconds. -/
+@[extern "editor_glue_window_await_parked"]
+private opaque windowAwaitParkedRaw (platform : Platform) (boundMs : UInt64) : IO Bool
+
 /-- Waits until the scripted window of `platform` is parked, its run waiting
 for its close with nothing to report and no close asked, and says whether
 it was: false at once for the real platform and for a scripted one that
-cannot open, and once `boundMs` milliseconds have passed first. With no run
-yet it waits for the run to start and park, so a test can start `windowRun`
-on a task and then wait. A readout for tests: it returns on the park, never
-by a window of time. `boundMs` is a hang guard: only a run that never parks
-reaches it. -/
-@[extern "editor_glue_window_await_parked"]
-opaque windowAwaitParked (platform : Platform) (boundMs : UInt64) : IO Bool
+cannot open, and once `guard` has run out first. With no run yet it waits
+for the run to start and park, so a test can start `windowRun` on a task and
+then wait. A readout for tests: it returns on the park, never by a window of
+time. Only a run that never parks reaches the guard. -/
+def windowAwaitParked (platform : Platform) (guard : HangGuard) : IO Bool :=
+  windowAwaitParkedRaw platform guard.ms.toUInt64
 
 /-- What Lean asks of the window (`editor_ffi_window_request`, its tags 0, 1,
 2, 4, 6 and 7: `WindowRequest.tag`). The title is not one: it is a field of

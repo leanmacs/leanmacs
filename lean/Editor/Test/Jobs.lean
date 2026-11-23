@@ -55,13 +55,12 @@ def stubborn : JobM Unit := do
     catch _ =>
       pure ()
 
-/-- hang guard: an event a check waits for that must come (a job's end, a
+/-- The guard of an event a check waits for that must come (a job's end, a
 fake's arrival, the rig's idle, a start reaching a service); only a hang
-reaches the bound, and the check then fails as a hang. In milliseconds: ten
-times the slowest such event seen under the stress load and more, as
+reaches it, and the check then fails as a hang. Ten times the slowest such event seen under the stress load and more, as
 `Editor.Test.Linked.hangGuard` is set. -/
-def patience : Nat :=
-  120000
+def patience : HangGuard :=
+  .on "the event the check waits for" 120000
 
 /-- `task`'s value, waited for on the task itself, an event that must come:
 `what` names it. The bound is `patience`, a hang guard: past it this throws
@@ -69,7 +68,7 @@ a hang, and the check fails as one. -/
 def awaitEvent {α : Type} (what : String) (task : Task α) : IO α := do
   let some value ←
     Job.awaitWithin patience
-        task | throw <| IO.userError s!"a hang: {what} had not come within {patience} ms"
+        task | throw <| IO.userError s!"a hang: {what} had not come within {patience.ms} ms"
   return value
 
 /-- `start`, a port's start of a request, decorated to resolve the promise it

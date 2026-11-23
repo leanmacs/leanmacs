@@ -21,11 +21,10 @@ namespace ContractTest
 
 open Editor
 
-/-- hang guard: the reply a check here holds the task of, which must come;
-only a hang reaches the bound, and the check then fails as a hang. How long
-it waits for it, in milliseconds. -/
-def linkedPatience : Nat :=
-  10000
+/-- The guard of the reply a check here holds the task of, which must come;
+only a hang reaches it, and the check then fails as a hang. -/
+def linkedPatience : HangGuard :=
+  .on "the reply the check holds the task of" 10000
 
 /-- `true` when `holds`; otherwise throws `seen`, so the check's failure
 says what it saw. -/
@@ -44,7 +43,8 @@ def linkedServicesChecks (services : Job.Services) : List Check :=
         let said ← IO.mkRef (#[] : Array String)
         let kept ← IO.mkRef (none : Option (Task (Except FileError Unit) × System.FilePath))
         try
-          Test.Linked.withFiles services (guard := 0) (hung := fun line => do
+          Test.Linked.withFiles services (guard :=
+              .held "the flush behind the hold, which the hang lets go" 0) (hung := fun line => do
               said.modify (·.push line)
               hold.release) fun directory => do
               let appended ← services.fileWorked (.append (directory / "log") "y".toUTF8)
@@ -64,7 +64,8 @@ def linkedServicesChecks (services : Job.Services) : List Check :=
         let said ← IO.mkRef (#[] : Array String)
         let kept ← IO.mkRef (none : Option (Task (Except FileError Unit) × System.FilePath))
         let bracketed : IO Unit :=
-          Test.Linked.withFiles services (guard := 0) (hung := fun line => do
+          Test.Linked.withFiles services (guard :=
+            .held "the flush behind the hold, which the hang lets go" 0) (hung := fun line => do
             said.modify (·.push line)
             hold.release) fun directory => do
             let appended ← services.fileWorked (.append (directory / "log") "y".toUTF8)

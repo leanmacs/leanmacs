@@ -25,7 +25,7 @@ def parsedSnapshot (text grammar : String) :
   let snapshot ← document.snapshot
   unless (← Editor.Ffi.syntaxAttach snapshot grammar) matches .ok () do
     return none
-  unless ← Editor.Ffi.syntaxSettle snapshot 5000 do
+  unless ← Editor.Ffi.syntaxSettle snapshot patience do
     return none
   return some (document, snapshot)
 
@@ -111,7 +111,7 @@ def syntaxChecks (_ : Unit) : List Check :=
         -- the edit is delivered, the earlier snapshot has none.
         unless (← document.replace 0 0 "fn zero() {}\n") == .done do
           return false
-        unless ← Editor.Ffi.syntaxSettle (← document.snapshot) 5000 do
+        unless ← Editor.Ffi.syntaxSettle (← document.snapshot) patience do
           return false
         let notParsed ← Editor.Ffi.syntaxCaptures snapshot rust 0 2
         -- The document is read here, so it is alive until now: a document
@@ -209,7 +209,7 @@ def syntaxChecks (_ : Unit) : List Check :=
             pure true
         unless (← document.replace 0 0 "fn zero() {}\n") == .done do
           return false
-        unless ← Editor.Ffi.syntaxSettle (← document.snapshot) 5000 do
+        unless ← Editor.Ffi.syntaxSettle (← document.snapshot) patience do
           return false
         let notParsed ← Editor.Ffi.syntaxKeptCaptures snapshot 2 0 12
         let read ← document.read

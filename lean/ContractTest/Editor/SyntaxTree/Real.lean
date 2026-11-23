@@ -354,7 +354,7 @@ def syntaxTreeChecks : List Check :=
         let (.ok (snapshot, scroll), texts) ←
           edited.runReal texts shown.handle (syntaxTree := syntaxTree) | return false
         let some found ← table.find? snapshot | return false
-        unless ← Ffi.syntaxSettle found 5000 do
+        unless ← Ffi.syntaxSettle found Ffi.treeGuard do
           return false
         let reported ← pulledParsed
         let scene : Scene :=
@@ -391,7 +391,7 @@ def syntaxTreeChecks : List Check :=
         let (.ok (snapshot, scroll), texts) ←
           entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
         let some found ← table.find? snapshot | return false
-        unless ← Ffi.syntaxSettle found 5000 do
+        unless ← Ffi.syntaxSettle found Ffi.treeGuard do
           return false
         discard drainedParsed
         let scene : Scene :=
@@ -432,7 +432,7 @@ def syntaxTreeChecks : List Check :=
         let (.ok (snapshot, scroll), texts) ←
           entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
         let some found ← table.find? snapshot | return false
-        unless ← Ffi.syntaxSettle found 5000 do
+        unless ← Ffi.syntaxSettle found Ffi.treeGuard do
           return false
         discard drainedParsed
         let scene : Scene :=
@@ -472,7 +472,7 @@ def syntaxTreeChecks : List Check :=
         let (.ok (snapshot, scroll), texts) ←
           entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
         let some found ← table.find? snapshot | return false
-        unless ← Ffi.syntaxSettle found 5000 do
+        unless ← Ffi.syntaxSettle found Ffi.treeGuard do
           return false
         discard drainedParsed
         let scene : Scene :=
@@ -509,7 +509,7 @@ def syntaxTreeChecks : List Check :=
         let some found ← table.find? snapshot | return false
         -- The settle waits for the layers the injections find, which the
         -- library delivers at the same revision.
-        unless ← Ffi.syntaxSettle found 5000 do
+        unless ← Ffi.syntaxSettle found Ffi.treeGuard do
           return false
         let reported ← drainedParsed
         let scene : Scene :=
@@ -551,7 +551,7 @@ def syntaxTreeChecks : List Check :=
         let (.ok (snapshot, scroll), texts) ←
           entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
         let some found ← table.find? snapshot | return false
-        unless ← Ffi.syntaxSettle found 5000 do
+        unless ← Ffi.syntaxSettle found Ffi.treeGuard do
           return false
         discard drainedParsed
         let scene : Scene :=

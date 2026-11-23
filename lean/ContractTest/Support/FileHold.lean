@@ -20,11 +20,11 @@ namespace ContractTest
 
 open Editor
 
-/-- hang guard: the worker's arrival at the hold, behind the requests handed
-to it before; only a hang reaches the bound, and the check then fails as a
-hang. How long a hold waits for it, in milliseconds. -/
-def holdPatience : Nat :=
-  10000
+/-- The guard of the worker's arrival at the hold, behind the requests
+handed to it before; only a hang reaches it, and the check then fails as a
+hang. -/
+def holdPatience : HangGuard :=
+  .on "the worker's arrival at the hold" 10000
 
 /-- The file service's worker, held. -/
 structure FileHold where
@@ -48,7 +48,7 @@ def FileHold.hold (completions : Job.Completions) : IO FileHold := do
     discard <| Ffi.filesCancel id
     throw <|
         IO.userError
-          s!"a hang: the file service's worker had not reached the hold within {holdPatience} ms"
+          s!"a hang: the file service's worker had not reached the hold within {holdPatience.ms} ms"
   return hold
 
 /-- Lets the worker go. Idempotent: only the first call cancels the hold. -/

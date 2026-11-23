@@ -688,7 +688,7 @@ def fileRunnerChecks : List Check :=
         let some (id, _) := (← files.started).back? | return false
         let early ← IO.hasFinished task
         rig.services.completions.finish id .cancelled
-        let some reply ← Job.awaitWithin 10000 task | return false
+        let some reply ← Job.awaitWithin (.on "the cancelled request's reply" 10000) task | return false
         files.letGo
         let withdrawn :=
           match (reply : Except FileError Unit),

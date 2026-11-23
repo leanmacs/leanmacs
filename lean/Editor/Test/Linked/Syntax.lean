@@ -69,11 +69,11 @@ def SyntaxText.run {α : Type} (held : SyntaxText) (program : TextId → EditorM
       | _ => none
     if let some snapshot := asked then
       if let some found← held.table.find? snapshot then
-        discard (Ffi.syntaxSettle found 5000)
+        discard (Ffi.syntaxSettle found Ffi.treeGuard)
     let reply ← real.handle request
     if let .attach snapshot _ := request then
       if let some found← held.table.find? snapshot then
-        discard (Ffi.syntaxSettle found 5000)
+        discard (Ffi.syntaxSettle found Ffi.treeGuard)
     return reply
   let recorder ← DisplayRecorder.new { advance := 1, lineHeight := 1 } held.table.reader
   let (answer, texts) ←

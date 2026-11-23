@@ -61,7 +61,7 @@ def playOnLibrary (completions : Job.Completions) (case : FileCases.Case) : IO (
       -- hang guard: the job's end, on its outcome.
       if (← Job.awaitWithin patience handle.outcome.result?).isNone then
         handle.cancel
-        return some s!"a hang: its job had not ended within {patience} ms"
+        return some s!"a hang: its job had not ended within {patience.ms} ms"
       match ← handle.outcome? with
       | some (.finished command) =>
         let (ran, texts) ← Job.finishWith rig.held handle command texts display
@@ -105,8 +105,8 @@ def caseFailures (completions : Job.Completions) : IO (List String) := do
   -- counts are read once then.
   let flushed ← Editor.Test.Linked.filesFlushed completions
   let requests ← Ffi.filesPending
-  let documentsFreed ← Ffi.Document.awaitLive before.1 patience.toUInt64
-  let snapshotsFreed ← Ffi.Snapshot.awaitLive before.2.1 patience.toUInt64
+  let documentsFreed ← Ffi.Document.awaitLive before.1 patience
+  let snapshotsFreed ← Ffi.Snapshot.awaitLive before.2.1 patience
   let freed :=
     documentsFreed && snapshotsFreed &&
       (← Ffi.Document.live, ← Ffi.Snapshot.live) == (before.1, before.2.1)

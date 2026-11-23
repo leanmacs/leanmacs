@@ -55,11 +55,10 @@ def worked (target : Flushed) : IO Unit := do
   let mut said := false
   repeat
     let task ← pullTask .completion
-    -- hang guard: the pull's return with the next completion; only a hang
-    -- reaches the bound, which is then said once and waited on.
+    -- Only a hang reaches the guard, which is then said once and waited on.
     if !said && (← Editor.Job.awaitWithin patience task).isNone then
       IO.eprintln
-          s!"ffi-test: a hang: the {target.name} service had not completed a directory's flush after {patience} ms; waiting for it"
+          s!"ffi-test: a hang: the {target.name} service had not completed a directory's flush after {patience.ms} ms; waiting for it"
       said := true
     let event ← IO.ofExcept (← IO.wait task)
     if event.kind == .quit then

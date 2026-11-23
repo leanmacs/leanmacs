@@ -856,8 +856,8 @@ structure Render where
   resting : IO (Option Bool)
   /-- Waits until the loop is at rest, on the step that records the rest,
   never by a poll of `resting`: `some true` once it is, `some false` when
-  the bound, in milliseconds, passed first, a hang guard. -/
-  awaitRest : Nat → IO (Option Bool)
+  the hang guard ran out first. -/
+  awaitRest : HangGuard → IO (Option Bool)
   /-- The journal's entries after a serial, oldest first. -/
   journal : UInt64 → IO (Option (Array Ffi.JournalEntry))
   /-- The loop's counters. -/
@@ -866,7 +866,7 @@ structure Render where
 /-- The library's render session: the one `editor headless --render`
 starts. -/
 def Render.library : Render :=
-  { resting := Ffi.renderResting, awaitRest := fun bound => Ffi.renderAwaitRest bound.toUInt64
+  { resting := Ffi.renderResting, awaitRest := Ffi.renderAwaitRest
     journal := Ffi.renderJournal, counters := Ffi.renderCounters }
 
 /-- The cells the headless host's display lays text out in: 8 pixels across
@@ -2719,8 +2719,8 @@ private def start {β σ : Type} {scheme : InputScheme} (collaborators : Collabo
 /-- What a driver's wait says, through its `waitHung`, when it reaches its
 guard: a hang, once, never a result. `what` is the wait (`settle`, `join`,
 `advance`, or `answer` for the editor thread's answer within one), `line`
-the script's line, if it has one, and `guard` the milliseconds that ran
-out. -/
+the script's line, if it has one, and `guard` the milliseconds of the guard
+that ran out. -/
 def waitHangLine (what : String) (line : Option Nat) (guard : Nat) : String :=
   let place :=
     match line with
@@ -2728,10 +2728,9 @@ def waitHangLine (what : String) (line : Option Nat) (guard : Nat) : String :=
     | none => ""
   s!"editor: a hang: the {what}{place} had not ended within {guard} ms"
 
-/-- Whether one of `tasks` has ended within `guard` milliseconds, waited for
-on the tasks themselves: a guard against a hang, never a result
-(`Job.awaitWithin`). -/
-def awaitAnyWithin (guard : Nat) (tasks : List (Task Unit)) : IO Bool := do
+/-- Whether one of `tasks` has ended within `guard`, waited for on the tasks
+themselves: a guard against a hang, never a result (`Job.awaitWithin`). -/
+def awaitAnyWithin (guard : HangGuard) (tasks : List (Task Unit)) : IO Bool := do
   for task in tasks do
     if ← IO.hasFinished task then
       return true
@@ -2824,14 +2823,15 @@ def indexed : Wait.Kind where
 /-- The verdict of a round of a wait of this kind (`Round.judge`), read once
 the driver has the loop up to date: whether it is still busy of `progress`,
 the host's `activity` now against `before`, the reading the round began
-with, whether a wait of `clock` is due, and what is left before `deadline`.
-At the hang it says it once, through `waitHung` (`waitHangLine`, naming
-the wait and its script's `line`; `waitGuard` the milliseconds that ran
-out). Both drivers' waits call it, so their rounds are judged as one. -/
+with, whether a wait of `clock` is due, and what is left before `deadline`,
+the deadline of the wait's guard `waitGuard`. At the hang it says it once,
+through `waitHung` (`waitHangLine`, naming the wait and its script's `line`
+and the guard that ran out). Both drivers' waits call it, so their rounds
+are judged as one. -/
 def judge (kind : Wait.Kind) (progress : Progress) (activity : Job.Activity)
-    -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-    (clock : Option Job.FakeClock) (before : Job.Activity.Seen) (deadline waitGuard : Nat)
-    (line : Option Nat) (waitHung : String → IO Unit) : IO Round.Verdict := do
+    (clock : Option Job.FakeClock) (before : Job.Activity.Seen) (deadline : HangGuard.Deadline)
+    (waitGuard : HangGuard) (line : Option Nat) (waitHung : String → IO Unit) : IO Round.Verdict :=
+  do
   let busy ← kind.busy progress
   let now ← activity.seen
   let due ←
@@ -2842,11 +2842,10 @@ def judge (kind : Wait.Kind) (progress : Progress) (activity : Job.Activity)
       pure false
   let verdict :=
     Round.judge
-      { busy, tracked := activity.tracked, before, now, due
-        -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-        remaining := deadline - (← IO.monoMsNow), still := kind.still, hung := kind.hung }
+      { busy, tracked := activity.tracked, before, now, due, remaining := (← deadline.rest).ms
+        still := kind.still, hung := kind.hung }
   if let .hang _ := verdict then
-    waitHung (waitHangLine kind.what line waitGuard)
+    waitHung (waitHangLine kind.what line waitGuard.ms)
   return verdict
 
 end Wait.Kind
@@ -2918,6 +2917,12 @@ def resize (_ : Host) (width height : Nat) : IO Unit := do
   unless ← Event.post (.resize { width, height, scale := 1.0 }) do
     throw (IO.userError "the editor queue refused a resize: it has been quit")
 
+/-- The poll of a wait on a host that keeps no count (the window mode's):
+what the wait is for is looked at again each millisecond as the progress
+changes, until the guard (follow-up window-mode-waits-poll-progress). -/
+def untrackedPoll : RealTime :=
+  .under "the poll of a wait on a host that keeps no count" 1
+
 /-- Waits until the editor thread has handled everything sent so far and
 what `kind` waits for no longer holds of its progress (`Wait.Kind`), and
 says what the wait came to. Every wait in it is on an event, and each is
@@ -2942,8 +2947,8 @@ and with `"running work"` before a block on work still running. It is the
 event a test lets a held step go on, in place of a guard; its default does
 nothing.
 
-The editor thread's answer is guarded by `answer` milliseconds, each round,
-and the whole wait by `waitGuard`. At either guard the wait says the hang
+The editor thread's answer is guarded by `answer`, each round, and the
+whole wait by `waitGuard`. At either guard the wait says the hang
 once, through `waitHung` (`waitHangLine`, naming the kind's `what` and its
 script's `line`), and ends: `unanswered` at the answer's, and the kind's
 `hung` at the wait's (`reloading` for a `settle`, `busy` for a `join` or an
@@ -2958,14 +2963,13 @@ A loop that has ended, or ends while the wait runs, is answered `ended` as
 soon as it is seen: its task has finished, so nothing it was waited for
 will happen. The loop's last progress is not read then: the loop does not
 publish it once it has ended, so it may still say a job is running. -/
--- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-def waitWhile (host : Host) (waitGuard : Nat) (kind : Wait.Kind) (answer : Nat := waitGuard)
-    (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
+def waitWhile (host : Host) (waitGuard : HangGuard) (kind : Wait.Kind)
+    (answer : HangGuard := waitGuard) (line : Option Nat := none)
+    (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait := do
   if ← IO.hasFinished host.thread then
     return .ended
-  -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-  let deadline := (← IO.monoMsNow) + waitGuard
+  let deadline ← waitGuard.deadline
   let thread := host.thread.map (sync := true) fun _ => ()
   let mut first := kind.marker
   repeat
@@ -2985,11 +2989,10 @@ def waitWhile (host : Host) (waitGuard : Nat) (kind : Wait.Kind) (answer : Nat :
     if ← IO.hasFinished host.thread then
       return .ended
     unless ← answered.isResolved do
-      waitHung (waitHangLine s!"answer to the {kind.what}" line answer)
+      waitHung (waitHangLine s!"answer to the {kind.what}" line answer.ms)
       return .unanswered
     match
       ←
-        -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
         kind.judge (← host.progress.get) host.activity host.clock before deadline waitGuard line
             waitHung with
     | .answer wait | .hang wait =>
@@ -2999,128 +3002,115 @@ def waitWhile (host : Host) (waitGuard : Nat) (kind : Wait.Kind) (answer : Nat :
     | .block since =>
       waitBlocked "running work"
       if host.activity.tracked then
-        discard <|
-            -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-            awaitAnyWithin (deadline - (← IO.monoMsNow))
-              [← host.activity.changedSince since, thread]
+        discard <| awaitAnyWithin (← deadline.rest) [← host.activity.changedSince since, thread]
       else
         -- No count to wait on: what the wait is for is looked at again,
-        -- every millisecond, as the progress changes, until the guard.
-        -- hang guard: what the wait is for ending, re-read from the
-        -- progress; only a hang reaches the guard. A poll, because the
-        -- window mode keeps no count (follow-up
+        -- every millisecond, as the progress changes, until the guard. A
+        -- poll, because the window mode keeps no count (follow-up
         -- window-mode-waits-poll-progress).
         repeat
           if (← IO.hasFinished host.thread) || !(← kind.busy (← host.progress.get)) then
             break
-          -- hang guard: as above (window-mode-waits-poll-progress).
-          if (← IO.monoMsNow) >= deadline then
+          if ← deadline.expired then
             break
-          -- hang guard: as above (window-mode-waits-poll-progress).
-          IO.sleep 1
+          RealTime.sleep untrackedPoll
   return .ended
 
 /-- A `settle`'s wait (`waitWhile` of `Wait.Kind.settle`): until the editor
 thread has handled everything sent so far, no reload is running and no
 restore is in flight; `settled` at the reload's end, or `reloading`, a
-hang, at its guard of `waitGuard` milliseconds. The editor thread's answer
-is guarded by `answer`. -/
--- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-def await (host : Host) (waitGuard : Nat) (answer : Nat := waitGuard) (line : Option Nat := none)
-    (waitHung : String → IO Unit := IO.eprintln)
+hang, at its guard `waitGuard`. The editor thread's answer is guarded by
+`answer`. -/
+def await (host : Host) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
+    (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
-  -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
   host.waitWhile waitGuard .settle answer line waitHung waitBlocked
 
 /-- A `join`'s wait (`waitWhile` of `Wait.Kind.join`): until the editor
 thread has handled everything sent so far and no job is running; `settled`,
 `working` once the host is idle with a job still running, or `busy`, a
-hang, at its guard of `waitGuard` milliseconds. -/
--- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-def join (host : Host) (waitGuard : Nat) (answer : Nat := waitGuard) (line : Option Nat := none)
-    (waitHung : String → IO Unit := IO.eprintln)
+hang, at its guard `waitGuard`. -/
+def join (host : Host) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
+    (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
-  -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
   host.waitWhile waitGuard .join answer line waitHung waitBlocked
 
 /-- Waits until the editor thread has handled everything sent so far and no
 reload is running (`await`); `false` if it did not, a hang said at its
-guard of `waitGuard` milliseconds, or the editor thread's answer's of
-`answer`. -/
--- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-def settle (host : Host) (waitGuard : Nat) (answer : Nat := waitGuard) (line : Option Nat := none)
-    (waitHung : String → IO Unit := IO.eprintln)
+guard `waitGuard`, or the editor thread's answer's, `answer`. -/
+def settle (host : Host) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
+    (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
-  -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
   return (← host.await waitGuard answer line waitHung waitBlocked) == .settled
 
 /-- Ends the loop at once, whether a reload is running or not; `false` if it
-has not ended after `patience` milliseconds, waited on for the loop's task
-itself (`Job.awaitWithin`): a hang guard, never a result. Throws the error
+has not ended within `guard`, waited on for the loop's task itself
+(`Job.awaitWithin`): a hang guard, never a result. Throws the error
 the loop ended with, if it ended with one. Inside a host's bracket
 (`withHost`), which ends the loop whatever this answered. -/
-def halt (host : Host) (patience : Nat) : IO Bool := do
+def halt (host : Host) (guard : HangGuard) : IO Bool := do
   unless ← IO.hasFinished host.thread do
     host.post .stop
-  let some ended ← Job.awaitWithin patience host.thread | return false
+  let some ended ← Job.awaitWithin guard host.thread | return false
   IO.ofExcept ended
   return true
 
 /-- Ends the loop once no reload is running; `false` if it did not settle or
-did not end, each within `patience` milliseconds. A loop that had ended by
+did not end, each within `guard`. A loop that had ended by
 itself, because a command quit the editor, has nothing to settle. Inside a
 host's bracket (`withHost`), which ends the loop whatever this answered. -/
-def stop (host : Host) (patience : Nat) : IO Bool := do
-  let wait ← host.await patience
-  let ended ← host.halt patience
+def stop (host : Host) (guard : HangGuard) : IO Bool := do
+  let wait ← host.await guard
+  let ended ← host.halt guard
   return (wait == .settled || wait == .ended) && ended
 
 end Host
 
-/-- hang guard: the journal's drain, a flush of the file service; only a
+/-- The guard of the journal's drain, a flush of the file service; only a
 stuck file system reaches it, and the end then quits the queues without it.
-How long a host's end waits for the drain before it quits the queues, in
-milliseconds: a guard, never a result. -/
-def drainPatience : Nat :=
-  2000
+How long a host's end waits for the drain before it quits the queues: a
+guard, never a result. -/
+def drainPatience : HangGuard :=
+  .on "the journal's drain" 2000
 
-/-- hang guard: the event each `settle`, `join`, `advance`, `indexed`,
+/-- The guard of the event each `settle`, `join`, `advance`, `indexed`,
 `journalled` and `restarted` ends on, and the loop's stop; only a hang
 reaches it, and the run then fails as a hang (`Host.waitWhile`). The
-headless mode's guard of each, in milliseconds. -/
-def settlePatience : Nat :=
-  30000
+headless mode's guard of each. -/
+def settlePatience : HangGuard :=
+  .on "the event the script's wait ends on" 30000
 
 /-- What a host's bracket says when its loop has not ended `guard`
 milliseconds after it was asked to stop: a hang, once, never a result. -/
 def hangLine (guard : Nat) : String :=
   s!"editor: a hang: the editor loop had not ended {guard} ms after it was asked to stop; waiting for it"
 
-/-- hang guard: the loop's end, after its hang was said; only a loop that
+/-- The guard of the loop's end, after its hang was said; only a loop that
 never ends reaches it, and the run then gives up as a hang. How long the
 headless mode waits, after it has said a hang, for its loop to end before
-it gives up and exits 1, in milliseconds: a guard so that CI and fixtures
-never hang, never a result. -/
-def hangGrace : Nat :=
-  5000
+it gives up and exits 1: a guard so that CI and fixtures never hang, never
+a result. -/
+def hangGrace : HangGuard :=
+  .on "the loop's end, after its hang was said" 5000
 
 /-- Asks `host`'s loop to stop, unless it has ended, and waits for its task;
-says what the loop ended with. A loop not ended `guard` milliseconds after
-it was asked is said through `hung` as a hang (`hangLine`), once, and still
-waited for: with no deadline when `grace` is `none`, and otherwise for at
-most `grace` milliseconds more, after which the loop's task is handed to
+says what the loop ended with. A loop not ended within `guard` after it was
+asked is said through `hung` as a hang (`hangLine`), once, and still waited
+for: with no deadline when `grace` is `none`, and otherwise within `grace`
+more, after which the loop's task is handed to
 `abandoned` and this answers `none`, the loop still running. The stop is
 posted only when the queue takes it: a queue already quit (`Ffi.quit`) ends
 the loop with its quit event. -/
-private def endLoop (host : Host) (guard : Nat) (grace : Option Nat) (hung : String → IO Unit)
-    (abandoned : Task (Except IO.Error Unit) → IO Unit) : IO (Option (Except IO.Error Unit)) := do
+private def endLoop (host : Host) (guard : HangGuard) (grace : Option HangGuard)
+    (hung : String → IO Unit) (abandoned : Task (Except IO.Error Unit) → IO Unit) :
+    IO (Option (Except IO.Error Unit)) := do
   unless ← IO.hasFinished host.thread do
     try
       host.post .stop
     catch _ =>
       pure ()
   if (← Job.awaitWithin guard host.thread).isNone then
-    hung (hangLine guard)
+    hung (hangLine guard.ms)
     if let some grace := grace then
       if (← Job.awaitWithin grace host.thread).isNone then
         abandoned host.thread
@@ -3129,12 +3119,12 @@ private def endLoop (host : Host) (guard : Nat) (grace : Option Nat) (hung : Str
 
 /-- `withHostEnding`'s end, with a bound for the headless mode: as
 `withHostEnding`, but when `grace` is given and the loop has still not
-ended `grace` milliseconds after the hang was said, hands the loop's task to
+ended within `grace` after the hang was said, hands the loop's task to
 `abandoned` and answers `none` with the loop still running. With `grace :=
 none` it never answers `none`. -/
 private def hostedWithin {α β σ : Type} {scheme : InputScheme}
-    (collaborators : Collaborators β σ scheme) (body : Host → IO α) (guard : Nat)
-    (grace : Option Nat) (hung : String → IO Unit)
+    (collaborators : Collaborators β σ scheme) (body : Host → IO α) (guard : HangGuard)
+    (grace : Option HangGuard) (hung : String → IO Unit)
     (abandoned : Task (Except IO.Error Unit) → IO Unit) : IO (Option (α × Except IO.Error Unit)) :=
   do
   let host ← start collaborators
@@ -3149,10 +3139,10 @@ private def hostedWithin {α β σ : Type} {scheme : InputScheme}
 /-- Runs `body` against a host started on `collaborators`, and returns only
 once the host's loop has ended, whether `body` returned or threw: a loop
 still running is asked to stop (`Signal.stop`), and its task is waited for
-with no deadline. A loop that has not ended `guard` milliseconds after it
-was asked is said through `hung` as a hang, once, and still waited for: the
+with no deadline. A loop that has not ended within `guard` after it was
+asked is said through `hung` as a hang, once, and still waited for: the
 guard reports a hang, it never ends the wait, unless `grace` is given: a
-loop still running `grace` milliseconds after the hang was said is handed
+loop still running at the end of `grace` after the hang was said is handed
 to `abandoned`, and this throws a hang (`a hang: the editor loop had not
 ended …; giving up`), as a check's bracket does (ConfigTest's `onStage`),
 so a suite always finishes. When `body` threw, its error is the one thrown,
@@ -3161,8 +3151,8 @@ result the loop ended with, for a caller that says a loop's error itself:
 the window mode, whose exit status says it (`Window.host`). `withHost`
 throws it. -/
 def withHostEnding {α β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (body : Host → IO α) (guard : Nat := settlePatience) (hung : String → IO Unit := IO.eprintln)
-    (grace : Option Nat := none)
+    (body : Host → IO α) (guard : HangGuard := settlePatience)
+    (hung : String → IO Unit := IO.eprintln) (grace : Option HangGuard := none)
     (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) :
     IO (α × Except IO.Error Unit) := do
   match ← hostedWithin collaborators body guard grace hung abandoned with
@@ -3172,7 +3162,7 @@ def withHostEnding {α β σ : Type} {scheme : InputScheme} (collaborators : Col
     -- Only with a grace: without one the loop is waited for until it ends.
     throw <|
         IO.userError
-          s!"a hang: the editor loop had not ended {grace.getD 0} ms after the hang was said ({guard} ms after it was asked to stop); giving up"
+          s!"a hang: the editor loop had not ended {(grace.map (·.ms)).getD 0} ms after the hang was said ({guard.ms} ms after it was asked to stop); giving up"
 
 /-- Runs `body` against a host started on `collaborators`, and returns only
 once the host's loop has ended, whether `body` returned or threw, as
@@ -3182,8 +3172,8 @@ is the one thrown. The way to have a host: a host's loop never outlives its
 bracket, and `Host.halt`, `Host.stop` and the waits inside `body` answer
 what they answer, the bracket ends the loop whatever they did. -/
 def withHost {α β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (body : Host → IO α) (guard : Nat := settlePatience) (hung : String → IO Unit := IO.eprintln)
-    (grace : Option Nat := none)
+    (body : Host → IO α) (guard : HangGuard := settlePatience)
+    (hung : String → IO Unit := IO.eprintln) (grace : Option HangGuard := none)
     (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) : IO α := do
   let (result, ended) ← withHostEnding collaborators body guard hung grace abandoned
   IO.ofExcept ended
@@ -3567,10 +3557,10 @@ def Wait.failureIn (wait : Wait) (line : Option Nat) (patience answer : Nat)
   | none, _ => wait.failure line
 
 /-- Waits until `render`'s loop is at rest, on the step that records the rest
-(`Render.awaitRest`); `false` if it is not after `patience` milliseconds, a
-hang guard: only a loop that never rests reaches it. -/
-def rested (render : Render) (patience : Nat) : IO Bool :=
-  return (← render.awaitRest patience) == some true
+(`Render.awaitRest`); `false` if it is not within `guard`, a hang guard: only
+a loop that never rests reaches it. -/
+def rested (render : Render) (guard : HangGuard) : IO Bool :=
+  return (← render.awaitRest guard) == some true
 
 /-- The serial of the newest entry of `render`'s journal, 0 for none. -/
 def newestSerial (render : Render) : IO UInt64 := do
@@ -3581,10 +3571,10 @@ def newestSerial (render : Render) : IO UInt64 := do
 newest entry of its journal and its counters; none with no render loop, or
 no session yet. At rest nothing is scheduled to draw, so what is counted
 from here is what was asked after it. -/
-def idleStart (render : Option Render) (patience : Nat) :
+def idleStart (render : Option Render) (guard : HangGuard) :
     IO (Option (UInt64 × Ffi.RenderCounters)) := do
   let some render := render | return none
-  discard <| rested render patience
+  discard <| rested render guard
   let some counters ← render.counters | return none
   return some (← newestSerial render, counters)
 
@@ -3595,11 +3585,11 @@ entries) and what was submitted to it (its counters) since `start`
 (`idleStart`), the loop's rest before that answer. Both ends are rests, so
 the count is what the editor asked of a loop left alone, fixed by events:
 no window of time decides it. With no render loop it says so. -/
-def idled (render : Option Render) (patience : Nat) (start : Option (UInt64 × Ffi.RenderCounters)) :
-    IO String := do
+def idled (render : Option Render) (guard : HangGuard)
+    (start : Option (UInt64 × Ffi.RenderCounters)) : IO String := do
   let some render := render | return "idle: no render loop"
-  unless ← rested render patience do
-    return s!"idle: the render loop did not come to rest within {patience} ms"
+  unless ← rested render guard do
+    return s!"idle: the render loop did not come to rest within {guard.ms} ms"
   let some now ← render.counters | return "idle: no render loop"
   -- A session that started after the directive began: all of it is since.
   let (last, before) := start.getD (0, { now with framesSubmitted := 0 })
@@ -3625,11 +3615,11 @@ def journalLine (journal : Array Ffi.JournalEntry) : String :=
 until the render loop is at rest, then reads the journal's entries after
 `after`, the serial the last `journal` line counted to (`journalLine`). With
 it the serial it counted to now. With no render loop it says so. -/
-def journalSince (render : Option Render) (patience : Nat) (after : UInt64) :
+def journalSince (render : Option Render) (guard : HangGuard) (after : UInt64) :
     IO (String × UInt64) := do
   let some render := render | return ("journal: no render loop", after)
-  unless ← rested render patience do
-    return (s!"journal: the render loop did not come to rest within {patience} ms", after)
+  unless ← rested render guard do
+    return (s!"journal: the render loop did not come to rest within {guard.ms} ms", after)
   let entries := (← render.journal after).getD #[]
   return (journalLine entries, (entries.back?.map (·.serial)).getD after)
 
@@ -3644,15 +3634,13 @@ after its `resume`-th `restarted`, and says why it could not run to its end,
 or the plan of the restart a `restarted` found. It never stops the loop:
 the bracket it runs in does. -/
 private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-    (host : Host) (script : Array Line) (waitGuard resume answer : Nat)
+    (host : Host) (script : Array Line) (waitGuard : HangGuard) (resume : Nat) (answer : HangGuard)
     (waitHung : String → IO Unit) (waitBlocked : String → IO Unit) :
     IO (Option Failure × Option Restart.Plan) := do
   -- The waits of the script, each said with its line when it hangs.
-  -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-  let await (line : Nat) (guard : Nat := waitGuard) (answer : Nat := answer) : IO Wait :=
-    host.await guard answer (some line) waitHung waitBlocked
-  let join (line : Nat) (guard : Nat := waitGuard) (answer : Nat := answer) : IO Wait :=
+  let await (line : Nat) (guard : HangGuard := waitGuard) (answer : HangGuard := answer) :
+    IO Wait := host.await guard answer (some line) waitHung waitBlocked
+  let join (line : Nat) (guard : HangGuard := waitGuard) (answer : HangGuard := answer) : IO Wait :=
     host.join guard answer (some line) waitHung waitBlocked
   -- With a state directory, the session is restored first: the index a
   -- restart handed over, when there is one.
@@ -3684,10 +3672,10 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
       | .settleWithin milliseconds =>
         -- Its own milliseconds guard it, the editor thread's answer too; its
         -- failure says how long it waited, not the run's guard.
-        let wait ← await line.number milliseconds milliseconds
+        let own := HangGuard.on "the settle" milliseconds
+        let wait ← await line.number own own
         if let some failure :=
-            -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-            wait.failureIn (some line.number) waitGuard answer (own := some milliseconds) then
+            wait.failureIn (some line.number) waitGuard.ms answer.ms (own := some milliseconds) then
           return (some failure, none)
         pure wait
       | .join none =>
@@ -3696,10 +3684,10 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
         -- As a `settle <milliseconds>`: its own seconds guard it, the
         -- editor thread's answer too, and its failure says how long.
         let milliseconds := seconds * 1000
-        let wait ← join line.number milliseconds milliseconds
+        let own := HangGuard.on "the join" milliseconds
+        let wait ← join line.number own own
         if let some failure :=
-            -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-            wait.failureIn (some line.number) waitGuard answer (own := some milliseconds) then
+            wait.failureIn (some line.number) waitGuard.ms answer.ms (own := some milliseconds) then
           return (some failure, none)
         pure wait
       | .idle =>
@@ -3707,13 +3695,10 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
         -- render loop at rest (`idleStart`); then the editor thread answers
         -- once more with nothing sent, and what the loop drew and was handed
         -- from that rest to the next is counted (`idled`).
-        let wait ←
-          -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-          host.waitWhile waitGuard .handled answer (some line.number) waitHung waitBlocked
+        let wait ← host.waitWhile waitGuard .handled answer (some line.number) waitHung waitBlocked
         if wait == .settled then
           let start ← idleStart collaborators.render waitGuard
           let again ←
-            -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
             host.waitWhile waitGuard .handled answer (some line.number) waitHung waitBlocked
           if again == .settled then
             collaborators.emit (← idled collaborators.render waitGuard start)
@@ -3723,7 +3708,6 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
       | .journal =>
         let wait ← await line.number
         if wait == .settled then
-          -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
           let (said, last) ← journalSince collaborators.render waitGuard journaled
           journaled := last
           collaborators.emit said
@@ -3733,7 +3717,6 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
         if wait == .settled then
           -- The drain is a flush of the file service: bounded by `waitGuard`
           -- only as a guard against a stuck file system.
-          -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
           let drained ← Job.awaitWithin waitGuard (← collaborators.journal.drained)
           unless drained == some true do
             return (some (.unanswered (some line.number)), none)
@@ -3744,15 +3727,15 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
           -- The index's write is bounded by the line's own seconds, if it
           -- gives them, and its failure then says how long it waited.
           let own := seconds.map (· * 1000)
+          let guard := (own.map (HangGuard.on "the index's write" ·)).getD waitGuard
+          let answerGuard := (own.map (HangGuard.on "the index's write" ·)).getD answer
           -- Each round ends on an event or at idle (`awaitIndexed`): a write
           -- in its sleep has the clock moved past its delay, and a host idle
           -- with the index still not written fails the run.
           let index ←
             awaitIndexed
                 (fun kind =>
-                  -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-                  host.waitWhile (own.getD waitGuard) kind (own.getD answer) (some line.number)
-                    waitHung waitBlocked)
+                  host.waitWhile guard kind answerGuard (some line.number) waitHung waitBlocked)
                 host.progress.get collaborators.clock
           if index == .working then
             return (some (Failure.ownedBy own (.working (some line.number))), none)
@@ -3761,8 +3744,7 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
           -- bounded by the line's own seconds only as a hang guard.
           let drained ←
             if written then
-              -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-              Job.awaitWithin (own.getD waitGuard) (← collaborators.journal.drained)
+              Job.awaitWithin guard (← collaborators.journal.drained)
             else
               pure none
           unless drained == some true do
@@ -3776,8 +3758,8 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
         -- task is waited for, guarded by the line's own seconds if it gives
         -- them, and a failure then says how long it waited.
         let own := seconds.map (· * 1000)
-        -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-        let ended := (← Job.awaitWithin (own.getD waitGuard) host.thread).isSome
+        let guard := (own.map (HangGuard.on "the restart" ·)).getD waitGuard
+        let ended := (← Job.awaitWithin guard host.thread).isSome
         let plan := (← host.progress.get).handOver
         match ended, plan with
         | true, some plan =>
@@ -3796,7 +3778,6 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
           clock.advance milliseconds
           continue
         let wait ←
-          -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
           host.waitWhile waitGuard (.advance clock milliseconds) answer (some line.number) waitHung
               waitBlocked
         match wait with
@@ -3809,14 +3790,12 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
           pure other
     if wait == .ended then
       break
-    -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-    if let some failure := wait.failureIn (some line.number) waitGuard answer then
+    if let some failure := wait.failureIn (some line.number) waitGuard.ms answer.ms then
       return (some failure, none)
   -- The end of the script: wait for a reload that is still running. The
   -- bracket the script runs in then stops the loop and waits for it to end.
-  -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
   let last ← host.await waitGuard answer none waitHung waitBlocked
-  return (last.failureIn none waitGuard answer, none)
+  return (last.failureIn none waitGuard.ms answer.ms, none)
 
 /-- Runs `script` against a host of its own, in its bracket (`withHost`), as
 its driver: sends each request in order and waits at each `settle` and each
@@ -3854,12 +3833,12 @@ outcome. At either guard the wait says the hang once through `waitHung`
 as a wait is about to block (`Host.waitWhile`).
 
 The wait guards are named apart from the loop's end, which `guard`,
-`hung`, `grace` and `abandoned` bound: a loop not ended `guard`
-milliseconds (`answer` unless it is given) after the run stopped it is said
-through `hung` as a hang, once, and waited for. With `grace := none`, the
-default, the wait has no deadline; with `some grace`, which the headless
-mode gives (`main`), a loop still running `grace` milliseconds after the
-hang was said is handed to `abandoned`, so a check can wait for it, and the
+`hung`, `grace` and `abandoned` bound: a loop not ended within `guard`
+(`answer` unless it is given) after the run stopped it is said through
+`hung` as a hang, once, and waited for. With `grace := none`, the default,
+the wait has no deadline; with `some grace`, which the headless mode gives
+(`main`), a loop still running at the end of `grace` after the hang was
+said is handed to `abandoned`, so a check can wait for it, and the
 run fails as `Failure.hung`, beside the live loop.
 
 A `settle <milliseconds>` or a `join <seconds>` guards its whole wait, the
@@ -3869,12 +3848,12 @@ place of `waitGuard`. A failure of a wait with its own guard is `waited`
 it. The headless mode passes one guard for both (`settlePatience`); a check
 passes its hang guard (`Editor.Test.Linked.hangGuard`), or, to pin a bound of the
 headless mode, a short one with a reload or the editor thread held for
-good; a check that holds the loop's end gives `guard := 0`, so that the
-hang, said at once, is what lets it go. -/
+good; a check that holds the loop's end gives a guard of 0 ms held for good, so
+that the hang, said at once, is what lets it go. -/
 def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-    (script : Array Line) (waitGuard : Nat) (resume : Nat := 0) (answer : Nat := waitGuard)
-    (guard : Nat := answer) (grace : Option Nat := none) (hung : String → IO Unit := IO.eprintln)
+    (script : Array Line) (waitGuard : HangGuard) (resume : Nat := 0)
+    (answer : HangGuard := waitGuard) (guard : HangGuard := answer)
+    (grace : Option HangGuard := none) (hung : String → IO Unit := IO.eprintln)
     (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ())
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) :
@@ -3882,7 +3861,6 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
   let ran ←
     hostedWithin collaborators
         (fun host =>
-          -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
           runScript collaborators host script waitGuard resume answer waitHung waitBlocked)
         guard grace hung abandoned
   match ran with
@@ -3891,20 +3869,19 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
     IO.ofExcept ended
     return result
   | none =>
-    return (some (.hung guard (grace.getD 0)), none)
+    return (some (.hung guard.ms ((grace.map (·.ms)).getD 0)), none)
 
 /-- Runs `script` against a host of its own, as `runFrom` does from its
 start, with the same patiences, guard and grace, and says only why it could
 not run to its end. -/
 def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-    (script : Array Line) (waitGuard : Nat) (answer : Nat := waitGuard) (guard : Nat := answer)
-    (grace : Option Nat := none) (hung : String → IO Unit := IO.eprintln)
+    (script : Array Line) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
+    (guard : HangGuard := answer) (grace : Option HangGuard := none)
+    (hung : String → IO Unit := IO.eprintln)
     (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ())
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO (Option Failure) :=
   (·.1) <$>
-    -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
     runFrom collaborators script waitGuard 0 answer guard grace hung abandoned waitHung waitBlocked
 
 /-- Runs `script` against a host of its own, as `runFrom` does, and then, the
@@ -3917,15 +3894,14 @@ headless mode gives up on a hung loop (`grace := some hangGrace`,
 exits. A dispose that throws is ignored, so it neither hides the run's
 failure nor replaces it. What the headless mode runs (`main`). -/
 def runAndDispose {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
-    (script : Array Line) (waitGuard : Nat) (resume : Nat := 0) (answer : Nat := waitGuard)
-    (guard : Nat := answer) (grace : Option Nat := none) (hung : String → IO Unit := IO.eprintln)
+    (script : Array Line) (waitGuard : HangGuard) (resume : Nat := 0)
+    (answer : HangGuard := waitGuard) (guard : HangGuard := answer)
+    (grace : Option HangGuard := none) (hung : String → IO Unit := IO.eprintln)
     (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ())
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) :
     IO (Option Failure × Option Restart.Plan) := do
   try
-    -- hang guard: the wait's guard (`waitGuard`); only a hang reaches it.
     runFrom collaborators script waitGuard resume answer guard grace hung abandoned waitHung
         waitBlocked
   finally
@@ -3934,13 +3910,13 @@ def runAndDispose {β σ : Type} {scheme : InputScheme} (collaborators : Collabo
     catch _ =>
       pure ()
 
-/-- hang guard: each warming task's start; it passes only when the pool is
-smaller than the machine, and warming then stops there, changing no result.
-How long warming the pool waits, in milliseconds, for each of its tasks to
-start. A task starts in microseconds; this long passes only when the pool
+/-- The guard of each warming task's start, run out on purpose: it passes
+only when the pool is smaller than the machine, and warming then stops
+there, changing no result. How long warming the pool waits for each of its
+tasks to start. A task starts in microseconds; this long passes only when the pool
 is smaller than the machine, because `LEAN_NUM_THREADS` says so. -/
-def warmPatience : Nat :=
-  200
+def warmPatience : HangGuard :=
+  .held "a warming task a full pool does not start" 200
 
 /-- The display the headless mode draws with under `--render`: the real
 binding over a display of the library's in `cells`, bound to the library's
@@ -4265,7 +4241,7 @@ def main (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Na
         s!"restart: the session is handed over{if plan.launcher.isSome then "" else " (no launcher, so no fallback)"}"
   (← IO.getStdout).flush
   if let some failure := failure then
-    IO.eprintln s!"editor: {failure.describe settlePatience}"
+    IO.eprintln s!"editor: {failure.describe settlePatience.ms}"
   if drawn then
     discard Ffi.renderStop
   -- Every child the library started is killed and reaped before the queues

@@ -77,11 +77,15 @@ for a reload to its report, on Lean's monotonic clock. -/
 
 namespace Bench
 
-/-- hang guard: a measurement's reload, settle or join; only a hang reaches
-the bound, and the measurement then fails as a hang. In milliseconds, for
-one reload. -/
-def patience : Nat :=
-  120000
+/-- The guard of a measurement's reload, settle or join; only a hang
+reaches it, and the measurement then fails as a hang. For one reload. -/
+def patience : HangGuard :=
+  .on "a measurement's reload, settle or join" 120000
+
+/-- The guard of the pool's warming again after a row, run out on purpose:
+a warming task a full pool does not start. -/
+def rewarm : HangGuard :=
+  .held "a warming task a full pool does not start" 5000
 
 /-- The real elaborator a measurement runs on, over the toolchain in
 `sysroot` and the `.olean` directories `oleanDir` names, on the base
@@ -416,7 +420,7 @@ ending that host.
 Of two computing jobs a pool thread, half run and half wait in the pool's
 queue: a job that never waits keeps its thread. -/
 def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
-  let pool := (← Job.Pool.warm Job.Pool.size 200).size
+  let pool := (← Job.Pool.warm Job.Pool.size Headless.warmPatience).size
   let completions ← Job.Completions.new
   discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
   let real := Job.realTimers completions
@@ -490,20 +494,19 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             times := times.push (ran - asked)
           return (times, (← waits.get) - waitsBefore, (← IO.monoNanosNow) - began)
     finally
-      discard <| Job.Pool.warm pool 5000
+      discard <| Job.Pool.warm pool rewarm
   -- Waits until the clock has been read `count` more times: so many jobs
   -- have reached a request, so the pool is computing.
   let computing (count : Nat) : IO Unit := do
     let before ← reads.get
-    -- hang guard: the jobs' reads of the clock, re-read each millisecond in
-    -- this opt-in bench (never part of `ci`); only jobs that never get going
-    -- reach `patience`, and the row then fails as a hang.
-    let deadline := (← IO.monoMsNow) + patience
+    -- The jobs' reads of the clock, re-read each millisecond in this
+    -- opt-in bench (never part of `ci`); only jobs that never get going
+    -- reach the guard, and the row then fails as a hang.
+    let deadline ← patience.deadline
     while (← reads.get) < before + count do
-      -- hang guard: as above.
-      if (← IO.monoMsNow) >= deadline then
+      if ← deadline.expired then
         throw (IO.userError "a hang: the computing jobs did not get going")
-      IO.sleep 1
+      RealTime.sleep (.under "the bench's re-read of the jobs' clock reads" 1)
   let idle := Row.of "idle" (← row "ticker" 0 (pure ())).1
   let (sleepingTimes, completed, elapsed) ← row "ticker" 64 (pure ())
   let sleeping :=
@@ -656,7 +659,7 @@ editing commands, with no at-point source, and with `benchAtPoint`'s source
 popping up by itself over 20 open buffers; and what a key costs in `open-file`'s prompt over a
 directory of 10,000 files; `samples` keys a row. -/
 def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
-  let pool := (← Job.Pool.warm Job.Pool.size 200).size
+  let pool := (← Job.Pool.warm Job.Pool.size Headless.warmPatience).size
   let completions ← Job.Completions.new
   discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
   let timers := Job.realTimers completions
@@ -731,7 +734,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
               IO.sleep cadence.toUInt32
           return (keyTimes, listingTimes)
     finally
-      discard <| Job.Pool.warm pool 5000
+      discard <| Job.Pool.warm pool rewarm
   let lifted := 1000000000
   let idle := Row.of "no candidates" (← row 0 lifted false).1
   let hundred := Row.of "100 inline" (← row 100 lifted false).1
@@ -817,7 +820,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             untimed "C-z C-z C-z C-z C-z C-z"
           return times
     finally
-      discard <| Job.Pool.warm pool 5000
+      discard <| Job.Pool.warm pool rewarm
   -- The file row: a host of the test scheme whose jobs reach a fake file
   -- service over one directory of `count` files, `/big`, its working
   -- directory, with the file prompt's commands, source, job and style.
@@ -866,7 +869,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
               throw (IO.userError "a listing was not delivered")
           return keyTimes
     finally
-      discard <| Job.Pool.warm pool 5000
+      discard <| Job.Pool.warm pool rewarm
   let fileTenThousand := Row.of "open-file, 10,000 entries" (← fileRow 10000)
   let plainInsert := Row.of "insert, no at-point" (← insertRow false)
   let autoPopup := Row.of "insert, auto popup, 20 buffers" (← insertRow true)
@@ -1020,7 +1023,7 @@ def journalTimes (services : Job.Services) (published : Snapshots) (directory : 
     state := reconciled.state
   -- What was handed is written before the next row starts: the journal's
   -- drain, a flush of the file service, bounded only as a hang guard.
-  discard <| Job.awaitWithin 30000 (← journal.drained)
+  discard <| Job.awaitWithin (.on "the journal's drain" 30000) (← journal.drained)
   return times
 
 /-- `bench-journal`: the session journal's cost on the editor thread, for

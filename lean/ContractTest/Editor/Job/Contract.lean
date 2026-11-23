@@ -128,7 +128,7 @@ def fileFailures (services : Job.Services) (held : Job.HeldSnapshots) : IO (List
   -- The live snapshots are freed by finalisers on other threads: waited for
   -- on the frees themselves (`awaitLive`), `patience` a hang guard, and read
   -- once then. Each job has released what it held before it ended.
-  let snapshotsFreed ← Ffi.Snapshot.awaitLive before.1 patience.toUInt64
+  let snapshotsFreed ← Ffi.Snapshot.awaitLive before.1 patience
   let freed := snapshotsFreed && (← Ffi.Snapshot.live) == before.1 && (← held.size) == 0
   let freed := flushed && freed && requests == before.2
   let after := (← Ffi.Snapshot.live, requests, ← held.size)

@@ -1,3 +1,4 @@
+import Editor.Bound
 import Editor.Ffi.Words
 
 /-!
@@ -198,13 +199,17 @@ know a pull is parked before they post. -/
 @[extern "editor_glue_events_waiting"]
 opaque waiting (queue : Queue) : IO UInt64
 
-/-- Waits until at least `pulls` pulls are parked on `queue`, and says
-whether they were: false once `boundMs` milliseconds have passed first. A
-readout for tests, which use it to know a pull is parked before they post:
-it returns on the park itself, never by a poll of `waiting`. `boundMs` is a
-hang guard: only a pull that never parks reaches it. -/
+/-- `awaitWaiting` as it crosses: its guard in milliseconds. -/
 @[extern "editor_glue_events_await_waiting"]
-opaque awaitWaiting (queue : Queue) (pulls : UInt64) (boundMs : UInt64) : IO Bool
+private opaque awaitWaitingRaw (queue : Queue) (pulls : UInt64) (boundMs : UInt64) : IO Bool
+
+/-- Waits until at least `pulls` pulls are parked on `queue`, and says
+whether they were: false once `guard` has run out first. A readout for
+tests, which use it to know a pull is parked before they post: it returns
+on the park itself, never by a poll of `waiting`. Only a pull that never
+parks reaches the guard. -/
+def awaitWaiting (queue : Queue) (pulls : UInt64) (guard : HangGuard) : IO Bool :=
+  awaitWaitingRaw queue pulls guard.ms.toUInt64
 
 /-- How many events `queue` holds that have not been pulled. A readout for
 tests, which drain the `parsed` events a highlighted document's parses
@@ -226,21 +231,25 @@ def takeQueued (queue : Queue) : IO (Option Event) := do
 @[extern "editor_glue_events_script_feed"]
 private opaque feedScriptRaw (queue : Queue) (sourceId count : UInt64) : IO UInt64
 
+/-- `feedJoin` as it crosses: its guard in milliseconds. -/
+@[extern "editor_glue_events_script_join"]
+private opaque feedJoinRaw (feed boundMs : UInt64) : IO Bool
+
 /-- Joins the feed `feed`: waits until it has pushed its last event (or been
 refused by a quit queue) and its thread has ended, and says whether it had;
 false for an id that names no feed, one already joined among them, and once
-`boundMs` milliseconds have passed first, when the feed is kept to be joined
-later. `boundMs` is a hang guard: only a feed that never ends reaches it. -/
-@[extern "editor_glue_events_script_join"]
-opaque feedJoin (feed boundMs : UInt64) : IO Bool
+`guard` has run out first, when the feed is kept to be joined later. Only a
+feed that never ends reaches the guard. -/
+def feedJoin (feed : UInt64) (guard : HangGuard) : IO Bool :=
+  feedJoinRaw feed guard.ms.toUInt64
 
 /-- Has the library's scripted source, a fake for tests, feed `queue` from a
 new Rust thread: `count` messages from the script source `sourceId`, with the
 codes 0, 1, 2 and so on. `none` when the thread could not be started;
 otherwise the task of the feed's end, which joins the thread (`feedJoin`,
-bounded by `guard` milliseconds, a hang guard): `true` once the feed has
-ended. A check waits on it, so the thread it started does not outlive it. -/
-def feedScript (queue : Queue) (sourceId count : UInt64) (guard : UInt64) :
+bounded by the hang guard `guard`): `true` once the feed has ended. A check
+waits on it, so the thread it started does not outlive it. -/
+def feedScript (queue : Queue) (sourceId count : UInt64) (guard : HangGuard) :
     IO (Option (Task (Except IO.Error Bool))) := do
   let feed ← feedScriptRaw queue sourceId count
   if feed == 0 then

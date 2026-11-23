@@ -93,7 +93,7 @@ def Row.keyWithinBound (row idle : Row) : Bool :=
 /-- Warms the job pool as the editor does at start, and gives how many
 threads it holds. -/
 def warmPool : IO Nat := do
-  return (← Job.Pool.warm Job.Pool.size 200).size
+  return (← Job.Pool.warm Job.Pool.size Headless.warmPatience).size
 
 /-- Runs `body` against a headless host of the test scheme for a benchmark,
 in its bracket (`Headless.withHost`), so this returns only once the host's
@@ -104,17 +104,17 @@ elaborated by the real elaborator over the toolchain in `sysroot` and the
 `.olean` directories `oleanDir` names, on the base `Editor`; the module
 data of config files in a temporary directory of the system's. One such
 host a process: its source ids are the first ones. `guard` is the bracket's
-guard against a hang of the loop's end, in milliseconds. -/
+guard against a hang of the loop's end. -/
 def withBenchHost {α : Type} (sysroot oleanDir : String) (services : Services)
     (packages : Array Package) (workingDirectory : System.FilePath) (emit : String → IO Unit)
-    (guard : Nat) (body : Headless.Host → IO α) : IO α := do
+    (guard : HangGuard) (body : Headless.Host → IO α) : IO α := do
   let files ← Config.Elaborate.ModuleFiles.temporary
   let elaborator :=
     Config.Elaborate.elaborator
       { sysroot, oleanDirs := (ModuleLookup.searchPath oleanDir).map System.FilePath.mk
         imports := #[`Editor] } files
-  -- hang guard: the loop's end, once the body has returned; only a hang
-  -- reaches `guard`, which is then said once and still waited on.
+  -- Only a hang reaches `guard`, the loop's end once the body has
+  -- returned, which is then said once and still waited on.
   Headless.withHost (scheme := TestScheme.scheme) (guard := guard)
       { elaborator, source := memorySource [], emit, services := services.jobs
         published := services.published, held := services.held, requests := 1, wakeups := 2

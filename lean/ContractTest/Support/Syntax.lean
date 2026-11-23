@@ -30,7 +30,7 @@ def settlingAttach (table : Snapshots) (handler : SyntaxTreeHandler) : SyntaxTre
   let reply ← handler request
   if let .attach snapshot _ := request then
     if let some found← table.find? snapshot then
-      discard (Ffi.syntaxSettle found 5000)
+      discard (Ffi.syntaxSettle found Ffi.treeGuard)
   return reply
 
 /-- `handler`, a real syntax tree binding's over `table`, which waits, with
@@ -46,7 +46,7 @@ def settling (table : Snapshots) (handler : SyntaxTreeHandler) : SyntaxTreeHandl
       | _ => none
     if let some snapshot := asked then
       if let some found← table.find? snapshot then
-        discard (Ffi.syntaxSettle found 5000)
+        discard (Ffi.syntaxSettle found Ffi.treeGuard)
     handler request
 
 /-- Documents of `texts` in the library, a table of a snapshot of each, the

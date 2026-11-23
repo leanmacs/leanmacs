@@ -1,3 +1,5 @@
+import Editor.Bound
+
 /-!
 # Bindings: the document
 
@@ -88,12 +90,12 @@ opaque Document.live : IO UInt64
 private opaque Document.liveAwaitRaw (kind : UInt8) (target boundMs : UInt64) : IO Bool
 
 /-- Waits until at most `target` documents the Rust library holds are not freed
-(`Document.live`), and says whether that came: false once `boundMs`
-milliseconds have passed first. A readout for tests, which use it to see a
+(`Document.live`), and says whether that came: false once `guard` has
+run out first. A readout for tests, which use it to see a
 finaliser run on another thread: it returns on the free, never by a poll of
-`Document.live`. `boundMs` is a hang guard: only a handle that is never freed
-reaches it. -/
-def Document.awaitLive (target boundMs : UInt64) : IO Bool :=
-  Document.liveAwaitRaw 2 target boundMs
+`Document.live`. Only a handle that is never freed
+reaches the guard. -/
+def Document.awaitLive (target : UInt64) (guard : HangGuard) : IO Bool :=
+  Document.liveAwaitRaw 2 target guard.ms.toUInt64
 
 end Editor.Ffi

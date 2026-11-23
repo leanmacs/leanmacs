@@ -1,3 +1,4 @@
+import Editor.Bound
 import Editor.ModuleLookup
 import Editor.Restart.Launch
 
@@ -120,14 +121,14 @@ inductive TitleBar where
   | standard
   deriving DecidableEq, Repr, Inhabited
 
-/-- real time under test: the window mode's start-up time limit, which the
-A6 check pins with the reload held for good. How long the window mode waits
-for the config it loads at start before it opens the window, in
-milliseconds: the window is opened with the title
-bar that config chose, so it waits for the start-up reload to finish,
-installed or refused, and for no longer than this. -/
-def configPatience : Nat :=
-  3000
+/-- The window mode's start-up time limit, which the A6 check pins with the
+reload held for good: how long the window mode waits for the config it loads
+at start before it opens the window. The window is opened with the title bar
+that config chose, so it waits for the start-up reload to finish, installed
+or refused, and for no longer than this; past it the window opens with the
+built-in title bar, and no hang is said (`configWaitHung`). -/
+def configPatience : HangGuard :=
+  .on "the start-up reload's end" 3000
 
 /-- The title bar the window opens with, given whether the start-up reload
 had finished when the wait for it ended (`settled`) and the title bar the

@@ -42,12 +42,11 @@ namespace ConfigTest.Lsp
 
 open Lean
 
-/-- hang guard: the exchange's end, the server's diagnostics of the file
-read; only a hang reaches the bound, and the check then fails as a hang.
-In milliseconds: a first run takes a few seconds; only a server that hangs
-takes this long. -/
-def patience : Nat :=
-  180000
+/-- The guard of the exchange's end, the server's diagnostics of the file
+read; only a hang reaches it, and the check then fails as a hang. A first
+run takes a few seconds; only a server that hangs takes this long. -/
+def patience : Editor.HangGuard :=
+  .on "the exchange's end, the server's diagnostics of the file read" 180000
 
 /-- An error the server reported: its place, from 1 for the line and from 0
 for the column, as the editor's own diagnostics count, and its first
@@ -156,7 +155,8 @@ def run (sysroot configDir : String) (line column : Nat) : IO UInt8 := do
   server.kill
   discard <| server.wait
   let some answered := finished |
-    IO.eprintln s!"config-test lsp: a hang: the language server did not answer within {patience} ms"
+    IO.eprintln
+        s!"config-test lsp: a hang: the language server did not answer within {patience.ms} ms"
     return 1
   match answered with
   | .error error =>

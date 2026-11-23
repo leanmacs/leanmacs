@@ -1,3 +1,5 @@
+import Editor.Bound
+
 /-!
 # The keyboard check
 
@@ -341,10 +343,9 @@ limit on the fake window ends on real ticks, not on an event the fake
 completes; follow-up window-check-limit-polls-the-clock (a timer on the
 `Window` port that the fake completes).
 
-How often, in milliseconds, the task that enforces the time limit looks
-at the clock. -/
-def limitPoll : UInt32 :=
-  50
+How often the task that enforces the time limit looks at the clock. -/
+def limitPoll : RealTime :=
+  .under "how often the time limit's task looks at the window's clock" 50
 
 /-- The exit status of a check: 0 when the window opened, ran and closed, 1
 when it could not be opened or ran and never said that it opened
@@ -388,7 +389,7 @@ def check (window : Window) (options : Options) : IO UInt32 := do
           if (← window.clock) - askedAt >= options.seconds * 1000000000 then
             limited.set true
             window.close
-          IO.sleep limitPoll
+          RealTime.sleep limitPoll
   let outcome ← window.run options.composition
   over.set true
   -- The loop ends at the stop, with everything before it counted.

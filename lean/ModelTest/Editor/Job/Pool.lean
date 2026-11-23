@@ -26,7 +26,7 @@ def heldAll : IO (Array UInt64) := do
   let expected ← Job.Pool.expected
   let some threads ←
     Job.Pool.holdAll expected
-        patience | throw <| IO.userError s!"a hang: {expected} pool tasks had not all started within {patience} ms"
+        patience | throw <| IO.userError s!"a hang: {expected} pool tasks had not all started within {patience.ms} ms"
   return threads
 
 /-- The checks of warming the pool (`Editor/Job/Pool.lean`). They are about

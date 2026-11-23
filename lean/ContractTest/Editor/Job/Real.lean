@@ -321,13 +321,13 @@ def sleepers (services : Job.Services) (count : Nat) : IO (Array Job.Handle) := 
               (pure ()))
   return jobs
 
-/-- hang guard: each pool task's start, which `Pool.holdAll` waits for; only
-a pool with fewer free threads than it is asked to hold reaches it, and the
-check then fails as a hang. A task starts on a free thread in microseconds;
+/-- The guard of each pool task's start, which `Pool.holdAll` waits for;
+only a pool with fewer free threads than it is asked to hold reaches it,
+and the check then fails as a hang. A task starts on a free thread in microseconds;
 the guard is the 120 000 ms `Editor.Test.Linked.hangGuard` was first
 measured as. -/
-def warmPatience : Nat :=
-  120000
+def warmPatience : HangGuard :=
+  .on "each pool task's start" 120000
 
 /-- The checks of the runner over the library's timer service
 (`Editor/Job/Real.lean`): what only the real service can show. It is a
@@ -434,7 +434,7 @@ def jobChecks (services : Job.Services) (pool : Array UInt64) : List Check :=
         "the pump is not one of the pool's tasks: with the pump parked in its pull, every thread the pool had before the pump was started is still free to be held, and no other"
       run := do
         -- Waited for on the pump's park itself; `patience` is a hang guard.
-        unless ← Ffi.awaitWaiting .completion 1 patience.toUInt64 do
+        unless ← Ffi.awaitWaiting .completion 1 patience do
           return false
         -- A pump that was a pool task would be parked on one of these
         -- threads, and the last of the hold could never start.
@@ -508,7 +508,7 @@ def fileChecks (completions : Job.Completions) : List Check :=
             -- The free is waited for on the free itself; `patience` is a
             -- hang guard.
             return parked && read == noteText && adoptedHeld && released.isOk &&
-                (← Ffi.Snapshot.awaitLive live patience.toUInt64) &&
+                (← Ffi.Snapshot.awaitLive live patience) &&
                 (← Ffi.Snapshot.live) == live
           finally
             handle.cancel },
@@ -532,7 +532,7 @@ def fileChecks (completions : Job.Completions) : List Check :=
           let query ← SyntaxTree.compile "json" "(number) @n"
           return (← SyntaxTree.captures snapshot query 0 6).size
         let some found ← rig.published.find? snapshot | return false
-        unless ← Ffi.syntaxSettle found 5000 do
+        unless ← Ffi.syntaxSettle found patience do
           return false
         let answered ← numbers.runWith syntaxTree
         -- The text's document is held until here: a document freed is
@@ -554,7 +554,7 @@ def fileChecks (completions : Job.Completions) : List Check :=
           let display := (← recorderOf rig.published).handle
           let (ran, _) ←
             Job.finishWith rig.held handle (pure () : EditorM Unit) (.over rig.published) display
-          return ended && kept && ran.isOk && (← Ffi.Snapshot.awaitLive live patience.toUInt64) &&
+          return ended && kept && ran.isOk && (← Ffi.Snapshot.awaitLive live patience) &&
               (← Ffi.Snapshot.live) == live &&
               (← rig.held.size) == 0 &&
               (← rig.published.size) == 0 },
@@ -599,7 +599,7 @@ def fileChecks (completions : Job.Completions) : List Check :=
             -- The one snapshot left is the one made here, which is read last
             -- so that it is alive until then.
             return withdrawn && (← rig.held.size) == 0 &&
-                (← Ffi.Snapshot.awaitLive (live + 1) patience.toUInt64) &&
+                (← Ffi.Snapshot.awaitLive (live + 1) patience) &&
                 (← Ffi.Snapshot.live) == live + 1 &&
                 (← snapshot.info).byteLength == 15
           finally
@@ -612,7 +612,7 @@ def fileChecks (completions : Job.Completions) : List Check :=
             -- the library's threads: waited for on the frees, with
             -- `patience` as a hang guard.
             discard <| Editor.Test.Linked.filesFlushed completions
-            discard <| Ffi.Snapshot.awaitLive (live + 1) patience.toUInt64 },
+            discard <| Ffi.Snapshot.awaitLive (live + 1) patience },
     { name :=
         "a job saves a snapshot a command took, found through the published table, and a snapshot the command has released since is refused as naming none, and writes no file"
       run :=

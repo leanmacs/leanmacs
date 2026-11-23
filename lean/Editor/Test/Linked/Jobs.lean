@@ -31,13 +31,13 @@ namespace Editor.Test.Linked
 
 open Editor
 
-/-- hang guard: an event a check waits for that must come (a job's end, a
-start reaching the library, a pump's end); only a hang reaches the bound,
-and the check then fails as a hang. In milliseconds: ten times the slowest
+/-- The guard of an event a check waits for that must come (a job's end, a
+start reaching the library, a pump's end); only a hang reaches it, and the
+check then fails as a hang. Ten times the slowest
 such event seen under the stress load and more, as `Editor.Test.Linked.hangGuard` is
 set, and the same 260 000. -/
-def patience : Nat :=
-  260000
+def patience : HangGuard :=
+  .on "the event the check waits for" 260000
 
 /-- `task`'s value, waited for on the task itself, an event that must come:
 `what` names it. The bound is `patience`, a hang guard: past it this throws
@@ -45,7 +45,7 @@ a hang, and the check fails as one. -/
 def hangGuarded {α : Type} (what : String) (task : Task α) : IO α := do
   let some value ←
     Job.awaitWithin patience
-        task | throw <| IO.userError s!"a hang: {what} had not come within {patience} ms"
+        task | throw <| IO.userError s!"a hang: {what} had not come within {patience.ms} ms"
   return value
 
 /-- `start`, a real port's start of a request, decorated to resolve the
@@ -112,7 +112,7 @@ def runOnTimers (services : Job.Services) (job : JobM Bool) : IO (Job.Outcome Bo
   let handle ← Job.spawn services (reporting fun _ => job) (pure ())
   if (← Job.awaitWithin patience handle.outcome.result?).isNone then
     handle.cancel
-    return .failed s!"a hang: the job had not ended within {patience} ms"
+    return .failed s!"a hang: the job had not ended within {patience.ms} ms"
   handle.settle
   match (← handle.outcome?).map texts with
   | some (.finished texts) =>

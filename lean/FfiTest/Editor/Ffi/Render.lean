@@ -52,7 +52,7 @@ def renderChecks (_ : Unit) : List Check :=
         fixture.real.publish (fixture.scene (SceneFixture.own fixture.top) #[])
         let submitted := (← framesSubmitted) == before + 1
         -- The step that records rest ends this wait, not a poll of it.
-        let rested := (← Editor.Ffi.renderAwaitRest patience.toUInt64) == some true
+        let rested := (← Editor.Ffi.renderAwaitRest patience) == some true
         let entries := (← Editor.Ffi.renderJournal 0).getD #[]
         let answered := entries.back?.map (·.inputNs) == some taken.stamp
         let stopped ← Editor.Ffi.renderStop

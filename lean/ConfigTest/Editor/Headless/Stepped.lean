@@ -239,7 +239,7 @@ def steppedChecks (context : Context) : List Check :=
           Headless.withStepped collaborators (← Headless.Queue.Memory.new) (guard := hangGuard)
               (grace := some hangGuard) fun stepped => do
               stepped.send .reload
-              stepped.await 0 (waitHung := fun line => hung.modify (·.push line))
+              stepped.await heldAtOnce (waitHung := fun line => hung.modify (·.push line))
         let hung ← hung.get
         let ends ← ends.get
         saw
@@ -251,15 +251,15 @@ def steppedChecks (context : Context) : List Check :=
       run := do
         -- The end's guard and grace are 0, and the reload is held at a gate
         -- only the check opens, so it cannot end within either: no timing.
-        let ending (grace : Option Nat) : IO (Option String × Array String × Bool × Nat) := do
+        let ending (grace : Option HangGuard) : IO (Option String × Array String × Bool × Nat) := do
           let gate ← Gate.new Config.rootModule
           let stage ← Stage.new context (gate.around context.elaborator) (memorySource emptyRoot)
           let said ← IO.mkRef (#[] : Array String)
           let left ← IO.mkRef (none : Option (Task (Except IO.Error Unit)))
           let thrown ←
             try
-              Headless.withStepped stage.collaborators (← Headless.Queue.Memory.new) (guard := 0)
-                  (grace := grace) (hung := fun line => do
+              Headless.withStepped stage.collaborators (← Headless.Queue.Memory.new) (guard :=
+                  heldAtOnce) (grace := grace) (hung := fun line => do
                   said.modify (·.push line)
                   -- With no grace the end waits on: the hang said, the
                   -- check lets the reload go.
@@ -279,7 +279,7 @@ def steppedChecks (context : Context) : List Check :=
           if let some task← left.get then
             discard <| IO.wait task
           return (thrown, ← said.get, abandoned, ← gate.inProgress.get)
-        let (thrown, said, abandoned, left) ← ending (some 0)
+        let (thrown, said, abandoned, left) ← ending (some heldAtOnce)
         let (waited, saidWaiting, abandonedWaiting, leftWaiting) ← ending none
         saw
             (thrown.any

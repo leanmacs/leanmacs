@@ -1,3 +1,4 @@
+import Editor.Bound
 import Editor.Job
 import Editor.Job.Activity
 import Std.Data.HashMap
@@ -682,27 +683,14 @@ def Services.fileWorked (services : Services) (request : FileRequest)
   services.files.start id request
   return reply.resultD (Files.withdrawnReply request)
 
-/-- `task`'s value, or `none` if it has not ended within `patience`
-milliseconds. It is a guard against a hang, never a result: a caller that
-gets `none` reports a hang, and does not pass or fail a property on time.
-It is the one place a deadline meets a flush.
-
-The guard is a dedicated task that reads the clock in steps of 10 ms; it is
-cancelled once `task` ends, and stops at its next step, so it does not hold
-the process open at its end for the rest of `patience`. -/
-def awaitWithin {α : Type} (patience : Nat) (task : Task α) : IO (Option α) := do
-  if ← IO.hasFinished task then
-    return some task.get
-  let guard ←
-    IO.asTask (prio := .dedicated) do
-        let deadline := (← IO.monoMsNow) + patience
-        while (← IO.monoMsNow) < deadline && !(← IO.checkCanceled) do
-          IO.sleep 10
-        return (none : Option α)
-  let first ←
-    IO.waitAny [task.map (sync := true) some, guard.map (sync := true) fun ran => ran.toOption.join]
-  IO.cancel guard
-  return first
+/-- `task`'s value, or `none` if it has not ended within `guard`. It is a
+guard against a hang, never a result: a caller that gets `none` reports a
+hang (`HangGuard.hang`), and does not pass or fail a property on time. It is
+the one place a deadline meets a flush: the guard's own `within`
+(`Editor/Bound.lean`), which races the task against the guard's expiry and
+reads no clock for a task that has ended. -/
+def awaitWithin {α : Type} (guard : HangGuard) (task : Task α) : IO (Option α) :=
+  guard.within task
 
 instance {α : Type} : Nonempty (Outcome α) :=
   ⟨.cancelled⟩

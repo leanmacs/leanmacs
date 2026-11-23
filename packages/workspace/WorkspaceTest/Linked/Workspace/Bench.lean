@@ -47,11 +47,10 @@ filter. -/
 def finderCadence : Nat :=
   120
 
-/-- hang guard: a measurement's settle or join, or its host's end; only a
-hang reaches the bound, and the measurement then fails as a hang. In
-milliseconds. -/
-def patience : Nat :=
-  120000
+/-- The guard of a measurement's settle or join, or its host's end; only a
+hang reaches it, and the measurement then fails as a hang. -/
+def patience : HangGuard :=
+  .on "a measurement's settle or join, or its host's end" 120000
 
 /-- The median of `times`, which need not be sorted. -/
 def median (times : Array Nat) : Nat :=

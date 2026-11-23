@@ -70,7 +70,7 @@ def recordingSyntaxTree (asked : IO.Ref (Array String)) (snapshots : SnapshotRea
     -- event of it is left for a later check's host to take.
     if let .attach snapshot _ := request then
       if let some found← snapshots.find? snapshot then
-        discard (Ffi.syntaxSettle found 5000)
+        discard (Ffi.syntaxSettle found Ffi.treeGuard)
     return reply
 
 /-- The faces the captures of the library's shipped highlights query for
@@ -139,11 +139,11 @@ def shippedStaged (scheme : InputScheme) (context : HostContext) (directory : Sy
       -- that edit and then ask are answered of a delivered tree.
       if let .capturesOf snapshot .. := request then
         if let some found← snapshots.find? snapshot then
-          discard (Ffi.syntaxSettle found 5000)
+          discard (Ffi.syntaxSettle found Ffi.treeGuard)
       let reply ← real.handle request
       if let .attach snapshot _ := request then
         if let some found← snapshots.find? snapshot then
-          discard (Ffi.syntaxSettle found 5000)
+          discard (Ffi.syntaxSettle found Ffi.treeGuard)
       return reply
   let collaborators :=
     { shipped with

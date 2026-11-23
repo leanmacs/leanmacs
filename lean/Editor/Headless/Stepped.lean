@@ -109,12 +109,13 @@ def input (stepped : Stepped) (event : Event) : IO Unit := do
 
 /-- `Host.waitWhile` over the stepped loop (the module docs): a round drains
 the queue, and is judged as the real host's is (`Wait.Kind.judge`). -/
-def waitWhile (stepped : Stepped) (waitGuard : Nat) (kind : Wait.Kind) (_answer : Nat := waitGuard)
-    (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
+def waitWhile (stepped : Stepped) (waitGuard : HangGuard) (kind : Wait.Kind)
+    (_answer : HangGuard := waitGuard) (line : Option Nat := none)
+    (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait := do
   if (← stepped.ending.get).isSome then
     return .ended
-  let deadline := (← IO.monoMsNow) + waitGuard
+  let deadline ← waitGuard.deadline
   let mut first := kind.marker
   repeat
     -- The next push's task is armed before the drain: an event posted after
@@ -137,19 +138,17 @@ def waitWhile (stepped : Stepped) (waitGuard : Nat) (kind : Wait.Kind) (_answer 
       continue
     | .block since =>
       waitBlocked "running work"
-      discard <|
-          awaitAnyWithin (deadline - (← IO.monoMsNow))
-            [arrived, ← stepped.activity.changedSince since]
+      discard <| awaitAnyWithin (← deadline.rest) [arrived, ← stepped.activity.changedSince since]
   return .ended
 
 /-- `Host.await` over the stepped loop: a `settle`'s wait (`Wait.Kind.settle`). -/
-def await (stepped : Stepped) (waitGuard : Nat) (answer : Nat := waitGuard)
+def await (stepped : Stepped) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
   stepped.waitWhile waitGuard .settle answer line waitHung waitBlocked
 
 /-- `Host.join` over the stepped loop: a `join`'s wait (`Wait.Kind.join`). -/
-def join (stepped : Stepped) (waitGuard : Nat) (answer : Nat := waitGuard)
+def join (stepped : Stepped) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
   stepped.waitWhile waitGuard .join answer line waitHung waitBlocked
@@ -168,13 +167,13 @@ threw (the module docs). The collaborators' queue is replaced with
 caller hands a fresh one, and may build a poster over it before the bracket
 (an environments' report, `reportedEnvironments`). The end's wait for a reload still running is
 guarded by `guard`: past it the hang is said once through `hung`, and with
-`grace` the bracket gives up as a hang that many milliseconds later, the
+`grace` the bracket gives up as a hang once `grace` has run out, the
 reload left running and its task handed to `abandoned`, so a check can let
 it go and wait for it, as `withHost` does. When `body` threw, its error is the
 one thrown; when it returned and a turn threw, that error is. -/
 def withStepped {α β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (memory : Queue.Memory Ffi.Event) (body : Stepped → IO α) (guard : Nat := settlePatience)
-    (hung : String → IO Unit := IO.eprintln) (grace : Option Nat := none)
+    (memory : Queue.Memory Ffi.Event) (body : Stepped → IO α) (guard : HangGuard := settlePatience)
+    (hung : String → IO Unit := IO.eprintln) (grace : Option HangGuard := none)
     (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) : IO α := do
   let collaborators ← ({ collaborators with queue := memory.queue Posted.toFfi }).prepared
   let ending ← IO.mkRef none
@@ -211,14 +210,14 @@ def withStepped {α β σ : Type} {scheme : InputScheme} (collaborators : Collab
       running.wind collaborators fun task => do
           if (← Job.awaitWithin guard task).isSome then
             return
-          hung (hangLine guard)
+          hung (hangLine guard.ms)
           match grace with
           | some grace =>
             if (← Job.awaitWithin grace task).isNone then
               abandoned task
               throw <|
                   IO.userError
-                    s!"a hang: the stepped host's end had not ended {grace} ms after the hang was said ({guard} ms after it began); giving up"
+                    s!"a hang: the stepped host's end had not ended {grace.ms} ms after the hang was said ({guard.ms} ms after it began); giving up"
           | none =>
             discard <| IO.wait task
     state.set none

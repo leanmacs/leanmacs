@@ -99,14 +99,14 @@ library.
 
 namespace Editor.Window
 
-/-- hang guard: the render loop's rest, once it has drawn what was published
-last; only a loop that never rests reaches it, and the window then closes
-without it. How long the window mode waits, once its loop has ended, for
-the render loop to draw what was published last before it closes the
-window, in milliseconds; and the bound of each round of the start-up
+/-- The guard of the render loop's rest, once it has drawn what was
+published last; only a loop that never rests reaches it, and the window
+then closes without it. How long the window mode waits, once its loop has
+ended, for the render loop to draw what was published last before it
+closes the window; and the bound of each round of the start-up
 config's wait with no bound (`awaitConfig`). -/
-def drawPatience : Nat :=
-  1000
+def drawPatience : HangGuard :=
+  .on "the render loop's rest" 1000
 
 /-- The library's name of a title bar. -/
 def TitleBar.library : TitleBar → Ffi.TitleBar
@@ -120,15 +120,15 @@ past them is an ordinary launch. -/
 def configWaitHung : String → IO Unit := fun _ => pure ()
 
 /-- Waits for the start-up reload `host` was sent to finish, installed or
-refused, for at most `patience` milliseconds, or with no bound for none;
+refused, within `patience`, or with no bound for none;
 whether it finished. A loop that has ended has nothing more to finish.
 Neither bound says a hang (`configWaitHung`). -/
-def awaitConfig (host : Headless.Host) : Option Nat → IO Bool
+def awaitConfig (host : Headless.Host) : Option HangGuard → IO Bool
   | some patience => return (← host.await patience (waitHung := configWaitHung)) == .settled
   | none => do
     repeat
-      -- hang guard: each round's, the reload's end; with no bound the wait
-      -- goes round again. The window mode's waits poll its progress
+      -- Each round's guard is the reload's end; with no bound the wait goes
+      -- round again. The window mode's waits poll its progress
       -- (follow-up window-mode-waits-poll-progress).
       match ← host.await drawPatience (waitHung := configWaitHung) with
       | .settled =>
@@ -229,7 +229,7 @@ def closeOnceEnded (platform : Ffi.Platform) (loop : Task (Except IO.Error Unit)
     say s!"editor: the editor loop ended with an error: {error}"
   -- On the step that records the rest, never a poll; at once with no render
   -- session.
-  discard <| Ffi.renderAwaitRest drawPatience.toUInt64
+  discard <| Ffi.renderAwaitRest drawPatience
   try
     shutdown
   catch error =>
@@ -281,7 +281,7 @@ holds them until it has finished (`ffi-test window-host-restart` runs
 def host (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Name)
     (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (display : Ffi.Display)
     (clipboard : ClipboardHandler) (said : Array String) (shutdown : IO (Task Bool) → IO Unit)
-    (processes : Process.Host) (patience : Option Nat := some configPatience)
+    (processes : Process.Host) (patience : Option HangGuard := some configPatience)
     (workingDirectory : System.FilePath := "/") (generator : Option Config.Generator := none)
     (afterRestore : Array Headless.Request := #[])
     (replace : Restart.Invocation → IO String := Restart.noExec)
