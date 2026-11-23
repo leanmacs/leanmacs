@@ -3245,6 +3245,7 @@ and the core's Lake package registers no `Package`.
 | The composite port and a command: `Editor.Command`, `Editor.Command.Append`, `Editor.Command.Call`, `Editor.Command.Control`, `Editor.Command.Registry`, `Editor.Program` | 6 | core | yes |
 | The ports: `Editor.Clipboard`, `Editor.Diff`, `Editor.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Process`, `Editor.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 14 | core | yes |
 | The word under the cursor, over the text port: `Editor.Text.Word` | 1 | core | yes |
+| The typed time bounds every bounded wait takes, a hang guard or real time under test (`docs/design/concurrency.md`, "What a test may still wait on time for"): `Editor.Bound` | 1 | core | yes |
 | The setup port, packages, extension points and stores: `Editor.Extension`, `Editor.Json`, `Editor.Package`, `Editor.Setup`, `Editor.Store`, `Editor.Store.Codec`, `Editor.Value` | 7 | core | yes |
 | The state, what a search of a workspace's files covers, and the names of the jobs the loop's reconcilers run: `Editor.DisplayRules`, `Editor.Event`, `Editor.ExcerptView`, `Editor.FileJobs`, `Editor.Floating`, `Editor.GeneratedView`, `Editor.Gutter`, `Editor.Gutter.Track`, `Editor.Layout`, `Editor.SearchRoot`, `Editor.State`, `Editor.State.Request`, `Editor.Workspace` | 13 | core | yes |
 | Places, jump lists and marks, and going to a place: `Editor.JumpList`, `Editor.Jumps`, `Editor.Jumps.Go`, `Editor.Marks`, `Editor.Marks.Follow` | 5 | core | yes |

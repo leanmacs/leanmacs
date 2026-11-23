@@ -13,6 +13,7 @@ import ModelTest.Check
 import ModelTest.Editor.Api
 import ModelTest.Editor.Api.Cases
 import ModelTest.Editor.Appearance
+import ModelTest.Editor.Bound
 import ModelTest.Editor.Clipboard.Contract
 import ModelTest.Editor.Clipboard.Model
 import ModelTest.Editor.Command
@@ -638,6 +639,15 @@ of the model is in step.
 
 The job system is tested here with no Rust library:
 
+- `boundChecks`: the typed time bounds (`Editor/Bound.lean`): a hang
+  guard's message names its event and its bound, and says when it ran out
+  on purpose; real time under test names its timing; a guarded wait on an
+  ended task is its value with no clock read, one on a task that ends is
+  its value, and one on a promise nobody resolves runs out to `none`; a
+  deadline of 0 ms has expired and what is left of it is a guard on the
+  same event. The module's `fail_if_success` examples show that a number,
+  an anonymous constructor and a structure instance are not a bound. They
+  run last, since one waits on a dedicated thread;
 - `poolChecks`: warming Lean's task pool (`Editor/Job/Pool.lean`). They take
   the pool's size as Lean's runtime does (`Pool.expected`:
   `LEAN_NUM_THREADS` when it is set, else the machine's), and hold that many
@@ -1400,7 +1410,8 @@ def checks : List Check :=
     jsonChecks ++
     filesApiChecks ++
     gutterCarryChecks ++
-    gutterTrackChecks
+    gutterTrackChecks ++
+    boundChecks
 
 end ModelTest
 
