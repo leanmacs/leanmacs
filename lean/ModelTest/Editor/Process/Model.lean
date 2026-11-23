@@ -47,6 +47,210 @@ def modelRun (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) (command
 
 -- inferred-waits W32: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
 set_option linter.inferredWait false in
+/-- A check of `processChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def cancellingJobProcessWaitCheck : Check :=
+  { name :=
+      "cancelling a job in a process wait withdraws the wait from the process service with the wait's id, the job ends cancelled, and it makes no further request"
+    run := do
+      let (rig, processes) ← Rig.withProcesses { scripts := #[sleeperScript 0] }
+      processes.holdCompletions
+      -- A held run keeps its job's unit: the check waits for its start to
+      -- reach the fake.
+      let (start, runStarted) ← startGate processes.processes.start 1
+      let rig :=
+        { rig with
+          services := { rig.services with processes := { processes.processes with start } } }
+      let spawned ←
+        rig.spawn
+            (reporting fun _ => do
+              discard <| Process.run sleeper 10
+              discard <| Process.run sleeper 10
+              return true)
+      try
+        discard <| awaitEvent "the run's start" runStarted.result?
+        unless (← processes.waiting) == 1 do
+          return false
+        let id := ((← processes.started)[0]?.map (·.1)).getD 0
+        spawned.handle.cancel
+        let cancelled ← spawned.endedAs .cancelled
+        processes.letGo
+        return cancelled && (← processes.withdrawn) == #[id] && (← processes.started).size == 1 &&
+            (← processes.taken).isEmpty &&
+            (← processes.waiting) == 0
+      finally
+        processes.letGo }
+
+-- inferred-waits W32: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
+/-- A check of `processChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def runnerGivenProcessServiceCheck : Check :=
+  { name :=
+      "a runner given no process service refuses a run as failed, as a value, and the job goes on"
+    run := do
+      let rig ← Rig.new
+      let spawned ←
+        rig.spawn
+            (reporting fun _ => do
+              let .error (.failed _) ← Process.run sleeper 10 | return false
+              return true)
+      spawned.endedAs (.finished #["true"]) }
+
+-- inferred-waits W32: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
+/-- A check of `processChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def readDeliversLineChildCheck : Check :=
+  { name :=
+      "one read delivers every line a child wrote before it waits on its input, on the model and on the fake, where the read is one start and one take: one completion"
+    run := do
+      let script : Process.StreamScript :=
+        { command := sleeper, steps := #[.write .out (JobContract.counted 1000), .awaitClosed] }
+      let expected := (List.range 1000).toArray.map fun n => s!"{n}".toUTF8
+      let job : JobM Bool := do
+        let child ← JobContract.started sleeper (JobContract.lines 1000000 true)
+        let delivery ← JobContract.delivered child
+        return JobContract.linesOf #[delivery] .out == expected && delivery.ended.isNone
+      let (onModel, _) := job.runModel { processes := { streams := #[script] } }
+      let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+      let onFake ← runOnFake job (some rig)
+      let reads :=
+        (← processes.started).filterMap fun (id, request) =>
+          match request with
+          | .read _ => some id
+          | _ => none
+      return onModel == .finished true && onFake == .finished true && reads.size == 1 &&
+          ((← processes.taken).filter reads.contains).size == 1 }
+
+-- inferred-waits W32: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
+/-- A check of `processChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def childLastDeliveryRunnerCheck : Check :=
+  { name :=
+      "after a child's last delivery the runner forgets it: a later read, write or close is noSuchProcess, answered without a request to the process service"
+    run := do
+      let script : Process.StreamScript :=
+        { command := sleeper, steps := #[.write .out "a\n".toUTF8] }
+      let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+      let noSuchProcess {α : Type} : Except ProcessError α → Bool
+        | .error .noSuchProcess => true
+        | _ => false
+      let spawned ←
+        rig.spawn
+            (reporting fun _ => do
+              let child ← JobContract.started sleeper (JobContract.lines 64)
+              let all ← JobContract.toTheEnd child
+              let read ← Process.read child
+              let write ← Process.write child "late".toUTF8
+              let close ← Process.closeInput child
+              return JobContract.linesOf all .out == JobContract.linesFrom ["a"] &&
+                  JobContract.endOf all == some (.exited (.code 0)) &&
+                  noSuchProcess read &&
+                  noSuchProcess write &&
+                  noSuchProcess close)
+      let finished ← spawned.endedAs (.finished #["true"])
+      let kinds :=
+        (← processes.started).map fun (_, request) =>
+          match request with
+          | .start _ _ => "start"
+          | .read _ => "read"
+          | .write _ _ => "write"
+          | .closeInput _ => "closeInput"
+          | .run _ _ => "run"
+          | .runWithin .. => "runWithin"
+          | .runInput .. => "runInput"
+          | .runHead .. => "runHead"
+      return finished && kinds == #["start", "read"] && (← processes.withdrawn).isEmpty }
+
+-- inferred-waits W32: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
+/-- A check of `processChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def jobEndsStreamingChildCheck : Check :=
+  { name :=
+      "a job that ends with a streaming child running, finished, failed or cancelled, cancels the child: the fake withdraws its id, and the model, the fake's and the job model's, records it killed"
+    run := do
+      let script : Process.StreamScript := { command := sleeper, steps := #[.awaitClosed] }
+      let starts : JobM Unit := discard <| JobContract.started sleeper (JobContract.lines 64 true)
+      let jobs : List (JobM Bool × Bool) :=
+        [((do
+              starts;
+              return true),
+            false),
+          ((do
+              starts;
+              throw "it fails"),
+            false),
+          ((do
+              starts;
+              sleep 1000;
+              return true),
+            true)]
+      let results ←
+        jobs.mapM fun (job, cancel) => do
+            let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+            let spawned ← rig.spawn (reporting fun _ => job)
+            if cancel then
+              discard <| rig.idle
+              unless (← rig.clock.waiting) == 1 do
+                return false
+              spawned.handle.cancel
+            discard <| awaitEvent "the job's end" spawned.handle.outcome.result?
+            let child := ((← processes.started)[0]?.map (·.1)).getD 0
+            let model ← processes.model
+            return (← processes.withdrawn) == #[child] && model.killed == #[sleeper] &&
+                model.children.isEmpty
+      let (_, model) :=
+        (do
+              starts;
+              return true : JobM Bool).runModel
+          { processes := { streams := #[script] } }
+      return results.all id && model.processes.killed == #[sleeper] &&
+          model.processes.children.isEmpty }
+
+-- inferred-waits W32: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
+/-- A check of `processChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def cancellingJobPendingReadCheck : Check :=
+  { name := "cancelling a job in a pending read withdraws the read's wait and then its child"
+    run := do
+      let script : Process.StreamScript := { command := sleeper, steps := #[.awaitClosed] }
+      let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+      -- The child's start, then the read's: a held read keeps its job's
+      -- unit, so the check waits for the second start to reach the fake.
+      let (start, readStarted) ← startGate processes.processes.start 2
+      let rig :=
+        { rig with
+          services := { rig.services with processes := { processes.processes with start } } }
+      let spawned ←
+        rig.spawn
+            (reporting fun _ => do
+              let child ← JobContract.started sleeper (JobContract.lines 64 true)
+              sleep 10
+              discard <| Process.read child
+              return true)
+      discard <| rig.idle
+      unless (← rig.clock.waiting) == 1 do
+        return false
+      processes.holdCompletions
+      rig.clock.advance 10
+      try
+        discard <| awaitEvent "the read's start" readStarted.result?
+        unless (← processes.waiting) == 1 do
+          return false
+        let started ← processes.started
+        let child := (started[0]?.map (·.1)).getD 0
+        let read := (started[1]?.map (·.1)).getD 0
+        spawned.handle.cancel
+        let cancelled ← spawned.endedAs .cancelled
+        return cancelled && (← processes.withdrawn) == #[read, child] &&
+            (← processes.model).killed == #[sleeper]
+      finally
+        processes.letGo }
+
 /-- The checks of processes a job runs: the model's order of refusals and its
 record of what was killed, and the runner's process waits on the fake of the
 process service, where cancelling a job withdraws its wait, which is how the
@@ -99,66 +303,7 @@ def processChecks : List Check :=
         return outcome == .cancelled && model.now == 50 && model.processes.killed == #[sleeper] &&
             finished == .finished true &&
             untouched.processes.killed.isEmpty },
-    { name :=
-        "cancelling a job in a process wait withdraws the wait from the process service with the wait's id, the job ends cancelled, and it makes no further request"
-      run := do
-        let (rig, processes) ← Rig.withProcesses { scripts := #[sleeperScript 0] }
-        processes.holdCompletions
-        -- A held run keeps its job's unit: the check waits for its start to
-        -- reach the fake.
-        let (start, runStarted) ← startGate processes.processes.start 1
-        let rig :=
-          { rig with
-            services := { rig.services with processes := { processes.processes with start } } }
-        let spawned ←
-          rig.spawn
-              (reporting fun _ => do
-                discard <| Process.run sleeper 10
-                discard <| Process.run sleeper 10
-                return true)
-        try
-          discard <| awaitEvent "the run's start" runStarted.result?
-          unless (← processes.waiting) == 1 do
-            return false
-          let id := ((← processes.started)[0]?.map (·.1)).getD 0
-          spawned.handle.cancel
-          let cancelled ← spawned.endedAs .cancelled
-          processes.letGo
-          return cancelled && (← processes.withdrawn) == #[id] && (← processes.started).size == 1 &&
-              (← processes.taken).isEmpty &&
-              (← processes.waiting) == 0
-        finally
-          processes.letGo },
-    { name :=
-        "a runner given no process service refuses a run as failed, as a value, and the job goes on"
-      run := do
-        let rig ← Rig.new
-        let spawned ←
-          rig.spawn
-              (reporting fun _ => do
-                let .error (.failed _) ← Process.run sleeper 10 | return false
-                return true)
-        spawned.endedAs (.finished #["true"]) },
-    { name :=
-        "one read delivers every line a child wrote before it waits on its input, on the model and on the fake, where the read is one start and one take: one completion"
-      run := do
-        let script : Process.StreamScript :=
-          { command := sleeper, steps := #[.write .out (JobContract.counted 1000), .awaitClosed] }
-        let expected := (List.range 1000).toArray.map fun n => s!"{n}".toUTF8
-        let job : JobM Bool := do
-          let child ← JobContract.started sleeper (JobContract.lines 1000000 true)
-          let delivery ← JobContract.delivered child
-          return JobContract.linesOf #[delivery] .out == expected && delivery.ended.isNone
-        let (onModel, _) := job.runModel { processes := { streams := #[script] } }
-        let (rig, processes) ← Rig.withProcesses { streams := #[script] }
-        let onFake ← runOnFake job (some rig)
-        let reads :=
-          (← processes.started).filterMap fun (id, request) =>
-            match request with
-            | .read _ => some id
-            | _ => none
-        return onModel == .finished true && onFake == .finished true && reads.size == 1 &&
-            ((← processes.taken).filter reads.contains).size == 1 },
+    cancellingJobProcessWaitCheck, runnerGivenProcessServiceCheck, readDeliversLineChildCheck,
     { name :=
         "the process model holds a child at the bound in the middle of its write, with exactly the bound undelivered, and a read lets it go on"
       run := do
@@ -230,117 +375,9 @@ def processChecks : List Check :=
     -- Seen to bite once by hand, on 2026-11-15: with the filter of
     -- `Handle.children` after a last delivery taken out of `answer`, the
     -- later read, write and close reach the fake, and the check fails.
-    { name :=
-        "after a child's last delivery the runner forgets it: a later read, write or close is noSuchProcess, answered without a request to the process service"
-      run := do
-        let script : Process.StreamScript :=
-          { command := sleeper, steps := #[.write .out "a\n".toUTF8] }
-        let (rig, processes) ← Rig.withProcesses { streams := #[script] }
-        let noSuchProcess {α : Type} : Except ProcessError α → Bool
-          | .error .noSuchProcess => true
-          | _ => false
-        let spawned ←
-          rig.spawn
-              (reporting fun _ => do
-                let child ← JobContract.started sleeper (JobContract.lines 64)
-                let all ← JobContract.toTheEnd child
-                let read ← Process.read child
-                let write ← Process.write child "late".toUTF8
-                let close ← Process.closeInput child
-                return JobContract.linesOf all .out == JobContract.linesFrom ["a"] &&
-                    JobContract.endOf all == some (.exited (.code 0)) &&
-                    noSuchProcess read &&
-                    noSuchProcess write &&
-                    noSuchProcess close)
-        let finished ← spawned.endedAs (.finished #["true"])
-        let kinds :=
-          (← processes.started).map fun (_, request) =>
-            match request with
-            | .start _ _ => "start"
-            | .read _ => "read"
-            | .write _ _ => "write"
-            | .closeInput _ => "closeInput"
-            | .run _ _ => "run"
-            | .runWithin .. => "runWithin"
-            | .runInput .. => "runInput"
-            | .runHead .. => "runHead"
-        return finished && kinds == #["start", "read"] && (← processes.withdrawn).isEmpty },
+    childLastDeliveryRunnerCheck,
     -- Seen to bite once by hand, on 2026-11-15: with `Handle.endChildren`
     -- taken out of `Handle.conclude`, this check and the next fail.
-    { name :=
-        "a job that ends with a streaming child running, finished, failed or cancelled, cancels the child: the fake withdraws its id, and the model, the fake's and the job model's, records it killed"
-      run := do
-        let script : Process.StreamScript := { command := sleeper, steps := #[.awaitClosed] }
-        let starts : JobM Unit := discard <| JobContract.started sleeper (JobContract.lines 64 true)
-        let jobs : List (JobM Bool × Bool) :=
-          [((do
-                starts;
-                return true),
-              false),
-            ((do
-                starts;
-                throw "it fails"),
-              false),
-            ((do
-                starts;
-                sleep 1000;
-                return true),
-              true)]
-        let results ←
-          jobs.mapM fun (job, cancel) => do
-              let (rig, processes) ← Rig.withProcesses { streams := #[script] }
-              let spawned ← rig.spawn (reporting fun _ => job)
-              if cancel then
-                discard <| rig.idle
-                unless (← rig.clock.waiting) == 1 do
-                  return false
-                spawned.handle.cancel
-              discard <| awaitEvent "the job's end" spawned.handle.outcome.result?
-              let child := ((← processes.started)[0]?.map (·.1)).getD 0
-              let model ← processes.model
-              return (← processes.withdrawn) == #[child] && model.killed == #[sleeper] &&
-                  model.children.isEmpty
-        let (_, model) :=
-          (do
-                starts;
-                return true : JobM Bool).runModel
-            { processes := { streams := #[script] } }
-        return results.all id && model.processes.killed == #[sleeper] &&
-            model.processes.children.isEmpty },
-    { name := "cancelling a job in a pending read withdraws the read's wait and then its child"
-      run := do
-        let script : Process.StreamScript := { command := sleeper, steps := #[.awaitClosed] }
-        let (rig, processes) ← Rig.withProcesses { streams := #[script] }
-        -- The child's start, then the read's: a held read keeps its job's
-        -- unit, so the check waits for the second start to reach the fake.
-        let (start, readStarted) ← startGate processes.processes.start 2
-        let rig :=
-          { rig with
-            services := { rig.services with processes := { processes.processes with start } } }
-        let spawned ←
-          rig.spawn
-              (reporting fun _ => do
-                let child ← JobContract.started sleeper (JobContract.lines 64 true)
-                sleep 10
-                discard <| Process.read child
-                return true)
-        discard <| rig.idle
-        unless (← rig.clock.waiting) == 1 do
-          return false
-        processes.holdCompletions
-        rig.clock.advance 10
-        try
-          discard <| awaitEvent "the read's start" readStarted.result?
-          unless (← processes.waiting) == 1 do
-            return false
-          let started ← processes.started
-          let child := (started[0]?.map (·.1)).getD 0
-          let read := (started[1]?.map (·.1)).getD 0
-          spawned.handle.cancel
-          let cancelled ← spawned.endedAs .cancelled
-          return cancelled && (← processes.withdrawn) == #[read, child] &&
-              (← processes.model).killed == #[sleeper]
-        finally
-          processes.letGo }]
+    jobEndsStreamingChildCheck, cancellingJobPendingReadCheck]
 
 end ModelTest

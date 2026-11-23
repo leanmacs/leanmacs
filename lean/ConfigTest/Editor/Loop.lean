@@ -98,6 +98,58 @@ def interruptPulled : IO (Option Ffi.Event) := do
 
 -- inferred-waits W12: removed by host-tests-on-fakes phase 4
 set_option linter.inferredWait false in
+/-- A check of `dispatchChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def commandTakesLongerThresholdCheck (context : Context) : Check :=
+  { name :=
+      "a command that takes longer than the threshold on the fake clock produces one log entry with its name and how long it took, on the log and not on the output; a press with the clock not moved adds none"
+    run :=
+      withHost context []
+        (fun session => do
+          -- The prefix is typed first: the host reads the clock at its
+          -- step, and to arm the key hint delay after it. Then the host
+          -- reads the clock once at the command's step, for the time the
+          -- publish records what was viewed by (`Loop.Keys.now`), and the
+          -- loop reads it just before the command and just after it. Each
+          -- of those readings is held, so the clock is moved between the
+          -- last two and at no other time.
+          session.typed "C-c"
+          let holds ← IO.mkRef (#[] : Array (IO.Promise Unit))
+          let hold : IO (IO.Promise Unit) := do
+            let held ← session.clock.holdReads
+            holds.modify (·.push held)
+            return held
+          let step ← hold
+          session.type "s"
+          -- A stepped host reads the clock on the thread that steps it, and
+          -- the holds park that thread: this one drain steps on a
+          -- dedicated task, joined below, while the check lets each read go.
+          let asked ← IO.asTask (prio := .dedicated) (session.ask [])
+          try
+            unless ← clockReaches session.clock (.held 1) do
+              return false
+            let first ← hold
+            step.resolve ()
+            unless ← clockReaches session.clock (.held 2) do
+              return false
+            let second ← hold
+            first.resolve ()
+            unless ← clockReaches session.clock (.held 3) do
+              return false
+            session.clock.advance 60
+            second.resolve ()
+            IO.ofExcept (← IO.wait asked)
+            let once ← session.log.get
+            session.typed "C-c s"
+            return once == #["slow command: stamp took 60 ms"] && (← session.log.get) == once &&
+                !(← session.output.get).any (·.startsWith "slow command")
+          finally
+            -- Every read let go, so a drain a failed step left parked ends.
+            for held in ← holds.get do
+              held.resolve ()
+            discard <| IO.wait asked)
+        { dispatchCompiled with slowAfter := 50 } }
+
 /-- The checks of key dispatch through the headless host, on the real queue,
 the real text binding, the library's interrupt flag and the real elaborator,
 with the test scheme and compiled commands and bindings written here. -/
@@ -215,54 +267,7 @@ def dispatchChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.typed "C-c u C-c u"
           return (← session.shown).contains "store counter v1: 2" },
-    { name :=
-        "a command that takes longer than the threshold on the fake clock produces one log entry with its name and how long it took, on the log and not on the output; a press with the clock not moved adds none"
-      run :=
-        withHost context []
-          (fun session => do
-            -- The prefix is typed first: the host reads the clock at its
-            -- step, and to arm the key hint delay after it. Then the host
-            -- reads the clock once at the command's step, for the time the
-            -- publish records what was viewed by (`Loop.Keys.now`), and the
-            -- loop reads it just before the command and just after it. Each
-            -- of those readings is held, so the clock is moved between the
-            -- last two and at no other time.
-            session.typed "C-c"
-            let holds ← IO.mkRef (#[] : Array (IO.Promise Unit))
-            let hold : IO (IO.Promise Unit) := do
-              let held ← session.clock.holdReads
-              holds.modify (·.push held)
-              return held
-            let step ← hold
-            session.type "s"
-            -- A stepped host reads the clock on the thread that steps it, and
-            -- the holds park that thread: this one drain steps on a
-            -- dedicated task, joined below, while the check lets each read go.
-            let asked ← IO.asTask (prio := .dedicated) (session.ask [])
-            try
-              unless ← clockReaches session.clock (.held 1) do
-                return false
-              let first ← hold
-              step.resolve ()
-              unless ← clockReaches session.clock (.held 2) do
-                return false
-              let second ← hold
-              first.resolve ()
-              unless ← clockReaches session.clock (.held 3) do
-                return false
-              session.clock.advance 60
-              second.resolve ()
-              IO.ofExcept (← IO.wait asked)
-              let once ← session.log.get
-              session.typed "C-c s"
-              return once == #["slow command: stamp took 60 ms"] && (← session.log.get) == once &&
-                  !(← session.output.get).any (·.startsWith "slow command")
-            finally
-              -- Every read let go, so a drain a failed step left parked ends.
-              for held in ← holds.get do
-                held.resolve ()
-              discard <| IO.wait asked)
-          { dispatchCompiled with slowAfter := 50 } },
+    commandTakesLongerThresholdCheck context,
     { name :=
         "the driver's run of a compiled command that is given its call makes the frame before the first window event and runs it for the focused window, as it does once a window event has arrived"
       run :=

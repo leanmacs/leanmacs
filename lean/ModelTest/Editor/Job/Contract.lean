@@ -43,29 +43,34 @@ def snapshotRig (table : Array (Option String)) : BaseIO Rig := do
 
 -- inferred-waits W23: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
 set_option linter.inferredWait false in
+/-- A check of `snapshotReadChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def jobModelSnapshotReadCheck : Check :=
+  { name :=
+      "in the job model, a snapshot read leaves the clock where it was, and is answered from the published snapshots of the files' model; on the runner over the fake clock it registers no wait and starts none on the clock"
+    run := do
+      let published := snapshotModelTable JobContract.snapshotTable
+      let job : JobM (Nat × Option String × Nat) := do
+        let before ← now
+        let read ← readSnapshot ⟨0⟩
+        return (before, read, ← now)
+      let onModel := modelled job { now := 7, files := { snapshots := published } }
+      let rig ← snapshotRig JobContract.snapshotTable
+      let outcome ←
+        runOnFake
+            (do
+              return (← readSnapshot ⟨2⟩) == some "café\r\nau")
+            (some rig)
+      let state ← rig.clock.state.get
+      return onModel == (.finished (7, some "alpha beta", 7), 7) && outcome == .finished true &&
+          state.started.isEmpty &&
+          (← rig.services.completions.waiting) == 0 }
+
 /-- The checks of the job port's snapshot read that need equality, against
 the job model and the runner over the fake clock (`JobContract`, "Snapshots",
 `Editor/Job/Contract.lean`). -/
 def snapshotReadChecks : List Check :=
-  [{  name :=
-        "in the job model, a snapshot read leaves the clock where it was, and is answered from the published snapshots of the files' model; on the runner over the fake clock it registers no wait and starts none on the clock"
-      run := do
-        let published := snapshotModelTable JobContract.snapshotTable
-        let job : JobM (Nat × Option String × Nat) := do
-          let before ← now
-          let read ← readSnapshot ⟨0⟩
-          return (before, read, ← now)
-        let onModel := modelled job { now := 7, files := { snapshots := published } }
-        let rig ← snapshotRig JobContract.snapshotTable
-        let outcome ←
-          runOnFake
-              (do
-                return (← readSnapshot ⟨2⟩) == some "café\r\nau")
-              (some rig)
-        let state ← rig.clock.state.get
-        return onModel == (.finished (7, some "alpha beta", 7), 7) && outcome == .finished true &&
-            state.started.isEmpty &&
-            (← rig.services.completions.waiting) == 0 }]
+  [jobModelSnapshotReadCheck]
 
 -- inferred-waits W24: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
 set_option linter.inferredWait false in

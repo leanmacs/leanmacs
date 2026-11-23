@@ -125,35 +125,127 @@ def withAtPointHost (context : Context) (files : List (String × String))
 
 -- inferred-waits W2: removed by host-tests-on-fakes phase 4
 set_option linter.inferredWait false in
+/-- A check of `atPointChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def keyPointNextTypingCheck (context : Context) : Check :=
+  { name :=
+      "the key of at-point-next, where typing is text, lists what config's source that answers later answers that matches the word before the cursor, its job started"
+    run :=
+      withAtPointHost context [("init.lean", listedText)] fun session => do
+        session.ask [.reload]
+        session.resize 640 480
+        session.commit "alpha beta al"
+        session.typed "C-n"
+        unless (← session.join) == .settled do
+          return false
+        let lines ← session.sceneLines
+        let rows ← realOrder "al" listedTexts
+        let some listId := listViewId lines | return false
+        let some (_, listY, _, listHeight) := printedRect lines listId | return false
+        let some (_, windowY, _, windowHeight) := printedRect lines 0 | return false
+        let output ← session.lines
+        return rows.length == 3 && listViewShows lines rows && noneChosen lines &&
+            windowY + windowHeight == listY &&
+            listY + listHeight < 480 &&
+            listHeight > 0 &&
+            (lines.filter (·.startsWith "view ")).size == 2 &&
+            output.any (fun line => line.startsWith "job " && line.endsWith " listed: started") &&
+            !output.any (·.startsWith "loop: refused") }
+
+-- inferred-waits W2: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `atPointChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def pausingTypingTwoCharactersCheck (context : Context) : Check :=
+  { name :=
+      "pausing after typing two characters of a word opens a session of config's source that pauses, with nothing chosen, and after one character it answers nothing and nothing opens"
+    run := do
+      let first ←
+        withAtPointHost context [("init.lean", listedText)] fun session => do
+            session.ask [.reload]
+            session.resize 640 480
+            session.commit "alpha alpine"
+            session.typed "RET a l"
+            let armed ← session.clock.waiting
+            let before ← session.sceneLines
+            let started := (← session.lines).filter (·.startsWith "job ")
+            session.clock.advance 240
+            unless (← session.join) == .settled do
+              return false
+            let lines ← session.sceneLines
+            let rows ← realOrder "al" listedTexts
+            return armed == 1 && started.isEmpty && (listViewId before).isNone &&
+                rows.length == 3 &&
+                listViewShows lines rows &&
+                noneChosen lines
+      let second ←
+        withAtPointHost context [("init.lean", listedText)] fun session => do
+            session.ask [.reload]
+            session.resize 640 480
+            session.commit "beta"
+            session.typed "RET a"
+            session.clock.advance 240
+            unless (← session.join) == .settled do
+              return false
+            return (listViewId (← session.sceneLines)).isNone
+      return first && second }
+
+-- inferred-waits W2: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `atPointChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def typedKeyArmsPauseCheck (context : Context) : Check :=
+  { name :=
+      "a typed key arms one pause wait and starts no job: after a b the clock holds one wait and has withdrawn one, the table of waits holds one, no job line is printed, and a join returns at once"
+    run :=
+      withAtPointHost context [("init.lean", listedText)] fun session => do
+        session.ask [.reload]
+        session.typed "a b"
+        let waiting ← session.clock.waiting
+        let withdrawn := (← session.clock.withdrawn).size
+        session.typed "c d e"
+        let afterMore ← session.clock.waiting
+        let withdrawnMore := (← session.clock.withdrawn).size
+        let joined ← session.join
+        let jobLines := (← session.lines).filter (·.startsWith "job ")
+        let table ← session.clock.completions.waiting
+        return waiting == 1 && withdrawn == 1 && afterMore == 1 && withdrawnMore == 4 &&
+            table == 1 &&
+            joined == .settled &&
+            jobLines.isEmpty }
+
+-- inferred-waits W2: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `atPointChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def pauseEventQueuedClockCheck (context : Context) : Check :=
+  { name :=
+      "the pause's event is queued before the clock's move returns: advance then join, five times over, each time finds the session the pause opened listed"
+    run :=
+      withAtPointHost context [("init.lean", listedText)] fun session => do
+        session.ask [.reload]
+        session.resize 640 480
+        session.commit "alpha alpine"
+        let mut held := true
+        for _ in [0:5] do
+          session.typed "RET a l"
+          -- No settle between the move and the join: the join's marker
+          -- must find the pause's event ahead of it.
+          session.clock.advance 240
+          unless (← session.join) == .settled do
+            return false
+          let lines ← session.sceneLines
+          held := held && (listViewId lines).isSome
+          session.typed "C-g"
+        return held }
+
 /-- The checks of completion at point through the headless host of the
 test scheme (`withAtPointHost`), with the real elaborator, the real text
 binding, the recorder and the stage's fake clock
 (`docs/design/keymaps-and-modes.md`, "Completion at point"), on the kit's
 at-point package and keys of the checks' own (`atPointTyping`). -/
 def atPointChecks (context : Context) : List Check :=
-  [{  name :=
-        "the key of at-point-next, where typing is text, lists what config's source that answers later answers that matches the word before the cursor, its job started"
-      run :=
-        withAtPointHost context [("init.lean", listedText)] fun session => do
-          session.ask [.reload]
-          session.resize 640 480
-          session.commit "alpha beta al"
-          session.typed "C-n"
-          unless (← session.join) == .settled do
-            return false
-          let lines ← session.sceneLines
-          let rows ← realOrder "al" listedTexts
-          let some listId := listViewId lines | return false
-          let some (_, listY, _, listHeight) := printedRect lines listId | return false
-          let some (_, windowY, _, windowHeight) := printedRect lines 0 | return false
-          let output ← session.lines
-          return rows.length == 3 && listViewShows lines rows && noneChosen lines &&
-              windowY + windowHeight == listY &&
-              listY + listHeight < 480 &&
-              listHeight > 0 &&
-              (lines.filter (·.startsWith "view ")).size == 2 &&
-              output.any (fun line => line.startsWith "job " && line.endsWith " listed: started") &&
-              !output.any (·.startsWith "loop: refused") },
+  [keyPointNextTypingCheck context,
     { name :=
         "a source that declares a trigger character opens a session when that character is typed, and no other character does"
       run :=
@@ -170,74 +262,7 @@ def atPointChecks (context : Context) : List Check :=
           return (listViewId before).isNone && listViewShows dotted rows && noneChosen dotted &&
               rows.length == 2 &&
               (listViewId closed).isNone },
-    { name :=
-        "pausing after typing two characters of a word opens a session of config's source that pauses, with nothing chosen, and after one character it answers nothing and nothing opens"
-      run := do
-        let first ←
-          withAtPointHost context [("init.lean", listedText)] fun session => do
-              session.ask [.reload]
-              session.resize 640 480
-              session.commit "alpha alpine"
-              session.typed "RET a l"
-              let armed ← session.clock.waiting
-              let before ← session.sceneLines
-              let started := (← session.lines).filter (·.startsWith "job ")
-              session.clock.advance 240
-              unless (← session.join) == .settled do
-                return false
-              let lines ← session.sceneLines
-              let rows ← realOrder "al" listedTexts
-              return armed == 1 && started.isEmpty && (listViewId before).isNone &&
-                  rows.length == 3 &&
-                  listViewShows lines rows &&
-                  noneChosen lines
-        let second ←
-          withAtPointHost context [("init.lean", listedText)] fun session => do
-              session.ask [.reload]
-              session.resize 640 480
-              session.commit "beta"
-              session.typed "RET a"
-              session.clock.advance 240
-              unless (← session.join) == .settled do
-                return false
-              return (listViewId (← session.sceneLines)).isNone
-        return first && second },
-    { name :=
-        "a typed key arms one pause wait and starts no job: after a b the clock holds one wait and has withdrawn one, the table of waits holds one, no job line is printed, and a join returns at once"
-      run :=
-        withAtPointHost context [("init.lean", listedText)] fun session => do
-          session.ask [.reload]
-          session.typed "a b"
-          let waiting ← session.clock.waiting
-          let withdrawn := (← session.clock.withdrawn).size
-          session.typed "c d e"
-          let afterMore ← session.clock.waiting
-          let withdrawnMore := (← session.clock.withdrawn).size
-          let joined ← session.join
-          let jobLines := (← session.lines).filter (·.startsWith "job ")
-          let table ← session.clock.completions.waiting
-          return waiting == 1 && withdrawn == 1 && afterMore == 1 && withdrawnMore == 4 &&
-              table == 1 &&
-              joined == .settled &&
-              jobLines.isEmpty },
-    { name :=
-        "the pause's event is queued before the clock's move returns: advance then join, five times over, each time finds the session the pause opened listed"
-      run :=
-        withAtPointHost context [("init.lean", listedText)] fun session => do
-          session.ask [.reload]
-          session.resize 640 480
-          session.commit "alpha alpine"
-          let mut held := true
-          for _ in [0:5] do
-            session.typed "RET a l"
-            -- No settle between the move and the join: the join's marker
-            -- must find the pause's event ahead of it.
-            session.clock.advance 240
-            unless (← session.join) == .settled do
-              return false
-            let lines ← session.sceneLines
-            held := held && (listViewId lines).isSome
-            session.typed "C-g"
-          return held }]
+    pausingTypingTwoCharactersCheck context, typedKeyArmsPauseCheck context,
+    pauseEventQueuedClockCheck context]
 
 end ConfigTest

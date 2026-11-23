@@ -211,6 +211,63 @@ def ranScript (context : HostContext) (directives : List Headless.Directive) :
 
 -- inferred-waits W35: removed by host-tests-on-fakes phase 4
 set_option linter.inferredWait false in
+/-- A check of `exScriptChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def stepSaidStopHostCheck (context : HostContext) : Check :=
+  { name :=
+      "once a step said stop the host runs no further invocation: a command that asks for quit and then for the open command, with a path, to be run after it ends the loop at quit, and the open command never runs: the host prints the run alone and starts no job; with a command that says other in place of quit, the load job is started"
+    run :=
+      context.withFiles fun files => do
+        let path := files / "note.txt"
+        IO.FS.writeBinFile path noteText.toUTF8
+        let handing (first : String) : Config.Registration :=
+          { name := s!"hand-{first}"
+            action :=
+              .plain do
+                Editor.invoke { command := first }
+                Editor.invoke
+                    { command := FilesApi.openFileName, arguments := [.str path.toString] } }
+        let compiled : Compiled :=
+          { exCompiled with
+            commands := exCompiled.commands ++ #[handing Ex.quitName, handing "other"]
+            jobs := FilesApiTest.fake.registered.jobs }
+        let started := s!"job 1 {Test.Opener.loadJob}: started"
+        let ran (name : String) : IO (Option (Headless.Wait × Array String)) := do
+          let stage ← Stage.new context context.elaborator (memorySource []) compiled
+          leavingLibraryQueue <|
+              Headless.withStepped stage.collaborators stage.memory (guard := hangGuard) (grace :=
+                some hangGuard) fun stepped => do
+                stepped.send (.run name)
+                let joined ← stepped.join hangGuard
+                let output ← stage.output.get
+                return some (joined, output)
+        let left ← ran s!"hand-{Ex.quitName}"
+        let went ← ran "hand-other"
+        return left == some (.ended, #[s!"run hand-{Ex.quitName}: ok"]) &&
+            (went.map fun (joined, output) =>
+                joined == .settled && output.contains "run hand-other: ok" &&
+                  output.contains started) ==
+              some true }
+
+-- inferred-waits W35: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `exScriptChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def waitHostWhoseLoopCheck (context : HostContext) : Check :=
+  { name :=
+      "a wait on a host whose loop a command ended answers that the loop has ended, a settle and a join alike, which is no failure of a script, and halting the host then answers that it stopped"
+    run := do
+      let stage ← Stage.new context context.elaborator (memorySource []) exCompiled
+      Headless.withHost stage.collaborators (guard := hangGuard) fun host => do
+          host.send (.run Ex.quitName)
+          let ended := (← Job.awaitWithin hangGuard host.thread).isSome
+          let awaited ← host.await hangGuard
+          let joined ← host.join hangGuard
+          return ended && awaited == .ended && joined == .ended &&
+              Headless.Wait.ended.failure (some 3) == none &&
+              (← host.halt hangGuard) &&
+              (← stage.output.get) == #[s!"run {Ex.quitName}: ok"] }
+
 /-- The checks of a script that a command ends (`lean/Editor/Headless.lean`,
 "The driver, and the command line"), with `Headless.run` on scripts built
 here, over the real elaborator, the real queue, the real text binding and
@@ -267,52 +324,6 @@ def exScriptChecks (context : HostContext) : List Check :=
                   [.request .show])
           return failure == none && listed output &&
               (← IO.FS.readBinFile path) == noteText.toUTF8 },
-    { name :=
-        "once a step said stop the host runs no further invocation: a command that asks for quit and then for the open command, with a path, to be run after it ends the loop at quit, and the open command never runs: the host prints the run alone and starts no job; with a command that says other in place of quit, the load job is started"
-      run :=
-        context.withFiles fun files => do
-          let path := files / "note.txt"
-          IO.FS.writeBinFile path noteText.toUTF8
-          let handing (first : String) : Config.Registration :=
-            { name := s!"hand-{first}"
-              action :=
-                .plain do
-                  Editor.invoke { command := first }
-                  Editor.invoke
-                      { command := FilesApi.openFileName, arguments := [.str path.toString] } }
-          let compiled : Compiled :=
-            { exCompiled with
-              commands := exCompiled.commands ++ #[handing Ex.quitName, handing "other"]
-              jobs := FilesApiTest.fake.registered.jobs }
-          let started := s!"job 1 {Test.Opener.loadJob}: started"
-          let ran (name : String) : IO (Option (Headless.Wait × Array String)) := do
-            let stage ← Stage.new context context.elaborator (memorySource []) compiled
-            leavingLibraryQueue <|
-                Headless.withStepped stage.collaborators stage.memory (guard := hangGuard) (grace :=
-                  some hangGuard) fun stepped => do
-                  stepped.send (.run name)
-                  let joined ← stepped.join hangGuard
-                  let output ← stage.output.get
-                  return some (joined, output)
-          let left ← ran s!"hand-{Ex.quitName}"
-          let went ← ran "hand-other"
-          return left == some (.ended, #[s!"run hand-{Ex.quitName}: ok"]) &&
-              (went.map fun (joined, output) =>
-                  joined == .settled && output.contains "run hand-other: ok" &&
-                    output.contains started) ==
-                some true },
-    { name :=
-        "a wait on a host whose loop a command ended answers that the loop has ended, a settle and a join alike, which is no failure of a script, and halting the host then answers that it stopped"
-      run := do
-        let stage ← Stage.new context context.elaborator (memorySource []) exCompiled
-        Headless.withHost stage.collaborators (guard := hangGuard) fun host => do
-            host.send (.run Ex.quitName)
-            let ended := (← Job.awaitWithin hangGuard host.thread).isSome
-            let awaited ← host.await hangGuard
-            let joined ← host.join hangGuard
-            return ended && awaited == .ended && joined == .ended &&
-                Headless.Wait.ended.failure (some 3) == none &&
-                (← host.halt hangGuard) &&
-                (← stage.output.get) == #[s!"run {Ex.quitName}: ok"] }]
+    stepSaidStopHostCheck context, waitHostWhoseLoopCheck context]
 
 end ExTest.Linked

@@ -23,6 +23,22 @@ open Editor.Job
 
 -- inferred-waits W17: stays (an adapter's contract over the real service, whose count is its subject)
 set_option linter.inferredWait false in
+/-- A rig of `flushRealRigs`, a declaration of its own so that the allow
+above it covers it alone. -/
+def libraryProcessServiceHeldRig (services : Job.Services) : FlushContract.FlushRig :=
+  { name := "the library's process service, held by a child only a cancel ends"
+    flush := services.flushed .processes
+    held :=
+      some do
+        let before ← Test.Linked.pendingChildren
+        let (id, _) ← services.completions.register
+        services.processes.start id
+            (.run { program := "/bin/sleep", arguments := #["600"], directory := "/" } 1024)
+        let release := do
+          services.processes.cancel id
+          services.completions.finish id .cancelled
+        return (release, return (← Test.Linked.pendingChildren) == before) }
+
 /-- The rigs of the real ports among `services`. -/
 def flushRealRigs (services : Job.Services) : List FlushContract.FlushRig :=
   let completions := services.completions
@@ -46,18 +62,7 @@ def flushRealRigs (services : Job.Services) : List FlushContract.FlushRig :=
               completions.finish id .cancelled
             return finished
           return (hold.release, ended) },
-    { name := "the library's process service, held by a child only a cancel ends"
-      flush := services.flushed .processes
-      held :=
-        some do
-          let before ← Test.Linked.pendingChildren
-          let (id, _) ← completions.register
-          services.processes.start id
-              (.run { program := "/bin/sleep", arguments := #["600"], directory := "/" } 1024)
-          let release := do
-            services.processes.cancel id
-            completions.finish id .cancelled
-          return (release, return (← Test.Linked.pendingChildren) == before) },
+    libraryProcessServiceHeldRig services,
     { name := "the library's watch service", flush := services.flushed .fileWatches },
     { name := "the library's diff service", flush := services.flushed .diffs },
     { name := "the library's grep service", flush := services.flushed .greps }]

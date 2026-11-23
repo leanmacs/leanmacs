@@ -71,6 +71,108 @@ def noPendingDrawn (lines : Array String) : Bool :=
 
 -- inferred-waits W3: removed by host-tests-on-fakes phase 4
 set_option linter.inferredWait false in
+/-- A check of `keyHintChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def ac1SchemeLeaderDefaultCheck (context : Context) : Check :=
+  { name :=
+      "AC1: after the scheme's leader and the default delay on the fake clock, the scene lists the keys that can follow it with their descriptions and prefix names, drawn by the minibuffer display directly above the bottom row; none before the delay has passed"
+    run :=
+      withTestHost context [("init.lean", delayText none)] fun session => do
+        session.resize 640 480
+        session.ask [.reload]
+        session.typed schemeLeader
+        let pending ← session.sceneLines
+        let armed := (← session.clock.waiting) == 1
+        session.clock.advance 499
+        let early := (← session.join) == .settled
+        let before ← session.sceneLines
+        session.clock.advance 1
+        let joined := (← session.join) == .settled
+        let after ← session.sceneLines
+        let heights := Headless.cells.heights
+        let listed := hintSheetRows leaderHints
+        let rect := (listViewId after).bind (printedRect after)
+        return armed && early && joined && (listViewId pending).isNone &&
+            !pending.any (·.startsWith "hint ") &&
+            (listViewId before).isNone &&
+            !before.any (·.startsWith "hint ") &&
+            after.filter (·.startsWith "hint ") ==
+              #["hint f: prefix \"file\" 1", "hint s: binding \"Save\""] &&
+            listViewShows after listed &&
+            rect.map (fun (_, y, _, height) => y + height) == some (480 - heights.message) }
+
+-- inferred-waits W3: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `keyHintChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def configSetsDelayNeverCheck (context : Context) : Check :=
+  { name :=
+      "a config that sets the delay to .never arms no wait and shows no hints however long the prefix is pending, and the pending keys are still drawn"
+    run :=
+      withTestHost context [("init.lean", delayText (some ".never"))] fun session => do
+        session.ask [.reload]
+        session.typed schemeLeader
+        let armed ← session.clock.waiting
+        session.clock.advance 10000
+        let joined := (← session.join) == .settled
+        let lines ← session.sceneLines
+        return armed == 0 && joined && (listViewId lines).isNone &&
+            !lines.any (·.startsWith "hint ") &&
+            pendingDrawn lines schemeLeader }
+
+-- inferred-waits W3: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `keyHintChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def reloadDefaultDelayPassedCheck (context : Context) : Check :=
+  { name :=
+      "a reload before the default delay has passed keeps its wait when the delay is still wanted, so the hints are shown 500 ms after the scheme's leader; one that sets .never withdraws the wait, and one that then sets the delay again arms a new wait of the whole delay, all with the leader still pending"
+    run :=
+      withTestHost context [("init.lean", delayText none)] fun session => do
+        session.ask [.reload]
+        session.typed schemeLeader
+        let armed := (← session.clock.waiting) == 1
+        let withdrawnArmed := (← session.clock.withdrawn).size
+        session.clock.advance 200
+        discard <| session.join
+        -- A reload that leaves the delay as it was: the wait is kept.
+        session.ask [.reload]
+        let kept :=
+          (← session.clock.waiting) == 1 && (← session.clock.withdrawn).size == withdrawnArmed
+        session.clock.advance 299
+        discard <| session.join
+        let early ← session.sceneLines
+        session.clock.advance 1
+        discard <| session.join
+        let due ← session.sceneLines
+        session.typed "<Escape>"
+        session.typed schemeLeader
+        let withdrawnPending := (← session.clock.withdrawn).size
+        -- A reload that sets `.never`: the wait is withdrawn.
+        session.write "init.lean" (delayText (some ".never"))
+        session.ask [.reload]
+        let closed :=
+          (← session.clock.waiting) == 0 && (← session.clock.withdrawn).size == withdrawnPending + 1
+        -- A reload that sets the delay again: a new wait of the whole delay.
+        session.write "init.lean" (delayText none)
+        session.ask [.reload]
+        let rearmed := (← session.clock.waiting) == 1
+        session.clock.advance 499
+        discard <| session.join
+        let rearmedEarly ← session.sceneLines
+        session.clock.advance 1
+        discard <| session.join
+        let rearmedDue ← session.sceneLines
+        return armed && kept && !early.any (·.startsWith "hint ") &&
+            due.filter (·.startsWith "hint ") ==
+              #["hint f: prefix \"file\" 1", "hint s: binding \"Save\""] &&
+            closed &&
+            rearmed &&
+            !rearmedEarly.any (·.startsWith "hint ") &&
+            pendingDrawn rearmedEarly schemeLeader &&
+            rearmedDue.filter (·.startsWith "hint ") ==
+              #["hint f: prefix \"file\" 1", "hint s: binding \"Save\""] }
+
 /-- The checks of when and where the key hints are shown, and of the pending
 keys drawn, through a host of the test scheme (`withTestHost`),
 with the real elaborator, the fake clock the host's waits are on and the
@@ -79,32 +181,7 @@ prefix is pending (the publish after an install, `Headless.Running.publish`),
 and the delays a reload refuses. What the hints list is `hintChecks`'; how the delay is
 armed and the list placed, `ModelTest`'s. -/
 def keyHintChecks (context : Context) : List Check :=
-  [{  name :=
-        "AC1: after the scheme's leader and the default delay on the fake clock, the scene lists the keys that can follow it with their descriptions and prefix names, drawn by the minibuffer display directly above the bottom row; none before the delay has passed"
-      run :=
-        withTestHost context [("init.lean", delayText none)] fun session => do
-          session.resize 640 480
-          session.ask [.reload]
-          session.typed schemeLeader
-          let pending ← session.sceneLines
-          let armed := (← session.clock.waiting) == 1
-          session.clock.advance 499
-          let early := (← session.join) == .settled
-          let before ← session.sceneLines
-          session.clock.advance 1
-          let joined := (← session.join) == .settled
-          let after ← session.sceneLines
-          let heights := Headless.cells.heights
-          let listed := hintSheetRows leaderHints
-          let rect := (listViewId after).bind (printedRect after)
-          return armed && early && joined && (listViewId pending).isNone &&
-              !pending.any (·.startsWith "hint ") &&
-              (listViewId before).isNone &&
-              !before.any (·.startsWith "hint ") &&
-              after.filter (·.startsWith "hint ") ==
-                #["hint f: prefix \"file\" 1", "hint s: binding \"Save\""] &&
-              listViewShows after listed &&
-              rect.map (fun (_, y, _, height) => y + height) == some (480 - heights.message) },
+  [ac1SchemeLeaderDefaultCheck context,
     { name :=
         "AC2: completing the sequence, or resetting it with an unbound key, before the delay passes withdraws the delay and leaves no hints in the scene after it"
       run :=
@@ -164,19 +241,7 @@ def keyHintChecks (context : Context) : List Check :=
           let plain := hintSheetRows leaderHints (Completion.Display.plain "plain")
           return plain == ["  f", "  s"] && listViewShows lines plain &&
               !listViewShows lines (hintSheetRows leaderHints) },
-    { name :=
-        "a config that sets the delay to .never arms no wait and shows no hints however long the prefix is pending, and the pending keys are still drawn"
-      run :=
-        withTestHost context [("init.lean", delayText (some ".never"))] fun session => do
-          session.ask [.reload]
-          session.typed schemeLeader
-          let armed ← session.clock.waiting
-          session.clock.advance 10000
-          let joined := (← session.join) == .settled
-          let lines ← session.sceneLines
-          return armed == 0 && joined && (listViewId lines).isNone &&
-              !lines.any (·.startsWith "hint ") &&
-              pendingDrawn lines schemeLeader },
+    configSetsDelayNeverCheck context,
     { name :=
         "a reload that sets the delay to .never while the scheme's leader is pending with its hints shown closes them: the scene after it lists no hints and draws no list, and the leader is still drawn pending"
       run :=
@@ -191,54 +256,7 @@ def keyHintChecks (context : Context) : List Check :=
               (listViewId lines).isNone &&
               !lines.any (·.startsWith "hint ") &&
               pendingDrawn lines schemeLeader },
-    { name :=
-        "a reload before the default delay has passed keeps its wait when the delay is still wanted, so the hints are shown 500 ms after the scheme's leader; one that sets .never withdraws the wait, and one that then sets the delay again arms a new wait of the whole delay, all with the leader still pending"
-      run :=
-        withTestHost context [("init.lean", delayText none)] fun session => do
-          session.ask [.reload]
-          session.typed schemeLeader
-          let armed := (← session.clock.waiting) == 1
-          let withdrawnArmed := (← session.clock.withdrawn).size
-          session.clock.advance 200
-          discard <| session.join
-          -- A reload that leaves the delay as it was: the wait is kept.
-          session.ask [.reload]
-          let kept :=
-            (← session.clock.waiting) == 1 && (← session.clock.withdrawn).size == withdrawnArmed
-          session.clock.advance 299
-          discard <| session.join
-          let early ← session.sceneLines
-          session.clock.advance 1
-          discard <| session.join
-          let due ← session.sceneLines
-          session.typed "<Escape>"
-          session.typed schemeLeader
-          let withdrawnPending := (← session.clock.withdrawn).size
-          -- A reload that sets `.never`: the wait is withdrawn.
-          session.write "init.lean" (delayText (some ".never"))
-          session.ask [.reload]
-          let closed :=
-            (← session.clock.waiting) == 0 &&
-              (← session.clock.withdrawn).size == withdrawnPending + 1
-          -- A reload that sets the delay again: a new wait of the whole delay.
-          session.write "init.lean" (delayText none)
-          session.ask [.reload]
-          let rearmed := (← session.clock.waiting) == 1
-          session.clock.advance 499
-          discard <| session.join
-          let rearmedEarly ← session.sceneLines
-          session.clock.advance 1
-          discard <| session.join
-          let rearmedDue ← session.sceneLines
-          return armed && kept && !early.any (·.startsWith "hint ") &&
-              due.filter (·.startsWith "hint ") ==
-                #["hint f: prefix \"file\" 1", "hint s: binding \"Save\""] &&
-              closed &&
-              rearmed &&
-              !rearmedEarly.any (·.startsWith "hint ") &&
-              pendingDrawn rearmedEarly schemeLeader &&
-              rearmedDue.filter (·.startsWith "hint ") ==
-                #["hint f: prefix \"file\" 1", "hint s: binding \"Save\""] },
+    reloadDefaultDelayPassedCheck context,
     { name :=
         "a reload refuses a delay over a minute, saying keyHintDelayTooLong's sentence, a delay that is not one, and a delay set twice; the previous config's bindings keep working"
       run :=

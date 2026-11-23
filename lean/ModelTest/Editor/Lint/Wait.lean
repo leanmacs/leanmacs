@@ -105,6 +105,33 @@ refused nothing here. -/
 def ModelTest.LintFixture.tagged : BaseIO Nat :=
   ModelTest.LintFixture.sharedCount
 
+/-! An allow covers the one declaration it is on, and a listed site's check
+is a declaration of its own: so a check list holding such a check refuses
+a new inferred wait written in the list beside it. -/
+
+-- The allow a listed site's check carries (a fixture: no row of its own).
+set_option linter.inferredWait false in
+/-- A check under an allow, a declaration of its own, as each listed site's
+check is. -/
+def ModelTest.LintFixture.allowedCheck (activity : Editor.Job.Activity) : ModelTest.Check :=
+  { name := "a check under an allow",
+    run := do
+      return (← activity.seen).running == 0 }
+
+/--
+error: `Editor.Job.Activity.seen`, in `ModelTest.LintFixture.listChecks`, is an inferred wait (count): it infers done from something shared, not from a signal for this work. It is allowed only in Editor.Job.Activity, Editor.Job.Runner, Editor.Headless, Editor.Headless.Stepped, Editor.Headless.Wait, Editor.Loop, Editor.Job.HandleContract, Editor.Test.Jobs, Editor.Test.Linked.Jobs and the test modules that mirror them; wait on the work's own handle, promise or flush, or, for a site a later phase removes, `set_option linter.inferredWait false in` with its row of docs/dev-practices/inferred-waits.md
+
+Note: This linter can be disabled with `set_option linter.inferredWait false`
+-/
+#guard_msgs in
+/-- A bad declaration: a check list with no allow, which holds a check under
+one, given a new check that reads the count. -/
+def ModelTest.LintFixture.listChecks (activity : Editor.Job.Activity) : List ModelTest.Check :=
+  [ModelTest.LintFixture.allowedCheck activity,
+    { name := "a new check",
+      run := do
+        return (← activity.seen).running == 0 }]
+
 /-! A wait does not take a number of milliseconds: `Job.awaitWithin` takes a
 `HangGuard`. -/
 

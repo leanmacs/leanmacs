@@ -71,55 +71,69 @@ def printedThrough (services : Job.Services) (command : Process.Command) : IO (O
   | _ =>
     return none
 
+/-- The command that prints `PATH`, `program` (`printenv`) run in
+`directory`. -/
+def printenv (directory : System.FilePath) (program := "/usr/bin/printenv") : Process.Command :=
+  { program, arguments := #["PATH"], directory }
+
 -- inferred-waits W22: stays (an adapter's contract over the real service, whose count is its subject)
 set_option linter.inferredWait false in
+/-- A check of `environmentChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def miseStandingFixtureChildCheck (services : Job.Services) (fixtures : System.FilePath) : Check :=
+  { name :=
+      "with mise standing in as a fixture, a child started in each of two directories, by its path and by a bare name, gets that directory's fixture PATH, and nothing is reported"
+    run :=
+      withFixturePath services fun first firstPath =>
+        withFixturePath services fun second secondPath => do
+          let said ← IO.mkRef #[]
+          let services ← withEnvironment services (.mise (some (fixtures / "mise"))) 1000 said
+          let before ← Ffi.processesPending
+          let outcome ←
+            runOnTimers services do
+                let byPath ← [first, second].mapM fun directory => outputOf (printenv directory)
+                let bare ←
+                  [first, second].mapM fun directory => outputOf (printenv directory "printenv")
+                return byPath == [firstPath ++ "\n", secondPath ++ "\n"] && bare == byPath
+          let reaped ← Editor.Test.Linked.childrenReapedTo services before
+          return outcome == .finished true && (← said.get).isEmpty && reaped }
+
+-- inferred-waits W22: stays (an adapter's contract over the real service, whose count is its subject)
+set_option linter.inferredWait false in
+/-- A check of `environmentChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def miseSleepsPastLimitCheck (services : Job.Services) (fixtures : System.FilePath) : Check :=
+  { name :=
+      "with a mise that sleeps past a limit of 1 s, the lookup is killed at its limit and not before it, its group reaped, the child gets the inherited environment, and the timeout is reported once"
+    run :=
+      withFixturePath services fun directory _ => do
+        let some inherited ← printedThrough services (printenv directory) | return false
+        let said ← IO.mkRef #[]
+        let services ← withEnvironment services (.mise (some (fixtures / "slow-mise"))) 1000 said
+        let before ← Ffi.processesPending
+        let outcome ←
+          runOnTimers services do
+              -- The lookup starts after this reading.
+              let start ← now
+              let path ← outputOf (printenv directory)
+              let ended ← now
+              -- real time under test: the 1 s limit is not cut short, a lower
+              -- bound load only makes surer. That the limit fired is the
+              -- timeout reported; how soon after is bounded only by the
+              -- job's hang guard (`runOnTimers`).
+              return ended - start >= 1000 && path == inherited
+        let reaped ← Editor.Test.Linked.childrenReapedTo services before
+        return outcome == .finished true &&
+            (← said.get) == #[Process.failureMessage directory (.timedOut 1000)] &&
+            reaped }
+
 /-- What the job port shows only over the real process service: the lookup
 of a child's environment with mise standing in as the fixtures under
 `fixtures` (`tests/process-environment`). Each check works in temporary
 directories of its own, which it removes, and none sets a variable of the
 test process or changes its working directory. -/
 def environmentChecks (services : Job.Services) (fixtures : System.FilePath) : List Check :=
-  let printenv (directory : System.FilePath) (program := "/usr/bin/printenv") : Process.Command :=
-    { program, arguments := #["PATH"], directory }
-  [{  name :=
-        "with mise standing in as a fixture, a child started in each of two directories, by its path and by a bare name, gets that directory's fixture PATH, and nothing is reported"
-      run :=
-        withFixturePath services fun first firstPath =>
-          withFixturePath services fun second secondPath => do
-            let said ← IO.mkRef #[]
-            let services ← withEnvironment services (.mise (some (fixtures / "mise"))) 1000 said
-            let before ← Ffi.processesPending
-            let outcome ←
-              runOnTimers services do
-                  let byPath ← [first, second].mapM fun directory => outputOf (printenv directory)
-                  let bare ←
-                    [first, second].mapM fun directory => outputOf (printenv directory "printenv")
-                  return byPath == [firstPath ++ "\n", secondPath ++ "\n"] && bare == byPath
-            let reaped ← Editor.Test.Linked.childrenReapedTo services before
-            return outcome == .finished true && (← said.get).isEmpty && reaped },
-    { name :=
-        "with a mise that sleeps past a limit of 1 s, the lookup is killed at its limit and not before it, its group reaped, the child gets the inherited environment, and the timeout is reported once"
-      run :=
-        withFixturePath services fun directory _ => do
-          let some inherited ← printedThrough services (printenv directory) | return false
-          let said ← IO.mkRef #[]
-          let services ← withEnvironment services (.mise (some (fixtures / "slow-mise"))) 1000 said
-          let before ← Ffi.processesPending
-          let outcome ←
-            runOnTimers services do
-                -- The lookup starts after this reading.
-                let start ← now
-                let path ← outputOf (printenv directory)
-                let ended ← now
-                -- real time under test: the 1 s limit is not cut short, a lower
-                -- bound load only makes surer. That the limit fired is the
-                -- timeout reported; how soon after is bounded only by the
-                -- job's hang guard (`runOnTimers`).
-                return ended - start >= 1000 && path == inherited
-          let reaped ← Editor.Test.Linked.childrenReapedTo services before
-          return outcome == .finished true &&
-              (← said.get) == #[Process.failureMessage directory (.timedOut 1000)] &&
-              reaped }]
+  [miseStandingFixtureChildCheck services fixtures, miseSleepsPastLimitCheck services fixtures]
 
 /-- The names of the environment checks that fail over the real process
 service, and, when the environment a child of the test process gets is not

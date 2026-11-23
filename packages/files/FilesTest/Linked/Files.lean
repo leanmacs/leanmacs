@@ -367,6 +367,246 @@ def languageChecks (context : HostContext) : List Check :=
 
 -- inferred-waits W37: removed by host-tests-on-fakes phase 4
 set_option linter.inferredWait false in
+/-- A check of `fileChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def jobLoadsFileThroughCheck (context : HostContext) : Check :=
+  {
+    name :=
+      "a job loads a file through the host and its handler makes a text of it, with its two-byte character: the job's line says ok, show prints the text, and the library then holds no snapshot more than before but the one of the loop's scene; a job whose file is not there fails with the refusal's description",
+    run :=
+      context.withFiles fun files =>
+        IO.FS.withTempDir fun config => do
+          IO.FS.writeBinFile (files / "note.txt") "héllo\n".toUTF8
+          writeConfig config [("init.lean", openText files)]
+          let stage ← Stage.overFiles context (Config.Directory.source config)
+          let snapshots ← Ffi.Snapshot.live
+          onSteppedStage stage fun host => do
+              let ask (requests : List Headless.Request) : IO Unit := do
+                for request in requests do
+                  host.send request
+                unless ← host.settle hangGuard do
+                  throw (IO.userError "the editor thread did not settle")
+              ask [.reload]
+              ask [.spawn "open"]
+              let opened ← host.join hangGuard
+              ask [.spawn "missing"]
+              let missed ← host.join hangGuard
+              ask [.show]
+              -- The loop delivered the job's command, so it has a frame: the
+              -- one snapshot more is the one its scene holds of the scratch
+              -- buffer's text, which is text 0.
+              -- Waited on the free itself, then read once.
+              let freed :=
+                (← Ffi.Snapshot.awaitLive (snapshots + 1) hangGuard) &&
+                  (← Ffi.Snapshot.live) == snapshots + 1
+              let wait ← host.await hangGuard
+              let stopped := wait == .settled || wait == .ended
+              return opened == .settled && missed == .settled && freed && stopped &&
+                  (← stage.collaborators.held.size) == 0 &&
+                  (← stage.output.get) ==
+                    #["reload 1: installed, 1 files, 0 commands", "spawn open: job 1",
+                      "job 1 open: ok", "spawn missing: job 2",
+                      "job 2 missing: failed: nothing is at the path", "commands:", "text 0: \"\"",
+                      "text 1: \"héllo\\n\""] }
+
+-- inferred-waits W37: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `fileChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def openCommandFileTemporaryCheck (context : HostContext) : Check :=
+  { name :=
+      "the open command on a file in a temporary directory: the host says the load job started and ended, and the focused view shows a buffer whose text is the file's, with its cursor at the start, and whose status line is the file's base name alone"
+    run :=
+      context.withFiles fun files => do
+        let path := files / "note.txt"
+        IO.FS.writeBinFile path noteText.toUTF8
+        withFileHost context [("open-note", path)] fun session => do
+            let joined ← session.ran "open-note"
+            let (echo, lines) ← session.viewsAndStatus
+            return joined &&
+                (← session.output.get).extract 0 3 ==
+                  #["run open-note: ok", s!"job 1 {Files.loadJob}: started",
+                    s!"job 1 {Files.loadJob}: ok"] &&
+                echo == "".quote &&
+                lines == #[viewLine noteText 0, noteStatus path] }
+
+-- inferred-waits W37: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `fileChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def saveCommandModifiedBufferCheck (context : HostContext) : Check :=
+  { name :=
+      "the save command on a modified buffer: after a commit the view's status line has the modified field, and once the save job has ended the file's bytes are the buffer's text, the echo area says the file was written, and the status line has the name alone"
+    run :=
+      context.withFiles fun files => do
+        let path := files / "note.txt"
+        IO.FS.writeBinFile path noteText.toUTF8
+        withFileHost context [("open-note", path)] fun session => do
+            unless ← session.ran "open-note" do
+              return false
+            session.commit "x"
+            -- The commit was the buffer's first edit, which starts a check
+            -- of its file: its lines are printed before the scene is asked.
+            unless (← session.join) == .settled do
+              return false
+            let (_, edited) ← session.viewsAndStatus
+            let saved ← session.ran Files.saveName
+            let (echo, lines) ← session.viewsAndStatus
+            return saved &&
+                edited ==
+                  #[viewLine ("x" ++ noteText) 1,
+                    noteStatus path (modified := true) (column := 1)] &&
+                endedOk (← session.output.get) Files.saveJob &&
+                (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
+                echo == (Files.wrote path).quote &&
+                lines == #[viewLine ("x" ++ noteText) 1, noteStatus path (column := 1)] }
+
+-- inferred-waits W37: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `fileChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def openingPathOpenStartsCheck (context : HostContext) : Check :=
+  { name :=
+      "opening a path that is open starts no second load and makes no second text: the open command a second time prints its own line alone, and show lists the texts it listed before"
+    run :=
+      context.withFiles fun files => do
+        let path := files / "note.txt"
+        IO.FS.writeBinFile path noteText.toUTF8
+        withFileHost context [("open-note", path)] fun session => do
+            unless ← session.ran "open-note" do
+              return false
+            let shown ← session.shown
+            let before := (← session.output.get).size
+            let again ← session.ran "open-note"
+            let printed := (← session.output.get).extract before
+            let (_, lines) ← session.viewsAndStatus
+            return again && printed == #["run open-note: ok"] && (← session.shown) == shown &&
+                (shown.filter (·.startsWith "text ")).size == 2 &&
+                lines == #[viewLine noteText 0, noteStatus path] }
+
+-- inferred-waits W37: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `fileChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def openSaveEditWritesCheck (context : HostContext) : Check :=
+  { name :=
+      "open then save with no edit writes the file and leaves its bytes as they were, for a file whose lines end in line feeds and one whose lines end in CRLF: each save job ends ok, the echo area says the file was written, and the bytes read back are the bytes the check wrote"
+    run :=
+      context.withFiles fun files => do
+        let cases : List (String × System.FilePath × ByteArray × Nat) :=
+          [("open-lf", files / "lf.txt", "one\ntwo\n".toUTF8, 2),
+            ("open-crlf", files / "crlf.txt", "one\r\ntwo\r\n".toUTF8, 4)]
+        for (_, path, bytes, _) in cases do
+          IO.FS.writeBinFile path bytes
+        withFileHost context (cases.map fun (name, path, _, _) => (name, path)) fun session => do
+            let mut held := true
+            for (name, path, bytes, job) in cases do
+              let opened ← session.ran name
+              let saved ← session.ran Files.saveName
+              let (echo, _) ← session.viewsAndStatus
+              held :=
+                held && opened && saved && echo == (Files.wrote path).quote &&
+                  (← session.output.get).contains s!"job {job} {Files.saveJob}: ok" &&
+                  (← IO.FS.readBinFile path) == bytes
+            return held }
+
+-- inferred-waits W37: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `fileChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def saveBufferWhoseFileCheck (context : HostContext) : Check :=
+  { name :=
+      "a save of a buffer whose file changed on disk after it was loaded leaves the file as it is: the file's bytes are the ones written behind the editor, the view's status line still has the modified field, and the echo area says the changed-on-disk refusal with the stamp the file now has"
+    run :=
+      context.withFiles fun files => do
+        let path := files / "note.txt"
+        IO.FS.writeBinFile path noteText.toUTF8
+        withFileHost context [("open-note", path)] fun session => do
+            unless ← session.ran "open-note" do
+              return false
+            -- Another length, so the change is seen whatever the file
+            -- system's clock.
+            let other := "another program wrote this, at another length\n".toUTF8
+            IO.FS.writeBinFile path other
+            let found ← stampOf path
+            session.commit "x"
+            -- The commit was the buffer's first edit, which starts a check:
+            -- it finds the file changed, so the status line has the
+            -- changed field too. Its job is joined before the save, so the
+            -- echo area's last word is the save's refusal, not the check's:
+            -- the two jobs reach the file service apart, and nothing else
+            -- orders their ends.
+            unless (← session.join) == .settled do
+              return false
+            let saved ← session.ran Files.saveName
+            let (echo, lines) ← session.viewsAndStatus
+            let bytes ← IO.FS.readBinFile path
+            saw
+                (saved && bytes == other &&
+                  lines ==
+                    #[viewLine ("x" ++ noteText) 1,
+                      noteStatus path (modified := true) (column := 1) (changed := true)] &&
+                  echo == (Files.notSaved path (.changed (some found))).quote)
+                s!"saved={saved} same={bytes == other} echo={echo} lines={lines} output={← session.output.get}" }
+
+-- inferred-waits W37: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `fileChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def openCommandPathFileCheck (context : HostContext) : Check :=
+  { name :=
+      "the open command on a path with no file: the echo area says the refusal, and the focused view still shows the buffer it showed, with its text, its cursor and its name"
+    run :=
+      context.withFiles fun files => do
+        let path := files / "missing.txt"
+        withFileHost context [("open-missing", path)] fun session => do
+            session.commit "kept"
+            let joined ← session.ran "open-missing"
+            let (echo, lines) ← session.viewsAndStatus
+            return joined && (← session.output.get).contains s!"job 1 {Files.loadJob}: ok" &&
+                echo == (Files.notOpened path .notFound).quote &&
+                lines == #[viewLine "kept" 4, statusOf (modified := true) (cursor := ⟨0, 4⟩)] }
+
+-- inferred-waits W37: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `fileChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def openCommandPathAsksCheck (context : HostContext) : Check :=
+  { name :=
+      "the open command with no path asks for one and opens the answer: run by its name, it lists the stage's working directory, /; with the path of a file in a temporary directory committed into the minibuffer after its /, read by the restart after //, which lists that directory, and the accept key pressed, the host says the listing jobs and the load job started and ended, the prompt is closed, and the view the command was asked from shows the file's text in a buffer called by its base name"
+    run :=
+      context.withFiles fun files => do
+        let path := files / "note.txt"
+        IO.FS.writeBinFile path noteText.toUTF8
+        withFileHost context [] fun session => do
+            session.ask [.run Files.openName]
+            -- The prompt lists the stage's working directory, /: the
+            -- listing is waited for, so its job's lines are all printed.
+            let listed := (← session.join) == .settled
+            -- The path is committed after the prompt's /: the restart
+            -- after // reads it as it is. Its directory is listed in
+            -- turn, and waited for.
+            session.commit path.toString
+            let relisted := (← session.join) == .settled
+            let asking ← session.sceneLines
+            session.pressKeys acceptKeys
+            let joined := (← session.join) == .settled
+            let (echo, lines) ← session.viewsAndStatus
+            let output ← session.output.get
+            let typed := "/" ++ path.toString
+            let files := Completion.Paths.job
+            return listed && relisted && joined && !acceptKeys.isEmpty &&
+                asking.extract 1 5 ==
+                  #[viewLine "" 0, statusOf, minibufferLine typed typed.utf8ByteSize,
+                    promptStatus Files.openPrompt] &&
+                output.contains s!"run {Files.openName}: ok" &&
+                output.filter (·.startsWith "job ") ==
+                  #[s!"job 1 {files}: started", s!"job 1 {files}: ok", s!"job 1 {files}: ok",
+                    s!"job 2 {files}: started", s!"job 2 {files}: ok", s!"job 2 {files}: ok",
+                    s!"job 3 {Files.loadJob}: started", s!"job 3 {Files.loadJob}: ok"] &&
+                echo == "".quote &&
+                lines == #[viewLine noteText 0, noteStatus path] }
+
 /-- The checks of files through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue, the real text binding and the
 library's file service: the checks of this executable whose hosts are over a
@@ -380,200 +620,10 @@ jobs as compiled code registers them (`Files/Compiled.lean`), on real
 files: each check writes its files' bytes itself, in a temporary directory
 it makes, and hands its host the paths (`withRealFileHost`). -/
 def fileChecks (context : HostContext) : List Check :=
-  [{
-      name :=
-        "a job loads a file through the host and its handler makes a text of it, with its two-byte character: the job's line says ok, show prints the text, and the library then holds no snapshot more than before but the one of the loop's scene; a job whose file is not there fails with the refusal's description",
-      run :=
-        context.withFiles fun files =>
-          IO.FS.withTempDir fun config => do
-            IO.FS.writeBinFile (files / "note.txt") "héllo\n".toUTF8
-            writeConfig config [("init.lean", openText files)]
-            let stage ← Stage.overFiles context (Config.Directory.source config)
-            let snapshots ← Ffi.Snapshot.live
-            onSteppedStage stage fun host => do
-                let ask (requests : List Headless.Request) : IO Unit := do
-                  for request in requests do
-                    host.send request
-                  unless ← host.settle hangGuard do
-                    throw (IO.userError "the editor thread did not settle")
-                ask [.reload]
-                ask [.spawn "open"]
-                let opened ← host.join hangGuard
-                ask [.spawn "missing"]
-                let missed ← host.join hangGuard
-                ask [.show]
-                -- The loop delivered the job's command, so it has a frame: the
-                -- one snapshot more is the one its scene holds of the scratch
-                -- buffer's text, which is text 0.
-                -- Waited on the free itself, then read once.
-                let freed :=
-                  (← Ffi.Snapshot.awaitLive (snapshots + 1) hangGuard) &&
-                    (← Ffi.Snapshot.live) == snapshots + 1
-                let wait ← host.await hangGuard
-                let stopped := wait == .settled || wait == .ended
-                return opened == .settled && missed == .settled && freed && stopped &&
-                    (← stage.collaborators.held.size) == 0 &&
-                    (← stage.output.get) ==
-                      #["reload 1: installed, 1 files, 0 commands", "spawn open: job 1",
-                        "job 1 open: ok", "spawn missing: job 2",
-                        "job 2 missing: failed: nothing is at the path", "commands:",
-                        "text 0: \"\"", "text 1: \"héllo\\n\""] },
-    { name :=
-        "the open command on a file in a temporary directory: the host says the load job started and ended, and the focused view shows a buffer whose text is the file's, with its cursor at the start, and whose status line is the file's base name alone"
-      run :=
-        context.withFiles fun files => do
-          let path := files / "note.txt"
-          IO.FS.writeBinFile path noteText.toUTF8
-          withFileHost context [("open-note", path)] fun session => do
-              let joined ← session.ran "open-note"
-              let (echo, lines) ← session.viewsAndStatus
-              return joined &&
-                  (← session.output.get).extract 0 3 ==
-                    #["run open-note: ok", s!"job 1 {Files.loadJob}: started",
-                      s!"job 1 {Files.loadJob}: ok"] &&
-                  echo == "".quote &&
-                  lines == #[viewLine noteText 0, noteStatus path] },
-    { name :=
-        "the save command on a modified buffer: after a commit the view's status line has the modified field, and once the save job has ended the file's bytes are the buffer's text, the echo area says the file was written, and the status line has the name alone"
-      run :=
-        context.withFiles fun files => do
-          let path := files / "note.txt"
-          IO.FS.writeBinFile path noteText.toUTF8
-          withFileHost context [("open-note", path)] fun session => do
-              unless ← session.ran "open-note" do
-                return false
-              session.commit "x"
-              -- The commit was the buffer's first edit, which starts a check
-              -- of its file: its lines are printed before the scene is asked.
-              unless (← session.join) == .settled do
-                return false
-              let (_, edited) ← session.viewsAndStatus
-              let saved ← session.ran Files.saveName
-              let (echo, lines) ← session.viewsAndStatus
-              return saved &&
-                  edited ==
-                    #[viewLine ("x" ++ noteText) 1,
-                      noteStatus path (modified := true) (column := 1)] &&
-                  endedOk (← session.output.get) Files.saveJob &&
-                  (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
-                  echo == (Files.wrote path).quote &&
-                  lines == #[viewLine ("x" ++ noteText) 1, noteStatus path (column := 1)] },
-    { name :=
-        "opening a path that is open starts no second load and makes no second text: the open command a second time prints its own line alone, and show lists the texts it listed before"
-      run :=
-        context.withFiles fun files => do
-          let path := files / "note.txt"
-          IO.FS.writeBinFile path noteText.toUTF8
-          withFileHost context [("open-note", path)] fun session => do
-              unless ← session.ran "open-note" do
-                return false
-              let shown ← session.shown
-              let before := (← session.output.get).size
-              let again ← session.ran "open-note"
-              let printed := (← session.output.get).extract before
-              let (_, lines) ← session.viewsAndStatus
-              return again && printed == #["run open-note: ok"] && (← session.shown) == shown &&
-                  (shown.filter (·.startsWith "text ")).size == 2 &&
-                  lines == #[viewLine noteText 0, noteStatus path] },
-    { name :=
-        "open then save with no edit writes the file and leaves its bytes as they were, for a file whose lines end in line feeds and one whose lines end in CRLF: each save job ends ok, the echo area says the file was written, and the bytes read back are the bytes the check wrote"
-      run :=
-        context.withFiles fun files => do
-          let cases : List (String × System.FilePath × ByteArray × Nat) :=
-            [("open-lf", files / "lf.txt", "one\ntwo\n".toUTF8, 2),
-              ("open-crlf", files / "crlf.txt", "one\r\ntwo\r\n".toUTF8, 4)]
-          for (_, path, bytes, _) in cases do
-            IO.FS.writeBinFile path bytes
-          withFileHost context (cases.map fun (name, path, _, _) => (name, path)) fun session => do
-              let mut held := true
-              for (name, path, bytes, job) in cases do
-                let opened ← session.ran name
-                let saved ← session.ran Files.saveName
-                let (echo, _) ← session.viewsAndStatus
-                held :=
-                  held && opened && saved && echo == (Files.wrote path).quote &&
-                    (← session.output.get).contains s!"job {job} {Files.saveJob}: ok" &&
-                    (← IO.FS.readBinFile path) == bytes
-              return held },
-    { name :=
-        "a save of a buffer whose file changed on disk after it was loaded leaves the file as it is: the file's bytes are the ones written behind the editor, the view's status line still has the modified field, and the echo area says the changed-on-disk refusal with the stamp the file now has"
-      run :=
-        context.withFiles fun files => do
-          let path := files / "note.txt"
-          IO.FS.writeBinFile path noteText.toUTF8
-          withFileHost context [("open-note", path)] fun session => do
-              unless ← session.ran "open-note" do
-                return false
-              -- Another length, so the change is seen whatever the file
-              -- system's clock.
-              let other := "another program wrote this, at another length\n".toUTF8
-              IO.FS.writeBinFile path other
-              let found ← stampOf path
-              session.commit "x"
-              -- The commit was the buffer's first edit, which starts a check:
-              -- it finds the file changed, so the status line has the
-              -- changed field too. Its job is joined before the save, so the
-              -- echo area's last word is the save's refusal, not the check's:
-              -- the two jobs reach the file service apart, and nothing else
-              -- orders their ends.
-              unless (← session.join) == .settled do
-                return false
-              let saved ← session.ran Files.saveName
-              let (echo, lines) ← session.viewsAndStatus
-              let bytes ← IO.FS.readBinFile path
-              saw
-                  (saved && bytes == other &&
-                    lines ==
-                      #[viewLine ("x" ++ noteText) 1,
-                        noteStatus path (modified := true) (column := 1) (changed := true)] &&
-                    echo == (Files.notSaved path (.changed (some found))).quote)
-                  s!"saved={saved} same={bytes == other} echo={echo} lines={lines} output={← session.output.get}" },
-    { name :=
-        "the open command on a path with no file: the echo area says the refusal, and the focused view still shows the buffer it showed, with its text, its cursor and its name"
-      run :=
-        context.withFiles fun files => do
-          let path := files / "missing.txt"
-          withFileHost context [("open-missing", path)] fun session => do
-              session.commit "kept"
-              let joined ← session.ran "open-missing"
-              let (echo, lines) ← session.viewsAndStatus
-              return joined && (← session.output.get).contains s!"job 1 {Files.loadJob}: ok" &&
-                  echo == (Files.notOpened path .notFound).quote &&
-                  lines == #[viewLine "kept" 4, statusOf (modified := true) (cursor := ⟨0, 4⟩)] },
-    { name :=
-        "the open command with no path asks for one and opens the answer: run by its name, it lists the stage's working directory, /; with the path of a file in a temporary directory committed into the minibuffer after its /, read by the restart after //, which lists that directory, and the accept key pressed, the host says the listing jobs and the load job started and ended, the prompt is closed, and the view the command was asked from shows the file's text in a buffer called by its base name"
-      run :=
-        context.withFiles fun files => do
-          let path := files / "note.txt"
-          IO.FS.writeBinFile path noteText.toUTF8
-          withFileHost context [] fun session => do
-              session.ask [.run Files.openName]
-              -- The prompt lists the stage's working directory, /: the
-              -- listing is waited for, so its job's lines are all printed.
-              let listed := (← session.join) == .settled
-              -- The path is committed after the prompt's /: the restart
-              -- after // reads it as it is. Its directory is listed in
-              -- turn, and waited for.
-              session.commit path.toString
-              let relisted := (← session.join) == .settled
-              let asking ← session.sceneLines
-              session.pressKeys acceptKeys
-              let joined := (← session.join) == .settled
-              let (echo, lines) ← session.viewsAndStatus
-              let output ← session.output.get
-              let typed := "/" ++ path.toString
-              let files := Completion.Paths.job
-              return listed && relisted && joined && !acceptKeys.isEmpty &&
-                  asking.extract 1 5 ==
-                    #[viewLine "" 0, statusOf, minibufferLine typed typed.utf8ByteSize,
-                      promptStatus Files.openPrompt] &&
-                  output.contains s!"run {Files.openName}: ok" &&
-                  output.filter (·.startsWith "job ") ==
-                    #[s!"job 1 {files}: started", s!"job 1 {files}: ok", s!"job 1 {files}: ok",
-                      s!"job 2 {files}: started", s!"job 2 {files}: ok", s!"job 2 {files}: ok",
-                      s!"job 3 {Files.loadJob}: started", s!"job 3 {Files.loadJob}: ok"] &&
-                  echo == "".quote &&
-                  lines == #[viewLine noteText 0, noteStatus path] }]
+  [jobLoadsFileThroughCheck context, openCommandFileTemporaryCheck context,
+    saveCommandModifiedBufferCheck context, openingPathOpenStartsCheck context,
+    openSaveEditWritesCheck context, saveBufferWhoseFileCheck context,
+    openCommandPathFileCheck context, openCommandPathAsksCheck context]
 
 /-- A compiled command called `name`, written for the reload checks, that
 puts the cursor of the window it is called with at the byte `offset`, in the
@@ -589,38 +639,43 @@ def placing (name : String) (offset : Nat) : Config.Registration :=
 
 -- inferred-waits W38: removed by host-tests-on-fakes phase 4
 set_option linter.inferredWait false in
+/-- A check of `reloadChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def criterion1FileRewrittenCheck (context : HostContext) : Check :=
+  { name :=
+      "criterion 1: a file rewritten behind its buffer is reloaded by e: the reload job ends ok, show prints the new text, the scene's view shows it with the cursor on the same character of the unchanged second row, and the status line has neither the modified field nor any other"
+    run :=
+      context.withFiles fun files => do
+        let path := files / "note.txt"
+        let (old, new) := ("one\ntwo\nthree\n", "one, and more\ntwo\nthree\n")
+        IO.FS.writeBinFile path old.toUTF8
+        withFileHost context [("open-note", path)] (extra := #[placing "cursor" 6]) fun session =>
+            do
+            unless ← session.ran "open-note" do
+              return false
+            -- Row 1, column 2: the "o" of "two".
+            session.ask [.run "cursor"]
+            let (_, placed) ← session.viewsAndStatus
+            IO.FS.writeBinFile path new.toUTF8
+            let reloaded ← session.ran Files.editName
+            let (echo, lines) ← session.viewsAndStatus
+            session.ask [.show]
+            let output ← session.output.get
+            -- The first line grew by ten bytes, so the "o" is at 16: on
+            -- row 1, column 2, of three rows, before and after.
+            let status :=
+              statusOf (name := "note.txt") (cursor := ⟨1, 2⟩) (lines := 3) (file := some path)
+            return reloaded && placed == #[viewLine old 6, status] &&
+                output.contains s!"job 2 {Files.reloadJob}: ok" &&
+                output.contains s!"text 1: {new.quote}" &&
+                echo == "".quote &&
+                lines == #[viewLine new 16, status] }
+
 /-- The checks of reloading a buffer from its file (`Files.reload`,
 `packages/files/Files.lean`) through the headless host, on real files, with the
 library's file and diff services. -/
 def reloadChecks (context : HostContext) : List Check :=
-  [{  name :=
-        "criterion 1: a file rewritten behind its buffer is reloaded by e: the reload job ends ok, show prints the new text, the scene's view shows it with the cursor on the same character of the unchanged second row, and the status line has neither the modified field nor any other"
-      run :=
-        context.withFiles fun files => do
-          let path := files / "note.txt"
-          let (old, new) := ("one\ntwo\nthree\n", "one, and more\ntwo\nthree\n")
-          IO.FS.writeBinFile path old.toUTF8
-          withFileHost context [("open-note", path)] (extra := #[placing "cursor" 6]) fun session =>
-              do
-              unless ← session.ran "open-note" do
-                return false
-              -- Row 1, column 2: the "o" of "two".
-              session.ask [.run "cursor"]
-              let (_, placed) ← session.viewsAndStatus
-              IO.FS.writeBinFile path new.toUTF8
-              let reloaded ← session.ran Files.editName
-              let (echo, lines) ← session.viewsAndStatus
-              session.ask [.show]
-              let output ← session.output.get
-              -- The first line grew by ten bytes, so the "o" is at 16: on
-              -- row 1, column 2, of three rows, before and after.
-              let status :=
-                statusOf (name := "note.txt") (cursor := ⟨1, 2⟩) (lines := 3) (file := some path)
-              return reloaded && placed == #[viewLine old 6, status] &&
-                  output.contains s!"job 2 {Files.reloadJob}: ok" &&
-                  output.contains s!"text 1: {new.quote}" &&
-                  echo == "".quote &&
-                  lines == #[viewLine new 16, status] }]
+  [criterion1FileRewrittenCheck context]
 
 /-- A config whose `setup` registers `pick`, which asks `Pick: ` over the
 fixed candidates `wq`, `edit` and `w`, and `picked`, which says its
@@ -722,6 +777,118 @@ def atW (context : HostContext) (check : Session → IO Bool) : IO Bool :=
 
 -- inferred-waits W40: removed by host-tests-on-fakes phase 4
 set_option linter.inferredWait false in
+/-- A check of `filePromptChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def ac2RecorderWCheck (context : HostContext) : Check :=
+  { name :=
+      "AC 2 over the recorder: at /w/, n o TAB makes the input /w/notes/ and starts one listing, after which t lists todo.md"
+    run :=
+      atW context fun session => do
+        let before := listingsStarted (← session.output.get)
+        session.typed "n o TAB"
+        let inserted ← session.sceneLines
+        unless (← session.join) == .settled do
+          return false
+        session.typed "t"
+        let typed ← session.sceneLines
+        return minibufferHolds inserted "/w/notes/" && listLabels typed == ["todo.md"] &&
+            listingsStarted (← session.output.get) == before + 1 }
+
+-- inferred-waits W40: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `filePromptChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def ac4RecorderRealCheck (context : HostContext) : Check :=
+  { name :=
+      "AC 4 over the recorder, on real files: in a temporary directory holding alpha.txt and alps.md, committed after the prompt's /, a l C-n RET opens the first listed file: view 0's status line names it, the view holds its text, and the load job ended"
+    run :=
+      context.withFiles fun directory => do
+        IO.FS.writeFile (directory / "alpha.txt") "alpha\n"
+        IO.FS.writeFile (directory / "alps.md") "alps\n"
+        withPromptHost context [] (realFiles := true) fun session => do
+            session.ask [.run Files.openName]
+            unless (← session.join) == .settled do
+              return false
+            session.commit s!"{directory}/"
+            unless (← session.join) == .settled do
+              return false
+            let some first := (← realOrder "al" #["alpha.txt", "alps.md"])[0]? | return false
+            session.typed "a l C-n RET"
+            unless (← session.join) == .settled do
+              return false
+            let lines ← session.sceneLines
+            let text := if first == "alpha.txt" then "alpha\n" else "alps\n"
+            let output ← session.output.get
+            return lines.any
+                  (fun line =>
+                    line.startsWith "status 0 in mode-line.active: " &&
+                      (line.splitOn s!"mode-line.buffer {first.quote}").length > 1) &&
+                lines.any (fun line => line.startsWith s!"view 0 0,0 0x0: {text.quote}") &&
+                output.any
+                  (fun line => line.startsWith "job " && line.endsWith s!" {Files.loadJob}: ok") &&
+                !output.any (·.startsWith "loop: refused") }
+
+-- inferred-waits W40: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `filePromptChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def hostHomeReachesEditorCheck (context : HostContext) : Check :=
+  { name :=
+      "the host's home reaches the editor, on real files: started with a temporary directory as its home and its notes/ as its working directory, open-file asks with ~/notes/ and lists todo.md, and ~/alpha.txt RET opens the home's alpha.txt"
+    run :=
+      context.withFiles fun home => do
+        IO.FS.writeFile (home / "alpha.txt") "alpha\n"
+        IO.FS.createDir (home / "notes")
+        IO.FS.writeFile (home / "notes" / "todo.md") "todo\n"
+        withPromptHost context [] (realFiles := true) (workingDirectory := home / "notes") (home :=
+            some home) fun session => do
+            session.ask [.run Files.openName]
+            unless (← session.join) == .settled do
+              return false
+            let asked ← session.sceneLines
+            session.typed "C-u"
+            session.commit "~/alpha.txt"
+            unless (← session.join) == .settled do
+              return false
+            session.typed "RET"
+            unless (← session.join) == .settled do
+              return false
+            let lines ← session.sceneLines
+            return minibufferHolds asked "~/notes/" && listLabels asked == ["todo.md"] &&
+                lines.any (fun line => line.startsWith s!"view 0 0,0 0x0: {"alpha\n".quote}") &&
+                lines.any
+                  (fun line =>
+                    line.startsWith "status 0 in mode-line.active: " &&
+                      (line.splitOn s!"mode-line.buffer {"alpha.txt".quote}").length > 1) &&
+                !(← session.output.get).any (·.startsWith "loop: refused") }
+
+-- inferred-waits W40: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
+/-- A check of `filePromptChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def ac6RecorderCommittingCheck (context : HostContext) : Check :=
+  { name :=
+      "AC 6 over the recorder: committing w/locked/ says files: cannot list /w/locked/: the file system does not allow it in the echo area and lists nothing; RET then says the load's refusal, and no prompt is left open"
+    run :=
+      withPromptHost context [] (fileModel := some promptFiles) fun session => do
+        session.ask [.run Files.openName]
+        unless (← session.join) == .settled do
+          return false
+        session.commit "w/locked/"
+        unless (← session.join) == .settled do
+          return false
+        let lines ← session.sceneLines
+        let (echo, _) ← session.scene
+        session.typed "RET"
+        unless (← session.join) == .settled do
+          return false
+        let (after, views) ← session.scene
+        return echo == "files: cannot list /w/locked/: the file system does not allow it".quote &&
+            (listRows lines).getD [""] == [""] &&
+            after == (Files.notOpened "/w/locked" .notAFile).quote &&
+            views.size == 1 &&
+            !(← session.output.get).any (·.startsWith "loop: refused") }
+
 /-- The checks of the file prompt and of putting a candidate into the
 minibuffer, over the recorder, under the test scheme with keys of the
 checks' own (`promptTyping`): which keys a shipped scheme puts the
@@ -755,97 +922,8 @@ def filePromptChecks (context : HostContext) : List Check :=
             realOrder "." #["locked", "notes", ".hidden", "alpha.txt", "alps.md", "beta.txt"]
           return listLabels dotted == ordered && ordered.contains ".hidden" &&
               listingsStarted (← session.output.get) == before },
-    { name :=
-        "AC 2 over the recorder: at /w/, n o TAB makes the input /w/notes/ and starts one listing, after which t lists todo.md"
-      run :=
-        atW context fun session => do
-          let before := listingsStarted (← session.output.get)
-          session.typed "n o TAB"
-          let inserted ← session.sceneLines
-          unless (← session.join) == .settled do
-            return false
-          session.typed "t"
-          let typed ← session.sceneLines
-          return minibufferHolds inserted "/w/notes/" && listLabels typed == ["todo.md"] &&
-              listingsStarted (← session.output.get) == before + 1 },
-    { name :=
-        "AC 4 over the recorder, on real files: in a temporary directory holding alpha.txt and alps.md, committed after the prompt's /, a l C-n RET opens the first listed file: view 0's status line names it, the view holds its text, and the load job ended"
-      run :=
-        context.withFiles fun directory => do
-          IO.FS.writeFile (directory / "alpha.txt") "alpha\n"
-          IO.FS.writeFile (directory / "alps.md") "alps\n"
-          withPromptHost context [] (realFiles := true) fun session => do
-              session.ask [.run Files.openName]
-              unless (← session.join) == .settled do
-                return false
-              session.commit s!"{directory}/"
-              unless (← session.join) == .settled do
-                return false
-              let some first := (← realOrder "al" #["alpha.txt", "alps.md"])[0]? | return false
-              session.typed "a l C-n RET"
-              unless (← session.join) == .settled do
-                return false
-              let lines ← session.sceneLines
-              let text := if first == "alpha.txt" then "alpha\n" else "alps\n"
-              let output ← session.output.get
-              return lines.any
-                    (fun line =>
-                      line.startsWith "status 0 in mode-line.active: " &&
-                        (line.splitOn s!"mode-line.buffer {first.quote}").length > 1) &&
-                  lines.any (fun line => line.startsWith s!"view 0 0,0 0x0: {text.quote}") &&
-                  output.any
-                    (fun line =>
-                      line.startsWith "job " && line.endsWith s!" {Files.loadJob}: ok") &&
-                  !output.any (·.startsWith "loop: refused") },
-    { name :=
-        "the host's home reaches the editor, on real files: started with a temporary directory as its home and its notes/ as its working directory, open-file asks with ~/notes/ and lists todo.md, and ~/alpha.txt RET opens the home's alpha.txt"
-      run :=
-        context.withFiles fun home => do
-          IO.FS.writeFile (home / "alpha.txt") "alpha\n"
-          IO.FS.createDir (home / "notes")
-          IO.FS.writeFile (home / "notes" / "todo.md") "todo\n"
-          withPromptHost context [] (realFiles := true) (workingDirectory := home / "notes")
-              (home := some home) fun session => do
-              session.ask [.run Files.openName]
-              unless (← session.join) == .settled do
-                return false
-              let asked ← session.sceneLines
-              session.typed "C-u"
-              session.commit "~/alpha.txt"
-              unless (← session.join) == .settled do
-                return false
-              session.typed "RET"
-              unless (← session.join) == .settled do
-                return false
-              let lines ← session.sceneLines
-              return minibufferHolds asked "~/notes/" && listLabels asked == ["todo.md"] &&
-                  lines.any (fun line => line.startsWith s!"view 0 0,0 0x0: {"alpha\n".quote}") &&
-                  lines.any
-                    (fun line =>
-                      line.startsWith "status 0 in mode-line.active: " &&
-                        (line.splitOn s!"mode-line.buffer {"alpha.txt".quote}").length > 1) &&
-                  !(← session.output.get).any (·.startsWith "loop: refused") },
-    { name :=
-        "AC 6 over the recorder: committing w/locked/ says files: cannot list /w/locked/: the file system does not allow it in the echo area and lists nothing; RET then says the load's refusal, and no prompt is left open"
-      run :=
-        withPromptHost context [] (fileModel := some promptFiles) fun session => do
-          session.ask [.run Files.openName]
-          unless (← session.join) == .settled do
-            return false
-          session.commit "w/locked/"
-          unless (← session.join) == .settled do
-            return false
-          let lines ← session.sceneLines
-          let (echo, _) ← session.scene
-          session.typed "RET"
-          unless (← session.join) == .settled do
-            return false
-          let (after, views) ← session.scene
-          return echo == "files: cannot list /w/locked/: the file system does not allow it".quote &&
-              (listRows lines).getD [""] == [""] &&
-              after == (Files.notOpened "/w/locked" .notAFile).quote &&
-              views.size == 1 &&
-              !(← session.output.get).any (·.startsWith "loop: refused") },
+    ac2RecorderWCheck context, ac4RecorderRealCheck context, hostHomeReachesEditorCheck context,
+    ac6RecorderCommittingCheck context,
     { name :=
         "AC 5: in a prompt that is not a file prompt, the key of next-item twice and then the key of minibuffer-insert puts the second listed candidate in the minibuffer with the bar at its end, not the first; e and that key puts the first listed for e; the prompt stays open, its status line and the list view still drawn, and nothing is refused"
       run :=
@@ -903,6 +981,52 @@ def rewriteFromOutside (path : System.FilePath) (text : String) : IO Bool := do
 
 -- inferred-waits W41: removed by host-tests-on-fakes phase 4
 set_option linter.inferredWait false in
+/-- A check of `autoReloadChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def criteria910RealCheck (context : HostContext) : Check :=
+  { name :=
+      "criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown; once the buffer is edited, another rewrite leaves its text and marks its status line"
+    run :=
+      context.withFiles (targets := [.files, .fileWatches]) fun files => do
+        let path := files / "note.txt"
+        let (old, new, again) := ("one\ntwo\n", "one\ntwo\nthree\n", "rewritten again\n")
+        IO.FS.writeBinFile path old.toUTF8
+        withRealFileHost context [("open-note", path)] fun session => do
+            unless ← session.ran "open-note" do
+              return false
+            -- With no argument the command toggles: off, so on.
+            session.ask [.run Files.autoReloadName]
+            -- The command starts the follow job, which says so as it starts:
+            -- read once the ask has waited for the command.
+            let armed :=
+              (← session.output.get).any fun line =>
+                line.startsWith "job " && line.endsWith s!" {FileJobs.followJob}: started"
+            unless armed do
+              return false
+            unless ← rewriteFromOutside path new do
+              return false
+            -- The watch's delivery wakes the follow job, whose command starts
+            -- the reload: the scene is asked again at each of their lines,
+            -- never after a time. How soon is `config-bench`'s to measure.
+            let jobLine (line : String) : Bool := line.startsWith "job "
+            let (shown, saw) ← session.shownOn jobLine (·.contains (viewLine new 0))
+            unless shown do
+              throw (IO.userError s!"the rewrite was not shown: {saw}")
+            unless ← Event.post (.commit "x") do
+              return false
+            unless ← rewriteFromOutside path again do
+              return false
+            let edited := "x" ++ new
+            let (marked, last) ←
+              session.shownOn jobLine fun lines =>
+                  lines ==
+                    #[viewLine edited 1,
+                      statusOf (name := "note.txt") (modified := true) (cursor := ⟨0, 1⟩) (lines :=
+                        3) (file := some path) (changed := true)]
+            unless marked do
+              throw (IO.userError s!"the edited buffer was not marked: {last}")
+            return (← IO.FS.readBinFile path) == again.toUTF8 }
+
 /-- The checks of auto-reload through the headless host on real files, with
 the library's watch service (`Editor/Loop.lean`, "Auto-reload"): criteria 9
 and 10, that the rewrite is shown and the edited buffer marked, each seen on
@@ -918,47 +1042,6 @@ shown 66 to 83 ms after the other process exited, a median of about 80 ms,
 and the edited buffer marked in 78 to 84 ms; the 50 ms coalescing window is
 most of it. -/
 def autoReloadChecks (context : HostContext) : List Check :=
-  [{  name :=
-        "criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown; once the buffer is edited, another rewrite leaves its text and marks its status line"
-      run :=
-        context.withFiles (targets := [.files, .fileWatches]) fun files => do
-          let path := files / "note.txt"
-          let (old, new, again) := ("one\ntwo\n", "one\ntwo\nthree\n", "rewritten again\n")
-          IO.FS.writeBinFile path old.toUTF8
-          withRealFileHost context [("open-note", path)] fun session => do
-              unless ← session.ran "open-note" do
-                return false
-              -- With no argument the command toggles: off, so on.
-              session.ask [.run Files.autoReloadName]
-              -- The command starts the follow job, which says so as it starts:
-              -- read once the ask has waited for the command.
-              let armed :=
-                (← session.output.get).any fun line =>
-                  line.startsWith "job " && line.endsWith s!" {FileJobs.followJob}: started"
-              unless armed do
-                return false
-              unless ← rewriteFromOutside path new do
-                return false
-              -- The watch's delivery wakes the follow job, whose command starts
-              -- the reload: the scene is asked again at each of their lines,
-              -- never after a time. How soon is `config-bench`'s to measure.
-              let jobLine (line : String) : Bool := line.startsWith "job "
-              let (shown, saw) ← session.shownOn jobLine (·.contains (viewLine new 0))
-              unless shown do
-                throw (IO.userError s!"the rewrite was not shown: {saw}")
-              unless ← Event.post (.commit "x") do
-                return false
-              unless ← rewriteFromOutside path again do
-                return false
-              let edited := "x" ++ new
-              let (marked, last) ←
-                session.shownOn jobLine fun lines =>
-                    lines ==
-                      #[viewLine edited 1,
-                        statusOf (name := "note.txt") (modified := true) (cursor := ⟨0, 1⟩)
-                          (lines := 3) (file := some path) (changed := true)]
-              unless marked do
-                throw (IO.userError s!"the edited buffer was not marked: {last}")
-              return (← IO.FS.readBinFile path) == again.toUTF8 }]
+  [criteria910RealCheck context]
 
 end FilesTest.Linked

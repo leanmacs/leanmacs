@@ -58,6 +58,38 @@ def scenesOf (kept : IO.Ref (Option Headless.Host.Display)) : IO Nat := do
 
 -- inferred-waits W11: removed by host-tests-on-fakes phase 4
 set_option linter.inferredWait false in
+/-- A check of `steppedChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def steppedHostPublishesScenesCheck (context : Context) : Check :=
+  { name :=
+      "a stepped host publishes the scenes a real host does: a settle one, and a join's later rounds none"
+    run := do
+      let counts (drive : (Headless.Collaborators _ _ TestScheme.scheme) → IO (List Nat)) := do
+        let stage ← Stage.new context context.elaborator (memorySource []) nappingCompiled
+        drive stage.collaborators
+      let kept ← IO.mkRef none
+      let memory ← Headless.Queue.Memory.new
+      let stepped ←
+        counts fun collaborators =>
+            Headless.withStepped (keptDisplay collaborators kept) memory (guard := hangGuard)
+              (grace := some hangGuard) fun stepped => do
+              stepped.send (.run "rest")
+              discard <| stepped.await hangGuard
+              let settled ← scenesOf kept
+              discard <| stepped.join hangGuard
+              return [settled, ← scenesOf kept]
+      let keptReal ← IO.mkRef none
+      let real ←
+        counts fun collaborators =>
+            Headless.withHost (keptDisplay collaborators keptReal) (guard := hangGuard) (grace :=
+              some hangGuard) fun host => do
+              host.send (.run "rest")
+              discard <| host.await hangGuard
+              let settled ← scenesOf keptReal
+              discard <| host.join hangGuard
+              return [settled, ← scenesOf keptReal]
+      saw (stepped == real && stepped.length == 2) s!"stepped {stepped}, real {real}" }
+
 /-- The checks of a host stepped on the check's own thread. -/
 def steppedChecks (context : Context) : List Check :=
   [{  name :=
@@ -197,34 +229,7 @@ def steppedChecks (context : Context) : List Check :=
               | some shown, some installed => shown < installed
               | _, _ => false))
             s!"wait {repr wait}, blocks {blocks}, output {output}" },
-    { name :=
-        "a stepped host publishes the scenes a real host does: a settle one, and a join's later rounds none"
-      run := do
-        let counts (drive : (Headless.Collaborators _ _ TestScheme.scheme) → IO (List Nat)) := do
-          let stage ← Stage.new context context.elaborator (memorySource []) nappingCompiled
-          drive stage.collaborators
-        let kept ← IO.mkRef none
-        let memory ← Headless.Queue.Memory.new
-        let stepped ←
-          counts fun collaborators =>
-              Headless.withStepped (keptDisplay collaborators kept) memory (guard := hangGuard)
-                (grace := some hangGuard) fun stepped => do
-                stepped.send (.run "rest")
-                discard <| stepped.await hangGuard
-                let settled ← scenesOf kept
-                discard <| stepped.join hangGuard
-                return [settled, ← scenesOf kept]
-        let keptReal ← IO.mkRef none
-        let real ←
-          counts fun collaborators =>
-              Headless.withHost (keptDisplay collaborators keptReal) (guard := hangGuard) (grace :=
-                some hangGuard) fun host => do
-                host.send (.run "rest")
-                discard <| host.await hangGuard
-                let settled ← scenesOf keptReal
-                discard <| host.join hangGuard
-                return [settled, ← scenesOf keptReal]
-        saw (stepped == real && stepped.length == 2) s!"stepped {stepped}, real {real}" },
+    steppedHostPublishesScenesCheck context,
     { name :=
         "a stepped wait that reaches its guard, a reload held for good, says the hang once and answers the hang, and the bracket's end lets the reload go through endWaits and waits for it"
       run := do
