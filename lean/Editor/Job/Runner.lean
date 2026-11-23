@@ -156,7 +156,7 @@ per critical section:
   (`Completions.finish`, which also removes the wait), `resume`
   (`Handle.resume`), `cancel` (`Handle.cancel`) and `done`
   (`Handle.retire`) each is one section, and so is the loop's end
-  (`Services.recordLoopEnd`). In it the runner decides the step with the
+  (`Services.endLoop`). In it the runner decides the step with the
   model's own per-job step (`Protocol.JobState.step`), writes the token,
   moves the job's unit and records the transition (`Recorder.record`),
   all before it lets the lock go; `Recorder.applied` is told after. So the
@@ -164,6 +164,19 @@ per critical section:
   split step, a unit given back before the wait is recorded, cannot be
   written: the token is written only by `Section.transition`, which runs
   only inside a section.
+- **The loop's end waits for every cancelled job.** The table keeps the
+  jobs cancelled and not yet done (`Pending.unsettled`): a job's `cancel`
+  section adds it unless it is done, its `done` section takes it out. A
+  host's loop's end hands a task for each to its wait (`Services.unsettled`,
+  `Running.wind`), owner-removed and keyed-cancel ones included, which have
+  left the host's table of jobs, and then ends the loop in a section that
+  decides it with the model's own step over them (`Services.endLoop`,
+  `Protocol.State.step`): `loopEnd` is applied and recorded only once every
+  cancelled job is done, so a loop's end the model refuses is never
+  recorded. A test stage waits for each under its hang guard, so a job that
+  never ends is reported as a hang there; the editor waits for none, and
+  its loop's end may then record nothing, which its recorder would not keep
+  anyway.
 - **Nothing else in a section.** A section calls no port, no other section
   and no promise but the activity's own waiter, whose consumers are all
   waits; the services' `start` and `cancel` and the end of a wait come
@@ -385,6 +398,12 @@ structure Pending where
   nextJob : Nat := 0
   /-- Each wait that has not ended. -/
   waits : Std.HashMap UInt64 Waiting := {}
+  /-- Each job cancelled and not yet done, by its number, with the promise
+  of the runner's last step for it (`Handle.finishedRan`): what the loop's
+  end waits for (`Services.unsettled`) and decides its end over
+  (`Services.endLoop`). A job's `cancel` section adds it unless it is done,
+  and its `done` section takes it out. -/
+  unsettled : Std.HashMap Nat (JobRef × IO.Promise Unit) := {}
 
 /-- The table of waits in flight, shared by the runner and whatever completes
 its waits. It is behind a lock, and every access to it is one critical
@@ -766,13 +785,38 @@ structure Services where
   runner that is given none has `Recorder.none`, which records nothing. -/
   recorder : Recorder := Recorder.none
 
-/-- Records the loop's end (`Protocol.Transition.loopEnd`), in a section of
-its own: what a host's loop calls once it has cancelled its jobs and waited
-for what it waits for (`Running.wind`, `Editor/Headless.lean`). -/
-def Services.recordLoopEnd (services : Services) : BaseIO Unit :=
+/-- A task for each job cancelled and not yet done, in one section: each
+ends once the runner is done with its job (`Handle.finishedRan`), after
+the job's `done`. What a host's loop hands its wait for the jobs it
+cancelled once it has cancelled its own (`Running.wind`,
+`Editor/Headless.lean`): those of its end's cancel, and those cancelled
+before it, by an owner's removal or a keyed cancel, which are no longer in
+its table of jobs. A table several hosts share holds theirs too. -/
+def Services.unsettled (services : Services) : BaseIO (Array (Task Unit)) := do
+  let ran ←
+    services.completions.critical fun pending =>
+        pure (pending.unsettled.fold (init := #[]) fun ran _ (_, last) => ran.push last, pending)
+  -- Each task is made after the section, which touches no promise.
+  return ran.map fun last => last.result?.map (sync := true) fun _ => ()
+
+/-- The loop's end (`Protocol.Transition.loopEnd`), in a section of its
+own, decided by the model's own step over the jobs cancelled and not yet
+done (`Protocol.State.step`): it is applied and recorded only once every
+cancelled job is done, so a loop's end the model refuses is never recorded.
+Whether it was. The table outlives one loop's end, which leaves it open, so
+the step is taken from a state that has not ended. What a host's loop calls
+last, once it has handed `Services.unsettled` to its wait (`Running.wind`);
+a host whose wait does not wait for them, the editor's, may find one not
+yet done, and then records nothing. -/
+def Services.endLoop (services : Services) : BaseIO Bool :=
   services.completions.critical fun pending => do
-    Section.note services.recorder .loopEnd
-    return ((), pending)
+    let mut jobs := []
+    for (_, (job, _)) in pending.unsettled do
+      jobs := (← job.token.get).state :: jobs
+    let ends := (({ jobs } : Protocol.State).step .loopEnd).isSome
+    if ends then
+      Section.note services.recorder .loopEnd
+    return (ends, pending)
 
 /-- A service whose flush a host or a test can wait on
 (`Services.flushed`). -/
@@ -954,6 +998,16 @@ def cancel (handle : Handle) : BaseIO Unit := do
   let recorded ←
     handle.services.completions.critical fun pending => do
         let stepped ← Section.transition handle.job (.cancel handle.job.number)
+        -- A job cancelled and not yet done is one the loop's end waits for.
+        let pending :=
+          match stepped with
+          | some (_, after) =>
+            if after.status == .done then pending
+            else
+              { pending with
+                unsettled :=
+                  pending.unsettled.insert handle.job.number (handle.job, handle.finishedRan) }
+          | none => pending
         return (stepped.bind (·.1.recorded), pending)
   if let some id := recorded then
     handle.withdraw id.toUInt64
@@ -1089,11 +1143,12 @@ def Handle.resume (handle : Handle) : BaseIO Bool :=
       return (true, pending)
 
 /-- The runner's last step for the job, once its `finished` has run: its
-`done`, in one section, which gives its unit back. -/
+`done`, in one section, which gives its unit back and takes it out of the
+jobs cancelled and not yet done. -/
 def Handle.retire (handle : Handle) : BaseIO Unit :=
   handle.services.completions.critical fun pending => do
     discard <| Section.transition handle.job (.done handle.job.number)
-    return ((), pending)
+    return ((), { pending with unsettled := pending.unsettled.erase handle.job.number })
 
 /-- Answers a request of the job behind `handle`. A request that waits is
 registered in the table of waits and handed to its service, and nothing here

@@ -130,7 +130,10 @@ show:
   (`Editor/Job/ProtocolContract.lean`) on a stepped host whose services
   record to the fake recorder: a nap the clock wakes and one the loop's end
   cancels record a trace that replays on the model and ends in the loop's
-  end, recorded once the jobs it cancelled are done; and a nap held just
+  end, recorded once the jobs it cancelled are done; a nap cancelled by its
+  key and a config job cancelled by the reload that installs, each held at
+  its resume until the loop's end hands it over to be waited for, are done
+  before the loop's end is recorded; and a nap held just
   after it gave its unit back for its sleep, where the body returns, is in
   a wait the loop's end withdraws (`parkHolds`). They wait only on the
   recorder's events, and hold the nap on a promise;

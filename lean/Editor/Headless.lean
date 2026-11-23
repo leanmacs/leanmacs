@@ -1157,14 +1157,17 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   ended (`loop`). A test's hook, to let a held reload go on the loop's own
   report that it waits for it, never on time; the default does nothing. -/
   endWaits : String → IO Unit := fun _ => pure ()
-  /-- What the loop's end calls last, with a task for each job it has just
-  cancelled that ends once the runner is done with that job
-  (`Job.Handle.finishedRan`): the job has ended and its wake-up has been
-  posted, or refused (`Running.wind`). The loop does not wait for them: the
-  default does nothing, and a wake-up posted to a queue that has been quit
-  is refused. A test's hook: a test host whose queue the next host shares
-  waits on them here, so that nothing of its jobs arrives after its bracket
-  has returned. -/
+  /-- What the loop's end calls last, with a task for each job cancelled and
+  not yet done (`Job.Services.unsettled`), those it has just cancelled and
+  those an owner's removal or a keyed cancel cancelled before, that ends
+  once the runner is done with that job (`Job.Handle.finishedRan`): the job
+  has ended and its wake-up has been posted, or refused (`Running.wind`).
+  The loop's end in the runner's protocol comes after it, and is recorded
+  only once every one has ended (`Job.Services.endLoop`). The loop does
+  not wait for them: the default does nothing, and a wake-up posted to a
+  queue that has been quit is refused. A test's hook: a test host whose
+  queue the next host shares waits on them here, so that nothing of its
+  jobs arrives after its bracket has returned. -/
   endCancelled : Array (Task Unit) → IO Unit := fun _ => pure ()
   /-- What the real loop calls on its own thread before it takes its first
   event (`loop`). A test's hook, to count the checks that run a loop thread;
@@ -2582,15 +2585,17 @@ waits for it, after telling `Collaborators.endWaits`, when it has not
 ended: through `awaitReload`, a plain wait for its task unless a stepped
 host's bracket guards it. A cancelled job ends on a pool thread and then
 posts its wake-up, which nothing will take; the end does not wait for that,
-and hands `Collaborators.endCancelled` what to wait on. Last it records the
-loop's end in the runner's protocol (`Job.Services.recordLoopEnd`), which a
-host's real recorder does not keep. -/
+and hands `Collaborators.endCancelled` what to wait on: every job cancelled
+and not yet done (`Job.Services.unsettled`), those its own cancel has just
+cancelled and those an owner's removal or a keyed cancel cancelled before,
+which have left its table of jobs. Last it ends the loop in the runner's
+protocol (`Job.Services.endLoop`), which the model decides: recorded once
+every cancelled job is done, as it is where `endCancelled` waits for them,
+and never before. A host's real recorder keeps nothing of it. -/
 def Running.wind {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
     (running : Running β σ scheme)
     (awaitReload : Task (Except IO.Error Unit) → IO Unit := fun task => discard <| IO.wait task) :
     IO Unit := do
-  let cancelled :=
-    running.jobs.table.entries.map fun entry => entry.handle.finishedRan.result?.map fun _ => ()
   running.jobs.cancelAll
   let running ← running.withdrawPauses collaborators
   discard <| running.withdrawHints collaborators
@@ -2601,10 +2606,12 @@ def Running.wind {β σ : Type} {scheme : InputScheme} (collaborators : Collabor
     unless ← IO.hasFinished task do
       collaborators.endWaits "reload"
       awaitReload task
-  collaborators.endCancelled cancelled
-  -- The loop's end, as the runner's protocol has it: once the jobs it
-  -- cancelled are waited for, where a stage waits for them.
-  collaborators.services.recordLoopEnd
+  -- Every job cancelled and not yet done, its end's own and those cancelled
+  -- before: a stage waits for them here.
+  collaborators.endCancelled (← collaborators.services.unsettled)
+  -- The loop's end, as the runner's protocol has it, which the model
+  -- applies only once every cancelled job is done.
+  discard <| collaborators.services.endLoop
 
 /-- The editor thread: pulls the editor queue and takes one turn of the loop
 for each event (`Running.turn`), until the driver ends the loop or the

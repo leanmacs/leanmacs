@@ -15,7 +15,8 @@ the order they took effect. It has two parts:
   recorder's own events (`FakeRecorder.reached`) and on the jobs'
   `finishedRan`, then requires the trace to replay (`Protocol.replay`). A
   job asks a second wait once it has resumed from its first
-  (`sleepThenLoad`). The order of
+  (`sleepThenLoad`), and the loop's end is refused, recording nothing,
+  while a cancelled job is not done (`loopEndAfterCancelled`). The order of
   the records is checked two ways: a cancel at a job's `ask`, held there,
   shows in the trace before the `park` or the `serve` that withdraws the
   wait, and a thread held inside a section, at its record, holds the
@@ -267,6 +268,40 @@ def serviceCancelAtAsk : RecordedProperty where
       rig.files.letGo
       handle.cancel
 
+/-- The loop's end with a job cancelled and not yet done, held at its
+resume. -/
+def loopEndAfterCancelled : RecordedProperty where
+  name :=
+    "the loop's end is refused while a cancelled job is not done, and records nothing; once the job is done, which its task among the unsettled says, it is recorded, and the trace is a run of the protocol"
+  holds rig := do
+    let handle ← rig.spawn (sleeper 10)
+    let (resumed, letGo) ← rig.recorder.holdAt (· matches .resume _)
+    try
+      discard <| awaitStep "the job's park" (← rig.recorder.reached (· matches .park _))
+      handle.cancel
+      discard <| awaitStep "the job's resume" resumed
+      let unsettled ← rig.services.unsettled
+      let early ← rig.services.endLoop
+      let refused ← rig.recorder.trace
+      letGo
+      for task in unsettled do
+        discard <| awaitStep "the cancelled job's last step" task
+      let ended ← rig.services.endLoop
+      let settled ← rig.services.unsettled
+      let trace ← rig.recorder.trace
+      let state ← replayed trace
+      saw
+          (unsettled.size == 1 && !early && !refused.contains .loopEnd && ended &&
+            settled.isEmpty &&
+            trace ==
+              #[.start 0, .ask 0 1 .parks, .park 0, .cancel 0, .wake 1 .cancelled, .resume 0,
+                .done 0, .loopEnd] &&
+            state.ended)
+          s!"unsettled={unsettled.size} early={early} ended={ended} trace={repr trace}"
+    finally
+      letGo
+      handle.cancel
+
 /-- A load on a file service that ends it by itself. -/
 def fileLoad : RecordedProperty where
   name :=
@@ -339,7 +374,7 @@ def recordedInside : RecordedProperty where
 /-- Every recorded run, in the order they run. -/
 def recordedRuns : List RecordedProperty :=
   [sleepWoken, sleepCancelled, sleepDue, cancelAtAsk, sleepThenLoad, serviceCancelAtAsk, fileLoad,
-    severalJobs, recordedInside]
+    severalJobs, recordedInside, loopEndAfterCancelled]
 
 /-- Runs every recorded run, each on a fresh rig `fresh` makes, and returns
 the failures, each named `<name>: <property>`, with what it saw. -/

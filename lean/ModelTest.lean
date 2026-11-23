@@ -712,9 +712,10 @@ The job system is tested here with no Rust library:
   parked, one already due, a cancel held at a job's ask of a sleep and of a
   load, a sleep then a load asked once the job has resumed, a load, and
   several jobs at once each record a trace that replays on the model, in
-  the order the transitions took effect; and a transition held at its record,
+  the order the transitions took effect; a transition held at its record,
   inside its section, holds the table's lock, so a competing cancel records
-  after it. The park property (`parkHolds`): a job held just after
+  after it; and the loop's end is refused, recording nothing, while a
+  cancelled job is not done, and recorded once it is. The park property (`parkHolds`): a job held just after
   it gave its unit back for its sleep is in a wait the cancel made there
   withdraws, on the runner over the fakes and on the model, and is in none
   on the protocol before the runner-park fix (`PreFix`). Each waits on the

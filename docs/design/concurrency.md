@@ -1200,7 +1200,9 @@ during a later check, where it was handled and published a scene: seen on
 nothing" (stress run 45095260790) and, in the Linux container, in the
 stepped check after a real host's. So a job's handle carries a promise the
 runner resolves as its last step for the job (`Job.Handle.finishedRan`),
-and the loop's end hands the tasks of the jobs it cancelled to
+and the loop's end hands a task for every job cancelled and not yet done
+(`Job.Services.unsettled`), those it has just cancelled and those an
+owner's removal or a keyed cancel cancelled before it, to
 `Collaborators.endCancelled`, which does nothing in the editor; a test
 stage's waits on them (`Editor.Test.Linked.Stage`), so nothing of a test
 host's jobs comes after its bracket has returned. Pinned by
@@ -1465,10 +1467,13 @@ same requests on both hosts and compares the published counts.
 **The runner's protocol on a stepped host.** A stage's services take the
 fake recorder (`Job.Services.recorder`), so a stepped check reads the trace
 of the runner's transitions and holds a job's thread at one, and its loop's
-end records `loopEnd` once the jobs it cancelled are done. Pinned by
-`ConfigTest.protocolContractChecks`: the trace replays on the model, and a
-job held just after it gave its unit back is in a wait the loop's end
-withdraws ("The runner's protocol, modelled").
+end records `loopEnd` once every job cancelled is done, those cancelled
+before it by a keyed cancel or an owner's removal included. Pinned by
+`ConfigTest.protocolContractChecks`: the trace replays on the model, a
+loop's end after a keyed cancel and a reload's removal of config's jobs,
+each job held at its resume until the end hands it over, records `loopEnd`
+after both are done, and a job held just after it gave its unit back is in
+a wait the loop's end withdraws ("The runner's protocol, modelled").
 
 **Limits.** A stepped host cannot bound a turn: a turn held inside an event
 holds the check's thread, so a check that holds the editor thread inside an
@@ -2535,8 +2540,7 @@ the waits, and each job transition. A job's `start` (`spawn`), `ask`
 (`Handle.enter`, with a withdrawn wait's removal), `wake`
 (`Completions.finish`, with the wait's removal), `resume`, `cancel` and
 `done` are one section each, and so is the loop's end
-(`Services.recordLoopEnd`, which `Running.wind` calls once the jobs it
-cancelled are waited for). Inside it the runner decides the step with the
+(`Services.endLoop`, below). Inside it the runner decides the step with the
 model's own per-job step (`Protocol.JobState.step`), writes the token, moves
 the job's unit and records the transition through the recording port
 (`Job.Recorder.record`), before it lets the lock go; `Recorder.applied` is
@@ -2549,6 +2553,29 @@ of a wait come after it. A host's recorder is `Recorder.none`, which records
 nothing; a check gives the runner the fake (`Job.FakeRecorder`), which keeps
 the trace and holds a thread at a transition it names, after its section or
 inside it.
+
+**The loop's end waits for every cancelled job.** The table keeps the jobs
+cancelled and not yet done (`Pending.unsettled`): a job's `cancel` section
+adds it unless it is done, and its `done` section takes it out. A host's
+loop's end (`Running.wind`) cancels its jobs, then hands a task for each of
+those (`Services.unsettled`, each the job's `Handle.finishedRan`) to
+`Collaborators.endCancelled`: those its own cancel has just cancelled, and
+those an owner's removal (`Jobs.removeOwner`, a reload that installs) or a
+keyed cancel (`Jobs.cancel`, `cancelJob`, a start under a key) cancelled
+before, which have left its table of jobs. Last it ends the loop in a
+section of its own that decides `loopEnd` with the model's own step over
+those jobs' tokens (`Services.endLoop`, `Protocol.State.step`), from a state
+that has not ended, since the table outlives one loop: `loopEnd` is applied
+and recorded only once every cancelled job is done, so a loop's end the
+model refuses is never recorded, and after it every cancelled job's
+wake-up has been handled and its unit given back, as
+`loopEnd_settles_cancelled` has it of the model. A test stage waits for
+each task under its hang guard (`Editor.Test.Linked.Stage`), so a job that
+never ends is reported as a hang there and never waited for for ever. The
+editor's `endCancelled` waits for none, so its loop's end may find a
+cancelled job not yet done and record nothing, which its recorder,
+`Recorder.none`, would not keep anyway. A table several hosts share holds
+their cancelled jobs too, and each loop's end over it waits for them all.
 
 **The pre-fix counterexample.** The runner before the runner-park fix
 (784962e3) gave a parking job's unit back, then recorded its wait. Rebuilt
@@ -2579,9 +2606,18 @@ of two.
   parked or already due, a cancel held at a job's ask of a sleep or of a
   load, recorded before the `park` or `serve` that withdraws the wait, a
   sleep then a load, whose second `ask` comes after its `resume`, a load,
-  and several jobs at once; on a stepped host (`ConfigTest.protocolContractChecks`), ending in the loop's
-  end; and over the library's timer and file services on real threads
+  and several jobs at once; on a stepped host
+  (`ConfigTest.protocolContractChecks`), ending in the loop's end; and over
+  the library's timer and file services on real threads
   (`ContractTest.protocolContractChecks`).
+- The loop's end: on the fakes it is refused, recording nothing, while a
+  cancelled job is held at its resume, and recorded once the job is done
+  (`loopEndAfterCancelled`); on a stepped host a nap cancelled by its key
+  and a config job a reload's install cancelled, each held at its resume
+  until the loop's end hands it over to be waited for, are done before
+  `loopEnd` is recorded. With the loop's end handing over only the jobs
+  still in its table, the stepped check fails in every run: the trace
+  records `loopEnd` before both jobs' `done`, and the model refuses it.
 - The record is inside the section: a transition held at its record holds
   the table's lock (`Completions.busy`), so a competing cancel records after
   it (`recordedInside`, on the fakes); it fails if the record moves out.
@@ -2594,10 +2630,8 @@ of two.
 and posted events, which hold the rest of a host's count; the job table
 (`Editor/Job/Table.lean`), the editor thread's record of which results it
 still deals with, which no transition reads; the requests a job makes that
-are answered at once; and liveness: nothing here says a wait ends. A job a
-loop cancelled before its end, not through its own end's cancel (an owner's
-removal), is not waited for by the loop's end, so a trace of such a run
-could have `loopEnd` before that job's `done`, which the model refuses.
+are answered at once; and liveness: nothing here says a wait ends. That a
+cancelled job ends is the stage's hang guard's to report, not the model's.
 
 ### Completing awaits without Rust calling Lean
 
