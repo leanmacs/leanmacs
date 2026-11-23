@@ -334,6 +334,141 @@ job reads as it comes and whose standard input it writes to (phase 2;
   environment, as built"). The headless and window mains call the shutdown
   before they quit the queues.
 
+### Handing a streaming child to a package's crate (proposal)
+
+Status: **a proposal**, from the ACP design spike of 2026-11-23 (the
+acp-agents roadmap's transport design "C"). The spike's code is on its own
+branch, marked `SPIKE`, and is not built on `main`. What was proved by
+running code and what was only read is said below.
+
+An ACP client (and later an LSP client) is a package's crate that speaks
+JSON-RPC to a child. The core's process service keeps owning the child:
+its spawn, environment, group, kill, reap and shutdown, as above. A Lean job
+opens it as a streaming child as it does today (`Process.start`), and then
+hands its number to the package's binding, whose crate **takes the child
+over**: from then on the crate's own thread pulls the child's framed
+streams and writes its input, Rust to Rust, and the job reads it no more.
+Rust still never calls Lean: the crate reports through its own service's
+completions, which Lean pulls.
+
+**The shape.** A package's crate may depend only on `editor-service`
+([packages.md](packages.md), "The service conventions as a crate of their
+own"), which depends on nothing, so the hand-off is a port there in the
+editor's terms, and the crate that holds the process's one process service
+provides it:
+
+| Piece | Where | What |
+|---|---|---|
+| `stream::StreamSource` | `editor-service` | The port: `take_over(child) -> Result<Box<dyn ChildStreams>, Refused>` |
+| `stream::ChildStreams` | `editor-service` | A child taken over: `pull()`, which blocks until a delivery, the end or a cancel (`Pulled::Delivered(Delivery)` or `Pulled::Cancelled`); `write(bytes)`, which blocks until they are in the pipe |
+| `stream::provide`, `stream::take_over` | `editor-service` | One process-wide `OnceLock` holding the source, and the call a package's crate makes. Refusals: no service provided, no such live child, a read of the job's pending, taken already |
+| `Service::hand_off(child)` | `editor-process` | Marks the child handed under its stream lock and returns a `Handed`: `pull` waits on the child's `changed` condvar for something deliverable, the end, or the abandon a cancel makes, and drains the outbox as a take does; `write` hands the bytes to the child's writer thread and waits for its reply |
+| the source | `editor-ffi` (`processes/spike_stream.rs` in the spike) | Forwards `take_over` to the one `PROCESSES` static and converts `Delivery` to `editor-service`'s plain types; installed with `provide` as the static is made |
+
+The spike duplicates the frame and delivery types in `editor-service`
+because `editor-process` depends on nothing. Proposed instead: move
+`editor_process::frame` (plain data, no thread, no port) into
+`editor-service`, and let `editor-process` depend on it, so a delivery is
+one type on both sides. `deny.toml` gives `editor-service` no entry, so the
+edge is allowed. The source should be provided when the library starts,
+not when the process service is first used, so a take-over never depends
+on an open having come first; in the spike it is provided at first use,
+which an open always is.
+
+**The rules it keeps.**
+
+- **The bound and "held, never dropped".** A consumer's `pull` is the
+  job's read and take in one call: it drains the outbox, which makes room
+  and wakes a parked reader. A consumer that does not pull holds the child
+  in `write(2)` exactly as a job that does not read does. Nothing is
+  dropped, and the bound still counts each stream on its own.
+- **One reader.** A child with a read of the job's pending is refused
+  (`ReadPending`); the job takes or cancels its read first. Once handed, a
+  read by the job is refused, and a second take-over is refused (`Taken`).
+- **Cancel, kill and shutdown** reach a consumer mid-pull with nothing new:
+  a cancel and shutdown already abandon the child's stream under its lock
+  and notify `changed`, which is the condvar the consumer waits on, so its
+  pull answers `Cancelled`. The one change the waiter needed was to notify
+  `changed` once it has recorded the exit, so a consumer waiting for the
+  end wakes.
+- **A child that exits before the hand-off** keeps its frames and its exit
+  in its stream state until its last delivery is taken (`Streamed::end`,
+  `Service::forget`), so a take-over after the exit still delivers every
+  line and the exit; a child whose last delivery the job already took is
+  forgotten and refused (`NoSuchChild`).
+- **Who owns the session.** The child stays named for the job that opened
+  it, and the runner cancels every child a job holds when the job ends, so
+  the opening job must live as long as the session, or the hand-off must
+  move the child out of the job's set. Proposed: a session is one long job
+  that opens the child, hands it over and waits on the crate's
+  completions; its cancel is the session's end.
+- **Threads.** Each child keeps its waiter, two readers and its writer, and
+  the consumer adds its own: one thread that runs the protocol's connection
+  (for ACP the SDK's future under a plain `block_on`, no runtime,
+  [agent-hosting.md](agent-hosting.md), "The ACP spike"), and one that
+  pulls into it. Six or so a session, for a handful of sessions.
+
+**What was proved by running code.**
+
+- `crates/editor-process-std/tests/spike_handoff.rs`, on real processes:
+  lines read and written after the hand-off; 2,000 lines through a bound of
+  64, the child held while nothing pulls and every line delivered once it
+  does; a cancel and a shutdown each wake a consumer blocked in a pull;
+  a child with a pending read refused, and taken over once the read is
+  withdrawn. The test of a child that exits before the hand-off does not
+  force that order (the child usually exits first); the rule is read in
+  the service, not forced.
+- **The riskiest assumption, that a package's crate reaches the core's one
+  running process service**: in the fixture package `echo`, a linked test
+  opens a streaming child through the job port's real process service
+  (`Job.realProcesses`, which `Process.start` reaches, from the linked test
+  kit's services rather than a running job), hands its number to the
+  binding `Echo.Real.attach`, and the crate (`rust/src/attach.rs`,
+  depending on `editor-service` alone) takes it over through
+  `editor_service::stream::take_over`, reads its lines, writes `pong` back
+  when it reads `ping-me`, sees its exit, and completes a request of its own
+  service, which Lean's pump ends and Lean takes. A second child, blocked
+  in a pull, is cancelled through the job port and the crate sees the
+  cancel. Run: `one`, `ping-me`, `got pong`, `three`, exit 2, in three
+  pulls; then `<cancelled>`. The generated crate's bans
+  (`tools/rust-bans-check.sh tests/packages`) still pass. So one archive
+  does give one copy of `editor-service`'s static, and the source
+  `editor-ffi` provided is the one the package's crate finds.
+- **Not proved**: a running Lean job awaiting a package's completion. A
+  package cannot add a service to the job runner's `Job.Services` yet
+  ([packages.md](packages.md), "Behind a port, so it stays replaceable"),
+  so the linked test registers its waits in the kit's table directly. The
+  ACP roadmap has to add that before a session can be a job.
+
+**`Content-Length` framing**, which an LSP client needs, is a third
+`Framing` beside `Lines` and `Bytes`. What it needs beyond today's `frame`
+module (read, not built):
+
+- A framer with two states, header and body. The header is ASCII lines
+  ending `\r\n` up to an empty line; `Content-Length: <n>` is required,
+  `Content-Type` is allowed and ignored, any other header or a malformed
+  one ends the child as `Failed`, its group killed, as a read that fails
+  does. A take gives whole bodies, `Frames::Messages(Vec<Vec<u8>>)`,
+  without their headers.
+- The bound counts the header in progress and the body in progress, as it
+  counts a partial line. Unlike a line, a message's size is known before
+  its body is read, so one whose header plus `n` exceeds the bound is
+  refused at once, `End::MessageTooLong` beside `LineTooLong`, with no probe
+  byte; and a reader can ask for exactly the body's remaining bytes.
+- A header with no end within the bound is too long, as a partial line is.
+- Writes stay bytes: the consumer frames what it writes (an ACP line with
+  its `\n`, an LSP header and body), and the writer writes every byte.
+  Nothing in the service parses JSON.
+
+**The bound for ACP.** Claude Code's adapter sent a 27,490-byte line on its
+first prompt (its list of commands), and a tool call's update carries the
+edited file whole, in its diff and again in `_meta`
+([agent-hosting.md](agent-hosting.md), "The ACP spike"), so a line is
+about three times the largest file it edits. A line longer than the bound
+kills the agent (`LineTooLong`). The bound for an agent's stream must be
+megabytes, not kilobytes, and whether an over-long line should end the
+session or be skipped is the ACP roadmap's to decide.
+
 ## Files and watching
 
 | Service | Where | Notes |
@@ -2540,9 +2675,12 @@ better generic primitive, not a feature-specific service.
   the library needs no scheduler of its own. Plain threads and channels are
   the starting point; an async runtime (tokio) would only be justified by
   the number of open pipes.
-- **JSON throughput.** Agent and language-server streams are parsed in
-  Lean. If that proves slow, framing already happens in Rust and parsing
-  could move there, delivering plain values.
+- **JSON throughput.** Decided for ACP: an agent's stream is parsed in
+  Rust, by the protocol's SDK in the ACP package's crate, which takes the
+  child's stream over from the process service ("Handing a streaming child
+  to a package's crate", a proposal), and Lean gets plain events. A
+  language server's stream is still to decide; the same hand-off, with
+  `Content-Length` framing, would let an LSP client do the same.
 - **HTTP.** A Lean client, or a small Rust one behind the same pattern.
 - **Backpressure** for a process that outpaces its consumer: answered for
   process output, which is held at its bound by not being read, and for

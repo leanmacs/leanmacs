@@ -3103,7 +3103,19 @@ The port is phrased in the editor's terms, not the crate's. For ACP the
 crate holds the JSON-RPC connection on its own threads and hands Lean
 events such as a message chunk, a tool call or a permission request; Lean
 does not get the protocol's raw messages, which would need every type of
-the protocol again in Lean.
+the protocol again in Lean. The ACP spike (2026-11-23,
+[agent-hosting.md](agent-hosting.md), "The ACP spike") found this fits the
+protocol's Rust SDK: it needs no async runtime (its connection is one
+future the crate polls on a plain thread), runs over any stream, and lets
+a request be parked and answered later from another thread, so an answer
+from Lean is a call into the crate, never a callback. The connection's
+transport is the agent child the core's process service opened, whose
+streams the crate takes over through `editor-service` (a proposal,
+[rust-library.md](rust-library.md), "Handing a streaming child to a
+package's crate"); the spike proved, in `echo`'s crate, that a package's
+crate reaches the core's one process service that way. The SDK changes
+major version every month or two, which the exact pin in the root lock
+absorbs, and the port keeps its types out of Lean.
 
 ### Who can build it
 

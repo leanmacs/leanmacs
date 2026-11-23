@@ -5,9 +5,11 @@ what they produce is in
 [review-and-navigation.md](review-and-navigation.md).
 
 This draws on a research pass over existing tools and on the `edmacs`
-record of building agent tooling in Emacs. Protocol details below came from
-fetched documentation that was machine-summarised, so field names must be
-re-checked against the ACP schema before implementation.
+record of building agent tooling in Emacs. Protocol details first came from
+fetched documentation that was machine-summarised; the ACP spike of
+2026-11-23 ("The ACP spike", below) checked them against the Rust SDK's
+source and against what Claude Code's adapter actually sent, and where they
+differ the spike's are the ones to build on.
 
 ## Two front ends, one agent table
 
@@ -30,15 +32,18 @@ agent subprocess. The agent streams session updates (message chunks, plans,
 tool calls with diffs and locations, usage) and calls back into the editor
 for permission, for file reads and writes, and to run commands.
 
-**The ACP client (a compiled Lean package over the process service):**
+**The ACP client (the package `acp`, its Rust crate and an interface
+package `agents-api`; decided by the owner, 2026-11-23):**
 - Spawning the agent process through the Rust process service, which
-  frames its output; JSON-RPC on top. As built, the service frames a
-  streaming child's output by line, delivers it to the job that started
-  the child a read at a time, one completion a read however fast the agent
-  writes, holds the agent at a bound by not reading, and takes a write to
-  its standard input as a request (`Process.start`, `Process.read`,
-  `Process.writeLine`, `lean/Editor/Process.lean`). A JSON-RPC message is a
-  line; the client parses the lines in Lean.
+  owns it (environment, group kill, reaping, shutdown). A Lean job opens
+  it as a streaming child (`Process.start`, `lean/Editor/Process.lean`),
+  framed by line, and hands it to the package's crate, which takes its
+  streams over and runs the protocol's Rust SDK on them, Rust to Rust
+  (transport design "C"; the primitive is a proposal,
+  [rust-library.md](rust-library.md), "Handing a streaming child to a
+  package's crate"). Lean gets plain events from the crate (a message
+  chunk, a tool call, a permission request), never JSON-RPC
+  ([packages.md](packages.md), "Behind a port, so it stays replaceable").
 - Serving the agent's requests while the editor's own prompt request is
   pending.
 - Tracking outstanding requests, and answering every pending permission
@@ -67,9 +72,119 @@ for permission, for file reads and writes, and to run commands.
 | Sessions are tied to the client process; no standard remote transport | Persist agent records and reattach with session resume; a detached supervisor process is a later option. For remote agents see below |
 | No worktrees, checkpoints or provenance | Version control in Lean; per-edit origin in the edit log |
 
-Diffs arrive as whole old and new text, so the editor computes hunks itself
-and reconciles them with the buffer, since the agent may already have
-written the file.
+Diffs arrive as old and new text, not as hunks, so the editor computes
+hunks itself and reconciles them with the buffer, since the agent may
+already have written the file. Under Claude Code's adapter the text is
+whole only in the update after the tool ran; before it, and in the
+permission request, it is only the edit's own strings ("The ACP spike",
+below).
+
+### The ACP spike (2026-11-23)
+
+A time-boxed spike checked the SDK, the stream hand-off and what Claude
+Code's adapter sends. Its code and the scrubbed transcripts are on the
+spike's branch under `spike/` (not landed); the transcripts are to seed
+the client's fixture tests. Each fact says how it is known.
+
+**The SDK** (read in the source of 5.5.1 and on crates.io; the stream point
+proved by running code):
+
+| | |
+|---|---|
+| Crates | `agent-client-protocol` 5.5.1 (2026-11-21), the connection, from github.com/agentclientprotocol/rust-sdk; it pins the wire types, `agent-client-protocol-schema`, exactly (`=1.21.2`) and re-exports them as `agent_client_protocol::v1::schema`, which is how they are to be named. Its `-derive` crate comes with it; `-rmcp`, `-conductor`, `-http` and others are separate and not needed |
+| Licence | Apache-2.0 for the three crates it pulls in; the rest of its normal tree is MIT, Apache-2.0, Zlib, Unlicense OR MIT and Unicode-3.0. All are compatible with the editor's GPL-3.0-or-later. `deny.toml` checks bans only, no licences, so nothing in the gate would catch a change |
+| Edition, MSRV | 2024, `rust-version = 1.88.0` |
+| Runtime | None. No default features; tokio is a dev-dependency only. The connection is one future the caller polls (`futures::executor::block_on` on a plain thread in the spike); its tasks run inside that future. Everything is `Send`; no `spawn_local`, no `LocalSet` |
+| Streams it did not open | Yes. `connect_with` takes any transport: `ByteStreams` over futures-io `AsyncRead`/`AsyncWrite`, `Lines` over a `Sink<String>` and a `Stream` of lines, or a channel of frames. The spike fed `Lines` from a plain thread doing blocking reads, as a consumer pulling a handed-over child would, and wrote through another plain thread |
+| Incoming requests | Typed handlers registered on the builder (`on_receive_request` for `RequestPermissionRequest`, `ReadTextFileRequest`, `WriteTextFileRequest`, `CreateTerminalRequest` and the rest; `on_receive_notification` for `SessionNotification`). **A handler holds the dispatch loop until it returns**, so it must not await Lean's answer: it parks the request's `Responder` (`Send + 'static`, answered synchronously) under a ticket, posts a plain event and returns; the answer comes later from any thread. The spike answered a permission request so, from another thread, while the prompt was pending, then cancelled the turn and saw `stopReason: "cancelled"`. A dropped `Responder` answers with an error |
+| Defaults to note | Request ids on the wire are UUID strings. The client's capabilities default to no fs and no terminal; they must be set to be offered |
+| Protocol | Version 1. Version 2 is a draft behind `unstable_protocol_v2`; about thirteen more `unstable_*` flags exist |
+| API churn | High. 0.8 to 0.15 broke between December 2025 and June 2026 (0.11 a new design); then 1.0.0 (2026-06-24), 2.0.0 (07-23), 3.0.0 (10-06) and 5.0.0 (11-02), with no 4. Minors come every few days. Semver is promised for the stable API from now on; the `unstable_*` API and the schema pin may move in a minor |
+
+So the SDK fits design C: no runtime to host, any stream, and every
+callback can become a parked request and a plain event. The cost is the
+churn: pin it exactly in the root lock, keep its types inside the crate
+behind the `agents-api` port, and expect a major upgrade every few months.
+
+**Claude Code's adapter** (observed: two short runs on this machine, one
+prompt each, from a fresh temporary directory, through a minimal client
+script; the rest read in the installed package's source):
+
+- **Package**: `@agentclientprotocol/claude-agent-acp` 0.110.0
+  (Apache-2.0, github.com/agentclientprotocol/claude-agent-acp); the old
+  `@zed-industries/claude-code-acp` and `@zed-industries/claude-agent-acp`
+  are deprecated renames. It is the binary `claude-agent-acp` (`node
+  dist/index.js`, no arguments), newline-delimited JSON-RPC on standard
+  input and output, logs on standard error. It wraps
+  `@anthropic-ai/claude-agent-sdk` 0.3.330 and starts that SDK's own
+  bundled CLI, not the `claude` on the `PATH`. It reuses the local Claude
+  Code login with no setup. `CLAUDE_AGENT_ACP_PROTOCOL`, `CLAUDE_CONFIG_DIR`
+  and `CLAUDE_CODE_EXECUTABLE` among others change it.
+- **`initialize`**: `protocolVersion: 1`; `agentCapabilities` with
+  `loadSession`, `promptCapabilities` (`image`, `embeddedContext`),
+  `mcpCapabilities` (`http`, `sse`, `acp`), `sessionCapabilities`
+  (`list`, `resume`, `fork`, `close`, `delete`, `title` and more), and
+  `_meta`; `agentInfo`; `authMethods: []` for a client that offers no
+  terminal auth.
+- **`session/new`** answers `sessionId` (a UUID), `modes` (`default`,
+  `acceptEdits`, `plan`, `auto`, `bypassPermissions`) and `configOptions`
+  (selects: `model`, `effort`, `fast`, `mode`, `agent` and others); no
+  top-level `models`. **The session's mode is the user's own Claude
+  settings'** (`auto` here), so a session may never ask permission at all;
+  `session/set_mode` with `default` was accepted and made it ask.
+- **Messages seen.** Client to agent: `initialize`, `session/new`,
+  `session/set_mode`, `session/prompt`, and the permission answer. Agent
+  to client: the responses, `session/update`, one
+  `session/request_permission`, and two notifications outside the
+  protocol, `auth/status_update` and `_auth/status_update`, three each a
+  run, carrying the account's email, plan and organisation (scrubbed). The
+  `sessionUpdate` kinds: `agent_message_chunk` (`content: {type: "text",
+  text}`, `messageId`), `tool_call`, `tool_call_update`, `usage_update`
+  (`used`, `size`, `cost: {amount, currency}`), `available_commands_update`,
+  `session_info_update` (`title`, `updatedAt`) and `config_option_update`.
+  No `plan`, `agent_thought_chunk` or `current_mode_update` in these runs.
+- **Tool calls** open empty (`tool_call` with `toolCallId`, `title`,
+  `kind` `read` or `edit`, `status: "pending"`, `rawInput: {}`, empty
+  `content` and `locations`) and are filled in by **incremental**
+  `tool_call_update`s that send only the fields that changed: `rawInput`
+  in growing versions, then `title` and `locations` (`[{path, line?}]`),
+  then the result, `status: "completed"` with `rawOutput` and `content`.
+  Much rides in `_meta.claudeCode` (the CLI's tool name, and its tool
+  response: for an edit the whole original file and a structured patch).
+  The client must merge updates into a tool call, and replace a diff, never
+  append to it.
+- **The permission request** (observed once): `{sessionId, toolCall:
+  {toolCallId, title: "Edit notes.txt", kind: "edit", status, rawInput,
+  content: [{type: "diff", path, oldText, newText}], locations: [{path}],
+  name}, options}`, with options `allow-once` ("Yes", `allow_once`),
+  `allow-with-updates` ("Yes, allow all edits during this session",
+  `allow_always`) and `reject` ("No", `reject_once`). `name` is outside the
+  schema. The diff in it is the edit's own strings, not the file. The
+  adapter's source builds the options per tool and input, and can also
+  offer `allow-skill-*` and `exit-plan-*` ids; it never offers
+  `reject_always`; a cancel answers pending requests as denied. So
+  "the options are the agent's, per request" holds.
+- **Diffs**: `content: [{type: "diff", path, oldText, newText}]`. Before
+  the tool runs (an update with partial input, and the permission request)
+  the texts are only the replaced and replacing strings; after it, the
+  whole file before and after, its last line feed trimmed.
+- **Files**: the client offered `fs/readTextFile` and `fs/writeTextFile`,
+  and **the agent used neither**: the CLI read and edited the file itself
+  in both runs, after permission in the second. Serving reads from buffers
+  and routing writes through the edit log (phase 5 of the roadmap) cannot
+  rest on the fs methods with this agent; edits are external changes,
+  attributed from the tool call's diff.
+- **Sizes and rate**: 36 messages, 70,624 bytes in 7.3 s for the first
+  run; 43 in 8.3 s for the second. The largest message was an
+  `available_commands_update`, 27,490 bytes (the user's skills and
+  commands); `session/new`'s answer about 5 kB; a whole-file edit update
+  1.1 kB for a three-line file. The peak, agent to client, was 12 messages
+  in a second and 7 in 100 ms. Both replies were one sentence, so this
+  says nothing yet about a long streamed reply.
+- **The user's environment leaks in**: mode, model, skills, commands and
+  subagents all come from the user's Claude settings, unless the client
+  passes its own (`CLAUDE_CONFIG_DIR`, `session/set_mode`,
+  `session/set_config_option`).
 
 ### Remote agents and sandboxes
 
@@ -217,9 +332,11 @@ the agent table. See review-and-navigation.md for the rdm client.
 
 ## An agent's write under an open buffer
 
-An agent that goes through ACP writes to the buffer through the edit log
-("ACP", above), so it never races the editor. An agent that writes the file
-directly does, and so does any other program. What happens then (decided by
+An agent that writes through ACP's `fs/write_text_file` writes to the
+buffer through the edit log ("ACP", above), so it never races the editor.
+An agent that writes the file directly does, and so does any other
+program; Claude Code's adapter is one, since it edits files itself even
+when the client offers the fs methods ("The ACP spike", above). What happens then (decided by
 the daily-driver floor's phase 5):
 
 - **Keep mine, and offer two explicit resolutions.** A buffer with unsaved
@@ -261,11 +378,28 @@ pins that with the mode off no watch is open; the phase is
 
 ## Open questions
 
-- **JSON throughput** of the ACP client in Lean under a fast-streaming
-  agent. If it is too slow, parsing moves into Rust (where the ACP Rust
-  SDK, licence and fit unchecked, becomes an option). The ACP package
-  would hold that Rust itself, behind a port in the editor's terms
-  ([packages.md](packages.md), "Rust in a package"; proposal).
+- **JSON throughput**: answered by moving it. The ACP package's crate
+  parses with the Rust SDK and Lean gets plain events; the SDK's licence
+  and fit were checked ("The ACP spike"). Still open: Lean's cost per
+  event under a long streamed reply, which the spike's one-sentence
+  replies (12 messages a second at most) did not reach.
+- **How edits are attributed** when the agent writes files itself, as
+  Claude Code's adapter does: from the tool call's final diff and its
+  `_meta` patch, reconciled with the buffer as an external change. Whether
+  the adapter can be made to use `fs/write_text_file` is unchecked.
+- **The line bound** for an agent's stream: a line is about three times
+  the largest file an edit touches, and a line past the bound ends the
+  agent ([rust-library.md](rust-library.md), "Handing a streaming child to
+  a package's crate").
+- **The user's Claude settings** decide the session's permission mode and
+  bring the user's skills and subagents in. Whether the editor passes its
+  own config directory or sets the mode per session is open.
+- **Non-standard notifications** (`auth/status_update`,
+  `_auth/status_update`) carry account details; the client should ignore
+  them and never log them unscrubbed.
+- **Keeping up with the SDK**: four major versions in five months. Who
+  upgrades it, and how the fixture transcripts catch a change of wire
+  shape, is open.
 - **A detached supervisor**: should agent processes be children of the
   editor, or of a small separate process that outlives it, as VS Code now
   does? Persisted records plus resume may be enough at first.
