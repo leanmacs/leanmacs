@@ -144,8 +144,8 @@ impl RecordingCompleter {
     }
 
     /// Waits until at least `count` reports are held, made since the last
-    /// take, and says whether they were: false only once `bound` has
-    /// passed first. A test waits for reports made on other threads with
+    /// take, and says whether they were: false only once `guard` has
+    /// run out first. A test waits for reports made on other threads with
     /// it, on each report and never by a poll, then takes them.
     ///
     /// `guard` names the reports: only reports that never come reach it.

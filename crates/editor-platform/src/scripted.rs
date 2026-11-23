@@ -305,8 +305,8 @@ impl ScriptedPlatform {
     }
 
     /// Waits until a run is parked, waiting for its close with nothing left
-    /// to report, and says whether one was: false only once `bound` has
-    /// passed first, and at once for a platform that cannot open a window,
+    /// to report, and says whether one was: false only once `guard` has
+    /// run out first, and at once for a platform that cannot open a window,
     /// whose runs never park. A readout for tests, which use it to know the
     /// run has reported all it has to and waits, on an event and never a
     /// poll: the run notifies it as it parks, under the lock its wait then

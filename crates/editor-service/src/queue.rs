@@ -355,7 +355,7 @@ impl Queue {
     }
 
     /// Waits until at least `pulls` pulls are parked on the queue, and says
-    /// whether they were: false only once `bound` has passed first. A
+    /// whether they were: false only once `guard` has run out first. A
     /// readout for tests, which use it to know a pull is parked before they
     /// push, on an event and never a poll: a pull notifies it as it parks,
     /// under the lock its wait then releases, so once this has seen the

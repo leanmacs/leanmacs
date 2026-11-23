@@ -286,7 +286,7 @@ pub mod probe {
 
     /// Waits until the loop of `platform`'s running window has carried out
     /// every request sent to it, on the main thread, and says whether it
-    /// had: false once `bound` has passed first, and at once when no window
+    /// had: false once `guard` has run out first, and at once when no window
     /// runs. A reading of the window or the menu bar made after it sees
     /// what the requests did. It is notified as the loop carries them out,
     /// never a poll.

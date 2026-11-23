@@ -396,7 +396,7 @@ impl RenderHandle {
     }
 
     /// Waits until the loop is at rest ([`RenderHandle::resting`]), and
-    /// says whether it was: false only once `bound` has passed first. A
+    /// says whether it was: false only once `guard` has run out first. A
     /// readout for tests, which use it to know that what they asked of the
     /// loop has been drawn, on an event and never a poll: a step that
     /// records rest signals it, under the lock this reads the rest under,

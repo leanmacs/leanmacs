@@ -1192,7 +1192,7 @@ impl<P: Processes + 'static> Service<P> {
 
     /// Waits until a reader of the child `child` is parked on its bound,
     /// and says whether one was: false at once for a child the service
-    /// does not hold as streaming, and false once `bound` has passed first.
+    /// does not hold as streaming, and false once `guard` has run out first.
     /// A readout for tests, which use it to know the child is held, on an
     /// event and never a poll: a reader notifies it as it parks, under the
     /// lock its wait then releases, so once this has seen the reader parked
