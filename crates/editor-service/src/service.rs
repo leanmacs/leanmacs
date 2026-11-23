@@ -14,6 +14,11 @@
 //! is the published fake, and [`completer_contract`] is what the fake and
 //! the real completer, a [`Service`], which posts to the process's
 //! completion queue ([`crate::queue::COMPLETION`]), are both held to.
+//!
+//! A test waits for a request it made on that request's own report,
+//! [`RecordingCompleter::wait_reported`], never on how many reports there
+//! are: [`RecordingCompleter::wait_for`], the count, is a readout for the
+//! completer's own tests alone.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
@@ -161,6 +166,22 @@ impl RecordingCompleter {
             });
         reported
     }
+
+    /// Waits until the request `request` has been reported, since the last
+    /// take, and says whether it was: false only once `guard` has run out
+    /// first. The request's own signal: a test that made a request waits on
+    /// its own id, never on how many reports there are, so a report made
+    /// by another request cannot answer it.
+    ///
+    /// `guard` names the report: only a report that never comes reaches it.
+    pub fn wait_reported(&self, request: u64, guard: HangGuard) -> bool {
+        let requests = self.requests.lock().unwrap_or_else(PoisonError::into_inner);
+        let (_requests, reported) =
+            editor_wait::wait_while(&self.reported, requests, guard, |requests| {
+                !requests.contains(&request)
+            });
+        reported
+    }
 }
 
 impl Completer for RecordingCompleter {
@@ -181,8 +202,13 @@ pub const ONCE_IN_ORDER: &str = "each report is delivered once, in the order mad
 /// A request id crosses whole: 0 and the largest word among them.
 pub const WHOLE_IDS: &str = "a request id is delivered whole, 0 and the largest among them";
 
+/// Each request accepted is reported on its own: delivered before the next
+/// is made, so a test waits on its own request's report.
+pub const EACH_REPORTED: &str =
+    "each request accepted is reported on its own, before the next is made";
+
 /// Every property of [`completer_contract`], by name.
-pub const PROPERTIES: [&str; 3] = [ACCEPTED, ONCE_IN_ORDER, WHOLE_IDS];
+pub const PROPERTIES: [&str; 4] = [ACCEPTED, ONCE_IN_ORDER, WHOLE_IDS, EACH_REPORTED];
 
 /// Holds `completer` to the contract, and returns the names of the
 /// properties that fail: none when it keeps them all. `delivered` answers
@@ -206,6 +232,13 @@ pub fn completer_contract(
     let all = whole.iter().all(|&request| completer.complete(request));
     if !all || delivered() != whole {
         failed.push(WHOLE_IDS);
+    }
+    let each = [5, 6, 5, 8].iter().all(|&request| {
+        let accepted = completer.complete(request);
+        accepted && delivered() == [request]
+    });
+    if !each {
+        failed.push(EACH_REPORTED);
     }
     failed
 }
@@ -282,6 +315,33 @@ mod tests {
         assert!(completer.wait_for(1, TOO_FEW));
         assert_eq!(completer.take(), [3]);
         assert!(!completer.wait_for(1, TOO_FEW), "taken, it holds none");
+    }
+
+    #[test]
+    fn a_wait_for_a_request_answers_once_that_request_is_reported_on_another_thread() {
+        let completer = Arc::new(RecordingCompleter::new());
+        assert!(completer.complete(4), "another request's report");
+        let reporter = {
+            let completer = Arc::clone(&completer);
+            thread::spawn(move || completer.complete(9))
+        };
+        assert!(completer.wait_reported(9, BOUND));
+        assert!(reporter.join().expect("the report's thread"));
+        assert_eq!(completer.take(), [4, 9]);
+    }
+
+    #[test]
+    fn a_wait_for_a_request_says_no_once_its_bound_has_passed_with_only_others_reported() {
+        let completer = RecordingCompleter::new();
+        assert!(completer.complete(4));
+        assert!(
+            !completer.wait_reported(9, TOO_FEW),
+            "another request's report is not its"
+        );
+        assert!(completer.complete(9));
+        assert!(completer.wait_reported(9, TOO_FEW));
+        assert_eq!(completer.take(), [4, 9]);
+        assert!(!completer.wait_reported(9, TOO_FEW), "taken, it holds none");
     }
 
     static FIRST: Service = Service::named("first");
@@ -368,6 +428,20 @@ mod tests {
         }
     }
 
+    /// A completer that holds back each report until the next is made,
+    /// delivering it then.
+    struct Late(RecordingCompleter, Mutex<Option<u64>>);
+
+    impl Completer for Late {
+        fn complete(&self, request: u64) -> bool {
+            let mut held = self.1.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(earlier) = held.replace(request) {
+                self.0.complete(earlier);
+            }
+            true
+        }
+    }
+
     /// A completer that refuses every report.
     struct Refusing;
 
@@ -396,5 +470,7 @@ mod tests {
             completer_contract(&truncating, || truncating.0.take()),
             [WHOLE_IDS]
         );
+        let late = Late(RecordingCompleter::new(), Mutex::new(None));
+        assert!(completer_contract(&late, || late.0.take()).contains(&EACH_REPORTED));
     }
 }

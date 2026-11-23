@@ -214,20 +214,18 @@ mod tests {
         Echo::new(Box::leak(Box::new(RecordingCompleter::new())))
     }
 
-    /// The requests reported, once `count` of them have been, in the order
-    /// they were, waited for on each report
-    /// ([`RecordingCompleter::wait_for`]); panics if they are not by the
+    /// The requests reported, in the order they were, once each of
+    /// `requests` has been, each waited for on its own id
+    /// ([`RecordingCompleter::wait_reported`]); panics if one is not by the
     /// deadline.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the service's tests wait for its reports on the published fake's readout, `RecordingCompleter::wait_for`"
-    )]
-    fn reported(echo: &Echo<&'static RecordingCompleter>, count: usize) -> Vec<u64> {
+    fn reported(echo: &Echo<&'static RecordingCompleter>, requests: &[u64]) -> Vec<u64> {
         let completer = echo.shared.completer;
-        assert!(
-            completer.wait_for(count, DEADLINE),
-            "fewer than {count} were reported: {DEADLINE}"
-        );
+        for &request in requests {
+            assert!(
+                completer.wait_reported(request, DEADLINE),
+                "{request} was not reported: {DEADLINE}"
+            );
+        }
         completer.take()
     }
 
@@ -235,7 +233,7 @@ mod tests {
     fn a_started_request_completes_and_its_take_answers_its_text() {
         let echo = echo();
         assert!(echo.start(3, "123456789"));
-        assert_eq!(reported(&echo, 1), [3]);
+        assert_eq!(reported(&echo, &[3]), [3]);
         let reply = echo.take(3).expect("a reply");
         assert_eq!(
             (reply.text.as_str(), reply.checksum),
@@ -247,7 +245,7 @@ mod tests {
     fn a_take_answers_once() {
         let echo = echo();
         assert!(echo.start(3, "once"));
-        reported(&echo, 1);
+        reported(&echo, &[3]);
         assert_eq!(echo.take(3), Some(Reply::to("once")));
         assert_eq!(echo.take(3), None);
     }
@@ -257,7 +255,7 @@ mod tests {
         let echo = echo();
         let text = "héllo, wörld: 日本語 \u{1F600}\0";
         assert!(echo.start(1, text));
-        reported(&echo, 1);
+        reported(&echo, &[1]);
         assert_eq!(echo.take(1), Some(Reply::to(text)));
     }
 
@@ -266,7 +264,7 @@ mod tests {
         let echo = echo();
         assert!(echo.start(5, "first"));
         assert!(!echo.start(5, "second"), "a second start is refused");
-        reported(&echo, 1);
+        reported(&echo, &[5]);
         assert!(!echo.start(5, "third"), "a reply not taken holds the id");
         assert_eq!(echo.take(5), Some(Reply::to("first")));
         assert!(echo.start(5, "fourth"), "a taken id is free");
@@ -323,7 +321,7 @@ mod tests {
         for id in 0..16 {
             assert!(echo.start(id, &format!("request {id}")));
         }
-        let mut ids = reported(&echo, 16);
+        let mut ids = reported(&echo, &(0..16).collect::<Vec<_>>());
         ids.sort_unstable();
         assert_eq!(ids, (0..16).collect::<Vec<_>>());
         for id in 0..16 {
