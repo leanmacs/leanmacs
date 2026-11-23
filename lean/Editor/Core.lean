@@ -18,6 +18,7 @@ import Editor.Job.FlushContract
 import Editor.Job.HandleContract
 import Editor.Job.Protocol.Theorems
 import Editor.Job.ProtocolContract
+import Editor.Job.PumpContract
 import Editor.Jumps.Go
 import Editor.Main
 import Editor.SearchRoot

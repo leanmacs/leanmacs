@@ -1501,6 +1501,12 @@ phase 3). The rules every one keeps:
 - **It is quiescent once stepped to its end**: nothing is left unworked and
   no drain waits, so a check that ends there leaves nothing to drain.
 
+**One step point.** The job services' fakes do not each step: in their
+step mode (`FakeAnswer.onStep`) each hands its completions to one fake pump,
+as the real services hand theirs to the library's one completion queue, and
+the check steps that pump. So the fakes' answers come in one due order, as
+the real wiring's do, and a host check has one call to step.
+
 Each fake and its real adapter run one shared contract: over the fake in
 `model-test`, and over the real adapter in `contract-test`, where the real
 run waits on its own flush, handle or wait, never on a count or the idle.
@@ -1508,6 +1514,7 @@ run waits on its own flush, handle or wait, never on a count or the idle.
 | Port (today's type) | The fake a host check gets, and how | Contract module | Fake's run | Real adapter pinned in |
 |---|---|---|---|---|
 | Session journal, `Headless.Journal` (`Editor/Headless/Journal.lean`) | `RecordingJournal` (`Editor/Headless/Journal/Fake.lean`), through `Collaborators.journal`, made over a stage by `Stage.recordingJournal` | `Editor/Headless/Journal/Contract.lean` | `ModelTest.journalContractChecks` | `ContractTest.journalContractChecks` (`Journal.real`, held by `FileHold`, its own flush) |
+| Completion pump, `Job.CompletionSource` (`Editor/Job/Pump.lean`) | `Job.FakePump` (`Editor/Job/Fake.lean`), handed to the stepped fakes of the job services (`FakeAnswer.onStep`); a check steps it, or runs `pumpFrom` over its `source` | `Editor/Job/PumpContract.lean` | `ModelTest.pumpContractChecks` | `ContractTest.pumpContractChecks` (the library's queue, each completion a file-service flush, each property on its own wait); Rust `completer_contract` |
 
 The host's own use of each is pinned over the fake: the journal's by
 `ConfigTest.journalOrderChecks`, which drives a stepped host and asserts
@@ -2754,7 +2761,11 @@ As built:
 - **The pump** (`Job.pump`) is one dedicated task for the process's one
   table: it pulls the completion queue and finishes the wait each
   completion names, until quit. A completion carries an id whichever
-  service queued it.
+  service queued it. It is `pumpFrom` over a port, `Job.CompletionSource`
+  (`lean/Editor/Job/Pump.lean`), whose library adapter is
+  `Job.librarySource`; its fake, `Job.FakePump`, is the one step point of
+  the job services' fakes ("Recording fakes for the host's background
+  collaborators").
 - **A flush is a wait like any other** (deterministic-test-concurrency
   phase 1). Each port has a `flush` (`Timers`, `Files`, `Processes`,
   `FileWatches`, `Diffs`): the service completes the wait once it has

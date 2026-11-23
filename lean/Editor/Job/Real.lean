@@ -1,4 +1,5 @@
 import Editor.Command.Real
+import Editor.Job.Pump
 import Editor.Job.Runner
 import Editor.Text.Real
 
@@ -1144,15 +1145,21 @@ def finishWith {α : Type} (held : HeldSnapshots) (handle : Handle) (command : E
   finally
     handle.settle
 
-/-- The completion pump: pulls the completion queue and ends the wait each
-completion names, until the queues are quit. It blocks in the library: run it
-on a dedicated task. -/
-def pump (completions : Completions) : IO Unit := do
-  repeat
+/-- The library's completion queue as the pump's source
+(`Editor/Job/Pump.lean`): each pull blocks in the library. -/
+def librarySource : CompletionSource where
+  next := do
     let event ← Ffi.nextEvent .completion
     if event.kind == .quit then
-      break
+      return .quit
     if event.kind == .completion then
-      completions.finish event.code .completed
+      return .completion event.code
+    return .other
+
+/-- The completion pump: pulls the completion queue and ends the wait each
+completion names, until the queues are quit (`pumpFrom` over
+`librarySource`). It blocks in the library: run it on a dedicated task. -/
+def pump (completions : Completions) : IO Unit :=
+  pumpFrom librarySource completions
 
 end Editor.Job

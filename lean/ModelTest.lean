@@ -72,6 +72,7 @@ import ModelTest.Editor.Job.Activity
 import ModelTest.Editor.Job.Contract
 import ModelTest.Editor.Job.FlushContract
 import ModelTest.Editor.Job.HandleContract
+import ModelTest.Editor.Job.PumpContract
 import ModelTest.Editor.Job.Jobs
 import ModelTest.Editor.Job.Model
 import ModelTest.Editor.Job.Pool
@@ -747,6 +748,11 @@ The job system is tested here with no Rust library:
   held completions: a held request's handle has not ended until it is let
   go, then ends with its reply, and a dropped handle's reply is still
   taken, so the service keeps nothing;
+- `pumpContractChecks`: the contract of the completion pump
+  (`Editor/Job/PumpContract.lean`) on the fake pump (`FakePump`), `pumpFrom`
+  run over its source on the check's thread, and the fake's own promises:
+  nothing finished before a step, every finish on the stepping thread, an
+  arrival resolved once that many are handed, quiescent once stepped;
 - `journalContractChecks`: the contract of the session journal's port
   (`Editor/Headless/Journal/Contract.lean`) on its recording fake
   (`RecordingJournal`), held by not stepping it, and the fake's own
@@ -1292,6 +1298,7 @@ def checks : List Check :=
     flushContractChecks ++
     handleContractChecks ++
     journalContractChecks ++
+    pumpContractChecks ++
     queueContractChecks ++
     queueMemoryChecks ++
     waitRoundChecks ++

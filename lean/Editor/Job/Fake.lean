@@ -1,6 +1,7 @@
 import Editor.File.Model
 import Editor.FileWatch.Model
 import Editor.Grep.Model
+import Editor.Job.Pump
 import Editor.Job.Runner
 import Editor.Process.Model
 
@@ -277,6 +278,142 @@ def readThreads (clock : FakeClock) : BaseIO (Array UInt64) :=
   return (← clock.state.get).readThreads
 
 end FakeClock
+
+/-- What a fake completion pump holds. -/
+structure FakePump.State where
+  /-- The completions handed and not yet finished, oldest first. -/
+  due : Array UInt64 := #[]
+  /-- How many completions were ever handed. -/
+  handed : Nat := 0
+  /-- The thread that finished each completion, oldest first. -/
+  finishedThreads : Array UInt64 := #[]
+  /-- The counts of completions handed that checks wait for (`arrivedAt`),
+  each with the promise resolved when `handed` reaches it. -/
+  arrivals : Array (Nat × IO.Promise Unit) := #[]
+  /-- Whether the source is closed: once nothing is due, a pull of it says
+  quit. -/
+  closed : Bool := false
+
+/-- The fake of the completion pump (`Editor/Job/Pump.lean`): the one step
+point of the job services' fakes. A stepped fake hands it each completion
+(`hand`) in place of finishing the wait itself, as a real service hands
+its completion to the library's queue; nothing is finished until the check
+steps (`step`), which finishes the oldest due completion on the caller's
+thread, so the fakes' answers come in one due order, as the real wiring's
+do. It starts no task: its state is one reference and the promises it
+hands out. Its `source` is the fake as the pump's port, so `pumpFrom` runs
+over it on the check's thread. -/
+structure FakePump where
+  /-- The table the pump finishes its completions through. -/
+  completions : Completions
+  /-- What the pump holds. Every change to it is one atomic step. -/
+  state : IO.Ref FakePump.State
+
+namespace FakePump
+
+/-- A pump over the table `completions` with nothing due. -/
+def new (completions : Completions) : BaseIO FakePump :=
+  return { completions, state := ← IO.mkRef {} }
+
+/-- Hands the completion of the wait `id`: due, and finished only by a
+step. -/
+def hand (pump : FakePump) (id : UInt64) : BaseIO Unit := do
+  let reached ←
+    pump.state.modifyGet fun state =>
+        let handed := state.handed + 1
+        let (reached, rest) := state.arrivals.partition (·.1 ≤ handed)
+        (reached, { state with due := state.due.push id, handed, arrivals := rest })
+  for (_, promise) in reached do
+    promise.resolve ()
+
+/-- Takes the oldest due completion, recording the caller's thread as the
+one that finishes it. -/
+private def takeDue (pump : FakePump) : BaseIO (Option UInt64) := do
+  let thread ← IO.getTID
+  pump.state.modifyGet fun state =>
+    match state.due[0]? with
+    | some id =>
+      (some id,
+        { state with
+          due := state.due.extract 1 state.due.size
+          finishedThreads := state.finishedThreads.push thread })
+    | none => (none, state)
+
+/-- Finishes the oldest due completion, as completed, on the caller's
+thread; `false` when none was due. -/
+def step (pump : FakePump) : BaseIO Bool := do
+  let some id ← pump.takeDue | return false
+  pump.completions.finish id .completed
+  return true
+
+/-- Finishes every due completion, oldest first, with `step`, those a
+finish hands on the way included. -/
+partial def stepAll (pump : FakePump) : BaseIO Unit := do
+  if ← pump.step then
+    pump.stepAll
+
+/-- A promise resolved once at least `count` completions have been handed:
+at once if they already have, else in the step that hands the last. What a
+check waits on, with a hang guard, for a completion handed on another
+thread, in place of polling `size`. -/
+def arrivedAt (pump : FakePump) (count : Nat) : BaseIO (IO.Promise Unit) := do
+  let promise ← IO.Promise.new
+  let reached ←
+    pump.state.modifyGet fun state =>
+        if state.handed ≥ count then (true, state)
+        else (false, { state with arrivals := state.arrivals.push (count, promise) })
+  if reached then
+    promise.resolve ()
+  return promise
+
+/-- How many completions are due. -/
+def size (pump : FakePump) : BaseIO Nat :=
+  return (← pump.state.get).due.size
+
+/-- How many completions were ever handed. -/
+def handed (pump : FakePump) : BaseIO Nat :=
+  return (← pump.state.get).handed
+
+/-- The thread that finished each completion, oldest first. -/
+def finishedThreads (pump : FakePump) : BaseIO (Array UInt64) :=
+  return (← pump.state.get).finishedThreads
+
+/-- Closes the source: once nothing is due, a pull of it says quit. -/
+def close (pump : FakePump) : BaseIO Unit :=
+  pump.state.modify fun state => { state with closed := true }
+
+/-- The pump as the pump's port: a pull gives the oldest due completion,
+taken on the caller's thread, and quit once nothing is due and the source
+is closed. A pull of an open source with nothing due says quit too: the
+fake never blocks, since nothing but the check's own thread could hand it
+more. -/
+def source (pump : FakePump) : CompletionSource where
+  next := do
+    match ← pump.takeDue with
+    | some id => return .completion id
+    | none => return .quit
+
+/-- Whether nothing is due: nothing is left for a step. -/
+def quiescent (pump : FakePump) : BaseIO Bool :=
+  return (← pump.state.get).due.isEmpty
+
+end FakePump
+
+/-- How a fake job service answers: at once, as each fake did before the
+pump, or on the check's step, through a fake pump it hands each completion
+to. -/
+inductive FakeAnswer where
+  /-- Each completion finished at once, on the thread that made it. -/
+  | atOnce
+  /-- Each completion handed to `pump`, finished on its step. -/
+  | onStep (pump : FakePump)
+
+/-- Finishes the wait `id` as completed as `answer` says: at once, or by
+handing it to the pump. -/
+def FakeAnswer.complete (answer : FakeAnswer) (completions : Completions) (id : UInt64) : BaseIO Unit :=
+  match answer with
+  | .atOnce => completions.finish id .completed
+  | .onStep pump => pump.hand id
 
 /-- What a fake file service holds. -/
 structure FakeFiles.State where
