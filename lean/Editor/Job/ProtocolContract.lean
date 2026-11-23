@@ -10,8 +10,8 @@ What the job runner's recorded transitions must be (`Editor/Job/Runner.lean`,
 the order they took effect. It has two parts:
 
 - **The recorded runs** (`recordedRuns`): scenarios over a `ProtocolRig`, a
-  runner's services over the fake clock and the fake files with the fake
-  recorder in place (`FakeRecorder`). Each spawns jobs, waits on the
+  runner's services over the fake clock, the fake files and the fake
+  processes with the fake recorder in place (`FakeRecorder`). Each spawns jobs, waits on the
   recorder's own events (`FakeRecorder.reached`) and on the jobs'
   `finishedRan`, then requires the trace to replay (`Protocol.replay`). A
   job asks a second wait once it has resumed from its first
@@ -21,7 +21,11 @@ the order they took effect. It has two parts:
   shows in the trace before the `park` or the `serve` that withdraws the
   wait, and a thread held inside a section, at its record, holds the
   table's lock, so no other section can apply or record until it is let
-  go.
+  go. A job held between the wake of a wait its service completed inside its
+  start and its `serve`, and cancelled there, drops the wait at the service
+  itself, so the service keeps nothing of it: a load's reply
+  (`loadCancelAfterWake`) and a streaming start's child
+  (`startCancelAfterWake`).
 - **The park** (`ParkSubject`, `parkHolds`): a subject holds a job just after
   the step at which its unit was given back (`ParkHold`), cancels it there,
   and reports what the cancel withdrew. Wherever the unit has been given
@@ -70,21 +74,35 @@ structure ProtocolRig where
   clock : FakeClock
   /-- The fake file service the services' files are. -/
   files : FakeFiles
+  /-- The fake process service the services' processes are. -/
+  processes : FakeProcesses
   /-- A file the services' file port loads. -/
   loadable : System.FilePath
+  /-- A command the services' process port starts as a streaming child. -/
+  startable : Process.Command
 
-/-- A rig over the fake clock and the fake files, with the file
-`/protocol/a.txt` in them. -/
+/-- The command `/protocol/stream`, which the rig's process model starts as
+a streaming child. -/
+def streamCommand : Process.Command :=
+  { program := "/protocol/stream", directory := "/protocol" }
+
+/-- A rig over the fake clock, the fake files, with the file
+`/protocol/a.txt` in them, and the fake processes, with the streaming
+command `streamCommand` scripted. Each fake completes a request inside its
+start unless a scenario holds it. -/
 def ProtocolRig.fakes : BaseIO ProtocolRig := do
   let completions ← Completions.new
   let clock ← FakeClock.new completions
   let files ← FakeFiles.new completions (({} : FileModel).withFile "/protocol/a.txt" "a".toUTF8)
+  let processes ← FakeProcesses.new completions { streams := #[{ command := streamCommand }] }
   let recorder ← FakeRecorder.new
   return {
       services :=
-        { completions, timers := clock.timers, files := files.files, recorder := recorder.recorder
+        { completions, timers := clock.timers, files := files.files
+          processes := processes.processes, recorder := recorder.recorder
           activity := ← Activity.counting }
-      recorder, clock, files, loadable := "/protocol/a.txt" }
+      recorder, clock, files, processes, loadable := "/protocol/a.txt"
+      startable := streamCommand }
 
 /-- A job that sleeps `duration` on the services' clock. -/
 def sleeper (duration : Nat) : Work :=
@@ -102,6 +120,10 @@ def sleepThenLoader (duration : Nat) (path : System.FilePath) : Work :=
       sleep duration
       File.load path 100)
     fun _ => pure ()
+
+/-- A job that starts `command` as a streaming child. -/
+def starter (command : Process.Command) : Work :=
+  Work.of (fun _ => Process.start command { bound := 64 }) fun _ => pure ()
 
 /-- A job that asks for nothing. -/
 def idler : Work :=
@@ -270,6 +292,62 @@ def serviceCancelAtAsk : RecordedProperty where
       rig.files.letGo
       handle.cancel
 
+/-- A wait its service completes inside its start, before the job records
+it: the job `work` is held just after that wake, on its own thread, before
+its `serve`, and cancelled there. The cancel finds nothing recorded, so the
+job's `serve` must drop the wait at its services itself, though it has
+ended: a service keeps a completed request's reply until it is taken or
+dropped, and a cancelled job never takes it. `kept` reads the service once
+the runner is done with the job: the waits it withdrew, which must be the
+job's one, and how much it still keeps of them, which must be nothing. -/
+def cancelAfterWake (rig : ProtocolRig) (work : Work) (kept : BaseIO (Array UInt64 × Nat)) :
+    IO Bool := do
+  let (woken, letGo) ← rig.recorder.holdAt (· matches .wake _ .completed)
+  let handle ← rig.spawn work
+  try
+    discard <| awaitStep "the wait's wake inside its start" woken
+    handle.cancel
+    letGo
+    finishedAll #[handle]
+    let trace ← rig.recorder.trace
+    let state ← replayed trace
+    let (withdrawn, left) ← kept
+    let outcome ← handle.outcome?
+    saw
+        (trace ==
+            #[.start 0, .ask 0 1 .service, .wake 1 .completed, .cancel 0, .serve 0, .resume 0,
+              .done 0] &&
+          withdrawn == #[1] &&
+          left == 0 &&
+          outcome matches some .cancelled &&
+          state.count == 0)
+        s!"trace={repr trace} withdrawn={withdrawn} left={left}"
+  finally
+    letGo
+    handle.cancel
+
+/-- A load the fake files complete at once, its job cancelled between the
+wake and its `serve`. -/
+def loadCancelAfterWake : RecordedProperty where
+  name :=
+    "a load its service completed before the job recorded it, the job cancelled there, is dropped at the file service by the job's serve, and the trace is a run of the protocol"
+  holds rig :=
+    cancelAfterWake rig (loader rig.loadable) do
+      let files ← rig.files.state.get
+      return (files.withdrawn, files.pending.size)
+
+/-- A streaming start the fake processes complete at once, its job
+cancelled between the wake and its `serve`: the child it would have
+started is never left running. -/
+def startCancelAfterWake : RecordedProperty where
+  name :=
+    "a streaming start its service completed before the job recorded it, the job cancelled there, is dropped at the process service by the job's serve, which kills the child, and the trace is a run of the protocol"
+  holds rig :=
+    cancelAfterWake rig (starter rig.startable) do
+      let model ← rig.processes.model
+      return (← rig.processes.withdrawn,
+          (← rig.processes.waiting) + model.children.size + (← rig.processes.taken).size)
+
 /-- The loop's end with a job cancelled and not yet done, held at its
 resume. -/
 def loopEndAfterCancelled : RecordedProperty where
@@ -375,8 +453,9 @@ def recordedInside : RecordedProperty where
 
 /-- Every recorded run, in the order they run. -/
 def recordedRuns : List RecordedProperty :=
-  [sleepWoken, sleepCancelled, sleepDue, cancelAtAsk, sleepThenLoad, serviceCancelAtAsk, fileLoad,
-    severalJobs, recordedInside, loopEndAfterCancelled]
+  [sleepWoken, sleepCancelled, sleepDue, cancelAtAsk, sleepThenLoad, serviceCancelAtAsk,
+    loadCancelAfterWake, startCancelAfterWake, fileLoad, severalJobs, recordedInside,
+    loopEndAfterCancelled]
 
 /-- Runs every recorded run, each on a fresh rig `fresh` makes, and returns
 the failures, each named `<name>: <property>`, with what it saw. -/

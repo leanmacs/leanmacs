@@ -7,7 +7,8 @@ import ModelTest.Support.Protocol
 
 The runner's protocol contract run on the fakes: `protocolContractChecks`.
 Each recorded run (`ProtocolContract.recordedRuns`) runs on a rig of its own
-over the fake clock and the fake files (`ProtocolRig.fakes`). The park
+over the fake clock, the fake files and the fake processes
+(`ProtocolRig.fakes`). The park
 property (`parkHolds`) is required of the runner over that rig, held after
 its unit's `done` with the cancel made on the check's thread, and of the
 model, scripted to the same place; and it is required to fail on the

@@ -72,7 +72,10 @@ cancellation is built here.
   once, so whichever of the service and the cancel comes first wins and the
   other does nothing. A wait the job was still making when it was cancelled
   is recorded nowhere: the job withdraws it itself, in the section of its
-  `park` or `serve`, which takes it out of the table.
+  `park` or `serve`, which takes it out of the table, and then tells the
+  services to drop it. It does so even when the service completed the wait
+  before the job recorded it: the service keeps a completed request's reply
+  until it is taken or dropped, and a cancelled job never takes it.
 - **A cancelled job makes no further request.** The runner looks at the
   token before each request, when each reply arrives, at once or after a
   wait, and when the program ends.
@@ -100,7 +103,9 @@ cancellation is built here.
   cancelled in a read or a write has that wait withdrawn first, then its
   children ended. A child is named by the id of its start's wait, so a job
   cancelled while its start is in flight has the start withdrawn, and the
-  library kills the child as it registers it.
+  library kills the child as it registers it; one cancelled after the
+  service completed its start, before it recorded it, drops the start at its
+  `serve`, and the library kills the child it registered.
 
 ## Activity
 
@@ -1109,25 +1114,29 @@ def Handle.ask (handle : Handle) (kind : Protocol.Kind := .service) :
 
 /-- Records the wait `id` the job asked as its own, in one section: its
 `park` for a wait that parks, which gives its unit back, its `serve` for any
-other. A job cancelled on its way in withdraws the wait in that step: the
-section removes it from the table, and the action that ends it is handed
-back, for the job to run once it has told the services to drop the wait.
-`none` once the job is in the wait, or the wait has ended. -/
-def Handle.enter (handle : Handle) (id : UInt64) : BaseIO (Option (Completion → BaseIO Unit)) :=
+other. `none` once the job is in the wait, or the wait has ended and the job
+recorded it, for its continuation to take the reply.
+
+A job cancelled on its way in withdraws the wait itself, since no cancel
+found it recorded: `some ended?`, for the job to tell the services to drop
+the wait, whether or not it has ended, and then to run `ended?`. A wait that
+had not ended is removed from the table in this step, and `ended?` is the
+action that ends it; one the service completed already is out of the table,
+and `ended?` is `none`, but the service keeps the request's reply until it is
+taken or dropped, and a cancelled job never takes it. -/
+def Handle.enter (handle : Handle) (id : UInt64) :
+    BaseIO (Option (Option (Completion → BaseIO Unit))) :=
   handle.services.completions.critical fun pending => do
     let transition :=
       match (← handle.job.token.get).state.status with
       | .asking _ .parks _ => Protocol.Transition.park handle.job.number
       | _ => .serve handle.job.number
     let withdraw :=
-      return (pending.waits[id]?.map (·.ended), { pending with waits := pending.waits.erase id })
+      return (some (pending.waits[id]?.map (·.ended)),
+        { pending with waits := pending.waits.erase id })
     match ← Section.transition handle.job transition with
     | some (before, _) =>
-      match before.cancelled, before.status with
-      | true, .asking _ _ none =>
-        withdraw
-      | _, _ =>
-        return (none, pending)
+      if before.cancelled then withdraw else return (none, pending)
     | none =>
       withdraw
 
@@ -1355,12 +1364,15 @@ partial def drive (handle : Handle) (finished : BaseIO Unit) :
       -- The job is in the wait from here, unless it was cancelled while the
       -- wait was being made: then nobody else will withdraw it, and it does
       -- so itself, its `park` or `serve` having taken the wait out of the
-      -- table. A job in a wait only a test ends gave its unit back in that
-      -- same section, its wait recorded: a host that reads idle finds every
-      -- parked job in a wait a cancel withdraws.
-      if let some ended← handle.enter id then
+      -- table if it was still there. It drops the wait at its services even
+      -- when the service completed it first, which keeps the reply until it
+      -- is taken or dropped. A job in a wait only a test ends gave its unit
+      -- back in that same section, its wait recorded: a host that reads idle
+      -- finds every parked job in a wait a cancel withdraws.
+      if let some ended?← handle.enter id then
         handle.drop id
-        ended .cancelled
+        if let some ended := ended? then
+          ended .cancelled
       BaseIO.chainTask wait.result? fun completion => do
           let cancelled ← handle.resume
           -- A wait the service completed just as the job was cancelled reads
@@ -1368,8 +1380,10 @@ partial def drive (handle : Handle) (finished : BaseIO Unit) :
           if completion == some .completed && !cancelled then
             drive handle finished (next (← reply))
           else
-            -- The reply is never fetched. Whoever cancelled the job withdrew
-            -- the wait, so its service keeps nothing for it.
+            -- The reply is never fetched, and its service keeps nothing for
+            -- it: a cancel that found the wait recorded dropped it at the
+            -- services, and a job cancelled on its way in dropped it itself
+            -- at its `park` or `serve`, whether or not the wait had ended.
             handle.conclude finished .cancelled
 
 /-- The body of a job's task: applies `work`, then runs the program it gives.

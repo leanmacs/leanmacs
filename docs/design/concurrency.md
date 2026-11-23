@@ -2411,7 +2411,11 @@ of each runner, when the job system was planned, on Lean 4.35.0:
   ends its promise as cancelled. A promise resolves once, so whichever of
   the service and the cancel comes first wins, and the other does nothing.
   A wait the job was still making when it was cancelled is withdrawn by the
-  job itself, in the section that would have recorded it.
+  job itself, in the section that would have recorded it, which then tells
+  the service to withdraw it too. It does so even when the service completed
+  the wait before the job recorded it, since a service keeps a completed
+  request's reply until it is taken or withdrawn, and a cancelled job never
+  takes it.
 - **A cancelled job makes no further request**, and its outcome is
   `cancelled` whatever it would have returned.
 - **A cancelled job runs no cleanup of its own.** There is no `finally`
@@ -2426,7 +2430,9 @@ of each runner, when the job system was planned, on Lean 4.35.0:
   `Processes.cancel` → `Ffi.processesCancel` → the library's process
   service, which kills the child's process group and reaps the child. A
   run the job was still starting when it was cancelled is killed by the
-  run's own thread, which sees the cancel as it registers its child.
+  run's own thread, which sees the cancel as it registers its child; one
+  the service had started already, before the job recorded the start, the
+  job withdraws itself at its `serve`, which kills the child.
   Removing an owner and ending the runtime cancel through `Handle.cancel`,
   so they reach it the same way. `model-test` shows the withdrawal on the
   fake, and `contract-test` that a real child is reaped.
@@ -2601,10 +2607,13 @@ of two.
   (`Editor/Core.lean` imports them; the config base does not).
 - Recorded traces are runs of the model (`Editor/Job/ProtocolContract.lean`,
   `recordedRuns`, each trace replayed by `Protocol.replay`, whose refusal
-  names the index, the transition and the state): on the fake clock and
-  files (`ModelTest.protocolContractChecks`), a sleep woken, cancelled while
+  names the index, the transition and the state): on the fake clock, files
+  and processes (`ModelTest.protocolContractChecks`), a sleep woken, cancelled while
   parked or already due, a cancel held at a job's ask of a sleep or of a
   load, recorded before the `park` or `serve` that withdraws the wait, a
+  cancel held between the wake of a load or a streaming start the service
+  completed at once and the job's `serve`, after which the service keeps
+  nothing of it (`loadCancelAfterWake`, `startCancelAfterWake`), a
   sleep then a load, whose second `ask` comes after its `resume`, a load,
   and several jobs at once; on a stepped host
   (`ConfigTest.protocolContractChecks`), ending in the loop's end; and over
