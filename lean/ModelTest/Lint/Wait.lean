@@ -84,6 +84,30 @@ here. -/
 def ModelTest.LintFixture.tagged : BaseIO Nat :=
   ModelTest.LintFixture.sharedCount
 
+/-! No laundering holds through a private declaration: one that references
+an inferred wait, directly or through another of this module, is a
+reference to that wait wherever it is referenced, so a public declaration
+that calls it unmarked hands the wait on. -/
+
+/-- A private wrapper of an inferred wait: allowed, as it is private. -/
+private def ModelTest.LintFixture.hidden : BaseIO Nat :=
+  ModelTest.LintFixture.sharedCount
+
+/-- A private wrapper of the private wrapper. -/
+private def ModelTest.LintFixture.hiddenTwice : BaseIO Nat :=
+  ModelTest.LintFixture.hidden
+
+/--
+error: `ModelTest.LintFixture.laundersPrivately` is public and hands on `ModelTest.LintFixture.sharedCount`, an inferred wait (count), through `ModelTest.LintFixture.hiddenTwice`: mark it, with `def ModelTest.LintFixture.laundersPrivately.inferredWait : InferredWait := .count […]` before it, or make it private
+
+Note: This linter can be disabled with `set_option linter.inferredWait false`
+-/
+#guard_msgs in
+/-- A bad declaration: a public wrapper, untagged, of a private wrapper of a
+private wrapper of an inferred wait. -/
+def ModelTest.LintFixture.laundersPrivately : BaseIO Nat :=
+  ModelTest.LintFixture.hiddenTwice
+
 /-! An allow covers the one declaration it is on, and a listed site's check
 is a declaration of its own: so a check list holding such a check refuses
 a new inferred wait written in the list beside it. -/

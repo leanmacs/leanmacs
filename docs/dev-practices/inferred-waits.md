@@ -35,7 +35,16 @@ In the own or a subject module, when that is a test module, a public
 declaration that references one must have a mark itself, written before
 it, so a kit cannot hand a restricted wait on to everyone: the kit's waits
 that are built on them (`Session.join`, `Session.ran`, `Rig.idle`,
-`childrenReapedTo` and the others) have one.
+`childrenReapedTo` and the others) have one. The rule holds through a
+private declaration: one that references a restricted wait, directly or
+through another private or auxiliary declaration of its module, is that
+wait wherever it is referenced, so a public declaration that calls a
+private wrapper unmarked is refused as one that calls the wait. In an own
+or subject module that is no test module, a public declaration may hand a
+restricted wait on unmarked: those are the hosts' and the runner's own
+workings (`Round.judge`, `Wait.Kind.judge`, `Host.waitWhile`), whose
+callers would all need marks in turn, and a test reaches them only through
+the marked waits it names.
 
 The mark is plain data and the linter a Lean plugin: the build loads the
 library `Lint` into every module it elaborates of the core's libraries and

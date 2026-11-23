@@ -30,7 +30,13 @@ it.
   anywhere else it is refused. In the own or a subject module, when that is
   a test module, a public declaration that references one must have a mark
   itself, written before it, so a kit cannot hand a restricted wait to
-  everyone (no laundering). A site that a later phase removes says so with
+  everyone (no laundering). A declaration of the module that no other
+  module can name, a private or an auxiliary one, that references one,
+  directly or through another such, is a reference to it wherever it is
+  referenced (`referencedWait?`), so no laundering holds through a private
+  wrapper either. A public declaration of an own or subject module that is
+  no test module may hand one on: those are the drivers' workings
+  (`Round.judge`, `Host.waitWhile`). A site that a later phase removes says so with
   `set_option linter.inferredWait false in` and the row of
   `docs/dev-practices/inferred-waits.md` beside it.
 
@@ -215,9 +221,57 @@ def launders (env : Environment) (wait : InferredWait) (owner here user : Name) 
     !user.isInternal &&
     !env.contains (markOf user)
 
+/-- Whether `name` is a declaration of the module being elaborated that no
+other module can name: a private one, or an auxiliary one (its name
+internal, as a `match`'s). A reference to one that hands an inferred wait
+on (`handedOn?`) is a reference to that wait. -/
+def isLocalHelper (env : Environment) (name : Name) : Bool :=
+  env.contains name && (env.getModuleIdxFor? name).isNone && (isPrivateName name || name.isInternal)
+
+/-- The inferred wait the declaration `name` of this module hands on: the
+first marked constant its value references, directly or through a
+declaration of this module that no other module can name
+(`isLocalHelper`), with what its mark says; `none` when it references
+none. A `partial` declaration's value is its implementation's
+(`_unsafe_rec`). So no laundering holds through a private wrapper: what a
+private declaration references is what a reference to it references. -/
+partial def handedOn? (env : Environment) (name : Name) :
+    Option (Name × Except String InferredWait) :=
+  (visit name).run' {}
+where
+  /-- `handedOn?` of `name`, skipping the declarations the state holds, those already visited. -/
+  visit (name : Name) : StateM NameSet (Option (Name × Except String InferredWait)) := do
+    if (← get).contains name then
+      return none
+    modify (·.insert name)
+    let values :=
+      [name, name.str "_unsafe_rec"].filterMap fun name =>
+        (env.find? name).bind (·.value? (allowOpaque := true))
+    for value in values do
+      for used in value.getUsedConstants do
+        if let some marked := markedWait? env used then
+          return some (used, marked)
+        if isLocalHelper env used then
+          if let some found← visit used then
+            return some found
+    return none
+
+/-- The inferred wait a reference to `name` is, with the declaration of
+this module it is reached through, if any: `name`'s own mark, or, for a
+declaration of this module that no other module can name and that has no
+mark, the wait it hands on (`handedOn?`). -/
+def referencedWait? (env : Environment) (name : Name) :
+    Option (Name × Except String InferredWait × Option Name) :=
+  match markedWait? env name with
+  | some marked => some (name, marked, none)
+  | none =>
+    if isLocalHelper env name then
+      (handedOn? env name).map fun (wait, marked) => (wait, marked, some name)
+    else none
+
 /-- `linter.inferredWait`: refuses a reference to a marked constant outside
 the modules it is allowed in, and a public test-kit declaration that hands
-one on unmarked. -/
+one on unmarked, directly or through a private declaration. -/
 def inferredWaitLinter : Linter where
   name := `Lint.inferredWaitLinter
   run :=
@@ -227,10 +281,11 @@ def inferredWaitLinter : Linter where
       let env ← getEnv
       let here := env.mainModule
       for tree in ← getInfoTrees do
-        for (stx, name, user) in referenced tree do
-          let some marked := markedWait? env name | continue
-          if user == some name then
+        for (stx, referencedName, user) in referenced tree do
+          if user == some referencedName then
             continue
+          let some (name, marked, through) := referencedWait? env referencedName | continue
+          let via := (through.map fun helper => s!", through `{privateToUserName helper}`").getD ""
           -- A mark it cannot read is refused at each reference written in a
           -- declaration, not at the name a declaration is given.
           let .ok wait := marked
@@ -242,11 +297,11 @@ def inferredWaitLinter : Linter where
           let homes := #[owner] ++ wait.subjects
           if !allowedIn wait owner here then
             Linter.logLint linter.inferredWait stx
-                m!"`{name}`{(user.map fun user => s!", in `{user}`,").getD ""} is an inferred wait ({wait.kind}): it infers done from something shared, not from a signal for this work. It is allowed only in {", ".intercalate (homes.toList.map toString)} and the test modules that mirror them; wait on the work's own handle, promise or flush, or, for a site a later phase removes, `set_option linter.inferredWait false in` with its row of docs/dev-practices/inferred-waits.md"
+                m!"`{name}`{(user.map fun user => s!", in `{privateToUserName user}`,").getD ""} is an inferred wait ({wait.kind}){via}: it infers done from something shared, not from a signal for this work. It is allowed only in {", ".intercalate (homes.toList.map toString)} and the test modules that mirror them; wait on the work's own handle, promise or flush, or, for a site a later phase removes, `set_option linter.inferredWait false in` with its row of docs/dev-practices/inferred-waits.md"
           else if let some user := user then
             if launders env wait owner here user then
               Linter.logLint linter.inferredWait stx
-                  m!"`{user}` is public and hands on `{name}`, an inferred wait ({wait.kind}): mark it, with `def {user}.inferredWait : InferredWait := .{wait.kind} […]` before it, or make it private"
+                  m!"`{user}` is public and hands on `{name}`, an inferred wait ({wait.kind}){via}: mark it, with `def {user}.inferredWait : InferredWait := .{wait.kind} […]` before it, or make it private"
 
 initialize
   addLinter inferredWaitLinter
