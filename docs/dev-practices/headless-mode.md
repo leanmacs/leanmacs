@@ -2213,8 +2213,11 @@ with a job still running; a `join` or an `advance` reached its guard with
 work still running; an `advance` found the editor idle with nothing due; the
 editor thread did not answer; or the editor loop did not end (`editor: the
 editor loop had not ended …; giving up`). Each that reached a guard is a
-hang: its line on stderr starts `a hang:`, after the wait's own `editor: a
-hang: the <wait> on line N had not ended within M ms`, said once.
+hang: its line on stderr starts `a hang:`, after the wait's own, said once
+in its guard's words (`HangGuard.hang`): `editor: a hang: <the guard's
+event> had not come within M ms: the <wait> on line N`, the event the
+headless mode's own guard's, or a `settle <milliseconds>`'s, `join
+<seconds>`'s, `indexed <seconds>`'s or `restarted <seconds>`'s.
 
 When the script ends or fails, the headless mode waits for its loop to
 end. A loop that has not ended 30 s (the patience) after the script

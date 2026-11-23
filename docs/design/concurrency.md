@@ -1339,8 +1339,9 @@ is pinned by `ModelTest.waitRoundChecks`, on the model alone.
 and `answer`), named apart from the loop's end's (`guard`, `hung`, `grace`,
 `abandoned`), so the two cannot be wired together by mistake. A wait that
 reaches its guard says the hang once through `waitHung`
-(`Headless.waitHangLine`: `editor: a hang: the <wait> on line N had not
-ended within M ms`) and fails the run as a hang (`Failure.reloading`,
+(`Headless.waitHangLine`, in the guard's own words, `HangGuard.hang`:
+`editor: a hang: <the guard's event> had not come within M ms: the <wait>
+on line N`) and fails the run as a hang (`Failure.reloading`,
 `unanswered` or `busy`, each described as `a hang: …`). `working` and
 `stalled` are never a guard's outcome. A check's waits pass
 `Editor.Test.Linked.hangGuard`, long enough that only a real hang trips it.

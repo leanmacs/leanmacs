@@ -692,6 +692,14 @@ reads no clock for a task that has ended. -/
 def awaitWithin {α : Type} (guard : HangGuard) (task : Task α) : IO (Option α) :=
   guard.within task
 
+/-- `task`'s value, waited for within `guard` (`awaitWithin`). Past the
+guard it throws the hang the guard says (`HangGuard.hang`), naming the event
+it waited for and its bound, so a caller that cannot go on without the
+value fails as a hang, in the guard's words. -/
+def awaitOrHang {α : Type} (guard : HangGuard) (task : Task α) : IO α := do
+  let some value ← awaitWithin guard task | throw (IO.userError guard.hang)
+  return value
+
 instance {α : Type} : Nonempty (Outcome α) :=
   ⟨.cancelled⟩
 

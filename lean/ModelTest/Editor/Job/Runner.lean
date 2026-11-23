@@ -61,7 +61,21 @@ def _root_.Editor.Test.Rig.wait (rig : Rig) (deadline : Nat) (log : IO.Ref (Arra
 /-- The checks of the table of waits and of the fake clock
 (`Editor/Job/Runner.lean`, `Editor/Job/Fake.lean`), with no job. -/
 def waitChecks : List Check :=
-  [{
+  [{  name :=
+        "a wait that reaches its guard throws the hang its guard says, naming the guard's event and its bound"
+      run := do
+        let never : IO.Promise Nat ← IO.Promise.new
+        let guard := HangGuard.held "a promise nobody resolves" 0
+        let thrown ←
+          try
+            discard <| Job.awaitOrHang guard never.result?
+            pure none
+          catch error =>
+            pure (some (toString error))
+        -- Resolved only now, so it is not dropped, and ended, while held.
+        never.resolve 0
+        return thrown == some guard.hang && thrown.any (·.contains "a promise nobody resolves") },
+    {
       name :=
         "the table of waits gives each wait an id of its own, from 1, and finish ends exactly that wait and forgets it",
       run := do

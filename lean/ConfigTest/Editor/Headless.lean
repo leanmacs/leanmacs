@@ -2506,6 +2506,7 @@ wait 2" with
               saw
                   (failure == some (.reloading (some 7)) && held && (← output.get).isEmpty &&
                     said.size == 1 &&
+                    said.all (·.contains heldShort.hang) &&
                     hung.isEmpty)
                   s!"failure={repr failure} held={held} said={said} hung={hung}"
             finally
@@ -2537,6 +2538,8 @@ wait 2" with
               let hung ← hung.get
               saw
                   (failure == some (.waited 200 (.reloading (some 7))) && said.size == 1 &&
+                    -- The hang names the settle's own guard, not the run's.
+                    said.all (·.contains (HangGuard.on "the settle" 200).hang) &&
                     hung.isEmpty)
                   s!"failure={repr failure} said={said} hung={hung}"
             finally
@@ -2564,11 +2567,17 @@ wait 2" with
           writeConfig directory jobsConfig
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           -- No restart is asked for, so none comes: its own patience of
-          -- none at all runs out at once, where the run's would be long.
+          -- none at all runs out at once, where the run's would be long,
+          -- and the hang it says names its own guard.
+          let said ← IO.mkRef (#[] : Array String)
           let failure ←
             Headless.run stage.collaborators #[⟨1, .restarted (some 0)⟩] hangGuard (grace :=
-                some hangGuard)
-          saw (failure == some (.waited 0 (.notRestarted 1))) s!"failure={repr failure}" },
+                some hangGuard) (waitHung := fun line => said.modify (·.push line))
+          let said ← said.get
+          saw
+              (failure == some (.waited 0 (.notRestarted 1)) && said.size == 1 &&
+                said.all (·.contains (HangGuard.on "the restart" 0).hang))
+              s!"failure={repr failure} said={said}" },
     { name :=
         "a join and an advance on a job held for good in a wait that ends by itself reach their guard: each says its hang once, and fails as busy with its line"
       run := do
@@ -2614,12 +2623,12 @@ wait 2" with
         let hung ← hung.get
         saw
             (joined == some (.busy (some 2)) && joinSaid.size == 1 &&
-              joinSaid.all (·.startsWith "editor: a hang: the join on line 2") &&
+              joinSaid.all (· == s!"editor: {heldShort.hang}: the join on line 2") &&
               advanced == some (.busy (some 2)) &&
               advanceSaid.size == 1 &&
-              advanceSaid.all (·.startsWith "editor: a hang: the advance on line 2") &&
+              advanceSaid.all (· == s!"editor: {heldShort.hang}: the advance on line 2") &&
               waited == .busy &&
-              hostSaid.size == 1 &&
+              hostSaid == #[s!"editor: {heldShort.hang}: the join"] &&
               hung.isEmpty)
             s!"joined={repr joined} joinSaid={joinSaid} advanced={repr advanced} advanceSaid={advanceSaid} waited={repr waited} hostSaid={hostSaid} hung={hung}" },
     { name :=

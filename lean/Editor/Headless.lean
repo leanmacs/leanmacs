@@ -2718,16 +2718,17 @@ private def start {β σ : Type} {scheme : InputScheme} (collaborators : Collabo
       activity := collaborators.services.activity, clock := collaborators.clock, thread }
 
 /-- What a driver's wait says, through its `waitHung`, when it reaches its
-guard: a hang, once, never a result. `what` is the wait (`settle`, `join`,
-`advance`, or `answer` for the editor thread's answer within one), `line`
-the script's line, if it has one, and `guard` the milliseconds of the guard
-that ran out. -/
-def waitHangLine (what : String) (line : Option Nat) (guard : Nat) : String :=
+guard: a hang, once, never a result. It is the hang `guard`, the guard that
+ran out, says (`HangGuard.hang`: its event and its bound), then the wait:
+`what` is the wait (`settle`, `join`, `advance`, `restarted`, or `answer
+to the …` for the editor thread's answer within one), and `line` the
+script's line, if it has one. -/
+def waitHangLine (what : String) (line : Option Nat) (guard : HangGuard) : String :=
   let place :=
     match line with
     | some line => s!" on line {line}"
     | none => ""
-  s!"editor: a hang: the {what}{place} had not ended within {guard} ms"
+  s!"editor: {guard.hang}: the {what}{place}"
 
 /-- Whether one of `tasks` has ended within `guard`, waited for on the tasks
 themselves: a guard against a hang, never a result (`Job.awaitWithin`). -/
@@ -2903,7 +2904,7 @@ def judge (kind : Wait.Kind) (progress : Progress) (activity : Job.Activity)
       { busy, tracked := activity.tracked, before, now, due, remaining := (← deadline.rest).ms
         still := kind.still, hung := kind.hung }
   if let .hang _ := verdict then
-    waitHung (waitHangLine kind.what line waitGuard.ms)
+    waitHung (waitHangLine kind.what line waitGuard)
   return verdict
 
 end Wait.Kind
@@ -3055,7 +3056,7 @@ def waitWhile (host : Host) (waitGuard : HangGuard) (kind : Wait.Kind)
     if ← IO.hasFinished host.thread then
       return .ended
     unless ← answered.isResolved do
-      waitHung (waitHangLine s!"answer to the {kind.what}" line answer.ms)
+      waitHung (waitHangLine s!"answer to the {kind.what}" line answer)
       return .unanswered
     match
       ←
@@ -3830,6 +3831,8 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
         let own := seconds.map (· * 1000)
         let guard := (own.map (HangGuard.on "the restart" ·)).getD waitGuard
         let ended := (← Job.awaitWithin guard host.thread).isSome
+        unless ended do
+          waitHung (waitHangLine "restarted" (some line.number) guard)
         let plan := (← host.progress.get).handOver
         match ended, plan with
         | true, some plan =>
@@ -3898,8 +3901,10 @@ happen at once: the editor thread's answer to a wait. A `join` that finds
 the host idle with a job still running answers `working`, and an `advance`
 that finds it idle with nothing due a stall, at once: neither is a guard's
 outcome. At either guard the wait says the hang once through `waitHung`
-(`waitHangLine`), and the run fails, as `reloading`, `unanswered` or
-`busy`, each a hang. `waitBlocked` is the waits' hook for a test, called
+(`waitHangLine`, in its guard's words), and the run fails, as
+`reloading`, `unanswered` or `busy`, each a hang; a `restarted` whose guard
+runs out before the loop ends says its hang the same way, and fails as
+`notRestarted`. `waitBlocked` is the waits' hook for a test, called
 as a wait is about to block (`Host.waitWhile`).
 
 The wait guards are named apart from the loop's end, which `guard`,

@@ -250,7 +250,8 @@ def steppedChecks (context : Context) : List Check :=
         let hung ← hung.get
         let ends ← ends.get
         saw
-            (wait == .reloading && hung.size == 1 && ends == #["reload"] &&
+            (wait == .reloading && hung == #[s!"editor: {heldAtOnce.hang}: the settle"] &&
+              ends == #["reload"] &&
               (← gate.inProgress.get) == 0)
             s!"wait {repr wait}, hung {hung}, ends {ends}" },
     { name :=

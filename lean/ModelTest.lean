@@ -666,7 +666,9 @@ The job system is tested here with no Rust library:
 - `jobModelChecks`: the job port's pure model (`Editor/Job/Model.lean`), its
   clock and its cancellation, and what only the model's exact clock can
   show: that a timer does not drift;
-- `waitChecks`: the table of waits and the fake clock, with no job;
+- `waitChecks`: a wait that reaches its guard throws the hang its guard
+  says (`Job.awaitOrHang`), and the table of waits and the fake clock, with
+  no job;
 - `activityChecks`: a host's activity count (`Editor/Job/Activity.lean`),
   what its idle is made of: begin and done move the count and its epoch, a
   round from 0 to 1 and back between two readings is not idle, a done with
