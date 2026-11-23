@@ -205,8 +205,8 @@ each of its rules is now a type, a Lean linter or a clippy lint:
 | The files it scanned | the Lean linters are active in every module that imports `Editor.Lint.Wait` (`Editor.Bound`, `Editor.Job.Activity` and the test roots' and packages' `Check` modules, which reach every test module that writes a check), and clippy runs over every target of every crate, under a config that holds the bans |
 
 What each holds is pinned by a fixture that must fail: the `#guard_msgs`
-fixtures of `ModelTest/Editor/Lint/Wait.lean` and
-`ContractTest/Editor/Lint/Wait.lean`, the `fail_if_success` examples of
+fixtures of `ModelTest/Editor/Lint/Wait.lean`,
+`ContractTest/Editor/Lint/Wait.lean` and `ConfigTest/Editor/Lint/Wait.lean`, the `fail_if_success` examples of
 `ModelTest/Editor/Bound.lean`, `editor-wait`'s `compile_fail` doctests, and
 `tests/wait-lints/` under every clippy config (`the-gate.md`, "The wait
 lints").

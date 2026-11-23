@@ -48,7 +48,8 @@ import, and `EchoTest.Model` imports it itself. A module that imports none
 of these is not linted.
 
 Its checks are `ModelTest.lintWaitChecks` and the `#guard_msgs` fixtures of
-`ModelTest/Editor/Lint/Wait.lean` and `ContractTest/Editor/Lint/Wait.lean`.
+`ModelTest/Editor/Lint/Wait.lean`, `ContractTest/Editor/Lint/Wait.lean` and
+`ConfigTest/Editor/Lint/Wait.lean`.
 -/
 
 open Lean Elab Command

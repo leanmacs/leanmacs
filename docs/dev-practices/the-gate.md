@@ -2781,10 +2781,12 @@ lint`, never a script over source text:
 - **It bites**: `ModelTest/Editor/Lint/Wait.lean` holds `#guard_msgs`
   fixtures, built by `mise run lean-test` and `mise run lean` and never
   run, that expect the error for a raw sleep, a raw clock read, a count
-  read outside its modules and a laundering wrapper, and a
-  `fail_if_success` that `Job.awaitWithin` takes no number;
-  `ContractTest/Editor/Lint/Wait.lean` expects it for a first-after wait,
-  which needs the linked kit. `ModelTest/Editor/Bound.lean`'s
+  read outside its modules, a laundering wrapper and a new count read in a
+  check list beside a check under an allow, and a `fail_if_success` that
+  `Job.awaitWithin` takes no number; `ContractTest/Editor/Lint/Wait.lean`
+  expects it for a first-after wait, which needs the linked kit, and
+  `ConfigTest/Editor/Lint/Wait.lean` for an idle wait put together from a
+  host's `waitWhile` and a kind, which needs the host. `ModelTest/Editor/Bound.lean`'s
   `fail_if_success` examples show that a number, an anonymous constructor
   and a structure instance are not a bound.
 - **Rust, by clippy** (`mise run lint`): a root `clippy.toml`, which governs

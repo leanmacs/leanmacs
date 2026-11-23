@@ -656,8 +656,8 @@ The job system is tested here with no Rust library:
   wait outside its modules, a laundering wrapper, a new count wait in a
   check list beside a check under an allow), built and never run, and a
   `fail_if_success` shows that `Job.awaitWithin` takes no number; the
-  first-after wait and the idle waits put together from a host's parts are
-  `ContractTest`'s;
+  first-after wait is `ContractTest`'s, and the idle waits put together
+  from a host's parts `ConfigTest`'s;
 - `poolChecks`: warming Lean's task pool (`Editor/Job/Pool.lean`). They take
   the pool's size as Lean's runtime does (`Pool.expected`:
   `LEAN_NUM_THREADS` when it is set, else the machine's), and hold that many
