@@ -127,6 +127,7 @@ import ModelTest.Editor.Store
 import ModelTest.Editor.Store.Codec
 import ModelTest.Editor.SyntaxTree.Contract
 import ModelTest.Editor.SyntaxTree.DeliveryContract
+import ModelTest.Editor.SyntaxTree.Fake
 import ModelTest.Editor.SyntaxTree.Model
 import ModelTest.Editor.TabBar
 import ModelTest.Editor.Test.Jobs
@@ -757,6 +758,10 @@ The job system is tested here with no Rust library:
   promises: captures refused as not parsed until a step, each step posting
   once on the stepping thread, every request on the check's thread, a new
   snapshot of an attached text pending, quiescent once stepped;
+- `syntaxFakeChecks`: what the fake of the syntax service's deliveries
+  promises of itself (`Editor/SyntaxTree/Fake.lean`): a snapshot it does
+  not know learnt through `learn` once, a highlight and an injection each
+  making the text's delivery pending, and a detach dropping a pending one;
 - `pumpContractChecks`: the contract of the completion pump
   (`Editor/Job/PumpContract.lean`) on the fake pump (`FakePump`), `pumpFrom`
   run over its source on the check's thread, and the fake's own promises:
@@ -1325,6 +1330,7 @@ def checks : List Check :=
     schedulerContractChecks ++
     jobFakeChecks ++
     syntaxDeliveryChecks ++
+    syntaxFakeChecks ++
     queueContractChecks ++
     queueMemoryChecks ++
     waitRoundChecks ++

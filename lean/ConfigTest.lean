@@ -18,6 +18,7 @@ import ConfigTest.Editor.Loop
 import ConfigTest.Editor.Minibuffer
 import ConfigTest.Editor.PackageSet.Edit
 import ConfigTest.Editor.Setup
+import ConfigTest.Editor.Test.Linked.Host
 import ConfigTest.Editor.Theme.Check
 import ConfigTest.Lint.Wait
 import ConfigTest.Lsp
@@ -300,6 +301,13 @@ show:
   (`Stage.recordingJournal`): the base's save, the header's and a record's
   appends and the removes, in order, each handed on the check's thread,
   and the drain ended only by the check's step;
+- `stageMakerChecks`: a stage's fake syntax service
+  (`Stage.fakeSyntaxService`, `Editor/Test/Linked/Host.lean`) on a stepped
+  host: it is the host's syntax handler, learns a text the host published
+  from the stage's table, refuses its captures as not parsed until the
+  check steps it, and its step posts one `parsed` event to the stage's
+  memory queue, which the loop takes and answers with one scene, every
+  request and post on the check's thread;
 - `reloadEchoChecks`: a rejected reload's first error is said in the echo
   area, while the old config runs; a reload that installs says nothing;
   and one rejected before the frame is made is said once it is;
@@ -411,6 +419,7 @@ def checks (context : Context) : List Check :=
     journalFailureChecks context ++
     journalDrainChecks context ++
     journalOrderChecks context ++
+    stageMakerChecks context ++
     leaderChecks context ++
     hintChecks context ++
     keyHintChecks context ++
