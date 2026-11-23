@@ -63,7 +63,8 @@ structure Property where
 `patience`. -/
 def awaited {α : Type} (what : String) (task : Task α) : IO α := do
   let some value ←
-    awaitWithin patience task | throw <| IO.userError s!"a hang: {what} had not ended within {patience.ms} ms"
+    awaitWithin patience
+        task | throw <| IO.userError s!"a hang: {what} had not ended within {patience.ms} ms"
   return value
 
 /-- A wait of `rig`'s table whose action appends its id and completion to
@@ -73,8 +74,8 @@ def logged (rig : PumpRig) (log : IO.Ref (Array (UInt64 × Completion))) :
   let ended ← IO.Promise.new
   let id ←
     rig.completions.registerWith fun id completion => do
-      log.modify (·.push (id, completion))
-      ended.resolve completion
+        log.modify (·.push (id, completion))
+        ended.resolve completion
   return (id, ended.result?.map (sync := true) (·.getD .cancelled))
 
 /-- P1: a handed completion ends its wait as completed. -/
@@ -87,7 +88,9 @@ def endsItsWait : Property where
     rig.run
     let ended ← awaited "the wait" task
     unless ended == .completed && (← log.get) == #[(id, .completed)] do
-      throw <| IO.userError s!"{rig.name}: the wait ended {repr ended}, its action ran {(← log.get).size} times"
+      throw <|
+          IO.userError
+            s!"{rig.name}: the wait ended {repr ended}, its action ran {(← log.get).size} times"
     return true
 
 /-- P2: two handed completions end their waits in the order handed. -/
@@ -104,7 +107,9 @@ def inOrder : Property where
     discard <| awaited "the second wait" secondTask
     let order := (← log.get).map (·.1)
     unless order == #[first, second] do
-      throw <| IO.userError s!"{rig.name}: handed {first} then {second}, the waits ended in the order {order}"
+      throw <|
+          IO.userError
+            s!"{rig.name}: handed {first} then {second}, the waits ended in the order {order}"
     return true
 
 /-- P3: a completion for a wait no longer waiting changes nothing, and the
@@ -123,7 +128,8 @@ def withdrawnIgnored : Property where
     let ended ← awaited "the wait after the withdrawn one" nextTask
     let seen ← log.get
     unless ended == .completed && seen == #[(withdrawn, .cancelled), (next, .completed)] do
-      throw <| IO.userError s!"{rig.name}: the next wait ended {repr ended}; the actions ran {repr seen}"
+      throw <|
+          IO.userError s!"{rig.name}: the next wait ended {repr ended}; the actions ran {repr seen}"
     return true
 
 /-- The properties, in the order they run. -/

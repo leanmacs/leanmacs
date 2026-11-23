@@ -341,7 +341,9 @@ def hand (pump : FakePump) (id : UInt64) : BaseIO Unit := do
     pump.state.modifyGet fun state =>
         let handed := state.handed + 1
         let (reached, rest) := state.arrivals.partition (·.1 ≤ handed)
-        (reached, { state with due := state.due.push id, handed, arrivals := rest })
+        (reached,
+          { state with
+            due := state.due.push id, handed, arrivals := rest })
   for (_, promise) in reached do
     promise.resolve ()
 
@@ -350,13 +352,13 @@ one that finishes it. -/
 private def takeDue (pump : FakePump) : BaseIO (Option UInt64) := do
   let thread ← IO.getTID
   pump.state.modifyGet fun state =>
-    match state.due[0]? with
-    | some id =>
-      (some id,
-        { state with
-          due := state.due.extract 1 state.due.size
-          finishedThreads := state.finishedThreads.push thread })
-    | none => (none, state)
+      match state.due[0]? with
+      | some id =>
+        (some id,
+          { state with
+            due := state.due.extract 1 state.due.size
+            finishedThreads := state.finishedThreads.push thread })
+      | none => (none, state)
 
 /-- Finishes the oldest due completion, as completed, on the caller's
 thread; `false` when none was due. -/
@@ -409,8 +411,10 @@ more. -/
 def source (pump : FakePump) : CompletionSource where
   next := do
     match ← pump.takeDue with
-    | some id => return .completion id
-    | none => return .quit
+    | some id =>
+      return .completion id
+    | none =>
+      return .quit
 
 /-- Whether nothing is due: nothing is left for a step. -/
 def quiescent (pump : FakePump) : BaseIO Bool :=
@@ -446,8 +450,10 @@ partial def runToEnd {α : Type} (pump : FakePump) (ended : Task α) (guard : Ha
   let next ← pump.arrivedAt ((← pump.handed) + 1)
   let wait ←
     match clock with
-    | some clock => clock.arrivedAt (.started (seen + 1))
-    | none => IO.Promise.new
+    | some clock =>
+      clock.arrivedAt (.started (seen + 1))
+    | none =>
+      IO.Promise.new
   let expiry ← guard.expiry
   let first ←
     IO.waitAny
@@ -471,7 +477,8 @@ inductive FakeAnswer where
 
 /-- Finishes the wait `id` as completed as `answer` says: at once, or by
 handing it to the pump. -/
-def FakeAnswer.complete (answer : FakeAnswer) (completions : Completions) (id : UInt64) : BaseIO Unit :=
+def FakeAnswer.complete (answer : FakeAnswer) (completions : Completions) (id : UInt64) :
+    BaseIO Unit :=
   match answer with
   | .atOnce => completions.finish id .completed
   | .onStep pump => pump.hand id
@@ -734,22 +741,22 @@ completed here and never happens. -/
 def cancel (files : FakeFiles) (id : UInt64) : BaseIO Unit := do
   let thread ← IO.getTID
   files.state.modify fun state =>
-    if state.pending.any (·.1 == id) then
-      { state with
-        pending := state.pending.filter (·.1 != id)
-        parked := state.parked.filter (· != id)
-        withdrawn := state.withdrawn.push id
-        log := state.log.push (.withdraw id, thread) }
-    else state
+      if state.pending.any (·.1 == id) then
+        { state with
+          pending := state.pending.filter (·.1 != id)
+          parked := state.parked.filter (· != id)
+          withdrawn := state.withdrawn.push id
+          log := state.log.push (.withdraw id, thread) }
+      else state
 
 /-- Gives up the job's snapshot `snapshot`: the model holds it no longer. -/
 def release (files : FakeFiles) (snapshot : JobSnapshotId) : BaseIO Unit := do
   let thread ← IO.getTID
   files.state.modify fun state =>
-    { state with
-      model := state.model.released snapshot
-      released := state.released.push snapshot
-      log := state.log.push (.release snapshot, thread) }
+      { state with
+        model := state.model.released snapshot
+        released := state.released.push snapshot
+        log := state.log.push (.release snapshot, thread) }
 
 /-- Flushes the files as the wait `id`: completed at once, unless completions
 are held, when it is parked behind them and `letGo` completes it after every
@@ -859,19 +866,19 @@ search `id`, if it is held. -/
 def cancelGrep (files : FakeFiles) (id : UInt64) : BaseIO Unit := do
   let thread ← IO.getTID
   files.state.modify fun state =>
-    let state :=
-      if state.grepsPending.contains id then
+      let state :=
+        if state.grepsPending.contains id then
+          { state with
+            grepsPending := state.grepsPending.erase id
+            parked := state.parked.filter (· != id)
+            withdrawn := state.withdrawn.push id }
+        else state
+      if state.greps.searches.any (·.id == id.toNat) then
         { state with
-          grepsPending := state.grepsPending.erase id
-          parked := state.parked.filter (· != id)
-          withdrawn := state.withdrawn.push id }
+          greps := { state.greps with searches := state.greps.searches.filter (·.id != id.toNat) }
+          grepsCancelled := state.grepsCancelled.push id
+          log := state.log.push (.grepCancel id, thread) }
       else state
-    if state.greps.searches.any (·.id == id.toNat) then
-      { state with
-        greps := { state.greps with searches := state.greps.searches.filter (·.id != id.toNat) }
-        grepsCancelled := state.grepsCancelled.push id
-        log := state.log.push (.grepCancel id, thread) }
-    else state
 
 /-- Flushes the searches as the wait `id`, as `flush` flushes the files: the
 model's searches are worked in the call that takes them, so nothing runs
@@ -1102,17 +1109,17 @@ and forgets it. -/
 def cancel (processes : FakeProcesses) (id : UInt64) : BaseIO Unit := do
   let thread ← IO.getTID
   processes.state.modify fun state =>
-    if state.pending.any (·.1 == id) then
-      { state with
-        pending := state.pending.filter (·.1 != id)
-        parked := state.parked.filter (· != id)
-        withdrawn := state.withdrawn.push id
-        log := state.log.push (.withdraw id, thread) }
-    else
-      if state.model.children.any (·.id == id.toNat) then
+      if state.pending.any (·.1 == id) then
         { state with
-          model := state.model.kill id.toNat, withdrawn := state.withdrawn.push id }
-      else state
+          pending := state.pending.filter (·.1 != id)
+          parked := state.parked.filter (· != id)
+          withdrawn := state.withdrawn.push id
+          log := state.log.push (.withdraw id, thread) }
+      else
+        if state.model.children.any (·.id == id.toNat) then
+          { state with
+            model := state.model.kill id.toNat, withdrawn := state.withdrawn.push id }
+        else state
 
 /-- Flushes the processes as the wait `id`: completed at once, unless
 completions are held, when it is parked behind them and `letGo` completes it
@@ -1240,8 +1247,8 @@ namespace FakeFileWatches
 
 /-- A watch service over `model`, through the table `completions`, with no
 request started. -/
-def new (completions : Completions) (model : FileWatchModel := {}) (answer : FakeAnswer := .atOnce) :
-    BaseIO FakeFileWatches :=
+def new (completions : Completions) (model : FileWatchModel := {})
+    (answer : FakeAnswer := .atOnce) : BaseIO FakeFileWatches :=
   return { completions, state := ← IO.mkRef { model }, answer }
 
 /-- Whether the model's watch `watch` has a change recorded, or is not
@@ -1318,17 +1325,17 @@ watch of the model's, ends it as the library drops one. -/
 def cancel (watches : FakeFileWatches) (id : UInt64) : BaseIO Unit := do
   let thread ← IO.getTID
   watches.state.modify fun state =>
-    let state := { state with log := state.log.push (.withdraw id, thread) }
-    if state.pending.any (·.1 == id) then
-      { state with
-        pending := state.pending.filter (·.1 != id)
-        parked := state.parked.filter (·.1 != id)
-        withdrawn := state.withdrawn.push id }
-    else
-      if state.model.watches.any (·.id == id.toNat) then
+      let state := { state with log := state.log.push (.withdraw id, thread) }
+      if state.pending.any (·.1 == id) then
         { state with
-          model := state.model.endWatch id.toNat, withdrawn := state.withdrawn.push id }
-      else state
+          pending := state.pending.filter (·.1 != id)
+          parked := state.parked.filter (·.1 != id)
+          withdrawn := state.withdrawn.push id }
+      else
+        if state.model.watches.any (·.id == id.toNat) then
+          { state with
+            model := state.model.endWatch id.toNat, withdrawn := state.withdrawn.push id }
+        else state
 
 /-- Flushes the watches as the wait `id`: completed at once, since the fake
 completes every start at once. -/

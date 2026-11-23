@@ -56,8 +56,10 @@ def pumpContractChecks : List Check :=
           pump.stepAll
           let after ← IO.hasFinished secondWait.result?
           let threads ← pump.finishedThreads
-          unless before == (false, false) && between == (true, false) && after &&
-                threads == #[thread, thread] && (← pump.quiescent) do
+          unless
+            before == (false, false) && between == (true, false) && after &&
+              threads == #[thread, thread] &&
+              (← pump.quiescent) do
             throw <|
                 IO.userError
                   s!"before a step the waits had ended {before}, after one {between}, after all {after}; finished on {threads}, the check's thread {thread}"

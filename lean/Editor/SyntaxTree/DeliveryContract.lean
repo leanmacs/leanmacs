@@ -94,16 +94,18 @@ def edited : String :=
 compiled: the snapshot and the query. -/
 def attached (rig : DeliveryRig) : IO (SnapshotId × QueryId) := do
   let snapshot ← rig.make first
-  let .ok () ← (SyntaxTree.attach snapshot "json").runWith rig.handler |
-    throw <| IO.userError s!"{rig.name}: the attach was refused"
+  let .ok () ←
+    (SyntaxTree.attach snapshot "json").runWith
+        rig.handler | throw <| IO.userError s!"{rig.name}: the attach was refused"
   discard <| rig.settle snapshot
-  let .ok compiled ← (SyntaxTree.compile "json" query).runWith rig.handler |
-    throw <| IO.userError s!"{rig.name}: the query was refused"
+  let .ok compiled ←
+    (SyntaxTree.compile "json" query).runWith
+        rig.handler | throw <| IO.userError s!"{rig.name}: the query was refused"
   return (snapshot, compiled)
 
 /-- The captures of the whole of `snapshot`, holding `contents`. -/
-def capturesOf (rig : DeliveryRig) (snapshot : SnapshotId) (compiled : QueryId) (contents : String) :
-    IO (Except SyntaxTreeError (Array SyntaxTree.Capture)) :=
+def capturesOf (rig : DeliveryRig) (snapshot : SnapshotId) (compiled : QueryId)
+    (contents : String) : IO (Except SyntaxTreeError (Array SyntaxTree.Capture)) :=
   (SyntaxTree.captures snapshot compiled 0 contents.utf8ByteSize).runWith rig.handler
 
 /-- D1: after an attach and its delivery, captures answer the model's. -/
@@ -114,7 +116,9 @@ def afterAttach : Property where
     let (snapshot, compiled) ← attached rig
     let answer ← capturesOf rig snapshot compiled first
     unless same answer (modelAnswer first) do
-      throw <| IO.userError s!"{rig.name}: answered {shown answer}, the model {shown (modelAnswer first)}"
+      throw <|
+          IO.userError
+            s!"{rig.name}: answered {shown answer}, the model {shown (modelAnswer first)}"
     return true
 
 /-- D2: after an edit and its delivery, captures of the new snapshot answer
@@ -143,8 +147,9 @@ def detached : Property where
     "a detached text's captures are refused as not attached, and a settle of it answers at once with nothing delivered"
   holds rig := do
     let (snapshot, compiled) ← attached rig
-    let .ok () ← (SyntaxTree.detach snapshot).runWith rig.handler |
-      throw <| IO.userError s!"{rig.name}: the detach was refused"
+    let .ok () ←
+      (SyntaxTree.detach snapshot).runWith
+          rig.handler | throw <| IO.userError s!"{rig.name}: the detach was refused"
     let answer ← capturesOf rig snapshot compiled first
     let settled ← rig.settle snapshot
     unless same answer (.error .notAttached) && !settled do

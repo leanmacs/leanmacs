@@ -124,8 +124,7 @@ def inOrder : Property where
     for order in orders do
       rig.journal.perform order
     let ended ← rig.drain
-    let seen :=
-      (← rig.read base, ← rig.read log, ← rig.read stale, ← rig.read x, ← rig.read y)
+    let seen := (← rig.read base, ← rig.read log, ← rig.read stale, ← rig.read x, ← rig.read y)
     let expected :=
       (some (bytes "base"), some (bytes "header;record;"), none, none, some (bytes "base"))
     unless ended && seen == expected do

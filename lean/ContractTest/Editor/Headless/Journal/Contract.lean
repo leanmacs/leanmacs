@@ -31,7 +31,8 @@ open Editor.Headless
 /-- The rig of the real journal over the file service among `services`,
 writing in `directory`, publishing through `published`. -/
 def journalRealRig (services : Job.Services) (published : Snapshots) (directory : System.FilePath) :
-    JournalContract.JournalRig where
+    JournalContract.JournalRig
+    where
   name := "the journal over the library's file service"
   journal := Journal.real published.reader services
   directory
@@ -52,7 +53,8 @@ def journalRealRig (services : Job.Services) (published : Snapshots) (directory 
 service among `services` (`Editor/Headless/Journal/Contract.lean`). -/
 def journalContractChecks (services : Job.Services) : List Check :=
   JournalContract.properties.map fun property =>
-    { name := s!"the journal over the library's file service keeps the journal's contract: {property.name}"
+    { name :=
+        s!"the journal over the library's file service keeps the journal's contract: {property.name}"
       run :=
         -- Nothing handed to the service may outlive the directory.
         Editor.Test.Linked.withFiles services fun directory => do

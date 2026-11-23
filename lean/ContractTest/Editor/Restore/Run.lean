@@ -243,8 +243,8 @@ orders handed to the library's file service through the checks' journal
 (`wrap` of it), each order's task kept in `handed`, oldest first, for the
 check to wait on (`ownDrained`). -/
 def runRestoring (rig : ProjectRig) (state : System.FilePath) (invocations : List Invocation)
-    (handed : IO.Ref (Array (Task (Option (String × String)))))
-    (wrap : Journal → Journal := id) : IO (Option (Loop TestScheme.scheme × RealTexts)) := do
+    (handed : IO.Ref (Array (Task (Option (String × String))))) (wrap : Journal → Journal := id) :
+    IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   let begin : EditorM (Loop TestScheme.scheme) := do
     let loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
     return { loop with state := loop.state.hostedBy "/" none (some state) }
@@ -356,17 +356,20 @@ def tabsHeldAtStaleRemove (services : Job.Services) (drain : TabsDrain) : IO Tab
       match drain with
       | .flush =>
         filesDrained services (asked := release)
-      | .ownTasks => do
-        release
-        ownDrained handed
+      | .ownTasks =>
+        do
+          release
+          ownDrained handed
       | .pendingCount =>
         pendingDrained
     if let some directory← used.get then
       let there ← (Restore.indexPath (directory / "state") 1).pathExists
       let removeEnded ←
         match ← removed.get with
-        | some task => IO.hasFinished task
-        | none => pure false
+        | some task =>
+          IO.hasFinished task
+        | none =>
+          pure false
       seen.set (some (ended, there, removeEnded))
     release
     discard <| filesDrained services
@@ -394,8 +397,7 @@ def tabsHeldAtStaleRemove (services : Job.Services) (drain : TabsDrain) : IO Tab
     throw <|
         IO.userError
           s!"the two tabs were {if restored then "" else "not "}restored, and the directory was {if gone then "gone" else "there"} after"
-  let some (drained, there, removeEnded) ← seen.get |
-    throw <| IO.userError "the drain never ran"
+  let some (drained, there, removeEnded) ← seen.get | throw <| IO.userError "the drain never ran"
   return { held := (← hold.get).isSome, drained, there, removeEnded }
 
 /-- The checks of session restore over the real bindings, in a directory of
@@ -458,43 +460,44 @@ def restoreRunChecks (services : Job.Services) : List Check :=
       run := do
         let handed ← IO.mkRef #[]
         withJournalledDirectory (ownDrained handed) fun directory => do
-          let state := directory / "state"
-          let a := directory / "a.txt"
-          IO.FS.writeFile a "first line\nsecond line\n"
-          let rig ← ProjectRig.over services
-          let some (typed, texts) ←
-            runRestoring rig state
-                [{ command := "start-restore", arguments := [.str state.toString] }, openFile a,
-                  { command := "type-text", arguments := [.str "typed "] },
-                  { command := "type-text", arguments := [.str "more "] }] handed | return false
-          -- The journal's writes are done once each order's own task has
-          -- ended.
-          unless ← ownDrained handed do
-            return false
-          let edited ← bufferText rig texts typed "a.txt"
-          let some index := typed.state.findFile a | return false
-          let some live :=
-            typed.state.restore.journals.find? (·.buffer == index.index) | return false
-          let base ← IO.FS.readBinFile (Restore.basePath state 1 index.index live.generation)
-          let log ← IO.FS.readBinFile (Restore.logPath state 1 index.index live.generation)
-          let decoded := Restore.Journal.decode (File.decodeBytes log)
-          let replayed : TextM String := do
-            let text ← createText (File.decodeBytes base)
-            discard <| Restore.Journal.replay text decoded.records
-            text.read
-          let fromDisk := (replayed.runModel {}).1.toOption
-          let fresh ← ProjectRig.over services
-          let some (restored, freshTexts) ←
-            runRestoring fresh state
-                [{ command := "start-restore", arguments := [.str state.toString] }] handed |
+            let state := directory / "state"
+            let a := directory / "a.txt"
+            IO.FS.writeFile a "first line\nsecond line\n"
+            let rig ← ProjectRig.over services
+            let some (typed, texts) ←
+              runRestoring rig state
+                  [{ command := "start-restore", arguments := [.str state.toString] }, openFile a,
+                    { command := "type-text", arguments := [.str "typed "] },
+                    { command := "type-text", arguments := [.str "more "] }]
+                  handed | return false
+            -- The journal's writes are done once each order's own task has
+            -- ended.
+            unless ← ownDrained handed do
               return false
-          let again ← bufferText fresh freshTexts restored "a.txt"
-          let buffer := (restored.state.findFile a).bind restored.state.buffer?
-          return edited == some "typed more first line\nsecond line\n" && fromDisk == edited &&
-              decoded.records.size == 1 &&
-              again == edited &&
-              (buffer.map Buffer.isModified) == some true &&
-              restored.state.restore.run == some 2 },
+            let edited ← bufferText rig texts typed "a.txt"
+            let some index := typed.state.findFile a | return false
+            let some live :=
+              typed.state.restore.journals.find? (·.buffer == index.index) | return false
+            let base ← IO.FS.readBinFile (Restore.basePath state 1 index.index live.generation)
+            let log ← IO.FS.readBinFile (Restore.logPath state 1 index.index live.generation)
+            let decoded := Restore.Journal.decode (File.decodeBytes log)
+            let replayed : TextM String := do
+              let text ← createText (File.decodeBytes base)
+              discard <| Restore.Journal.replay text decoded.records
+              text.read
+            let fromDisk := (replayed.runModel {}).1.toOption
+            let fresh ← ProjectRig.over services
+            let some (restored, freshTexts) ←
+              runRestoring fresh state
+                  [{ command := "start-restore", arguments := [.str state.toString] }]
+                  handed | return false
+            let again ← bufferText fresh freshTexts restored "a.txt"
+            let buffer := (restored.state.findFile a).bind restored.state.buffer?
+            return edited == some "typed more first line\nsecond line\n" && fromDisk == edited &&
+                decoded.records.size == 1 &&
+                again == edited &&
+                (buffer.map Buffer.isModified) == some true &&
+                restored.state.restore.run == some 2 },
     { name :=
         "two tabs, the first split, are restored on the real text binding and file service: a second loop over the same state directory has both tabs, the split, the second tab's name, and every window on the file's buffer"
       run := do

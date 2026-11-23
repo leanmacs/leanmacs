@@ -61,14 +61,15 @@ namespace FakeSyntaxService
 
 /-- A service over `model`, nothing pending. -/
 def new (model : SyntaxTreeModel := {}) (post : BaseIO Unit := pure ())
-    (learn : SnapshotId → BaseIO (Option String) := fun _ => pure none) : BaseIO FakeSyntaxService :=
+    (learn : SnapshotId → BaseIO (Option String) := fun _ => pure none) :
+    BaseIO FakeSyntaxService :=
   return { state := ← IO.mkRef { model }, post, learn }
 
 /-- The snapshot a request names, if it names one. -/
 def named? : SyntaxTreeRequest → Option SnapshotId
-  | .attach snapshot _ | .detach snapshot | .captures snapshot _ _ _ | .highlight snapshot _ _
-  | .inject snapshot _ | .injectLanguage snapshot _ _ _ _ | .keep snapshot _ _
-  | .capturesOf snapshot _ _ _ => some snapshot
+  | .attach snapshot _ | .detach snapshot | .captures snapshot _ _ _ | .highlight snapshot _ _ |
+    .inject snapshot _ | .injectLanguage snapshot _ _ _ _ | .keep snapshot _ _ |
+    .capturesOf snapshot _ _ _ => some snapshot
   | _ => none
 
 namespace State
@@ -79,12 +80,12 @@ def undelivered (state : State) (snapshot : SnapshotId) : Bool :=
 
 /-- `state` with a delivery of `snapshot`'s text pending, unless one is. -/
 def deliver (state : State) (snapshot : SnapshotId) : State :=
-  if state.undelivered snapshot then state else { state with pending := state.pending.push snapshot }
+  if state.undelivered snapshot then state
+  else { state with pending := state.pending.push snapshot }
 
 /-- `state` with a delivery of `snapshot`'s text pending when `reply` is
 `ok`. -/
-def deliverIf {α : Type} (state : State) (snapshot : SnapshotId) :
-    Except SyntaxTreeError α → State
+def deliverIf {α : Type} (state : State) (snapshot : SnapshotId) : Except SyntaxTreeError α → State
   | .ok _ => state.deliver snapshot
   | .error _ => state
 
@@ -94,12 +95,12 @@ end State
 delivery is pending refused `notParsed`, and the state after it. -/
 def answer : (request : SyntaxTreeRequest) → State → request.Reply × State
   | .captures snapshot query first last, state =>
-    let model := if state.undelivered snapshot then { state.model with delivered := false }
-      else state.model
+    let model :=
+      if state.undelivered snapshot then { state.model with delivered := false } else state.model
     (model.captures snapshot query first last, state)
   | .capturesOf snapshot kind first last, state =>
-    let model := if state.undelivered snapshot then { state.model with delivered := false }
-      else state.model
+    let model :=
+      if state.undelivered snapshot then { state.model with delivered := false } else state.model
     (model.capturesOf snapshot kind first last, state)
   | .attach snapshot named, state =>
     let (reply, model) := state.model.attach snapshot named
@@ -113,7 +114,9 @@ def answer : (request : SyntaxTreeRequest) → State → request.Reply × State
   | .detach snapshot, state =>
     let (reply, model) := state.model.detach snapshot
     let pending := state.pending.filter (!state.model.sameText · snapshot)
-    (reply, { state with model, pending })
+    (reply,
+      { state with
+        model, pending })
   | request, state =>
     let (reply, model) := SyntaxTreeModel.handle request state.model
     (reply, { state with model })
@@ -126,23 +129,25 @@ def handle (fake : FakeSyntaxService) : SyntaxTreeHandler := fun request => do
   let named := named? request
   if let some snapshot := named then
     if ((← fake.state.get).model.text? snapshot).isNone then
-      if let some text ← fake.learn snapshot then
+      if let some text← fake.learn snapshot then
         fake.state.modify fun state =>
-          { state with model := { state.model with texts := state.model.texts.push (snapshot, text) } }
+            { state with
+              model := { state.model with texts := state.model.texts.push (snapshot, text) } }
   fake.state.modifyGet fun state =>
-    let state := { state with requestThreads := state.requestThreads.push thread }
-    let state :=
-      match named with
-      | some snapshot =>
-        if state.seen.contains snapshot then state
-        else
-          let fresh := { state with seen := state.seen.push snapshot }
-          if (state.model.attachedTo? snapshot).isSome &&
-              !state.model.attached.any (·.1 == snapshot) then
-            fresh.deliver snapshot
-          else fresh
-      | none => state
-    answer request state
+      let state := { state with requestThreads := state.requestThreads.push thread }
+      let state :=
+        match named with
+        | some snapshot =>
+          if state.seen.contains snapshot then state
+          else
+            let fresh := { state with seen := state.seen.push snapshot }
+            if
+                (state.model.attachedTo? snapshot).isSome &&
+                  !state.model.attached.any (·.1 == snapshot) then
+              fresh.deliver snapshot
+            else fresh
+        | none => state
+      answer request state
 
 /-- Delivers the oldest pending delivery, then posts once, on the caller's
 thread; `false` when nothing was pending. -/

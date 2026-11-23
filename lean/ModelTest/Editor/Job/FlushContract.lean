@@ -115,7 +115,8 @@ def flushSteppedRigs : BaseIO (List FlushContract.FlushRig × FakePump) := do
   let watches ← FakeFileWatches.new completions (answer := .onStep pump)
   let watchRig : FlushContract.FlushRig :=
     { name := "the fake watch service, stepped"
-      flush := ({ services with fileWatches := watches.fileWatches } : Services).flushed .fileWatches
+      flush :=
+        ({ services with fileWatches := watches.fileWatches } : Services).flushed .fileWatches
       step := pump.stepAll }
   let rigs := [files', diffs, greps, processRig, watchRig]
   return (rigs, pump)

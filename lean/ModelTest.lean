@@ -72,13 +72,12 @@ import ModelTest.Editor.Job.Activity
 import ModelTest.Editor.Job.Contract
 import ModelTest.Editor.Job.FlushContract
 import ModelTest.Editor.Job.HandleContract
-import ModelTest.Editor.Job.PumpContract
-import ModelTest.Editor.SyntaxTree.DeliveryContract
 import ModelTest.Editor.Job.Jobs
 import ModelTest.Editor.Job.Model
 import ModelTest.Editor.Job.Pool
 import ModelTest.Editor.Job.Protocol
 import ModelTest.Editor.Job.ProtocolContract
+import ModelTest.Editor.Job.PumpContract
 import ModelTest.Editor.Job.Runner
 import ModelTest.Editor.Job.Table
 import ModelTest.Editor.Json
@@ -125,6 +124,7 @@ import ModelTest.Editor.State.Request
 import ModelTest.Editor.Store
 import ModelTest.Editor.Store.Codec
 import ModelTest.Editor.SyntaxTree.Contract
+import ModelTest.Editor.SyntaxTree.DeliveryContract
 import ModelTest.Editor.SyntaxTree.Model
 import ModelTest.Editor.TabBar
 import ModelTest.Editor.Test.Jobs

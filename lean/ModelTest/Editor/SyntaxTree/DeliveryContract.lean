@@ -58,8 +58,8 @@ def syntaxDeliveryChecks : List Check :=
           let snapshot ← rig.make SyntaxDeliveryContract.first
           discard <| (SyntaxTree.attach snapshot "json").runWith rig.handler
           let .ok compiled ←
-            (SyntaxTree.compile "json" SyntaxDeliveryContract.query).runWith rig.handler |
-            return false
+            (SyntaxTree.compile "json" SyntaxDeliveryContract.query).runWith
+                rig.handler | return false
           let before ←
             SyntaxDeliveryContract.capturesOf rig snapshot compiled SyntaxDeliveryContract.first
           let postsBefore ← fake.posts
@@ -69,10 +69,14 @@ def syntaxDeliveryChecks : List Check :=
           let again ← fake.step
           let posts ← fake.postThreads
           let requests ← fake.requestThreads
-          unless SyntaxDeliveryContract.same before (.error .notParsed) && postsBefore == 0 &&
-                stepped && SyntaxDeliveryContract.same after
-                  (SyntaxDeliveryContract.modelAnswer SyntaxDeliveryContract.first) && !again &&
-                posts == #[thread] && requests.all (· == thread) && (← fake.quiescent) do
+          unless
+            SyntaxDeliveryContract.same before (.error .notParsed) && postsBefore == 0 && stepped &&
+              SyntaxDeliveryContract.same after
+                (SyntaxDeliveryContract.modelAnswer SyntaxDeliveryContract.first) &&
+              !again &&
+              posts == #[thread] &&
+              requests.all (· == thread) &&
+              (← fake.quiescent) do
             throw <|
                 IO.userError
                   s!"before the step {SyntaxDeliveryContract.shown before}, after it {SyntaxDeliveryContract.shown after}; posts on {posts}, requests on {requests}, the check's thread {thread}"

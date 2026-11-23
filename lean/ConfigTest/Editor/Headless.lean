@@ -4428,7 +4428,9 @@ def journalOrderCommands : Array Config.Registration :=
       action :=
         .call fun _ => do
           let state ← editorState
-          Restore.setKept { state.restore with run := some 1, restored := true } },
+          Restore.setKept
+              { state.restore with
+                run := some 1, restored := true } },
     { name := "journal-unmodify"
       action :=
         .call fun call => do
@@ -4480,8 +4482,7 @@ def journalOrderChecks (context : Context) : List Check :=
             let base := (Restore.basePath state 1 0 generation).toString
             let log := (Restore.logPath state 1 0 generation).toString
             let expected :=
-              #[("save", base), ("append", log), ("append", log), ("remove", base),
-                ("remove", log)]
+              #[("save", base), ("append", log), ("append", log), ("remove", base), ("remove", log)]
             let threads ← fake.orderThreads
             let drain ← fake.journal.drained
             let early ← IO.hasFinished drain

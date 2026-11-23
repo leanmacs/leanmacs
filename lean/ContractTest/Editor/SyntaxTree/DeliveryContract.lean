@@ -43,10 +43,11 @@ def deliveryRealRig : IO SyntaxDeliveryContract.DeliveryRig := do
         let reply ← real.handle request
         discard <| documents.get
         return reply
-      make := fun contents => do add (← Ffi.Document.new contents) contents
+      make := fun contents => do
+        add (← Ffi.Document.new contents) contents
       edit := fun snapshot contents => do
-        let some (_, document, old) := (← documents.get).find? (·.1 == snapshot) |
-          throw <| IO.userError "no such text"
+        let some (_, document, old) :=
+          (← documents.get).find? (·.1 == snapshot) | throw <| IO.userError "no such text"
         discard <| document.replace 0 old.utf8ByteSize.toUSize contents
         add document contents
       settle := fun snapshot => do
@@ -57,6 +58,7 @@ def deliveryRealRig : IO SyntaxDeliveryContract.DeliveryRig := do
 def syntaxDeliveryChecks : List Check :=
   SyntaxDeliveryContract.properties.map fun property =>
     { name := s!"the real syntax tree binding keeps the delivery contract: {property.name}"
-      run := do property.holds (← deliveryRealRig) }
+      run := do
+        property.holds (← deliveryRealRig) }
 
 end ContractTest

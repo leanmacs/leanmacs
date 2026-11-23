@@ -39,11 +39,11 @@ def journalFakeRig : BaseIO (JournalContract.JournalRig × RecordingJournal) := 
         fake.state.modify fun state => { state with model := state.model.withFile path bytes }
       snapshotOf := fun text =>
         fake.state.modifyGet fun state =>
-            (⟨state.model.snapshots.size⟩,
-              { state with
-                model :=
-                  { state.model with
-                    snapshots := state.model.snapshots.push (some { contents := text }) } })
+          (⟨state.model.snapshots.size⟩,
+            { state with
+              model :=
+                { state.model with
+                  snapshots := state.model.snapshots.push (some { contents := text }) } })
       step := fake.stepAll
       held := return pure () }
   return (rig, fake)

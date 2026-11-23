@@ -69,8 +69,8 @@ namespace RecordingJournal
 
 /-- A journal over `model` that has recorded nothing, reading the text of a
 save's snapshot from `snapshots` when given. -/
-def new (model : FileModel := {}) (snapshots : Option (SnapshotId → BaseIO (Option String)) := none) :
-    BaseIO RecordingJournal :=
+def new (model : FileModel := {})
+    (snapshots : Option (SnapshotId → BaseIO (Option String)) := none) : BaseIO RecordingJournal :=
   return { state := ← IO.mkRef { model }, snapshots }
 
 /-- `model` with `text` in the slot of the snapshot `id`. -/
@@ -87,15 +87,17 @@ def perform (journal : RecordingJournal) (order : Restore.Order) : BaseIO Unit :
   let thread ← IO.getTID
   let text : Option (SnapshotId × String) ←
     match journal.snapshots, order.request with
-    | some read, .save (.snapshot id) _ _ => pure ((← read id).map (id, ·))
-    | _, _ => pure none
+    | some read, .save (.snapshot id) _ _ =>
+      pure ((← read id).map (id, ·))
+    | _, _ =>
+      pure none
   journal.state.modify fun state =>
-    let model :=
-      match text with
-      | some (id, text) => withSnapshot state.model id text
-      | none => state.model
-    { state with
-      model, recorded := state.recorded.push (order, thread) }
+      let model :=
+        match text with
+        | some (id, text) => withSnapshot state.model id text
+        | none => state.model
+      { state with
+        model, recorded := state.recorded.push (order, thread) }
 
 /-- Resolves, with `true`, every drain of `state` that its worked orders
 cover, on the caller's thread, and returns the state without them. -/

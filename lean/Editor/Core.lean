@@ -10,7 +10,6 @@ import Editor.Config.Elaborator.Contract
 import Editor.Config.Elaborator.Model
 import Editor.Display.Contract
 import Editor.Headless.Journal.Contract
-import Editor.Headless.Journal.Fake
 import Editor.Headless.Queue.Contract
 import Editor.Indent
 import Editor.InputScheme.Contract
@@ -23,7 +22,6 @@ import Editor.Jumps.Go
 import Editor.Main
 import Editor.SearchRoot
 import Editor.SyntaxTree.DeliveryContract
-import Editor.SyntaxTree.Fake
 import Editor.Test.AtPoint
 import Editor.Test.Excerpt
 import Editor.Test.Frame

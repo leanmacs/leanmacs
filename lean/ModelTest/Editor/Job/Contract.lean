@@ -242,12 +242,13 @@ def runProcessesStepped (property : JobContract.ProcessProperty) : IO (Job.Outco
   let completions ← Job.Completions.new
   let clock ← Job.FakeClock.new completions
   let pump ← Job.FakePump.new completions
-  let processes ← Job.FakeProcesses.new completions (processModelOf property) (answer := .onStep pump)
+  let processes ←
+    Job.FakeProcesses.new completions (processModelOf property) (answer := .onStep pump)
   let services : Job.Services :=
     { completions, timers := clock.timers, processes := processes.processes }
   try
     runStepped services pump clock (property.holds processRoot) processes.quiescent
-      (return (← processes.started).size)
+        (return (← processes.started).size)
   catch error =>
     pure (.failed s!"the stepped run: {error}")
 
