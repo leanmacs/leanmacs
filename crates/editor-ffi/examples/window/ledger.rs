@@ -3,8 +3,8 @@
 //! what the window presents and compares it with the headless renderer's
 //! picture of the same frame.
 
+use editor_wait::HangGuard;
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
 
 use editor_ffi::render::target;
 use editor_ffi::window::{Rasteriser, window_rasteriser};
@@ -106,23 +106,18 @@ impl Ledger {
     }
 
     /// Waits until `ready` holds of what the ledger comes to, and says
-    /// whether it did: false once `limit` has passed first. It is notified
+    /// whether it did: false once `guard` has run out first. It is notified
     /// as each thing is entered ([`note`](Self::note)), never a poll.
-    pub fn wait(&self, limit: Duration, ready: impl Fn(&Tally) -> bool) -> bool {
-        let (kept, _) = self
-            .changed
-            // hang guard: `ready` holding, which each entry notifies; only
-            // a hang reaches the limit.
-            .wait_timeout_while(locked(&self.kept), limit, |kept| {
-                let found = ready(&kept.tally);
-                #[cfg(test)]
-                if let Some(hook) = self.awaited.get() {
-                    hook(found);
-                }
-                !found
-            })
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        ready(&kept.tally)
+    pub fn wait(&self, guard: HangGuard, ready: impl Fn(&Tally) -> bool) -> bool {
+        editor_wait::wait_while(&self.changed, locked(&self.kept), guard, |kept| {
+            let found = ready(&kept.tally);
+            #[cfg(test)]
+            if let Some(hook) = self.awaited.get() {
+                hook(found);
+            }
+            !found
+        })
+        .1
     }
 
     /// Enters that `frame`, laid out for the window `window`, is
@@ -465,13 +460,22 @@ mod tests {
 
     use editor_ffi::window::Rasteriser;
 
+    use editor_wait::HangGuard;
+
     use super::{Entered, Handed, Ledger, alike, entering, happened, platform, settings};
     use crate::tally::{Happened, Tally};
     use crate::testing::{LARGE, MS, PRESENTED, SMALL, began, presented_as};
 
     /// hang guard: the wait's next reading, or its answer; only a hang
     /// reaches the bound, and the test then fails as a hang.
-    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "the wait's next reading, or its answer",
+        std::time::Duration::from_secs(5),
+    );
+
+    /// A guard run out on purpose, at once: what is not yet entered.
+    const NOT_ENTERED: HangGuard =
+        HangGuard::held("what is not yet entered", std::time::Duration::ZERO);
 
     #[test]
     fn a_wait_begun_before_what_it_waits_for_is_entered_returns_once_it_is() {
@@ -491,7 +495,7 @@ mod tests {
             });
         }
         assert_eq!(
-            readings.recv_timeout(DEADLINE),
+            editor_wait::recv(&readings, DEADLINE),
             Ok(false),
             "nothing is shown yet"
         );
@@ -506,18 +510,17 @@ mod tests {
         // A wait that answered at its first reading never reads the draw.
         let mut last = false;
         while !last {
-            last = readings
-                .recv_timeout(DEADLINE)
+            last = editor_wait::recv(&readings, DEADLINE)
                 .expect("the wait reads again as each thing is entered");
         }
-        assert_eq!(answered.recv_timeout(DEADLINE), Ok(true));
+        assert_eq!(editor_wait::recv(&answered, DEADLINE), Ok(true));
     }
 
     #[test]
     fn a_wait_for_what_is_never_entered_says_no_once_its_limit_has_passed() {
         let ledger = ledger();
-        assert!(!ledger.wait(std::time::Duration::ZERO, |tally| tally.shown.is_some()));
-        assert!(ledger.wait(std::time::Duration::ZERO, |tally| tally.shown.is_none()));
+        assert!(!ledger.wait(NOT_ENTERED, |tally| tally.shown.is_some()));
+        assert!(ledger.wait(NOT_ENTERED, |tally| tally.shown.is_none()));
     }
 
     #[test]
@@ -748,7 +751,7 @@ mod tests {
         );
         // The renderer was asked for each.
         assert_eq!(renderer.inner.requests().len(), 3);
-        assert!(!ledger.wait(std::time::Duration::ZERO, Tally::settled));
+        assert!(!ledger.wait(NOT_ENTERED, Tally::settled));
     }
 
     #[test]

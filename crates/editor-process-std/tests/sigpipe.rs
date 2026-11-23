@@ -12,12 +12,17 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_process::{Child, ChildInput, Command, Input, Output, Processes, RefusalKind, Stream};
 use editor_process_std::StdProcesses;
 
 /// hang guard: the child's saying it has closed its input, which must come;
 /// only a hang reaches the bound, and the check then fails as a hang.
-const DEADLINE: Duration = Duration::from_secs(10);
+const DEADLINE: HangGuard = HangGuard::on(
+    "the child's saying it has closed its input",
+    Duration::from_secs(10),
+);
 
 #[test]
 fn a_write_to_an_input_the_child_closed_is_refused_with_sigpipe_at_its_default() {
@@ -51,7 +56,7 @@ fn a_write_to_an_input_the_child_closed_is_refused_with_sigpipe_at_its_default()
         }
         sender.send(all).ok();
     });
-    let said = said.recv_timeout(DEADLINE);
+    let said = editor_wait::recv(&said, DEADLINE);
     let wrote = said.is_ok().then(|| input.write(b"x"));
     // Killed whatever was seen, so a reader still waiting ends and is
     // joined.

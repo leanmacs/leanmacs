@@ -281,8 +281,6 @@ use crate::translate::{KeyParts, Seen, Told};
 /// loop to have carried out every request sent to it.
 #[doc(hidden)]
 pub mod probe {
-    use std::time::Duration;
-
     #[cfg(target_os = "macos")]
     pub use crate::menu_bar::{Reading, read_menu_bar};
 
@@ -293,14 +291,17 @@ pub mod probe {
     /// what the requests did. It is notified as the loop carries them out,
     /// never a poll.
     ///
-    /// `bound` is a hang guard: only a loop that never carries a request
-    /// out reaches it.
-    pub fn await_requests_handled(platform: &crate::WinitPlatform, bound: Duration) -> bool {
+    /// `guard` names the loop's count of what it carried out: only a loop
+    /// that never carries a request out reaches it.
+    pub fn await_requests_handled(
+        platform: &crate::WinitPlatform,
+        guard: editor_wait::HangGuard,
+    ) -> bool {
         let handled = platform
             .running()
             .as_ref()
             .map(|running| std::sync::Arc::clone(&running.handled));
-        handled.is_some_and(|handled| handled.wait_all(bound))
+        handled.is_some_and(|handled| handled.wait_all(guard))
     }
 }
 
@@ -890,6 +891,7 @@ fn event_loop() -> Result<EventLoop, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use editor_wait::HangGuard;
     use std::sync::atomic::AtomicUsize;
     use std::time::Duration;
     use winit::event_loop::EventLoopProxyProvider;
@@ -1003,11 +1005,12 @@ mod tests {
 
         // Each is counted as sent, so a wait for them runs out until the
         // loop has counted both carried out.
-        assert!(!probe::await_requests_handled(&platform, Duration::ZERO));
+        let not_yet = HangGuard::held("the requests not yet carried out", Duration::ZERO);
+        assert!(!probe::await_requests_handled(&platform, not_yet));
         handled.handled(1);
-        assert!(!probe::await_requests_handled(&platform, Duration::ZERO));
+        assert!(!probe::await_requests_handled(&platform, not_yet));
         handled.handled(1);
-        assert!(probe::await_requests_handled(&platform, Duration::ZERO));
+        assert!(probe::await_requests_handled(&platform, not_yet));
 
         // Woken once for each, with it already on the channel: the loop
         // that wakes finds it. A request asks no close.
@@ -1030,7 +1033,8 @@ mod tests {
     fn with_no_window_running_a_wait_for_requests_carried_out_says_no_at_once() {
         let platform = WinitPlatform::new(|| false);
         platform.request(Request::Minimise);
-        assert!(!probe::await_requests_handled(&platform, Duration::MAX));
+        let no_bound = HangGuard::on("the requests carried out", Duration::MAX);
+        assert!(!probe::await_requests_handled(&platform, no_bound));
     }
 
     /// A loop's waker that takes, at each wake-up, the lists of paths

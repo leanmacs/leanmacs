@@ -196,12 +196,13 @@ impl<C: Completer> Shared<C> {
 mod tests {
     use super::*;
     use editor_service::RecordingCompleter;
+    use editor_service::wait::HangGuard;
     use std::time::Duration;
 
     /// hang guard: the reports each wait ends on; only a hang reaches the
     /// bound, and the test then fails as a hang. How long a test waits for
     /// something that should happen at once.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on("the service's reports", Duration::from_secs(5));
 
     /// A service over a recording completer of its own, which lives as long
     /// as the test's process, as the service's workers may.
@@ -217,7 +218,7 @@ mod tests {
         let completer = echo.shared.completer;
         assert!(
             completer.wait_for(count, DEADLINE),
-            "fewer than {count} were reported after {DEADLINE:?}"
+            "fewer than {count} were reported: {DEADLINE}"
         );
         completer.take()
     }

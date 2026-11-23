@@ -54,7 +54,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use editor_wait::{self as wait, HangGuard};
 
 use crate::contract::Ground;
 use crate::{
@@ -615,27 +617,16 @@ impl FakeProcesses {
     }
 
     /// Blocks until `ready` holds of what the fake has seen, or until
-    /// `deadline` has passed, and says whether it held. Every change to
-    /// the record is told on the fake's Condvar, so it returns on the
-    /// change that makes `ready` hold: `deadline` is a hang guard, for a
-    /// state that must come, and never decides a negative.
-    pub fn until(&self, deadline: Duration, ready: impl Fn(&Record) -> bool) -> bool {
-        // hang guard: the change to the record that makes `ready` hold;
-        // only a hang reaches the bound, and the check then fails as a hang.
-        let end = Instant::now() + deadline;
-        let mut state = self.shared.state();
-        loop {
-            if ready(&state.record) {
-                return true;
-            }
-            let left = end.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return false;
-            }
-            // hang guard: the same change, told on the Condvar.
-            let waited = self.shared.changed.wait_timeout(state, left);
-            state = waited.unwrap_or_else(PoisonError::into_inner).0;
-        }
+    /// `guard` has run out, and says whether it held. Every change to the
+    /// record is told on the fake's Condvar, so it returns on the change
+    /// that makes `ready` hold: `guard` is a hang guard, for a state that
+    /// must come, and never decides a negative.
+    pub fn until(&self, guard: HangGuard, ready: impl Fn(&Record) -> bool) -> bool {
+        let state = self.shared.state();
+        wait::wait_while(&self.shared.changed, state, guard, |state| {
+            !ready(&state.record)
+        })
+        .1
     }
 
     /// Ends the child `id`, held by [`Hold::UntilLetGo`], as its script says,
@@ -1167,7 +1158,10 @@ pub struct FakeGround {
 /// file written); only a hang reaches the bound, and the check then fails
 /// as a hang. The fake is synchronous, so only a fake that breaks a rule
 /// waits this long.
-const FAKE_DEADLINE: Duration = Duration::from_secs(2);
+const FAKE_DEADLINE: HangGuard = HangGuard::on(
+    "the change to the fake's state that the ground waits for",
+    Duration::from_secs(2),
+);
 
 impl Ground for FakeGround {
     fn make_file(&self, path: &Path) -> Result<(), String> {
@@ -1176,21 +1170,13 @@ impl Ground for FakeGround {
     }
 
     fn written(&self, path: &Path) -> Option<u32> {
-        let end = Instant::now() + FAKE_DEADLINE;
-        let mut state = self.fake.shared.state();
-        loop {
-            if let Some(&id) = state.files.get(path) {
-                return Some(id);
-            }
-            let left = end.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return None;
-            }
-            // hang guard: the write of the file, told on the Condvar; only
-            // a hang reaches the bound, and the check then fails as a hang.
-            let waited = self.fake.shared.changed.wait_timeout(state, left);
-            state = waited.unwrap_or_else(PoisonError::into_inner).0;
-        }
+        // The write of the file, told on the Condvar.
+        let state = self.fake.shared.state();
+        let (state, _) =
+            wait::wait_while(&self.fake.shared.changed, state, FAKE_DEADLINE, |state| {
+                !state.files.contains_key(path)
+            });
+        state.files.get(path).copied()
     }
 
     fn exists(&self, path: &Path) -> bool {
@@ -1206,28 +1192,22 @@ impl Ground for FakeGround {
 
     fn ends(&self, id: u32) -> bool {
         let shared = &self.fake.shared;
-        // hang guard: the change to the fake's state that ends the process;
-        // only a hang reaches the bound, and the check then fails as a hang.
-        let end = Instant::now() + FAKE_DEADLINE;
-        let mut state = shared.state();
+        // The change to the fake's state that ends the process, told on
+        // the Condvar. The first reading that finds it running counts the
+        // wait as under way, and tells it.
         let mut waiting = false;
-        let ended = loop {
-            if state.ended(id) {
-                break true;
-            }
-            let left = end.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                break false;
-            }
-            if !waiting {
-                state.record.ends_waiting += 1;
-                waiting = true;
-                shared.changed.notify_all();
-            }
-            // hang guard: the same change, told on the Condvar.
-            let waited = shared.changed.wait_timeout(state, left);
-            state = waited.unwrap_or_else(PoisonError::into_inner).0;
-        };
+        let (mut state, ended) =
+            wait::wait_while(&shared.changed, shared.state(), FAKE_DEADLINE, |state| {
+                if state.ended(id) {
+                    return false;
+                }
+                if !waiting {
+                    state.record.ends_waiting += 1;
+                    waiting = true;
+                    shared.changed.notify_all();
+                }
+                true
+            });
         if waiting {
             state.record.ends_waiting -= 1;
         }
@@ -1244,7 +1224,7 @@ impl Ground for FakeGround {
         true
     }
 
-    fn deadline(&self) -> Duration {
+    fn deadline(&self) -> HangGuard {
         FAKE_DEADLINE
     }
 }
@@ -1258,7 +1238,10 @@ mod tests {
     /// hang guard: each state of the fake a test waits for, which must
     /// come; only a hang reaches the bound, and the check then fails as a
     /// hang.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "each state of the fake a test waits for",
+        Duration::from_secs(5),
+    );
 
     fn command(script: &str) -> Command {
         Command::new("/bin/sh", ["-c", script], "/dir")

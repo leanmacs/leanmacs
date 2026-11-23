@@ -65,9 +65,10 @@
 //! [`check`], and in `tests/contract.rs` a fake written to break it.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+
+use editor_wait::HangGuard;
 
 use crate::batch::Change;
 use crate::clock::Clock;
@@ -105,7 +106,7 @@ pub trait Ground {
     /// hang guard: the notice or completion each wait of the check ends
     /// on; only a hang reaches the bound, and the check then fails as a
     /// hang. How long the check waits for what should happen at once.
-    fn deadline(&self) -> Duration;
+    fn deadline(&self) -> HangGuard;
 
     /// Holds every later call of the port's `watch` inside the port, until
     /// [`release_starts`](Self::release_starts), and says whether it can.
@@ -328,22 +329,22 @@ impl Listener {
     /// `deadline`, and says whether one came.
     pub(crate) fn until(
         &self,
-        deadline: Duration,
+        deadline: HangGuard,
         mut matches: impl FnMut(&Notice) -> bool,
     ) -> bool {
         loop {
             // hang guard: the next notice; only a hang reaches the bound,
             // and the check then fails as a hang.
-            match self.notices.recv_timeout(deadline) {
+            match editor_wait::recv(&self.notices, deadline) {
                 Ok(notice) if matches(&notice) => return true,
                 Ok(_) => {}
-                Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => return false,
+                Err(_) => return false,
             }
         }
     }
 
     /// Reads notices until one at `path` of `kind`.
-    pub(crate) fn heard(&self, deadline: Duration, path: &Path, kind: Kind) -> bool {
+    pub(crate) fn heard(&self, deadline: HangGuard, path: &Path, kind: Kind) -> bool {
         self.until(deadline, |notice| {
             notice.path == path && notice.kind == kind
         })
@@ -351,7 +352,7 @@ impl Listener {
 
     /// Reads notices until one at `path`, and gives every notice before it;
     /// `None` if none came.
-    pub(crate) fn before(&self, deadline: Duration, path: &Path) -> Option<Vec<Notice>> {
+    pub(crate) fn before(&self, deadline: HangGuard, path: &Path) -> Option<Vec<Notice>> {
         let mut before = Vec::new();
         self.until(deadline, |notice| {
             if notice.path == path {
@@ -384,7 +385,7 @@ struct Served<W: Watch, C: Clock> {
 impl<W: Watch, C: Clock> Served<W, C> {
     /// Waits for the id `id` to be completed, up to `deadline`, keeping the
     /// others it receives on the way.
-    fn completed(&mut self, id: u64, deadline: Duration) -> bool {
+    fn completed(&mut self, id: u64, deadline: HangGuard) -> bool {
         if let Some(index) = self.seen.iter().position(|&seen| seen == id) {
             self.seen.remove(index);
             return true;
@@ -392,7 +393,7 @@ impl<W: Watch, C: Clock> Served<W, C> {
         loop {
             // hang guard: the next completion; only a hang reaches the
             // bound, and the check then fails as a hang.
-            match self.completed.recv_timeout(deadline) {
+            match editor_wait::recv(&self.completed, deadline) {
                 Ok(seen) if seen == id => return true,
                 Ok(seen) => self.seen.push(seen),
                 Err(_) => return false,
@@ -412,7 +413,7 @@ impl<W: Watch, C: Clock> Served<W, C> {
         id: u64,
         target: Target,
         coalescing: Coalescing,
-        deadline: Duration,
+        deadline: HangGuard,
     ) -> bool {
         self.service.start(id, target, coalescing)
             && self.completed(id, deadline)
@@ -427,7 +428,7 @@ impl<W: Watch, C: Clock> Served<W, C> {
     }
 
     /// Waits for the delivery of `wait` and takes it.
-    fn delivery(&mut self, wait: u64, deadline: Duration) -> Option<Vec<Change>> {
+    fn delivery(&mut self, wait: u64, deadline: HangGuard) -> Option<Vec<Change>> {
         if !self.completed(wait, deadline) {
             return None;
         }
@@ -442,7 +443,7 @@ impl<W: Watch, C: Clock> Served<W, C> {
     fn reads_until(
         &mut self,
         watch: u64,
-        deadline: Duration,
+        deadline: HangGuard,
         done: impl FnMut(&[Change]) -> bool,
     ) -> bool {
         self.reads_for(watch, deadline, 1, done)
@@ -453,7 +454,7 @@ impl<W: Watch, C: Clock> Served<W, C> {
     fn reads_for(
         &mut self,
         watch: u64,
-        deadline: Duration,
+        deadline: HangGuard,
         wanted: usize,
         mut done: impl FnMut(&[Change]) -> bool,
     ) -> bool {
@@ -506,7 +507,7 @@ impl<W: Watch + Clone, C: Clock + Clone, G: Ground> Check<'_, W, C, G> {
 
     /// hang guard: the ground's [`Ground::deadline`], the deadline of each
     /// wait; only a hang reaches it, and the check then fails as a hang.
-    fn deadline(&self) -> Duration {
+    fn deadline(&self) -> HangGuard {
         self.ground.deadline()
     }
 
@@ -621,7 +622,9 @@ impl<W: Watch + Clone, C: Clock + Clone, G: Ground> Check<'_, W, C, G> {
         // share of the deadline only triggers a rewrite (inotify may watch
         // the subdirectory only after the first write), so only a hang
         // reaches the whole deadline, and the check then fails as a hang.
-        let each = self.deadline() / NEW_SUBDIRECTORY_TRIES;
+        let each = self
+            .deadline()
+            .with_bound(self.deadline().bound() / NEW_SUBDIRECTORY_TRIES);
         (0..NEW_SUBDIRECTORY_TRIES).any(|_| {
             self.ground.write(&file, b"x");
             listener.until(each, |notice| notice.path == file)
@@ -909,8 +912,8 @@ impl<W: Watch + Clone, C: Clock + Clone, G: Ground> Check<'_, W, C, G> {
         // hang guard: the start's and the flush's completions; only a hang
         // reaches the bound, and the check then fails as a hang.
         let order = [
-            served.completed.recv_timeout(deadline).ok(),
-            served.completed.recv_timeout(deadline).ok(),
+            editor_wait::recv(&served.completed, deadline).ok(),
+            editor_wait::recv(&served.completed, deadline).ok(),
         ];
         asked && waited && order == [Some(1), Some(2)] && served.service.take(2).is_none()
     }

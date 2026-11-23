@@ -21,6 +21,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_ffi::display::{Display, WireScene, WireView};
 use editor_ffi::document::Document;
 use editor_ffi::render::{HeadlessRefusal, Presenter, headless, headless_with, start_into};
@@ -31,7 +33,10 @@ use editor_render::port::{DrawRequest, Drawn, Renderer, Target};
 
 /// hang guard: a word from the render thread, or its rest; only a hang
 /// reaches the bound, and the test then fails as a hang.
-const BOUND: Duration = Duration::from_secs(10);
+const BOUND: HangGuard = HangGuard::on(
+    "a word from the render thread, or its rest",
+    Duration::from_secs(10),
+);
 
 /// The recording renderer, which also says on a channel the target of each
 /// draw.
@@ -95,7 +100,7 @@ fn a_bound_displays_frame_is_drawn_at_the_scenes_size_with_its_stamp_and_the_loo
     let snapshot = Snapshot::of(&document);
     presenter.answering().note(1234);
     publish(&display, &snapshot, 640, 480);
-    let target = draws.recv_timeout(BOUND).expect("the frame is drawn");
+    let target = editor_wait::recv(&draws, BOUND).expect("the frame is drawn");
     assert_eq!(
         target,
         Target {

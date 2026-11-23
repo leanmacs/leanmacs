@@ -17,6 +17,8 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread;
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_syntax::clock::ManualClock;
 use editor_syntax::fake::{GRAMMAR, Parens, ParensParser, ParensQuery, ParensTree};
 use editor_syntax::highlight::{self, Highlighter};
@@ -30,7 +32,10 @@ use editor_text::{InputEdit, Revision, Snapshot, Text};
 /// hang guard: the step of the other thread each wait ends on; only a
 /// hang reaches the bound, and the test then fails as a hang. The longest
 /// any step waits: far above any real wait.
-const BOUND: Duration = Duration::from_secs(10);
+const BOUND: HangGuard = HangGuard::on(
+    "the step of the other thread each wait ends on",
+    Duration::from_secs(10),
+);
 
 /// The worker's idle interval. Its clock never moves, so no refresh runs.
 const REFRESH_AFTER: Duration = Duration::from_millis(500);
@@ -258,9 +263,7 @@ fn the_round_takes_the_state_lock_only_briefly() {
         // inside its parse, holding the session's work lock.
         closed.store(true, Ordering::Release);
         handle.touch(&session, replace(&text, 2..2, "x"));
-        entered
-            .recv_timeout(BOUND)
-            .expect("the worker never started the parse");
+        editor_wait::recv(&entered, BOUND).expect("the worker never started the parse");
 
         // 2. Another edit and its touch, and a language set, on another
         // thread, bounded.
@@ -277,7 +280,7 @@ fn the_round_takes_the_state_lock_only_briefly() {
             session.set_language("inner".to_owned(), language);
             let _ = done_sender.send(());
         });
-        done.recv_timeout(BOUND)
+        editor_wait::recv(&done, BOUND)
             .expect("an edit, its touch or a language set waited for a parse in progress");
         let third = lock(text).snapshot();
         assert_eq!(third.revision(), Revision::new(2));
@@ -290,8 +293,7 @@ fn the_round_takes_the_state_lock_only_briefly() {
         scope.spawn(move || {
             let _ = spans_sender.send(drawn(syntax, session, &asked));
         });
-        let carried = spans
-            .recv_timeout(BOUND)
+        let carried = editor_wait::recv(&spans, BOUND)
             .expect("reading highlights waited for a parse in progress")
             .expect("highlights of a newer snapshot than the tree delivered");
         let patch = lock(text).changes_since(first.revision()).unwrap();

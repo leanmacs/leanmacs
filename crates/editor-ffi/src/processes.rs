@@ -129,6 +129,8 @@ use std::path::PathBuf;
 use std::sync::LazyLock;
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_process::frame::{Frames, Framing};
 use editor_process::service::{End, RunResult, Service, StreamReply, Streaming};
 use editor_process::{Command, Environment, Exit, Input, RefusalKind, Stream};
@@ -731,7 +733,13 @@ pub extern "C" fn editor_ffi_processes_held(child: u64) -> u64 {
 /// `u64::MAX` waits for the park however long it takes.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_processes_await_held(child: u64, bound_ms: u64) -> bool {
-    PROCESSES.wait_held(child, Duration::from_millis(bound_ms))
+    PROCESSES.wait_held(
+        child,
+        HangGuard::on(
+            "a reader's park on its bound, under a Lean caller's guard",
+            Duration::from_millis(bound_ms),
+        ),
+    )
 }
 
 /// The reply about a streaming child as it crosses: the same record as a
@@ -764,7 +772,10 @@ pub(crate) mod tests {
 
     /// hang guard: a completion the service queues at once; only a hang
     /// reaches the bound, and the test then fails as a hang.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "a completion the service queues at once",
+        Duration::from_secs(5),
+    );
 
     /// The words and the string of `command` with `limit`, as Lean lays
     /// them out.
@@ -1003,7 +1014,7 @@ pub(crate) mod tests {
         let (command, limit) = command_of(&words, strings.as_bytes()).expect("a command");
 
         assert!(service.start(5, command, limit));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(5));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(5));
         let raw = RawProcessResult::lending(encoded(service.take(5).expect("a result")));
 
         assert_eq!(raw.status, 0);
@@ -1193,7 +1204,7 @@ pub(crate) mod tests {
         let (command, streaming) = open_of(&words, strings.as_bytes()).expect("an open");
 
         assert!(service.open(5, command, streaming));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(5));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(5));
         assert_eq!(
             service.take_stream(5).map(encoded_stream).map(|e| e.status),
             Some(10)
@@ -1202,7 +1213,7 @@ pub(crate) mod tests {
         let mut stdout = Vec::new();
         for wait in 6.. {
             assert!(service.read(5, wait));
-            assert_eq!(completed.recv_timeout(DEADLINE), Ok(wait));
+            assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(wait));
             let reply = encoded_stream(service.take_stream(wait).expect("a delivery"));
             stdout.extend(reply.stdout);
             let ended = *reply.words.last().expect("words") != 0;

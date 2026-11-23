@@ -432,13 +432,17 @@ pub extern "C" fn editor_ffi_timers_pending() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use editor_wait::HangGuard;
     use std::sync::mpsc::{self, Receiver};
 
     use editor_service::Worker;
 
     /// hang guard: the next completion of the service, or the release a held test gives; only a hang reaches the bound, and the test then fails as a hang. Each wait on it is for something that
     /// should happen at once.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "the next completion of the service, or the release a held test gives",
+        Duration::from_secs(5),
+    );
 
     /// A timer service with its loop on a thread of the test's own and its
     /// completions on a channel.
@@ -483,8 +487,7 @@ mod tests {
         /// The next wait the service completes; panics if it completes none
         /// by the deadline.
         fn next(&self) -> u64 {
-            self.completed
-                .recv_timeout(DEADLINE)
+            editor_wait::recv(&self.completed, DEADLINE)
                 .unwrap_or_else(|_| panic!("no wait was completed within {DEADLINE:?}"))
         }
 
@@ -742,7 +745,7 @@ mod tests {
                     timers.run(|id| {
                         let _ = done.send(id);
                         if id == 1 {
-                            let _ = released.recv_timeout(DEADLINE);
+                            let _ = editor_wait::recv(&released, DEADLINE);
                         }
                     });
                 }
@@ -750,8 +753,7 @@ mod tests {
         )
         .expect("the service's thread starts");
         let next = || {
-            completed
-                .recv_timeout(DEADLINE)
+            editor_wait::recv(&completed, DEADLINE)
                 .unwrap_or_else(|_| panic!("no wait was completed within {DEADLINE:?}"))
         };
         assert!(timers.start(1, 0));

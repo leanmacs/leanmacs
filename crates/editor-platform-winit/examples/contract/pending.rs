@@ -33,6 +33,8 @@ use std::thread;
 
 use editor_platform::{Canvas, Drawer, Platform, Report, WindowOptions};
 
+use editor_wait::HangGuard;
+
 use crate::{BOUND, PLATFORM, Record, guard_exit, terminate};
 
 /// The argument the contract example is started again with, to run this.
@@ -167,14 +169,15 @@ pub fn judge() -> Result<(), String> {
     // hang guard: the process's end, which closes its output and is then
     // reaped; only a hang reaches the bound, and the check then fails as a
     // hang.
-    let Ok((status, said)) = end.recv_timeout(BOUND + BOUND) else {
+    let guard = HangGuard::on(
+        "the end of the process with a terminate pending",
+        BOUND.bound() + BOUND.bound(),
+    );
+    let Ok((status, said)) = editor_wait::recv(&end, guard) else {
         let mut child = child.lock().unwrap_or_else(PoisonError::into_inner);
         let _ = child.kill();
         let _ = child.wait();
-        return Err(format!(
-            "the process with a terminate pending had not ended {:?} after it started",
-            BOUND + BOUND
-        ));
+        return Err(guard.hang());
     };
     let status =
         status.map_err(|error| format!("the process with a terminate pending: {error}"))?;

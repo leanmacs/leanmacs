@@ -13,6 +13,8 @@ use std::mem::MaybeUninit;
 use std::slice;
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_diff::Step;
 use editor_ffi::document::{Document, editor_ffi_document_free, editor_ffi_document_new};
 use editor_ffi::log::RawWords;
@@ -29,8 +31,9 @@ use editor_syntax::{GrammarName, QueryErrorKind, Syntax};
 use editor_syntax_treesitter::TreeSitter;
 use editor_text::{ChangeSet, Origin, Transaction};
 
-/// The longest a test waits for a delivery.
-const BOUND: Duration = Duration::from_secs(10);
+/// hang guard: a delivery; only a hang reaches the bound, and the test
+/// then fails as a hang. The longest a test waits for one.
+const BOUND: HangGuard = HangGuard::on("a delivery", Duration::from_secs(10));
 
 /// A Rust text of two functions.
 const RUST: &str = "fn one() {}\n\nfn two(x: u8) -> u8 {\n    x\n}\n";

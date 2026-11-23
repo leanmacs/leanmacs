@@ -13,6 +13,9 @@ publish = false
 # contract drives a real `Text` so that the edits it hands a `Syntax` are
 # the log's own.
 editor-text = { path = "../editor-text" }
+# The typed time bounds the session's readouts (`Session::wait_for`,
+# `Session::wait_exact`) take; it depends on nothing.
+editor-wait = { path = "../editor-wait" }
 
 # No parsing library: the port names none, and everything here is tested on
 # the published fake, `fake::Parens`. The library that parses is behind the

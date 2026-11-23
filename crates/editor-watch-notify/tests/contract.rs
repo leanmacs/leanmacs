@@ -10,6 +10,8 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+use editor_wait::HangGuard;
+
 use editor_watch::clock::Clock;
 use editor_watch::contract::{self, Ground};
 use editor_watch_notify::NotifyWatch;
@@ -18,7 +20,10 @@ use editor_watch_notify::NotifyWatch;
 /// on; only a hang reaches the bound, and the check then fails as a hang.
 /// How long the contract waits for what should happen at once: only an
 /// adapter that breaks a rule takes this long.
-const DEADLINE: Duration = Duration::from_secs(10);
+const DEADLINE: HangGuard = HangGuard::on(
+    "the notice or completion each wait of the contract ends on",
+    Duration::from_secs(10),
+);
 
 /// The real clock: monotonic, beginning the first time it is read. The
 /// watch crate has no real clock of its own, and its `clippy.toml` forbids
@@ -78,7 +83,7 @@ impl Ground for System {
 
     fn let_pass(&self, _ms: u64) {}
 
-    fn deadline(&self) -> Duration {
+    fn deadline(&self) -> HangGuard {
         DEADLINE
     }
 }

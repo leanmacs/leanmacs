@@ -18,7 +18,9 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use editor_wait::HangGuard;
 
 use editor_process::contract::{self, Ground};
 use editor_process::{Command, Input, Processes, RefusalKind};
@@ -30,14 +32,17 @@ use tempfile::TempDir;
 /// hang guard: each event the ground and the check wait for with it, a
 /// file a child writes, a process's exit, a completion, which must come;
 /// only a hang reaches the bound, and the check then fails as a hang.
-const DEADLINE: Duration = Duration::from_secs(10);
+const DEADLINE: HangGuard = HangGuard::on(
+    "a file a child writes, a process's exit or a completion",
+    Duration::from_secs(10),
+);
 
-/// Whether the process `pid` exits within `bound`, told by kqueue's
+/// Whether the process `pid` exits within `guard`, told by kqueue's
 /// `NOTE_EXIT`: a registration refused with `ESRCH` means it has already
 /// ended. Any other failure is the error, with no polling in its place.
 /// The twin of `editor-launch-std`'s `StdPids::wait_exit`.
 #[cfg(target_os = "macos")]
-fn exits_within(pid: Pid, bound: Duration) -> rustix::io::Result<bool> {
+fn exits_within(pid: Pid, guard: HangGuard) -> rustix::io::Result<bool> {
     use rustix::buffer::spare_capacity;
     use rustix::event::kqueue::{Event, EventFilter, EventFlags, ProcessEvents, kevent, kqueue};
     let queue = kqueue()?;
@@ -52,7 +57,14 @@ fn exits_within(pid: Pid, bound: Duration) -> rustix::io::Result<bool> {
     let mut out = Vec::with_capacity(1);
     // SAFETY: the event names a process, not a file descriptor, so no
     // descriptor it refers to can be closed while the queue lives.
-    let waited = unsafe { kevent(&queue, &[change], spare_capacity(&mut out), Some(bound)) };
+    let waited = unsafe {
+        kevent(
+            &queue,
+            &[change],
+            spare_capacity(&mut out),
+            Some(guard.bound()),
+        )
+    };
     match waited {
         Ok(0) => Ok(false),
         // A registration that fails with room for events comes back as an
@@ -74,12 +86,12 @@ fn exits_within(pid: Pid, bound: Duration) -> rustix::io::Result<bool> {
     }
 }
 
-/// Whether the process `pid` exits within `bound`, told by its pidfd's
+/// Whether the process `pid` exits within `guard`, told by its pidfd's
 /// becoming readable: `ESRCH` from `pidfd_open` means it has already
 /// ended. Any other failure is the error, with no polling in its place.
 /// The twin of `editor-launch-std`'s `StdPids::wait_exit`.
 #[cfg(target_os = "linux")]
-fn exits_within(pid: Pid, bound: Duration) -> rustix::io::Result<bool> {
+fn exits_within(pid: Pid, guard: HangGuard) -> rustix::io::Result<bool> {
     use rustix::event::{PollFd, PollFlags, Timespec, poll};
     use rustix::process::{PidfdFlags, pidfd_open};
     let fd = match pidfd_open(pid, PidfdFlags::empty()) {
@@ -88,8 +100,8 @@ fn exits_within(pid: Pid, bound: Duration) -> rustix::io::Result<bool> {
         Err(error) => return Err(error),
     };
     let timeout = Timespec {
-        tv_sec: i64::try_from(bound.as_secs()).unwrap_or(i64::MAX),
-        tv_nsec: bound.subsec_nanos().into(),
+        tv_sec: i64::try_from(guard.bound().as_secs()).unwrap_or(i64::MAX),
+        tv_nsec: guard.bound().subsec_nanos().into(),
     };
     let mut fds = [PollFd::new(&fd, PollFlags::IN)];
     Ok(poll(&mut fds, Some(&timeout))? > 0)
@@ -98,7 +110,7 @@ fn exits_within(pid: Pid, bound: Duration) -> rustix::io::Result<bool> {
 /// No exit event this ground knows of: the check fails with the error
 /// rather than polling.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn exits_within(_pid: Pid, _bound: Duration) -> rustix::io::Result<bool> {
+fn exits_within(_pid: Pid, _guard: HangGuard) -> rustix::io::Result<bool> {
     Err(Errno::NOSYS)
 }
 
@@ -136,7 +148,7 @@ impl Ground for System {
     /// no file, an empty one or a partial number, and tries again. The
     /// result is decided by the line appearing, never by the time.
     fn written(&self, path: &Path) -> Option<u32> {
-        let end = Instant::now() + DEADLINE;
+        let end = DEADLINE.start();
         loop {
             // `echo` ends what it writes with a line feed, so a number
             // without one may be half written.
@@ -146,7 +158,7 @@ impl Ground for System {
             {
                 return Some(id);
             }
-            if Instant::now() >= end {
+            if end.expired() {
                 return None;
             }
             // hang guard: the same line, read again once it may be there;
@@ -199,7 +211,7 @@ impl Ground for System {
         there
     }
 
-    fn deadline(&self) -> Duration {
+    fn deadline(&self) -> HangGuard {
         DEADLINE
     }
 }
@@ -220,7 +232,7 @@ fn the_grounds_exit_wait_says_running_for_a_live_process_and_ended_for_a_zombie_
         .expect("a pid");
 
     // Alive until it is killed, so a wait of no time finds it running.
-    let running = exits_within(pid, Duration::ZERO);
+    let running = exits_within(pid, HangGuard::held("a live process", Duration::ZERO));
     kill_process(pid, Signal::KILL).expect("the child can be killed");
     // A zombie until it is reaped: it has exited.
     let zombie = exits_within(pid, DEADLINE);

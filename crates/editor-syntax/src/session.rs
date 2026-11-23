@@ -174,7 +174,8 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+
+use editor_wait::HangGuard;
 
 use editor_text::{Patch, Revision, Snapshot};
 
@@ -471,9 +472,10 @@ impl<S: Syntax> Session<S> {
 
     /// The last result delivered once its revision is at least `revision`
     /// and its layers were found with the injections as they are now,
-    /// waiting for a delivery up to `bound`; `None` when none has come by
-    /// then. For tests, and for nothing on the editor thread.
-    pub fn wait_for(&self, revision: Revision, bound: Duration) -> Option<Arc<Parsed<S::Tree>>> {
+    /// waiting for a delivery up to `guard`, which names it; `None` when
+    /// none has come by then. For tests, and for nothing on the editor
+    /// thread.
+    pub fn wait_for(&self, revision: Revision, guard: HangGuard) -> Option<Arc<Parsed<S::Tree>>> {
         let state = lock(&self.state);
         let reached = |state: &mut State<S>| {
             state.delivered_generation == state.generation
@@ -482,11 +484,9 @@ impl<S: Syntax> Session<S> {
                     .as_ref()
                     .is_some_and(|parsed| parsed.revision >= revision)
         };
-        let (mut state, _) = self
-            .delivered
-            .wait_timeout_while(state, bound, |state| !reached(state))
-            .unwrap_or_else(PoisonError::into_inner);
-        if reached(&mut state) {
+        let (state, reached) =
+            editor_wait::wait_while(&self.delivered, state, guard, |state| !reached(state));
+        if reached {
             state.delivered.clone()
         } else {
             None
@@ -497,9 +497,9 @@ impl<S: Syntax> Session<S> {
     /// least `revision`: its tree equals a whole parse of its own revision
     /// (a whole parse delivered, or an incremental one a refresh found
     /// equal), and its layers were found with the injections as they are
-    /// now. Waits for that up to `bound`; `None` when it has not come by
-    /// then. For tests, and for nothing on the editor thread.
-    pub fn wait_exact(&self, revision: Revision, bound: Duration) -> Option<Arc<Parsed<S::Tree>>> {
+    /// now. Waits for that up to `guard`, which names it; `None` when it has
+    /// not come by then. For tests, and for nothing on the editor thread.
+    pub fn wait_exact(&self, revision: Revision, guard: HangGuard) -> Option<Arc<Parsed<S::Tree>>> {
         let state = lock(&self.state);
         let reached = |state: &mut State<S>| {
             state.delivered_generation == state.generation
@@ -511,11 +511,9 @@ impl<S: Syntax> Session<S> {
                             .is_some_and(|parsed| parsed.revision == exact)
                 })
         };
-        let (mut state, _) = self
-            .delivered
-            .wait_timeout_while(state, bound, |state| !reached(state))
-            .unwrap_or_else(PoisonError::into_inner);
-        if reached(&mut state) {
+        let (state, reached) =
+            editor_wait::wait_while(&self.delivered, state, guard, |state| !reached(state));
+        if reached {
             state.delivered.clone()
         } else {
             None
@@ -861,6 +859,11 @@ pub(crate) mod tests {
     use crate::highlight::Highlighter;
     use crate::inject::{Injections, Language, Layer};
     use crate::port::{Node, QueryError, QueryKind, ReparsePolicy};
+    use std::time::Duration;
+
+    /// A guard run out at once, on purpose: a read of what is delivered
+    /// now, with no wait for a delivery not yet made.
+    const AT_ONCE: HangGuard = HangGuard::held("a delivery not yet made", Duration::ZERO);
 
     /// A text behind a lock, as a document holds one, read as a source.
     pub(crate) struct TextSource(pub(crate) Weak<Mutex<Text>>);
@@ -1225,12 +1228,7 @@ pub(crate) mod tests {
         assert!(fixture.delivered_is_fresh());
         assert_eq!(fixture.olds().last(), Some(&None));
         assert_eq!(fixture.delivered(), [Revision::new(0), revision, revision]);
-        assert!(
-            fixture
-                .session
-                .wait_exact(revision, Duration::ZERO)
-                .is_some()
-        );
+        assert!(fixture.session.wait_exact(revision, AT_ONCE).is_some());
     }
 
     #[test]
@@ -1239,12 +1237,7 @@ pub(crate) mod tests {
         fixture.session.parse_once(&fixture.syntax);
         let revision = fixture.replace(5..5, " c");
         fixture.session.parse_once(&fixture.syntax);
-        assert!(
-            fixture
-                .session
-                .wait_exact(revision, Duration::ZERO)
-                .is_none()
-        );
+        assert!(fixture.session.wait_exact(revision, AT_ONCE).is_none());
 
         assert_eq!(
             fixture.session.refresh_once(&fixture.syntax),
@@ -1254,7 +1247,7 @@ pub(crate) mod tests {
         assert_eq!(fixture.olds().len(), 3);
         assert_eq!(fixture.olds().last(), Some(&None));
         assert_eq!(fixture.delivered(), [Revision::new(0), revision]);
-        let exact = fixture.session.wait_exact(revision, Duration::ZERO);
+        let exact = fixture.session.wait_exact(revision, AT_ONCE);
         assert_eq!(exact.map(|parsed| parsed.revision), Some(revision));
     }
 
@@ -1344,7 +1337,7 @@ pub(crate) mod tests {
         assert!(
             fixture
                 .session
-                .wait_exact(Revision::new(0), Duration::ZERO)
+                .wait_exact(Revision::new(0), AT_ONCE)
                 .is_none()
         );
         // The first round parses whole: its tree is exact.
@@ -1352,7 +1345,7 @@ pub(crate) mod tests {
         assert!(
             fixture
                 .session
-                .wait_exact(Revision::new(0), Duration::ZERO)
+                .wait_exact(Revision::new(0), AT_ONCE)
                 .is_some()
         );
         // An incremental delivery is not, until a refresh finds it so.
@@ -1361,21 +1354,16 @@ pub(crate) mod tests {
         assert!(
             fixture
                 .session
-                .wait_exact(Revision::new(0), Duration::ZERO)
+                .wait_exact(Revision::new(0), AT_ONCE)
                 .is_none()
         );
         fixture.session.refresh_once(&fixture.syntax);
-        assert!(
-            fixture
-                .session
-                .wait_exact(revision, Duration::ZERO)
-                .is_some()
-        );
+        assert!(fixture.session.wait_exact(revision, AT_ONCE).is_some());
         // Not past what has been parsed.
         assert!(
             fixture
                 .session
-                .wait_exact(Revision::new(2), Duration::ZERO)
+                .wait_exact(Revision::new(2), AT_ONCE)
                 .is_none()
         );
     }
@@ -1586,16 +1574,16 @@ pub(crate) mod tests {
         assert!(
             fixture
                 .session
-                .wait_for(Revision::new(0), Duration::ZERO)
+                .wait_for(Revision::new(0), AT_ONCE)
                 .is_none()
         );
         fixture.session.parse_once(&fixture.syntax);
-        let parsed = fixture.session.wait_for(Revision::new(0), Duration::ZERO);
+        let parsed = fixture.session.wait_for(Revision::new(0), AT_ONCE);
         assert_eq!(parsed.map(|parsed| parsed.revision), Some(Revision::new(0)));
         assert!(
             fixture
                 .session
-                .wait_for(Revision::new(1), Duration::ZERO)
+                .wait_for(Revision::new(1), AT_ONCE)
                 .is_none()
         );
     }
@@ -1936,14 +1924,14 @@ pub(crate) mod tests {
         assert!(
             fixture
                 .session
-                .wait_for(Revision::new(0), Duration::ZERO)
+                .wait_for(Revision::new(0), AT_ONCE)
                 .is_none()
         );
         fixture.session.parse_once(&fixture.syntax);
         assert!(
             fixture
                 .session
-                .wait_for(Revision::new(0), Duration::ZERO)
+                .wait_for(Revision::new(0), AT_ONCE)
                 .is_some()
         );
     }
@@ -2005,7 +1993,7 @@ pub(crate) mod tests {
         assert!(
             fixture
                 .session
-                .wait_for(Revision::new(0), Duration::ZERO)
+                .wait_for(Revision::new(0), AT_ONCE)
                 .is_some()
         );
 

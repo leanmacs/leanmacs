@@ -21,6 +21,10 @@ crate-type = ["rlib"]
 # (`src/events.rs` re-exports the queue; `src/text.rs` forwards to the
 # buffers).
 editor-service = { path = "../editor-service" }
+# The typed time bounds: what each readout a C function forwards to takes,
+# made at the edge from the bound in milliseconds a Lean caller passes, and
+# what the tests' waits take.
+editor-wait = { path = "../editor-wait" }
 # The window port, its fake and its contract.
 editor-platform = { path = "../editor-platform" }
 # The real window. This is the crate that wires the library together, so it

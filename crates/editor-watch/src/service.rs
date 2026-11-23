@@ -975,6 +975,8 @@ mod tests {
 
     use std::sync::Arc;
 
+    use editor_wait::HangGuard;
+
     use super::{Coalescing, Service, Target, WatchReply};
     use crate::batch::{Change, Kinds};
     use crate::clock::ManualClock;
@@ -985,7 +987,10 @@ mod tests {
     /// a hang reaches the bound, and the test then fails as a hang. How
     /// long a test waits for something that should happen at once: only a
     /// broken service takes this long.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "the completion, notice or count each wait ends on",
+        Duration::from_secs(5),
+    );
 
     /// No window, and room for every test's paths.
     const AT_ONCE: Coalescing = Coalescing {
@@ -1042,7 +1047,7 @@ mod tests {
         coalescing: Coalescing,
     ) {
         assert!(service.start(id, target, coalescing), "accepted");
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(id));
+        assert_eq!(editor_wait::recv(completed, DEADLINE), Ok(id));
         assert_eq!(service.take(id), Some(WatchReply::Started));
     }
 
@@ -1070,7 +1075,7 @@ mod tests {
 
     /// The delivery of the wait `wait`, once its completion has come.
     fn delivered(service: &Fake, completed: &Receiver<u64>, wait: u64) -> Option<WatchReply> {
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(wait));
+        assert_eq!(editor_wait::recv(completed, DEADLINE), Ok(wait));
         service.take(wait)
     }
 
@@ -1308,7 +1313,7 @@ mod tests {
             ground.write(Path::new("/w/f"), b"x");
             service.wake();
             if [100, 250, 400].contains(&at) {
-                assert_eq!(completed.recv_timeout(DEADLINE), Ok(wait), "at {at}");
+                assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(wait), "at {at}");
                 assert_eq!(service.take(wait), changes(&[("/w/f", &[Kind::Written])]));
                 delivered_at.push(at);
                 wait += 1;
@@ -1335,7 +1340,7 @@ mod tests {
 
         assert!(service.next(1, 2));
         ground.write(Path::new("/w/a"), b"x");
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(2));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(2));
         ground.remove(Path::new("/w/a"));
         ground.write(Path::new("/w/b"), b"x");
 
@@ -1494,7 +1499,7 @@ mod tests {
         let (service, completed) = service(&fake, &clock);
         let refused = |id, target, coalescing| {
             assert!(service.start(id, target, coalescing));
-            assert_eq!(completed.recv_timeout(DEADLINE), Ok(id));
+            assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(id));
             refusal(service.take(id))
         };
 
@@ -1548,8 +1553,8 @@ mod tests {
         assert!(fake.until(DEADLINE, |record| record.parked == 2));
         fake.release_watches();
         let mut started = [
-            completed.recv_timeout(DEADLINE).ok(),
-            completed.recv_timeout(DEADLINE).ok(),
+            editor_wait::recv(&completed, DEADLINE).ok(),
+            editor_wait::recv(&completed, DEADLINE).ok(),
         ];
         started.sort();
 
@@ -1582,7 +1587,7 @@ mod tests {
         let (service, completed) = service(&fake, &clock);
 
         assert!(service.start(1, file("/"), AT_ONCE));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
 
         match service.take(1) {
             Some(WatchReply::Refused(refusal)) => {
@@ -1620,8 +1625,8 @@ mod tests {
         assert_eq!(pending, 2);
         assert!(nothing, "nothing is completed while the start is held");
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(2));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(2));
         // It keeps no reply.
         assert_eq!(service.take(2), None);
         assert_eq!(service.take(1), Some(WatchReply::Started));
@@ -1675,7 +1680,7 @@ mod tests {
         flush: u64,
     ) -> (bool, Vec<u64>) {
         assert_eq!(
-            entered.recv_timeout(DEADLINE),
+            editor_wait::recv(entered, DEADLINE),
             Ok(()),
             "the start completes"
         );
@@ -1687,8 +1692,8 @@ mod tests {
         drop(release);
         assert!(asked);
         let after = [
-            completed.recv_timeout(DEADLINE),
-            completed.recv_timeout(DEADLINE),
+            editor_wait::recv(completed, DEADLINE),
+            editor_wait::recv(completed, DEADLINE),
         ]
         .into_iter()
         .map_while(Result::ok)
@@ -1749,7 +1754,7 @@ mod tests {
         assert!(service.flush(2));
         fake.release_watches();
         assert_eq!(
-            entered.recv_timeout(DEADLINE),
+            editor_wait::recv(&entered, DEADLINE),
             Ok(()),
             "the start's thread completes the flush"
         );
@@ -1762,7 +1767,7 @@ mod tests {
             // Read while the completion is held, and checked once it is
             // let go: a check that fails while it is held would leave
             // shutdown waiting for it.
-            let first = told.recv_timeout(DEADLINE);
+            let first = editor_wait::recv(&told, DEADLINE);
             let early: Vec<_> = told.try_iter().collect();
             drop(release);
             (first, early)
@@ -1806,7 +1811,7 @@ mod tests {
         clock.advance(300);
         service.wake();
         assert_eq!(
-            entered.recv_timeout(DEADLINE),
+            editor_wait::recv(&entered, DEADLINE),
             Ok(()),
             "the timer thread delivers the read"
         );
@@ -1916,7 +1921,11 @@ mod tests {
         assert!(fake.until(DEADLINE, |record| record.parked == 1));
         assert!(service.cancel(1));
         fake.release_watches();
-        assert_eq!(dropping.recv_timeout(DEADLINE), Ok(()), "the drop begins");
+        assert_eq!(
+            editor_wait::recv(&dropping, DEADLINE),
+            Ok(()),
+            "the drop begins"
+        );
 
         let asked = service.flush(2);
         // Read while the drop is held, and checked once it is let go.
@@ -1930,7 +1939,7 @@ mod tests {
             [(PathBuf::from("/w"), Depth::Tree)],
             "held in its drop"
         );
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(2));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(2));
         assert_eq!(fake.live(), [], "dropped before the flush was completed");
         service.shutdown();
         assert!(
@@ -1948,7 +1957,7 @@ mod tests {
         // completion, so a flush is waited on first: once it is completed,
         // no start is in flight.
         assert!(service.flush(4));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(4));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(4));
         assert!(service.next(1, 2), "a pending read is not waited for");
 
         assert!(service.flush(3));
@@ -1992,7 +2001,7 @@ mod tests {
         assert!(shut, "shutdown ends the live watch while the start is held");
 
         // The cancelled start is never completed, nor the cancelled flush.
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(3));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(3));
         assert!(completed.try_recv().is_err());
         assert_eq!(service.pending(), 0);
         // The start dropped what it registered before the flush it was the
@@ -2038,9 +2047,9 @@ mod tests {
             ended.shutdown();
             done.send("shutdown").ok();
         });
-        assert_eq!(finished.recv_timeout(DEADLINE), Ok("cancel"));
+        assert_eq!(editor_wait::recv(&finished, DEADLINE), Ok("cancel"));
         fake.release_watches();
-        assert_eq!(finished.recv_timeout(DEADLINE), Ok("shutdown"));
+        assert_eq!(editor_wait::recv(&finished, DEADLINE), Ok("shutdown"));
 
         assert_eq!(fake.live(), []);
         assert_eq!(fake.record().dropped.len(), 3);
@@ -2082,7 +2091,7 @@ mod tests {
         assert!(service.start(1, file("/w/f"), AT_ONCE));
         assert!(!service.start(1, file("/w/g"), AT_ONCE), "starting");
         fake.release_watches();
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert!(!service.start(1, file("/w/g"), AT_ONCE), "not taken");
         assert_eq!(service.take(1), Some(WatchReply::Started));
         assert!(!service.start(1, file("/w/g"), AT_ONCE), "a live watch");
@@ -2092,6 +2101,6 @@ mod tests {
 
         assert!(service.cancel(1));
         assert!(service.start(1, file("/w/g"), AT_ONCE), "free again");
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
     }
 }

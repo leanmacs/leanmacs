@@ -6,7 +6,11 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-# No dependency and no dev-dependency: the port names no process library,
-# and the service above it is tested on the port's published fake. The real
-# adapter, over `std::process`, is `editor-process-std`.
+# No dev-dependency, and no dependency but the typed time bounds: the port
+# names no process library, and the service above it is tested on the
+# port's published fake. The real adapter, over `std::process`, is
+# `editor-process-std`.
 [dependencies]
+# The typed time bounds the service's readout (`Service::wait_held`), the
+# fake's waits and the contract's ground take; it depends on nothing.
+editor-wait = { path = "../editor-wait" }

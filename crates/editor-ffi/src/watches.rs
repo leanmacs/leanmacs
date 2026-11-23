@@ -346,6 +346,7 @@ pub extern "C" fn editor_ffi_watches_shutdown() {
 
 #[cfg(test)]
 mod tests {
+    use editor_wait::HangGuard;
     use std::path::{Path, PathBuf};
     use std::sync::mpsc;
     use std::time::Duration;
@@ -361,7 +362,8 @@ mod tests {
     use crate::words::tests::buffer;
 
     /// hang guard: the next completion of the service; only a hang reaches the bound, and the test then fails as a hang.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard =
+        HangGuard::on("the next completion of the service", Duration::from_secs(5));
 
     fn kinds(of: &[Kind]) -> Kinds {
         of.iter()
@@ -483,14 +485,14 @@ mod tests {
         let (target, coalescing) = start_of(&buffer(&[0, 0, 8]), b"/w/f").expect("a start");
 
         assert!(service.start(1, target, coalescing));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert_eq!(
             service.take(1).map(encoded).map(|reply| reply.status),
             Some(0)
         );
         assert!(service.next(1, 2));
         ground.write(Path::new("/w/f"), b"x");
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(2));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(2));
 
         assert_eq!(
             service.take(2).map(encoded),

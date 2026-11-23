@@ -1611,10 +1611,14 @@ mod tests {
     use editor_text::fs::{Entry, FakeFs, Kind};
 
     use super::*;
+    use editor_wait::HangGuard;
 
     /// hang guard: the next completion of the service, or the release a held test gives; only a hang reaches the bound, and the test then fails as a hang. Each wait on it is for something that
     /// should happen at once.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "the next completion of the service, or the release a held test gives",
+        Duration::from_secs(5),
+    );
 
     /// The file the tests' fake holds.
     const FILE: &str = "/dir/file.txt";
@@ -1694,8 +1698,7 @@ mod tests {
         /// returns which thread it is; panics if no call is made by the
         /// deadline.
         fn entered(&self) -> ThreadId {
-            self.entered
-                .recv_timeout(DEADLINE)
+            editor_wait::recv(&self.entered, DEADLINE)
                 .unwrap_or_else(|_| panic!("the file system was not asked within {DEADLINE:?}"))
         }
 
@@ -1747,7 +1750,7 @@ mod tests {
             let (release, released) = mpsc::channel::<()>();
             self.fs().on_next_call(move |_| {
                 let _ = enter.send(thread::current().id());
-                let _ = released.recv_timeout(DEADLINE);
+                let _ = editor_wait::recv(&released, DEADLINE);
             });
             Parked { entered, release }
         }
@@ -1755,8 +1758,7 @@ mod tests {
         /// The next request the service completes; panics if it completes
         /// none by the deadline.
         fn next(&self) -> u64 {
-            self.completed
-                .recv_timeout(DEADLINE)
+            editor_wait::recv(&self.completed, DEADLINE)
                 .unwrap_or_else(|_| panic!("no request was completed within {DEADLINE:?}"))
         }
 
@@ -1987,7 +1989,7 @@ mod tests {
         assert!(!rig.files.cancel(2));
 
         assert_eq!([rig.next(), rig.next()], [3, 4]);
-        assert_eq!(saw.recv_timeout(DEADLINE), Ok(true));
+        assert_eq!(editor_wait::recv(&saw, DEADLINE), Ok(true));
         // A hold keeps no result, and once let go its id is free.
         assert!(rig.files.take(2).is_none());
         assert!(rig.files.take(1).is_some());

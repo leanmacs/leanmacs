@@ -110,6 +110,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::{Duration, Instant};
 
+use editor_wait::HangGuard;
+
 use editor_platform::{
     Appearance, Button, CannotOpen, Composition, Drawer, Input, Key, LogicalKey, Modifiers,
     NativeWindow, PhysicalKey, Platform, Pointer, PointerAction, Report, Request as WindowRequest,
@@ -1282,7 +1284,12 @@ pub extern "C" fn editor_ffi_window_close(platform: u8) -> bool {
 pub extern "C" fn editor_ffi_window_await_parked(platform: u8, bound_ms: u64) -> bool {
     PlatformId::from_tag(platform)
         .and_then(PlatformId::scripted)
-        .is_some_and(|scripted| scripted.wait_parked(Duration::from_millis(bound_ms)))
+        .is_some_and(|scripted| {
+            scripted.wait_parked(HangGuard::on(
+                "the run's park, under a Lean caller's guard",
+                Duration::from_millis(bound_ms),
+            ))
+        })
 }
 
 /// The request Lean's tag `tag` names: 0 enter fullscreen, 1 leave
@@ -1476,11 +1483,14 @@ mod tests {
     /// hang guard: the next event the run pushes, what it draws, or its
     /// return; only a hang reaches the bound, and the test then fails as a hang. Each wait on it is for something that should
     /// happen at once.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "the next event the run pushes, what it draws, or its return",
+        Duration::from_secs(5),
+    );
 
     /// hang guard: the scripted run parks to wait for its close
     /// ([`ScriptedPlatform::wait_parked`]); only a hang reaches the bound, and the test then fails as a hang.
-    const PARKS: Duration = Duration::from_secs(5);
+    const PARKS: HangGuard = HangGuard::on("the scripted run's park", Duration::from_secs(5));
 
     /// An event from the window, as it should arrive.
     fn from_window(kind: EventKind, code: u64, text: &str, stamp: u64) -> Event {
@@ -1572,8 +1582,7 @@ mod tests {
         });
         (0..count)
             .map(|_| {
-                events
-                    .recv_timeout(DEADLINE)
+                editor_wait::recv(&events, DEADLINE)
                     .expect("the window's next event reaches the queue")
             })
             .collect()
@@ -1635,7 +1644,7 @@ mod tests {
             ]
         );
         platform.close();
-        assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+        assert_eq!(editor_wait::recv(&done, DEADLINE), Ok(Ok(())));
     }
 
     #[test]
@@ -2504,9 +2513,8 @@ mod tests {
 
         assert!(arrive(&queue, &interrupt, key.clone(), 7));
 
-        let (event, raised) = events
-            .recv_timeout(DEADLINE)
-            .expect("the key reaches the puller");
+        let (event, raised) =
+            editor_wait::recv(&events, DEADLINE).expect("the key reaches the puller");
         let unmarked = super::event(key, 7);
         assert_eq!(event.code, unmarked.code | KEY_INTERRUPT);
         assert_eq!(event.code, KEY_PRESSED | KEY_INTERRUPT);
@@ -2595,7 +2603,7 @@ mod tests {
         );
         assert!(interrupt.raised());
         platform.close();
-        assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+        assert_eq!(editor_wait::recv(&done, DEADLINE), Ok(Ok(())));
     }
 
     #[test]
@@ -2627,7 +2635,7 @@ mod tests {
         );
         platform.close();
 
-        assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+        assert_eq!(editor_wait::recv(&done, DEADLINE), Ok(Ok(())));
         assert_eq!(platform.runs(), [options]);
     }
 
@@ -2677,7 +2685,7 @@ mod tests {
         let kinds: Vec<EventKind> = pull(&queue, 2).iter().map(|event| event.kind).collect();
         assert_eq!(kinds, [EventKind::WindowOpened, EventKind::Resize]);
         platform.close();
-        assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+        assert_eq!(editor_wait::recv(&done, DEADLINE), Ok(Ok(())));
 
         let told: Vec<&str> = told.try_iter().collect();
         assert_eq!(told, ["opened", "resized", "closing"]);
@@ -2693,7 +2701,7 @@ mod tests {
         let done = start(&platform, WindowOptions::default(), &queue);
 
         assert_eq!(
-            done.recv_timeout(DEADLINE),
+            editor_wait::recv(&done, DEADLINE),
             Ok(Err(CannotOpen {
                 reason: "no display".into()
             }))
@@ -2847,11 +2855,11 @@ mod tests {
         let document = crate::document::Document::new("ab");
         let snapshot = crate::snapshot::Snapshot::of(&document);
         publish_to(&display, &snapshot);
-        draws.recv_timeout(DEADLINE).expect("the frame is drawn");
+        editor_wait::recv(&draws, DEADLINE).expect("the frame is drawn");
         platform.close();
         // Something drew in the window, so the run has no reason to give.
         assert_eq!(
-            done.recv_timeout(DEADLINE),
+            editor_wait::recv(&done, DEADLINE),
             Ok(Ok(Ran { nothing_drew: None }))
         );
         // Closed: nothing takes submits, and the run's handle is the last.
@@ -2986,7 +2994,7 @@ mod tests {
         // The drawer is told before the queue, so the resize has been said.
         assert_eq!(presenter.scale(), 2.0);
         platform.close();
-        assert!(done.recv_timeout(DEADLINE).is_ok_and(|ran| ran.is_ok()));
+        assert!(editor_wait::recv(&done, DEADLINE).is_ok_and(|ran| ran.is_ok()));
     }
 
     /// Why the renderer of [`a_window_whose_renderer_cannot_be_made_runs_and_its_run_says_why_nothing_drew`]
@@ -3009,7 +3017,7 @@ mod tests {
         assert!(presenter.target().is_none());
         platform.close();
         assert_eq!(
-            done.recv_timeout(DEADLINE),
+            editor_wait::recv(&done, DEADLINE),
             Ok(Ok(Ran {
                 nothing_drew: Some(NO_ADAPTER.to_owned())
             }))

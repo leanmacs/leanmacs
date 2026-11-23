@@ -15,3 +15,6 @@ publish = false
 # it of every row and every open buffer's text, so a match found on disk is
 # one the buffer's `/` finds. Its tests run on the engine's fake, `Literal`.
 editor-search = { path = "../editor-search" }
+# The typed time bounds of the service's readout (`until_held_back`); it
+# depends on nothing.
+editor-wait = { path = "../editor-wait" }

@@ -40,6 +40,8 @@ editor-watch = { path = "../editor-watch" }
 notify = { version = "=8.2.2", default-features = false, features = ["macos_fsevent"] }
 
 [dev-dependencies]
+# The typed time bounds the contract's ground takes.
+editor-wait = { path = "../editor-wait" }
 # The temporary directory the contract is checked in: one the test makes
 # and owns, removed when the test ends. Pinned exactly, as in
 # `editor-fs-std`, whose manifest says why this library and no other;

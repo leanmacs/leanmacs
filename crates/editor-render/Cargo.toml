@@ -8,7 +8,11 @@ publish = false
 
 [dependencies]
 # The frame a renderer draws, as plain data. `deny.toml` lists this crate
-# among editor-layout's wrappers. There is no other dependency and no
-# dev-dependency: the port names no drawing library, and its tests run on
-# the fakes published here and on layout's fake shaper.
+# among editor-layout's wrappers. There is no other dependency but the
+# typed time bounds below, and no dev-dependency: the port names no drawing
+# library, and its tests run on the fakes published here and on layout's
+# fake shaper.
 editor-layout = { path = "../editor-layout" }
+# The typed time bounds the loop's readout (`RenderHandle::wait_resting`)
+# takes; it depends on nothing.
+editor-wait = { path = "../editor-wait" }

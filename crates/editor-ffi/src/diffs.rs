@@ -539,10 +539,14 @@ mod tests {
 
     use super::*;
     use crate::words::tests::words_of;
+    use editor_wait::HangGuard;
 
     /// hang guard: the next completion, or the release a held test gives;
     /// only a hang reaches the bound, and the test then fails as a hang. It is never a result.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "the next completion, or the release a held test gives",
+        Duration::from_secs(5),
+    );
 
     fn snapshot(text: &str) -> editor_text::Snapshot {
         Text::from(text).snapshot()
@@ -601,11 +605,11 @@ mod tests {
         let service = serve(&diffs, move |id| {
             sent.send(id).unwrap();
             if id == 1 {
-                let _ = released.recv_timeout(DEADLINE);
+                let _ = editor_wait::recv(&released, DEADLINE);
             }
         });
         assert!(diffs.start(1, snapshot("a\n"), snapshot("b\n"), 10));
-        assert_eq!(completed.recv_timeout(DEADLINE).unwrap(), 1);
+        assert_eq!(editor_wait::recv(&completed, DEADLINE).unwrap(), 1);
         assert!(diffs.start(2, snapshot("a\n"), snapshot("a\n"), 10));
         assert!(diffs.flush(3));
         // Its id is in use while it waits.
@@ -617,8 +621,8 @@ mod tests {
 
         assert_eq!(
             [
-                completed.recv_timeout(DEADLINE).unwrap(),
-                completed.recv_timeout(DEADLINE).unwrap()
+                editor_wait::recv(&completed, DEADLINE).unwrap(),
+                editor_wait::recv(&completed, DEADLINE).unwrap()
             ],
             [2, 3]
         );

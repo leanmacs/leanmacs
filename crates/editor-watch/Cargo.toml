@@ -6,8 +6,12 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-# No dependency and no dev-dependency: the port names no watching library,
+# No dev-dependency, and no dependency but the typed time bounds: the port
+# names no watching library,
 # and the service above it is tested on the port's published fake and on
 # `clock::ManualClock`. The real adapter, over `notify`, is
 # `editor-watch-notify`.
 [dependencies]
+# The typed time bounds the fake's wait (`FakeWatch::until`) and the
+# contract's ground take; it depends on nothing.
+editor-wait = { path = "../editor-wait" }

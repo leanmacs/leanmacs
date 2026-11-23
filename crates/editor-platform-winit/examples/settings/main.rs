@@ -46,6 +46,8 @@ mod macos {
     use std::thread;
     use std::time::Duration;
 
+    use editor_wait::{self as wait, HangGuard};
+
     use editor_platform::{
         Appearance, Canvas, Input, NativeWindow, Platform, Request, Rgb, WindowOptions,
     };
@@ -63,12 +65,18 @@ mod macos {
 
     /// hang guard: the window's opening and its saying its view; only a
     /// hang reaches the bound, and the example then says no window opened.
-    const OPEN: Duration = Duration::from_secs(20);
+    const OPEN: HangGuard = HangGuard::on(
+        "the window's opening and its saying its view",
+        Duration::from_secs(20),
+    );
 
     /// hang guard: the loop carrying the two requests out on the main
     /// thread; only a hang reaches the bound, and the example then says so
     /// and reads the window as it is.
-    const SHOW: Duration = Duration::from_secs(3);
+    const SHOW: HangGuard = HangGuard::on(
+        "the loop carrying the two requests out",
+        Duration::from_secs(3),
+    );
 
     /// `main` runs on the process's main thread, and the platform is run
     /// from `main`.
@@ -93,15 +101,13 @@ mod macos {
     /// main thread, after them: the control, and the reading; `None` when
     /// it did not open.
     fn scenario(views: &Receiver<usize>, opened: &Receiver<()>) -> Option<(Reading, Reading)> {
-        let view = views.recv_timeout(OPEN).ok()?;
-        opened.recv_timeout(OPEN).ok()?;
+        let view = wait::recv(views, OPEN).ok()?;
+        wait::recv(opened, OPEN).ok()?;
         let before = read(view)?;
         PLATFORM.request(Request::Background(PAPER));
         PLATFORM.request(Request::Appearance(Appearance::Dark));
         if !probe::await_requests_handled(&PLATFORM, SHOW) {
-            println!(
-                "settings: a hang: the loop had not carried the requests out {SHOW:?} after they were asked"
-            );
+            println!("settings: {SHOW}");
         }
         let reading = read(view)?;
         Some((before, reading))

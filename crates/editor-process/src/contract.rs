@@ -76,7 +76,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread;
-use std::time::Duration;
+
+use editor_wait::{self as wait, HangGuard};
 
 use crate::fake::{Hold, Script, Step, Writer};
 use crate::frame::{Frames, Framing};
@@ -132,7 +133,7 @@ pub trait Ground {
     /// which must come; only a hang reaches the bound, and the property
     /// then fails as a hang. Only an implementation that breaks a rule
     /// takes this long.
-    fn deadline(&self) -> Duration;
+    fn deadline(&self) -> HangGuard;
 }
 
 /// A run to its end gives the child's exit status and every byte of both
@@ -755,14 +756,10 @@ impl Completions {
             .clone()
     }
 
-    /// Whether `id` arrives within `deadline`.
-    fn arrives(&self, id: u64, deadline: Duration) -> bool {
+    /// Whether `id` arrives within `guard`.
+    fn arrives(&self, id: u64, guard: HangGuard) -> bool {
         let ids = self.ids.lock().unwrap_or_else(PoisonError::into_inner);
-        let (ids, _) = self
-            .arrived
-            .wait_timeout_while(ids, deadline, |ids| !ids.contains(&id))
-            .unwrap_or_else(PoisonError::into_inner);
-        ids.contains(&id)
+        wait::wait_while(&self.arrived, ids, guard, |ids| !ids.contains(&id)).1
     }
 }
 
@@ -793,7 +790,7 @@ impl<G: Ground> Check<'_, G> {
         thread::spawn(move || {
             sender.send(child.wait()).ok();
         });
-        exit.recv_timeout(self.ground.deadline()).ok()
+        wait::recv(&exit, self.ground.deadline()).ok()
     }
 
     /// Both streams of `started`, if each reaches its end within the
@@ -802,8 +799,8 @@ impl<G: Ground> Check<'_, G> {
         let deadline = self.ground.deadline();
         let [out, err] = &started.streams;
         Some((
-            out.recv_timeout(deadline).ok()?,
-            err.recv_timeout(deadline).ok()?,
+            wait::recv(out, deadline).ok()?,
+            wait::recv(err, deadline).ok()?,
         ))
     }
 
@@ -1000,7 +997,7 @@ impl<G: Ground> Check<'_, G> {
             service.shutdown();
             sender.send(()).ok();
         });
-        returned.recv_timeout(self.ground.deadline()).is_ok()
+        wait::recv(&returned, self.ground.deadline()).is_ok()
     }
 
     /// Whether the family whose files are named after `name` both started:
@@ -1332,7 +1329,7 @@ impl<G: Ground> Check<'_, G> {
             }
             sender.send(all.ends_with(b"closed\n")).ok();
         });
-        let closed = said.recv_timeout(self.ground.deadline()) == Ok(true);
+        let closed = wait::recv(&said, self.ground.deadline()) == Ok(true);
         let refused = closed
             && matches!(
                 input.write(b"x"),

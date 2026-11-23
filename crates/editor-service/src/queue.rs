@@ -40,7 +40,8 @@ use std::io;
 use std::ops::Deref;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+
+use editor_wait::{self as wait, HangGuard};
 
 /// What an [`Event`] says happened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -361,40 +362,17 @@ impl Queue {
     /// count the pull is in its wait and a push reaches it. It waits on a
     /// Condvar of its own, so it never takes a push's wake-up from a pull.
     ///
-    /// `bound` is a hang guard: only a pull that never parks reaches it. A
-    /// bound past what the clock can count is no bound.
-    pub fn await_waiting(&self, pulls: usize, bound: Duration) -> bool {
-        // A bound past what the clock can count is no bound.
-        let until = Instant::now().checked_add(bound);
-        let mut state = self.state();
-        loop {
+    /// `guard` names the pull's park: only a pull that never parks reaches
+    /// it. A bound past what the clock can count is no bound.
+    pub fn await_waiting(&self, pulls: usize, guard: HangGuard) -> bool {
+        let (_state, parked) = wait::wait_while(&self.parked, self.state(), guard, |state| {
             #[cfg(test)]
             if let Some(hook) = self.awaited.get() {
                 hook(state.waiting);
             }
-            if state.waiting >= pulls {
-                return true;
-            }
-            state = match until {
-                None => self
-                    .parked
-                    .wait(state)
-                    .unwrap_or_else(PoisonError::into_inner),
-                Some(until) => {
-                    let left = until.saturating_duration_since(Instant::now());
-                    if left.is_zero() {
-                        return false;
-                    }
-                    self.parked
-                        // hang guard: a pull's park; only a pull that never
-                        // parks reaches the bound, and the caller then fails
-                        // as a hang.
-                        .wait_timeout(state, left)
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .0
-                }
-            };
-        }
+            state.waiting < pulls
+        });
+        parked
     }
 
     /// How many events the queue holds that have not been pulled.
@@ -539,7 +517,10 @@ mod tests {
     /// only a hang reaches the bound, and the test then fails as a hang.
     /// How long a test waits for something that should happen at once:
     /// only a broken queue takes this long.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "a call's return, a pull's park or a reading",
+        Duration::from_secs(5),
+    );
 
     /// Starts `blocking` on a detached thread and returns where its result
     /// arrives. The thread is detached, not scoped, so a call that never
@@ -555,9 +536,8 @@ mod tests {
     /// The result of a call begun with [`start`]; panics if it has not
     /// arrived by the deadline.
     fn finish<T>(result: &Receiver<T>, what: &str) -> T {
-        result
-            .recv_timeout(DEADLINE)
-            .unwrap_or_else(|_| panic!("{what} did not return within {DEADLINE:?}"))
+        wait::recv(result, DEADLINE)
+            .unwrap_or_else(|missed| panic!("{what} did not return: {missed}"))
     }
 
     /// Starts a pull on a detached thread.
@@ -576,7 +556,7 @@ mod tests {
     fn wait_for_parked(queue: &Queue, pulls: usize) {
         assert!(
             queue.await_waiting(pulls, DEADLINE),
-            "{} pulls were parked after {DEADLINE:?}, not {pulls}",
+            "{} pulls were parked, not {pulls}: {DEADLINE}",
             queue.waiting()
         );
     }
@@ -695,14 +675,13 @@ mod tests {
         let counts = counts_awaited(&queue);
 
         let pulled = start_pull(&queue);
-        held.recv_timeout(DEADLINE)
-            .expect("the pull reaches its park");
+        wait::recv(&held, DEADLINE).expect("the pull reaches its park");
         let awaited = {
             let queue = Arc::clone(&queue);
             start(move || queue.await_waiting(1, DEADLINE))
         };
         assert_eq!(
-            counts.recv_timeout(DEADLINE),
+            wait::recv(&counts, DEADLINE),
             Ok(0),
             "the wait reads no parked pull while the pull is held"
         );
@@ -710,7 +689,7 @@ mod tests {
 
         // A wait that returned at the first reading never reads the park.
         assert_eq!(
-            counts.recv_timeout(DEADLINE),
+            wait::recv(&counts, DEADLINE),
             Ok(1),
             "the wait reads the count again once the pull has parked"
         );
@@ -733,7 +712,7 @@ mod tests {
         };
         // The wait for two has read one and is parked, under the lock it
         // read the count with.
-        assert_eq!(counts.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(wait::recv(&counts, DEADLINE), Ok(1));
 
         queue.push(message(1, 0));
 
@@ -750,15 +729,16 @@ mod tests {
     #[test]
     fn await_waiting_says_no_once_its_bound_has_passed_with_no_pull_parked() {
         let queue = Queue::new();
-        assert!(!queue.await_waiting(1, Duration::ZERO));
-        assert!(queue.await_waiting(0, Duration::ZERO));
+        const NONE: HangGuard = HangGuard::held("a pull, which none makes", Duration::ZERO);
+        assert!(!queue.await_waiting(1, NONE));
+        assert!(queue.await_waiting(0, NONE));
     }
 
     #[test]
     fn await_waiting_takes_a_bound_past_what_the_clock_can_count_as_no_bound() {
         let queue = Queue::new();
-        assert!(queue.await_waiting(0, Duration::MAX));
-        assert!(queue.await_waiting(0, Duration::from_millis(u64::MAX)));
+        assert!(queue.await_waiting(0, DEADLINE.with_bound(Duration::MAX)));
+        assert!(queue.await_waiting(0, DEADLINE.with_bound(Duration::from_millis(u64::MAX))));
     }
 
     #[test]

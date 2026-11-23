@@ -42,6 +42,8 @@
 
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_platform::{Input, Platform, Request};
 use editor_platform_winit::WinitPlatform;
 use editor_platform_winit::probe;
@@ -58,7 +60,10 @@ use crate::{Count, Record};
 /// hang guard: what each step waits for (a report, the loop carrying a
 /// request out, an ask coming back); only a hang reaches the bound, and the
 /// scenario then fails as a hang.
-const STEP: Duration = Duration::from_secs(3);
+const STEP: HangGuard = HangGuard::on(
+    "the loop's next step of the scenario",
+    Duration::from_secs(3),
+);
 
 /// `kCoreEventClass`, `'aevt'`.
 const CORE_EVENT_CLASS: u32 = u32::from_be_bytes(*b"aevt");
@@ -227,7 +232,7 @@ fn titled(platform: &WinitPlatform, text: &str, after: &str) -> Result<(), Strin
     platform.request(Request::Title(text.into()));
     if !probe::await_requests_handled(platform, STEP) {
         return Err(format!(
-            "{after}: the loop had not carried the title's request out {STEP:?} after it was asked"
+            "{after}: the loop had not carried the title's request out after it was asked: {STEP}"
         ));
     }
     let shown = title();

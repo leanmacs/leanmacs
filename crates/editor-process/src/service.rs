@@ -181,10 +181,10 @@
 //!   or not taken, and the flushes waiting: a readout for tests. A test
 //!   that needs the service to have finished waits on a flush.
 
+use editor_wait::HangGuard;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
-use std::time::{Duration, Instant};
 
 use crate::frame::{Frames, Framing, Outbox};
 use crate::{
@@ -1199,11 +1199,10 @@ impl<P: Processes + 'static> Service<P> {
     /// the reader is in its wait. It waits on a Condvar of its own, so it
     /// never takes a take's wake-up from a reader.
     ///
-    /// `bound` is a hang guard: only a child whose readers never park
-    /// reaches it. A bound past what the clock can count is no bound.
-    pub fn wait_held(&self, child: u64, bound: Duration) -> bool {
-        // A bound past what the clock can count is no bound.
-        let until = Instant::now().checked_add(bound);
+    /// `guard` names a reader's park on the bound: only a child whose
+    /// readers never park reaches it. A bound past what the clock can count
+    /// is no bound.
+    pub fn wait_held(&self, child: u64, guard: HangGuard) -> bool {
         let stream = {
             let state = self.inner.state();
             let Some(Run::Streaming { stream, .. }) = state.runs.get(&child) else {
@@ -1211,34 +1210,16 @@ impl<P: Processes + 'static> Service<P> {
             };
             Arc::clone(stream)
         };
-        let mut streamed = stream.state();
-        loop {
-            let held = streamed.parked.iter().any(|&parked| parked);
-            #[cfg(test)]
-            if let Some(hook) = self.inner.held_read.get() {
-                hook(held);
-            }
-            if held {
-                return true;
-            }
-            streamed = match until {
-                None => stream
-                    .held
-                    .wait(streamed)
-                    .unwrap_or_else(PoisonError::into_inner),
-                Some(until) => {
-                    let left = until.saturating_duration_since(Instant::now());
-                    if left.is_zero() {
-                        return false;
-                    }
-                    // hang guard: a reader's park on the bound; only a hang
-                    // reaches the bound, and the caller's check then fails as
-                    // a hang.
-                    let waited = stream.held.wait_timeout(streamed, left);
-                    waited.unwrap_or_else(PoisonError::into_inner).0
+        let (_streamed, held) =
+            editor_wait::wait_while(&stream.held, stream.state(), guard, |streamed| {
+                let held = streamed.parked.iter().any(|&parked| parked);
+                #[cfg(test)]
+                if let Some(hook) = self.inner.held_read.get() {
+                    hook(held);
                 }
-            };
-        }
+                !held
+            });
+        held
     }
 
     /// Cancels the wait `id` on a streaming child, if it is one: drops it,
@@ -1904,7 +1885,10 @@ mod tests {
     /// thread's entering a held call or the fake reaching a state, which
     /// must come; only a hang reaches the bound, and the check then fails
     /// as a hang.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "a completion, a thread's entering a held call or the fake reaching a state",
+        Duration::from_secs(5),
+    );
 
     /// A limit no test's output is over.
     const ROOMY: u64 = 1 << 20;
@@ -1933,7 +1917,7 @@ mod tests {
     /// child cancelled or forgotten before it has been reaped.
     fn flushed(service: &Service<FakeProcesses>, completed: &Receiver<u64>) -> bool {
         assert!(service.flush(FLUSH), "the flush's id is free");
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(FLUSH));
+        assert_eq!(editor_wait::recv(completed, DEADLINE), Ok(FLUSH));
         service.pending() == 0
     }
 
@@ -1990,7 +1974,11 @@ mod tests {
         release: Sender<()>,
         flush: u64,
     ) -> (bool, Vec<u64>) {
-        assert_eq!(entered.recv_timeout(DEADLINE), Ok(()), "it is completed");
+        assert_eq!(
+            editor_wait::recv(entered, DEADLINE),
+            Ok(()),
+            "it is completed"
+        );
         let asked = service.flush(flush);
         // Read while the completion is held, and checked once it is let
         // go: a check that fails while it is held would leave the
@@ -1999,8 +1987,8 @@ mod tests {
         drop(release);
         assert!(asked);
         let after = [
-            completed.recv_timeout(DEADLINE),
-            completed.recv_timeout(DEADLINE),
+            editor_wait::recv(completed, DEADLINE),
+            editor_wait::recv(completed, DEADLINE),
         ]
         .into_iter()
         .map_while(Result::ok)
@@ -2064,8 +2052,8 @@ mod tests {
         fake.let_go_all();
 
         // The run's completion, then the flush left.
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(3));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(3));
         assert!(service.take(1).is_some());
         assert!(flushed(&service, &completed));
     }
@@ -2111,7 +2099,7 @@ mod tests {
         assert!(service.flush(2));
         fake.let_go_all();
         assert_eq!(
-            entered.recv_timeout(DEADLINE),
+            editor_wait::recv(&entered, DEADLINE),
             Ok(()),
             "the run's thread completes the flush"
         );
@@ -2124,7 +2112,7 @@ mod tests {
             // Read while the completion is held, and checked once it is
             // let go: a check that fails while it is held would leave
             // shutdown waiting for it.
-            let first = told.recv_timeout(DEADLINE);
+            let first = editor_wait::recv(&told, DEADLINE);
             let early: Vec<_> = told.try_iter().collect();
             drop(release);
             (first, early)
@@ -2156,7 +2144,7 @@ mod tests {
         assert!(!service.start(1, command("x"), ROOMY), "running");
         assert!(fake.until(DEADLINE, |record| record.waiting.len() == 1));
         fake.let_go_all();
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert!(!service.start(1, command("x"), ROOMY), "not taken");
         assert_eq!(fake.record().spawned.len(), 1);
 
@@ -2168,7 +2156,7 @@ mod tests {
         assert!(fake.until(DEADLINE, |record| record.waiting.len() == 1
             && record.spawned.len() == 2));
         fake.let_go_all();
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
     }
 
     #[test]
@@ -2178,7 +2166,7 @@ mod tests {
 
         assert!(service.start(4, command("unscripted"), ROOMY));
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(4));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(4));
         let Some(RunResult::Refused(refusal)) = service.take(4) else {
             panic!("a refusal");
         };
@@ -2197,8 +2185,8 @@ mod tests {
         assert!(service.start(1, Command::new("/bin/sh", [""; 0], "relative"), ROOMY));
         assert!(service.start(2, Command::new("bin/sh", [""; 0], "/dir"), ROOMY));
         let mut done = [
-            completed.recv_timeout(DEADLINE).expect("one"),
-            completed.recv_timeout(DEADLINE).expect("two"),
+            editor_wait::recv(&completed, DEADLINE).expect("one"),
+            editor_wait::recv(&completed, DEADLINE).expect("two"),
         ];
         done.sort_unstable();
 
@@ -2229,7 +2217,7 @@ mod tests {
 
         assert!(service.start(9, command("x"), ROOMY));
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(9));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(9));
         assert_eq!(
             service.take(9),
             Some(ran(Exit::Code(3), b"out\n\xff", b"err"))
@@ -2250,7 +2238,7 @@ mod tests {
 
         assert!(service.start_with_input(9, command("cat"), Some(b"in\0\xff".to_vec()), ROOMY));
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(9));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(9));
         assert_eq!(service.take(9), Some(ran(Exit::Code(0), b"in\0\xff", b"")));
         let record = fake.record();
         let child = record.spawned[0].0;
@@ -2274,7 +2262,7 @@ mod tests {
 
         assert!(service.start_with_input(3, command("true"), Some(vec![b'x'; 1 << 16]), ROOMY));
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(3));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(3));
         assert_eq!(service.take(3), Some(ran(Exit::Code(0), b"done", b"")));
         assert!(flushed(&service, &completed));
     }
@@ -2341,7 +2329,7 @@ mod tests {
         let fake = FakeProcesses::scripted([(command("x"), Ok(Script::ends(Exit::Code(0))))]);
         let (service, completed) = service(&fake);
         assert!(service.start(1, command("x"), ROOMY));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
 
         assert!(service.cancel(1));
 
@@ -2369,7 +2357,7 @@ mod tests {
         assert!(completed.try_recv().is_err());
         fake.release_reads();
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert_eq!(service.take(1), Some(ran(Exit::Code(0), b"out", b"err")));
     }
 
@@ -2403,7 +2391,7 @@ mod tests {
         // a check that fails while they are held would leave shutdown
         // waiting for them.
         let parked = fake.until(DEADLINE, |record| record.reaps_parked == 2);
-        let first = told.recv_timeout(DEADLINE);
+        let first = editor_wait::recv(&told, DEADLINE);
         let early: Vec<_> = told.try_iter().collect();
         let reaped = fake.record().reaped;
         fake.release_reaps();
@@ -2416,7 +2404,7 @@ mod tests {
         );
         assert_eq!(reaped, []);
         let returned = loop {
-            match told.recv_timeout(DEADLINE) {
+            match editor_wait::recv(&told, DEADLINE) {
                 Ok("returned") => break true,
                 Ok(_) => {}
                 Err(_) => break false,
@@ -2467,7 +2455,7 @@ mod tests {
             sender.send(()).ok();
         });
 
-        assert_eq!(returned.recv_timeout(DEADLINE), Ok(()));
+        assert_eq!(editor_wait::recv(&returned, DEADLINE), Ok(()));
         assert!(!fake.alive(child), "reaped");
         assert!(fake.alive(child + 1), "the escaped process is not ended");
         assert_eq!(service.pending(), 0);
@@ -2515,7 +2503,7 @@ mod tests {
         assert!(completed.try_recv().is_err());
         fake.end(fake.record().spawned[0].0 + 1);
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert_eq!(service.take(1), Some(ran(Exit::Code(0), b"out", b"")));
     }
 
@@ -2524,7 +2512,7 @@ mod tests {
         let fake = FakeProcesses::scripted([(command("x"), Ok(Script::ends(Exit::Code(0))))]);
         let (service, completed) = service(&fake);
         assert!(service.start(1, command("x"), ROOMY));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
 
         service.shutdown();
         service.shutdown();
@@ -2562,7 +2550,7 @@ mod tests {
 
         assert!(service.start(1, command("x"), 4));
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert_eq!(
             service.take(1),
             Some(RunResult::OutputTooLarge {
@@ -2593,7 +2581,7 @@ mod tests {
 
         assert!(service.start(1, command("x"), ROOMY));
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert_eq!(service.take(1), Some(RunResult::Refused(refusal)));
         let child = fake.record().spawned[0].0;
         assert_eq!(fake.record().killed, [child]);
@@ -2614,7 +2602,7 @@ mod tests {
 
         assert!(service.start(1, command("cat"), ROOMY));
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert_eq!(service.take(1), Some(ran(Exit::Code(0), b"", b"")));
         let child = fake.record().spawned[0].0;
         assert_eq!(fake.record().children[&child].input, Input::Closed);
@@ -2630,7 +2618,7 @@ mod tests {
 
         assert!(service.start(1, command("x"), 4));
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert_eq!(service.take(1), Some(ran(Exit::Code(0), b"0123", b"abcd")));
         assert!(Path::new("/dir").is_absolute());
     }
@@ -2648,7 +2636,7 @@ mod tests {
 
         assert!(service.start_head(1, command("x"), Some(b"in".to_vec()), 4));
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert_eq!(
             service.take(1),
             Some(RunResult::Cut {
@@ -2672,7 +2660,7 @@ mod tests {
 
         assert!(service.start_head(1, command("x"), None, 4));
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert_eq!(service.take(1), Some(ran(Exit::Code(1), b"0123", b"ab")));
         assert_eq!(fake.record().killed, []);
     }
@@ -2690,7 +2678,7 @@ mod tests {
 
         assert!(service.start_head(1, command("x"), None, 4));
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert_eq!(
             service.take(1),
             Some(RunResult::OutputTooLarge {
@@ -2736,7 +2724,10 @@ mod streaming {
     /// reader's park, a reading or the fake reaching a state, which must
     /// come; only a hang reaches the bound, and the check then fails as a
     /// hang.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "a completion, a reader's park, a reading or the fake reaching a state",
+        Duration::from_secs(5),
+    );
 
     /// A bound no test's output reaches.
     const ROOMY: u64 = 1 << 20;
@@ -2786,7 +2777,7 @@ mod streaming {
         let (service, completed) = service(&fake);
 
         assert!(service.start(1, cleared, ROOMY));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert!(matches!(
             opened(
                 &service,
@@ -2822,7 +2813,7 @@ mod streaming {
         streaming: Streaming,
     ) -> Option<StreamReply> {
         assert!(service.open(id, command, streaming));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(id));
+        assert_eq!(editor_wait::recv(completed, DEADLINE), Ok(id));
         service.take_stream(id)
     }
 
@@ -2835,7 +2826,7 @@ mod streaming {
         wait: u64,
     ) -> Delivery {
         assert!(service.read(child, wait), "the read is taken");
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(wait));
+        assert_eq!(editor_wait::recv(completed, DEADLINE), Ok(wait));
         match service.take_stream(wait) {
             Some(StreamReply::Delivered(delivery)) => delivery,
             other => panic!("a delivery, not {other:?}"),
@@ -3096,7 +3087,7 @@ mod streaming {
         ask: impl FnOnce() -> bool,
     ) -> Option<StreamReply> {
         assert!(ask(), "the request is taken");
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(wait));
+        assert_eq!(editor_wait::recv(completed, DEADLINE), Ok(wait));
         service.take_stream(wait)
     }
 
@@ -3312,15 +3303,14 @@ mod streaming {
             command("x"),
             lines_with(Input::Closed, 1000),
         );
-        held.recv_timeout(DEADLINE)
-            .expect("the reader reaches its park");
+        editor_wait::recv(&held, DEADLINE).expect("the reader reaches its park");
 
         let waited = {
             let service = service.clone();
             thread::spawn(move || service.wait_held(1, DEADLINE))
         };
         assert_eq!(
-            readings.recv_timeout(DEADLINE),
+            editor_wait::recv(&readings, DEADLINE),
             Ok(false),
             "the wait reads no parked reader while the reader is held"
         );
@@ -3329,7 +3319,7 @@ mod streaming {
 
         // A wait that returned at its first reading never reads the park.
         assert_eq!(
-            readings.recv_timeout(DEADLINE),
+            editor_wait::recv(&readings, DEADLINE),
             Ok(true),
             "the wait reads again once the reader has parked"
         );
@@ -3371,8 +3361,8 @@ mod streaming {
         assert!(comes_to_be_held(&service, 1));
 
         // The child is already held, so neither wait blocks.
-        assert!(service.wait_held(1, Duration::MAX));
-        assert!(service.wait_held(1, Duration::from_millis(u64::MAX)));
+        assert!(service.wait_held(1, DEADLINE.with_bound(Duration::MAX)));
+        assert!(service.wait_held(1, DEADLINE.with_bound(Duration::from_millis(u64::MAX))));
         assert!(service.cancel(1));
         assert!(flushed(&service, &completed));
     }
@@ -3476,7 +3466,7 @@ mod streaming {
             lines_with(Input::Closed, 6),
         );
         assert!(service.read(1, 2));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(2));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(2));
 
         // A bound of exactly the output: held once all of it is read.
         assert!(comes_to_be_held(&service, 1));
@@ -3520,7 +3510,7 @@ mod streaming {
         assert!(comes_to_be_held(&service, 1), "every chunk is read");
         let child = fake.record().spawned[0].0;
         assert_eq!(fake.record().children[&child].read[0], lines_written.len());
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(2));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(2));
         assert!(completed.try_recv().is_err(), "exactly one completion");
 
         let Some(StreamReply::Delivered(first)) = service.take_stream(2) else {
@@ -3601,11 +3591,8 @@ mod streaming {
                 // hang guard: the read's completion, which the child's end
                 // brings; only a hang reaches the bound, and the order
                 // asserted below then fails.
-                after_read
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .recv_timeout(DEADLINE)
-                    .ok();
+                let after_read = after_read.lock().unwrap_or_else(PoisonError::into_inner);
+                editor_wait::recv(&after_read, DEADLINE).ok();
             }
             sender
                 .lock()
@@ -3645,8 +3632,8 @@ mod streaming {
         // The close returns once it has completed, which the hold above
         // puts after the read's completion: the child ended on the close.
         assert!(service.close_input(1, 3));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(2));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(3));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(2));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(3));
 
         let Some(StreamReply::Delivered(mut delivered)) = service.take_stream(2) else {
             panic!("a delivery");
@@ -3746,7 +3733,7 @@ mod streaming {
     /// one is, until it is reaped.
     fn flushed(service: &Service<FakeProcesses>, completed: &Receiver<u64>) -> bool {
         assert!(service.flush(FLUSH), "the flush's id is free");
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(FLUSH));
+        assert_eq!(editor_wait::recv(completed, DEADLINE), Ok(FLUSH));
         service.pending() == 0
     }
 
@@ -3886,7 +3873,7 @@ mod streaming {
         let (service, completed, entered, release) = super::tests::holding(&fake, 1);
         assert!(service.open(1, command("x"), lines_with(Input::Pipe, ROOMY)));
         assert_eq!(
-            entered.recv_timeout(DEADLINE),
+            editor_wait::recv(&entered, DEADLINE),
             Ok(()),
             "the waiter completes the open"
         );
@@ -3903,7 +3890,7 @@ mod streaming {
         fake.release_reaps();
 
         assert_eq!(before_the_reap, [1], "the flush waits for the reap");
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(FLUSH));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(FLUSH));
         assert_eq!(service.pending(), 0);
     }
 
@@ -4114,7 +4101,7 @@ mod streaming {
             sender.send(()).ok();
         });
 
-        assert_eq!(returned.recv_timeout(DEADLINE), Ok(()));
+        assert_eq!(editor_wait::recv(&returned, DEADLINE), Ok(()));
         shutdown.join().expect("shutdown returns");
         let record = fake.record();
         assert_eq!(record.reaped.len(), 2);

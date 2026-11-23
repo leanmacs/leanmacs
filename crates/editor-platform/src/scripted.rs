@@ -4,9 +4,9 @@
 //! above the port, and the Lean test executable through `editor-ffi`, run on
 //! it. It opens nothing and needs no display.
 
+use editor_wait::{self as wait, HangGuard};
 use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use crate::TitleBar;
@@ -317,42 +317,21 @@ impl ScriptedPlatform {
     /// again. A close asked unparks it too. A wait begun before a run
     /// starts waits for that run to park.
     ///
-    /// `bound` is a hang guard: only a run that never parks reaches it.
-    pub fn wait_parked(&self, bound: Duration) -> bool {
+    /// `guard` names the run's park: only a run that never parks reaches
+    /// it. A bound past what the clock can count is no bound.
+    pub fn wait_parked(&self, guard: HangGuard) -> bool {
         if self.script.is_err() {
             return false;
         }
-        // A bound past what the clock can count is no bound.
-        let until = Instant::now().checked_add(bound);
-        let mut state = self.state();
-        loop {
+        let (_state, parked) = wait::wait_while(&self.parks, self.state(), guard, |state| {
             let parked = state.parked && !state.close_asked && state.to_report.is_empty();
             #[cfg(test)]
             if let Some(hook) = self.awaited.get() {
                 hook(parked);
             }
-            if parked {
-                return true;
-            }
-            state = match until {
-                None => self
-                    .parks
-                    .wait(state)
-                    .unwrap_or_else(PoisonError::into_inner),
-                Some(until) => {
-                    let left = until.saturating_duration_since(Instant::now());
-                    if left.is_zero() {
-                        return false;
-                    }
-                    // hang guard: the run's park, which notifies `parks`;
-                    // only a run that never parks reaches the bound.
-                    self.parks
-                        .wait_timeout(state, left)
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .0
-                }
-            };
-        }
+            !parked
+        });
+        parked
     }
 
     /// Locks the state. The lock is never held while other code runs, so a
@@ -525,12 +504,19 @@ mod tests {
     /// only a hang reaches the bound, and the test then fails as a hang
     /// instead of hanging. Each wait on it is for something that should
     /// happen at once.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "the next thing the run reports or says, or its return",
+        Duration::from_secs(5),
+    );
 
     /// hang guard: the run parks to wait for its close
     /// ([`ScriptedPlatform::wait_parked`]); only a run that never parks
     /// takes this long, and the test then fails instead of hanging.
-    const PARKS: Duration = Duration::from_secs(5);
+    const PARKS: HangGuard = HangGuard::on("the run's park", Duration::from_secs(5));
+
+    /// A guard run out on purpose, at once: the run is not parked, and the
+    /// wait says so without waiting.
+    const UNPARKED: HangGuard = HangGuard::held("the run, which is not parked", Duration::ZERO);
 
     /// A run in progress on a thread of its own.
     struct Running {
@@ -588,9 +574,7 @@ mod tests {
         fn next(&self, count: usize) -> Vec<Input> {
             (0..count)
                 .map(|_| {
-                    self.inputs
-                        .recv_timeout(DEADLINE)
-                        .expect("the platform reports its next input")
+                    wait::recv(&self.inputs, DEADLINE).expect("the platform reports its next input")
                 })
                 .collect()
         }
@@ -610,9 +594,7 @@ mod tests {
 
         /// The run's result; panics if it has not returned by the deadline.
         fn result(&self) -> Result<(), CannotOpen> {
-            self.done
-                .recv_timeout(DEADLINE)
-                .expect("the run returns once it is asked to close")
+            wait::recv(&self.done, DEADLINE).expect("the run returns once it is asked to close")
         }
     }
 
@@ -674,9 +656,7 @@ mod tests {
         fn all_said(&self) -> Vec<Said> {
             let mut all = Vec::new();
             loop {
-                let next = self
-                    .said
-                    .recv_timeout(DEADLINE)
+                let next = wait::recv(&self.said, DEADLINE)
                     .expect("the run says its next thing, or returns");
                 let returned = next == Said::Returned;
                 all.push(next);
@@ -716,8 +696,7 @@ mod tests {
         /// Waits for the run to reach the place; panics if it has not by the
         /// deadline.
         fn reached(&self, place: &str) {
-            self.reached
-                .recv_timeout(DEADLINE)
+            wait::recv(&self.reached, DEADLINE)
                 .unwrap_or_else(|_| panic!("the run reaches {place}"));
         }
 
@@ -771,7 +750,7 @@ mod tests {
         hold.reached("its park");
         let waited = start_wait(&platform);
         assert_eq!(
-            readings.recv_timeout(DEADLINE),
+            wait::recv(&readings, DEADLINE),
             Ok(false),
             "the wait reads no park while the run is held before it"
         );
@@ -779,14 +758,13 @@ mod tests {
 
         // A wait that answered at its first reading never reads the park.
         loop {
-            let parked = readings
-                .recv_timeout(DEADLINE)
+            let parked = wait::recv(&readings, DEADLINE)
                 .expect("the wait reads again once the run has parked");
             if parked {
                 break;
             }
         }
-        assert_eq!(waited.recv_timeout(DEADLINE), Ok(true));
+        assert_eq!(wait::recv(&waited, DEADLINE), Ok(true));
         platform.close();
         assert_eq!(run.result(), Ok(()));
     }
@@ -809,19 +787,19 @@ mod tests {
 
         platform.request(Request::EnterFullscreen);
         assert!(
-            !platform.wait_parked(Duration::ZERO),
+            !platform.wait_parked(UNPARKED),
             "a report queued unparks the run, whether it has woken yet or not"
         );
         hold.reached("its report of the resize");
         assert!(
-            !platform.wait_parked(Duration::ZERO),
+            !platform.wait_parked(UNPARKED),
             "a run that is reporting is not parked"
         );
         let waited = start_wait(&platform);
         hold.release();
 
         assert_eq!(
-            waited.recv_timeout(DEADLINE),
+            wait::recv(&waited, DEADLINE),
             Ok(true),
             "the wait ends once the run has parked again"
         );
@@ -848,7 +826,7 @@ mod tests {
 
         assert_eq!(run.next(1), [Input::Resized(opened_size(true))]);
         assert!(
-            platform.wait_parked(Duration::MAX),
+            platform.wait_parked(PARKS.with_bound(Duration::MAX)),
             "a bound past what the clock can count is no bound"
         );
         platform.close();
@@ -864,16 +842,16 @@ mod tests {
 
         platform.close();
         assert!(
-            !platform.wait_parked(Duration::ZERO),
+            !platform.wait_parked(UNPARKED),
             "a run asked to close waits no more, whether it has woken yet or not"
         );
         assert_eq!(run.result(), Ok(()));
-        assert!(!platform.wait_parked(Duration::ZERO));
+        assert!(!platform.wait_parked(UNPARKED));
     }
 
     #[test]
     fn wait_parked_says_no_once_its_bound_has_passed_and_at_once_for_a_platform_that_cannot_open() {
-        assert!(!ScriptedPlatform::new(Vec::new()).wait_parked(Duration::ZERO));
+        assert!(!ScriptedPlatform::new(Vec::new()).wait_parked(UNPARKED));
 
         let failing = Arc::new(ScriptedPlatform::failing("no display"));
         let readings = readings_awaited(&failing);

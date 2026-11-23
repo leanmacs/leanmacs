@@ -17,7 +17,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
-use std::time::Duration;
+
+use editor_wait::HangGuard;
 
 use crate::queue;
 
@@ -147,22 +148,18 @@ impl RecordingCompleter {
     /// passed first. A test waits for reports made on other threads with
     /// it, on each report and never by a poll, then takes them.
     ///
-    /// `bound` is a hang guard: only reports that never come reach it.
-    pub fn wait_for(&self, count: usize, bound: Duration) -> bool {
+    /// `guard` names the reports: only reports that never come reach it.
+    pub fn wait_for(&self, count: usize, guard: HangGuard) -> bool {
         let requests = self.requests.lock().unwrap_or_else(PoisonError::into_inner);
-        let (_requests, waited) = self
-            .reported
-            // hang guard: a report; only reports that never come reach the
-            // bound, and the caller then fails as a hang.
-            .wait_timeout_while(requests, bound, |requests| {
+        let (_requests, reported) =
+            editor_wait::wait_while(&self.reported, requests, guard, |requests| {
                 #[cfg(test)]
                 if let Some(read) = self.read.get() {
                     read(requests.len());
                 }
                 requests.len() < count
-            })
-            .unwrap_or_else(PoisonError::into_inner);
-        !waited.timed_out()
+            });
+        reported
     }
 }
 
@@ -219,10 +216,15 @@ mod tests {
     use std::sync::mpsc::{self, Receiver};
     use std::sync::{Arc, Barrier};
     use std::thread;
+    use std::time::Duration;
 
     /// hang guard: the report or the reading each wait ends on; only a
     /// hang reaches the bound, and the test then fails as a hang.
-    const BOUND: Duration = Duration::from_secs(10);
+    const BOUND: HangGuard = HangGuard::on("a report or a reading", Duration::from_secs(10));
+
+    /// A guard run out on purpose: the reports, too few of which are made.
+    const TOO_FEW: HangGuard =
+        HangGuard::held("the reports, too few of which are made", Duration::ZERO);
 
     /// Where each count [`RecordingCompleter::wait_for`] reads arrives.
     fn readings(completer: &RecordingCompleter) -> Receiver<usize> {
@@ -248,7 +250,7 @@ mod tests {
             thread::spawn(move || completer.wait_for(1, BOUND))
         };
         assert_eq!(
-            readings.recv_timeout(BOUND),
+            editor_wait::recv(&readings, BOUND),
             Ok(0),
             "the wait begins with no report held"
         );
@@ -260,7 +262,7 @@ mod tests {
 
         // A wait that answered at its first reading never reads the report.
         assert_eq!(
-            readings.recv_timeout(BOUND),
+            editor_wait::recv(&readings, BOUND),
             Ok(1),
             "the wait reads the reports again once one is made"
         );
@@ -271,14 +273,11 @@ mod tests {
     #[test]
     fn a_wait_for_reports_says_no_once_its_bound_has_passed_with_too_few() {
         let completer = RecordingCompleter::new();
-        assert!(!completer.wait_for(1, Duration::ZERO));
+        assert!(!completer.wait_for(1, TOO_FEW));
         assert!(completer.complete(3));
-        assert!(completer.wait_for(1, Duration::ZERO));
+        assert!(completer.wait_for(1, TOO_FEW));
         assert_eq!(completer.take(), [3]);
-        assert!(
-            !completer.wait_for(1, Duration::ZERO),
-            "taken, it holds none"
-        );
+        assert!(!completer.wait_for(1, TOO_FEW), "taken, it holds none");
     }
 
     static FIRST: Service = Service::named("first");

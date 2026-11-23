@@ -17,6 +17,8 @@ use std::ops::Range;
 use std::slice;
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_ffi::display::{Display, WireFace, WireScene, WireView, text_ref};
 use editor_ffi::document::{Document, RawText};
 use editor_ffi::excerpts::ExcerptStatus;
@@ -36,8 +38,9 @@ use editor_syntax::{GrammarName, QueryKind, Syntax};
 use editor_syntax_treesitter::{TreeSitter, TreeSitterQuery};
 use editor_text::{ChangeSet, Origin, Transaction};
 
-/// The longest a test waits for a delivery.
-const BOUND: Duration = Duration::from_secs(10);
+/// hang guard: a delivery; only a hang reaches the bound, and the test
+/// then fails as a hang. The longest a test waits for one.
+const BOUND: HangGuard = HangGuard::on("a delivery", Duration::from_secs(10));
 
 /// Has the process's service refresh a text as soon as it is quiet, through
 /// C: what a test that waits for [`settled_quiet`] sets before its first

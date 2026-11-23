@@ -26,6 +26,8 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 /// The `kind` of [`editor_ffi_live_await`] that names snapshots.
 pub const SNAPSHOTS: u8 = 1;
 
@@ -93,29 +95,24 @@ impl Live {
     }
 
     /// Waits until at most `target` handles are live, and says whether
-    /// they were: false only once `bound` has passed first.
+    /// they were: false only once `guard` has run out first.
     ///
-    /// `bound` is a hang guard: only a handle that is never freed reaches
-    /// it.
-    pub(crate) fn await_at_most(&self, target: u64, bound: Duration) -> bool {
+    /// `guard` names the free of a handle, which notifies `freed`: only a
+    /// handle that is never freed reaches it.
+    pub(crate) fn await_at_most(&self, target: u64, guard: HangGuard) -> bool {
         let lock = self.lock.lock().unwrap_or_else(PoisonError::into_inner);
         self.waits.fetch_add(1, Ordering::SeqCst);
-        // A free notifies `freed`; only a handle never freed reaches the bound.
-        // hang guard: the free of a handle.
-        let (lock, waited) = self
-            .freed
-            .wait_timeout_while(lock, bound, |_| {
-                let count = self.count();
-                #[cfg(test)]
-                if let Some(read) = self.read.get() {
-                    read(count);
-                }
-                count > target
-            })
-            .unwrap_or_else(PoisonError::into_inner);
+        let (lock, freed) = editor_wait::wait_while(&self.freed, lock, guard, |_| {
+            let count = self.count();
+            #[cfg(test)]
+            if let Some(read) = self.read.get() {
+                read(count);
+            }
+            count > target
+        });
         self.waits.fetch_sub(1, Ordering::SeqCst);
         drop(lock);
-        !waited.timed_out()
+        freed
     }
 }
 
@@ -140,7 +137,11 @@ fn of(kind: u8) -> Option<&'static Live> {
 /// it.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_live_await(kind: u8, target: u64, bound_ms: u64) -> bool {
-    of(kind).is_some_and(|live| live.await_at_most(target, Duration::from_millis(bound_ms)))
+    let guard = HangGuard::on(
+        "the free of a handle, under a Lean caller's guard",
+        Duration::from_millis(bound_ms),
+    );
+    of(kind).is_some_and(|live| live.await_at_most(target, guard))
 }
 
 #[cfg(test)]
@@ -150,11 +151,19 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use editor_wait::HangGuard;
+
     use super::{COUNTERS, DOCUMENTS, Live, SNAPSHOTS, editor_ffi_live_await};
 
     /// hang guard: the free, or the reading, each wait ends on; only a hang
     /// reaches the bound, and the test then fails as a hang.
-    const BOUND: Duration = Duration::from_secs(10);
+    const BOUND: HangGuard = HangGuard::on(
+        "the free, or the reading, each wait ends on",
+        Duration::from_secs(10),
+    );
+
+    /// A guard run out on purpose, at once: the handles not yet freed.
+    const NOT_FREED: HangGuard = HangGuard::held("the handles not yet freed", Duration::ZERO);
 
     /// Where each count [`Live::await_at_most`] reads on `live` arrives.
     fn readings(live: &Live) -> Receiver<u64> {
@@ -181,7 +190,7 @@ mod tests {
             thread::spawn(move || live.await_at_most(1, BOUND))
         };
         assert_eq!(
-            readings.recv_timeout(BOUND),
+            editor_wait::recv(&readings, BOUND),
             Ok(2),
             "the wait begins with the count above its target"
         );
@@ -194,7 +203,7 @@ mod tests {
 
         // A wait that answered at its first reading never reads the free.
         assert_eq!(
-            readings.recv_timeout(BOUND),
+            editor_wait::recv(&readings, BOUND),
             Ok(1),
             "the wait reads the count again once the handle is freed"
         );
@@ -206,10 +215,10 @@ mod tests {
     fn a_wait_says_no_once_its_bound_has_passed_with_the_count_above_its_target() {
         let live = Live::new();
         live.add();
-        assert!(!live.await_at_most(0, Duration::ZERO));
-        assert!(live.await_at_most(1, Duration::ZERO));
+        assert!(!live.await_at_most(0, NOT_FREED));
+        assert!(live.await_at_most(1, NOT_FREED));
         live.free();
-        assert!(live.await_at_most(0, Duration::ZERO));
+        assert!(live.await_at_most(0, NOT_FREED));
     }
 
     #[test]

@@ -12,6 +12,8 @@ use std::sync::Arc;
 use std::sync::mpsc::{Sender, channel};
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_layout::Layout;
 use editor_layout::frame::Frame;
 use editor_layout::scene::{Rect, Scene};
@@ -24,7 +26,10 @@ use editor_render::render_loop::{CondvarPark, RenderLoop};
 /// hang guard: a word from the other thread, the draw or the loop's
 /// return; only a hang reaches the bound, and the test then fails as a
 /// hang.
-const BOUND: Duration = Duration::from_secs(10);
+const BOUND: HangGuard = HangGuard::on(
+    "a word from the other thread, the draw or the loop's return",
+    Duration::from_secs(10),
+);
 
 /// The recording renderer, which also says on a channel that it drew.
 struct Signalling {
@@ -78,14 +83,11 @@ fn a_parked_loop_draws_a_frame_submitted_from_another_thread_and_stops_when_told
     assert!(draws.try_recv().is_err());
     let frame = frame_of("one\ntwo");
     handle.submit(Arc::clone(&frame), None);
-    draws
-        .recv_timeout(BOUND)
-        .expect("the frame submitted from this thread is drawn");
+    editor_wait::recv(&draws, BOUND).expect("the frame submitted from this thread is drawn");
 
     handle.stop();
-    let renderer = renderers
-        .recv_timeout(BOUND)
-        .expect("the loop returns when it is told to stop");
+    let renderer =
+        editor_wait::recv(&renderers, BOUND).expect("the loop returns when it is told to stop");
     let requests = renderer.inner.requests();
     assert_eq!(requests.len(), 1);
     assert!(Arc::ptr_eq(&requests[0].frame, &frame));

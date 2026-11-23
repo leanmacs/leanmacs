@@ -16,6 +16,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_process::frame::{Frames, Framing};
 use editor_process::service::{Delivery, End, Service, StreamReply, Streaming};
 use editor_process::{Command, Exit, Input};
@@ -23,7 +25,7 @@ use editor_process_std::StdProcesses;
 
 /// hang guard: each reply the test waits for, which must come; only a hang
 /// reaches the bound, and the check then fails as a hang.
-const DEADLINE: Duration = Duration::from_secs(10);
+const DEADLINE: HangGuard = HangGuard::on("each reply the test waits for", Duration::from_secs(10));
 
 /// What the test writes: 256 KiB, four times the 64 KiB a pipe holds on
 /// Linux and the most macOS grows one to. No run of it repeats within 251
@@ -53,7 +55,7 @@ fn replied(
     ask: impl FnOnce() -> bool,
 ) -> Option<StreamReply> {
     assert!(ask(), "the request is taken");
-    assert_eq!(completed.recv_timeout(DEADLINE), Ok(wait));
+    assert_eq!(editor_wait::recv(completed, DEADLINE), Ok(wait));
     service.take_stream(wait)
 }
 

@@ -12,7 +12,8 @@
 //! ([`Handled::wait_all`]) is notified as the loop counts, never a poll.
 
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant};
+
+use editor_wait::{self as wait, HangGuard};
 
 /// The two counts of one run, and what is notified as they change.
 #[derive(Default)]
@@ -57,41 +58,20 @@ impl Handled {
     }
 
     /// Waits until every request sent has been carried out, and says
-    /// whether it was: false only once `bound` has passed first.
+    /// whether it was: false only once `guard` has run out first.
     ///
-    /// `bound` is a hang guard: only a loop that never carries a request
-    /// out reaches it.
-    pub(crate) fn wait_all(&self, bound: Duration) -> bool {
-        // A bound past what the clock can count is no bound.
-        let until = Instant::now().checked_add(bound);
-        let mut counts = self.counts();
-        loop {
+    /// `guard` names the loop's count of what it carried out: only a loop
+    /// that never carries a request out reaches it. A bound past what the
+    /// clock can count is no bound.
+    pub(crate) fn wait_all(&self, guard: HangGuard) -> bool {
+        let (_counts, all) = wait::wait_while(&self.changed, self.counts(), guard, |counts| {
             #[cfg(test)]
             if let Some(hook) = self.awaited.get() {
                 hook(*counts);
             }
-            if counts.handled >= counts.sent {
-                return true;
-            }
-            counts = match until {
-                None => self
-                    .changed
-                    .wait(counts)
-                    .unwrap_or_else(PoisonError::into_inner),
-                Some(until) => {
-                    let left = until.saturating_duration_since(Instant::now());
-                    if left.is_zero() {
-                        return false;
-                    }
-                    // hang guard: the loop's count of what it carried out;
-                    // only a loop that never carries one out reaches it.
-                    self.changed
-                        .wait_timeout(counts, left)
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .0
-                }
-            };
-        }
+            counts.handled < counts.sent
+        });
+        all
     }
 
     /// Locks the counts. Nothing runs under the lock, so a poisoned one
@@ -107,10 +87,18 @@ mod tests {
     use std::sync::Arc;
     use std::sync::mpsc::{self, Receiver};
     use std::thread;
+    use std::time::Duration;
 
     /// hang guard: the wait's next reading, or its answer; only a hang
     /// reaches the bound, and the test then fails as a hang.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "the wait's next reading, or its answer",
+        Duration::from_secs(5),
+    );
+
+    /// A guard run out on purpose, at once: the requests not yet carried
+    /// out.
+    const NOT_YET: HangGuard = HangGuard::held("the requests not yet carried out", Duration::ZERO);
 
     /// Where each reading [`Handled::wait_all`] makes on `handled` arrives.
     fn readings(handled: &Handled) -> Receiver<Counts> {
@@ -128,16 +116,16 @@ mod tests {
 
     #[test]
     fn with_nothing_sent_everything_has_been_carried_out() {
-        assert!(Handled::default().wait_all(Duration::ZERO));
+        assert!(Handled::default().wait_all(NOT_YET));
     }
 
     #[test]
     fn a_request_sent_and_not_carried_out_runs_the_wait_out() {
         let handled = Handled::default();
         handled.sent();
-        assert!(!handled.wait_all(Duration::ZERO));
+        assert!(!handled.wait_all(NOT_YET));
         handled.handled(1);
-        assert!(handled.wait_all(Duration::ZERO));
+        assert!(handled.wait_all(NOT_YET));
     }
 
     #[test]
@@ -154,7 +142,7 @@ mod tests {
             });
         }
         assert_eq!(
-            readings.recv_timeout(DEADLINE),
+            wait::recv(&readings, DEADLINE),
             Ok(Counts {
                 sent: 2,
                 handled: 0
@@ -165,7 +153,7 @@ mod tests {
         handled.handled(1);
         // A wait that answered at its first reading never reads these.
         assert_eq!(
-            readings.recv_timeout(DEADLINE),
+            wait::recv(&readings, DEADLINE),
             Ok(Counts {
                 sent: 2,
                 handled: 1
@@ -173,12 +161,12 @@ mod tests {
         );
         handled.handled(1);
         assert_eq!(
-            readings.recv_timeout(DEADLINE),
+            wait::recv(&readings, DEADLINE),
             Ok(Counts {
                 sent: 2,
                 handled: 2
             })
         );
-        assert_eq!(answered.recv_timeout(DEADLINE), Ok(true));
+        assert_eq!(wait::recv(&answered, DEADLINE), Ok(true));
     }
 }

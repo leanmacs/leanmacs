@@ -54,10 +54,12 @@ pub use editor_service::queue::{
 
 use std::collections::BTreeMap;
 use std::ops::Deref;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+
+use editor_wait::{HangGuard, Unreceived};
 
 use editor_service::queue::{COMPLETION, EDITOR};
 
@@ -227,7 +229,10 @@ pub extern "C" fn editor_ffi_events_await_waiting(queue: u8, pulls: u64, bound_m
     self::queue(queue).is_some_and(|queue| {
         queue.await_waiting(
             usize::try_from(pulls).unwrap_or(usize::MAX),
-            Duration::from_millis(bound_ms),
+            HangGuard::on(
+                "a pull's park, under a Lean caller's guard",
+                Duration::from_millis(bound_ms),
+            ),
         )
     })
 }
@@ -274,7 +279,13 @@ pub extern "C" fn editor_ffi_events_script_feed(queue: u8, source_id: u64, count
 /// `bound_ms` is a hang guard: only a feed that never ends reaches it.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_events_script_join(feed: u64, bound_ms: u64) -> bool {
-    FEEDS.join(feed, Duration::from_millis(bound_ms))
+    FEEDS.join(
+        feed,
+        HangGuard::on(
+            "a feed's end, under a Lean caller's guard",
+            Duration::from_millis(bound_ms),
+        ),
+    )
 }
 
 /// The process's feeds, started by [`editor_ffi_events_script_feed`].
@@ -363,9 +374,9 @@ impl Feeds {
         id
     }
 
-    /// Waits up to `bound` for the feed `id` to end and joins its thread
-    /// ([`editor_ffi_events_script_join`]).
-    fn join(&self, id: u64, bound: Duration) -> bool {
+    /// Waits up to `guard`, which names the feed's end, for the feed `id`
+    /// to end and joins its thread ([`editor_ffi_events_script_join`]).
+    fn join(&self, id: u64, guard: HangGuard) -> bool {
         let Some(feed) = self.table().feeds.remove(&id) else {
             return false;
         };
@@ -374,11 +385,11 @@ impl Feeds {
         let mut ended = matches!(feed.ended.try_recv(), Err(TryRecvError::Disconnected));
         self.told_read(ended);
         if !ended {
-            // hang guard: the feeder's end, which drops the sender; only a
-            // feed that never ends reaches the bound.
+            // The feeder's end drops the sender; only a feed that never
+            // ends reaches the guard.
             ended = matches!(
-                feed.ended.recv_timeout(bound),
-                Err(RecvTimeoutError::Disconnected)
+                editor_wait::recv(&feed.ended, guard),
+                Err(Unreceived::Disconnected)
             );
             self.told_read(ended);
         }
@@ -412,7 +423,10 @@ mod tests {
 
     /// hang guard: the step of another thread each wait ends on; only a
     /// hang reaches the bound, and the test then fails as a hang.
-    const BOUND: Duration = Duration::from_secs(10);
+    const BOUND: HangGuard = HangGuard::on(
+        "the step of another thread each wait ends on",
+        Duration::from_secs(10),
+    );
 
     /// Where each reading a join of `feeds` makes of whether its feed has
     /// ended arrives.
@@ -448,12 +462,11 @@ mod tests {
 
         let feed = feeds.start(Arc::clone(&queue), ScriptedSource::numbered(9, 2));
         assert_ne!(feed, 0, "the feeder starts");
-        held.recv_timeout(BOUND)
-            .expect("the feeder reaches its first push");
+        editor_wait::recv(&held, BOUND).expect("the feeder reaches its first push");
         thread::scope(|scope| {
             let joined = scope.spawn(|| (feeds.join(feed, BOUND), queue.queued()));
             assert_eq!(
-                readings.recv_timeout(BOUND),
+                editor_wait::recv(&readings, BOUND),
                 Ok(false),
                 "the join reads no end while the feeder is held"
             );
@@ -461,7 +474,7 @@ mod tests {
 
             // A join that answered at its first reading never reads the end.
             assert_eq!(
-                readings.recv_timeout(BOUND),
+                editor_wait::recv(&readings, BOUND),
                 Ok(true),
                 "the join reads the end once the feeder is let go"
             );
@@ -472,7 +485,10 @@ mod tests {
             );
         });
         // Joined once: the id names no feed any more.
-        assert!(!feeds.join(feed, Duration::ZERO));
+        assert!(!feeds.join(
+            feed,
+            HangGuard::held("a feed already joined", Duration::ZERO)
+        ));
     }
 
     #[test]

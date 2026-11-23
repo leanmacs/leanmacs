@@ -95,6 +95,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_layout::frame::Frame;
 
 use crate::clock::Clock;
@@ -396,26 +398,22 @@ impl RenderHandle {
     /// records rest signals it, under the lock this reads the rest under,
     /// so no rest recorded after a reading is missed.
     ///
-    /// `bound` is a hang guard: only a loop that never comes to rest
-    /// reaches it.
-    pub fn wait_resting(&self, bound: Duration) -> bool {
+    /// `guard` names the step that records rest: only a loop that never
+    /// comes to rest reaches it.
+    pub fn wait_resting(&self, guard: HangGuard) -> bool {
         let shared = &self.shared;
         // The bound is the condition variable's: the crate reads no real
         // clock.
-        let (_rest, waited) = shared
-            .rested
-            // hang guard: the step that records rest; only a loop that
-            // never comes to rest reaches the bound, and the caller fails.
-            .wait_timeout_while(locked(&shared.rest_lock), bound, |_| {
+        let (_rest, rested) =
+            editor_wait::wait_while(&shared.rested, locked(&shared.rest_lock), guard, |_| {
                 let resting = self.resting();
                 #[cfg(test)]
                 if let Some(hook) = shared.rest_read.get() {
                     hook(resting);
                 }
                 !resting
-            })
-            .unwrap_or_else(PoisonError::into_inner);
-        !waited.timed_out()
+            });
+        rested
     }
 
     /// Whether `other` is a handle of the same loop as this one.
@@ -770,6 +768,8 @@ mod tests {
     use std::sync::{Arc, Mutex, PoisonError};
     use std::time::Duration;
 
+    use editor_wait::HangGuard;
+
     use editor_layout::Layout;
     use editor_layout::frame::Frame;
     use editor_layout::scene::{Rect, Scene};
@@ -791,7 +791,7 @@ mod tests {
 
     /// hang guard: the word from another thread that each wait ends on;
     /// only a hang reaches the bound, and the test then fails as a hang.
-    const BOUND: Duration = Duration::from_secs(10);
+    const BOUND: HangGuard = HangGuard::on("the word from another thread", Duration::from_secs(10));
 
     /// The target the loops begin on.
     const TARGET: Target = Target {
@@ -1948,13 +1948,13 @@ mod tests {
             let mut rig = rig;
             rig.render.step()
         });
-        held.recv_timeout(BOUND).expect("the step reaches its rest");
+        editor_wait::recv(&held, BOUND).expect("the step reaches its rest");
         let waited = {
             let handle = handle.clone();
             std::thread::spawn(move || handle.wait_resting(BOUND))
         };
         assert_eq!(
-            readings.recv_timeout(BOUND),
+            editor_wait::recv(&readings, BOUND),
             Ok(false),
             "the wait reads no rest while the step is held"
         );
@@ -1962,7 +1962,7 @@ mod tests {
 
         // A wait that answered at its first reading never reads the rest.
         assert_eq!(
-            readings.recv_timeout(BOUND),
+            editor_wait::recv(&readings, BOUND),
             Ok(true),
             "the wait reads the rest again once the step has recorded it"
         );
@@ -1973,9 +1973,10 @@ mod tests {
     #[test]
     fn wait_resting_says_no_once_its_bound_has_passed_with_the_loop_not_at_rest() {
         let mut rig = rig();
-        assert!(!rig.handle.wait_resting(Duration::ZERO));
+        let not_at_rest = HangGuard::held("the loop, which is not at rest", Duration::ZERO);
+        assert!(!rig.handle.wait_resting(not_at_rest));
         assert_eq!(rig.render.step(), Step::Wait(None));
-        assert!(rig.handle.wait_resting(Duration::ZERO));
+        assert!(rig.handle.wait_resting(not_at_rest));
     }
 
     #[test]
@@ -2052,7 +2053,7 @@ mod tests {
     fn goes_into_its_wait(waits: &Receiver<bool>) -> bool {
         // hang guard: the wait's hook; only a wait that never goes into
         // its wait reaches the bound, and the test then fails as a hang.
-        waits.recv_timeout(BOUND) == Ok(true)
+        editor_wait::recv(waits, BOUND) == Ok(true)
     }
 
     /// Whether the wait with no deadline behind `returned`, on the park
@@ -2067,7 +2068,7 @@ mod tests {
     fn ends(returned: &Receiver<()>) -> bool {
         // hang guard: the wait's return; only a wait that never ends
         // reaches the bound, and the test then fails as a hang.
-        returned.recv_timeout(BOUND).is_ok()
+        editor_wait::recv(returned, BOUND).is_ok()
     }
 
     /// Where a word arrives each time a wait on `park` goes into its wait,
@@ -2098,7 +2099,7 @@ mod tests {
             // A hook fired with the lock released could see a notification
             // made before the wait goes into its wait, and lost to it.
             assert_eq!(
-                waits.recv_timeout(BOUND),
+                editor_wait::recv(&waits, BOUND),
                 Ok(true),
                 "{until:?}: the hook fires under the lock"
             );

@@ -157,6 +157,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::Duration;
 
+use editor_wait::{HangGuard, RealTime};
+
 use editor_ffi::events::{EventKind, Queue};
 use editor_ffi::interrupt::Interrupt;
 use editor_ffi::render::{Presenter, Session, target};
@@ -180,18 +182,24 @@ use crate::timing::{journalled, on_demand, timeline};
 /// hang guard: the first frame presented, which the ledger notifies; only a
 /// window that never presents reaches it, and the run then fails for no
 /// frame presented.
-const FIRST_FRAME: Duration = Duration::from_secs(30);
+const FIRST_FRAME: HangGuard = HangGuard::on("the first frame presented", Duration::from_secs(30));
 
 /// hang guard: the window settling, which the ledger notifies. It is how
 /// long the window has, once its first frame is presented, to draw what
 /// else was asked of it as it opened, before the wait for the render
 /// loop's rest begins whether or not it has: on purpose a bound to go on
 /// at, which the run then says ("before the window had settled").
-const SETTLE: Duration = Duration::from_secs(5);
+const SETTLE: HangGuard = HangGuard::held(
+    "the window settling, a bound to go on at",
+    Duration::from_secs(5),
+);
 
 /// hang guard: the render loop's rest once the window has settled; only a
 /// loop that never rests reaches it, and the run then fails for it.
-const REST: Duration = Duration::from_secs(10);
+const REST: HangGuard = HangGuard::on(
+    "the render loop's rest once the window has settled",
+    Duration::from_secs(10),
+);
 
 /// How many lines of the timeline are printed, and how many of the
 /// journal: enough for a window as it opens, its wait for rest, and a
@@ -362,9 +370,11 @@ fn watch(session: &Session<Watched>, shared: &Shared, stay: Option<Duration>) {
     }
     println!("window: ready for input");
     if let Some(stay) = stay {
-        // real time under test: how long the window stays open for a
-        // person, or for the left-alone check, once it is ready.
-        thread::sleep(stay);
+        RealTime::under(
+            "how long the window stays open for a person, or for the left-alone check, once it is ready",
+            stay,
+        )
+        .sleep();
         PLATFORM.close();
     }
 }
@@ -454,7 +464,7 @@ fn report(session: &Session<Watched>, shared: &Shared, options: &Options) -> Vec
     failures.extend(found.failures);
     if shared.restless.load(Ordering::SeqCst) {
         failures.push(format!(
-            "the render loop had not come to rest {REST:?} after the window settled: something asks for a draw again and again"
+            "the render loop had not come to rest after the window settled ({REST}): something asks for a draw again and again"
         ));
     }
 

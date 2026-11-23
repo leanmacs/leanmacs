@@ -5,3 +5,8 @@ description = "The platform's ports: the window (what it reports) and the clipbo
 edition.workspace = true
 license.workspace = true
 publish = false
+
+[dependencies]
+# The typed time bounds the scripted platform's readout (`wait_parked`) and
+# the window contract's waits take: the one dependency, itself of none.
+editor-wait = { path = "../editor-wait" }

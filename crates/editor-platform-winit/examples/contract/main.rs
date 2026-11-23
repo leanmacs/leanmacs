@@ -44,7 +44,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use editor_wait::{self as wait, HangGuard};
 
 use editor_platform::contract::Check;
 #[cfg(target_os = "macos")]
@@ -56,20 +58,26 @@ use editor_platform_winit::WinitPlatform;
 /// to close; only a hang reaches the bound, and the check then fails as a
 /// hang. The contract judges a return later than it on elapsed time, which
 /// load can stretch: follow-up `platform-contract-settle-window-on-time`.
-pub const BOUND: Duration = Duration::from_secs(20);
+pub const BOUND: HangGuard = HangGuard::on(
+    "the window's opening, then its return once asked to close",
+    Duration::from_secs(20),
+);
 
 /// hang guard, run out on purpose: the open window left alone, which a loop
 /// that keeps the contract does not end; the check pins the hang. A loop
 /// that an earlier close would end has turned many times by then. Deciding
 /// that by a window and not by the loop's idle notification is follow-up
 /// `platform-contract-settle-window-on-time`.
-const SETTLE: Duration = Duration::from_millis(500);
+const SETTLE: HangGuard = HangGuard::held(
+    "the open window left alone, which a loop that keeps the contract does not end",
+    Duration::from_millis(500),
+);
 
 /// hang guard: the scenarios finishing, which the check's close waits for;
 /// only a hang reaches the bound, and the check then fails as a hang. It is
 /// well within the bound the platform then has to return.
 #[cfg(target_os = "macos")]
-const SCENARIO: Duration = Duration::from_secs(15);
+const SCENARIO: HangGuard = HangGuard::on("the scenarios finishing", Duration::from_secs(15));
 
 /// `main` runs on the process's main thread, and the platform is run from
 /// `main`.
@@ -130,26 +138,12 @@ impl Record {
         self.locked().clone()
     }
 
-    /// Waits until `ready` holds of what has been reported, or `limit` has
-    /// passed, and returns what has been.
-    pub fn wait(&self, limit: Duration, ready: impl Fn(&[Input]) -> bool) -> Vec<Input> {
-        // hang guard: `ready` holding of what is reported, which each push
-        // notifies; only a hang reaches the limit, and the scenario then
-        // fails as a hang.
-        let deadline = Instant::now() + limit;
-        let mut inputs = self.locked();
-        loop {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if ready(&inputs) || left.is_zero() {
-                return inputs.clone();
-            }
-            // hang guard: as above.
-            inputs = self
-                .changed
-                .wait_timeout(inputs, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
-        }
+    /// Waits until `ready` holds of what has been reported, which each push
+    /// notifies, or `guard` has run out, and returns what has been.
+    pub fn wait(&self, guard: HangGuard, ready: impl Fn(&[Input]) -> bool) -> Vec<Input> {
+        let (inputs, _) =
+            wait::wait_while(&self.changed, self.locked(), guard, |inputs| !ready(inputs));
+        inputs.clone()
     }
 }
 
@@ -189,16 +183,10 @@ impl Count {
         *self.locked()
     }
 
-    /// Waits until the count is at least `count`, or `limit` has passed,
-    /// and returns it.
-    pub fn wait(&self, count: usize, limit: Duration) -> usize {
-        let (now, _) = self
-            .changed
-            // hang guard: the count reaching `count`, which each `add`
-            // notifies; only a hang reaches the limit, and the scenario
-            // then fails as a hang.
-            .wait_timeout_while(self.locked(), limit, |now| *now < count)
-            .unwrap_or_else(PoisonError::into_inner);
+    /// Waits until the count is at least `count`, which each `add`
+    /// notifies, or `guard` has run out, and returns it.
+    pub fn wait(&self, count: usize, guard: HangGuard) -> usize {
+        let (now, _) = wait::wait_while(&self.changed, self.locked(), guard, |now| *now < count);
         *now
     }
 }
@@ -225,26 +213,13 @@ impl Outcome {
         self.finished.notify_all();
     }
 
-    /// Waits until the scenario has finished, or `limit` has passed.
+    /// Waits until the scenario has finished, which notifies `finished`,
+    /// or `guard` has run out.
     #[cfg_attr(not(target_os = "macos"), expect(dead_code, reason = "macOS only"))]
-    fn wait(&self, limit: Duration) {
-        // hang guard: the scenario finishing, which notifies `finished`;
-        // only a hang reaches the limit, and the check then fails as a
-        // hang.
-        let deadline = Instant::now() + limit;
-        let mut result = self.locked();
-        while result.is_none() {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return;
-            }
-            // hang guard: as above.
-            result = self
-                .finished
-                .wait_timeout(result, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
-        }
+    fn wait(&self, guard: HangGuard) {
+        let _ = wait::wait_while(&self.finished, self.locked(), guard, |result| {
+            result.is_none()
+        });
     }
 
     /// The scenario's result: a failure if it has not finished.

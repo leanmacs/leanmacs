@@ -470,6 +470,7 @@ dependencies = [
  "editor-syntax",
  "editor-syntax-treesitter",
  "editor-text",
+ "editor-wait",
  "editor-watch",
  "editor-watch-notify",
  "rustix",
@@ -509,6 +510,7 @@ name = "editor-grep"
 version = "0.1.0"
 dependencies = [
  "editor-search",
+ "editor-wait",
 ]
 
 [[package]]
@@ -548,6 +550,9 @@ dependencies = [
 [[package]]
 name = "editor-platform"
 version = "0.1.0"
+dependencies = [
+ "editor-wait",
+]
 
 [[package]]
 name = "editor-platform-arboard"
@@ -563,6 +568,7 @@ version = "0.1.0"
 dependencies = [
  "dispatch2",
  "editor-platform",
+ "editor-wait",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
@@ -572,12 +578,16 @@ dependencies = [
 [[package]]
 name = "editor-process"
 version = "0.1.0"
+dependencies = [
+ "editor-wait",
+]
 
 [[package]]
 name = "editor-process-std"
 version = "0.1.0"
 dependencies = [
  "editor-process",
+ "editor-wait",
  "libc",
  "rustix",
  "tempfile",
@@ -618,6 +628,7 @@ name = "editor-render"
 version = "0.1.0"
 dependencies = [
  "editor-layout",
+ "editor-wait",
 ]
 
 [[package]]
@@ -670,6 +681,7 @@ name = "editor-syntax"
 version = "0.1.0"
 dependencies = [
  "editor-text",
+ "editor-wait",
 ]
 
 [[package]]
@@ -701,11 +713,15 @@ version = "0.1.0"
 [[package]]
 name = "editor-watch"
 version = "0.1.0"
+dependencies = [
+ "editor-wait",
+]
 
 [[package]]
 name = "editor-watch-notify"
 version = "0.1.0"
 dependencies = [
+ "editor-wait",
  "editor-watch",
  "notify",
  "tempfile",

@@ -148,6 +148,8 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_layout::frame::Frame;
 use editor_platform::{Canvas, Drawer, Menu, NativeWindow, Request, Resize, Rgb};
 use editor_render::clock::Clock;
@@ -788,14 +790,20 @@ pub extern "C" fn editor_ffi_render_resting() -> u8 {
 /// reaches it.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_render_await_rest(bound_ms: u64) -> u8 {
-    await_rest(last_session(), Duration::from_millis(bound_ms))
+    await_rest(
+        last_session(),
+        HangGuard::on(
+            "the loop's rest, under a Lean caller's guard",
+            Duration::from_millis(bound_ms),
+        ),
+    )
 }
 
 /// What [`editor_ffi_render_await_rest`] answers for the session `last`.
-fn await_rest(last: Option<RenderHandle>, bound: Duration) -> u8 {
+fn await_rest(last: Option<RenderHandle>, guard: HangGuard) -> u8 {
     match last {
         None => 0,
-        Some(handle) if handle.wait_resting(bound) => 2,
+        Some(handle) if handle.wait_resting(guard) => 2,
         Some(_) => 1,
     }
 }
@@ -1006,6 +1014,7 @@ impl<R: Renderer + Send + 'static> Session<R> {
 
 #[cfg(test)]
 mod tests {
+    use editor_wait::HangGuard;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
@@ -1162,16 +1171,17 @@ mod tests {
     /// for a loop at rest, 1 for one the bound passed on first.
     #[test]
     fn a_wait_for_rest_says_whether_there_is_a_session_and_whether_it_rested() {
-        assert_eq!(await_rest(None, Duration::ZERO), 0);
+        let not_at_rest = HangGuard::held("a loop not at rest", Duration::ZERO);
+        assert_eq!(await_rest(None, not_at_rest), 0);
         let (mut render, handle) = RenderLoop::new(
             RecordingRenderer::new(),
             Arc::new(FakeClock::new()),
             Arc::new(RecordingPark::new()),
             target(SIZE),
         );
-        assert_eq!(await_rest(Some(handle.clone()), Duration::ZERO), 1);
+        assert_eq!(await_rest(Some(handle.clone()), not_at_rest), 1);
         assert_eq!(render.step(), Step::Wait(None));
-        assert_eq!(await_rest(Some(handle), Duration::ZERO), 2);
+        assert_eq!(await_rest(Some(handle), not_at_rest), 2);
     }
 
     #[test]

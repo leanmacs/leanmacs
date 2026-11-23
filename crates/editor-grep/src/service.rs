@@ -61,11 +61,11 @@
 //!   answered or not taken, flushes among them, and [`Service::held_back`]
 //!   the searches waiting for their reader: readouts for tests.
 
+use editor_wait::HangGuard;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
-use std::time::Duration;
 
 use editor_search::Engine;
 
@@ -547,20 +547,14 @@ where
         self.inner().state().held_back
     }
 
-    /// hang guard: the search held back that brings [`Service::held_back`]
-    /// to `count`; `timeout` is the caller's, and only a hang reaches it.
-    /// Waits up to `timeout` for [`Service::held_back`] to be `count`, and
+    /// Waits up to `guard` for [`Service::held_back`] to be `count`, and
     /// says whether it came to be: how a test sees a search held back
-    /// without sleeping.
-    pub fn until_held_back(&self, count: usize, timeout: Duration) -> bool {
+    /// without sleeping. `guard` names the search held back that brings it
+    /// to `count`; only a hang reaches it.
+    pub fn until_held_back(&self, count: usize, guard: HangGuard) -> bool {
         let inner = self.inner();
         let state = inner.state();
-        let (state, _) = inner
-            .room
-            // hang guard: the search held back; the caller's bound.
-            .wait_timeout_while(state, timeout, |state| state.held_back != count)
-            .unwrap_or_else(PoisonError::into_inner);
-        state.held_back == count
+        editor_wait::wait_while(&inner.room, state, guard, |state| state.held_back != count).1
     }
 }
 

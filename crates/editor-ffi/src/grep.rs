@@ -466,6 +466,7 @@ pub extern "C" fn editor_ffi_grep_shutdown() {
 
 #[cfg(test)]
 mod tests {
+    use editor_wait::HangGuard;
     use std::path::PathBuf;
     use std::sync::mpsc;
     use std::time::Duration;
@@ -480,7 +481,10 @@ mod tests {
     use crate::words::tests::buffer;
 
     /// hang guard: the next completion of the service; only a hang reaches the bound, and the test then fails as a hang.
-    const DEADLINE: Duration = Duration::from_secs(10);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "the next completion of the service",
+        Duration::from_secs(10),
+    );
 
     /// The words and strings of a start.
     fn spelled(overlays: &[&str]) -> (Vec<u8>, Vec<u8>) {
@@ -657,7 +661,7 @@ mod tests {
         let (request, bound) = start.request(vec![text]).expect("a request");
 
         assert!(service.start(1, request, bound));
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(1));
         assert_eq!(
             service.take(1).map(encoded).map(|reply| reply.status),
             Some(0)
@@ -665,7 +669,7 @@ mod tests {
         let mut all = Vec::new();
         for wait in 2.. {
             assert!(service.next(1, wait));
-            assert_eq!(completed.recv_timeout(DEADLINE), Ok(wait));
+            assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(wait));
             let reply = service.take(wait).map(encoded).expect("a delivery");
             let ended = reply.words.last() != Some(&0);
             all.push(reply);

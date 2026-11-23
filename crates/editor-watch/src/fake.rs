@@ -45,6 +45,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use crate::clock::ManualClock;
 use crate::contract::Ground;
 use crate::{Depth, Kind, Notice, Refusal, RefusalKind, Sink, Watch};
@@ -96,7 +98,10 @@ const LATE_SERIAL: u64 = 20;
 /// as a hang. How long the contract waits, on the fake, for what should
 /// happen at once. The fake tells its notices before its ground returns, so only a
 /// flawed fake, or a service that breaks a rule, takes this long.
-const FAKE_DEADLINE: Duration = Duration::from_secs(1);
+const FAKE_DEADLINE: HangGuard = HangGuard::on(
+    "the notice or completion each wait of the contract ends on, on the fake",
+    Duration::from_secs(1),
+);
 
 /// What the fake was asked.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -381,17 +386,14 @@ impl FakeWatch {
         self.shared.state().sinks_on_drop = true;
     }
 
-    /// Waits until `ready` holds of the record, up to `deadline`, and says
-    /// whether it did.
-    pub fn until(&self, deadline: Duration, ready: impl Fn(&Record) -> bool) -> bool {
-        let (state, _) = self
-            .shared
-            .changed
-            // hang guard: the change that makes `ready` hold; only a hang
-            // reaches the bound, and the caller then fails as a hang.
-            .wait_timeout_while(self.shared.state(), deadline, |state| !ready(&state.record))
-            .unwrap_or_else(PoisonError::into_inner);
-        ready(&state.record)
+    /// Waits until `ready` holds of the record, up to `guard`, and says
+    /// whether it did: `guard` names the change that makes it hold.
+    pub fn until(&self, guard: HangGuard, ready: impl Fn(&Record) -> bool) -> bool {
+        let state = self.shared.state();
+        editor_wait::wait_while(&self.shared.changed, state, guard, |state| {
+            !ready(&state.record)
+        })
+        .1
     }
 
     /// Its ground: changes to its file system, told as notices.
@@ -674,7 +676,7 @@ impl Ground for FakeGround {
         }
     }
 
-    fn deadline(&self) -> Duration {
+    fn deadline(&self) -> HangGuard {
         FAKE_DEADLINE
     }
 
@@ -696,13 +698,18 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use editor_wait::HangGuard;
+
     use super::{FakeWatch, Flaws, Record};
     use crate::{Depth, Kind, Notice, Refusal, RefusalKind, Sink, Watch};
 
     /// hang guard: the change of the record or the notice each wait ends
     /// on; only a hang reaches the bound, and the test then fails as a hang.
     /// How long a test waits for what should happen at once.
-    const DEADLINE: Duration = Duration::from_secs(5);
+    const DEADLINE: HangGuard = HangGuard::on(
+        "the change of the record or the notice each wait ends on",
+        Duration::from_secs(5),
+    );
 
     /// A sink that sends each notice, and what it sends.
     fn sink() -> (Sink, Receiver<Notice>) {

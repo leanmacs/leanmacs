@@ -80,6 +80,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use editor_wait::{self as wait, HangGuard};
+
 use crate::{
     CannotOpen, Canvas, Drawer, Input, Menu, Platform, Report, Request, Resize, WindowOptions,
 };
@@ -199,7 +201,10 @@ fn name(canvas: &Canvas) -> &'static str {
 /// before it would end returns in this time. Deciding that by a window and
 /// not by an idle notification from the port is follow-up
 /// `platform-contract-settle-window-on-time`.
-pub const SETTLE: Duration = Duration::from_millis(50);
+pub const SETTLE: HangGuard = HangGuard::held(
+    "the run left alone, which a platform that keeps the contract does not end",
+    Duration::from_millis(50),
+);
 
 /// The title the check asks for with no run in progress, before the run and
 /// after it.
@@ -215,10 +220,10 @@ pub struct Check {
     options: WindowOptions,
     /// How long the platform has to report [`Input::Opened`], and then to
     /// return once it is asked to close.
-    bound: Duration,
+    bound: HangGuard,
     /// How long the run is left alone after its first input, before it is
-    /// asked to close.
-    settle: Duration,
+    /// asked to close: a guard run out on purpose.
+    settle: HangGuard,
     /// What the run has done so far.
     progress: Arc<Shared>,
 }
@@ -312,34 +317,28 @@ impl Shared {
     }
 
     /// Parks the calling thread until `ready` holds of the progress or
-    /// `limit` has passed, and returns the progress, locked.
-    fn wait(&self, limit: Duration, ready: impl Fn(&Progress) -> bool) -> MutexGuard<'_, Progress> {
-        // hang guard: `ready` holding, which each change of the progress
-        // notifies; only a hang reaches the limit, and the check then fails
-        // as a hang. The settling time runs out on purpose (`SETTLE`).
-        let deadline = Instant::now() + limit;
-        let mut progress = self.progress();
-        loop {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if ready(&progress) || left.is_zero() {
-                return progress;
-            }
-            // hang guard: as above, the wait ends on the progress changing.
-            progress = self
-                .changed
-                .wait_timeout(progress, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
-        }
+    /// `guard` has run out, and returns the progress, locked. `ready` is
+    /// read at each change of the progress, which notifies it; the
+    /// settling time runs out on purpose ([`SETTLE`]).
+    fn wait(
+        &self,
+        guard: HangGuard,
+        ready: impl Fn(&Progress) -> bool,
+    ) -> MutexGuard<'_, Progress> {
+        wait::wait_while(&self.changed, self.progress(), guard, |progress| {
+            !ready(progress)
+        })
+        .0
     }
 }
 
 impl Check {
     /// A check that opens the window as `options` say, and gives the
     /// platform `bound` to report [`Input::Opened`] and `bound` again to
-    /// return once it is asked to close. It leaves the run alone for
-    /// [`SETTLE`] after its first input.
-    pub fn new(options: WindowOptions, bound: Duration) -> Self {
+    /// return once it is asked to close: a hang guard, which only a
+    /// platform that hangs reaches. It leaves the run alone for [`SETTLE`]
+    /// after its first input.
+    pub fn new(options: WindowOptions, bound: HangGuard) -> Self {
         Self {
             options,
             bound,
@@ -352,7 +351,7 @@ impl Check {
     /// input, before it is asked to close. Give a platform that is slow to
     /// act on a close longer than [`SETTLE`].
     #[must_use]
-    pub fn settling_for(mut self, settle: Duration) -> Self {
+    pub fn settling_for(mut self, settle: HangGuard) -> Self {
         self.settle = settle;
         self
     }
@@ -426,7 +425,7 @@ impl Check {
         let settle = if reported {
             self.settle
         } else {
-            Duration::ZERO
+            self.settle.with_bound(Duration::ZERO)
         };
         // The lock is held from seeing that the run has not returned to
         // recording the close, so a close is recorded only of a run that
@@ -463,8 +462,10 @@ impl Check {
             // return once it has been asked to close, which is the settling
             // time after it reported.
             let allowed_until = match (progress.close_asked, progress.started) {
-                (Some(asked), _) => asked + self.bound,
-                (None, Some(started)) => started + self.bound + self.settle + self.bound,
+                (Some(asked), _) => asked + self.bound.bound(),
+                (None, Some(started)) => {
+                    started + self.bound.bound() + self.settle.bound() + self.bound.bound()
+                }
                 (None, None) => continue,
             };
             // hang guard: the run's return, which the progress notifies;
@@ -473,7 +474,7 @@ impl Check {
             // and be judged so is follow-up
             // `platform-contract-settle-window-on-time`.
             if Instant::now() >= allowed_until {
-                return Err(Violation::DidNotReturn(self.bound));
+                return Err(Violation::DidNotReturn(self.bound.bound()));
             }
         }
     }
@@ -481,7 +482,7 @@ impl Check {
     /// The rules, held against a run that has returned.
     fn judge(&self, progress: &Progress) -> Result<(), Violation> {
         let Some((returned_at, result)) = &progress.returned else {
-            return Err(Violation::DidNotReturn(self.bound));
+            return Err(Violation::DidNotReturn(self.bound.bound()));
         };
         if let Err(cannot_open) = result {
             return Err(match progress.first_told {
@@ -511,8 +512,8 @@ impl Check {
         // hang guard: the run's return after the close; only a hang takes
         // longer than the bound. Judging it on elapsed time, which load can
         // stretch, is follow-up `platform-contract-settle-window-on-time`.
-        if returned_at.saturating_duration_since(asked) > self.bound {
-            return Err(Violation::DidNotReturn(self.bound));
+        if returned_at.saturating_duration_since(asked) > self.bound.bound() {
+            return Err(Violation::DidNotReturn(self.bound.bound()));
         }
         if let Some(late) = &progress.late {
             return Err(Violation::ReportedAfterReturn(late.clone()));
@@ -547,7 +548,7 @@ impl Check {
 /// `bound` is how long the platform has to report [`Input::Opened`], and
 /// then to return once it is asked to close. A platform that never returns
 /// fails at the bound, and the thread it was run on is left behind.
-pub fn check<P>(platform: Arc<P>, options: WindowOptions, bound: Duration) -> Result<(), Violation>
+pub fn check<P>(platform: Arc<P>, options: WindowOptions, bound: HangGuard) -> Result<(), Violation>
 where
     P: Platform + Send + 'static,
 {
@@ -567,12 +568,16 @@ mod tests {
     /// platform that keeps the contract comes near it: a check that holds
     /// returns long before it, and one that fails for another reason does
     /// not wait for it.
-    const GENEROUS: Duration = Duration::from_secs(5);
+    const GENEROUS: HangGuard = HangGuard::on(
+        "the run's reports and its return once asked to close",
+        Duration::from_secs(5),
+    );
 
     /// hang guard, run out on purpose: a platform that never returns, held
     /// for good; the check pins the hang. A bound short enough to wait out,
     /// for a platform that is expected to miss it.
-    const SHORT: Duration = Duration::from_millis(50);
+    const SHORT: HangGuard =
+        HangGuard::held("a platform that never returns", Duration::from_millis(50));
 
     /// Something a thread waits for and another opens, once.
     #[derive(Default)]
@@ -1167,7 +1172,7 @@ mod tests {
     #[test]
     fn a_check_that_holds_leaves_the_run_alone_for_the_settling_time() {
         let platform = Arc::new(ScriptedPlatform::sample());
-        let settle = Duration::from_millis(30);
+        let settle = HangGuard::held("the run left alone", Duration::from_millis(30));
         let check = Check::new(WindowOptions::default(), GENEROUS).settling_for(settle);
         let began = Instant::now();
 
@@ -1178,7 +1183,7 @@ mod tests {
         // real time under test: the settling time, a lower bound that load
         // only makes surer.
         let took = began.elapsed();
-        assert!(took >= settle, "the run was left alone: {took:?}");
+        assert!(took >= settle.bound(), "the run was left alone: {took:?}");
     }
 
     #[test]
@@ -1366,11 +1371,17 @@ mod tests {
         // bound that load only makes surer.
         let took = began.elapsed();
         platform.released.open();
-        assert_eq!(verdict, Err(Violation::DidNotReturn(SHORT)));
-        assert!(took >= SHORT, "the platform had its whole bound: {took:?}");
+        assert_eq!(verdict, Err(Violation::DidNotReturn(SHORT.bound())));
+        assert!(
+            took >= SHORT.bound(),
+            "the platform had its whole bound: {took:?}"
+        );
         // hang guard, run out on purpose: the `Deaf` platform never
         // returns, so the check ends at its bound; the check pins the hang.
-        assert!(took < GENEROUS, "the check ended at the bound: {took:?}");
+        assert!(
+            took < GENEROUS.bound(),
+            "the check ended at the bound: {took:?}"
+        );
     }
 
     #[test]

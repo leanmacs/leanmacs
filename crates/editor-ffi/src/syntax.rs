@@ -144,6 +144,8 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_layout::scene::{SpansAt, TextSpans};
 use editor_syntax::clock::Clock;
 use editor_syntax::inject::Language;
@@ -774,27 +776,28 @@ impl Syntaxes {
         }))
     }
 
-    /// Waits up to `bound` for a tree of `snapshot`'s revision, or a newer
-    /// one, to be delivered, with layers found with the injections as they
-    /// are now (`Session::wait_for`); whether one was. False at once when its
-    /// document is not attached.
-    pub fn settle(&self, snapshot: &Snapshot, bound: Duration) -> bool {
+    /// Waits up to `guard`, which names the delivery, for a tree of
+    /// `snapshot`'s revision, or a newer one, to be delivered, with layers
+    /// found with the injections as they are now (`Session::wait_for`);
+    /// whether one was. False at once when its document is not attached.
+    pub fn settle(&self, snapshot: &Snapshot, guard: HangGuard) -> bool {
         self.session(snapshot.key()).is_some_and(|session| {
             session
-                .wait_for(snapshot.text().revision(), bound)
+                .wait_for(snapshot.text().revision(), guard)
                 .is_some()
         })
     }
 
-    /// Waits up to `bound` for the tree delivered of `snapshot`'s document to
-    /// be exact for its revision or a newer one: a whole parse, or an
-    /// incremental one the idle refresh found equal to it, once the text is
-    /// quiet (`Session::wait_exact`); whether it was. False at once when its
-    /// document is not attached. For tests.
-    pub fn settle_exact(&self, snapshot: &Snapshot, bound: Duration) -> bool {
+    /// Waits up to `guard`, which names the delivery, for the tree
+    /// delivered of `snapshot`'s document to be exact for its revision or a
+    /// newer one: a whole parse, or an incremental one the idle refresh
+    /// found equal to it, once the text is quiet (`Session::wait_exact`);
+    /// whether it was. False at once when its document is not attached. For
+    /// tests.
+    pub fn settle_exact(&self, snapshot: &Snapshot, guard: HangGuard) -> bool {
         self.session(snapshot.key()).is_some_and(|session| {
             session
-                .wait_exact(snapshot.text().revision(), bound)
+                .wait_exact(snapshot.text().revision(), guard)
                 .is_some()
         })
     }
@@ -1307,7 +1310,11 @@ pub unsafe extern "C" fn editor_ffi_syntax_settle(
     bound_ms: u64,
 ) -> bool {
     // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
-    syntaxes().settle(unsafe { &*snapshot }, Duration::from_millis(bound_ms))
+    let guard = HangGuard::on(
+        "a delivery of the snapshot's parse, under a Lean caller's guard",
+        Duration::from_millis(bound_ms),
+    );
+    syntaxes().settle(unsafe { &*snapshot }, guard)
 }
 
 /// [`Syntaxes::refresh_after`] for C: texts parsed incrementally are parsed
@@ -1328,8 +1335,9 @@ mod tests {
     use crate::events::{EventKind, Queue};
     use crate::words::tests::{buffer, words_of};
 
-    /// The longest a test waits for a delivery.
-    const BOUND: Duration = Duration::from_secs(10);
+    /// hang guard: a delivery; only a hang reaches the bound, and the test
+    /// then fails as a hang. The longest a test waits for one.
+    const BOUND: HangGuard = HangGuard::on("a delivery", Duration::from_secs(10));
 
     /// The kinds of the events on `queue`, once it is quit, up to the quit.
     fn drained(queue: &Queue) -> Vec<EventKind> {

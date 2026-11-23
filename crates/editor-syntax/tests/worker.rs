@@ -14,6 +14,8 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use editor_wait::HangGuard;
+
 use editor_syntax::clock::{Clock, ManualClock};
 use editor_syntax::fake::{GRAMMAR, Parens, ParensParser};
 use editor_syntax::{
@@ -27,7 +29,10 @@ const EDITS: u64 = 200;
 /// hang guard: a delivery, or the session's tree of a revision; only a
 /// hang reaches the bound, and the test then fails as a hang. The longest
 /// the test waits for one delivery.
-const BOUND: Duration = Duration::from_secs(10);
+const BOUND: HangGuard = HangGuard::on(
+    "a delivery, or the session's tree of a revision",
+    Duration::from_secs(10),
+);
 
 /// The worker's idle interval.
 const REFRESH_AFTER: Duration = Duration::from_millis(500);
@@ -94,9 +99,7 @@ fn a_worker_on_its_own_thread_delivers_only_newer_revisions_and_ends_at_the_last
         }
         let mut delivered = Revision::new(0);
         while delivered < revision {
-            delivered = received
-                .recv_timeout(BOUND)
-                .expect("a delivery within the bound");
+            delivered = editor_wait::recv(&received, BOUND).expect("a delivery within the bound");
         }
         handle.stop();
         delivered
@@ -149,7 +152,14 @@ fn the_loop_refreshes_a_quiet_text_once_the_clock_passes_the_interval_and_it_is_
         );
         // The edit's incremental reparse is delivered, and not yet known
         // to be exact: the clock has not moved.
-        assert!(session.wait_exact(revision, Duration::ZERO).is_none());
+        assert!(
+            session
+                .wait_exact(
+                    revision,
+                    HangGuard::held("an exact tree not yet delivered", Duration::ZERO)
+                )
+                .is_none()
+        );
 
         clock.advance(500);
         handle.wake();

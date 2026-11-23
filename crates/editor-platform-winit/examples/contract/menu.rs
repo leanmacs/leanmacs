@@ -28,6 +28,8 @@
 
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_platform::menu::{Action, Item, KeyEquivalent, Role, Submenu, System};
 use editor_platform::{Input, Menu, Modifiers, Platform, Request};
 use editor_platform_winit::WinitPlatform;
@@ -44,7 +46,10 @@ use crate::{Count, Record};
 /// hang guard: what each step waits for (a report, the loop carrying a
 /// request out, a perform returning); only a hang reaches the bound, and
 /// the scenario then fails as a hang.
-const STEP: Duration = Duration::from_secs(3);
+const STEP: HangGuard = HangGuard::on(
+    "the loop's next step of the scenario",
+    Duration::from_secs(3),
+);
 
 /// How many performs of the Quit item have returned.
 static QUIT_RETURNED: Count = Count::new();
@@ -192,7 +197,7 @@ fn read() -> Option<Reading> {
 fn shown(platform: &WinitPlatform, menu: &Menu) -> Result<Reading, String> {
     if !probe::await_requests_handled(platform, STEP) {
         return Err(format!(
-            "the loop had not carried the menu bar's request out {STEP:?} after it was asked"
+            "the loop had not carried the menu bar's request out after it was asked: {STEP}"
         ));
     }
     let reading = read();

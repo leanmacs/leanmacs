@@ -6,6 +6,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_search::Literal;
 
 use super::{Delivery, Reply, Service};
@@ -17,7 +19,10 @@ use crate::{
 /// hang guard: a read entering the gate, or a completion; only a hang
 /// reaches the bound, and the test then fails as a hang. How long a test
 /// waits for what should happen at once.
-const DEADLINE: Duration = Duration::from_secs(10);
+const DEADLINE: HangGuard = HangGuard::on(
+    "a read entering the gate, or a completion",
+    Duration::from_secs(10),
+);
 
 /// What a gate holds: permits to read a file, and the reads entered.
 #[derive(Debug, Default)]
@@ -53,12 +58,10 @@ impl Gate {
 
     /// Waits until `count` reads were asked for.
     fn until_entered(&self, count: usize) -> bool {
-        let (permits, _) = self
-            .0
-            .1
-            .wait_timeout_while(self.lock(), DEADLINE, |permits| permits.entered < count)
-            .unwrap_or_else(PoisonError::into_inner);
-        permits.entered >= count
+        editor_wait::wait_while(&self.0.1, self.lock(), DEADLINE, |permits| {
+            permits.entered < count
+        })
+        .1
     }
 
     /// How many reads were asked for.
@@ -147,7 +150,7 @@ impl Rig {
 
     /// Waits for the next completion.
     fn completion(&self) -> Option<u64> {
-        self.completed.recv_timeout(DEADLINE).ok()
+        editor_wait::recv(&self.completed, DEADLINE).ok()
     }
 
     /// Starts the search `id` of `pattern` under `/w`, with `bound`, and
@@ -643,7 +646,7 @@ fn shutdown_does_not_return_before_a_flush_a_search_thread_settled_is_completed(
     service.when_settled(move || {
         let hold = hold.lock().unwrap_or_else(PoisonError::into_inner);
         let _ = hold.0.send(());
-        let _ = hold.1.recv_timeout(DEADLINE);
+        let _ = editor_wait::recv(&hold.1, DEADLINE);
     });
     let release = Mutex::new(Some(release));
     service.when_shutdown_waits(move || {
@@ -660,9 +663,7 @@ fn shutdown_does_not_return_before_a_flush_a_search_thread_settled_is_completed(
     assert!(gate.until_entered(1));
     assert!(service.flush(9));
     gate.open();
-    settled
-        .recv_timeout(DEADLINE)
-        .expect("the search's thread settles its flush");
+    editor_wait::recv(&settled, DEADLINE).expect("the search's thread settles its flush");
 
     service.shutdown();
 
