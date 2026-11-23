@@ -17,6 +17,16 @@ adapters a stepped check uses stay real and keep their own threads: the
 elaborator, the library's file, diff and grep services and the completion
 pump, and the display binding. Only the editor loop thread goes.
 
+The elaborator and the display binding stay real: they do no background
+work a host check waits on. The session journal, the file, diff and grep
+services, the syntax service, process spawns, file watches and the
+completion pump each have a recording fake that answers only on the
+check's step, held to its real adapter by one contract
+([concurrency.md](../design/concurrency.md), "Recording fakes for the
+host's background collaborators"), and the host checks move onto them
+(host-tests-on-fakes phase 4); until a check has moved it uses the real
+adapter, as above.
+
 A check that says `Real` in its helper, or calls `Headless.withHost`,
 `Headless.run` or `Headless.runAndDispose` itself, runs a loop thread; the
 plain names are the stepped helpers. The helpers are the linked test kit's

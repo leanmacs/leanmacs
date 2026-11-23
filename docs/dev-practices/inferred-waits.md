@@ -96,6 +96,13 @@ readout whose fake exists. Phase 3 marked each as its fake landed:
   subject beside their own module: their one user is the binding's own
   check (`FfiTest/Editor/Ffi/Processes.lean`).
 
+`Ffi.syntaxSettle` is not marked yet, though its fake exists
+(`FakeSyntaxService`): a mark makes the linter refuse every public kit
+declaration that hands it on (`SyntaxText.run`, `recordingSyntaxTree`,
+`shippedStaged`) and every caller of those in the packages' linked tests,
+so it is placed with the move of those checks onto the fake (task
+`mark-syntax-settle-real-effect`).
+
 A site that a later phase removes, or that stays, keeps an explicit allow,
 `set_option linter.inferredWait false in` on the declaration that holds it,
 with its row beside it: `-- inferred-waits W<n>: removed by host-tests-on-fakes
