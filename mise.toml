@@ -681,7 +681,9 @@ run = [
   # imports, it must name the roots that link the elaborator without it and
   # exit 4. Told `Editor.Core`, which imports the two adapters that link
   # Lean's frontend, must be plain Lean, it must name their imports of
-  # `Lean` and of Lake and exit 5. And told the elaborator adapter is
+  # `Lean` and of Lake and exit 5. Told `Editor.Core`, which imports the
+  # raw bindings, must link no Rust library, it must name `Editor.Ffi` and
+  # exit 6. And told the elaborator adapter is
   # `Editor.Core`, which no root reaches, so that the third rule would hold
   # of nothing, it must say so and exit 2. The output of each is shown only
   # when it is not that.
@@ -689,6 +691,7 @@ run = [
   "status=0; out=$(sh ../tools/core-imports-check.sh Editor.Setup 2>&1) || status=$?; test \"$status\" -eq 3 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --base Editor.Core 2>&1) || status=$?; test \"$status\" -eq 4 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --plain Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 5 && printf '%s\\n' \"$out\" | grep -qxF \"$(printf 'Editor.Config.Elaborate\\tLean')\"; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  "status=0; out=$(sh ../tools/core-imports-check.sh --unlinked Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 6 && printf '%s\\n' \"$out\" | grep -qxF Editor.Ffi; } || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --elaborator Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 2 && test \"${out#core-imports-check: no root of the build}\" != \"$out\"; } || { printf '%s\\n' \"$out\"; exit 1; }",
   # A package imports only what a package may import of the core, on Lake's
   # module graph (tools/package-imports-check.sh;

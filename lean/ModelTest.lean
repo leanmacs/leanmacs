@@ -60,6 +60,7 @@ import ModelTest.Editor.Grep.Model
 import ModelTest.Editor.Gutter
 import ModelTest.Editor.Gutter.Track
 import ModelTest.Editor.Headless.CommandLine
+import ModelTest.Editor.Headless.Journal.Contract
 import ModelTest.Editor.Headless.Queue
 import ModelTest.Editor.Headless.Wait
 import ModelTest.Editor.Highlight
@@ -746,6 +747,12 @@ The job system is tested here with no Rust library:
   held completions: a held request's handle has not ended until it is let
   go, then ends with its reply, and a dropped handle's reply is still
   taken, so the service keeps nothing;
+- `journalContractChecks`: the contract of the session journal's port
+  (`Editor/Headless/Journal/Contract.lean`) on its recording fake
+  (`RecordingJournal`), held by not stepping it, and the fake's own
+  promises: nothing is worked and no drain ends before a step, each order
+  is recorded with its thread and answered on the stepping thread, and it
+  is quiescent once stepped to its end;
 - `tableChecks`: the job table (`Editor/Job/Table.lean`), which is pure;
 - `ownerChecks`: the shell over the table and the runner
   (`Editor/Job/Jobs.lean`): removing an owner cancels its jobs;
@@ -1284,6 +1291,7 @@ def checks : List Check :=
     protocolContractChecks ++
     flushContractChecks ++
     handleContractChecks ++
+    journalContractChecks ++
     queueContractChecks ++
     queueMemoryChecks ++
     waitRoundChecks ++

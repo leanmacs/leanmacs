@@ -6,7 +6,7 @@
 # on the core, and the core on no package.
 #
 #   tools/core-imports-check.sh [--base <module>] [--elaborator <module>]
-#                                [--plain <module>]
+#                                [--plain <module>] [--unlinked <module>]
 #                                [<root module> [<moving name>...]]
 #
 # Run it in `lean/`. The root module defaults to `Editor.Core`, the core's
@@ -27,9 +27,11 @@
 # them to see the third rule fail. `--plain` names a module that must reach
 # no module of Lean's frontend, in place of the editor's (`plain`, below),
 # and may be given more than once: the gate uses it to see the fourth rule
-# fail.
+# fail. `--unlinked` names a module that must reach no raw binding, in place
+# of the model tests' root (`unlinked`, below), and may be given more than
+# once: the gate uses it to see the fifth rule fail.
 #
-# It checks four things, in this order, and stops at the first that fails:
+# It checks five things, in this order, and stops at the first that fails:
 #
 # 1. The root and the modules it imports, directly or through another, hold
 #    no moving module. Otherwise it prints each one found, one a line, and
@@ -57,8 +59,15 @@
 #    none. Lake's `transImports` names the workspace's modules alone, so
 #    this asks the core's facet `editorFrontendImports`, which reads each
 #    module's header (lean/lakefile.lean).
+# 5. The model tests' root (`unlinked`) reaches no raw binding: neither it
+#    nor any module it imports, directly or through another, is `Editor.Ffi`
+#    or a module under it. `model-test` links no Rust library, so a port, a
+#    fake or a contract it runs is written over the port alone, never a
+#    binding (the session journal's port, fake and contract,
+#    lean/Editor/Headless/Journal*.lean, among them). Otherwise it prints
+#    each such module, one a line, and exits 6.
 #
-# It exits 0 when all four hold. It exits 2, before it reports on any
+# It exits 0 when all five hold. It exits 2, before it reports on any
 # rule, for a command line it does not take, when Lake fails a query, when
 # Lake answers nothing for a root, and when no root of the build reaches
 # the elaborator adapter: each would make a rule hold of nothing, so the
@@ -72,7 +81,8 @@
 # them and the module's own, from the headers Lake parses. It builds
 # nothing. So the check follows a module that is renamed or moved, and an
 # import written in any form. It makes one query for the root, one for each
-# root of the build and one for each plain module.
+# root of the build, one for each plain module and one for each unlinked
+# module.
 #
 # One root of the build is no module of a library: the root the package-set
 # build generates for the default package set, which `main` of the editor
@@ -98,19 +108,23 @@ built_set=../packages
 # base and the model tests' root.
 plain="Editor ModelTest"
 plain_given=
+# The modules that must reach no raw binding (`Editor.Ffi…`): the model
+# tests' root, which links no Rust library.
+unlinked="ModelTest"
+unlinked_given=
 # The moving names when none is given: none. A feature between having its
 # edges from the core cut and moving out is named here until it has moved.
 moving=""
 
 usage() {
-  echo "usage: tools/core-imports-check.sh [--base <module>] [--elaborator <module>] [--plain <module>] [<root module> [<moving name>...]]" >&2
+  echo "usage: tools/core-imports-check.sh [--base <module>] [--elaborator <module>] [--plain <module>] [--unlinked <module>] [<root module> [<moving name>...]]" >&2
   exit 2
 }
 
 # The options, each with the module it names, before the root.
 while [ "$#" -gt 0 ]; do
   case $1 in
-    --base | --elaborator | --plain)
+    --base | --elaborator | --plain | --unlinked)
       [ "$#" -ge 2 ] || usage
       case $2 in
         '' | -* | *[!A-Za-z0-9_.]*) usage ;;
@@ -119,6 +133,7 @@ while [ "$#" -gt 0 ]; do
         --base) base=$2 ;;
         --elaborator) elaborator=$2 ;;
         --plain) plain_given="${plain_given:+$plain_given }$2" ;;
+        --unlinked) unlinked_given="${unlinked_given:+$unlinked_given }$2" ;;
       esac
       shift 2
       ;;
@@ -135,6 +150,9 @@ done
 
 if [ -n "$plain_given" ]; then
   plain=$plain_given
+fi
+if [ -n "$unlinked_given" ]; then
+  unlinked=$unlinked_given
 fi
 
 root=${1:-Editor.Core}
@@ -270,4 +288,19 @@ if [ -n "$frontend" ]; then
   echo "core-imports-check: these imports put Lean's frontend in a module that must be plain Lean ($plain):" >&2
   printf '%s\n' "$frontend" | sed '/^$/d' | sort -u
   exit 5
+fi
+
+# 5. The model tests' root reaches no raw binding.
+bound=
+for module in $unlinked; do
+  reached=$(closure "$module") || exit 2
+  found=$(printf '%s\n' "$reached" | grep -E '^Editor\.Ffi($|\.)' || true)
+  if [ -n "$found" ]; then
+    bound=$(printf '%s\n%s\n' "$bound" "$found")
+  fi
+done
+if [ -n "$bound" ]; then
+  echo "core-imports-check: these raw bindings are reached by a module that must link no Rust library ($unlinked):" >&2
+  printf '%s\n' "$bound" | sed '/^$/d' | sort -u
+  exit 6
 fi

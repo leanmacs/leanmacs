@@ -9,6 +9,8 @@ import Editor.Completion.StyleContract
 import Editor.Config.Elaborator.Contract
 import Editor.Config.Elaborator.Model
 import Editor.Display.Contract
+import Editor.Headless.Journal.Contract
+import Editor.Headless.Journal.Fake
 import Editor.Headless.Queue.Contract
 import Editor.Indent
 import Editor.InputScheme.Contract

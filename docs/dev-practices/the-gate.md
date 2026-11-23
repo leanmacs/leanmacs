@@ -1685,8 +1685,8 @@ depend on the core, and the core depends on no package
 graph that the core's root holds the whole core, that the core imports no
 module of a feature that is moving out of it, and that an executable that
 elaborates config links the config base, and that the config base and the
-model tests' root are plain Lean, reaching no module of Lean's frontend.
-It is given a root and
+model tests' root are plain Lean, reaching no module of Lean's frontend,
+and that the model tests' root reaches no raw binding. It is given a root and
 the moving names: the root defaults to `Editor.Core`, the core's
 root module (`lean/Editor/Core.lean`), and there is no moving name by
 default. A moving name is a module still under `lean/Editor/` that is not
@@ -1701,8 +1701,10 @@ config base and the elaborator adapter in place of the editor's; the gate
 uses them to see the third rule fail. A third, `--plain <module>`, given
 once or more, names the modules that must be plain Lean in place of the
 config base and the model tests' root; the gate uses it to see the fourth
-rule fail. It checks four rules, in order, and stops at the first that
-fails:
+rule fail. A fourth, `--unlinked <module>`, given once or more, names the
+modules that must reach no raw binding in place of the model tests' root;
+the gate uses it to see the fifth rule fail. It checks five rules, in
+order, and stops at the first that fails:
 
 | Rule | Exit when it fails |
 |---|---|
@@ -1710,6 +1712,7 @@ fails:
 | Every module named `Editor.…` that a root of the build reaches (`ModelTest`, `ConfigTest`, `FfiTest`, `ContractTest`, and the root generated for the default set) is the root or one of the modules it imports, unless it is a moving module | 3, after printing each one outside |
 | A root of the build that reaches the elaborator adapter (`Editor.Config.Elaborate`) reaches the config base (`Editor`) | 4, after printing each root that does not |
 | The config base (`Editor`) and the model tests' root (`ModelTest`), and every module either imports, directly or through another, import no module of Lean's frontend (`Lean`, `Lake`, or a module under either) | 5, after printing each such import, `<importer><TAB><imported>` |
+| The model tests' root (`ModelTest`), and every module it imports, directly or through another, is no raw binding (`Editor.Ffi` or a module under it) | 6, after printing each one reached |
 
 - **The second rule is what makes the first a statement about every core
   module.** A core module that `Editor.Core` did not import would be
@@ -1741,6 +1744,15 @@ fails:
   their own that no module imports, loaded into the build as a plugin
   (`lean/Lint/Wait.lean`), and a module of the base that imported them,
   as `Editor.Bound` once did, fails here.
+- **The fifth rule keeps what `model-test` runs written over ports.**
+  `model-test` links no Rust library, so a port, a fake or a contract it
+  runs reaches no binding: the session journal's port, its recording fake
+  and its contract (`lean/Editor/Headless/Journal.lean`,
+  `Journal/Fake.lean`, `Journal/Contract.lean`) are among them, and the
+  real adapter, which is the one that imports `Editor.Ffi.Files`, is a
+  module of its own (`Journal/Real.lean`) that only the hosts and
+  `contract-test` import. A module the model tests reach that imported a
+  binding would otherwise pass for as long as nothing it runs called one.
 - **The moving names are named, never derived.** "Every module the root
   does not reach" would pass whatever the core imported.
 - **No module is exempt by name.** The core's Lake package lists no
@@ -1755,8 +1767,9 @@ fails:
 - **It asks Lake and reads no source text** (`lake query
   +<module>:transImports`, one module a line), as the host imports check
   does, so it follows a module that is renamed or moved, and an import
-  written in any form. It makes eight queries, one for the root, one for
-  each root of the build and one for each module that must be plain Lean,
+  written in any form. It makes nine queries, one for the root, one for
+  each root of the build, one for each module that must be plain Lean and
+  one for each that must reach no raw binding,
   builds nothing and writes nothing under `lean/` or `packages/`: the build
   has written the generated root already.
 - **The gate sees each rule bite.** `ffi-test` runs it told that a module
@@ -1772,7 +1785,9 @@ fails:
   root imports, and requires exit 4, with the roots that link the
   elaborator named; and told with `--plain Editor.Core` that the core's
   root must be plain Lean, and requires exit 5, with the elaborator
-  adapter's import of `Lean` named.
+  adapter's import of `Lean` named; and told with `--unlinked Editor.Core`
+  that the core's root must reach no raw binding, and requires exit 6,
+  with `Editor.Ffi` named.
 - **It refuses to pass for no reason.** A command line it does not take, a
   query Lake fails, an empty answer and a third rule that would be about
   no root are exit 2, before any rule is reported, so none can stand in
