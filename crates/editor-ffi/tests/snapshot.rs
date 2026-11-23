@@ -7,7 +7,10 @@
 //! one test below owns both counts of this process.
 
 use std::mem::MaybeUninit;
+use std::time::Duration;
 use std::{ptr, slice, thread};
+
+use editor_wait::HangGuard;
 
 use editor_ffi::document::{
     Document, RawText, ReplaceStatus, editor_ffi_document_free, editor_ffi_document_new,
@@ -38,9 +41,13 @@ const NO_UNIT: u8 = 3;
 /// A tag that names no motion.
 const NO_MOTION: u8 = motion::TAGS;
 
-/// hang guard: the free a wait for the live count ends on; only a hang
-/// reaches the bound, and the test then fails as a hang.
-const HANG_GUARD_MS: u64 = 10_000;
+/// The free a wait for the live count ends on
+/// (`editor_ffi_live_await`, which takes it in milliseconds,
+/// [`HangGuard::as_millis`]); only a hang reaches the bound.
+const FREED: HangGuard = HangGuard::on(
+    "the free of the snapshot freed on another thread",
+    Duration::from_secs(10),
+);
 
 /// A new document holding `text`.
 fn document_new(text: &str) -> *mut Document {
@@ -389,7 +396,7 @@ fn a_snapshot_is_taken_and_read_through_c_and_is_live_from_the_call_that_made_it
         // address.
         let second = second as usize;
         let freeing = thread::spawn(move || editor_ffi_snapshot_free(second as *mut Snapshot));
-        assert!(editor_ffi_live_await(SNAPSHOTS, before, HANG_GUARD_MS));
+        assert!(editor_ffi_live_await(SNAPSHOTS, before, FREED.as_millis()));
         freeing.join().expect("the free's thread");
         assert_eq!(editor_ffi_snapshot_live(), before);
     }

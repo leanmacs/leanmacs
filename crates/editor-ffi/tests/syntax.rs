@@ -251,7 +251,7 @@ fn a_query_is_answered_only_from_a_tree_of_the_snapshots_revision() {
     let attached = unsafe { editor_ffi_syntax_attach(before, "rust".as_ptr(), 4) };
     assert_eq!(attached, AttachStatus::Attached as u64);
     // SAFETY: the snapshot is live.
-    assert!(unsafe { editor_ffi_syntax_settle(before, 10_000) });
+    assert!(unsafe { editor_ffi_syntax_settle(before, BOUND.as_millis()) });
     assert_eq!(
         captures(before, query, 0, RUST.len()),
         (
@@ -273,7 +273,7 @@ fn a_query_is_answered_only_from_a_tree_of_the_snapshots_revision() {
         status == CapturesStatus::NotParsed as u64 || status == CapturesStatus::Answered as u64
     );
     // SAFETY: the snapshot is live.
-    assert!(unsafe { editor_ffi_syntax_settle(after, 10_000) });
+    assert!(unsafe { editor_ffi_syntax_settle(after, BOUND.as_millis()) });
     assert_eq!(
         captures(before, query, 0, 4).0,
         CapturesStatus::NotParsed as u64

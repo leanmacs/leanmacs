@@ -173,6 +173,10 @@ mod tests {
     /// A guard run out on purpose, at once: the handles not yet freed.
     const NOT_FREED: HangGuard = HangGuard::held("the handles not yet freed", Duration::ZERO);
 
+    /// A guard of no time on an answer the count gives at once, without a
+    /// wait: a kind that names no handles, or a target every count meets.
+    const AT_ONCE: HangGuard = HangGuard::on("an answer given at once", Duration::ZERO);
+
     /// Where each count [`Live::await_at_most`] reads on `live` arrives.
     fn readings(live: &Live) -> Receiver<u64> {
         let (read, readings) = channel();
@@ -232,11 +236,17 @@ mod tests {
     #[test]
     fn a_kind_that_names_no_handles_is_refused_at_once() {
         for kind in [0, COUNTERS + 1, u8::MAX] {
-            assert!(!editor_ffi_live_await(kind, u64::MAX, 0), "kind {kind}");
+            assert!(
+                !editor_ffi_live_await(kind, u64::MAX, AT_ONCE.as_millis()),
+                "kind {kind}"
+            );
         }
         // Every count is at most the largest there is.
         for kind in [SNAPSHOTS, DOCUMENTS, COUNTERS] {
-            assert!(editor_ffi_live_await(kind, u64::MAX, 0), "kind {kind}");
+            assert!(
+                editor_ffi_live_await(kind, u64::MAX, AT_ONCE.as_millis()),
+                "kind {kind}"
+            );
         }
     }
 }

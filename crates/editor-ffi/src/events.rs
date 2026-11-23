@@ -508,7 +508,7 @@ mod tests {
         let feeds = Feeds::new();
         assert!(!feeds.join(0, BOUND));
         assert!(!feeds.join(1, BOUND));
-        assert!(!editor_ffi_events_script_join(0, 10_000));
+        assert!(!editor_ffi_events_script_join(0, BOUND.as_millis()));
     }
 
     #[test]

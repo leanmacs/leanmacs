@@ -38,10 +38,6 @@ use editor_ffi::text::{ByteRange, editor_ffi_text_find, editor_ffi_text_free};
 const DEADLINE: HangGuard =
     HangGuard::on("the event each wait here ends on", Duration::from_secs(5));
 
-/// hang guard: as [`DEADLINE`], in milliseconds, as the C functions take
-/// it.
-const DEADLINE_MS: u64 = 5000;
-
 /// The tag of the editor queue.
 const EDITOR: u8 = QueueId::Editor.tag();
 
@@ -125,7 +121,7 @@ fn next(queue: u8) -> Option<Event> {
 /// deadline, a hang guard.
 fn wait_for_parked(queue: u8, pulls: u64) {
     assert!(
-        editor_ffi_events_await_waiting(queue, pulls, DEADLINE_MS),
+        editor_ffi_events_await_waiting(queue, pulls, DEADLINE.as_millis()),
         "{pulls} pulls were not parked on queue {queue}: {DEADLINE}"
     );
 }
@@ -163,7 +159,7 @@ fn find_bytes(haystack: &[u8], needle: &[u8], start: Option<usize>) -> Option<(u
 fn freed_on_another_thread(kind: u8, target: u64, free: impl FnOnce() + Send + 'static) {
     let freeing = thread::spawn(free);
     assert!(
-        editor_ffi_live_await(kind, target, DEADLINE_MS),
+        editor_ffi_live_await(kind, target, DEADLINE.as_millis()),
         "the count of kind {kind} did not come down to {target}: {DEADLINE}"
     );
     freeing.join().expect("the free's thread");
@@ -428,16 +424,20 @@ fn the_process_wide_queues_carry_events_until_they_are_quit() {
         assert_eq!(event.words, [code, u64::MAX - code]);
     }
     // Its whole script fed, the feed ends, and is joined once.
-    assert!(editor_ffi_events_script_join(feed, DEADLINE_MS));
-    assert!(!editor_ffi_events_script_join(feed, DEADLINE_MS));
+    assert!(editor_ffi_events_script_join(feed, DEADLINE.as_millis()));
+    assert!(!editor_ffi_events_script_join(feed, DEADLINE.as_millis()));
 
     // A tag that names no queue is refused, not acted on.
     assert!(!post(NO_QUEUE, 1, 1, "nowhere"));
     assert_eq!(next(NO_QUEUE), None);
     assert_eq!(editor_ffi_events_script_feed(NO_QUEUE, 1, 1), 0);
-    assert!(!editor_ffi_events_script_join(0, DEADLINE_MS));
+    assert!(!editor_ffi_events_script_join(0, DEADLINE.as_millis()));
     assert_eq!(editor_ffi_events_waiting(NO_QUEUE), 0);
-    assert!(!editor_ffi_events_await_waiting(NO_QUEUE, 0, DEADLINE_MS));
+    assert!(!editor_ffi_events_await_waiting(
+        NO_QUEUE,
+        0,
+        DEADLINE.as_millis()
+    ));
 
     // Quit reaches both queues, after what was already queued.
     assert!(post(EDITOR, 7, 1, "before quit"));
@@ -458,6 +458,6 @@ fn the_process_wide_queues_carry_events_until_they_are_quit() {
         editor_ffi_events_script_feed(COMPLETION, 9, u64::MAX)
     });
     assert_ne!(feed, 0, "the feed starts");
-    assert!(editor_ffi_events_script_join(feed, DEADLINE_MS));
+    assert!(editor_ffi_events_script_join(feed, DEADLINE.as_millis()));
     assert_eq!(next(COMPLETION), Some(Event::quit()));
 }

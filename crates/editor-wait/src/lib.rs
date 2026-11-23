@@ -126,6 +126,21 @@ impl HangGuard {
         self.bound
     }
 
+    /// The bound in whole milliseconds, rounded down, as the C functions
+    /// Lean calls take it (`editor-ffi`'s `bound_ms`), so a Rust check of
+    /// those functions derives the number it passes from its guard. A
+    /// bound past what a `u64` of milliseconds counts, such as
+    /// [`Duration::MAX`], is `u64::MAX`, which those functions read as no
+    /// bound.
+    pub const fn as_millis(&self) -> u64 {
+        let millis = self.bound.as_millis();
+        if millis > u64::MAX as u128 {
+            u64::MAX
+        } else {
+            millis as u64
+        }
+    }
+
     /// Whether running out is the expected outcome
     /// ([`held`](Self::held)).
     pub const fn held_for_good(&self) -> bool {
@@ -398,6 +413,21 @@ mod tests {
             ON.with_bound(Duration::ZERO),
             HangGuard::on("a reply", Duration::ZERO)
         );
+    }
+
+    #[test]
+    fn a_guard_gives_its_bound_in_whole_milliseconds_for_a_c_function() {
+        assert_eq!(
+            HangGuard::on("a reply", Duration::from_secs(5)).as_millis(),
+            5_000
+        );
+        assert_eq!(HangGuard::held("the lock", Duration::ZERO).as_millis(), 0);
+        assert_eq!(
+            HangGuard::on("a step", Duration::from_micros(2_999)).as_millis(),
+            2
+        );
+        // No bound stays no bound: past what milliseconds in a `u64` count.
+        assert_eq!(NO_BOUND.as_millis(), u64::MAX);
     }
 
     #[test]

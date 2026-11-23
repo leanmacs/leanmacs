@@ -38,9 +38,16 @@ const DEADLINE: HangGuard = HangGuard::on(
     Duration::from_secs(5),
 );
 
-/// hang guard: the scripted run parks to wait for its close
-/// (`editor_ffi_window_await_parked`), in milliseconds; only a hang reaches the bound, and the test then fails as a hang.
-const PARKS_MS: u64 = 5_000;
+/// The scripted run's park to wait for its close
+/// (`editor_ffi_window_await_parked`, which takes it in milliseconds,
+/// [`HangGuard::as_millis`]); only a hang reaches the bound.
+const PARKS: HangGuard = HangGuard::on(
+    "the scripted run's park to wait for its close",
+    Duration::from_secs(5),
+);
+
+/// A wait for a park with no run going, which can only run out, at once.
+const NO_RUN: HangGuard = HangGuard::held("the park of a run that is not going", Duration::ZERO);
 
 /// The tag of the editor queue.
 const EDITOR: u8 = QueueId::Editor.tag();
@@ -267,7 +274,7 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     let done = run(SCRIPTED, true);
     assert_arrives(sample(true));
     assert!(
-        editor_ffi_window_await_parked(SCRIPTED, PARKS_MS),
+        editor_ffi_window_await_parked(SCRIPTED, PARKS.as_millis()),
         "the run goes on, waiting until the window is closed"
     );
     // What it was asked crosses with the close in its place: a minimise
@@ -278,11 +285,14 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     assert_eq!(editor_wait::recv(&done, DEADLINE), Ok(Ok(None)));
     assert_eq!(asked(SCRIPTED), (0, vec![2, 9]));
     // Nothing runs now: a wait for a park can only run out.
-    assert!(!editor_ffi_window_await_parked(SCRIPTED, 0));
+    assert!(!editor_ffi_window_await_parked(
+        SCRIPTED,
+        NO_RUN.as_millis()
+    ));
     // A tag that names no scripted platform has no run to park, nor has
     // the one that cannot open a window: each says so at once.
     for platform in [NO_PLATFORM, PlatformId::Winit.tag(), SCRIPTED_FAILING] {
-        assert!(!editor_ffi_window_await_parked(platform, PARKS_MS));
+        assert!(!editor_ffi_window_await_parked(platform, PARKS.as_millis()));
     }
 
     // Run with composition not allowed, no composition event arrives: the
