@@ -173,6 +173,51 @@ def checkChecks (_ : Unit) : List Check :=
               between == "config-test: during \"it speaks\": editor: a hang: one\n" &&
               said == between ++ "config-test: during \"it speaks\": two\n")
             s!"failed={failed} between={between.quote} said={said.quote}" },
+    { name :=
+        "several lines said in one write each come after the check's name with nothing after the last newline, bytes written are named as text is and bytes that are no text pass as they are, and once a check has thrown the thread's stderr is the one it was"
+      run := do
+        let caught ← IO.mkRef ({} : IO.FS.Stream.Buffer)
+        let before ← IO.setStderr (IO.FS.Stream.ofBuffer caught)
+        let failed ←
+          try
+            let failed ←
+              failures
+                  [{  name := "two"
+                      run := do
+                        (← IO.getStderr).putStr "a\nb\n"
+                        return true },
+                    { name := "bytes"
+                      run := do
+                        (← IO.getStderr).write "c\n".toUTF8
+                        return true },
+                    { name := "raw"
+                      run := do
+                        (← IO.getStderr).write ⟨#[0xff, 0x0a]⟩
+                        return true },
+                    { name := "throws"
+                      run := do
+                        IO.eprintln "d"
+                        throw (IO.userError "x") }]
+            -- Said on the buffer itself again: no check is running.
+            IO.eprintln "after"
+            pure failed
+          finally
+            discard <| IO.setStderr before
+        -- What was said: the text up to the bytes that are none, those
+        -- bytes, and the text after them.
+        let said := (← caught.get).data.toList
+        let text (bytes : List UInt8) : String :=
+          (String.fromUTF8? ⟨bytes.toArray⟩).getD "not UTF-8"
+        let first := text (said.takeWhile (· != 0xff))
+        let raw := (said.dropWhile (· != 0xff)).take 2
+        let last := text ((said.dropWhile (· != 0xff)).drop 2)
+        saw
+            (failed == ["throws (x)"] &&
+              first ==
+                "config-test: during \"two\": a\nconfig-test: during \"two\": b\nconfig-test: during \"bytes\": c\n" &&
+              raw == [0xff, 0x0a] &&
+              last == "config-test: during \"throws\": d\nafter\n")
+            s!"failed={failed} first={first.quote} raw={raw} last={last.quote}" },
     { name := "the inventory names, sorted, only the checks during which a loop thread started"
       run := do
         let loops ← IO.mkRef 0
