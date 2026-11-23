@@ -1202,7 +1202,7 @@ def activityRunnerChecks : List Check :=
               (← activity.refused) == 0)
             s!"parked={repr parked} woken={woken} here={here} held={repr held} again={repr again} waiting={waiting} ended={ended}" },
     { name :=
-        "a sleep already due is ended inside its start: the count goes from 1 to 2 and back to 1 as the job enters it, and never reads 0 before the job has ended"
+        "a sleep already due is ended inside its start, the job keeping its own unit: the count goes from 1 to 0 only as the job ends, and never reads 0 before"
       run := do
         let rig ← Rig.new
         let counted := rig.services.activity
@@ -1216,8 +1216,8 @@ def activityRunnerChecks : List Check :=
                 return 0)
         let ended ← spawned.endedAs (.finished #["0"])
         -- The end's entry is noted after its step, so idle can come first.
-        let counts := (← log.untilHolds 4).map (·.1)
-        saw (ended && counts == #[1, 2, 1, 0] && (← activity.refused) == 0) s!"counts={counts}" },
+        let counts := (← log.untilHolds 2).map (·.1)
+        saw (ended && counts == #[1, 0] && (← activity.refused) == 0) s!"counts={counts}" },
     { name :=
         "cancelling a job parked on the fake clock gives back exactly one unit: the count is 0 once it has concluded, and no done ever arrived with nothing held"
       run := do
@@ -1244,47 +1244,36 @@ def activityRunnerChecks : List Check :=
               (← activity.refused) == 0)
             s!"cancelled={cancelled} counts={counts} refused={← activity.refused}" },
     { name :=
-        "a job that has given its unit back for a sleep on the fake clock is in a wait a cancel withdraws: a cancel made as the unit is given back withdraws the sleep before it returns"
+        "a job that has given its unit back for a sleep on the fake clock is in a wait a cancel withdraws: a cancel made as its park is applied withdraws the sleep before it returns"
       run := do
         let rig ← Rig.new
-        let counted := rig.services.activity
-        -- The job's handle, for the count's `done`, which runs on the job's
-        -- thread: there once `known` is resolved.
-        let handle ← IO.mkRef (none : Option Job.Handle)
-        let known : IO.Promise Unit ← IO.Promise.new
-        -- What the clock had withdrawn as the cancel returned.
-        let noted ← IO.mkRef (none : Option (Array UInt64))
-        let activity : Job.Activity :=
-          { counted with
-            done := do
-              counted.done
-              -- The job's first `done` is its park's: the cancel is made
-              -- there, on the job's own thread, so the order is the runner's
-              -- alone.
-              if (← noted.get).isNone then
-                discard <| IO.wait known.result?
-                if let some handle← handle.get then
-                  handle.cancel
-                  noted.set (some (← rig.clock.withdrawn)) }
-        let rig := { rig with services := { rig.services with activity } }
+        let recorder ← Job.FakeRecorder.new
+        let rig := { rig with services := { rig.services with recorder := recorder.recorder } }
+        -- The job is held just after the section of its park, which gave its
+        -- unit back: the cancel is made there, so the order is the runner's
+        -- alone.
+        let (parked, letGo) ← recorder.holdAt (· matches .park _)
         let spawned ←
           rig.spawn
               (reporting fun _ => do
                 sleep 10
                 return 0)
         try
-          handle.set (some spawned.handle)
-          known.resolve ()
+          discard <| awaitEvent "the job's park" parked
+          spawned.handle.cancel
+          let noted ← rig.clock.withdrawn
+          letGo
           let cancelled ← spawned.endedAs .cancelled
-          let noted ← noted.get
           let started := (← rig.clock.started).map (·.1)
-          saw (cancelled && started.size == 1 && noted == some started && (← activity.refused) == 0)
-              s!"cancelled={cancelled} started={started} withdrawn as the cancel returned={noted} refused={← activity.refused}"
+          saw
+              (cancelled && started.size == 1 && noted == started &&
+                (← rig.services.activity.refused) == 0)
+              s!"cancelled={cancelled} started={started} withdrawn as the cancel returned={noted}"
         finally
-          known.resolve ()
+          letGo
           spawned.handle.cancel },
     { name :=
-        "a job cancelled while the clock is being asked for its sleep keeps its unit until it has ended: it withdraws the sleep itself, and the count never reads 0 before its end"
+        "a job cancelled while the clock is being asked for its sleep keeps its own unit until it has ended: it withdraws the sleep itself, and the count goes from 1 to 0 only at its end"
       run := do
         let rig ← Rig.new
         let counted := rig.services.activity
@@ -1306,11 +1295,12 @@ def activityRunnerChecks : List Check :=
           spawned.handle.cancel
           starting.resolve ()
           let cancelled ← spawned.endedAs .cancelled
-          -- The spawn's step, the withdrawal's, the park's and the end's.
-          let counts := (← log.untilHolds 4).map (·.1)
+          -- The spawn's step and the end's: the withdrawal, in the job's
+          -- park, takes no unit, the job having kept its own.
+          let counts := (← log.untilHolds 2).map (·.1)
           let started := (← rig.clock.started).map (·.1)
           saw
-              (cancelled && counts == #[1, 2, 1, 0] && (← rig.clock.withdrawn) == started &&
+              (cancelled && counts == #[1, 0] && (← rig.clock.withdrawn) == started &&
                 (← activity.refused) == 0)
               s!"cancelled={cancelled} counts={counts} refused={← activity.refused}"
         finally
@@ -1388,6 +1378,57 @@ def activityRunnerChecks : List Check :=
           let seen ← rig.services.activity.seen
           saw (!early && seen.running == 0) s!"early={early} seen={repr seen}"
         finally
-          gate.resolve () }]
+          gate.resolve () },
+    { name :=
+        "a job's sleep on the fake clock is recorded as one transition per section, in the order they took effect, and the trace is a run of the protocol"
+      run := do
+        let rig ← Rig.new
+        let recorder ← Job.FakeRecorder.new
+        let rig := { rig with services := { rig.services with recorder := recorder.recorder } }
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 10
+                return 1)
+        discard <| awaitEvent "the job's park" (← recorder.reached (· matches .park _))
+        rig.clock.advance 10
+        discard <|
+            awaitEvent "the runner's last step for the job" spawned.handle.finishedRan.result?
+        let trace ← recorder.trace
+        let replayed := Job.Protocol.replay trace
+        saw
+            (trace ==
+                #[.start 0, .ask 0 1 .parks, .park 0, .wake 1 .completed, .resume 0, .done 0] &&
+              replayed matches .ok _)
+            s!"trace={repr trace}" },
+    { name :=
+        "a job cancelled while the clock is being asked for its sleep is recorded cancelled before its park, which withdraws the sleep, and the trace is a run of the protocol"
+      run := do
+        let rig ← Rig.new
+        let recorder ← Job.FakeRecorder.new
+        let rig := { rig with services := { rig.services with recorder := recorder.recorder } }
+        let starting ← rig.clock.holdStarts
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 1000
+                return 0)
+        try
+          discard <|
+              awaitEvent "the job's call at the clock's hold"
+                (← rig.clock.arrivedAt (.held 1)).result?
+          spawned.handle.cancel
+          starting.resolve ()
+          discard <|
+              awaitEvent "the runner's last step for the job" spawned.handle.finishedRan.result?
+          let trace ← recorder.trace
+          let replayed := Job.Protocol.replay trace
+          saw
+              (trace == #[.start 0, .ask 0 1 .parks, .cancel 0, .park 0, .resume 0, .done 0] &&
+                replayed matches .ok _)
+              s!"trace={repr trace}"
+        finally
+          starting.resolve ()
+          spawned.handle.cancel }]
 
 end ModelTest

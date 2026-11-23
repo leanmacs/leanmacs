@@ -9,8 +9,10 @@ import Editor.Process.Model
 
 Four fakes, published for `model-test` and `config-test`: the fake clock,
 below, the fake file service (`FakeFiles`, after it), the fake process
-service (`FakeProcesses`) and the fake watch service (`FakeFileWatches`, at
-the end of this module), each of whose doc comment has its rules.
+service (`FakeProcesses`) and the fake watch service (`FakeFileWatches`),
+each of whose doc comment has its rules; and the fake of the recording port
+(`FakeRecorder`, at the end of this module), which keeps the trace of the
+runner's protocol transitions and holds a thread at one a check names.
 
 ## The fake clock
 
@@ -1034,5 +1036,135 @@ def withdrawn (watches : FakeFileWatches) : BaseIO (Array UInt64) :=
   return (← watches.state.get).withdrawn
 
 end FakeFileWatches
+
+/-- A hold of a fake recorder: the transitions it holds at, the promise
+resolved with the first one to arrive, and the promise that lets it go. -/
+structure FakeRecorder.Hold where
+  /-- Which transitions it holds at. -/
+  picks : Protocol.Transition → Bool
+  /-- Resolved with the transition held, once a thread has arrived. -/
+  arrived : IO.Promise Protocol.Transition
+  /-- Resolved to let the held thread go. -/
+  release : IO.Promise Unit
+
+/-- What a fake recorder holds. -/
+structure FakeRecorder.State where
+  /-- Every transition recorded, in the order of the sections that applied
+  them. -/
+  trace : Array Protocol.Transition := #[]
+  /-- Every transition told as applied, in the order the tells came. -/
+  applied : Array Protocol.Transition := #[]
+  /-- What checks wait for (`reached`): each with the promise resolved with
+  the first transition told as applied that it picks. -/
+  reaching : Array ((Protocol.Transition → Bool) × IO.Promise Protocol.Transition) := #[]
+  /-- The holds at a tell of applied, not yet arrived at (`holdAt`). -/
+  appliedHolds : Array FakeRecorder.Hold := #[]
+  /-- The holds inside a section, at a record, not yet arrived at
+  (`holdRecordAt`). -/
+  recordHolds : Array FakeRecorder.Hold := #[]
+
+/-- The fake of the recording port (`Job.Recorder`, `Editor/Job/Runner.lean`):
+it keeps the trace of the transitions the runner records, in the order of
+their sections, and lets a check wait for a transition to have been applied
+(`reached`), or hold the thread that applies one, after its section
+(`holdAt`) or inside it (`holdRecordAt`), until the check lets it go. A held
+thread is held on a promise, never on time. A check that holds inside a
+section holds the table's lock: it makes no call into the runner on that
+table until it has let the hold go. -/
+structure FakeRecorder where
+  /-- What it holds. Every change to it is one atomic step. -/
+  state : IO.Ref FakeRecorder.State
+
+namespace FakeRecorder
+
+/-- A recorder that has recorded nothing. -/
+def new : BaseIO FakeRecorder :=
+  return { state := ← IO.mkRef {} }
+
+/-- Takes the first hold of `holds` that `transition` picks, if one does. -/
+def takeHold (holds : Array Hold) (transition : Protocol.Transition) : Option Hold × Array Hold :=
+  match holds.findIdx? (·.picks transition) with
+  | some index => (holds[index]?, holds.eraseIdxIfInBounds index)
+  | none => (none, holds)
+
+/-- Parks the calling thread on `hold`, if there is one, once it has told
+the check it arrived. -/
+def park (hold : Option Hold) (transition : Protocol.Transition) : BaseIO Unit := do
+  if let some hold := hold then
+    hold.arrived.resolve transition
+    discard <| IO.wait hold.release.result?
+
+/-- Records `transition`, inside the section that applies it: appended to
+the trace, then held if a hold inside a section picks it. -/
+def record (recorder : FakeRecorder) (transition : Protocol.Transition) : BaseIO Unit := do
+  let hold ←
+    recorder.state.modifyGet fun state =>
+        let (hold, recordHolds) := takeHold state.recordHolds transition
+        (hold,
+          { state with
+            trace := state.trace.push transition, recordHolds })
+  park hold transition
+
+/-- Tells that `transition` has been applied, its section over: noted, each
+wait it picks resolved, then held if a hold after a section picks it. -/
+def applied (recorder : FakeRecorder) (transition : Protocol.Transition) : BaseIO Unit := do
+  let (reached, hold) ←
+    recorder.state.modifyGet fun state =>
+        let (reached, reaching) := state.reaching.partition (·.1 transition)
+        let (hold, appliedHolds) := takeHold state.appliedHolds transition
+        ((reached, hold),
+          { state with
+            applied := state.applied.push transition, reaching, appliedHolds })
+  for (_, promise) in reached do
+    promise.resolve transition
+  park hold transition
+
+/-- The recorder as the port the runner is given. -/
+def recorder (recorder : FakeRecorder) : Recorder :=
+  { record := recorder.record, applied := recorder.applied }
+
+/-- The transitions recorded so far, in the order of their sections. -/
+def trace (recorder : FakeRecorder) : BaseIO (Array Protocol.Transition) :=
+  return (← recorder.state.get).trace
+
+/-- A task that ends with the first transition matching `picks` told as
+applied, its section over: at once if one already has been. What a check
+waits on, with a hang guard, for a step the runner takes on another
+thread. -/
+def reached (recorder : FakeRecorder) (picks : Protocol.Transition → Bool) :
+    BaseIO (Task Protocol.Transition) := do
+  let promise ← IO.Promise.new
+  let already ←
+    recorder.state.modifyGet fun state =>
+        match state.applied.find? picks with
+        | some transition => (some transition, state)
+        | none => (none, { state with reaching := state.reaching.push (picks, promise) })
+  if let some transition := already then
+    promise.resolve transition
+  return promise.result?.map (sync := true) (·.getD .loopEnd)
+
+/-- Sets a hold at the transitions `picks` names, where `place` puts it,
+and gives back the task of its arrival and the action that lets it go. -/
+def hold (recorder : FakeRecorder) (picks : Protocol.Transition → Bool)
+    (place : Hold → State → State) : BaseIO (Task Protocol.Transition × BaseIO Unit) := do
+  let hold : Hold := { picks, arrived := ← IO.Promise.new, release := ← IO.Promise.new }
+  recorder.state.modify (place hold)
+  return (hold.arrived.result?.map (sync := true) (·.getD .loopEnd), hold.release.resolve ())
+
+/-- Holds the thread that tells the first transition from now matching
+`picks` as applied, after its section, until the action handed back is
+run; the task ends once the thread has arrived. -/
+def holdAt (recorder : FakeRecorder) (picks : Protocol.Transition → Bool) :
+    BaseIO (Task Protocol.Transition × BaseIO Unit) :=
+  recorder.hold picks fun hold state => { state with appliedHolds := state.appliedHolds.push hold }
+
+/-- Holds the thread that records the first transition from now matching
+`picks`, inside its section, with the table's lock held, until the action
+handed back is run; the task ends once the thread has arrived. -/
+def holdRecordAt (recorder : FakeRecorder) (picks : Protocol.Transition → Bool) :
+    BaseIO (Task Protocol.Transition × BaseIO Unit) :=
+  recorder.hold picks fun hold state => { state with recordHolds := state.recordHolds.push hold }
+
+end FakeRecorder
 
 end Editor.Job

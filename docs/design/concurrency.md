@@ -1152,7 +1152,7 @@ run or post, and given back after:
 
 | Unit | Taken | Given back |
 |---|---|---|
-| A job while it can run | `Job.spawn`, before its task; and a parking wait's end, in the wait's action, on the thread that ends it (`Handle.parkingWait`) | When it parks in a wait only a test ends, once the wait is recorded as the job's (`drive`), or after its `finished` (`spawn`) |
+| A job while it can run | `Job.spawn`'s `start` section, before its task; and a parking wait's end, in the `wake` section of `Completions.finish`, on the thread that ends it | In the `park` section that records a wait only a test ends as the job's (`Handle.enter`), or in the `done` section after its `finished` (`Handle.retire`). Each is one critical section of the table of waits ("The runner's protocol, modelled") |
 | A wait on a service that ends it by itself (the real file, process, diff and grep services, real timers and watches) | Nothing of its own: the job keeps its unit through the wait | |
 | A handle's request (`Services.fileWorked`) | Before the port's start | In the wait's action, after `noted` and the resolve |
 | The reload job | `reduce`'s `.start`, before its task | `reloadJob`'s `finally`, after its counted post |
@@ -1166,21 +1166,26 @@ timer is not. A flush (`Services.flushed`) holds none either: it is its
 observer's, not the program's.
 
 **A parked job's wait can be withdrawn.** A job gives its unit back for
-such a wait only once the runner has recorded the wait as the job's
-(`Job.drive`), or has withdrawn it when the job was cancelled on its way in.
-So idle means more than that nothing can run: every parked job is in a wait
-a cancel withdraws (`Handle.cancel`), which is what the loop's end and an
-owner's removal rely on, and a job cancelled on its way into a wait holds a
-unit until it has ended. The order the other way round, the unit first, let
-a host read idle and end its loop while the job's thread was between the
-two steps: the cancel found no wait, and the job withdrew its own after the
-host's bracket had returned. Pinned by `ModelTest.activityRunnerChecks`, on
-one thread's order: a cancel made as the unit is given back withdraws the
-sleep, and a job cancelled while the clock is asked for its sleep never
-lets the count read 0 before its end. A test that needs the event itself,
-the wait recorded, waits on that `done`, never on the fake clock's arrival,
-which comes inside the clock's `start`, before the runner has its answer
-(`withdrawingHeld`, `lean/ConfigTest/Editor/Headless.lean`).
+such a wait in the same critical section that records the wait as the
+job's (its `park`, `Handle.enter`), and a job cancelled on its way in
+withdraws the wait in that section instead and keeps its unit. So idle
+means more than that nothing can run: every parked job is in a wait a
+cancel withdraws (`Handle.cancel`), which is what the loop's end and an
+owner's removal rely on, and a job cancelled on its way into a wait holds
+its own unit until it has ended. The order the other way round, the unit
+first, let a host read idle and end its loop while the job's thread was
+between the two steps: the cancel found no wait, and the job withdrew its
+own after the host's bracket had returned. With the two in one section
+there is no such place to be, and the model's counterexample shows the old
+order breaks `cancel_finds_running_or_recorded` ("The runner's protocol,
+modelled"). Pinned by `ModelTest.activityRunnerChecks`, on one thread's
+order: a cancel made as the job's park is applied (held in
+`Recorder.applied`) withdraws the sleep, and a job cancelled while the
+clock is asked for its sleep never lets the count read 0 before its end. A
+test that needs the event itself, the wait recorded, waits on that `done`,
+never on the fake clock's arrival, which comes inside the clock's `start`,
+before the runner has its answer (`withdrawingHeld`,
+`lean/ConfigTest/Editor/Headless.lean`).
 
 **A cancelled job's last step can be waited for.** The loop's end cancels
 its jobs and does not wait for them: a cancelled job ends on a pool thread,

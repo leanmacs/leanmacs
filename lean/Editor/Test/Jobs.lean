@@ -155,10 +155,12 @@ ends (the fake clock's sleep, a fake watch's next) or has ended, its
 itself. It stays so until the check acts: moves the clock, changes a watch,
 lets a fake go, spawns.
 
-It is sound after a cancel too: a job parking gives back its unit only once
-its wait is recorded as its own or withdrawn (`Job.drive`), so a cancelled
-job holds a unit from the cancel, or from its own withdrawal, until its
-`finished` has run, and idle after a cancel means the job has ended. The
+It is sound after a cancel too: a job parking gives back its unit in the
+section that records its wait as its own, and a job cancelled on its way in
+withdraws the wait in that section and keeps its unit (`Job.Handle.enter`),
+so a cancelled job holds a unit from the cancel's withdrawal, which takes
+one back, or its own, until its `finished` has run, and idle after a
+cancel means the job has ended. The
 checks that wait for a cancelled job's end first (`awaitEnded`) wait for
 an event that idle now implies.
 

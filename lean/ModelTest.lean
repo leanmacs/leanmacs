@@ -697,8 +697,9 @@ The job system is tested here with no Rust library:
   job holds a unit while it can run and none in a sleep on the fake clock,
   the unit of a wait's end is taken on the thread that ends it, a sleep
   already due never lets the count read 0, a cancel in a park gives back
-  exactly one unit, and a load on a file service that ends it by itself
-  holds the job's. Each waits on the count's own changes;
+  exactly one unit, a cancel made as a park is applied withdraws the sleep,
+  and a load on a file service that ends it by itself holds the job's. Each
+  waits on the count's own changes, or on the fake recorder's;
 - `rigChecks`: the test kit's waits (`Editor/Test/Jobs.lean`), each forced
   into the order it must not get wrong: a rig's idle has not come while a
   job is held in its leading work, the start gate resolves at its count and

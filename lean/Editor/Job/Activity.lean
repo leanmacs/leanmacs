@@ -11,7 +11,9 @@ back (`done`) once it has: a job while it is runnable, a wait on a service
 that ends it by itself, the reload job until it has posted its wake-up, and
 an event a job, the reload, a pause or a hint delay posted until the editor
 thread has handled it. Who takes and gives back each is said where it
-happens (`Editor/Job/Runner.lean`, `Editor/Headless.lean`).
+happens (`Editor/Job/Runner.lean`, `Editor/Headless.lean`): a job's unit
+moves only inside the runner's critical sections, each of which applies and
+records one protocol transition (`Editor/Job/Runner.lean`, "The protocol").
 
 It is plain core code, not a port: data of closures, so a host that does not
 track its idle carries `untracked`, whose steps do nothing.

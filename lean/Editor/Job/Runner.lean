@@ -3,6 +3,7 @@ import Editor.Job
 import Editor.Job.Activity
 import Editor.Job.Protocol
 import Std.Data.HashMap
+import Std.Sync.Mutex
 
 /-!
 # The job runner
@@ -60,15 +61,18 @@ spawn. Interpreted config is not affected.
 Lean's own `IO.cancel` only sets a flag: it interrupts no wait. So
 cancellation is built here.
 
-- **The token** is in the job's handle: whether the job is cancelled, and
-  the id of the wait it is in, if it is in one, changed together in one
-  atomic step.
-- **Every wait races it.** `Handle.cancel` sets the token, takes the id,
-  tells the clock, the file service and the process service to withdraw
-  that wait and ends it in the table as `cancelled`. A promise resolves once, so whichever of the service and the
-  cancel comes first wins and the other does nothing. A wait the job was
-  still making when it was cancelled is withdrawn by the job itself, as
-  soon as it sees the token.
+- **The token** is in the job's handle (`Handle.job`, a `Token`): the job's
+  state in the protocol, whether it is cancelled and the wait it has
+  recorded among it. It changes only inside a critical section of the table
+  of waits, under the table's lock, with the transition recorded ("The
+  protocol", below); it is read anywhere.
+- **Every wait races it.** `Handle.cancel` sets the token and takes the
+  wait it recorded, in one section, then tells the services to withdraw
+  that wait and ends it in the table as `cancelled`. A promise resolves
+  once, so whichever of the service and the cancel comes first wins and the
+  other does nothing. A wait the job was still making when it was cancelled
+  is recorded nowhere: the job withdraws it itself, in the section of its
+  `park` or `serve`, which takes it out of the table.
 - **A cancelled job makes no further request.** The runner looks at the
   token before each request, when each reply arrives, at once or after a
   wait, and when the program ends.
@@ -105,21 +109,22 @@ The runner keeps the host's activity count (`Services.activity`,
 (`docs/design/concurrency.md`, "The idle signal"): a job holds one unit
 while it can run, and none while it is in a wait only a test ends.
 
-- **`spawn`** takes the job's unit before its task exists, and the
-  `finished` it hands the job gives it back last, after the job's own
-  `finished` has run: a wake-up that posts is posted under the unit.
+- **`spawn`** takes the job's unit before its task exists, in its `start`
+  section, and the `finished` it hands the job gives it back last, in the
+  `done` section after the job's own `finished` has run: a wake-up that
+  posts is posted under the unit.
 - **A wait that parks** is one on a port that says its waits end only when a
   test acts (`Timers.outside`, `FileWatches.outside`: the fake clock's sleep,
-  the fake watches' `next`). `answer` registers it with an action that
-  takes a unit and then resolves the promise (`Handle.parkingWait`), so the
-  unit is taken on the thread that ends the wait, the clock's `advance` or
-  `start`, a withdrawal, before the job's continuation can run; and `drive`
-  gives the job's unit back once `answer` has returned and the wait is
-  recorded as the job's, or withdrawn when the job was cancelled on its way
-  in. So at idle every parked job is in a wait a cancel withdraws
-  (`Handle.cancel`), and a job cancelled on its way in holds a unit until it
-  has ended. A wait cancelled ends through the same action, so a take and a
-  give stay paired however the wait ends.
+  the fake watches' `next`). The job gives its unit back in the section
+  that records the wait as its own (its `park`, `Handle.enter`), and the
+  wait's end takes one back in the section that ends it (its `wake`, in
+  `Completions.finish`), on the thread that ends it, the clock's `advance`
+  or a withdrawal, before the job's continuation can run. So at idle every
+  parked job is in a wait a cancel withdraws (`Handle.cancel`). A wait that
+  ended before the job recorded it, a sleep already due, takes nothing,
+  and the job keeps its own unit; so does a job cancelled on its way in,
+  which withdraws the wait in its `park` and holds its unit until it has
+  ended.
 - **Any other wait** keeps the job's unit: a timer of the library, a real
   file, process, diff, grep or watch request, a fake one a test holds on
   purpose. The job is not idle while it waits on something that ends by
@@ -133,6 +138,40 @@ A runner given no count has `Activity.untracked`, whose steps do nothing.
 the fake files; the handle's contract (`Editor/Job/HandleContract.lean`,
 `handleCounts` and `jobLoadCounts`) pins a handle's and a job's load on the
 fake file service and on the library's.
+
+## The protocol
+
+How the runner moves jobs through their waits is a pure transition system
+(`Editor/Job/Protocol.lean`), whose invariants are proved
+(`Editor/Job/Protocol/Theorems.lean`). The runner applies it one transition
+per critical section:
+
+- **One lock.** The table of waits is behind a mutex (`Completions`, whose
+  constructor and state are private), and every access to it goes through
+  the one private section helper, `Completions.critical`: registering and
+  ending a wait, job or not, counting the waits, and each job transition.
+- **One section per transition.** A job's `start` (`spawn`), `ask`
+  (`Handle.ask`, which also registers the wait), `park` or `serve`
+  (`Handle.enter`, which also takes out a wait the job withdraws), `wake`
+  (`Completions.finish`, which also removes the wait), `resume`
+  (`Handle.resume`), `cancel` (`Handle.cancel`) and `done`
+  (`Handle.retire`) each is one section, and so is the loop's end
+  (`Services.recordLoopEnd`). In it the runner decides the step with the
+  model's own per-job step (`Protocol.JobState.step`), writes the token,
+  moves the job's unit and records the transition (`Recorder.record`),
+  all before it lets the lock go; `Recorder.applied` is told after. So the
+  order of the records is the order the transitions took effect, and a
+  split step, a unit given back before the wait is recorded, cannot be
+  written: the token is written only by `Section.transition`, which runs
+  only inside a section.
+- **Nothing else in a section.** A section calls no port, no other section
+  and no promise but the activity's own waiter, whose consumers are all
+  waits; the services' `start` and `cancel` and the end of a wait come
+  after it, on the same thread.
+- **The recording port** (`Recorder`) is `Recorder.none` in a host, which
+  records nothing; a check gives the runner the fake (`FakeRecorder`,
+  `Editor/Job/Fake.lean`) and replays its trace on the model
+  (`Protocol.replay`; `Editor/Job/ProtocolContract.lean`).
 
 ## Posting a command
 
@@ -285,24 +324,143 @@ thread.
 
 namespace Editor.Job
 
+/-- The recording port: what the runner tells of each protocol transition
+it applies (`Editor/Job/Protocol.lean`). `record` is called inside the
+critical section that applies the transition, so the order of the records is
+the order the transitions took effect; `applied` is called once that section
+has let its lock go, on the same thread. Neither may call the runner, which
+`record` would deadlock, and `record` may not block on anything but what a
+check holds on purpose. The real one is `Recorder.none`; the fake, which
+keeps the trace and holds a thread at a transition a check names, is
+`FakeRecorder` (`Editor/Job/Fake.lean`). -/
+structure Recorder where
+  /-- Records a transition, inside the section that applies it. -/
+  record : Protocol.Transition → BaseIO Unit
+  /-- Tells that a transition has been applied, once its section is over. -/
+  applied : Protocol.Transition → BaseIO Unit
+  /-- Whether anything is recorded: `false` only for `Recorder.none`, whose
+  sections then call neither. -/
+  on : Bool := true
+
+/-- No recording: what a runner has when it is given no recorder, a host's
+real one among them. A section then pays one branch on this field. -/
+def Recorder.none : Recorder where
+  record _ := pure ()
+  applied _ := pure ()
+  on := false
+
+/-- A job's token: its state in the protocol (`Protocol.JobState`): whether
+it is cancelled, and the wait it has recorded, with where it is. Its
+constructor is private, so only this module makes one, and only inside a
+section (`Section.transition`) is one written. -/
+structure Token where private mk ::
+  /-- The job's state in the protocol. -/
+  state : Protocol.JobState
+
+/-- A job as the runner's sections reach it: its number in the table, its
+token, and the count and the recorder its steps move and tell. -/
+structure JobRef where
+  /-- The job's number, given by the table in the order of spawns. -/
+  number : Nat
+  /-- The job's token. Read anywhere; written only inside a section. -/
+  token : IO.Ref Token
+  /-- The host's activity count, whose unit the job's steps move. -/
+  activity : Activity
+  /-- What the job's steps are told to. -/
+  recorder : Recorder
+
+/-- What the table holds for a wait. -/
+structure Waiting where
+  /-- What ends the wait: run once, outside the section that ends it. -/
+  ended : Completion → BaseIO Unit
+  /-- The job whose wait it is, for a job's wait: its end is that job's
+  `wake`. -/
+  job? : Option JobRef := none
+
 /-- What the table of waits holds. -/
 structure Pending where
   /-- The id of the next wait. -/
   next : UInt64 := 1
-  /-- What ends each wait that has not ended: run once, by `finish`. -/
-  waits : Std.HashMap UInt64 (Completion → BaseIO Unit) := {}
+  /-- The number of the next job spawned on the table. -/
+  nextJob : Nat := 0
+  /-- Each wait that has not ended. -/
+  waits : Std.HashMap UInt64 Waiting := {}
 
 /-- The table of waits in flight, shared by the runner and whatever completes
-its waits. -/
-structure Completions where
-  /-- The table. Every change to it is one atomic step. -/
-  pending : IO.Ref Pending
+its waits. It is behind a lock, and every access to it is one critical
+section (`Completions.critical`), job or not. -/
+structure Completions where private mk ::
+  /-- The table, behind its lock. -/
+  private state : Std.Mutex Pending
+
+/-- What a section has applied, each transition with the recorder to tell
+once the section has let its lock go. -/
+private abbrev Section :=
+  StateT (Array (Recorder × Protocol.Transition)) BaseIO
+
+/-- Records `transition` with `recorder`, inside the section, and has it told
+as applied once the section is over. -/
+private def Section.note (recorder : Recorder) (transition : Protocol.Transition) : Section Unit :=
+  do
+  if recorder.on then
+    recorder.record transition
+    modify (·.push (recorder, transition))
+
+/-- Moves `activity` as the protocol's move says. -/
+private def Section.move (activity : Activity) : Protocol.Move → Section Unit
+  | .keep => pure ()
+  | .take => activity.begin
+  | .give => activity.done
+
+/-- Applies `transition` to `job`, inside a section: decides it with the
+model's own step (`Protocol.JobState.step`), writes the token, moves the
+job's unit and records the transition, in that one section. The job's state
+before and after, or `none` where the model refuses the step, which the
+runner never takes by construction: then nothing changes, the transition is
+recorded all the same, so a replay names it, and the caller takes the
+cancelled path. -/
+private def Section.transition (job : JobRef) (transition : Protocol.Transition) :
+    Section (Option (Protocol.JobState × Protocol.JobState)) := do
+  let before := (← job.token.get).state
+  match before.step transition with
+  | some (after, move) =>
+    job.token.set ⟨after⟩
+    Section.move job.activity move
+    Section.note job.recorder transition
+    return some (before, after)
+  | none =>
+    Section.note job.recorder transition
+    return none
 
 namespace Completions
 
 /-- A table with no waits. -/
 def new : BaseIO Completions :=
-  return { pending := ← IO.mkRef {} }
+  return ⟨← Std.Mutex.new {}⟩
+
+/-- The one critical section: runs `body` on the table under its lock, and
+leaves what it gives back; then, with the lock let go, tells each recorder
+of each transition the body applied. Every access to the table is one, and
+every token is written inside one (`Section.transition`). A body calls no
+port, no other section and no promise but the activity's own waiter, whose
+consumers are all waits; port calls and the ends of waits come after it. -/
+private def critical {α : Type} (completions : Completions)
+    (body : Pending → Section (α × Pending)) : BaseIO α := do
+  let (result, applied) ←
+    completions.state.atomically do
+        let pending ← get
+        let ((result, pending), applied) ← liftM ((body pending).run #[])
+        set pending
+        return (result, applied)
+  for (recorder, transition) in applied do
+    recorder.applied transition
+  return result
+
+/-- Whether a section holds the table's lock now, read without waiting for
+it: for a check that a transition is recorded inside the section that
+applies it (`Editor/Job/ProtocolContract.lean`). -/
+def busy (completions : Completions) : BaseIO Bool :=
+  return (← completions.state.tryAtomically (pure ())).isNone
 
 /-- Registers a wait that ends by running `ended id completion`, once, on the
 thread that ends it (`finish`), whether or not anything still waits on it:
@@ -310,9 +468,12 @@ the table holds the action, so it outlives whatever the action resolves.
 Returns the wait's id. -/
 def registerWith (completions : Completions) (ended : UInt64 → Completion → BaseIO Unit) :
     BaseIO UInt64 :=
-  completions.pending.modifyGet fun pending =>
-    (pending.next,
-      { next := pending.next + 1, waits := pending.waits.insert pending.next (ended pending.next) })
+  completions.critical fun pending =>
+    pure
+      (pending.next,
+        { pending with
+          next := pending.next + 1
+          waits := pending.waits.insert pending.next { ended := ended pending.next } })
 
 /-- Registers a wait: its id, and the promise that ends it, which `finish`
 resolves (`registerWith` over the promise). -/
@@ -322,18 +483,25 @@ def register (completions : Completions) : BaseIO (UInt64 × IO.Promise Completi
   return (id, wait)
 
 /-- Ends the wait `id` as `completion`, and forgets it: removes it in one
-atomic step, then runs its action outside that step, on this thread. Does
-nothing if `id` is not waiting: it never was, or it has ended already. -/
+section, which for a job's wait is also the job's `wake`, then runs its
+action outside that section, on this thread. Does nothing if `id` is not
+waiting: it never was, or it has ended already. -/
 def finish (completions : Completions) (id : UInt64) (completion : Completion) : BaseIO Unit := do
   let ended? ←
-    completions.pending.modifyGet fun pending =>
-        (pending.waits[id]?, { pending with waits := pending.waits.erase id })
+    completions.critical fun pending => do
+        match pending.waits[id]? with
+        | none =>
+          return (none, pending)
+        | some waiting =>
+          if let some job := waiting.job? then
+            discard <| Section.transition job (.wake id.toNat completion)
+          return (some waiting.ended, { pending with waits := pending.waits.erase id })
   if let some ended := ended? then
     ended completion
 
 /-- How many waits are in flight. -/
 def waiting (completions : Completions) : BaseIO Nat :=
-  return (← completions.pending.get).waits.size
+  completions.critical fun pending => pure (pending.waits.size, pending)
 
 end Completions
 
@@ -594,6 +762,17 @@ structure Services where
   (`Editor/Job/Activity.lean`; "Activity", in the module docs). A runner
   that is given none has `Activity.untracked`, which is never idle. -/
   activity : Activity := Activity.untracked
+  /-- What the runner's protocol transitions are told to (`Recorder`). A
+  runner that is given none has `Recorder.none`, which records nothing. -/
+  recorder : Recorder := Recorder.none
+
+/-- Records the loop's end (`Protocol.Transition.loopEnd`), in a section of
+its own: what a host's loop calls once it has cancelled its jobs and waited
+for what it waits for (`Running.wind`, `Editor/Headless.lean`). -/
+def Services.recordLoopEnd (services : Services) : BaseIO Unit :=
+  services.completions.critical fun pending => do
+    Section.note services.recorder .loopEnd
+    return ((), pending)
 
 /-- A service whose flush a host or a test can wait on
 (`Services.flushed`). -/
@@ -696,19 +875,13 @@ def awaitOrHang {α : Type} (guard : HangGuard) (task : Task α) : IO α := do
 instance {α : Type} : Nonempty (Outcome α) :=
   ⟨.cancelled⟩
 
-/-- A job's token: what the job and whoever cancels it share. -/
-structure Flags where
-  /-- Whether the job has been cancelled. -/
-  cancelled : Bool := false
-  /-- The wait the job is in, if it is in one. -/
-  waiting : Option UInt64 := none
-
 /-- A job that was spawned, as whoever spawned it holds it. -/
 structure Handle where
   /-- What the job's waits are made of. -/
   services : Services
-  /-- The job's token. Every change to it is one atomic step. -/
-  flags : IO.Ref Flags
+  /-- The job as the runner's sections reach it: its number and its token,
+  which is written only inside a section of the table. -/
+  job : JobRef
   /-- How the job ended, once it has. -/
   outcome : IO.Promise (Outcome (EditorM Unit))
   /-- Resolved once the runner is done with the job: its `finished` has
@@ -738,7 +911,7 @@ namespace Handle
 
 /-- Whether the job has been cancelled. -/
 def cancelled (handle : Handle) : BaseIO Bool :=
-  return (← handle.flags.get).cancelled
+  return (← handle.job.token.get).state.cancelled
 
 /-- The snapshots the job holds now: the ones its loads made and nothing has
 released, oldest first. -/
@@ -752,6 +925,17 @@ def settle (handle : Handle) : BaseIO Unit := do
   for snapshot in held do
     handle.services.files.release snapshot
 
+/-- Tells the clock, the file service, the process service, the watch
+service, the diff service and the grep service to drop the wait `id`, each
+of which is safe for an id it does not know; the table is not told. -/
+def drop (handle : Handle) (id : UInt64) : BaseIO Unit := do
+  handle.services.timers.cancel id
+  handle.services.files.cancel id
+  handle.services.processes.cancel id
+  handle.services.fileWatches.cancel id
+  handle.services.diffs.cancel id
+  handle.services.greps.cancel id
+
 /-- Withdraws the wait `id`: tells the clock, the file service, the
 process service and the watch service to drop it, each of which is safe for
 an id it does not know, and ends it as `cancelled` in the table. The process
@@ -759,21 +943,20 @@ service kills the child of a run it drops; the watch service drops a start
 in flight, and the registration it makes. Whichever of this and the
 service's completion comes first wins, and the other does nothing. -/
 def withdraw (handle : Handle) (id : UInt64) : BaseIO Unit := do
-  handle.services.timers.cancel id
-  handle.services.files.cancel id
-  handle.services.processes.cancel id
-  handle.services.fileWatches.cancel id
-  handle.services.diffs.cancel id
-  handle.services.greps.cancel id
+  handle.drop id
   handle.services.completions.finish id .cancelled
 
-/-- Cancels the job: sets its token, and withdraws the wait it is in, if it
-is in one, which ends the job there. -/
+/-- Cancels the job: sets its token and takes the wait it has recorded, in
+one section (the protocol's `cancel`), and then withdraws that wait, if it
+had one, which ends the job there. A job that has recorded none is on its
+thread, and sees the token there. -/
 def cancel (handle : Handle) : BaseIO Unit := do
-  let waiting ←
-    handle.flags.modifyGet fun flags => (flags.waiting, { cancelled := true, waiting := none })
-  if let some id := waiting then
-    handle.withdraw id
+  let recorded ←
+    handle.services.completions.critical fun pending => do
+        let stepped ← Section.transition handle.job (.cancel handle.job.number)
+        return (stepped.bind (·.1.recorded), pending)
+  if let some id := recorded then
+    handle.withdraw id.toUInt64
 
 /-- Whether the job has ended. -/
 def ended (handle : Handle) : BaseIO Bool :=
@@ -844,27 +1027,73 @@ inductive Answer (α : Type) where
   /-- The reply, once the wait `id`, whose promise is `wait`, has ended:
   `reply` fetches it then. It is run on the job's thread, once, and only for
   a wait the service completed in a job that is not cancelled; a wait with
-  nothing to fetch, a timer's, answers `pure ()`. `parks` says the wait ends
-  only when a test acts (`Timers.outside`, `FileWatches.outside`): the job
-  gives back its unit of the host's activity once it is in the wait, and
-  the wait's end takes one back ("Activity", in the module docs). -/
-  | later (id : UInt64) (wait : IO.Promise Completion) (reply : BaseIO α) (parks : Bool := false)
+  nothing to fetch, a timer's, answers `pure ()`. Whether the wait parks is
+  the job's token's, which its `ask` left asking that kind of wait
+  (`Handle.ask`). -/
+  | later (id : UInt64) (wait : IO.Promise Completion) (reply : BaseIO α)
 
-/-- Registers a wait of the job behind `handle`: its id and its promise. A
-wait that `parks`, one only a test ends, takes a unit of the host's activity
-as it ends, on the thread that ends it and before the promise resolves, so
-the job holds a unit again before it can run ("Activity", in the module
-docs); any other wait keeps the job's own. -/
-def Handle.parkingWait (handle : Handle) (parks : Bool) : BaseIO (UInt64 × IO.Promise Completion) :=
-  do
-  unless parks do
-    return ← handle.services.completions.register
+/-- The kind of a wait on a port that says whether its waits end only when a
+test acts (`Timers.outside`, `FileWatches.outside`). -/
+def Protocol.Kind.of (outside : Bool) : Protocol.Kind :=
+  if outside then .parks else .service
+
+/-- Registers a wait of the job behind `handle`, of kind `kind`, and applies
+the job's `ask`, in one section: its id and its promise. The caller hands
+the id to the service after the section. -/
+def Handle.ask (handle : Handle) (kind : Protocol.Kind := .service) :
+    BaseIO (UInt64 × IO.Promise Completion) := do
   let wait ← IO.Promise.new
   let id ←
-    handle.services.completions.registerWith fun _ completion => do
-        handle.services.activity.begin
-        wait.resolve completion
+    handle.services.completions.critical fun pending => do
+        let id := pending.next
+        discard <| Section.transition handle.job (.ask handle.job.number id.toNat kind)
+        return (id,
+            { pending with
+              next := id + 1
+              waits := pending.waits.insert id { ended := wait.resolve, job? := some handle.job } })
   return (id, wait)
+
+/-- Records the wait `id` the job asked as its own, in one section: its
+`park` for a wait that parks, which gives its unit back, its `serve` for any
+other. A job cancelled on its way in withdraws the wait in that step: the
+section removes it from the table, and the action that ends it is handed
+back, for the job to run once it has told the services to drop the wait.
+`none` once the job is in the wait, or the wait has ended. -/
+def Handle.enter (handle : Handle) (id : UInt64) : BaseIO (Option (Completion → BaseIO Unit)) :=
+  handle.services.completions.critical fun pending => do
+    let transition :=
+      match (← handle.job.token.get).state.status with
+      | .asking _ .parks _ => Protocol.Transition.park handle.job.number
+      | _ => .serve handle.job.number
+    let withdraw :=
+      return (pending.waits[id]?.map (·.ended), { pending with waits := pending.waits.erase id })
+    match ← Section.transition handle.job transition with
+    | some (before, _) =>
+      match before.cancelled, before.status with
+      | true, .asking _ _ none =>
+        withdraw
+      | _, _ =>
+        return (none, pending)
+    | none =>
+      withdraw
+
+/-- The first step of the job's continuation, once its wait has ended: its
+`resume`, in one section, which leaves it running with no wait recorded.
+Whether the job is cancelled. -/
+def Handle.resume (handle : Handle) : BaseIO Bool :=
+  handle.services.completions.critical fun pending => do
+    match ← Section.transition handle.job (.resume handle.job.number) with
+    | some (before, _) =>
+      return (before.cancelled, pending)
+    | none =>
+      return (true, pending)
+
+/-- The runner's last step for the job, once its `finished` has run: its
+`done`, in one section, which gives its unit back. -/
+def Handle.retire (handle : Handle) : BaseIO Unit :=
+  handle.services.completions.critical fun pending => do
+    discard <| Section.transition handle.job (.done handle.job.number)
+    return ((), pending)
 
 /-- Answers a request of the job behind `handle`. A request that waits is
 registered in the table of waits and handed to its service, and nothing here
@@ -872,11 +1101,11 @@ waits for it. -/
 def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request.Reply)
   | .now => return .now (← handle.services.timers.now)
   | .waitUntil deadline => do
-    let (id, wait) ← handle.parkingWait handle.services.timers.outside
+    let (id, wait) ← handle.ask (.of handle.services.timers.outside)
     handle.services.timers.start id deadline
-    return .later id wait (pure ()) (parks := handle.services.timers.outside)
+    return .later id wait (pure ())
   | .file (.load path limit) => do
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.files.start id (.load path limit)
     return .later id wait do
         let reply ← handle.services.files.take id (.load path limit)
@@ -889,31 +1118,31 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     if let .held snapshot := source then
       unless (← handle.held.get).contains snapshot do
         return .now (.error .noSuchSnapshot)
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.files.start id (.save source path expect)
     return .later id wait (handle.services.files.take id (.save source path expect))
   | .file (.stamp path) => do
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.files.start id (.stamp path)
     return .later id wait (handle.services.files.take id (.stamp path))
   | .file (.list path) => do
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.files.start id (.list path)
     return .later id wait (handle.services.files.take id (.list path))
   | .file (.makeDirectory path) => do
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.files.start id (.makeDirectory path)
     return .later id wait (handle.services.files.take id (.makeDirectory path))
   | .file (.append path bytes) => do
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.files.start id (.append path bytes)
     return .later id wait (handle.services.files.take id (.append path bytes))
   | .file (.remove path) => do
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.files.start id (.remove path)
     return .later id wait (handle.services.files.take id (.remove path))
   | .process (.start command streaming) => do
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.processes.start id (.start command streaming)
     return .later id wait do
         let reply ← handle.services.processes.take id (.start command streaming)
@@ -925,7 +1154,7 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     -- A child is named for the job that started it, and for no other.
     unless (← handle.children.get).contains child do
       return .now (.error .noSuchProcess)
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.processes.start id (.read child)
     return .later id wait do
         let reply ← handle.services.processes.take id (.read child)
@@ -936,33 +1165,33 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
   | .process (.write child bytes) => do
     unless (← handle.children.get).contains child do
       return .now (.error .noSuchProcess)
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.processes.start id (.write child bytes)
     return .later id wait (handle.services.processes.take id (.write child bytes))
   | .process (.closeInput child) => do
     unless (← handle.children.get).contains child do
       return .now (.error .noSuchProcess)
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.processes.start id (.closeInput child)
     return .later id wait (handle.services.processes.take id (.closeInput child))
   | .process (.run command limit) => do
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.processes.start id (.run command limit)
     return .later id wait (handle.services.processes.take id (.run command limit))
   | .process (.runWithin command limit time) => do
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.processes.start id (.runWithin command limit time)
     return .later id wait (handle.services.processes.take id (.runWithin command limit time))
   | .process (.runInput command input limit time) => do
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.processes.start id (.runInput command input limit time)
     return .later id wait (handle.services.processes.take id (.runInput command input limit time))
   | .process (.runHead command input limit time) => do
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.processes.start id (.runHead command input limit time)
     return .later id wait (handle.services.processes.take id (.runHead command input limit time))
   | .fileWatch (.start target coalescing) => do
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.fileWatches.start id (.start target coalescing)
     return .later id wait do
         let reply ← handle.services.fileWatches.take id (.start target coalescing)
@@ -990,10 +1219,9 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     -- A watch is named for the job that started it, and for no other.
     unless (← handle.watches.get).contains watch do
       return .now (.error .noSuchWatch)
-    let (id, wait) ← handle.parkingWait handle.services.fileWatches.outside
+    let (id, wait) ← handle.ask (.of handle.services.fileWatches.outside)
     handle.services.fileWatches.start id (.next watch)
-    return .later id wait (handle.services.fileWatches.take id (.next watch)) (parks :=
-        handle.services.fileWatches.outside)
+    return .later id wait (handle.services.fileWatches.take id (.next watch))
   | .diff request => do
     -- A snapshot a job holds is named for that job and for no other, as a
     -- save's source is.
@@ -1002,14 +1230,14 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
       if let .held snapshot := source then
         unless (← handle.held.get).contains snapshot do
           return .now (request.refused .noSuchSnapshot)
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.diffs.start id request
     return .later id wait (handle.services.diffs.take id request)
   | .grep (.next search) => do
     -- A search is named for the job that started it, and for no other.
     unless (← handle.searches.get).contains search do
       return .now (.error .noSuchSearch)
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.greps.start id (.next search)
     return .later id wait do
         let reply ← handle.services.greps.take id (.next search)
@@ -1028,7 +1256,7 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
       if let .held snapshot := source then
         unless (← handle.held.get).contains snapshot do
           return .now (request.refused .noSuchSnapshot)
-    let (id, wait) ← handle.services.completions.register
+    let (id, wait) ← handle.ask
     handle.services.greps.start id request
     return .later id wait do
         let reply ← handle.services.greps.take id request
@@ -1068,26 +1296,18 @@ partial def drive (handle : Handle) (finished : BaseIO Unit) :
       if ← handle.cancelled then
         return ← handle.conclude finished .cancelled
       drive handle finished (next reply)
-    | .later id wait reply parks =>
+    | .later id wait reply =>
       -- The job is in the wait from here, unless it was cancelled while the
-      -- wait was being made: then nobody else will withdraw it.
-      let entered ←
-        handle.flags.modifyGet fun flags =>
-            if flags.cancelled then (false, flags) else (true, { flags with waiting := some id })
-      unless entered do
-        handle.withdraw id
-      -- A job in a wait only a test ends can no longer run by itself: it
-      -- gives back its unit, entered or not, and the wait's end, cancelled
-      -- included, takes one back before it resolves (`parkingWait`). Only
-      -- now, with the wait recorded or withdrawn: a host that reads idle
-      -- then finds every parked job in a wait a cancel withdraws, and a job
-      -- cancelled on its way in keeps a unit until it has ended, the wait's
-      -- end having taken one before this gives one back.
-      if parks then
-        handle.services.activity.done
+      -- wait was being made: then nobody else will withdraw it, and it does
+      -- so itself, its `park` or `serve` having taken the wait out of the
+      -- table. A job in a wait only a test ends gave its unit back in that
+      -- same section, its wait recorded: a host that reads idle finds every
+      -- parked job in a wait a cancel withdraws.
+      if let some ended← handle.enter id then
+        handle.drop id
+        ended .cancelled
       BaseIO.chainTask wait.result? fun completion => do
-          let cancelled ←
-            handle.flags.modifyGet fun flags => (flags.cancelled, { flags with waiting := none })
+          let cancelled ← handle.resume
           -- A wait the service completed just as the job was cancelled reads
           -- as completed: the token still says the job is over.
           if completion == some .completed && !cancelled then
@@ -1115,18 +1335,28 @@ post the job makes while it is not cancelled, on the job's thread, in the
 order they were made. -/
 def spawn (services : Services) (work : Work) (finished : BaseIO Unit)
     (posted : Invocation → BaseIO Unit := fun _ => pure ()) : BaseIO Handle := do
+  -- The job's `start`, in one section: it is numbered, and it can run from
+  -- here, holding a unit of the host's activity until it is in a wait only a
+  -- test ends, or has ended, its `finished` called first, so a wake-up it
+  -- posts there is posted under its unit.
+  let job ←
+    services.completions.critical fun pending => do
+        let number := pending.nextJob
+        let (fresh, move) := Protocol.JobState.started
+        let job : JobRef :=
+          { number, token := ← IO.mkRef ⟨fresh⟩, activity := services.activity
+            recorder := services.recorder }
+        Section.move services.activity move
+        Section.note services.recorder (.start number)
+        return (job, { pending with nextJob := number + 1 })
   let handle : Handle :=
-    { services, flags := ← IO.mkRef {}, outcome := ← IO.Promise.new
+    { services, job, outcome := ← IO.Promise.new
       finishedRan := ← IO.Promise.new, held := ← IO.mkRef #[]
       children := ← IO.mkRef #[], watches := ← IO.mkRef #[], searches := ← IO.mkRef #[]
       posted }
-  -- The job can run from here: it holds a unit of the host's activity until
-  -- it is in a wait only a test ends, or has ended, its `finished` called
-  -- first, so a wake-up it posts there is posted under its unit.
-  services.activity.begin
   let ended : BaseIO Unit := do
     finished
-    services.activity.done
+    handle.retire
     handle.finishedRan.resolve ()
   discard <| BaseIO.asTask (start handle ended work)
   return handle
