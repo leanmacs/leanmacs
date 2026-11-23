@@ -2,6 +2,7 @@ import Editor
 import Editor.Command.Append
 import Editor.Headless
 import Editor.InputScheme.Test
+import Editor.Lint.Wait
 import Editor.Text.Real
 import Greeting.EditorPackage
 

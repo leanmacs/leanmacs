@@ -1,3 +1,5 @@
+import Editor.Lint.Wait
+
 /-!
 # Typed time bounds
 

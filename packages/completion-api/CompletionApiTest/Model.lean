@@ -1,4 +1,5 @@
 import CompletionApiTest.CompletionApi
+import Editor.Lint.Wait
 
 /-!
 # The test driver of the package `completion-api`

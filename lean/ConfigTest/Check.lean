@@ -3,6 +3,7 @@ import Editor
 import Editor.Config.Elaborate
 import Editor.Config.Session
 import Editor.Job.Runner
+import Editor.Lint.Wait
 import Editor.Test.Linked.Host
 import ExtensionFixture
 
@@ -282,6 +283,13 @@ several joined with `:`, as the editor reads its own
 def oleanDirs (argument : String) : List System.FilePath :=
   (ModuleLookup.searchPath argument).map System.FilePath.mk
 
+-- A measurement of real time, never a wait.
+set_option linter.rawClock false in
+/-- The monotonic clock in milliseconds, for a check's wall time, which
+`--timings` writes for sizing guards; no result reads it. -/
+def wallClock : IO Nat :=
+  IO.monoMsNow
+
 /-- Makes the base once and runs every check: names on stderr the ones that
 failed, and returns the exit status, 0 when all hold and 1 otherwise.
 
@@ -307,8 +315,7 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
             handle.flush
     | none =>
       pure fun _ => pure ()
-  -- real time under test: a check's wall time, written for sizing guards; no result reads it.
-  let clock : IO Nat := IO.monoMsNow
+  let clock : IO Nat := wallClock
   -- Compiled code writes to the fixture's cell before the base is imported.
   let bumped ← ConfigFixture.bump
   -- The module data of the config files the checks elaborate is written in

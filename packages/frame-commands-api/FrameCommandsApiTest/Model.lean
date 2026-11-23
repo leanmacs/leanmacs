@@ -1,3 +1,4 @@
+import Editor.Lint.Wait
 import FrameCommandsApiTest.FrameCommandsApi
 
 /-!

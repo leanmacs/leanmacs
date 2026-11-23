@@ -1,3 +1,5 @@
+import Editor.Lint.Wait
+
 /-!
 # FFI tests: the check
 

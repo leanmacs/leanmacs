@@ -1,9 +1,12 @@
+import Editor.Lint.Wait
+
 /-!
 # The tests of `mode-line`: the check
 
 The type of one test, `Check`, and `failures`, which runs a list of them.
 Every test module of the package that writes a check imports this one. It
-needs nothing of the editor.
+needs nothing of the editor but the wait linters (`Editor/Lint/Wait.lean`), which it
+imports so that every test module that writes a check is linted.
 -/
 
 namespace ModeLineTest

@@ -19,6 +19,11 @@ test kit (`Editor.Test.Linked`) and the file checks' real host
 (`withRealFileHost`, `FilesTest/Linked/Files.lean`).
 -/
 
+-- A bench measures real time: its clock reads, and the sleeps of its
+-- cadence, are the measurement and never a wait, and it is never part of
+-- `ci` (`linter.rawClock`, `Editor/Lint/Wait.lean`).
+set_option linter.rawClock false
+
 namespace FilesTest.Linked.Bench
 
 open Editor

@@ -84,6 +84,7 @@ import ModelTest.Editor.Key.Notation
 import ModelTest.Editor.Keymap
 import ModelTest.Editor.Language
 import ModelTest.Editor.Layout
+import ModelTest.Editor.Lint.Wait
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
 import ModelTest.Editor.Marks
@@ -647,7 +648,14 @@ The job system is tested here with no Rust library:
   deadline of 0 ms has expired and what is left of it is a guard on the
   same event. The module's `fail_if_success` examples show that a number,
   an anonymous constructor and a structure instance are not a bound. They
-  run last, since one waits on a dedicated thread;
+  run last, with the linters' checks;
+- `lintWaitChecks`: the wait linters' rules on module names
+  (`Editor/Lint/Wait.lean`): what a test module is and which test module
+  mirrors which. Their module's `#guard_msgs` fixtures are bad
+  declarations the linters refuse (a raw sleep, a raw clock read, a count
+  wait outside its modules, a first-after wait, a laundering wrapper),
+  built and never run, and a `fail_if_success` shows that `Job.awaitWithin`
+  takes no number;
 - `poolChecks`: warming Lean's task pool (`Editor/Job/Pool.lean`). They take
   the pool's size as Lean's runtime does (`Pool.expected`:
   `LEAN_NUM_THREADS` when it is set, else the machine's), and hold that many
@@ -1411,7 +1419,8 @@ def checks : List Check :=
     filesApiChecks ++
     gutterCarryChecks ++
     gutterTrackChecks ++
-    boundChecks
+    boundChecks ++
+    lintWaitChecks
 
 end ModelTest
 

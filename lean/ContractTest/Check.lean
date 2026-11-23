@@ -1,10 +1,13 @@
+import Editor.Lint.Wait
+
 /-!
 # Contract tests: the check
 
 The type of one check of a real binding, `Check`, and `checkFailures`, which
 runs a list of them. Every test module that writes a check imports this one (the
 root module `ContractTest` describes the layout). This module needs nothing of
-the editor.
+the editor but the wait linters (`Editor/Lint/Wait.lean`), which it
+imports so that every test module that writes a check is linted.
 -/
 
 namespace ContractTest

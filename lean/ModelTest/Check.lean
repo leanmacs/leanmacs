@@ -1,10 +1,13 @@
+import Editor.Lint.Wait
+
 /-!
 # Model tests: the check
 
 The type of one model test, `Check`, and `failures`, which runs a list of
 them. Every module of the model tests that writes a check imports this one
 directly (the root module `ModelTest` describes the layout). This module
-needs nothing of the editor.
+needs nothing of the editor but the wait linters (`Editor/Lint/Wait.lean`), which it
+imports so that every test module that writes a check is linted.
 -/
 
 namespace ModelTest
