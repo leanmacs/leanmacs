@@ -9,6 +9,8 @@ import Editor.Display.Real
 import Editor.Display.Recorder
 import Editor.Event.Queue
 import Editor.Headless.CommandLine
+import Editor.Headless.Journal
+import Editor.Headless.Journal.Real
 import Editor.Headless.Queue.Real
 import Editor.Headless.Wait
 import Editor.InferredWait
@@ -976,47 +978,6 @@ def drawn (display : Host.Display) : BaseIO String :=
   display.drawnIn.get
 
 end Host.Display
-
-/-- How a host hands the session journal's orders to its file service
-(`Loop.Stepped.journal`, `Editor/Restore.lean`), and reads back what failed.
-The default does nothing, for a host with no file service. -/
-structure Journal where
-  /-- Hands one order to the file service, unobserved: nothing waits on it. -/
-  perform : Restore.Order → IO Unit := fun _ => pure ()
-  /-- Takes what failed of the orders handed so far, each a path and why,
-  oldest first, once. -/
-  failures : IO (Array (String × String)) := pure #[]
-  /-- Flushes the file service: a task that ends `true` once every order
-  handed before it has been worked, and `false` if the service refused the
-  flush. The default has nothing to wait for. -/
-  drained : IO (Task Bool) := pure (.pure true)
-
-/-- The journal over the library's file service: each order an unobserved
-request (`Ffi.filesAppendUnobserved`, `Ffi.filesRemoveUnobserved`,
-`Ffi.filesSaveUnobserved` of the snapshot `published` holds), its failures
-taken with `Ffi.filesFailure`, and its drain a flush of the file service
-through `services` (`Job.Services.flushed`), whose table's pump must run. -/
-def Journal.real (published : SnapshotReader) (services : Job.Services) : Journal where
-  perform order := do
-    match order.request with
-    | .append path bytes =>
-      discard <| Ffi.filesAppendUnobserved path.toString bytes
-    | .remove path =>
-      discard <| Ffi.filesRemoveUnobserved path.toString
-    | .save (.snapshot id) path _ =>
-      if let some snapshot← published.find? id then
-        discard <| Ffi.filesSaveUnobserved snapshot path.toString
-    | _ =>
-      pure ()
-  failures := do
-    let mut taken := #[]
-    repeat
-      let some failure ← Ffi.filesFailure | break
-      taken := taken.push failure
-    return taken
-  drained := do
-    let flushed ← services.flushed .files
-    return flushed.map (sync := true) (· == .completed)
 
 /-- What a host that runs the input scheme `scheme` needs from outside. The
 scheme is a parameter, as it is of the loop (`Loop`): it is in `Type 1`, and
