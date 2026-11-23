@@ -13,11 +13,14 @@ the order they took effect. It has two parts:
   runner's services over the fake clock and the fake files with the fake
   recorder in place (`FakeRecorder`). Each spawns jobs, waits on the
   recorder's own events (`FakeRecorder.reached`) and on the jobs'
-  `finishedRan`, then requires the trace to replay (`Protocol.replay`). The
-  order of the records is checked two ways: a cancel at a job's `ask`, held
-  there, shows in the trace before the `park` that withdraws the wait, and a
-  thread held inside a section, at its record, holds the table's lock, so
-  no other section can apply or record until it is let go.
+  `finishedRan`, then requires the trace to replay (`Protocol.replay`). A
+  job asks a second wait once it has resumed from its first
+  (`sleepThenLoad`). The order of
+  the records is checked two ways: a cancel at a job's `ask`, held there,
+  shows in the trace before the `park` or the `serve` that withdraws the
+  wait, and a thread held inside a section, at its record, holds the
+  table's lock, so no other section can apply or record until it is let
+  go.
 - **The park** (`ParkSubject`, `parkHolds`): a subject holds a job just after
   the step at which its unit was given back (`ParkHold`), cancels it there,
   and reports what the cancel withdrew. Wherever the unit has been given
@@ -62,6 +65,8 @@ structure ProtocolRig where
   recorder : FakeRecorder
   /-- The fake clock the services' timers are. -/
   clock : FakeClock
+  /-- The fake file service the services' files are. -/
+  files : FakeFiles
   /-- A file the services' file port loads. -/
   loadable : System.FilePath
 
@@ -76,7 +81,7 @@ def ProtocolRig.fakes : BaseIO ProtocolRig := do
       services :=
         { completions, timers := clock.timers, files := files.files, recorder := recorder.recorder
           activity := ← Activity.counting }
-      recorder, clock, loadable := "/protocol/a.txt" }
+      recorder, clock, files, loadable := "/protocol/a.txt" }
 
 /-- A job that sleeps `duration` on the services' clock. -/
 def sleeper (duration : Nat) : Work :=
@@ -85,6 +90,15 @@ def sleeper (duration : Nat) : Work :=
 /-- A job that loads `path`. -/
 def loader (path : System.FilePath) : Work :=
   Work.of (fun _ => File.load path 100) fun _ => pure ()
+
+/-- A job that sleeps `duration` on the services' clock, then loads `path`:
+a second wait, asked once the first has ended and the job has resumed. -/
+def sleepThenLoader (duration : Nat) (path : System.FilePath) : Work :=
+  Work.of
+    (fun _ => do
+      sleep duration
+      File.load path 100)
+    fun _ => pure ()
 
 /-- A job that asks for nothing. -/
 def idler : Work :=
@@ -199,6 +213,60 @@ def cancelAtAsk : RecordedProperty where
       letGo
       handle.cancel
 
+/-- A sleep, then a load the check holds, asked once the job has resumed. -/
+def sleepThenLoad : RecordedProperty where
+  name :=
+    "a job that sleeps and then loads asks its second wait after it resumes from the first, and the trace is a run of the protocol"
+  holds rig := do
+    rig.files.holdCompletions
+    let handle ← rig.spawn (sleepThenLoader 10 rig.loadable)
+    try
+      discard <| awaitStep "the job's park" (← rig.recorder.reached (· matches .park _))
+      rig.clock.advance 10
+      discard <| awaitStep "the job's serve" (← rig.recorder.reached (· matches .serve _))
+      rig.files.letGo
+      finishedAll #[handle]
+      let trace ← rig.recorder.trace
+      let state ← replayed trace
+      saw
+          (trace ==
+              #[.start 0, .ask 0 1 .parks, .park 0, .wake 1 .completed, .resume 0,
+                .ask 0 2 .service, .serve 0, .wake 2 .completed, .resume 0, .done 0] &&
+            state.count == 0)
+          s!"trace={repr trace}"
+    finally
+      rig.files.letGo
+      handle.cancel
+
+/-- A cancel made while the job is held just after its `ask` of a service
+wait, a load the fake file service holds. -/
+def serviceCancelAtAsk : RecordedProperty where
+  name :=
+    "a cancel at a job's ask of a service wait is recorded before the job's serve, which withdraws the wait itself, and the trace is a run of the protocol"
+  holds rig := do
+    rig.files.holdCompletions
+    let (asked, letGo) ← rig.recorder.holdAt (· matches .ask _ _ .service)
+    let handle ← rig.spawn (loader rig.loadable)
+    try
+      discard <| awaitStep "the job's ask" asked
+      handle.cancel
+      letGo
+      finishedAll #[handle]
+      let trace ← rig.recorder.trace
+      let state ← replayed trace
+      let withdrawn ← rig.files.withdrawn
+      -- The cancel found nothing recorded; the job's serve took the wait out
+      -- of the table and told the file service, which held it by then.
+      saw
+          (trace == #[.start 0, .ask 0 1 .service, .cancel 0, .serve 0, .resume 0, .done 0] &&
+            withdrawn == #[1] &&
+            state.count == 0)
+          s!"trace={repr trace} withdrawn={withdrawn}"
+    finally
+      letGo
+      rig.files.letGo
+      handle.cancel
+
 /-- A load on a file service that ends it by itself. -/
 def fileLoad : RecordedProperty where
   name :=
@@ -270,7 +338,8 @@ def recordedInside : RecordedProperty where
 
 /-- Every recorded run, in the order they run. -/
 def recordedRuns : List RecordedProperty :=
-  [sleepWoken, sleepCancelled, sleepDue, cancelAtAsk, fileLoad, severalJobs, recordedInside]
+  [sleepWoken, sleepCancelled, sleepDue, cancelAtAsk, sleepThenLoad, serviceCancelAtAsk, fileLoad,
+    severalJobs, recordedInside]
 
 /-- Runs every recorded run, each on a fresh rig `fresh` makes, and returns
 the failures, each named `<name>: <property>`, with what it saw. -/

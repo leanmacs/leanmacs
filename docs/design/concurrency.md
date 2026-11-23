@@ -2576,9 +2576,10 @@ of two.
   `recordedRuns`, each trace replayed by `Protocol.replay`, whose refusal
   names the index, the transition and the state): on the fake clock and
   files (`ModelTest.protocolContractChecks`), a sleep woken, cancelled while
-  parked or already due, a cancel held at a job's ask, recorded before the
-  park that withdraws the wait, a load, and several jobs at once; on a
-  stepped host (`ConfigTest.protocolContractChecks`), ending in the loop's
+  parked or already due, a cancel held at a job's ask of a sleep or of a
+  load, recorded before the `park` or `serve` that withdraws the wait, a
+  sleep then a load, whose second `ask` comes after its `resume`, a load,
+  and several jobs at once; on a stepped host (`ConfigTest.protocolContractChecks`), ending in the loop's
   end; and over the library's timer and file services on real threads
   (`ContractTest.protocolContractChecks`).
 - The record is inside the section: a transition held at its record holds

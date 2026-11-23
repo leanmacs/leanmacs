@@ -79,6 +79,13 @@ def protocolChecks : List Check :=
         pure
           (statusAfter [.start 0, .ask 0 3 .parks] 0 == some (.asking 3 .parks none) &&
             (reached [.start 0, .ask 0 3 .parks]).map (·.nextWait) == some 4 &&
+            statusAfter
+                [.start 0, .ask 0 0 .parks, .park 0, .wake 0 .completed, .resume 0,
+                  .ask 0 1 .service]
+                0 ==
+              some (.asking 1 .service none) &&
+            reached [.start 0, .ask 0 0 .parks, .park 0, .wake 0 .completed, .ask 0 1 .service] ==
+              none &&
             reached [.start 0, .start 1, .ask 0 3 .parks, .ask 1 2 .service] == none &&
             reached [.start 0, .ask 0 0 .parks, .ask 0 1 .parks] == none) },
     { name :=

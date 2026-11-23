@@ -709,11 +709,12 @@ The job system is tested here with no Rust library:
 - `protocolContractChecks`: the runner's protocol contract
   (`Editor/Job/ProtocolContract.lean`) on the fake clock and the fake files,
   each recorded run on a rig of its own: a sleep woken, one cancelled while
-  parked, one already due, a cancel held at a job's ask, a load, and
+  parked, one already due, a cancel held at a job's ask of a sleep and of a
+  load, a sleep then a load asked once the job has resumed, a load, and
   several jobs at once each record a trace that replays on the model, in
-  the order the transitions took effect; and a transition held at its
-  record, inside its section, holds the table's lock, so a competing cancel
-  records after it. The park property (`parkHolds`): a job held just after
+  the order the transitions took effect; and a transition held at its record,
+  inside its section, holds the table's lock, so a competing cancel records
+  after it. The park property (`parkHolds`): a job held just after
   it gave its unit back for its sleep is in a wait the cancel made there
   withdraws, on the runner over the fakes and on the model, and is in none
   on the protocol before the runner-park fix (`PreFix`). Each waits on the
