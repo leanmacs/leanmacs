@@ -1277,20 +1277,19 @@ reload that first imports Lean took 188 s, past its 120 s hang guard: what
 the phase 6 run reported as a hang was the load. The loop now runs its
 suites at `nice -n 5`: 6.8 times slower than unloaded, the nearest
 measured level to macOS's 11 times (116 to 121 s a config run under 36
-hogs against 10.7 s), with the slowest check at 10.2 s, against 12.1 s on
-macOS, so ten times either is inside the 130 s of
-`Editor.Test.Linked.hangGuard`, which the macOS figure raised from 120 s
-(its doc has both). That slowest check, on every machine, is "the real
-elaborator: a handle is one version of a file…", six elaborations in a row
-with no wait in them, so its time bounds no wait the guard guards and the
-sizing by it is on the safe side. It took up to 13.2 s on macOS in later
-rounds and 16.1 to 25.1 s on `ubuntu-24.04` (run 45097785021's 50
-rounds), where ten times it would be past the guard. The slowest check that
-does wait under the guard, a reload's settle, took 5.9 s at most on macOS,
-8.4 s in the container and 11.3 s on `ubuntu-24.04`, so ten times it is
-inside 130 s on all three. Nice 10 would need
-every guard near 340 s, past the 300 s limit `ffi-test` has in the gate,
-so a real hang there would be killed before it named itself. The peak
+hogs against 10.7 s).
+
+`Editor.Test.Linked.hangGuard` is ten times the slowest check of
+config-test under that load on each platform, each check's wall time
+measured by `--timings`, rounded up to the next ten seconds. The slowest
+check of a round, on every platform "the real elaborator: a handle is one
+version of a file…", took at most 13.2 s on macOS (40 rounds), 10.4 s in
+the container (40 rounds) and 25.1 s on `ubuntu-24.04` (16.1 to 25.1 s
+over the 50 rounds of stress run 45097785021), so the guard is 260 s; it
+was 120 s, then 130 s, while only the first two had been measured. Nice 10
+in the container alone would need 340 s, past the 300 s limit `ffi-test`
+has in the gate, so a real hang there would be killed before it named
+itself. The peak
 memory of the container was 3.0 GB in every run: nothing was killed for
 memory.
 

@@ -249,26 +249,25 @@ reaches it fails, reported as a hang, never as a timing result; a check
 that pins a bound of the headless mode on purpose holds a reload or the
 editor thread for good and gives a short guard of its own.
 
-Set from measurements under the stress loop's load
-(`docs/dev-practices/on-demand-checks.md`, "The stress loop, on demand"):
-ten times the slowest, rounded up to the next ten seconds.
+Set from a measurement: ten times the slowest check of config-test under
+the stress loop's load on each platform, rounded up to the next ten
+seconds. A check's wall time, which `config-test --timings` writes for each
+check, bounds any one wait in it. Measured on 2026-11-22 and 2026-11-23
+(`docs/dev-practices/on-demand-checks.md`, "The load on Linux"), the
+slowest check of a round, on every platform "the real elaborator: a handle
+is one version of a file…":
 
-- 2026-11-21, an 18-core Mac under 36 CPU hogs, config-test run five times
-  under `taskpolicy -c utility`: the slowest settle of the real reload
-  whose root first imports `Lean` (`moduleHostChecks`) took 6502 ms (the
-  others 5408, 5728, 5816 and 5946).
-- 2026-11-22, each check's wall time (`config-test --timings`), which
-  bounds any one wait in it, over the loop's ten rounds. The same Mac
-  under 36 hogs: the slowest check of each round took 8868 to 12 134 ms
-  ("the real elaborator: a handle is one version of a file…"), and the
-  check of the reload that first imports `Lean` 4048 to 6100 ms. The Linux
-  container (aarch64, 8 CPUs, 16 hogs, the suite at `nice -n 5`): 9760 to
-  10 211 ms, and 5096 to 7481 ms.
+- macOS, 18 cores under 36 hogs, `taskpolicy -c utility`, 40 rounds: at
+  most 13 216 ms.
+- The Linux container, aarch64, 8 CPUs under 16 hogs, `nice -n 5`, 40
+  rounds: at most 10 448 ms.
+- `ubuntu-24.04`, the CI runner, under `2 x nproc` hogs, `nice -n 5`, the 50
+  rounds of stress run 45097785021: 16 053 to 25 080 ms.
 
-Ten times 12 134 ms is past the 120 000 ms this was first set to, so it is
-130 000 ms. -/
+Ten times 25 080 ms, rounded up, is 260 000 ms. It was 120 000 ms, then
+130 000 ms, while only the first two had been measured. -/
 def hangGuard : Nat :=
-  130000
+  260000
 
 /-- Waits until the fake clock `clock` has reached `arrival`
 (`Job.FakeClock.arrivedAt`): on the step that makes it, on whichever thread

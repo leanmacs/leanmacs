@@ -35,9 +35,9 @@ open Editor
 start reaching the library, a pump's end); only a hang reaches the bound,
 and the check then fails as a hang. In milliseconds: ten times the slowest
 such event seen under the stress load and more, as `Editor.Test.Linked.hangGuard` is
-set, and the same 130 000. -/
+set, and the same 260 000. -/
 def patience : Nat :=
-  130000
+  260000
 
 /-- `task`'s value, waited for on the task itself, an event that must come:
 `what` names it. The bound is `patience`, a hang guard: past it this throws
