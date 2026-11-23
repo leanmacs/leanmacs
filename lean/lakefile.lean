@@ -1325,7 +1325,8 @@ package_facet editorShipped pkg : Array String := do
         let jobs ← modules.mapM (·.oExport.fetch)
         return (Job.collectArray jobs).map fun _ => modules
   let pluginsJob := Job.collectArray plugins
-  ((builtJob.zipWith Prod.mk glueJob).zipWith Prod.mk pluginsJob).mapM fun ((modules, _), dynlibs) => do
+  ((builtJob.zipWith Prod.mk glueJob).zipWith Prod.mk pluginsJob).mapM
+      fun ((modules, _), dynlibs) => do
       let placeOf (dep : Package) : Option String :=
         (placed.find? (·.1.keyName == dep.keyName)).map (·.2)
       let mut lines : Array String := #[]
