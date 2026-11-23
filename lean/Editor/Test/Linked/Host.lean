@@ -501,13 +501,13 @@ structure Driven where
   `Headless.Stepped.waitWhile`): its guard, the kind of wait
   (`Headless.Wait.Kind`), the answer's guard, the script's line, where a
   hang is said, and what is called before a block. What each kind waits
-  for is the core's, never this record's. -/
-  waitWhile :
+  for is the core's, never this record's. Private: a check waits through
+  the named waits below, so one that infers "done" from the host's idle
+  is one of the marked ones (`linter.inferredWait`). -/
+  private waitWhile :
     HangGuard →
       Headless.Wait.Kind →
       HangGuard → Option Nat → (String → IO Unit) → (String → IO Unit) → IO Headless.Wait
-  /-- The host's activity count and its epoch, read in one step. -/
-  activitySeen : BaseIO Job.Activity.Seen
   /-- How far the host's loop has got, as it published after its last
   event. -/
   progress : IO Headless.Progress
@@ -527,7 +527,6 @@ def ofHost (host : Headless.Host) : Driven where
       throw (IO.userError "the editor queue refused an event: it has been quit")
   waitWhile guard kind answer line waitHung waitBlocked :=
     host.waitWhile guard kind answer line waitHung waitBlocked
-  activitySeen := host.activitySeen
   progress := host.progress.get
   ended? := do
     if ← IO.hasFinished host.thread then
@@ -541,7 +540,6 @@ def ofStepped (stepped : Headless.Stepped) : Driven where
   input := stepped.input
   waitWhile guard kind answer line waitHung waitBlocked :=
     stepped.waitWhile guard kind answer line waitHung waitBlocked
-  activitySeen := stepped.activitySeen
   progress := stepped.progress
   ended? := stepped.ended?
   clock := stepped.clock
@@ -589,26 +587,32 @@ def settle (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := wait
 def handled (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
   driven.waitWhile waitGuard .handled waitGuard none IO.eprintln fun _ => pure ()
 
-/-- A `join`'s wait that publishes nothing (its marker is a probe): what
-replaces a poll for a state the host reaches by itself, such as a job in
-its sleep, so the scene count stays the poll's.
+/-- A `join`'s wait that publishes nothing (`Headless.Wait.Kind.idle`):
+what replaces a poll for a state the host reaches by itself, such as a job
+in its sleep, so the scene count stays the poll's.
  -/
 @[inferred_wait idle]
 def idle (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
-  driven.waitWhile waitGuard { Headless.Wait.Kind.join with marker := false } waitGuard none
-    IO.eprintln fun _ => pure ()
+  driven.waitWhile waitGuard .idle waitGuard none IO.eprintln fun _ => pure ()
 
-/-- A wait until the host is idle (`docs/design/concurrency.md`, "The idle
-signal": everything sent handled, nothing that can end by itself running,
-no fake-clock wait due), publishing nothing: what it waits for always
-holds, so it answers only at idle, `settled`. What replaces a poll for a
-state work reaches by itself after the jobs table has let it go, such as a
-cancelled job's end. -/
+/-- A wait until the host is idle (`Headless.Wait.Kind.quiet`), publishing
+nothing: `settled` at idle. What replaces a poll for a state work reaches
+by itself after the jobs table has let it go, such as a cancelled job's
+end. -/
 @[inferred_wait idle]
 def quiet (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
-  driven.waitWhile waitGuard
-    { what := "idle", busy := fun _ => pure true, still := some .settled, hung := .busy
-      marker := false } waitGuard none IO.eprintln fun _ => pure ()
+  driven.waitWhile waitGuard .quiet waitGuard none IO.eprintln fun _ => pure ()
+
+/-- An `indexed`'s wait on the driven host (`Headless.awaitIndexed`), over
+the fake clock `clock` the host's index write sleeps on: until the session
+index is written, its delay moved past at idle, with `waitGuard` against a
+hang only. `waitBlocked` is the wait's, called as it blocks. -/
+@[inferred_wait idle]
+def indexed (driven : Driven) (waitGuard : HangGuard) (clock : Option Job.FakeClock)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
+  Headless.awaitIndexed
+    (fun kind => driven.waitWhile waitGuard kind waitGuard none IO.eprintln waitBlocked)
+    driven.progress clock
 
 end Driven
 

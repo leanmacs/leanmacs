@@ -18,7 +18,8 @@ it.
   `set_option linter.rawClock false in` and its reason beside it.
 
 - **`linter.inferredWait`**: a reference to a constant tagged
-  `@[inferred_wait <kind> <subject module>*]`, a wait that infers "done"
+  `@[inferred_wait <kind> <subject module>*]`, or a structure instance's
+  field whose projection is tagged, a wait that infers "done"
   from something shared rather than from a signal for its own work: the
   activity count and idle (`count`, `idle`), a "first X after Y" wait
   another thread's X can satisfy (`firstAfter`), or a real service's
@@ -47,7 +48,7 @@ import, and `EchoTest.Model` imports it itself. A module that imports none
 of these is not linted.
 
 Its checks are `ModelTest.lintWaitChecks` and the `#guard_msgs` fixtures of
-`ModelTest/Editor/Lint/Wait.lean`.
+`ModelTest/Editor/Lint/Wait.lean` and `ContractTest/Editor/Lint/Wait.lean`.
 -/
 
 open Lean Elab Command
@@ -124,10 +125,11 @@ def mirrors (module target : Name) : Bool :=
   | root :: rest => root.toString.endsWith "Test" && rest == target.components
   | [] => false
 
-/-- Every constant a term of `tree` resolved to, with the syntax it was
-written at and the declaration it was written in, once for each place: a
-term elaborated twice (a `←` lifted out of an expression) is one
-reference. -/
+/-- Every constant a term of `tree` resolved to, and every field a
+structure instance of it sets (`{ busy := … }`, `{ kind with busy := … }`)
+as its projection, with the syntax it was written at and the declaration it
+was written in, once for each place: a term elaborated twice (a `←` lifted
+out of an expression) is one reference. -/
 def referenced (tree : InfoTree) : Array (Syntax × Name × Option Name) :=
   let found :=
     tree.foldInfo (init := #[]) fun context info found =>
@@ -136,6 +138,7 @@ def referenced (tree : InfoTree) : Array (Syntax × Name × Option Name) :=
         match term.expr.consumeMData with
         | .const name _ => found.push (term.stx, name, context.parentDecl?)
         | _ => found
+      | .ofFieldInfo field => found.push (field.stx, field.projName, context.parentDecl?)
       | _ => found
   found.foldl (init := #[]) fun kept (stx, name, user) =>
     if kept.any fun (other, seen, _) => seen == name && other.getRange? == stx.getRange? then kept

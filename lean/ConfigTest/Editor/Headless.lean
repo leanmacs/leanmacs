@@ -3886,6 +3886,8 @@ def withStateHost (context : Context) (state : System.FilePath) (files : List (S
                 stage.collaborators.services } }
     onStage stage fun host stage => check host stage
 
+-- inferred-waits W56: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- Waits until the host has written the session index, as the script's
 `indexed` does (`Headless.awaitIndexed`, `Headless.Wait.Kind.indexed`):
 each round ends on an event or at idle, each write's delay is moved past on
@@ -3894,13 +3896,9 @@ is running, with `hangGuard` against a hang only. A write the host started
 after the last one rendered, for a change its publish had not seen yet, is
 waited for too. `waitBlocked` is the wait's, called as it blocks. -/
 def indexWritten {β σ : Type} (host : Driven) (stage : Stage β σ)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool := do
-  let index ←
-    Headless.awaitIndexed
-        -- hang guard: `hangGuard`, on each round's event or idle.
-        (fun kind => host.waitWhile hangGuard kind hangGuard none IO.eprintln waitBlocked)
-        host.progress (some stage.clock)
-  return index == .settled
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+  -- hang guard: `hangGuard`, on each round's event or idle.
+  return (← host.indexed hangGuard (some stage.clock) waitBlocked) == .settled
 
 /-- The text of the highest run's index under `state`, if there is one. -/
 def lastIndex (state : System.FilePath) : IO (Option String) := do

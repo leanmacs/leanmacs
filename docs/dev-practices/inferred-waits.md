@@ -42,10 +42,25 @@ others) carry it. The marked constants:
 | `Test.Rig.idle`, `Rig.spawn`, `Rig.stepToEnd`, `Test.Linked.untilIdle` | idle | `Editor.Job.Runner`, `Editor.Job.Activity` |
 | `Test.runOnFake` | idle | none |
 | `Headless.Host.join`, `Headless.Stepped.join` | idle | `Editor.Headless.Wait`, `Editor.Test.Linked.Host` |
-| `Driven.join`, `Driven.idle`, `Driven.quiet`, `Session.join`, `Session.idle`, `Session.quiet`, `Session.ran` | idle | `Editor.Headless.Wait` |
+| `Headless.Wait.Kind.join`, `.idle`, `.quiet`, `.indexed`, `Headless.awaitIndexed` | idle | `Editor.Headless.Stepped`, `Editor.Headless.Wait`, `Editor.Test.Linked.Host` |
+| `Headless.Wait.Kind.advance` | firstAfter | `Editor.Headless.Stepped`, `Editor.Headless.Wait`, `Editor.Test.Linked.Host` |
+| `Headless.Wait.Kind.mk`, `.busy`, `.still` | idle | `Editor.Headless.Stepped`, `Editor.Headless.Wait` |
+| `Headless.Host.activitySeen`, `Headless.Stepped.activitySeen` | count | none |
+| `Driven.join`, `Driven.idle`, `Driven.quiet`, `Driven.indexed`, `Session.join`, `Session.idle`, `Session.quiet`, `Session.ran` | idle | `Editor.Headless.Wait` |
 | `Ffi.filesPending`, `diffsPending`, `grepPending`, `processesPending`, `watchesPending`, `timersPending` | count | the job port's real binding and contracts (`Editor.Job.Real`, `.Contract`, `.FlushContract`, `.HandleContract`), `Editor.Test.Linked.Services` |
 | `Test.Linked.pendingChildren`, `childrenReapedTo` | count | none |
 | `Ffi.awaitWaiting`, `Test.Linked.startsArrive`, `Test.Linked.clockReaches` | firstAfter | none |
+
+The hosts' general wait, `Host.waitWhile` and `Stepped.waitWhile`, takes
+a kind of wait (`Headless.Wait.Kind`), and what it infers "done" from is
+the kind's: so the kinds that infer from the host's idle, its job counts or
+the first wait on its fake clock are the marked ones, and a new kind cannot
+be made outside the hosts' modules, since a kind's constructor and the two
+fields that decide what it infers, `busy` and `still`, are marked too (the
+linter sees a structure instance's fields as references to their
+projections). A `settle` or a `handled` through `waitWhile` infers nothing
+from the idle, and is refused nothing. `Driven`'s `waitWhile` is private: a
+check drives a host through its named waits, the marked ones among them.
 
 `realEffect`, the fourth kind the attribute takes, marks a real service's
 readout whose fake exists; phase 3 marks each as its fake lands.
@@ -128,7 +143,7 @@ contract and the C exports the Lean checks call (`clippy.toml`).
 | W53 | `lean/Editor/Test/Linked/Services.lean`, `withFiles` (`workedBefore`): flushes only the named `targets`, then removes the directory; `VersionControlTest.Linked.gutterChecks` names files and diffs while its host runs real git and a real repository watch, and `FilesTest.Linked.languageChecks` names files while a real syntax service runs | c | files, diff, processes, watches, syntax | real | phase 4 | not lintable: kind c/d | package-linked-real-thread-inventory |
 | W54 | `packages/compile/CompileTest/Linked.lean`, the host check over `tests/linked/run/script` (`Headless.run`): `finally removeDirAll directory` with no process or file flush, after the script killed a child and joined | c | processes, files | real | phase 5 | not lintable: kind c/d | compile-linked-next-error-settle-race |
 | W55 | The `withReal*` hosts: `Test.Linked.withRealHostOver`/`withRealHost` (fake services), `withRealShippedHost`, `ConfigTest.withRealTestHost`, `EvilTest.withRealVimHost` (real syntax), `FilesTest.withRealFileHost`/`withRealLanguageHost` (real files, diffs, grep, watches, syntax), `ConfigTest.withRealRecordedSyntaxTree`, `withRealRestoreFiles`: each removes its config directory once the loop has ended, with no flush of a service | c | loop thread, syntax, files, diff, grep, watches | real | phase 4 | not lintable: kind c/d | package-linked-real-thread-inventory |
-| W56 | `lean/ConfigTest/Editor/Headless.lean`, "a config's store kept across a restart…" (`lastIndex`): reads the index on disk after `indexWritten`, an idle wait | a, d | journal, files | real | phase 4 | not lintable: kind c/d |  |
+| W56 | `lean/ConfigTest/Editor/Headless.lean`, `indexWritten`, and through it four checks of `restoreOrderChecks` ("a config's store kept across a restart…" reads the index on disk after it, `lastIndex`): `Editor.Test.Linked.Driven.indexed` | a, d | journal, files | real | phase 4 | `linter.inferredWait`; allowed at `indexWritten` |  |
 | W57 | `lean/ConfigTest/Editor/Headless.lean`, `journalDrainChecks`: `pathExists` after the drain, the file service held and let go | d | journal, files | real | Stays: the journal's drain over the real file service is its subject; phase 6 places it | not lintable: kind c/d |  |
 | W58 | `packages/ex/ExTest/Linked/Ex.lean`, `exScriptChecks` (criteria 1 and 2, the refused `q`): `readBinFile` after the script's `join` | a, d | files | real (`Stage.overFiles`) | phase 4 | headless script: not lintable in Lean | package-linked-real-thread-inventory |
 | W59 | `packages/files/FilesTest/Linked/Files.lean`, the save checks (save on a modified buffer, open then save with no edit, a save of a file changed on disk) and `autoReloadChecks`: `readBinFile` after the save or at the host's end | d | files, watches, loop thread | real | phase 4 | not lintable: kind c/d | package-linked-real-thread-inventory |

@@ -73,6 +73,7 @@ structure Stepped where private mk ::
 namespace Stepped
 
 /-- The host's activity count and its epoch, read in one step. -/
+@[inferred_wait count]
 def activitySeen (stepped : Stepped) : BaseIO Job.Activity.Seen :=
   stepped.activity.seen
 
