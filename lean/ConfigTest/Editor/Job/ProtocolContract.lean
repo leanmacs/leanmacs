@@ -20,6 +20,21 @@ before it by a keyed cancel or an owner's removal included
 (`Collaborators.endCancelled`, which `Stage.new` sets), then records the
 loop's end. The root module `ConfigTest` runs them; its module doc says
 what they show.
+
+The park check (`steppedPark`) is one function over the park's order
+(`ParkOrder`), run twice: in the runner's own order (`runnerOrder`), where
+the property holds, and in the order before the runner-park fix
+(`preFixOrder`), where it must fail, held at the job's `ask` with its unit
+given back and no wait recorded for the cancel to withdraw. The pre-fix
+order is a wrapper of the count and the recorder the stepped host's runner
+is given, written here, its one user: the runner is not touched and takes
+no seam for it. Its park is still one section, which alone writes the
+token and moves the job's unit as the model says, and every access to its
+table is still one `Completions.critical`; the wrapper only moves the
+count's unit around that section, as the old runner did around its token
+write. The editor's wiring imports no test module and gives the runner its
+own count and `Recorder.none`, which tells no transition for an order to
+act on, and the proofs, which are of the model, see none of it.
 -/
 
 namespace ConfigTest
@@ -67,21 +82,102 @@ def drainUntil {β σ : Type} (stage : Stage β σ) (stepped : Headless.Stepped)
       return
     discard <| ProtocolContract.awaitStep what arrived
 
-/-- The park subject of a stepped host's real runner: the stage's count is
-this subject's own (`tracksIdle := false`), wrapped to note each `done`'s
-thread, and the recorder holds the nap's thread at its first transition
-after its unit's `done`, which is its park (`ProtocolContract.ParkHold`).
-While it is held the body returns, so the loop's end cancels the job; the
-stage's clock, wrapped, notes each wait it is told to withdraw, and the
-wrapped `endCancelled` reads what was withdrawn as the cancel returned, then
-lets the hold go before it hands over to the stage's wait for the job. A
-`finally` lets it go too. A held call, never a sleep. -/
-def steppedPark (context : Context) : ProtocolContract.ParkSubject where
+/-- An order of a job's park, as the two collaborators the park moves and
+tells see it: the count (`Job.Activity`) and the recorder (`Job.Recorder`)
+a stepped host's runner is given. `over` wraps the ones the check's hold
+sees (`ProtocolContract.ParkHold`), so the hold sees the job's unit given
+back and the transitions told in the order the park makes them. -/
+structure ParkOrder where
+  /-- Which order, as a check names it. -/
+  name : String
+  /-- The count and the recorder the runner is given, over the hold's. -/
+  over : Job.Activity → Job.Recorder → BaseIO (Job.Activity × Job.Recorder)
+
+/-- The runner's own order: the count and the recorder as they are, so the
+park gives the job's unit back in the section that records its wait. -/
+def runnerOrder : ParkOrder where
   name := "the stepped host"
+  over activity recorder := pure (activity, recorder)
+
+/-- The order of the park before the runner-park fix (784962e3), put
+together around the real runner from the two collaborators its park moves
+and tells: a job asking a wait that parks gives its unit back once its
+`ask` has taken effect, before its `park` records the wait, as the old
+`drive` (784962e3's parent) called `activity.done` before it set the
+token's wait.
+
+- **The unit given back early.** At the `ask` of a wait that parks, told
+  applied on the job's thread, the job's unit is given back first, then the
+  `applied` is passed on: the job's first step out of a section after its
+  unit went back is that `ask`, where the hold comes, its wait not yet
+  recorded.
+- **The park's own give is absorbed.** The `park`'s section then gives the
+  unit back as the model says (`Protocol.JobState.step`); the next `done` on
+  that thread, inside that section, is not passed on, as the old runner's
+  token write moved no unit.
+- **A park that kept the unit takes one back.** A `park` of a job cancelled
+  in between, or whose wait ended first, keeps the job's unit in the model;
+  told it is recorded, inside its section, with the unit given early still
+  out, the order takes one, as the old wait's end took one before it
+  resolved. So the count is back at the runner's at the end of the park,
+  and the job's `done` is never refused.
+
+The runner is not touched: it still applies and records its park in one
+section, and it alone writes the token, so the trace records an `ask` and
+then a `park` as the model has them; only the count, which the host's idle
+reads, sees the unit back before the wait is recorded. It needs a recorder
+that records (`Recorder.on`); the check's fake does. -/
+def preFixOrder : ParkOrder where
+  name := "the stepped host in the park's order before the runner-park fix"
+  over activity recorder := do
+    -- The threads that gave their job's unit back early and whose park is
+    -- not yet recorded, each with whether the park's own give has been
+    -- absorbed.
+    let early ← IO.mkRef (#[] : Array (UInt64 × Bool))
+    return ({ activity with
+          done := do
+            let thread ← IO.getTID
+            let absorbed ←
+              early.modifyGet fun gave =>
+                  match gave.findIdx? fun (held, absorbed) => held == thread && !absorbed with
+                  | some index => (true, gave.modify index fun (held, _) => (held, true))
+                  | none => (false, gave)
+            unless absorbed do
+              activity.done },
+        { recorder with
+          record := fun transition => do
+            recorder.record transition
+            if transition matches .park _ then
+              let thread ← IO.getTID
+              let absorbed? ←
+                early.modifyGet fun gave =>
+                    ((gave.find? (·.1 == thread)).map (·.2), gave.filter (·.1 != thread))
+              if absorbed? == some false then
+                activity.begin
+          applied := fun transition => do
+            if transition matches .ask _ _ .parks then
+              activity.done
+              let thread ← IO.getTID
+              early.modify (·.push (thread, false))
+            recorder.applied transition })
+
+/-- The park subject of a stepped host's real runner, its park in `order`:
+the stage's count is this subject's own (`tracksIdle := false`), wrapped to
+note each `done`'s thread, and the recorder holds the nap's thread at its
+first transition after its unit's `done` (`ProtocolContract.ParkHold`),
+which in the runner's own order is its park; `order` wraps both. While it
+is held the body returns, so the loop's end cancels the job; the stage's
+clock, wrapped, notes each wait it is told to withdraw, and the wrapped
+`endCancelled` reads what was withdrawn as the cancel returned, then lets
+the hold go before it hands over to the stage's wait for the job. A
+`finally` lets it go too. A held call, never a sleep. -/
+def steppedPark (context : Context) (order : ParkOrder) : ProtocolContract.ParkSubject where
+  name := order.name
   run := do
     let stage ← Stage.new context context.elaborator (memorySource []) nappingCompiled
     let recorder ← Job.FakeRecorder.new
     let hold ← ProtocolContract.ParkHold.over (← Job.Activity.counting) recorder.recorder
+    let (activity, recording) ← order.over hold.activity hold.recorder
     let told ← IO.mkRef (#[] : Array UInt64)
     let withdrawn ← IO.mkRef (#[] : Array UInt64)
     let held ← IO.mkRef (none : Option Job.Protocol.Transition)
@@ -93,7 +189,7 @@ def steppedPark (context : Context) : ProtocolContract.ParkSubject where
             tracksIdle := false
             services :=
               { staged.services with
-                activity := hold.activity, recorder := hold.recorder
+                activity, recorder := recording
                 timers :=
                   { timers with
                     cancel := fun id => do
@@ -117,6 +213,22 @@ def steppedPark (context : Context) : ProtocolContract.ParkSubject where
         asked := ProtocolContract.askedIn (← recorder.trace) ((held.bind (·.job?)).getD 0)
         unitBack := held.isSome && (← hold.unitBack.get)
         withdrawn := (← withdrawn.get).map (·.toNat) }
+
+/-- A check that `subject` holds the park property (`parkHolds`), or with
+`holds` false, that it breaks it where its hold came and its job had asked
+a wait: the cancel made there withdrew none of it. -/
+def parkCheck (subject : ProtocolContract.ParkSubject) (holds : Bool := true) : Check :=
+  { name :=
+      if holds then
+        s!"{subject.name}: a nap held just after it gave its unit back for its sleep is in a wait the loop's end withdraws"
+      else
+        s!"{subject.name}: a nap held just after it gave its unit back for its sleep is in no wait the loop's end withdraws"
+    run := do
+      let observed ← subject.run
+      saw
+          (if holds then ProtocolContract.parkHolds observed
+          else observed.unitBack && observed.asked.isSome && !ProtocolContract.parkHolds observed)
+          s!"{repr observed}" }
 
 /-- The checks of the runner's protocol contract on a stepped host. -/
 def protocolContractChecks (context : Context) : List Check :=
@@ -219,10 +331,7 @@ def protocolContractChecks (context : Context) : List Check :=
               state.jobs.length == 2 &&
               state.count == 0)
             s!"handed={handed} trace={repr trace}" },
-    { name :=
-        "a stepped host's nap held just after it gave its unit back for its sleep is in a wait the loop's end withdraws"
-      run := do
-        let observed ← (steppedPark context).run
-        saw (ProtocolContract.parkHolds observed) s!"{repr observed}" }]
+    parkCheck (steppedPark context runnerOrder),
+    parkCheck (steppedPark context preFixOrder) (holds := false)]
 
 end ConfigTest

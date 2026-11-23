@@ -135,8 +135,10 @@ show:
   its resume until the loop's end hands it over to be waited for, are done
   before the loop's end is recorded; and a nap held just
   after it gave its unit back for its sleep, where the body returns, is in
-  a wait the loop's end withdraws (`parkHolds`). They wait only on the
-  recorder's events, and hold the nap on a promise;
+  a wait the loop's end withdraws (`parkHolds`), and the same check with
+  the park put in the order before the runner-park fix (`preFixOrder`)
+  finds it in none, held at its `ask` with its unit back. They wait only on
+  the recorder's events, and hold the nap on a promise;
 - `threadChecks`: the editor answers events while a file elaborates, reloads
   are serialised, and a replaced config is not retained;
 - `jobChecks`: jobs from config through the host: a handler receives a job's

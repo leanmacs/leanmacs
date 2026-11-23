@@ -2624,7 +2624,26 @@ of two.
 - The park (`parkHolds`): a job held on its own thread just after it gave
   its unit back for its sleep is in a wait the cancel made there withdraws,
   on the runner over the fakes, on a stepped host whose loop's end makes
-  the cancel, and on the model; and it is in none on `PreFix`.
+  the cancel, and on the model; and it is in none on `PreFix`, nor on the
+  same stepped host with its park put in the pre-fix order. That last run
+  is the stepped host's own check, one function (`ConfigTest.steppedPark`)
+  over the park's order (`ConfigTest.ParkOrder`): with the runner's order
+  it holds; with the pre-fix order (`ConfigTest.preFixOrder`) the hold
+  comes at the job's `ask`, its unit given back, and the loop's end's cancel
+  finds no wait recorded and withdraws none, in every run, by the hold
+  alone (`asked := some 1, unitBack := true, withdrawn := #[]`). The
+  pre-fix order is put together in the config-test module around the real
+  runner, from the two collaborators a park moves and tells, the count and
+  the recorder: it gives the job's unit back as its `ask` of a wait that
+  parks is told applied, before passing that on, absorbs the park's own
+  give, and takes a unit back at a park that kept it, as the old wait's end
+  did. It is not a seam in the runner, which still applies and records its
+  park in one section and alone writes the token, and the editor's wiring
+  imports no test module and gives the runner `Recorder.none`, which tells
+  no transition for an order to act on. So the split stays unwritable in the runner, what is
+  said above of its sections holds unchanged (every access to the table is
+  one `Completions.critical`, and the park is one of them), and the proofs,
+  which are of the model, are not touched.
 
 **What the model leaves out.** Handles (`Services.fileWorked`), the reload
 and posted events, which hold the rest of a host's count; the job table

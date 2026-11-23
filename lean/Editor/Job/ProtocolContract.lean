@@ -30,7 +30,9 @@ the order they took effect. It has two parts:
 `model-test` runs both on the fakes and the park on the model and on the
 model of the protocol before the runner-park fix, where it fails
 (`ModelTest.protocolContractChecks`); `config-test` runs a recorded run and
-the park on a stepped host (`ConfigTest.protocolContractChecks`); and
+the park on a stepped host, and the same park check on that host with its
+park put in the pre-fix order around the real runner, from the count and
+the recorder, where it fails (`ConfigTest.protocolContractChecks`); and
 `contract-test` runs a recorded run over the library's real services on
 real threads (`ContractTest.protocolContractChecks`).
 
