@@ -282,7 +282,14 @@ def clockReaches (clock : Job.FakeClock) (arrival : Job.FakeClockArrival) : IO B
 check keeps of them. The host's output goes to a buffer, with the thread
 that emitted each line; its jobs wait on a fake clock the check moves; and it
 posts under source ids no other host of this process has. Its input scheme
-is the test scheme, so no check names a shipped scheme's keys. -/
+is the test scheme, so no check names a shipped scheme's keys.
+
+Its loop's end waits for the jobs it cancels (`Collaborators.endCancelled`):
+a cancelled job ends on a pool thread and then posts its wake-up, and a real
+host's queue is the library's, which the next check's host shares, so a
+wake-up that came after the host's bracket had returned would be handled,
+and publish a scene, in a later check. The bound is `hangGuard`: past it
+the loop's end throws a hang. -/
 structure Stage (β σ : Type) where
   /-- What the host is started with. -/
   collaborators : Headless.Collaborators β σ TestScheme.scheme
@@ -447,6 +454,15 @@ def Stage.new {β σ : Type} (context : HostContext) (elaborator : Config.Elabor
             let emitted := (← output.get).size
             disposed.modify (·.push emitted)
           clock := some clock, tracksIdle := true
+          endCancelled := fun cancelled => do
+            for job in cancelled do
+              -- hang guard: the runner's last step for a job the loop's end
+              -- cancelled; only a hang reaches the bound, and the loop's end
+              -- then fails as a hang.
+              unless (← Job.awaitWithin hangGuard job).isSome do
+                throw <|
+                    IO.userError
+                      s!"a hang: a job the loop's end cancelled had not ended within {hangGuard} ms"
           loopStarted := context.realLoops.modify (· + 1)
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩

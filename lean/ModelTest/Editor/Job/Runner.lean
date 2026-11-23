@@ -1355,6 +1355,24 @@ def activityRunnerChecks : List Check :=
         let counts := (← log.untilHolds 4).map (·.1)
         let ended ← spawned.endedAs (.finished #["true"])
         saw (parked.running == 0 && counts == #[1, 0, 1, 0] && ended && (← activity.refused) == 0)
-            s!"parked={repr parked} counts={counts} ended={ended}" }]
+            s!"parked={repr parked} counts={counts} ended={ended}" },
+    { name :=
+        "a job's handle says when the runner is done with it: not while its finished is running, though its outcome is in, and once the finished has returned and its unit is given back"
+      run := do
+        let rig ← Rig.new
+        -- The job's `finished` is held here, so the runner cannot be done
+        -- with the job until the check opens the gate.
+        let gate : IO.Promise Unit ← IO.Promise.new
+        let handle ←
+          Job.spawn rig.services (reporting fun _ => pure 1) (discard <| IO.wait gate.result?)
+        try
+          discard <| awaitEvent "the job's end" handle.outcome.result?
+          let early ← handle.finishedRan.isResolved
+          gate.resolve ()
+          discard <| awaitEvent "the runner's last step for the job" handle.finishedRan.result?
+          let seen ← rig.services.activity.seen
+          saw (!early && seen.running == 0) s!"early={early} seen={repr seen}"
+        finally
+          gate.resolve () }]
 
 end ModelTest

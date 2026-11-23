@@ -1172,6 +1172,26 @@ the wait recorded, waits on that `done`, never on the fake clock's arrival,
 which comes inside the clock's `start`, before the runner has its answer
 (`withdrawingHeld`, `lean/ConfigTest/Editor/Headless.lean`).
 
+**A cancelled job's last step can be waited for.** The loop's end cancels
+its jobs and does not wait for them: a cancelled job ends on a pool thread,
+and the runner then calls its `finished`, which posts its wake-up, and
+gives its unit back. In the editor that wake-up goes to a queue that has
+been quit and is refused. A test's real host posts to the library's queue,
+which the next host of the process shares, so there the wake-up arrived
+during a later check, where it was handled and published a scene: seen on
+`ubuntu-24.04` under the stress loop, in "a wait's later rounds publish
+nothing" (stress run 45095260790) and, in the Linux container, in the
+stepped check after a real host's. So a job's handle carries a promise the
+runner resolves as its last step for the job (`Job.Handle.finishedRan`),
+and the loop's end hands the tasks of the jobs it cancelled to
+`Collaborators.endCancelled`, which does nothing in the editor; a test
+stage's waits on them (`Editor.Test.Linked.Stage`), so nothing of a test
+host's jobs comes after its bracket has returned. Pinned by
+`ModelTest.activityRunnerChecks` (the promise, with the job's `finished`
+held) and by `ConfigTest.scriptChecks`' "a run that reaches its script's
+end disposes only after its loop has ended…", whose job's wake-up is held
+until the loop's end has handed over what it waits on.
+
 **Why the epoch.** The count alone can be 0 at the marker's post, go to 1
 when an earlier event's handler starts a job, and be 0 again when that job
 has ended and posted after the marker. Every unit is taken before the post

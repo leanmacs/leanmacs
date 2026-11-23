@@ -722,6 +722,12 @@ structure Handle where
   flags : IO.Ref Flags
   /-- How the job ended, once it has. -/
   outcome : IO.Promise (Outcome (EditorM Unit))
+  /-- Resolved once the runner is done with the job: its `finished` has
+  been called and its unit of the activity given back, the last thing the
+  runner does for it, after the outcome is in. Something to wait on for
+  whoever must know that nothing of the job is still to come, such as the
+  wake-up its `finished` posts; a host's loop drops it, a test does not. -/
+  finishedRan : IO.Promise Unit
   /-- The snapshots the job holds: the ones its loads made, oldest first.
   Every change to it is one atomic step. -/
   held : IO.Ref (Array JobSnapshotId)
@@ -1121,7 +1127,8 @@ order they were made. -/
 def spawn (services : Services) (work : Work) (finished : BaseIO Unit)
     (posted : Invocation → BaseIO Unit := fun _ => pure ()) : BaseIO Handle := do
   let handle : Handle :=
-    { services, flags := ← IO.mkRef {}, outcome := ← IO.Promise.new, held := ← IO.mkRef #[]
+    { services, flags := ← IO.mkRef {}, outcome := ← IO.Promise.new
+      finishedRan := ← IO.Promise.new, held := ← IO.mkRef #[]
       children := ← IO.mkRef #[], watches := ← IO.mkRef #[], searches := ← IO.mkRef #[]
       posted }
   -- The job can run from here: it holds a unit of the host's activity until
@@ -1131,6 +1138,7 @@ def spawn (services : Services) (work : Work) (finished : BaseIO Unit)
   let ended : BaseIO Unit := do
     finished
     services.activity.done
+    handle.finishedRan.resolve ()
   discard <| BaseIO.asTask (start handle ended work)
   return handle
 
