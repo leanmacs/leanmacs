@@ -1017,35 +1017,49 @@ def saw (holds : Bool) (observed : String) : IO Bool := do
 
 /-- What `recorded` notes: an entry for each step, the count it left and the
 thread that made it, and a promise each entry resolves (and replaces), so a
-check waits for the entries it reads (`untilHolds`). The count's own epoch
-moves inside the step, before the entry is noted, so a wait on the count
-(`untilEpoch`) can return before the entry it reads is there. -/
+check waits for the entries it reads (`untilHolds`).
+
+The count an entry holds is the log's own: how many units the steps noted
+so far have left held, kept in one reference with the entries, so a step's
+count and its place in the log are one atomic change. It is never a reading
+of the activity's count taken after the step, which another thread's step
+can move first.
+
+A `done` is noted after the count has given the unit back, so a wait on the
+count (`untilEpoch`) can return before that entry is there: a check that
+then moves the count itself (the clock, a cancel, a watch's change) waits
+for the entry first (`untilHolds`), or its own step is noted before it. -/
 structure ActivityLog where
-  /-- The entries, oldest first. -/
-  entries : IO.Ref (Array (Nat × UInt64))
+  /-- The units the noted steps have left held, and the entries, oldest
+  first: one reference, each note one atomic change of it. -/
+  noted : IO.Ref (Nat × Array (Nat × UInt64))
   /-- Resolved, and replaced, by the next entry. -/
   grown : IO.Ref (IO.Promise Unit)
 
 namespace ActivityLog
 
-/-- An empty log. -/
+/-- An empty log, of a count that holds nothing. -/
 def new : BaseIO ActivityLog := do
-  return { entries := ← IO.mkRef #[], grown := ← IO.mkRef (← IO.Promise.new) }
+  return { noted := ← IO.mkRef (0, #[]), grown := ← IO.mkRef (← IO.Promise.new) }
 
-/-- Notes `entry`, then wakes a check waiting for it. -/
-def note (log : ActivityLog) (entry : Nat × UInt64) : BaseIO Unit := do
-  log.entries.modify (·.push entry)
+/-- Notes a step that moved the held units by `move`, made by `thread`, with
+the count it left, in one atomic change; then wakes a check waiting for
+it. -/
+def note (log : ActivityLog) (move : Nat → Nat) (thread : UInt64) : BaseIO Unit := do
+  log.noted.modify fun (held, entries) =>
+      let held := move held
+      (held, entries.push (held, thread))
   let fresh ← IO.Promise.new
   let woken ← log.grown.modifyGet fun current => (current, fresh)
   woken.resolve ()
 
 /-- The entries now. -/
 def get (log : ActivityLog) : BaseIO (Array (Nat × UInt64)) :=
-  log.entries.get
+  return (← log.noted.get).2
 
-/-- Replaces the entries with `entries`. -/
+/-- Replaces the entries with `entries`; the units held stay as they are. -/
 def set (log : ActivityLog) (entries : Array (Nat × UInt64)) : BaseIO Unit :=
-  log.entries.set entries
+  log.noted.modify fun (held, _) => (held, entries)
 
 /-- The entries, once there are at least `count`: waited for on each entry
 as it is noted, never by time. The promise is read before the entries, so
@@ -1054,7 +1068,7 @@ guard (`awaitEvent`). -/
 def untilHolds (log : ActivityLog) (count : Nat) : IO (Array (Nat × UInt64)) := do
   repeat
     let wake ← log.grown.get
-    let entries ← log.entries.get
+    let entries ← log.get
     if entries.size >= count then
       return entries
     discard <| awaitEvent s!"the activity log's entry {count}" wake.result?
@@ -1063,18 +1077,18 @@ def untilHolds (log : ActivityLog) (count : Nat) : IO (Array (Nat × UInt64)) :=
 end ActivityLog
 
 /-- `activity`, noting in `log`, at each `begin` and each `done`, the count
-it left and the thread that called it. A check reads the log of one job,
-whose steps follow one another, so each entry is the count that step left. -/
+that step left and the thread that called it (`ActivityLog`). A `begin` is
+noted before the unit is taken and a `done` after it is given back, so what
+a unit lets run is noted after the unit's own `begin`, and a job's steps,
+which follow one another, are noted in their order. -/
 def recorded (activity : Job.Activity) (log : ActivityLog) : Job.Activity :=
   { activity with
     begin := do
+      log.note (· + 1) (← IO.getTID)
       activity.begin
-      let seen ← activity.seen
-      log.note (seen.running, ← IO.getTID)
     done := do
       activity.done
-      let seen ← activity.seen
-      log.note (seen.running, ← IO.getTID) }
+      log.note (· - 1) (← IO.getTID) }
 
 /-- The checks of the runner's activity accounting (`Editor/Job/Runner.lean`,
 "Activity"), each on a fake clock of its own and the fresh count its rig
@@ -1085,6 +1099,26 @@ A check waits on the count's own changes (the kit's `changedAfter`), and holds t
 port (`holdReads`, held completions) to look while a step is in flight. -/
 def activityRunnerChecks : List Check :=
   [{  name :=
+        "the recorded count's entries are the counts its own steps left, whatever moves the count between a step and a reading of it"
+      run := do
+        let counted ← Job.Activity.counting
+        -- Another thread's step that lands just after a step of the recorded
+        -- count, before the count is read: made here by the first reading
+        -- itself, so it lands there every run.
+        let moved ← IO.mkRef false
+        let raced : Job.Activity :=
+          { counted with
+            seen := do
+              unless ← moved.modifyGet fun moved => (moved, true) do
+                counted.begin
+              counted.seen }
+        let log ← ActivityLog.new
+        let activity := recorded raced log
+        activity.begin
+        activity.done
+        let counts := (← log.get).map (·.1)
+        saw (counts == #[1, 0]) s!"counts={counts}" },
+    { name :=
         "a job on the fake clock holds a unit from its spawn until its sleep is in the clock, then none; once the clock is moved past it holds one again until it has ended, and none once its finished has run"
       run := do
         let rig ← Rig.new
@@ -1100,6 +1134,9 @@ def activityRunnerChecks : List Check :=
         -- The spawn's step, then the park's: the sleep is in the clock.
         untilEpoch activity 2
         let waiting ← rig.clock.waiting
+        -- The park's entry is noted after its step: the clock is moved only
+        -- once it is there, or the wake's own step is noted before it.
+        discard <| log.untilHolds 2
         rig.clock.advance 10
         -- The wake's step, on this thread, then the end's, each noted.
         let counts := (← log.untilHolds 4).map (·.1)
@@ -1180,6 +1217,9 @@ def activityRunnerChecks : List Check :=
                 sleep 10
                 return 0)
         untilEpoch activity 2
+        -- The park's entry is noted after its step: the job is cancelled
+        -- only once it is there, or the cancel's own step is noted before it.
+        discard <| log.untilHolds 2
         spawned.handle.cancel
         let cancelled ← spawned.endedAs .cancelled
         -- The end's entry is noted after its step, so idle can come first.
@@ -1307,6 +1347,9 @@ def activityRunnerChecks : List Check :=
         -- inside its own request, the job keeping its unit.
         untilEpoch activity 2
         let parked ← activity.seen
+        -- The park's entry is noted after its step: the change is made only
+        -- once it is there, or the change's own step is noted before it.
+        discard <| log.untilHolds 2
         watches.change (watchRoot / "f") #[.written]
         -- The change's step, on this thread, then the end's, each noted.
         let counts := (← log.untilHolds 4).map (·.1)
