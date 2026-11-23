@@ -13,7 +13,9 @@ steps the fake until the text has nothing pending. Beside them, what only
 the fake shows: before a step the undelivered revision's captures are
 refused as not parsed, each step posts exactly once on the stepping thread,
 every request is recorded on the check's thread, and the fake is quiescent
-once stepped to its end. The root module `ModelTest` runs them.
+once stepped to its end. And that the contract bites: a settle that finds
+nothing to wait for where a delivery is due is reported as a hang. The root
+module `ModelTest` runs them.
 -/
 
 namespace ModelTest
@@ -92,6 +94,28 @@ def syntaxDeliveryChecks : List Check :=
           discard <| (SyntaxTree.captures next ⟨0⟩ 0 0).runWith rig.handler
           let pending := !(← fake.quiescent)
           fake.settleAll
-          return pending && (← fake.quiescent) && (← fake.posts) == 2 }]
+          return pending && (← fake.quiescent) && (← fake.posts) == 2 },
+      { name :=
+          "the delivery contract bites on a settle that finds nothing to wait for: of the attached text, and of the edit's new snapshot only, it reports a hang, not an answer"
+        run := do
+          -- The fake's first text is snapshot 0, the edit's snapshot 1:
+          -- `afterEdit`'s settle finds nothing only for the edit's.
+          let failures ←
+            [(SyntaxDeliveryContract.afterAttach, fun (_ : SnapshotId) => true),
+                    (SyntaxDeliveryContract.afterEdit, (· != ⟨0⟩))].mapM
+                fun (property, empty) => do
+                let (rig, _) ← deliveryFakeRig
+                let never :=
+                  { rig with
+                    settle := fun snapshot =>
+                      if empty snapshot then pure false else rig.settle snapshot }
+                try
+                  discard <| property.holds never
+                  return s!"{property.name}: held"
+                catch error =>
+                  return s!"{property.name}: {error}"
+          unless failures.all fun failure => (failure.splitOn ": a hang: ").length > 1 do
+            throw <| IO.userError s!"{failures}"
+          return true }]
 
 end ModelTest

@@ -47,7 +47,8 @@ structure DeliveryRig where
   snapshot, of the same text. -/
   edit : SnapshotId → String → IO SnapshotId
   /-- Waits for the delivery of `snapshot`'s text, as the service does it:
-  whether there was one to wait for. -/
+  whether there was one to wait for. `false` where a delivery is due is a
+  hang (`settled`); only a detached text's settle answers `false`. -/
   settle : SnapshotId → IO Bool
 
 /-- One property: whether it holds on a fresh rig, or why not, thrown. -/
@@ -90,6 +91,18 @@ def first : String :=
 def edited : String :=
   "[3, 40, 5]"
 
+/-- Settles `snapshot`'s delivery (`settle`), which must have been there to
+wait for: a hang thrown when it was not, since the service's guard on the
+wait running out is a hang, never an answer, and a service that finds
+nothing pending here has lost the delivery. `what` names the delivery for
+the failure. The detached text's settle (`detached`) is the one place
+where nothing to wait for is the answer. -/
+def settled (rig : DeliveryRig) (snapshot : SnapshotId) (what : String) : IO Unit := do
+  unless ← rig.settle snapshot do
+    throw <|
+        IO.userError
+          s!"{rig.name}: a hang: the delivery of {what} (snapshot {snapshot.index}) had not come when its settle ended"
+
 /-- A text of `first`, attached and its delivery settled, and the query
 compiled: the snapshot and the query. -/
 def attached (rig : DeliveryRig) : IO (SnapshotId × QueryId) := do
@@ -97,7 +110,7 @@ def attached (rig : DeliveryRig) : IO (SnapshotId × QueryId) := do
   let .ok () ←
     (SyntaxTree.attach snapshot "json").runWith
         rig.handler | throw <| IO.userError s!"{rig.name}: the attach was refused"
-  discard <| rig.settle snapshot
+  settled rig snapshot "the attached text"
   let .ok compiled ←
     (SyntaxTree.compile "json" query).runWith
         rig.handler | throw <| IO.userError s!"{rig.name}: the query was refused"
@@ -132,7 +145,7 @@ def afterEdit : Property where
     let next ← rig.edit snapshot edited
     let early ← capturesOf rig next compiled edited
     let earlyHeld := same early (.error .notParsed) || same early (modelAnswer edited)
-    discard <| rig.settle next
+    settled rig next "the edit's new snapshot"
     let late ← capturesOf rig next compiled edited
     unless earlyHeld && same late (modelAnswer edited) do
       throw <|
