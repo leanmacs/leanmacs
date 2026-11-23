@@ -1462,6 +1462,14 @@ publishes the scene a real host's marker does; later rounds enqueue nothing,
 as a real host's probes publish nothing. Pinned by a check that runs the
 same requests on both hosts and compares the published counts.
 
+**The runner's protocol on a stepped host.** A stage's services take the
+fake recorder (`Job.Services.recorder`), so a stepped check reads the trace
+of the runner's transitions and holds a job's thread at one, and its loop's
+end records `loopEnd` once the jobs it cancelled are done. Pinned by
+`ConfigTest.protocolContractChecks`: the trace replays on the model, and a
+job held just after it gave its unit back is in a wait the loop's end
+withdraws ("The runner's protocol, modelled").
+
 **Limits.** A stepped host cannot bound a turn: a turn held inside an event
 holds the check's thread, so a check that holds the editor thread inside an
 event, or whose subject is the loop thread or the library's queue, stays on
@@ -2389,13 +2397,16 @@ of each runner, when the job system was planned, on Lean 4.35.0:
 
 ### Cancellation
 
-- **The token** is in the job's handle: a flag, and the id of the wait the
-  job is in, changed together in one atomic step.
-- **Every wait races it.** Cancelling sets the flag, takes the waiting id,
-  tells the service to withdraw that request and ends its promise as
-  cancelled. A promise resolves once, so whichever of the service and the
-  cancel comes first wins, and the other does nothing. A wait the job was
-  still making when it was cancelled is withdrawn by the job itself.
+- **The token** is in the job's handle: the job's state in the runner's
+  protocol, its flag and the wait it has recorded among it, written only
+  inside a critical section of the table of waits ("The runner's protocol,
+  modelled", below).
+- **Every wait races it.** Cancelling sets the flag and takes the recorded
+  wait in one section, then tells the service to withdraw that request and
+  ends its promise as cancelled. A promise resolves once, so whichever of
+  the service and the cancel comes first wins, and the other does nothing.
+  A wait the job was still making when it was cancelled is withdrawn by the
+  job itself, in the section that would have recorded it.
 - **A cancelled job makes no further request**, and its outcome is
   `cancelled` whatever it would have returned.
 - **A cancelled job runs no cleanup of its own.** There is no `finally`
@@ -2436,6 +2447,156 @@ of each runner, when the job system was planned, on Lean 4.35.0:
   children ended. A child is named by its start's wait, so a job cancelled
   while its start is in flight has the start withdrawn, and the library's
   own thread kills the child as it registers it.
+
+### The runner's protocol, modelled
+
+Status: built by host-tests-on-fakes phase 2. How the runner moves many
+jobs through their waits is a pure transition system
+(`lean/Editor/Job/Protocol.lean`), its safety invariants are proved in Lean
+(`lean/Editor/Job/Protocol/Theorems.lean`), and the real runner applies it
+one transition per critical section. It is not the job port's model
+(`Editor/Job/Model.lean`), which runs one job's requests.
+
+**The states.** Each job has a token (`Protocol.JobState`): where it is, a
+flag that says it is cancelled, and the wait it has recorded as its own.
+Where it is:
+
+| Status | What it means | Holds a unit |
+|---|---|---|
+| `queued` | spawned, no wait asked yet | yes |
+| `running` | on its thread again after a wait | yes |
+| `asking w k e` | its wait `w` of kind `k` (parking or service) registered and handed to its service, not yet recorded; `e` is how it ended, if it already has | yes |
+| `waiting w` | in the service wait `w`, recorded | yes |
+| `parked w` | in the parking wait `w`, recorded, its unit given back | no |
+| `woken c` | its wait ended as `c`, its continuation queued | yes |
+| `done` | ended | no |
+
+The state beside the jobs is the runner's share of the activity count, the
+next fresh wait and whether the loop has ended. The table of waits is the
+waits the `asking` (not ended), `waiting` and `parked` jobs carry, and the
+queued wake-ups are the `woken` jobs: both are read off the jobs, not
+stored.
+
+**The transitions**, each one atomic step:
+
+| Transition | Enabled when | Effect |
+|---|---|---|
+| `start j` | `j` is the next job, the loop has not ended | a `queued` job; a unit taken |
+| `ask j w k` | `queued` or `running`, `w` fresh | `asking w k`, not ended |
+| `park j` (park-with-wait) | `asking w parks e` | not cancelled, not ended: `parked w`, recorded, a unit given back; not cancelled, ended as `c`: `woken c`, recorded; cancelled: `woken`, the wait withdrawn in the step if it had not ended |
+| `serve j` (wait-on-service) | `asking w service e` | as `park`, with `waiting w` and no unit given |
+| `wake w c` | `w` in the table | `asking` ended early; `waiting w` or `parked w` to `woken c`, a parked job taking a unit back |
+| `resume j` | `woken` | `running`, nothing recorded |
+| `cancel j` | a job, the loop has not ended | cancelled, nothing recorded |
+| `done j` | `queued` or `running` | `done`; a unit given back |
+| `loopEnd` | not ended, every cancelled job `done` | ended; no `start`, `cancel` or `loopEnd` after it |
+
+`ask` and `resume` are the model's own: the runner registers a wait and
+hands it to its service before it records it, and a service may end it in
+between (a sleep already due, a service that is absent), so the model needs
+the state between; and the woken job's continuation runs later, on the
+pool. A wait that ends before the job has recorded it takes no unit, since
+the job still holds its own, and a job cancelled on its way in withdraws its
+wait in its `park` or `serve` and keeps its unit: each step moves the count
+at most once, and the count is the number of holding jobs. The count is the
+runner's share of the host's, and the claim is where `tracksIdle` is set:
+handles, the reload and posted events hold the rest, and `Activity.untracked`
+moves nothing.
+
+**What is proved**, over every reachable state (`Reachable`), with no
+`sorry` and no axiom beyond `propext`, `Classical.choice` and `Quot.sound`,
+each theorem's axioms pinned in the module so another fails the build:
+
+- `cancel_finds_running_or_recorded`: a job not cancelled and not done is
+  `queued`, `running` or `asking`, on its thread where it sees the token, or
+  has its wait recorded, which a cancel takes and withdraws.
+- `count_zero_iff_none_holds`: the count is 0 exactly when no job holds a
+  unit: none is running or in a service wait, and no wake-up is queued.
+- `done_matches_start`: in every run (`Run`) each job starts at most once
+  and is done at most as often as it started, so every `done` matches
+  exactly one `start`, which comes before it (`Run.prefix`).
+- `loopEnd_settles_cancelled`: after loop-end every cancelled job is
+  `done`: its wake-up has been handled and its unit given back, and nothing
+  can undo that.
+
+`run_iff_Run` proves the executable replay (`Protocol.run`) sound and
+complete for runs, and `checker_agrees` ties the decidable checker the model
+tests search with (`State.violation?`) to the theorems. They go through one
+inductive invariant (`Inv`): the count is the number of holding jobs, every
+job not cancelled has recorded the wait it is in, and after loop-end every
+cancelled job is done.
+
+**One transition per critical section.** The table of waits is behind a
+mutex (`Completions`, its constructor and state private), and every access
+to it goes through one private section helper (`Completions.critical`),
+whether a job is involved or not: registering and ending a wait, counting
+the waits, and each job transition. A job's `start` (`spawn`), `ask`
+(`Handle.ask`, with the wait's registration), `park` or `serve`
+(`Handle.enter`, with a withdrawn wait's removal), `wake`
+(`Completions.finish`, with the wait's removal), `resume`, `cancel` and
+`done` are one section each, and so is the loop's end
+(`Services.recordLoopEnd`, which `Running.wind` calls once the jobs it
+cancelled are waited for). Inside it the runner decides the step with the
+model's own per-job step (`Protocol.JobState.step`), writes the token, moves
+the job's unit and records the transition through the recording port
+(`Job.Recorder.record`), before it lets the lock go; `Recorder.applied` is
+told after, on the same thread. The token's constructor is private and it is
+written only by the section's `Section.transition`, so a split step, a unit
+given back before the wait is recorded, cannot be written. A section calls
+no port, no other section and no promise but the activity's own waiter,
+whose consumers are all waits: the services' `start` and `cancel` and the end
+of a wait come after it. A host's recorder is `Recorder.none`, which records
+nothing; a check gives the runner the fake (`Job.FakeRecorder`), which keeps
+the trace and holds a thread at a transition it names, after its section or
+inside it.
+
+**The pre-fix counterexample.** The runner before the runner-park fix
+(784962e3) gave a parking job's unit back, then recorded its wait. Rebuilt
+as a step over the same state (`PreFix`, `lean/ModelTest/Support/Protocol.lean`),
+a bounded search over it (`ModelTest.protocolChecks`) finds the shortest
+trace that breaks `cancel_finds_running_or_recorded`:
+
+```
+start 0, ask 0 0 parks, giveBack 0
+```
+
+The job is parked, its unit given back, and has recorded nothing, so a
+cancel there finds nothing to withdraw: the host read idle, ended its loop,
+and the job withdrew its own wait after the host's bracket had returned. The
+same search over the protocol finds nothing within 6 steps of one job and 5
+of two.
+
+**Where each piece is checked.**
+
+- The model: `ModelTest.protocolChecks`, each transition enabled and
+  refused, the replay, and the search.
+- The proofs: `lake build`, which elaborates the theorems
+  (`Editor/Core.lean` imports them; the config base does not).
+- Recorded traces are runs of the model (`Editor/Job/ProtocolContract.lean`,
+  `recordedRuns`, each trace replayed by `Protocol.replay`, whose refusal
+  names the index, the transition and the state): on the fake clock and
+  files (`ModelTest.protocolContractChecks`), a sleep woken, cancelled while
+  parked or already due, a cancel held at a job's ask, recorded before the
+  park that withdraws the wait, a load, and several jobs at once; on a
+  stepped host (`ConfigTest.protocolContractChecks`), ending in the loop's
+  end; and over the library's timer and file services on real threads
+  (`ContractTest.protocolContractChecks`).
+- The record is inside the section: a transition held at its record holds
+  the table's lock (`Completions.busy`), so a competing cancel records after
+  it (`recordedInside`, on the fakes); it fails if the record moves out.
+- The park (`parkHolds`): a job held on its own thread just after it gave
+  its unit back for its sleep is in a wait the cancel made there withdraws,
+  on the runner over the fakes, on a stepped host whose loop's end makes
+  the cancel, and on the model; and it is in none on `PreFix`.
+
+**What the model leaves out.** Handles (`Services.fileWorked`), the reload
+and posted events, which hold the rest of a host's count; the job table
+(`Editor/Job/Table.lean`), the editor thread's record of which results it
+still deals with, which no transition reads; the requests a job makes that
+are answered at once; and liveness: nothing here says a wait ends. A job a
+loop cancelled before its end, not through its own end's cancel (an owner's
+removal), is not waited for by the loop's end, so a trace of such a run
+could have `loopEnd` before that job's `done`, which the model refuses.
 
 ### Completing awaits without Rust calling Lean
 
