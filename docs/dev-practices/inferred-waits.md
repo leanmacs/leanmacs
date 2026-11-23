@@ -86,7 +86,11 @@ from the idle, and is refused nothing. `Driven`'s `waitWhile` is private: a
 check drives a host through its named waits, the marked ones among them.
 
 `realEffect`, the fourth kind the attribute takes, marks a real service's
-readout whose fake exists; phase 3 marks each as its fake lands.
+readout whose fake exists. Phase 3 marked each as its fake landed:
+
+- `Ffi.filesFailure`, with the session journal's recording fake
+  (`RecordingJournal`), its subject the real journal
+  (`Editor.Headless.Journal.Real`).
 
 A site that a later phase removes, or that stays, keeps an explicit allow,
 `set_option linter.inferredWait false in` on the declaration that holds it,
@@ -205,6 +209,7 @@ every other banned readout, so the gate sees each ban bite.
 | W82 | `crates/editor-ffi/tests/window.rs`, `the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed`: `editor_ffi_window_await_parked`, the scripted run parked with nothing left to report | a | loop thread (the scripted window) | scripted platform | Stays: the window C API's own check; phase 6 places it | Rust: `clippy::disallowed_methods` on the C function, `#[expect]` (W82) at the check |  |
 | W83 | `crates/editor-ffi/tests/common/open.rs`, `comes_to_be_held`, for `tests/processes_stream.rs` and `tests/processes_shutdown.rs`: `editor_ffi_processes_await_held(child)`, the child's own reader parked on its bound | b | processes | real | Stays: the process C API's wiring checks; phase 6 places them | Rust: `clippy::disallowed_methods` on the C function, `#[expect]` (W83) at `comes_to_be_held` |  |
 | W84 | `crates/editor-ffi/tests/syntax.rs`, `a_query_is_answered_only_from_a_tree_of_the_snapshots_revision`: `editor_ffi_syntax_settle(snapshot)`, a delivery of the snapshot's revision or a newer one; only the check's own document's edits give one | b | the syntax worker (the document's session) | real | Stays: the syntax C API's own check; phase 6 places it | Rust: `clippy::disallowed_methods` on the C function, `#[expect]` (W84) at the check |  |
+| W86 | `lean/ContractTest/Editor/Job/HandleContract.lean`, `handleRealRig`'s `leaked`: `Editor.Ffi.filesFailure`, the failures queue of the process-wide file service, read once after a flush | d | files | real file service | Stays: the readout is the property's subject, that a handle's outcome is said only through the handle and never on the unobserved requests' queue | `linter.inferredWait`; allowed at `handleRealRig` |  |
 
 ## The flaky tasks
 

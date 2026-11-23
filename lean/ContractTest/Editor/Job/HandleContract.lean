@@ -25,6 +25,8 @@ namespace ContractTest
 open Editor
 open Editor.Job
 
+-- inferred-waits W86: stays (the failures queue is the property's subject: a handle's outcome is said only through the handle)
+set_option linter.inferredWait false in
 /-- The rig of the real file port among `services`, writing in `directory`. -/
 def handleRealRig (services : Job.Services) (directory : System.FilePath) : HandleContract.HandleRig
     where

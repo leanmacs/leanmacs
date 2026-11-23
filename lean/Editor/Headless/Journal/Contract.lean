@@ -92,6 +92,12 @@ def JournalRig.drain (rig : JournalRig) : IO Bool := do
   rig.step
   awaitDrain task
 
+/-- What a file's bytes are, said for a failure. -/
+def shown (bytes : Option ByteArray) : String :=
+  match bytes with
+  | none => "none"
+  | some bytes => (String.fromUTF8? bytes).getD s!"{bytes.size} bytes"
+
 /-- The bytes `text` is as a file. -/
 def bytes (text : String) : ByteArray :=
   text.toUTF8
@@ -125,7 +131,7 @@ def inOrder : Property where
     unless ended && seen == expected do
       throw <|
           IO.userError
-            s!"{rig.name}: the drain ended {ended}; the base, the log, the stale file, x and y were {repr (seen.1.map String.fromUTF8!, seen.2.1.map String.fromUTF8!, seen.2.2.1.isSome, seen.2.2.2.1.isSome, seen.2.2.2.2.map String.fromUTF8!)}"
+            s!"{rig.name}: the drain ended {ended}; the base, the log, the stale file, x and y were {shown seen.1}, {shown seen.2.1}, {shown seen.2.2.1}, {shown seen.2.2.2.1}, {shown seen.2.2.2.2}"
     return true
 
 /-- J2: a drain asked while the work is held has not ended; let go, it ends

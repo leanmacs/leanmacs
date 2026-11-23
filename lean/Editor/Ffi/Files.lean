@@ -259,6 +259,13 @@ library keeps its own hold on the snapshot's text. -/
 @[extern "editor_glue_files_save_unobserved"]
 opaque filesSaveUnobserved (snapshot : @& Snapshot) (path : @& String) : IO Bool
 
+/-- `filesFailure` is an inferred wait (`Editor/InferredWait.lean`): a real
+service's readout whose fake exists, the session journal's recording fake
+(`Editor/Headless/Journal/Fake.lean`), so a host check reads the fake's
+failures, never these. -/
+def filesFailure.inferredWait : InferredWait :=
+  .realEffect [`Editor.Headless.Journal.Real]
+
 /-- Takes the oldest failure of an unobserved request the service keeps, once:
 its path and what failed, for a person. `none` when it keeps none. -/
 @[extern "editor_glue_files_failure"]
