@@ -38,7 +38,9 @@
 # It has no headless fixture of its own: the core's fixture tests/headless/ex,
 # which runs on the default set's editor, lists its ex names.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
@@ -52,6 +54,7 @@ name = "version-control"
 testDriver = "«version-control-test»"
 defaultTargets = ["VersionControl", "VersionControlTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 # The interface package of the workspaces: the reach of the workspace at a
 # path, which the worktree list's visit reaches through, and its fake.

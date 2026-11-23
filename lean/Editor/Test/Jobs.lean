@@ -4,6 +4,7 @@ import Editor.File.Model
 import Editor.FileWatch
 import Editor.FileWatch.Model
 import Editor.Fuzzy
+import Editor.InferredWait
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Fake
@@ -90,19 +91,25 @@ def startGate {ρ : Type} (start : UInt64 → ρ → BaseIO Unit) (count : Nat) 
       arrived.resolve ()
   return (gated, arrived)
 
+/-- `changedAfter` is an inferred wait (`Editor/InferredWait.lean`). -/
+def changedAfter.inferredWait : InferredWait :=
+  .count [`Editor.Job.Runner, `Editor.Job.Activity]
+
 /-- The count `activity` reads at its next change after `seen`, waited for on
 the change itself (`changedSince`). The bound is `patience`, a hang guard:
 past it this throws a hang. -/
-@[inferred_wait count Editor.Job.Runner Editor.Job.Activity]
 def changedAfter (activity : Job.Activity) (seen : Job.Activity.Seen) : IO Job.Activity.Seen := do
   awaitEvent s!"a change of the count from {repr seen}" (← activity.changedSince seen.epoch)
   activity.seen
+
+/-- `untilEpoch` is an inferred wait (`Editor/InferredWait.lean`). -/
+def untilEpoch.inferredWait : InferredWait :=
+  .count [`Editor.Job.Runner, `Editor.Job.Activity]
 
 /-- Waits, on the count's own changes, until `activity`'s epoch has reached
 `epoch`: the steps a check knows will come, counted from a fresh count, so
 it never waits for a change that already happened. The bound is a hang
 guard: past it this throws a hang. -/
-@[inferred_wait count Editor.Job.Runner Editor.Job.Activity]
 def untilEpoch (activity : Job.Activity) (epoch : Nat) : IO Unit := do
   repeat
     let seen ← activity.seen
@@ -139,6 +146,10 @@ def awaitEnded (handles : Array Job.Handle) : IO Unit := do
   for handle in handles do
     discard <| awaitEvent "a cancelled job's end" handle.outcome.result?
 
+/-- `Rig.idle` is an inferred wait (`Editor/InferredWait.lean`). -/
+def Rig.idle.inferredWait : InferredWait :=
+  .idle [`Editor.Job.Runner, `Editor.Job.Activity]
+
 /-- Waits until nothing on `rig` can run by itself, and returns the count's
 reading then: every job spawned on it is parked in a wait only the check
 ends (the fake clock's sleep, a fake watch's next) or has ended, its
@@ -156,7 +167,6 @@ an event that idle now implies.
 Waited for on the count's own changes, never by time; the bound is a hang
 guard (`changedAfter`). A rig whose services keep no count is refused: it
 is never idle. -/
-@[inferred_wait idle Editor.Job.Runner Editor.Job.Activity]
 def Rig.idle (rig : Rig) : IO Job.Activity.Seen := do
   let activity := rig.services.activity
   unless activity.tracked do
@@ -213,13 +223,20 @@ def endedAs (spawned : Spawned) (expected : Job.Outcome (Array String)) : IO Boo
 
 end Spawned
 
+/-- `Rig.spawn` is an inferred wait (`Editor/InferredWait.lean`). -/
+def Rig.spawn.inferredWait : InferredWait :=
+  .idle [`Editor.Job.Runner, `Editor.Job.Activity]
+
 /-- Spawns `work` on `rig`, counting the calls of its `finished`. -/
-@[inferred_wait idle Editor.Job.Runner Editor.Job.Activity]
 def Rig.spawn (rig : Rig) (work : Work) : BaseIO Spawned := do
   let finishes ← IO.mkRef 0
   return {
       handle := ← Job.spawn rig.services work (finishes.modify (· + 1)), finishes
       idle := discard rig.idle }
+
+/-- `Rig.stepToEnd` is an inferred wait (`Editor/InferredWait.lean`). -/
+def Rig.stepToEnd.inferredWait : InferredWait :=
+  .idle [`Editor.Job.Runner, `Editor.Job.Activity]
 
 /-- Steps the job behind `handle` on `rig` to its end, standing in for time:
 at each idle of the rig, if the job has ended it stops; else, if a wait is
@@ -228,7 +245,6 @@ waits for the next idle; else the job is stuck in a wait nothing here ends,
 and it says so. `none` once the job has ended, else why it has not, the job
 then cancelled. Only the idle's hang guard bounds it; a hang is said as
 well. -/
-@[inferred_wait idle Editor.Job.Runner Editor.Job.Activity]
 def Rig.stepToEnd (rig : Rig) (handle : Job.Handle) : IO (Option String) := do
   try
     repeat
@@ -246,11 +262,14 @@ def Rig.stepToEnd (rig : Rig) (handle : Job.Handle) : IO (Option String) := do
     handle.cancel
     return some (toString error)
 
+/-- `runOnFake` is an inferred wait (`Editor/InferredWait.lean`). -/
+def runOnFake.inferredWait : InferredWait :=
+  .idle []
+
 /-- Runs `job` on the runner over a fake clock of its own, and returns how it
 ended. The driver stands in for time, stepped on the rig's idle
 (`Rig.stepToEnd`): at each idle it advances the clock to the earliest
 deadline. A job stuck at idle, or one that hangs, has failed. -/
-@[inferred_wait idle]
 def runOnFake (job : JobM Bool) (rig? : Option Rig := none) : IO (Job.Outcome Bool) := do
   let rig ←
     match rig? with

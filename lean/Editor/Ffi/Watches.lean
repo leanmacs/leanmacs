@@ -1,5 +1,5 @@
 import Editor.Ffi.Words
-import Editor.Lint.Wait
+import Editor.InferredWait
 
 /-!
 # Bindings: the watch service
@@ -146,11 +146,15 @@ waited for. -/
 @[extern "editor_glue_watches_flush"]
 opaque watchesFlush (id : UInt64) : IO Bool
 
+/-- `watchesPending` is an inferred wait (`Editor/InferredWait.lean`). -/
+def watchesPending.inferredWait : InferredWait :=
+  .count
+    [`Editor.Job.Real, `Editor.Job.Contract, `Editor.Job.FlushContract, `Editor.Job.HandleContract,
+      `Editor.Test.Linked.Services]
+
 /-- How many watches are starting or live, and how many waits are not
 answered or not taken, together. A readout for tests. -/
-@[extern "editor_glue_watches_pending",
-  inferred_wait count Editor.Job.Real Editor.Job.Contract Editor.Job.FlushContract
-      Editor.Job.HandleContract Editor.Test.Linked.Services]
+@[extern "editor_glue_watches_pending"]
 opaque watchesPending : IO UInt64
 
 /-- Shuts the library's watch service down: ends every watch. A start asked

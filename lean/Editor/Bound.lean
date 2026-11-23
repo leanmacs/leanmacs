@@ -1,5 +1,3 @@
-import Editor.Lint.Wait
-
 /-!
 # Typed time bounds
 
@@ -24,7 +22,7 @@ The module owns the clock reads a bound needs: the guard's expiry (`expiry`,
 which `within` races against a task), a deadline and what is left of it
 (`deadline`, `Deadline.expired`, `Deadline.rest`), and real time's sleep
 (`RealTime.sleep`). It is the one module the raw-clock linter
-(`linter.rawClock`, `Editor/Lint/Wait.lean`) lets read the clock.
+(`linter.rawClock`, `Lint/Wait.lean`) lets read the clock.
 
 Its checks are `ModelTest.boundChecks` (`ModelTest/Editor/Bound.lean`).
 -/

@@ -28,7 +28,9 @@
 # (tools/user-sets-test.sh) runs its commands end to end, on an editor
 # built from the default set.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
@@ -42,6 +44,7 @@ name = "package-set"
 testDriver = "«package-set-test»"
 defaultTargets = ["PackageSet", "PackageSetTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 [[require]]
 name = "editor-core"

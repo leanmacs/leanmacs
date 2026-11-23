@@ -13,12 +13,12 @@ import ConfigTest.Editor.Headless
 import ConfigTest.Editor.Headless.Stepped
 import ConfigTest.Editor.Indent
 import ConfigTest.Editor.Keymap
-import ConfigTest.Editor.Lint.Wait
 import ConfigTest.Editor.Loop
 import ConfigTest.Editor.Minibuffer
 import ConfigTest.Editor.PackageSet.Edit
 import ConfigTest.Editor.Setup
 import ConfigTest.Editor.Theme.Check
+import ConfigTest.Lint.Wait
 import ConfigTest.Lsp
 
 /-!

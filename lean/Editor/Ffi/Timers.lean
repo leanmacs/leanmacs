@@ -1,4 +1,4 @@
-import Editor.Lint.Wait
+import Editor.InferredWait
 
 /-!
 # Bindings: the timer service
@@ -38,11 +38,15 @@ waits it covers; a wait not yet due is not covered. -/
 @[extern "editor_glue_timers_flush"]
 opaque timersFlush (id : UInt64) : IO Bool
 
+/-- `timersPending` is an inferred wait (`Editor/InferredWait.lean`). -/
+def timersPending.inferredWait : InferredWait :=
+  .count
+    [`Editor.Job.Real, `Editor.Job.Contract, `Editor.Job.FlushContract, `Editor.Job.HandleContract,
+      `Editor.Test.Linked.Services]
+
 /-- How many timer requests are waiting. A readout for tests, which use it to
 see that a request reached the service and that a cancel removed it. -/
-@[extern "editor_glue_timers_pending",
-  inferred_wait count Editor.Job.Real Editor.Job.Contract Editor.Job.FlushContract
-      Editor.Job.HandleContract Editor.Test.Linked.Services]
+@[extern "editor_glue_timers_pending"]
 opaque timersPending : IO UInt64
 
 end Editor.Ffi

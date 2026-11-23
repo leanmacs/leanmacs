@@ -17,7 +17,9 @@
 # - `ex-api-test` is its test driver (`lake test`), rooted at
 #   `ExApiTest/Model.lean`.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/ex-api update --keep-toolchain
@@ -28,6 +30,7 @@ keywords = ["editor-interface"]
 testDriver = "«ex-api-test»"
 defaultTargets = ["ExApi", "ExApiTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 # The interface package of the shell: the name `shell-command`, which the
 # contract holds a bang line to be handed to.

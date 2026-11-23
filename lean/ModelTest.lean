@@ -84,7 +84,6 @@ import ModelTest.Editor.Key.Notation
 import ModelTest.Editor.Keymap
 import ModelTest.Editor.Language
 import ModelTest.Editor.Layout
-import ModelTest.Editor.Lint.Wait
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
 import ModelTest.Editor.Marks
@@ -137,6 +136,7 @@ import ModelTest.Editor.Window
 import ModelTest.Editor.WindowCheck
 import ModelTest.Editor.Workspace
 import ModelTest.FilesApi
+import ModelTest.Lint.Wait
 
 /-!
 # The model tests
@@ -648,16 +648,17 @@ The job system is tested here with no Rust library:
   deadline of 0 ms has expired and what is left of it is a guard on the
   same event. The module's `fail_if_success` examples show that a number,
   an anonymous constructor and a structure instance are not a bound. They
-  run last, with the linters' checks;
-- `lintWaitChecks`: the wait linters' rules on module names
-  (`Editor/Lint/Wait.lean`): what a test module is and which test module
-  mirrors which. Their module's `#guard_msgs` fixtures are bad
-  declarations the linters refuse (a raw sleep, a raw clock read, a count
-  wait outside its modules, a laundering wrapper, a new count wait in a
-  check list beside a check under an allow), built and never run, and a
-  `fail_if_success` shows that `Job.awaitWithin` takes no number; the
-  first-after wait is `ContractTest`'s, and the idle waits put together
-  from a host's parts `ConfigTest`'s;
+  run last;
+- the wait linters' fixtures (`ModelTest/Lint/Wait.lean`), which hold no
+  check: bad declarations the linters refuse (a raw sleep, a raw clock
+  read, a count wait outside its modules, a laundering wrapper, a new count
+  wait in a check list beside a check under an allow, a constant whose mark
+  they cannot read), built and never run, and a `fail_if_success` that
+  shows that `Job.awaitWithin` takes no number. The build loads the
+  linters as a plugin, so this module imports none of them; the
+  first-after wait is `ContractTest`'s, the idle waits put together from a
+  host's parts `ConfigTest`'s, and the linters' own checks
+  `LintTest.lintWaitChecks`;
 - `poolChecks`: warming Lean's task pool (`Editor/Job/Pool.lean`). They take
   the pool's size as Lean's runtime does (`Pool.expected`:
   `LEAN_NUM_THREADS` when it is set, else the machine's), and hold that many
@@ -1421,8 +1422,7 @@ def checks : List Check :=
     filesApiChecks ++
     gutterCarryChecks ++
     gutterTrackChecks ++
-    boundChecks ++
-    lintWaitChecks
+    boundChecks
 
 end ModelTest
 

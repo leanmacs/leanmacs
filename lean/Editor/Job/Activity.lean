@@ -1,4 +1,4 @@
-import Editor.Lint.Wait
+import Editor.InferredWait
 
 /-!
 # A host's activity count
@@ -139,13 +139,25 @@ end Activity
 subject of the hosts' and the runner's waits; a test that reads them to
 know that one piece of its own work is done infers it from something
 shared (`docs/dev-practices/inferred-waits.md`, kind a). So they are
-inferred waits (`Editor/Lint/Wait.lean`): allowed here, in the modules
+inferred waits, marked (`Editor/InferredWait.lean`): allowed here, in the modules
 that build the hosts' idle on them, and in the tests that mirror those. -/
 
-attribute
-  [inferred_wait count Editor.Job.Runner Editor.Headless Editor.Headless.Stepped
-      Editor.Headless.Wait Editor.Loop Editor.Job.HandleContract Editor.Test.Jobs
-      Editor.Test.Linked.Jobs]
-  Activity.seen Activity.changedSince Activity.Seen.idleSince
+/-- The modules, beside this one, whose subject the count and its idle are:
+the subject modules of their marks. -/
+def Activity.countSubjects : List Lean.Name :=
+  [`Editor.Job.Runner, `Editor.Headless, `Editor.Headless.Stepped, `Editor.Headless.Wait,
+    `Editor.Loop, `Editor.Job.HandleContract, `Editor.Test.Jobs, `Editor.Test.Linked.Jobs]
+
+/-- `Activity.seen` is an inferred wait (`Editor/InferredWait.lean`). -/
+def Activity.seen.inferredWait : InferredWait :=
+  .count Activity.countSubjects
+
+/-- `Activity.changedSince` is an inferred wait (`Editor/InferredWait.lean`). -/
+def Activity.changedSince.inferredWait : InferredWait :=
+  .count Activity.countSubjects
+
+/-- `Activity.Seen.idleSince` is an inferred wait (`Editor/InferredWait.lean`). -/
+def Activity.Seen.idleSince.inferredWait : InferredWait :=
+  .count Activity.countSubjects
 
 end Editor.Job

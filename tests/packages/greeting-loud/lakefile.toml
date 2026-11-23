@@ -17,6 +17,7 @@ name = "greeting-loud"
 testDriver = "«greeting-loud-test»"
 defaultTargets = ["GreetingLoud", "GreetingLoudTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 # `greeting` is required only to order registration: this package registers
 # after it, so its `greeting-reply` is the one found. None of its modules is

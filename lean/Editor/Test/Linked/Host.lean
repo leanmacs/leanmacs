@@ -14,6 +14,7 @@ import Editor.Fuzzy
 import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.Headless.Stepped
+import Editor.InferredWait
 import Editor.InputScheme.Test
 import Editor.Job.Fake
 import Editor.Job.Real
@@ -281,11 +282,14 @@ runs out after 200 ms. -/
 def heldShort : HangGuard :=
   .held "the reload or the editor thread the check holds for good" 200
 
+/-- `clockReaches` is an inferred wait (`Editor/InferredWait.lean`). -/
+def clockReaches.inferredWait : InferredWait :=
+  .firstAfter []
+
 /-- Waits until the fake clock `clock` has reached `arrival`
 (`Job.FakeClock.arrivedAt`): on the step that makes it, on whichever thread
 takes it, never by a poll of the readout. Whether it came before
 `hangGuard`, which only a hang reaches. -/
-@[inferred_wait firstAfter]
 def clockReaches (clock : Job.FakeClock) (arrival : Job.FakeClockArrival) : IO Bool := do
   let reached ← clock.arrivedAt arrival
   return (← Job.awaitWithin hangGuard reached.result?).isSome
@@ -565,10 +569,13 @@ def await (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitG
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
   driven.waitWhile waitGuard .settle answer line waitHung waitBlocked
 
+/-- `join` is an inferred wait (`Editor/InferredWait.lean`). -/
+def join.inferredWait : InferredWait :=
+  .idle []
+
 /-- `Headless.Host.join` on the driven host: a `join`'s wait
 (`Headless.Wait.Kind.join`).
  -/
-@[inferred_wait idle]
 def join (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
@@ -587,27 +594,36 @@ def settle (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := wait
 def handled (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
   driven.waitWhile waitGuard .handled waitGuard none IO.eprintln fun _ => pure ()
 
+/-- `idle` is an inferred wait (`Editor/InferredWait.lean`). -/
+def idle.inferredWait : InferredWait :=
+  .idle []
+
 /-- A `join`'s wait that publishes nothing (`Headless.Wait.Kind.idle`):
 what replaces a poll for a state the host reaches by itself, such as a job
 in its sleep, so the scene count stays the poll's.
  -/
-@[inferred_wait idle]
 def idle (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
   driven.waitWhile waitGuard .idle waitGuard none IO.eprintln fun _ => pure ()
+
+/-- `quiet` is an inferred wait (`Editor/InferredWait.lean`). -/
+def quiet.inferredWait : InferredWait :=
+  .idle []
 
 /-- A wait until the host is idle (`Headless.Wait.Kind.quiet`), publishing
 nothing: `settled` at idle. What replaces a poll for a state work reaches
 by itself after the jobs table has let it go, such as a cancelled job's
 end. -/
-@[inferred_wait idle]
 def quiet (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
   driven.waitWhile waitGuard .quiet waitGuard none IO.eprintln fun _ => pure ()
+
+/-- `indexed` is an inferred wait (`Editor/InferredWait.lean`). -/
+def indexed.inferredWait : InferredWait :=
+  .idle []
 
 /-- An `indexed`'s wait on the driven host (`Headless.awaitIndexed`), over
 the fake clock `clock` the host's index write sleeps on: until the session
 index is written, its delay moved past at idle, with `waitGuard` against a
 hang only. `waitBlocked` is the wait's, called as it blocks. -/
-@[inferred_wait idle]
 def indexed (driven : Driven) (waitGuard : HangGuard) (clock : Option Job.FakeClock)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
   Headless.awaitIndexed
@@ -739,15 +755,21 @@ is running, with `hangGuard` and the session's `waitHung` and
 def settle (session : Session) : IO Bool :=
   session.drive.settle hangGuard (waitHung := session.waitHung) (waitBlocked := session.waitBlocked)
 
+/-- `idle` is an inferred wait (`Editor/InferredWait.lean`). -/
+def idle.inferredWait : InferredWait :=
+  .idle []
+
 /-- `join` with `hangGuard` that publishes nothing (`Driven.idle`): what a
 check waits on in place of a poll for a job in its sleep. -/
-@[inferred_wait idle]
 def idle (session : Session) : IO Headless.Wait :=
   session.drive.idle hangGuard
 
+/-- `quiet` is an inferred wait (`Editor/InferredWait.lean`). -/
+def quiet.inferredWait : InferredWait :=
+  .idle []
+
 /-- Waits until the host is idle, with `hangGuard`, publishing nothing
 (`Driven.quiet`): whether it came to idle. -/
-@[inferred_wait idle]
 def quiet (session : Session) : IO Bool :=
   return (← session.drive.quiet hangGuard) == .settled
 
@@ -756,10 +778,13 @@ def quiet (session : Session) : IO Bool :=
 def handled (session : Session) : IO Bool :=
   return (← session.drive.handled hangGuard) == .settled
 
+/-- `join` is an inferred wait (`Editor/InferredWait.lean`). -/
+def join.inferredWait : InferredWait :=
+  .idle []
+
 /-- Waits until the host has handled everything sent so far and no job is
 running, with `hangGuard` and the session's `waitHung` and `waitBlocked`:
 `settled`, `working` at idle with a job still running, or a hang. -/
-@[inferred_wait idle]
 def join (session : Session) : IO Headless.Wait :=
   session.drive.join hangGuard (waitHung := session.waitHung) (waitBlocked := session.waitBlocked)
 
@@ -1020,9 +1045,12 @@ line has it. -/
 def Session.echo (session : Session) : IO String :=
   return (← session.scene).1
 
+/-- `Session.ran` is an inferred wait (`Editor/InferredWait.lean`). -/
+def Session.ran.inferredWait : InferredWait :=
+  .idle []
+
 /-- Runs the command called `name` through the host and waits for the jobs
 it started: whether the wait settled. -/
-@[inferred_wait idle]
 def Session.ran (session : Session) (name : String) : IO Bool := do
   session.ask [.run name]
   return (← session.join) == .settled

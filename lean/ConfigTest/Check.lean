@@ -3,7 +3,6 @@ import Editor
 import Editor.Config.Elaborate
 import Editor.Config.Session
 import Editor.Job.Runner
-import Editor.Lint.Wait
 import Editor.Test.Linked.Host
 import ExtensionFixture
 

@@ -733,7 +733,7 @@ example : True := by
 /-! An `IO` action is not a job: alone, and inside a `do` block. -/
 
 example : True := by
-  fail_if_success exact (fun (_ : JobM Unit) => True.intro) (IO.sleep 10)
+  fail_if_success exact (fun (_ : JobM Unit) => True.intro) (pure () : BaseIO Unit)
   trivial
 
 example : True := by
@@ -741,7 +741,7 @@ example : True := by
     exact
       (fun (_ : JobM Unit) => True.intro)
         (do
-          IO.sleep 10
+          (pure () : BaseIO Unit)
           pure ())
   trivial
 
@@ -760,11 +760,11 @@ example : True := by
 and after a text request in a `do` block. -/
 
 example : True := by
-  fail_if_success exact (fun (_ : TextM Unit) => True.intro) (IO.sleep 10)
+  fail_if_success exact (fun (_ : TextM Unit) => True.intro) (pure () : BaseIO Unit)
   trivial
 
 example : True := by
-  fail_if_success exact (fun (_ : EditorM Unit) => True.intro) (IO.sleep 10)
+  fail_if_success exact (fun (_ : EditorM Unit) => True.intro) (pure () : BaseIO Unit)
   trivial
 
 example : True := by
@@ -773,7 +773,7 @@ example : True := by
       (fun (_ : TextM Unit) => True.intro)
         (do
           (⟨0⟩ : TextId).insert 0 "x"
-          IO.sleep 10)
+          (pure () : BaseIO Unit))
   trivial
 
 example : True := by
@@ -782,7 +782,7 @@ example : True := by
       (fun (_ : EditorM Unit) => True.intro)
         (do
           (⟨0⟩ : TextId).insert 0 "x"
-          IO.sleep 10)
+          (pure () : BaseIO Unit))
   trivial
 
 /-! A job is not a command, nor a program over the text port. -/

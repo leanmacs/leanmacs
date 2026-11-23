@@ -15,7 +15,6 @@ import ContractTest.Editor.Job.Contract
 import ContractTest.Editor.Job.FlushContract
 import ContractTest.Editor.Job.HandleContract
 import ContractTest.Editor.Job.Real
-import ContractTest.Editor.Lint.Wait
 import ContractTest.Editor.Process.Environment
 import ContractTest.Editor.Restore.Run
 import ContractTest.Editor.SyntaxTree.Contract
@@ -24,6 +23,7 @@ import ContractTest.Editor.Test.Linked.Services
 import ContractTest.Editor.Text.Contract
 import ContractTest.Editor.Watch.Contract
 import ContractTest.Editor.Watch.Real
+import ContractTest.Lint.Wait
 import Editor.Api.Cases
 import Editor.Clipboard.Contract
 import Editor.Completion.StyleContract

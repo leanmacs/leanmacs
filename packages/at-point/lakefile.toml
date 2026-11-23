@@ -21,7 +21,9 @@
 # - `AtPointTest` holds the test modules.
 # - `tests/headless/` holds its headless fixtures.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
@@ -35,6 +37,7 @@ name = "at-point"
 testDriver = "«at-point-test»"
 defaultTargets = ["AtPoint", "AtPointTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 # The interface package this one implements: it declares the names of the
 # commands the Vim scheme's insert table and the core reach, and publishes

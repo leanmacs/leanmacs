@@ -2,6 +2,7 @@ import Editor.Ffi.Events
 import Editor.Ffi.Processes
 import Editor.Ffi.Watches
 import Editor.Fuzzy.Real
+import Editor.InferredWait
 import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.Test.Linked.Jobs
@@ -116,10 +117,13 @@ def shutdown : IO Unit := do
   Ffi.grepShutdown
   Ffi.quit
 
+/-- `pendingChildren` is an inferred wait (`Editor/InferredWait.lean`). -/
+def pendingChildren.inferredWait : InferredWait :=
+  .count []
+
 /-- How many children the library's process service has started and not yet
 reaped. A check reads it before it starts a child and requires it again
 afterwards. -/
-@[inferred_wait count]
 def pendingChildren : IO UInt64 :=
   Ffi.processesPending
 
@@ -144,13 +148,16 @@ def filesFlushed (completions : Job.Completions) : IO Bool := do
   Job.flushThrough completions Ffi.filesFlush id
   return (← Job.awaitWithin reapPatience (wait.resultD .cancelled)) == some .completed
 
+/-- `childrenReapedTo` is an inferred wait (`Editor/InferredWait.lean`). -/
+def childrenReapedTo.inferredWait : InferredWait :=
+  .count []
+
 /-- Whether the library's process service, flushed through `jobs`, is back to
 `before` children: the flush (`Job.Services.flushed .processes`) is
 completed once every run started before it has ended and every child
 cancelled before it has been reaped, and `pendingChildren` is then read
 once. It replaces a poll of the count: a check reads `pendingChildren`
 before it starts a child and asks this afterwards. -/
-@[inferred_wait count]
 def childrenReapedTo (jobs : Job.Services) (before : UInt64) : IO Bool := do
   let flushed ← Job.awaitWithin reapPatience (← jobs.flushed .processes)
   return flushed == some .completed && (← pendingChildren) == before

@@ -179,9 +179,9 @@ or given a longer timeout. Threads, queues and the clock are described in
   `HangGuard::held` or `RealTime::under` of `editor-wait` in Rust. A wait
   takes only those, so a bare number does not compile; a raw sleep or clock
   read is refused by `lake build`'s `linter.rawClock` and by `mise run lint`.
-- A count or idle wait, or a "first X after Y" wait (`@[inferred_wait]`), is
-  callable only from its subject modules; `lake build` refuses one elsewhere
-  (`docs/dev-practices/inferred-waits.md`).
+- A count or idle wait, or a "first X after Y" wait (marked with a
+  `<constant>.inferredWait`), is callable only from its subject modules;
+  `lake build` refuses one elsewhere (`docs/dev-practices/inferred-waits.md`).
 - Pin results that do not depend on scheduling. Check the final state, or
   what was published last, and not how many times something happened when
   that count changes with timing.

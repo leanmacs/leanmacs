@@ -1,5 +1,6 @@
 import Editor.Bound
 import Editor.Ffi.Words
+import Editor.InferredWait
 
 /-!
 # Bindings: the process service
@@ -392,12 +393,16 @@ A live streaming child and its pending read are not waited for. -/
 @[extern "editor_glue_processes_flush"]
 opaque processesFlush (id : UInt64) : IO Bool
 
+/-- `processesPending` is an inferred wait (`Editor/InferredWait.lean`). -/
+def processesPending.inferredWait : InferredWait :=
+  .count
+    [`Editor.Job.Real, `Editor.Job.Contract, `Editor.Job.FlushContract, `Editor.Job.HandleContract,
+      `Editor.Test.Linked.Services]
+
 /-- How many runs have a child not yet reaped, and how many results have not
 been taken, together. A readout for tests, which use it to see that a
 cancelled run's child was reaped. -/
-@[extern "editor_glue_processes_pending",
-  inferred_wait count Editor.Job.Real Editor.Job.Contract Editor.Job.FlushContract
-      Editor.Job.HandleContract Editor.Test.Linked.Services]
+@[extern "editor_glue_processes_pending"]
 opaque processesPending : IO UInt64
 
 /-- Shuts the library's process service down: kills every child's process

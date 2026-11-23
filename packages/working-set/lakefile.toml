@@ -35,7 +35,9 @@
 # which run on the default set's editor, add, write and open sets through
 # it.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
@@ -49,6 +51,7 @@ name = "working-set"
 testDriver = "«working-set-test»"
 defaultTargets = ["WorkingSet", "WorkingSetTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 # The interface package this one implements: it declares the names of
 # `working-set-add` and `working-set-open`, which the default config binds,

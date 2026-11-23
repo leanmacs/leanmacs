@@ -14,7 +14,9 @@
 # - `tab-commands-api-test` is its test driver (`lake test`), rooted at
 #   `TabCommandsApiTest/Model.lean`.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/tab-commands-api update --keep-toolchain
@@ -25,6 +27,7 @@ keywords = ["editor-interface"]
 testDriver = "«tab-commands-api-test»"
 defaultTargets = ["TabCommandsApi", "TabCommandsApiTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 [[require]]
 name = "editor-core"

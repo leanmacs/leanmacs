@@ -17,7 +17,9 @@
 #   whose config is `tests/linked/config/`.
 # - `tests/headless/` holds its headless fixtures.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its
@@ -27,6 +29,7 @@ name = "greeting"
 testDriver = "«greeting-test»"
 defaultTargets = ["Greeting", "GreetingTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 # The interface package this one implements: it declares the name of
 # `greeting-reply`, which `greeting-loud` reaches, and publishes the

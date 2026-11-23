@@ -29,13 +29,22 @@ lakefile cannot declare a target that compiles C, a library's
   root of the executable the core's `editorLinked` facet links as the editor
   is linked, which runs the contract against the binding.
 
-Every Lean linter is on and a warning fails the build, as in the core. -/
+Every Lean linter is on and a warning fails the build, as in the core, and
+the build's own linters, the wait linters, are loaded as a Lean plugin as
+the core's libraries load them (`lintPlugin`; `lean/Lint/Wait.lean`). -/
 
 package echo where
   testDriver := "«echo-test»"
   leanOptions := #[⟨`linter.all, true⟩, ⟨`warningAsError, true⟩]
 
 require «editor-core» from ".." / ".." / ".." / "lean"
+
+/-- The core's build linters as a Lean plugin, which each library and the
+test driver load (the core's `lintPlugin`). It is named on them, not on the
+package: the formatter elaborates this file under the package's own
+plugins, and the plugin is not for this file. -/
+def lintPlugin : TargetArray Dynlib :=
+  #[`@«editor-core»/Lint:shared]
 
 /-- The package's crate: the path of its manifest. -/
 target editorRustCrate pkg : FilePath :=
@@ -49,17 +58,24 @@ target echoGlue.o pkg : FilePath := do
 
 /-- The port, its model, its contract and the entry module: every module of
 the package but its tests and the binding. -/
-@[default_target] lean_lib Echo where globs :=
+@[default_target] lean_lib Echo where
+  globs :=
   #[.one `Echo, .one `Echo.Model, .one `Echo.Contract, .one `Echo.Checksum, .one `Echo.Packages,
     .one `Echo.EditorPackage]
+  plugins := lintPlugin
 
 /-- The Rust-backed binding, with the package's glue. -/
 @[default_target] lean_lib EchoReal where
   roots := #[`Echo.Real]
   moreLinkObjs := #[echoGlue.o]
+  plugins := lintPlugin
 
 /-- The test modules. -/
-@[default_target] lean_lib EchoTest where globs := #[.submodules `EchoTest]
+@[default_target] lean_lib EchoTest where
+  globs := #[.submodules `EchoTest]
+  plugins := lintPlugin
 
 /-- The test driver: the tests that need no Rust. -/
-lean_exe «echo-test» where root := `EchoTest.Model
+lean_exe «echo-test» where
+  root := `EchoTest.Model
+  plugins := lintPlugin

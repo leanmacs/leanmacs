@@ -22,7 +22,9 @@
 # - `BindingSearchTest` holds the test modules.
 # - `tests/headless/` holds its headless fixture.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
@@ -36,6 +38,7 @@ name = "binding-search"
 testDriver = "«binding-search-test»"
 defaultTargets = ["BindingSearch", "BindingSearchTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 # The interface package this one implements: it declares the name the
 # binding search is registered under, which the default config binds, and

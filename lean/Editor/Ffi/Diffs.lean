@@ -1,5 +1,6 @@
 import Editor.Ffi.Transaction
 import Editor.Ffi.Words
+import Editor.InferredWait
 
 /-!
 # Bindings: the diff service
@@ -98,11 +99,15 @@ accepted. It returns at once and keeps no answer. -/
 @[extern "editor_glue_diffs_flush"]
 opaque diffsFlush (id : UInt64) : IO Bool
 
+/-- `diffsPending` is an inferred wait (`Editor/InferredWait.lean`). -/
+def diffsPending.inferredWait : InferredWait :=
+  .count
+    [`Editor.Job.Real, `Editor.Job.Contract, `Editor.Job.FlushContract, `Editor.Job.HandleContract,
+      `Editor.Test.Linked.Services]
+
 /-- How many diff requests are waiting or being worked, and how many answers
 (scripts or hunks) have not yet been taken, together. A readout for tests. -/
-@[extern "editor_glue_diffs_pending",
-  inferred_wait count Editor.Job.Real Editor.Job.Contract Editor.Job.FlushContract
-      Editor.Job.HandleContract Editor.Test.Linked.Services]
+@[extern "editor_glue_diffs_pending"]
 opaque diffsPending : IO UInt64
 
 end Editor.Ffi

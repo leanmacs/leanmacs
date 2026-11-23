@@ -197,7 +197,7 @@ run = [
 # (the core's Lake manifest), it must name the formatter host's copy and
 # exit 1. Its output is shown only when it does not.
 [tasks.lean-test]
-description = "Check that every copy of the Lean pin equals lean/lean-toolchain (tools/toolchain-check.sh), then run the Lean model tests with `lake test`, and those of each package of the fixture set, the default packages (the shipped themes, the compile mode) among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh)"
+description = "Check that every copy of the Lean pin equals lean/lean-toolchain (tools/toolchain-check.sh), then run the Lean model tests with `lake test` and the build's linters' checks with `lake exe lint-test`, and those of each package of the fixture set, the default packages (the shipped themes, the compile mode) among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh)"
 dir = "lean"
 run = [
   "sh ../tools/toolchain-check.sh",
@@ -306,6 +306,10 @@ run = [
   "status=0; out=$(sh ../tools/module-map-check.sh --points ../tests/module-map/packages ../tests/module-map/stale-map.md 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/module-map/stale-expected -; } || { echo \"lean-test: module-map-check passed a stale map (exit $status), or printed another difference\"; printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/module-map-check.sh --points ../tests/module-map/packages 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'usage:'; } || { echo \"lean-test: module-map-check took a command line with no map (exit $status)\"; printf '%s\\n' \"$out\"; exit 1; }",
   'PATH="$PWD/no-cargo:$PATH" lake test --wfail',
+  # The checks of the build's linters (lean/LintTest.lean), which import the
+  # linters and so are a test executable of their own: model-test links no
+  # module of Lean's frontend (tools/core-imports-check.sh, rule 4).
+  'PATH="$PWD/no-cargo:$PATH" lake exe lint-test',
   # The same for each package of the fixture set (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps"): its Lake test
   # driver, with the same `cargo` that fails, so a package's model tests
@@ -643,14 +647,16 @@ run = [
   # The core's root holds the whole core, on Lake's module graph
   # (tools/core-imports-check.sh; docs/dev-practices/the-gate.md, "The core
   # imports check"): every `Editor.…` module the build reaches is the
-  # core's root, `Editor.Core`, or one of the modules it imports; and every
-  # root that links the elaborator links the config base. No feature is
+  # core's root, `Editor.Core`, or one of the modules it imports; every
+  # root that links the elaborator links the config base; and the config
+  # base and the model tests' root import no module of Lean's frontend,
+  # through any module. No feature is
   # between having its edges from the core cut and moving out, so the check
   # is given no moving name, and its first rule, that the root reaches no
   # moving module, holds of nothing: the two features it was about, the
   # shipped palettes and the compile mode, are Lake packages now, which the
   # core cannot import. The roots of the build are the core's executables'
-  # and the root generated for the default set. Six `lake query` calls,
+  # and the root generated for the default set. Eight `lake query` calls,
   # about half a second each.
   "sh ../tools/core-imports-check.sh",
   # And each rule of the check bites. Told that a module of the core, the
@@ -662,12 +668,16 @@ run = [
   # not the whole core, it must find the core modules outside it and exit 3.
   # Told the config base is `Editor.Core`, which no executable's root
   # imports, it must name the roots that link the elaborator without it and
-  # exit 4. And told the elaborator adapter is `Editor.Core`, which no root
-  # reaches, so that the third rule would hold of nothing, it must say so
-  # and exit 2. The output of each is shown only when it is not that.
+  # exit 4. Told `Editor.Core`, which imports the two adapters that link
+  # Lean's frontend, must be plain Lean, it must name their imports of
+  # `Lean` and of Lake and exit 5. And told the elaborator adapter is
+  # `Editor.Core`, which no root reaches, so that the third rule would hold
+  # of nothing, it must say so and exit 2. The output of each is shown only
+  # when it is not that.
   "status=0; out=$(sh ../tools/core-imports-check.sh Editor.Core Editor.Ex.Line 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh Editor.Setup 2>&1) || status=$?; test \"$status\" -eq 3 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --base Editor.Core 2>&1) || status=$?; test \"$status\" -eq 4 || { printf '%s\\n' \"$out\"; exit 1; }",
+  "status=0; out=$(sh ../tools/core-imports-check.sh --plain Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 5 && printf '%s\\n' \"$out\" | grep -qxF \"$(printf 'Editor.Config.Elaborate\\tLean')\"; } || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --elaborator Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 2 && test \"${out#core-imports-check: no root of the build}\" != \"$out\"; } || { printf '%s\\n' \"$out\"; exit 1; }",
   # A package imports only what a package may import of the core, on Lake's
   # module graph (tools/package-imports-check.sh;

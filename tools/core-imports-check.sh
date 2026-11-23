@@ -6,6 +6,7 @@
 # on the core, and the core on no package.
 #
 #   tools/core-imports-check.sh [--base <module>] [--elaborator <module>]
+#                                [--plain <module>]
 #                                [<root module> [<moving name>...]]
 #
 # Run it in `lean/`. The root module defaults to `Editor.Core`, the core's
@@ -23,9 +24,12 @@
 # the first bite, by naming a feature that is in the core as moving.
 # `--base` names the config base and `--elaborator` the elaborator adapter,
 # in place of the editor's (`base` and `elaborator`, below): the gate uses
-# them to see the third rule fail.
+# them to see the third rule fail. `--plain` names a module that must reach
+# no module of Lean's frontend, in place of the editor's (`plain`, below),
+# and may be given more than once: the gate uses it to see the fourth rule
+# fail.
 #
-# It checks three things, in this order, and stops at the first that fails:
+# It checks four things, in this order, and stops at the first that fails:
 #
 # 1. The root and the modules it imports, directly or through another, hold
 #    no moving module. Otherwise it prints each one found, one a line, and
@@ -41,8 +45,20 @@
 #    reaches the config base (`base`): an executable that can elaborate
 #    config links every module config may import. Otherwise it prints each
 #    root that does not, one a line, and exits 4.
+# 4. The config base and the model tests' root (`plain`) are plain Lean:
+#    neither, nor any module it imports, directly or through another,
+#    imports `Lean` or `Lake`, or a module under either
+#    (docs/design/overview.md, "Config is elaborated behind a port, and two
+#    adapters link Lean's frontend"). Otherwise it prints each such import,
+#    `<importer><TAB><imported>`, one a line, and exits 5. Config is
+#    elaborated on the base, and a base that holds Lean's frontend costs
+#    every config its memory and its start (docs/design/lean-runtime.md);
+#    `model-test` tests the session on a model of the elaborator and links
+#    none. Lake's `transImports` names the workspace's modules alone, so
+#    this asks the core's facet `editorFrontendImports`, which reads each
+#    module's header (lean/lakefile.lean).
 #
-# It exits 0 when all three hold. It exits 2, before it reports on any
+# It exits 0 when all four hold. It exits 2, before it reports on any
 # rule, for a command line it does not take, when Lake fails a query, when
 # Lake answers nothing for a root, and when no root of the build reaches
 # the elaborator adapter: each would make a rule hold of nothing, so the
@@ -51,9 +67,12 @@
 #
 # It asks Lake (`lake query`) and reads no source text:
 # `+<module>:transImports` is a module's transitive imports, one module a
-# line, from the build graph Lake resolves. It builds nothing. So the check
-# follows a module that is renamed or moved, and an import written in any
-# form. It makes one query for the root and one for each root of the build.
+# line, from the build graph Lake resolves, and
+# `+<module>:editorFrontendImports` the imports of Lean's frontend among
+# them and the module's own, from the headers Lake parses. It builds
+# nothing. So the check follows a module that is renamed or moved, and an
+# import written in any form. It makes one query for the root, one for each
+# root of the build and one for each plain module.
 #
 # One root of the build is no module of a library: the root the package-set
 # build generates for the default package set, which `main` of the editor
@@ -75,24 +94,32 @@ built="ModelTest ConfigTest FfiTest ContractTest"
 # The package set whose generated root is a root of the build too: the
 # default set's directory, from `lean/`.
 built_set=../packages
+# The modules that must reach no module of Lean's frontend: the config
+# base and the model tests' root.
+plain="Editor ModelTest"
+plain_given=
 # The moving names when none is given: none. A feature between having its
 # edges from the core cut and moving out is named here until it has moved.
 moving=""
 
 usage() {
-  echo "usage: tools/core-imports-check.sh [--base <module>] [--elaborator <module>] [<root module> [<moving name>...]]" >&2
+  echo "usage: tools/core-imports-check.sh [--base <module>] [--elaborator <module>] [--plain <module>] [<root module> [<moving name>...]]" >&2
   exit 2
 }
 
 # The options, each with the module it names, before the root.
 while [ "$#" -gt 0 ]; do
   case $1 in
-    --base | --elaborator)
+    --base | --elaborator | --plain)
       [ "$#" -ge 2 ] || usage
       case $2 in
         '' | -* | *[!A-Za-z0-9_.]*) usage ;;
       esac
-      if [ "$1" = --base ]; then base=$2; else elaborator=$2; fi
+      case $1 in
+        --base) base=$2 ;;
+        --elaborator) elaborator=$2 ;;
+        --plain) plain_given="${plain_given:+$plain_given }$2" ;;
+      esac
       shift 2
       ;;
     *) break ;;
@@ -105,6 +132,10 @@ for argument in "$@"; do
     '' | -* | *[!A-Za-z0-9_.]*) usage ;;
   esac
 done
+
+if [ -n "$plain_given" ]; then
+  plain=$plain_given
+fi
 
 root=${1:-Editor.Core}
 if [ "$#" -gt 1 ]; then
@@ -224,4 +255,19 @@ if [ -n "$unbased" ]; then
   echo "core-imports-check: these roots reach $elaborator and not the config base, $base:" >&2
   printf '%s\n' "$unbased" | sed '/^$/d'
   exit 4
+fi
+
+# 4. The config base and the model tests' root reach no module of Lean's
+# frontend.
+frontend=
+for module in $plain; do
+  reached=$(asked "+$module:editorFrontendImports") || exit 2
+  if [ -n "$reached" ]; then
+    frontend=$(printf '%s\n%s\n' "$frontend" "$reached")
+  fi
+done
+if [ -n "$frontend" ]; then
+  echo "core-imports-check: these imports put Lean's frontend in a module that must be plain Lean ($plain):" >&2
+  printf '%s\n' "$frontend" | sed '/^$/d' | sort -u
+  exit 5
 fi

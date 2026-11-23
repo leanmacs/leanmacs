@@ -24,16 +24,29 @@ wiring-set modules.
 ## How the list is held
 
 Kinds a and b cannot be written outside the modules they are allowed in.
-Each such wait is a constant marked `@[inferred_wait <kind> <subject
-module>*]`, and `lake build`'s `linter.inferredWait`
-(`lean/Editor/Lint/Wait.lean`) refuses a reference to one anywhere but its
-own module, the subject modules it names and the test modules that mirror
-them (`ModelTest.Editor.Job.Activity` mirrors `Editor.Job.Activity`). In the
-own or a subject module, when that is a test module, a public declaration
-that references one must carry the attribute itself, so a kit cannot hand a
-restricted wait on to everyone: the kit's waits that are built on them
-(`Session.join`, `Session.ran`, `Rig.idle`, `childrenReapedTo` and the
-others) carry it. The marked constants:
+Each such wait is a constant with a mark beside it, a declaration
+`<constant>.inferredWait : InferredWait` whose value is the kind applied
+to the subject modules (`.idle [`Editor.Headless.Wait]`;
+`lean/Editor/InferredWait.lean`), and `lake build`'s `linter.inferredWait`
+(`lean/Lint/Wait.lean`) refuses a reference to one anywhere but its own
+module, the subject modules its mark names and the test modules that
+mirror them (`ModelTest.Editor.Job.Activity` mirrors `Editor.Job.Activity`).
+In the own or a subject module, when that is a test module, a public
+declaration that references one must have a mark itself, written before
+it, so a kit cannot hand a restricted wait on to everyone: the kit's waits
+that are built on them (`Session.join`, `Session.ran`, `Rig.idle`,
+`childrenReapedTo` and the others) have one.
+
+The mark is plain data and the linter a Lean plugin: the build loads the
+library `Lint` into every module it elaborates of the core's libraries and
+of every package (`lintPlugin`, `lean/lakefile.lean`; `plugins` in each
+package's lakefile), and no module imports it. The linter imports `Lean`,
+which the config base and the model tests may not reach
+(`docs/design/overview.md`, "Config is elaborated behind a port, and two
+adapters link Lean's frontend"), and the core imports check holds them to
+that (`tools/core-imports-check.sh`, rule 4). So the list of restricted
+waits is the marks, each beside its constant, and nothing else keeps it.
+The marked constants:
 
 | Constant | Kind | Allowed in, beside its own module and the mirrors |
 |---|---|---|
@@ -160,7 +173,7 @@ every other banned readout, so the gate sees each ban bite.
 | W60 | `packages/project-search/ProjectSearchTest/Linked/ProjectSearch/Run.lean`, `projectSearchChecks` (criteria 2 and 3): reads the file after `runSettledFrom` | d | files, grep | real | phase 4 | not lintable: kind c/d | package-linked-real-thread-inventory |
 | W61 | `packages/version-control/VersionControlTest/Linked/VersionControl/Status.lean`, criterion 1 through vc-stage-hunk: reads the file and `git show` after `runSettled` | d | files, processes | real git | phase 4 | not lintable: kind c/d | package-linked-real-thread-inventory |
 | W62 | `packages/working-set/WorkingSetTest/Linked/WorkingSet/Run.lean`, `workingSetChecks` (criteria 1 and 2): reads the store after `runHost` | d | files | real | phase 4 | not lintable: kind c/d | package-linked-real-thread-inventory |
-| W63 | The service counts read outside the bindings: `FfiTest` (Files, Processes, Grep, Diffs, Timers, Document, Snapshot: `filesPending`, `processesPending`, `grepPending`, `diffsPending == 0`, `timersPending`, `Document.live`, `Snapshot.live`) and `ContractTest` (`caseFailures`, `apiFailures`, the text contract's `releaseFrees`, `fileFailures`, `processFailures`, `fileWatchFailures`, `handleRealRig`, the flush contract's process rig, `jobChecks`/`processChecks`/`fileChecks`/`grepChecks` of `Job/Real.lean`, `environmentChecks`): a process-wide count read before and after | d | files, diff, grep, processes, watches, clock, text | real | Stays: each is the binding's or the adapter's own contract, whose count is its subject (the counts are `@[inferred_wait count]`, allowed in the bindings' mirrors and the job port's contracts); phase 6 places them | not lintable: kind c/d |  |
+| W63 | The service counts read outside the bindings: `FfiTest` (Files, Processes, Grep, Diffs, Timers, Document, Snapshot: `filesPending`, `processesPending`, `grepPending`, `diffsPending == 0`, `timersPending`, `Document.live`, `Snapshot.live`) and `ContractTest` (`caseFailures`, `apiFailures`, the text contract's `releaseFrees`, `fileFailures`, `processFailures`, `fileWatchFailures`, `handleRealRig`, the flush contract's process rig, `jobChecks`/`processChecks`/`fileChecks`/`grepChecks` of `Job/Real.lean`, `environmentChecks`): a process-wide count read before and after | d | files, diff, grep, processes, watches, clock, text | real | Stays: each is the binding's or the adapter's own contract, whose count is its subject (the counts are marked `count`, allowed in the bindings' mirrors and the job port's contracts); phase 6 places them | not lintable: kind c/d |  |
 | W64 | `tests/headless/*/script`, `packages/*/tests/headless/*/script`, `tests/packages/*/tests/headless/*/script`, with one `settle` before their scenes: bundle, display-rules, edge-sidebar, finder-session, float-anchor, float-rule, generate, insert-window-keys, insert-word-delete, manual-splits, modules, monocle, needs-rebuild, no-input-scheme, not-linked, padding, tabs, two-windows, window-dividers; binding-search, compile's config, ex-names and shipped-formats, completion-choices, command-prompt, the minibuffer's candidates and prompt, mode-line, shipped-themes' load-theme, package-names and shipped-themes; greeting-loud's reply, greeting's hello | a | loop thread, the reload | real (the headless host) | phase 5 | headless script: not lintable in Lean |  |
 | W65 | Headless fixtures that `join` before a scene: column, open-file, session, view, working-set-from-search, working-set-reopen, default-config, dispatch, files, at-point and at-point-tuned, ex (with `published`), milestone (with `agree` and `idle`), scene-script, ex's wq-script and save-quit-script, user-sets' elab-script | a | loop thread and every service (the host's idle) | real | phase 5 | headless script: not lintable in Lean |  |
 | W66 | `packages/compile/tests/linked/run/script`: the `settle`/`join` before each `scene` (after `kill-compilation`, and after `next-error`, whose visit's load the `join` infers from every job having ended) | a | loop thread, the files-api fake | real loop thread | phase 5 | headless script: not lintable in Lean | compile-linked-next-error-settle-race |
@@ -207,17 +220,18 @@ each of its rules is now a type, a Lean linter or a clippy lint:
 |---|---|
 | Lean: `IO.sleep` | `linter.rawClock`, in every module but `Editor.Bound`; real time is `RealTime.sleep` |
 | Lean: `monoMsNow` (and `monoNanosNow`) | `linter.rawClock`; a deadline is `HangGuard.deadline` |
-| Lean: `eventually`, a bare `within`, `Headless.within`, `Pool.within`, `Session.within`, a name holding `patience` or ending in `Guard` | the bound is a `HangGuard` parameter: `Job.awaitWithin`, the hosts' waits, the pool's, the brackets' guard and grace and the bindings' readouts take nothing else, so a number does not elaborate (`ModelTest/Editor/Bound.lean`, `ModelTest/Editor/Lint/Wait.lean`) |
+| Lean: `eventually`, a bare `within`, `Headless.within`, `Pool.within`, `Session.within`, a name holding `patience` or ending in `Guard` | the bound is a `HangGuard` parameter: `Job.awaitWithin`, the hosts' waits, the pool's, the brackets' guard and grace and the bindings' readouts take nothing else, so a number does not elaborate (`ModelTest/Editor/Bound.lean`, `ModelTest/Lint/Wait.lean`) |
 | Rust: `sleep(`, `sleep_ms(` | clippy bans `std::thread::sleep` and `sleep_ms`; real time is `editor_wait::RealTime::sleep`, and a fake clock's `sleep` was never a wait |
 | Rust: `recv_timeout`, `wait_timeout*`, `park_timeout`, `yield_now` | clippy bans each; a bounded wait is `editor_wait::recv` or `wait_while` |
 | Rust: `Instant::now() +`, `.elapsed()` | clippy bans `Instant::now`, which both need; a deadline is `HangGuard::start`, a measurement `Stopwatch` |
 | Rust: `is_finished()` or `try_wait()` in a `while` | clippy bans `JoinHandle::is_finished` and `Child::try_wait` |
 | The comment forms (`hang guard:`, `hang guard, run out on purpose:`, `real time under test:`) | the three constructors, `HangGuard.on`, `HangGuard.held` and `RealTime.under` (`HangGuard::on`, `::held`, `RealTime::under` in Rust), each naming its event, what it holds or its timing |
-| The files it scanned | the Lean linters are active in every module that imports `Editor.Lint.Wait` (`Editor.Bound`, `Editor.Job.Activity` and the test roots' and packages' `Check` modules, which reach every test module that writes a check), and clippy runs over every target of every crate, under a config that holds the bans |
+| The files it scanned | the Lean linters are loaded, as a plugin, into every module of the core's libraries and of every package under `packages/` and `tests/packages/` (the library `Lint`, `lean/lakefile.lean`), and clippy runs over every target of every crate, under a config that holds the bans |
 
 What each holds is pinned by a fixture that must fail: the `#guard_msgs`
-fixtures of `ModelTest/Editor/Lint/Wait.lean`,
-`ContractTest/Editor/Lint/Wait.lean` and `ConfigTest/Editor/Lint/Wait.lean`, the `fail_if_success` examples of
+fixtures of `ModelTest/Lint/Wait.lean`, `ContractTest/Lint/Wait.lean` and
+`ConfigTest/Lint/Wait.lean` (and the rules they apply by
+`LintTest.lintWaitChecks`, `lake exe lint-test`), the `fail_if_success` examples of
 `ModelTest/Editor/Bound.lean`, `editor-wait`'s `compile_fail` doctests, and
 `tests/wait-lints/` under every clippy config (`the-gate.md`, "The wait
 lints").

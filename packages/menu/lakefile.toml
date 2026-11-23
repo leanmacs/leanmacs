@@ -28,7 +28,9 @@
 #
 # It has no headless fixture of its own.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
@@ -43,6 +45,7 @@ name = "menu"
 testDriver = "«menu-test»"
 defaultTargets = ["Menu", "MenuTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 # The interface package of evil: the names `undo` and `redo`, which the
 # Edit menu's Undo and Redo, and `s-z` and `s-Z`, run.

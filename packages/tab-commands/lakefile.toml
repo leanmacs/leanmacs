@@ -27,7 +27,9 @@
 # `tests/headless/tabs`, which runs on the default set's editor, opens,
 # selects and closes tabs through it.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
@@ -41,6 +43,7 @@ name = "tab-commands"
 testDriver = "«tab-commands-test»"
 defaultTargets = ["TabCommands", "TabCommandsTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 # The interface package of the tab commands: their names, its fake and the
 # contract check this package's tests run.

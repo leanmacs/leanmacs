@@ -1,6 +1,5 @@
 import EchoTest.Echo.Checksum
 import EchoTest.Echo.Model
-import Editor.Lint.Wait
 
 /-!
 # The test driver of the package `echo`

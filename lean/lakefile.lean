@@ -29,6 +29,32 @@ Vim scheme is the default package `evil`'s (`packages/evil/`), so an editor
 built from this package alone refuses to start. -/
 package «editor-core» where leanOptions := coreLeanOptions
 
+/-- The build's linters (`Lint.lean`, `Lint/Wait.lean`): the wait
+linters, which refuse a raw clock read and an inferred wait outside the
+modules it is allowed in (`docs/dev-practices/inferred-waits.md`). They
+import `Lean`, which the config base and the model tests must not reach
+(`docs/design/overview.md`, "Config is elaborated behind a port, and two
+adapters link Lean's frontend"; `tools/core-imports-check.sh`, rule 4), so
+this library is outside `Editor` and no module imports it: every other
+library of this package, and every package under `packages/`, loads it as
+a Lean plugin (`lintPlugin`). Its own modules load no plugin, which would
+be themselves. Its tests are `LintTests`, run by `lint-test`, and the
+linters' fixtures in the test roots. Its root is the library's name, as a
+plugin's must be: Lake initializes a plugin through
+`initialize_<library>`. -/
+lean_lib Lint where globs := #[.andSubmodules `Lint]
+
+/-- The build's linters as a Lean plugin (`lean --plugin`), which each
+library of this package but `Lint` and its tests loads as it elaborates
+each of its modules, and each package's lakefile names the same way
+(`plugins`): the plugin runs the library's `initialize` declarations,
+which register the wait linters and their options, and the modules it is
+loaded for import nothing of it, so the linters reach no import closure.
+It is the shared library of `Lint`, named with this package's name, so a
+package set that requires this package by path loads the same one. -/
+def lintPlugin : TargetArray Dynlib :=
+  #[`@«editor-core»/Lint:shared]
+
 /-- The editor's modules. Its root `Editor` is what user config is elaborated
 on at runtime, and the build makes its `.olean` files for that. Its second
 root, `Editor.Core`, is the core's (`Editor/Core.lean`,
@@ -44,7 +70,9 @@ package named `p` lists its packages in the module `<P>.EditorPackage`,
 and `editor` would put a list at `Editor.EditorPackage`, under the
 namespace the core imports check rules (`docs/design/packages.md`, "The
 package set and its build"). -/
-@[default_target] lean_lib Editor where roots := #[`Editor, `Editor.Core]
+@[default_target] lean_lib Editor where
+  roots := #[`Editor, `Editor.Core]
+  plugins := lintPlugin
 
 /-- The interface library `files-api` (`FilesApi.lean`): the hooks around a
 buffer taking in and writing a file, what files does for others, and the
@@ -58,12 +86,14 @@ libraries the features-as-packages roadmap's phase 5 staged here as it is,
 (`packages/vc-api/`, `packages/project-api/`): their last users left the
 core, and each moved with a `git mv` and a lakefile, no import line in it
 changed. -/
-lean_lib FilesApi
+lean_lib FilesApi where plugins := lintPlugin
 
 /-- The test library of `files-api` (`FilesApiTest/`): its fake, the core's
 kit's opener with the interface's hooks (`FilesApiTest.Fake`), and its
 contract check (`FilesApiTest.Contract`). -/
-lean_lib FilesApiTest where globs := #[.submodules `FilesApiTest]
+lean_lib FilesApiTest where
+  globs := #[.submodules `FilesApiTest]
+  plugins := lintPlugin
 
 /-- Code that `ffi-test overflow` has Lean's interpreter run
 (`InterpretedFixture.lean`; `mise run ffi-overflow`). It is a library of its
@@ -1339,6 +1369,34 @@ package can name (`linkedTestModule?`, `tools/package-set.sh`). -/
 module_facet editorLinked mod : FilePath := do
   linkAsEditor mod.pkg mod (linkedFile mod)
 
+/-- Whether the module `name` is Lean's frontend: `Lean` or `Lake`, or a
+module under either, which hold Lean's parser and elaborator and what is
+built on them. `Init` and `Std` are not: every module imports `Init`, and
+neither holds a parser or an elaborator. -/
+def isFrontendModule (name : Name) : Bool :=
+  match name.components.head? with
+  | some `Lean | some `Lake => true
+  | _ => false
+
+/-- Where the module `mod` reaches Lean's frontend (`isFrontendModule`),
+one line `<importer><TAB><imported>` for each import of the frontend that
+the header of `mod`, or of a module it imports directly or through
+another, names (`lake query +<module>:editorFrontendImports`). Lake's
+`transImports` names the workspace's modules alone, never the
+toolchain's, so this reads each of those modules' headers. The core
+imports check asks it of the config base and of the model tests' root,
+which must reach none (`tools/core-imports-check.sh`, rule 4). It builds
+nothing. -/
+module_facet editorFrontendImports mod : Array String := do
+  let imports ← (← mod.transImports.fetch).await
+  let mut found : Array String := #[]
+  for importer in imports.push mod do
+    let input ← (← importer.input.fetch).await
+    for imported in input.imports do
+      if isFrontendModule imported.module then
+        found := found.push s!"{importer.name}\t{imported.module}"
+  return Job.pure found
+
 /-- The module of the linked test of the Lake package `pkg`, when it has
 one: `<P>Test.Linked`, `<P>` being the package's name in upper camel case,
 held by a library of `pkg`, with its source file. It is the root of one
@@ -1508,6 +1566,7 @@ and `@[extern]` symbols, and the glue, the Rust archive and `linkArgs` are
 the same. `mise run ffi-test` runs it. -/
 @[default_target] lean_exe «ffi-test» where
   root := `FfiTest
+  plugins := lintPlugin
   supportInterpreter := true
   moreLinkObjs := #[glue.o, rustlib]
   moreLinkArgs := linkArgs.push coreSystemLibraries
@@ -1517,6 +1576,7 @@ the same. `mise run ffi-test` runs it. -/
 `mise run ffi-test` runs it. It also holds the benchmark `mise run config-bench` runs. -/
 @[default_target] lean_exe «config-test» where
   root := `ConfigTest
+  plugins := lintPlugin
   supportInterpreter := true
   moreLinkObjs := #[glue.o, rustlib]
   moreLinkArgs := linkArgs.push coreSystemLibraries
@@ -1927,6 +1987,7 @@ needs reaches `rustlib`. `-L`: as in `linkArgs`, so it links under either
 compiler. It starts at Lean's `main`. -/
 @[test_driver] lean_exe «model-test» where
   root := `ModelTest
+  plugins := lintPlugin
   moreLinkArgs := #["-L", leanSystemLibDir.toString]
 
 /-- The model tests' modules (`ModelTest/**/*.lean`: the test modules under
@@ -1938,7 +1999,9 @@ own. It is not a default target: `lake test` builds it for the test driver.
 `.submodules` takes every module under `ModelTest`, at any depth
 (`ModelTest.Editor.Job.Contract`), and not `ModelTest` itself, so the
 executable's root belongs to no library. -/
-lean_lib ModelTests where globs := #[.submodules `ModelTest]
+lean_lib ModelTests where
+  globs := #[.submodules `ModelTest]
+  plugins := lintPlugin
 
 /-- The `ffi-test` executable's modules (`FfiTest/**/*.lean`: the test
 modules under `FfiTest/Editor/`, the support modules under `FfiTest/Support/`
@@ -1949,7 +2012,9 @@ target: the `ffi-test` executable, which is, imports it, so `lake build`
 builds it and links its objects in. `.submodules` takes every module under
 `FfiTest`, at any depth, and not `FfiTest` itself, so the executable's root
 belongs to no library. -/
-lean_lib FfiTests where globs := #[.submodules `FfiTest]
+lean_lib FfiTests where
+  globs := #[.submodules `FfiTest]
+  plugins := lintPlugin
 
 /-- The `contract-test` executable's modules (`ContractTest/**/*.lean`: the
 test modules under `ContractTest/Editor/`, the support modules under
@@ -1960,7 +2025,9 @@ own. It is not a default target: the `contract-test` executable, which is,
 imports it, so `lake build` builds it and links its objects in.
 `.submodules` takes every module under `ContractTest`, at any depth, and
 not `ContractTest` itself, so the executable's root belongs to no library. -/
-lean_lib ContractTests where globs := #[.submodules `ContractTest]
+lean_lib ContractTests where
+  globs := #[.submodules `ContractTest]
+  plugins := lintPlugin
 
 /-- The `config-test` executable's modules (`ConfigTest/**/*.lean`: the test
 modules under `ConfigTest/Editor/`, the support modules under
@@ -1972,7 +2039,9 @@ target: the `config-test` executable, which is, imports it, so `lake build`
 builds it and links its objects in. `.submodules` takes every module under
 `ConfigTest`, at any depth, and not `ConfigTest` itself, so the executable's
 root belongs to no library. -/
-lean_lib ConfigTests where globs := #[.submodules `ConfigTest]
+lean_lib ConfigTests where
+  globs := #[.submodules `ConfigTest]
+  plugins := lintPlugin
 
 /-- The contract checks of the text port and of the job port against their
 real bindings (`ContractTest.lean`), linked like the editor with the glue and
@@ -1980,5 +2049,22 @@ the Rust archive. `mise run ffi-test` runs it. It interprets nothing, so it
 does not export its symbols. -/
 @[default_target] lean_exe «contract-test» where
   root := `ContractTest
+  plugins := lintPlugin
   moreLinkObjs := #[glue.o, rustlib]
   moreLinkArgs := linkArgs.push coreSystemLibraries
+
+/-- The tests of the build's linters (`LintTest.lean`, which imports its
+modules under `LintTest/`): `lint-test` runs them (`mise run lean-test`).
+They call the linters' functions, so they import `Lint`, and so they are
+the one test executable that loads no plugin: importing the library
+registers the linters as loading it would, and both would register them
+twice. It links no glue and no Rust archive, as `model-test` does not, and
+is not a default target, for the same reason. -/
+lean_exe «lint-test» where
+  root := `LintTest
+  moreLinkArgs := #["-L", leanSystemLibDir.toString]
+
+/-- The `lint-test` executable's modules (`LintTest/**/*.lean`), which its
+root `LintTest.lean` imports, in a library of their own as the other test
+executables' are. -/
+lean_lib LintTests where globs := #[.submodules `LintTest]

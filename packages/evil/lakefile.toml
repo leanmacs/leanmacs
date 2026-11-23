@@ -44,7 +44,9 @@
 # It has no headless fixture of its own: the core's fixtures under
 # tests/headless, which run on the default set's editor, press its keys.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): `editor-input-scheme` is no layer keyword, so no package may
@@ -60,6 +62,7 @@ keywords = ["editor-input-scheme"]
 testDriver = "«evil-test»"
 defaultTargets = ["Evil", "EvilTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 # The interface package of evil: the names `insert-newline`, `insert-tab`,
 # `undo` and `redo`, which completion at point and the Edit menu reach, its

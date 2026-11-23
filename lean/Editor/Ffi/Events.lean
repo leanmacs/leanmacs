@@ -1,5 +1,6 @@
 import Editor.Bound
 import Editor.Ffi.Words
+import Editor.InferredWait
 
 /-!
 # Bindings: the event queues
@@ -203,12 +204,15 @@ opaque waiting (queue : Queue) : IO UInt64
 @[extern "editor_glue_events_await_waiting"]
 private opaque awaitWaitingRaw (queue : Queue) (pulls : UInt64) (boundMs : UInt64) : IO Bool
 
+/-- `awaitWaiting` is an inferred wait (`Editor/InferredWait.lean`). -/
+def awaitWaiting.inferredWait : InferredWait :=
+  .firstAfter []
+
 /-- Waits until at least `pulls` pulls are parked on `queue`, and says
 whether they were: false once `guard` has run out first. A readout for
 tests, which use it to know a pull is parked before they post: it returns
 on the park itself, never by a poll of `waiting`. Only a pull that never
 parks reaches the guard. -/
-@[inferred_wait firstAfter]
 def awaitWaiting (queue : Queue) (pulls : UInt64) (guard : HangGuard) : IO Bool :=
   awaitWaitingRaw queue pulls guard.ms.toUInt64
 

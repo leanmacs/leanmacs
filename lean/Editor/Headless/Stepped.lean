@@ -1,4 +1,5 @@
 import Editor.Headless
+import Editor.InferredWait
 
 /-!
 # A host stepped on its caller's thread
@@ -72,8 +73,11 @@ structure Stepped where private mk ::
 
 namespace Stepped
 
+/-- `activitySeen` is an inferred wait (`Editor/InferredWait.lean`). -/
+def activitySeen.inferredWait : InferredWait :=
+  .count []
+
 /-- The host's activity count and its epoch, read in one step. -/
-@[inferred_wait count]
 def activitySeen (stepped : Stepped) : BaseIO Job.Activity.Seen :=
   stepped.activity.seen
 
@@ -148,8 +152,11 @@ def await (stepped : Stepped) (waitGuard : HangGuard) (answer : HangGuard := wai
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
   stepped.waitWhile waitGuard .settle answer line waitHung waitBlocked
 
+/-- `join` is an inferred wait (`Editor/InferredWait.lean`). -/
+def join.inferredWait : InferredWait :=
+  .idle [`Editor.Headless.Wait, `Editor.Test.Linked.Host]
+
 /-- `Host.join` over the stepped loop: a `join`'s wait (`Wait.Kind.join`). -/
-@[inferred_wait idle Editor.Headless.Wait Editor.Test.Linked.Host]
 def join (stepped : Stepped) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=

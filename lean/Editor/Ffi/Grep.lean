@@ -1,5 +1,6 @@
 import Editor.Ffi.Snapshot
 import Editor.Ffi.Words
+import Editor.InferredWait
 
 /-!
 # Bindings: the grep service
@@ -213,11 +214,15 @@ in use. It returns at once and keeps no result. `grepCancel` withdraws it. -/
 @[extern "editor_glue_grep_flush"]
 opaque grepFlush (id : UInt64) : IO Bool
 
+/-- `grepPending` is an inferred wait (`Editor/InferredWait.lean`). -/
+def grepPending.inferredWait : InferredWait :=
+  .count
+    [`Editor.Job.Real, `Editor.Job.Contract, `Editor.Job.FlushContract, `Editor.Job.HandleContract,
+      `Editor.Test.Linked.Services]
+
 /-- How many searches are held, and how many waits are not answered or not
 taken, together. A readout for tests. -/
-@[extern "editor_glue_grep_pending",
-  inferred_wait count Editor.Job.Real Editor.Job.Contract Editor.Job.FlushContract
-      Editor.Job.HandleContract Editor.Test.Linked.Services]
+@[extern "editor_glue_grep_pending"]
 opaque grepPending : IO UInt64
 
 /-- Shuts the library's grep service down: ends every search, once each

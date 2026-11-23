@@ -1130,9 +1130,10 @@ The count and its idle are the subject of the hosts' and the runner's
 waits, and a stand-in for one piece of work anywhere else: a test that
 waits for idle to know that its own load has ended infers it from
 something shared. So the reads of the count and the waits built on it are
-marked `@[inferred_wait]` (`lean/Editor/Lint/Wait.lean`), and
-`linter.inferredWait` refuses them outside the modules whose subject they
-are and the tests that mirror those; each site that remains is listed,
+marked inferred waits (`lean/Editor/InferredWait.lean`), and
+`linter.inferredWait` (`lean/Lint/Wait.lean`, a Lean plugin the build loads,
+which no module of the editor imports) refuses them outside the modules
+whose subject they are and the tests that mirror those; each site that remains is listed,
 with the phase that removes it, in `docs/dev-practices/inferred-waits.md`.
 
 **What idle is.** A host is idle when all three hold:
@@ -1226,8 +1227,8 @@ adapters' contracts and the C functions (`clippy.toml`), and so are the
 syntax session's `wait_for` and `wait_exact` with the bindings'
 `Syntaxes::settle` and `settle_exact`, the grep service's
 `until_held_back`, the live-handle wait and the script feeds' join. In
-Lean the ones that infer done from something shared are
-`@[inferred_wait]` (`Ffi.awaitWaiting`).
+Lean the ones that infer done from something shared are marked
+inferred waits (`Ffi.awaitWaiting`; `lean/Editor/InferredWait.lean`).
 
 - **A render loop's rest** (`RenderHandle::wait_resting`, for C
   `editor_ffi_render_await_rest`): the step that records rest signals it,
@@ -1328,7 +1329,7 @@ script runner and the config tests' `Driven` forward a kind to
 `waitWhile`, so a change to what a settle means, or to the idle rule,
 reaches every wait at once. The kinds that infer "done" from the idle, the
 job counts or the fake clock (`join`, `idle`, `quiet`, `indexed`,
-`advance`) are marked `@[inferred_wait]`, and so are a kind's constructor
+`advance`) are marked inferred waits, and so are a kind's constructor
 and its `busy` and `still`, so no check builds such a wait from the parts
 outside the modules whose subject it is; `Driven` keeps its `waitWhile`
 private and hands out only its named waits. The verdict

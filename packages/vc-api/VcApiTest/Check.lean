@@ -1,12 +1,9 @@
-import Editor.Lint.Wait
-
 /-!
 # The tests of `vc-api`: the check
 
 The type of one test, `Check`, and `failures`, which runs a list of them.
 Every test module of the package that writes a check of its own imports this one; the fake and the contract check, which other packages' tests import, do not. It
-needs nothing of the editor but the wait linters (`Editor/Lint/Wait.lean`), which it
-imports so that every test module that writes a check is linted.
+needs nothing of the editor.
 -/
 
 namespace VcApiTest

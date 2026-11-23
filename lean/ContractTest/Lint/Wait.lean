@@ -2,14 +2,14 @@ import ContractTest.Check
 import Editor.Test.Linked.Jobs
 
 /-!
-# Contract tests: `Editor/Lint/Wait.lean`
+# Contract tests: `Lint/Wait.lean`
 
 The wait linter's fixture that needs the linked kit, which the model tests
 cannot link: a "first X after Y" wait (kind b of
 `docs/dev-practices/inferred-waits.md`) written outside the modules it is
 allowed in, wrapped in `#guard_msgs`, which expects `linter.inferredWait`'s
 error. Building this module shows that the linter refuses it; it holds no
-check. The model tests' fixtures (`ModelTest/Editor/Lint/Wait.lean`) show
+check. The model tests' fixtures (`ModelTest/Lint/Wait.lean`) show
 the other kinds.
 -/
 

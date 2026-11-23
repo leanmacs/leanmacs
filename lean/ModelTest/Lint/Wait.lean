@@ -1,46 +1,19 @@
 import Editor.Job.Runner
-import Editor.Lint.Wait
 import ModelTest.Check
 
 /-!
-# Model tests: `Editor/Lint/Wait.lean`
+# Model tests: `Lint/Wait.lean`
 
-The model tests of `Editor/Lint/Wait.lean`: `lintWaitChecks`, the rules on
-module names the linters apply, and, below them, the linters' fixtures:
+The wait linters' fixtures that need nothing but the model tests' modules:
 each a bad declaration wrapped in `#guard_msgs`, which expects the lint's
 error (an error under `warningAsError`), so a build of this module shows
 that the linter refuses it, and the declaration is no check of the suite.
-The root module `ModelTest` runs the checks; its module doc says what each
-shows.
+This module imports nothing of the linters: the build loads them as a Lean
+plugin (`lean/lakefile.lean`, `lintPlugin`), and `model-test` links no
+module of Lean's frontend. Their checks, which call the linters'
+functions and so import them, are `LintTest.lintWaitChecks`
+(`LintTest/Lint/Wait.lean`).
 -/
-
-namespace ModelTest
-
-open Editor
-
-/-- The checks of the wait linters' rules on module names
-(`Editor/Lint/Wait.lean`): what a test module is, and which test module
-mirrors which. -/
-def lintWaitChecks : List Check :=
-  [{  name :=
-        "a test module is one whose first name component ends in Test, or the core's test kits under Editor.Test"
-      run :=
-        return Lint.isTestModule `ModelTest.Editor.Job.Activity &&
-            Lint.isTestModule `CompileTest.Linked &&
-            Lint.isTestModule `FilesApiTest.Fake &&
-            Lint.isTestModule `Editor.Test.Linked.Host &&
-            !Lint.isTestModule `Editor.Job.Activity &&
-            !Lint.isTestModule `Editor.Headless &&
-            !Lint.isTestModule `Editor.Testing },
-    { name := "a test module mirrors the module it names under its root, and no other"
-      run :=
-        return Lint.mirrors `ModelTest.Editor.Job.Activity `Editor.Job.Activity &&
-            Lint.mirrors `ContractTest.Editor.Job.Activity `Editor.Job.Activity &&
-            !Lint.mirrors `ModelTest.Editor.Job.Activity `Editor.Job.Runner &&
-            !Lint.mirrors `Editor.Job.Activity `Editor.Job.Activity &&
-            !Lint.mirrors `ModelTest `Editor.Job.Activity }]
-
-end ModelTest
 
 /-! A raw sleep, and a raw read of the clock, are refused by `linter.rawClock`
 outside `Editor.Bound`. -/
@@ -81,16 +54,19 @@ def ModelTest.LintFixture.countRead (activity : Editor.Job.Activity) : BaseIO Bo
 
 /-! In the module that declares an inferred wait, or one of its subject
 modules, when that is a test module, a public declaration that references
-it must carry the attribute itself: a kit cannot hand it on to everyone. -/
+it must have a mark itself: a kit cannot hand it on to everyone. -/
+
+/-- The mark of `sharedCount`. -/
+def ModelTest.LintFixture.sharedCount.inferredWait : Editor.InferredWait :=
+  .count
 
 /-- A stand-in for an inferred wait, declared here so this test module is
 its own module, where a reference to it is allowed. -/
-@[inferred_wait count]
 def ModelTest.LintFixture.sharedCount : BaseIO Nat :=
   pure 0
 
 /--
-error: `ModelTest.LintFixture.launders` is public and hands on `ModelTest.LintFixture.sharedCount`, an inferred wait (count): tag it `@[inferred_wait count …]` or make it private
+error: `ModelTest.LintFixture.launders` is public and hands on `ModelTest.LintFixture.sharedCount`, an inferred wait (count): mark it, with `def ModelTest.LintFixture.launders.inferredWait : InferredWait := .count […]` before it, or make it private
 
 Note: This linter can be disabled with `set_option linter.inferredWait false`
 -/
@@ -99,9 +75,12 @@ Note: This linter can be disabled with `set_option linter.inferredWait false`
 def ModelTest.LintFixture.launders : BaseIO Nat :=
   ModelTest.LintFixture.sharedCount
 
-/-- A wrapper that carries the attribute is itself restricted, and is
-refused nothing here. -/
-@[inferred_wait count]
+/-- The mark of `tagged`, before it, as the linter reads it. -/
+def ModelTest.LintFixture.tagged.inferredWait : Editor.InferredWait :=
+  .count
+
+/-- A wrapper that has a mark is itself restricted, and is refused nothing
+here. -/
 def ModelTest.LintFixture.tagged : BaseIO Nat :=
   ModelTest.LintFixture.sharedCount
 
@@ -132,10 +111,51 @@ def ModelTest.LintFixture.listChecks (activity : Editor.Job.Activity) : List Mod
       run := do
         return (← activity.seen).running == 0 }]
 
+/-! A mark the linter cannot read is refused where the constant it marks is
+referenced, in any module: one of another type than `Editor.InferredWait`,
+and one whose value is not a kind applied to a list of module names
+written out or named. -/
+
+/-- A bad mark: not of the type of a mark. -/
+def ModelTest.LintFixture.mistyped.inferredWait : Nat :=
+  0
+
+/-- A constant with a bad mark. -/
+def ModelTest.LintFixture.mistyped : Nat :=
+  0
+
+/--
+error: `ModelTest.LintFixture.mistyped.inferredWait` is named as a mark and is not of the type `Editor.InferredWait`
+
+Note: This linter can be disabled with `set_option linter.inferredWait false`
+-/
+#guard_msgs in
+/-- A reference to a constant whose mark is of another type. -/
+def ModelTest.LintFixture.readsMistyped : Nat :=
+  ModelTest.LintFixture.mistyped
+
+/-- A bad mark: its kind is worked out, not written. -/
+def ModelTest.LintFixture.computed.inferredWait : Editor.InferredWait :=
+  if true then .count else .idle
+
+/-- A constant with a bad mark. -/
+def ModelTest.LintFixture.computed : Nat :=
+  0
+
+/--
+error: `ModelTest.LintFixture.computed.inferredWait` is a mark the wait linter cannot read: write its value as a kind applied to a literal list of module names, or to a constant that is one, as `.count [`Editor.Job.Runner]`
+
+Note: This linter can be disabled with `set_option linter.inferredWait false`
+-/
+#guard_msgs in
+/-- A reference to a constant whose mark is worked out. -/
+def ModelTest.LintFixture.readsComputed : Nat :=
+  ModelTest.LintFixture.computed
+
 /-! A wait does not take a number of milliseconds: `Job.awaitWithin` takes a
 `HangGuard`. -/
 
 example : True := by
   fail_if_success
-    exact (fun (_ : IO (Option Nat)) => True.intro) (Job.awaitWithin 5000 (Task.pure 1))
+    exact (fun (_ : IO (Option Nat)) => True.intro) (Editor.Job.awaitWithin 5000 (Task.pure 1))
   trivial

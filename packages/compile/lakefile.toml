@@ -27,7 +27,9 @@
 #   `tests/linked/run/`.
 # - `tests/headless/` holds its headless fixtures.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
@@ -48,6 +50,7 @@ name = "compile"
 testDriver = "«compile-test»"
 defaultTargets = ["Compile", "CompileTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 # The minibuffer's interface package: its tests bind its names
 # (`MinibufferApi.cancelName`) and its linked test hands its host the

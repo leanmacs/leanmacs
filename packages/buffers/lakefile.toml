@@ -27,7 +27,9 @@
 # core's fixture tests/headless/default-config, which runs on the default
 # set's editor.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
@@ -41,6 +43,7 @@ name = "buffers"
 testDriver = "«buffers-test»"
 defaultTargets = ["Buffers", "BuffersTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 # The interface package this one implements: the hook before a buffer
 # closes, the close others ask for, the names the ex names `b`, `ls` and

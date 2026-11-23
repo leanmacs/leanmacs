@@ -2,7 +2,7 @@ import ConfigTest.Check
 import Editor.Headless
 
 /-!
-# Config tests: `Editor/Lint/Wait.lean`
+# Config tests: `Lint/Wait.lean`
 
 The wait linter's fixtures that need the host, which only the config tests
 link, with the elaborator it imports: an idle wait (kind a of
@@ -10,8 +10,8 @@ link, with the elaborator it imports: an idle wait (kind a of
 `waitWhile` and a kind of wait, written outside the modules it is allowed
 in, each wrapped in `#guard_msgs`, which expects `linter.inferredWait`'s
 error. Building this module shows that the linter refuses them; it holds
-no check. The model tests' fixtures (`ModelTest/Editor/Lint/Wait.lean`) and
-the contract tests' (`ContractTest/Editor/Lint/Wait.lean`) show the other
+no check. The model tests' fixtures (`ModelTest/Lint/Wait.lean`) and
+the contract tests' (`ContractTest/Lint/Wait.lean`) show the other
 kinds.
 -/
 

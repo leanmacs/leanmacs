@@ -1684,7 +1684,9 @@ depend on the core, and the core depends on no package
 ([packages.md](../design/packages.md)). The check shows on Lake's module
 graph that the core's root holds the whole core, that the core imports no
 module of a feature that is moving out of it, and that an executable that
-elaborates config links the config base. It is given a root and
+elaborates config links the config base, and that the config base and the
+model tests' root are plain Lean, reaching no module of Lean's frontend.
+It is given a root and
 the moving names: the root defaults to `Editor.Core`, the core's
 root module (`lean/Editor/Core.lean`), and there is no moving name by
 default. A moving name is a module still under `lean/Editor/` that is not
@@ -1696,14 +1698,18 @@ which the core does not require, so Lake itself refuses a core module
 that imports one. So the first rule below holds of nothing today, and
 stays for the next such feature. Two options, `--base <module>` and `--elaborator <module>`, name the
 config base and the elaborator adapter in place of the editor's; the gate
-uses them to see the third rule fail. It checks three rules, in order, and
-stops at the first that fails:
+uses them to see the third rule fail. A third, `--plain <module>`, given
+once or more, names the modules that must be plain Lean in place of the
+config base and the model tests' root; the gate uses it to see the fourth
+rule fail. It checks four rules, in order, and stops at the first that
+fails:
 
 | Rule | Exit when it fails |
 |---|---|
 | The root and the modules it imports, directly or through another, hold no moving module | 1, after printing each one found |
 | Every module named `Editor.…` that a root of the build reaches (`ModelTest`, `ConfigTest`, `FfiTest`, `ContractTest`, and the root generated for the default set) is the root or one of the modules it imports, unless it is a moving module | 3, after printing each one outside |
 | A root of the build that reaches the elaborator adapter (`Editor.Config.Elaborate`) reaches the config base (`Editor`) | 4, after printing each root that does not |
+| The config base (`Editor`) and the model tests' root (`ModelTest`), and every module either imports, directly or through another, import no module of Lean's frontend (`Lean`, `Lake`, or a module under either) | 5, after printing each such import, `<importer><TAB><imported>` |
 
 - **The second rule is what makes the first a statement about every core
   module.** A core module that `Editor.Core` did not import would be
@@ -1720,6 +1726,21 @@ stops at the first that fails:
   fails when one does not. The modules of a set's base beyond `Editor`,
   the entry modules of its packages, are linked because the generated
   root imports them to list the packages.
+- **The fourth rule keeps the config base and the model tests plain
+  Lean.** Two adapters link Lean's frontend, and neither is in the base
+  ([overview.md](../design/overview.md), "Config is elaborated behind a
+  port, and two adapters link Lean's frontend"): config is elaborated on
+  the base, and a base that holds `Lean` costs every config its memory and
+  its start ([lean-runtime.md](../design/lean-runtime.md)), and
+  `model-test` tests the config session on a model of the elaborator with
+  none linked. Lake's `transImports` names the workspace's modules alone,
+  never the toolchain's, so the rule asks the core's module facet
+  `editorFrontendImports` (`lean/lakefile.lean`), which reads the header of
+  the module and of each module it reaches. It is what keeps the build's
+  own linters out of the base: they import `Lean`, so they are a library of
+  their own that no module imports, loaded into the build as a plugin
+  (`lean/Lint/Wait.lean`), and a module of the base that imported them,
+  as `Editor.Bound` once did, fails here.
 - **The moving names are named, never derived.** "Every module the root
   does not reach" would pass whatever the core imported.
 - **No module is exempt by name.** The core's Lake package lists no
@@ -1734,9 +1755,10 @@ stops at the first that fails:
 - **It asks Lake and reads no source text** (`lake query
   +<module>:transImports`, one module a line), as the host imports check
   does, so it follows a module that is renamed or moved, and an import
-  written in any form. It makes six queries, one for the root and one for
-  each root of the build, builds nothing and writes nothing under `lean/`
-  or `packages/`: the build has written the generated root already.
+  written in any form. It makes eight queries, one for the root, one for
+  each root of the build and one for each module that must be plain Lean,
+  builds nothing and writes nothing under `lean/` or `packages/`: the build
+  has written the generated root already.
 - **The gate sees each rule bite.** `ffi-test` runs it told that a module
   of the core, the ex line's data, is moving (`core-imports-check.sh
   Editor.Core Editor.Ex.Line`), and requires exit 1, with `Editor.Ex.Line`
@@ -1748,7 +1770,9 @@ stops at the first that fails:
   module and is not the whole core, and requires exit 3; and told with
   `--base Editor.Core` that the config base is a module no executable's
   root imports, and requires exit 4, with the roots that link the
-  elaborator named.
+  elaborator named; and told with `--plain Editor.Core` that the core's
+  root must be plain Lean, and requires exit 5, with the elaborator
+  adapter's import of `Lean` named.
 - **It refuses to pass for no reason.** A command line it does not take, a
   query Lake fails, an empty answer and a third rule that would be about
   no root are exit 2, before any rule is reported, so none can stand in
@@ -2762,31 +2786,43 @@ still wait on time for"; `docs/dev-practices/inferred-waits.md`). What a
 type cannot say is held by lints, each part of the build or of `mise run
 lint`, never a script over source text:
 
-- **`linter.rawClock`** (`lean/Editor/Lint/Wait.lean`, part of every `lake
+- **`linter.rawClock`** (`lean/Lint/Wait.lean`, part of every `lake
   build`): a call of `IO.sleep` or a read of `IO.monoMsNow` or
   `IO.monoNanosNow` in any module but `Editor.Bound` is a lint, and
   `warningAsError` makes it an error. It reads the constants the command's
   terms resolved to (its info trees), never text. It is on through
   `linter.all`, in the core and in every package's lakefile, and active in
-  every module that imports `Editor.Lint.Wait`: `Editor.Bound`,
-  `Editor.Job.Activity`, and the `Check` modules of the test roots and of
-  the packages. A bench, or `config-test --timings`'s wall clock, says it
-  measures real time with `set_option linter.rawClock false` and its reason.
+  every module of the core's libraries and of every package under
+  `packages/` and `tests/packages/`, which the build elaborates with the
+  library `Lint` loaded as a Lean plugin (`lintPlugin` in
+  `lean/lakefile.lean`, `plugins` in each package's lakefile). No module
+  imports it: it imports `Lean`, which the config base and the model tests
+  may not reach (the core imports check's fourth rule, below). A bench, or
+  `config-test --timings`'s wall clock, says it measures real time with
+  `set_option linter.rawClock false` and its reason.
 - **`linter.inferredWait`** (the same module): a reference to a constant
-  marked `@[inferred_wait <kind> <subject module>*]` outside its own module,
-  its subject modules and the test modules that mirror them is an error,
-  and so is a public declaration of an allowed test module that hands one
-  on untagged. Each site left is under `set_option linter.inferredWait
+  with a mark, a declaration `<constant>.inferredWait` of the type
+  `Editor.InferredWait` (`lean/Editor/InferredWait.lean`, plain data that
+  the editor's modules may hold), outside its own module, its subject
+  modules and the test modules that mirror them is an error, and so is a
+  public declaration of an allowed test module that hands one on with no
+  mark of its own, or a reference to a constant whose mark the linter
+  cannot read. Each site left is under `set_option linter.inferredWait
   false in` with its row of `inferred-waits.md`.
-- **It bites**: `ModelTest/Editor/Lint/Wait.lean` holds `#guard_msgs`
-  fixtures, built by `mise run lean-test` and `mise run lean` and never
-  run, that expect the error for a raw sleep, a raw clock read, a count
-  read outside its modules, a laundering wrapper and a new count read in a
-  check list beside a check under an allow, and a `fail_if_success` that
-  `Job.awaitWithin` takes no number; `ContractTest/Editor/Lint/Wait.lean`
-  expects it for a first-after wait, which needs the linked kit, and
-  `ConfigTest/Editor/Lint/Wait.lean` for an idle wait put together from a
-  host's `waitWhile` and a kind, which needs the host. `ModelTest/Editor/Bound.lean`'s
+- **It bites**: `ModelTest/Lint/Wait.lean` holds `#guard_msgs` fixtures,
+  built by `mise run lean-test` and `mise run lean` and never run, that
+  expect the error for a raw sleep, a raw clock read, a count read outside
+  its modules, a laundering wrapper, a new count read in a check list
+  beside a check under an allow and a mark of the wrong type or worked
+  out, and a `fail_if_success` that `Job.awaitWithin` takes no number;
+  `ContractTest/Lint/Wait.lean` expects it for a first-after wait, which
+  needs the linked kit, and `ConfigTest/Lint/Wait.lean` for an idle wait
+  put together from a host's `waitWhile` and a kind, which needs the host.
+  The rules they apply, which module is a test module, which mirrors
+  which, and how a mark is read, are `LintTest.lintWaitChecks`, which
+  `mise run lean-test` runs (`lake exe lint-test`): those checks call the
+  linters' functions, so they import `Lint` and are an executable of their
+  own, whose library loads no plugin. `ModelTest/Editor/Bound.lean`'s
   `fail_if_success` examples show that a number, an anonymous constructor
   and a structure instance are not a bound.
 - **Rust, by clippy** (`mise run lint`): the root `clippy.toml`, which

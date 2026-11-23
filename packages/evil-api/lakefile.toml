@@ -28,7 +28,9 @@
 #   `model-test` is not: `mise run lean` links with the system compiler,
 #   which this executable has no flags for.
 #
-# Every Lean linter is on and a warning fails the build, as in the core.
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/evil-api update --keep-toolchain
@@ -40,6 +42,7 @@ keywords = ["editor-interface"]
 testDriver = "«evil-api-test»"
 defaultTargets = ["EvilApi", "EvilApiTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/Lint:shared"]
 
 [[require]]
 name = "editor-core"

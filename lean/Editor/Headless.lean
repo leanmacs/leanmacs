@@ -11,6 +11,7 @@ import Editor.Event.Queue
 import Editor.Headless.CommandLine
 import Editor.Headless.Queue.Real
 import Editor.Headless.Wait
+import Editor.InferredWait
 import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Pool
@@ -2770,8 +2771,17 @@ a kind whose `still` is set answers at the host's idle, and one whose
 elsewhere waits with one of the kinds below, and those that infer from the
 host's idle, its job counts or the first wait on its fake clock are marked
 too. -/
-attribute [inferred_wait idle Editor.Headless.Stepped Editor.Headless.Wait] Wait.Kind.mk
-  Wait.Kind.busy Wait.Kind.still
+/-- `Wait.Kind.mk` is an inferred wait (`Editor/InferredWait.lean`). -/
+def Wait.Kind.mk.inferredWait : InferredWait :=
+  .idle [`Editor.Headless.Stepped, `Editor.Headless.Wait]
+
+/-- `Wait.Kind.busy` is an inferred wait (`Editor/InferredWait.lean`). -/
+def Wait.Kind.busy.inferredWait : InferredWait :=
+  .idle [`Editor.Headless.Stepped, `Editor.Headless.Wait]
+
+/-- `Wait.Kind.still` is an inferred wait (`Editor/InferredWait.lean`). -/
+def Wait.Kind.still.inferredWait : InferredWait :=
+  .idle [`Editor.Headless.Stepped, `Editor.Headless.Wait]
 
 namespace Wait.Kind
 
@@ -2785,22 +2795,28 @@ def settle : Wait.Kind where
   busy progress := pure (progress.reloading || progress.restoring)
   hung := .reloading
 
+/-- `join` is an inferred wait (`Editor/InferredWait.lean`). -/
+def join.inferredWait : InferredWait :=
+  .idle [`Editor.Headless.Stepped, `Editor.Headless.Wait, `Editor.Test.Linked.Host]
+
 /-- A `join`'s wait: until no job is running; `working` once the host is
 idle with a job still running, which nothing left to run can end, as a job
 asleep on a fake clock nobody moves; `busy` at its guard. A job is running
 from its `spawn` until the editor thread has dealt with its result, or has
 cancelled it with its owner. -/
-@[inferred_wait idle Editor.Headless.Stepped Editor.Headless.Wait Editor.Test.Linked.Host]
 def join : Wait.Kind where
   what := "join"
   busy progress := pure (progress.jobs > 0)
   still := some .working
   hung := .busy
 
+/-- `advance` is an inferred wait (`Editor/InferredWait.lean`). -/
+def advance.inferredWait : InferredWait :=
+  .firstAfter [`Editor.Headless.Stepped, `Editor.Headless.Wait, `Editor.Test.Linked.Host]
+
 /-- An `advance`'s wait: until `clock` holds a wait due within
 `milliseconds`, publishing nothing; `working` at idle with none due, a
 stall, and `busy` at its guard. -/
-@[inferred_wait firstAfter Editor.Headless.Stepped Editor.Headless.Wait Editor.Test.Linked.Host]
 def advance (clock : Job.FakeClock) (milliseconds : Nat) : Wait.Kind where
   what := "advance"
   busy _ := return !(← clock.dueWithin milliseconds)
@@ -2818,6 +2834,10 @@ def handled : Wait.Kind where
   hung := .unanswered
   marker := false
 
+/-- `indexed` is an inferred wait (`Editor/InferredWait.lean`). -/
+def indexed.inferredWait : InferredWait :=
+  .idle [`Editor.Headless.Stepped, `Editor.Headless.Wait, `Editor.Test.Linked.Host]
+
 /-- An `indexed`'s wait: until the session index is written, no write or
 save of it running and no job running but those the script started with
 `spawn` (`Progress.indexing`, `Progress.background`), publishing nothing;
@@ -2826,7 +2846,6 @@ guard. A write sleeps on the job clock (`Restore.writeDelay`): at idle the
 driver moves the clock past it and waits again (`awaitIndexed`). A
 background job asleep on the fake clock fails the run at idle, never at the
 guard. -/
-@[inferred_wait idle Editor.Headless.Stepped Editor.Headless.Wait Editor.Test.Linked.Host]
 def indexed : Wait.Kind where
   what := "indexed"
   busy progress := pure (progress.indexing || progress.background > 0)
@@ -2834,18 +2853,24 @@ def indexed : Wait.Kind where
   hung := .unanswered
   marker := false
 
+/-- `idle` is an inferred wait (`Editor/InferredWait.lean`). -/
+def idle.inferredWait : InferredWait :=
+  .idle [`Editor.Headless.Stepped, `Editor.Headless.Wait, `Editor.Test.Linked.Host]
+
 /-- A `join`'s wait that publishes nothing (its marker is a probe): what
 replaces a poll for a state the host reaches by itself, such as a job in
 its sleep, so the scene count stays the poll's. -/
-@[inferred_wait idle Editor.Headless.Stepped Editor.Headless.Wait Editor.Test.Linked.Host]
 def idle : Wait.Kind :=
   { join with marker := false }
+
+/-- `quiet` is an inferred wait (`Editor/InferredWait.lean`). -/
+def quiet.inferredWait : InferredWait :=
+  .idle [`Editor.Headless.Stepped, `Editor.Headless.Wait, `Editor.Test.Linked.Host]
 
 /-- A wait until the host is idle (`docs/design/concurrency.md`, "The idle
 signal": everything sent handled, nothing that can end by itself running,
 no fake-clock wait due), publishing nothing: what it waits for always
 holds, so it answers only at idle, `settled`, and `busy` at its guard. -/
-@[inferred_wait idle Editor.Headless.Stepped Editor.Headless.Wait Editor.Test.Linked.Host]
 def quiet : Wait.Kind where
   what := "idle"
   busy _ := pure true
@@ -2883,6 +2908,10 @@ def judge (kind : Wait.Kind) (progress : Progress) (activity : Job.Activity)
 
 end Wait.Kind
 
+/-- `awaitIndexed` is an inferred wait (`Editor/InferredWait.lean`). -/
+def awaitIndexed.inferredWait : InferredWait :=
+  .idle [`Editor.Headless.Stepped, `Editor.Headless.Wait, `Editor.Test.Linked.Host]
+
 /-- The loop of an `indexed`'s wait, over a driver's wait of a kind (`wait`,
 a host's `waitWhile` or a stepped one's), its progress and its fake clock:
 each round waits on `Wait.Kind.indexed`; at idle with a write of the index
@@ -2892,7 +2921,6 @@ changed is in one write; at idle otherwise it answers `working`, which
 fails the run. Each round ends on an event, idle among them, and its guard
 is the wait's, a hang guard. The script's `indexed` and the config tests'
 stepped twin both run it. -/
-@[inferred_wait idle Editor.Headless.Stepped Editor.Headless.Wait Editor.Test.Linked.Host]
 def awaitIndexed (wait : Wait.Kind → IO Wait) (progress : IO Progress)
     (clock : Option Job.FakeClock) : IO Wait := do
   repeat
@@ -2910,9 +2938,12 @@ def awaitIndexed (wait : Wait.Kind → IO Wait) (progress : IO Progress)
 
 namespace Host
 
+/-- `activitySeen` is an inferred wait (`Editor/InferredWait.lean`). -/
+def activitySeen.inferredWait : InferredWait :=
+  .count []
+
 /-- The host's activity count and its epoch, read in one step: for a test,
 which looks at what the host's idle is made of (`Job.Activity`). -/
-@[inferred_wait count]
 def activitySeen (host : Host) : BaseIO Job.Activity.Seen :=
   host.activity.seen
 
@@ -3061,11 +3092,14 @@ def await (host : Host) (waitGuard : HangGuard) (answer : HangGuard := waitGuard
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
   host.waitWhile waitGuard .settle answer line waitHung waitBlocked
 
+/-- `join` is an inferred wait (`Editor/InferredWait.lean`). -/
+def join.inferredWait : InferredWait :=
+  .idle [`Editor.Headless.Wait, `Editor.Test.Linked.Host]
+
 /-- A `join`'s wait (`waitWhile` of `Wait.Kind.join`): until the editor
 thread has handled everything sent so far and no job is running; `settled`,
 `working` once the host is idle with a job still running, or `busy`, a
 hang, at its guard `waitGuard`. -/
-@[inferred_wait idle Editor.Headless.Wait Editor.Test.Linked.Host]
 def join (host : Host) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
