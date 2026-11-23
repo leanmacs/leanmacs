@@ -18,13 +18,15 @@ it holds each delivery until the check steps it.
   `delivered := false`, after every check the real binding makes first.
 - `step` delivers the oldest pending delivery, then calls `post` once, on
   the caller's thread: a host check's maker posts a `parsed` event there
-  (`Test.Linked.fakeSyntaxService`, `Editor/Test/Linked/Syntax.lean`).
+  (`Stage.fakeSyntaxService`, `Editor/Test/Linked/Host.lean`).
 - `learn`, when given, tells the model a snapshot's text the first time a
   request names one it does not know: the maker reads it from the host's
   published table.
 
 It starts no thread: its state is one reference. Once stepped to its end
-(`settleAll`) nothing is pending (`quiescent`).
+(`settleAll`) nothing is pending (`quiescent`). Its own promises are pinned
+by `ModelTest.syntaxFakeChecks`, and the maker on a stepped host by
+`ConfigTest.stageMakerChecks`.
 
 ## Where an addition goes
 
