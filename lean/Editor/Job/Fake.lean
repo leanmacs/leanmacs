@@ -11,9 +11,10 @@ import Editor.Process.Model
 Four fakes, published for `model-test` and `config-test`: the fake clock,
 below, the fake file service (`FakeFiles`, after it), the fake process
 service (`FakeProcesses`) and the fake watch service (`FakeFileWatches`),
-each of whose doc comment has its rules; the fake completion pump
-(`FakePump`), the one step point they answer through in their step mode;
-and the fake of the recording port (`FakeRecorder`, at the end of this
+each of whose doc comment has its rules; the fake scheduler
+(`FakeScheduler`), which runs a job's code only when a check steps it; the
+fake completion pump (`FakePump`), the one step point they answer through
+in their step mode; and the fake of the recording port (`FakeRecorder`, at the end of this
 module), which keeps the trace of the runner's protocol transitions and
 holds a thread at one a check names.
 
@@ -25,14 +26,18 @@ once, on the thread that made it. `.onStep pump` hands every completion
 (a start's, a flush's, a `letGo`'s, a watch's wake) to the fake pump
 (`FakePump`) in place of finishing it, as a real service hands its
 completion to the library's one queue; the check steps the pump on its own
-thread, so every answer is on that thread, in one due order.
-`FakePump.runToEnd` is the stepped runner: it waits on events alone (the
-next completion handed, the next wait started on the fake clock, or the
-job's end), steps or moves the clock, and asserts at the end that nothing
-is left due. Each fake also logs what it was handed, with the thread that
-handed it (`FakeFiles.log`), and resolves an arrival once that many
-requests are started (`FakeFiles.startsArrivedAt`). The fakes start no
-thread: their state is one reference each and the promises they hand out.
+thread, so every answer is on that thread, in one due order. A runner
+given the fake scheduler (`Services.scheduler`) runs the job's code on the
+check's thread too, when the check steps it, so the job's requests are
+made there. `FakePump.runToEnd` is the stepped runner: it runs the job's
+next piece of code, steps the pump or moves the clock, waits on events
+alone (the next completion handed, the next wait started on the fake
+clock, or the job's end) only when none of those can, and asserts at the
+end that nothing is left due. Each fake also logs what it was handed, with
+the thread that handed it (`FakeFiles.log`), and the file service resolves
+an arrival once that many requests are started
+(`FakeFiles.startsArrivedAt`). The fakes start no thread: their state is
+one reference each and the promises they hand out.
 
 ## The fake clock
 
@@ -298,6 +303,90 @@ def readThreads (clock : FakeClock) : BaseIO (Array UInt64) :=
 
 end FakeClock
 
+/-- One piece of a job's code a fake scheduler holds. -/
+inductive FakeScheduler.Entry where
+  /-- A job's first run. -/
+  | start (job : BaseIO Unit)
+  /-- A job's continuation, run with what `wait` ended with once it has. -/
+  | resume (wait : Task (Option Completion)) (next : Option Completion → BaseIO Unit)
+
+/-- What a fake scheduler holds. -/
+structure FakeScheduler.State where
+  /-- The pieces handed and not yet run, in the order they were handed. -/
+  held : Array FakeScheduler.Entry := #[]
+  /-- The thread that ran each piece, oldest first. -/
+  ranThreads : Array UInt64 := #[]
+
+/-- The fake of the scheduler port (`Scheduler`, `Editor/Job/Runner.lean`):
+it holds a job's start and each of its continuations, and runs none of them
+until a check steps it (`step`), which runs the oldest that can run, a start
+or a continuation whose wait has ended, on the caller's thread. So a job of
+a runner given it makes its requests on the check's thread, and takes each
+reply there on a step, and nothing of it runs anywhere else. It starts no
+task: its state is one reference. It is stepped from one thread. -/
+structure FakeScheduler where
+  /-- What it holds. Every change to it is one atomic step. -/
+  state : IO.Ref FakeScheduler.State
+
+namespace FakeScheduler
+
+/-- A scheduler that holds nothing. -/
+def new : BaseIO FakeScheduler :=
+  return { state := ← IO.mkRef {} }
+
+/-- The fake as the port the runner is given: each piece is held. -/
+def scheduler (jobs : FakeScheduler) : Scheduler where
+  start job := jobs.state.modify fun state => { state with held := state.held.push (.start job) }
+  resume wait next :=
+    jobs.state.modify fun state => { state with held := state.held.push (.resume wait next) }
+
+/-- Whether the piece can run now: a start can, and a continuation once its
+wait has ended. -/
+def Entry.ready : Entry → BaseIO Bool
+  | .start _ => pure true
+  | .resume wait _ => IO.hasFinished wait
+
+/-- Runs the oldest held piece that can run, on the caller's thread, and
+records the thread; `false` when none can. -/
+def step (jobs : FakeScheduler) : BaseIO Bool := do
+  let some index ← (← jobs.state.get).held.findIdxM? (·.ready) | return false
+  let thread ← IO.getTID
+  let entry? ←
+    jobs.state.modifyGet fun state =>
+        (state.held[index]?,
+          { state with
+            held := state.held.eraseIdxIfInBounds index
+            ranThreads := state.ranThreads.push thread })
+  match entry? with
+  | some (.start job) =>
+    job
+  | some (.resume wait next) =>
+    -- The wait has ended, so this returns at once.
+    next (← IO.wait wait)
+  | none =>
+    pure ()
+  return true
+
+/-- Runs every piece that can run, oldest first, with `step`, those a piece
+hands on the way included. -/
+partial def stepAll (jobs : FakeScheduler) : BaseIO Unit := do
+  if ← jobs.step then
+    jobs.stepAll
+
+/-- How many pieces it holds, run or not yet able to. -/
+def size (jobs : FakeScheduler) : BaseIO Nat :=
+  return (← jobs.state.get).held.size
+
+/-- The thread that ran each piece, oldest first. -/
+def ranThreads (jobs : FakeScheduler) : BaseIO (Array UInt64) :=
+  return (← jobs.state.get).ranThreads
+
+/-- Whether it holds nothing: no job's code is left to run. -/
+def quiescent (jobs : FakeScheduler) : BaseIO Bool :=
+  return (← jobs.state.get).held.isEmpty
+
+end FakeScheduler
+
 /-- What a fake completion pump holds. -/
 structure FakePump.State where
   /-- The completions handed and not yet finished, oldest first. -/
@@ -472,41 +561,60 @@ def source (pump : FakePump) : CompletionSource where
 def quiescent (pump : FakePump) : BaseIO Bool :=
   return (← pump.state.get).due.isEmpty
 
-/-- Runs the pump on the caller's thread until `ended` has ended: waits, on
-events alone, for whichever comes first, the next completion handed, the
-next wait started on `clock` when one is given, or `ended`; steps the pump,
-or moves the clock to the earliest deadline waiting, which completes that
-wait on this thread; and goes on. Then steps what is still due. A job's
-requests are handed on its pool thread, and each step finishes one on the
-check's, so the job runs to its end with every answer the check's, and
-stands in for time as the job's own waits start, never at an idle. The
-next hand it waits for is the one after the count it read before its step,
-so a hand made on another thread just after a step that found nothing due
-is not lost (`ModelTest.jobFakeChecks`). Throws a hang when nothing comes
-within `guard`, which only a hang reaches; and throws when the pump is not
-quiescent at the end. -/
+/-- Runs every job piece and every completion that can run, on the caller's
+thread, until neither can. -/
+private partial def drain (pump : FakePump) (jobs : Option FakeScheduler) : BaseIO Unit := do
+  if let some jobs := jobs then
+    if ← jobs.step then
+      return ← pump.drain (some jobs)
+  if ← pump.step then
+    pump.drain jobs
+
+/-- Runs the pump on the caller's thread until `ended` has ended: runs the
+next piece of a job's code `jobs` holds that can run, when it is given, or
+steps the pump, or moves the clock to the earliest deadline waiting when a
+wait has started on `clock` since it last did, which completes that wait on
+this thread; and goes on. When none of these can, it waits, on events
+alone, for whichever comes first: the next completion handed, the next
+wait started on `clock`, or `ended`. Once `ended` has ended it runs what is
+still due. So a job runs to its end with every answer the check's, and the
+clock stands in for time as the job's own waits start, never at an idle.
+
+Given `jobs`, the scheduler of the job's runner (`FakeScheduler`), the job's
+code runs here too, so its requests are made on this thread and the wait is
+only reached by a hang. Without it, a job's requests are handed on its pool
+thread; the next hand it waits for is the one after the count it read
+before its step, so a hand made on another thread just after a step that
+found nothing due is not lost (`ModelTest.jobFakeChecks`). Throws a hang
+when nothing comes within `guard`, which only a hang reaches; and throws
+when the pump, or `jobs`, still holds something at the end. -/
 partial def runToEnd {α : Type} (pump : FakePump) (ended : Task α) (guard : HangGuard)
-    (clock : Option FakeClock := none) (seen : Nat := 0) : IO Unit := do
+    (clock : Option FakeClock := none) (jobs : Option FakeScheduler := none) (seen : Nat := 0) :
+    IO Unit := do
   if ← IO.hasFinished ended then
-    pump.stepAll
+    pump.drain jobs
     unless ← pump.quiescent do
       throw <| IO.userError "the fake pump still holds a completion once the run ended"
+    if let some jobs := jobs then
+      unless ← jobs.quiescent do
+        throw <| IO.userError "the fake scheduler still holds a job's code once the run ended"
     return
   -- The count of hands is read before the step, and the wait is for the
   -- hand after it: a hand that lands after the step found nothing due
   -- resolves that wait at once, where a count read after the step would
   -- have counted it and waited for the next.
   let handed ← pump.handed
+  if let some jobs := jobs then
+    if ← jobs.step then
+      return ← pump.runToEnd ended guard clock (some jobs) seen
   if ← pump.step then
-    pump.runToEnd ended guard clock seen
-    return
+    return ← pump.runToEnd ended guard clock jobs seen
   if let some clock := clock then
     let started := (← clock.started).size
     if started > seen then
       if let some deadline← clock.nextDeadline then
         clock.advance (deadline - (← clock.now))
-      pump.runToEnd ended guard (some clock) started
-      return
+      return ← pump.runToEnd ended guard (some clock) jobs started
   let next ← pump.arrivedAt (handed + 1)
   let clockStart ←
     match clock with
@@ -522,7 +630,7 @@ partial def runToEnd {α : Type} (pump : FakePump) (ended : Task α) (guard : Ha
           clockStart)
   IO.cancel expiry
   let some () := first | throw <| IO.userError guard.hang
-  pump.runToEnd ended guard clock seen
+  pump.runToEnd ended guard clock jobs seen
 
 end FakePump
 

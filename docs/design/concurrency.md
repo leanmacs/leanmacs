@@ -1488,11 +1488,16 @@ Each collaborator that does background work a host check would otherwise
 wait on has a recording fake a check hands the host (host-tests-on-fakes
 phase 3). The rules every one keeps:
 
-- **It records each order it receives, with the thread that handed it.**
-  An order from the host arrives on the editor thread, which on a stepped
-  host is the check's own; a job's request arrives on the job's pool
-  thread, and a check reads it after the event that guarantees it is
-  there.
+- **It records each order it receives, with the thread that handed it,
+  and that thread is the check's own.** An order from the host arrives on
+  the editor thread, which on a stepped host is the check's. A job's
+  request arrives on the job's thread, and a stepped run gives the runner
+  the fake scheduler (`Job.FakeScheduler`, through `Services.scheduler`),
+  which runs a job's code only when the check steps it, on the check's
+  thread: so the request is made, and recorded, there, and its reply taken
+  there on the step that finished its wait. `ModelTest.runStepped` asserts
+  that every order its fakes recorded, every piece of the job and every
+  completion was on the check's thread.
 - **It answers only in `step`**, on the thread that calls it: every
   completion, delivery and drain. Nothing is worked, and no drain ends,
   before the check steps.
@@ -1515,7 +1520,8 @@ run waits on its own flush, handle or wait, never on a count or the idle.
 |---|---|---|---|---|
 | Session journal, `Headless.Journal` (`Editor/Headless/Journal.lean`) | `RecordingJournal` (`Editor/Headless/Journal/Fake.lean`), through `Collaborators.journal`, made over a stage by `Stage.recordingJournal` | `Editor/Headless/Journal/Contract.lean` | `ModelTest.journalContractChecks` | `ContractTest.journalContractChecks` (`Journal.real`, held by `FileHold`, its own flush) |
 | Completion pump, `Job.CompletionSource` (`Editor/Job/Pump.lean`) | `Job.FakePump` (`Editor/Job/Fake.lean`), handed to the stepped fakes of the job services (`FakeAnswer.onStep`); a check steps it, or runs `pumpFrom` over its `source` | `Editor/Job/PumpContract.lean` | `ModelTest.pumpContractChecks` | `ContractTest.pumpContractChecks` (the library's queue, each completion a file-service flush, each property on its own wait); Rust `completer_contract` (its `EACH_REPORTED`, over `RecordingCompleter` and a real `Service`), a test waiting on its own request (`RecordingCompleter::wait_reported`) |
-| Files, `Job.Files` | `FakeFiles` with `answer := .onStep pump`, through `Services.files`; run to its job's end by `FakePump.runToEnd` | `Editor/Job/Contract.lean` (`fileProperties`), `FlushContract`, `HandleContract` (H-order among them) | `ModelTest.fileFailures` (its stepped run), `flushContractChecks` (the stepped rigs), `handleContractChecks` (the stepped H-order) | `ContractTest.fileFailures`, `flushContractChecks`, `handleContractChecks` (`realFiles`, held by `FileHold`, each property on its job's outcome, its handles or its flush) |
+| Scheduler, `Job.Scheduler` (`Editor/Job/Runner.lean`): where a job's code runs | `Job.FakeScheduler` (`Editor/Job/Fake.lean`), through `Services.scheduler`; a check steps it, or hands it to `FakePump.runToEnd` beside the pump | `Editor/Job/SchedulerContract.lean` | `ModelTest.schedulerContractChecks` | `ModelTest.schedulerContractChecks` (`Scheduler.pool`, Lean's task pool, each property on its own task) |
+| Files, `Job.Files` | `FakeFiles` with `answer := .onStep pump`, through `Services.files`; run to its job's end by `FakePump.runToEnd` with a fake scheduler | `Editor/Job/Contract.lean` (`fileProperties`), `FlushContract`, `HandleContract` (H-order among them) | `ModelTest.fileFailures` (its stepped run), `flushContractChecks` (the stepped rigs), `handleContractChecks` (the stepped H-order) | `ContractTest.fileFailures`, `flushContractChecks`, `handleContractChecks` (`realFiles`, held by `FileHold`, each property on its job's outcome, its handles or its flush) |
 | Diff, `Job.Diffs` | `FakeFiles`' diff side, in the same step mode, through `Services.diffs` | `Editor/Job/Contract.lean` (`diffProperties`), `FlushContract` | `ModelTest.fileFailures` (stepped), `flushContractChecks` (the stepped diff rig) | `ContractTest.fileFailures`, `flushContractChecks` (`realDiffs`, the diff flush) |
 | Grep, `Job.Greps` | `FakeFiles`' grep side, in the same step mode, through `Services.greps` | `Editor/Job/Contract.lean` (`grepProperties`), `FlushContract` | `ModelTest.fileFailures` (stepped), `flushContractChecks` (the stepped grep rig) | `ContractTest.fileFailures`, `flushContractChecks` (`realGreps`, the grep flush) |
 | Processes, `Job.Processes` | `FakeProcesses` with `answer := .onStep pump`, through `Services.processes` | `Editor/Job/Contract.lean` (`processProperties`, the stream properties among them), `FlushContract` | `ModelTest.processFailures` (its stepped run), `flushContractChecks` (the stepped process rig) | `ContractTest.processFailures`, `flushContractChecks` (`realProcesses`, each job's outcome; the held child only a cancel ends) |

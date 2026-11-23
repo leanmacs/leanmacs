@@ -80,6 +80,7 @@ import ModelTest.Editor.Job.Protocol
 import ModelTest.Editor.Job.ProtocolContract
 import ModelTest.Editor.Job.PumpContract
 import ModelTest.Editor.Job.Runner
+import ModelTest.Editor.Job.SchedulerContract
 import ModelTest.Editor.Job.Table
 import ModelTest.Editor.Json
 import ModelTest.Editor.JumpList
@@ -761,6 +762,13 @@ The job system is tested here with no Rust library:
   run over its source on the check's thread, and the fake's own promises:
   nothing finished before a step, every finish on the stepping thread, an
   arrival resolved once that many are handed, quiescent once stepped;
+- `schedulerContractChecks`: the contract of the scheduler, where the
+  runner runs a job's code (`Editor/Job/SchedulerContract.lean`), on the
+  fake (`FakeScheduler`), stepped on the check's thread, and on Lean's task
+  pool (`Scheduler.pool`), and the fake's own promises: nothing run before
+  a step, the oldest piece that can run run on the stepping thread, a
+  continuation passed over until its wait has ended, quiescent once
+  stepped;
 - `jobFakeChecks`: what the job services' fakes promise of themselves
   (`Editor/Job/Fake.lean`): the stepped runner (`FakePump.runToEnd`) steps
   a completion handed off its thread just after a step that found nothing
@@ -1311,6 +1319,7 @@ def checks : List Check :=
     handleContractChecks ++
     journalContractChecks ++
     pumpContractChecks ++
+    schedulerContractChecks ++
     jobFakeChecks ++
     syntaxDeliveryChecks ++
     queueContractChecks ++

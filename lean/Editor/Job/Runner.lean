@@ -51,6 +51,16 @@ the job's thread. A request that waits ends the loop, and the rest of the
 job is chained on the wait's promise, so a job in a wait holds no thread and
 any number of waiting jobs leave the pool free.
 
+Where the job's code runs is a port of its own, the scheduler
+(`Scheduler`, `Services.scheduler`): what runs a job's start, and what runs
+its continuation once a wait has ended. A host's is `Scheduler.pool`, Lean's
+task pool as above, and every runner that is given none has it. A check of
+a stepped fake gives the runner the fake (`FakeScheduler`,
+`Editor/Job/Fake.lean`), which runs nothing until the check steps it, and
+then on the check's own thread, so a job's requests are made there and each
+reply is taken on the check's step. Its contract, kept by both, is
+`Editor/Job/SchedulerContract.lean`.
+
 A known limit: in compiled code Lean lifts a closed term out to a constant
 that is computed when the module is initialised. Leading work that depends on
 nothing is such a term, so it is computed once at start-up, not at each
@@ -756,6 +766,28 @@ def sharedEnvironments (state : IO.Ref Process.Environments) (report : String �
       report text
     return reply
 
+/-- The scheduler port: where the runner runs a job's code. `start` is handed
+the job's first run, the code up to its first wait, and `resume` the rest of
+the job after a wait, with the wait's task and what to run once it has
+ended; each returns at once. A job's code runs once each: `start`'s action
+once, and `resume`'s continuation once, with what the wait ended with,
+after it has ended. The real one is `Scheduler.pool`; the fake, which runs
+them on the check's thread when it steps, is `FakeScheduler`
+(`Editor/Job/Fake.lean`). -/
+structure Scheduler where
+  /-- Runs `job`, a job's first run, later. -/
+  start : (job : BaseIO Unit) → BaseIO Unit
+  /-- Runs `next` with what `wait` ended with, once it has ended. -/
+  resume :
+    (wait : Task (Option Completion)) → (next : Option Completion → BaseIO Unit) → BaseIO Unit
+
+/-- Lean's task pool as the scheduler: a job's start is a pool task of its
+own, and its continuation a task chained on its wait, which holds no thread
+until the wait has ended ("Where a job runs", in the module docs). -/
+def Scheduler.pool : Scheduler where
+  start job := discard <| BaseIO.asTask job
+  resume wait next := BaseIO.chainTask wait next
+
 /-- What a runner is given. -/
 structure Services where
   /-- The waits in flight. -/
@@ -789,6 +821,9 @@ structure Services where
   /-- What the runner's protocol transitions are told to (`Recorder`). A
   runner that is given none has `Recorder.none`, which records nothing. -/
   recorder : Recorder := Recorder.none
+  /-- Where a job's code runs (`Scheduler`). A runner that is given none has
+  `Scheduler.pool`, Lean's task pool. -/
+  scheduler : Scheduler := Scheduler.pool
 
 /-- A task for each job cancelled and not yet done, in one section: each
 ends once the runner is done with its job (`Handle.finishedRan`), after
@@ -1373,7 +1408,7 @@ partial def drive (handle : Handle) (finished : BaseIO Unit) :
         handle.drop id
         if let some ended := ended? then
           ended .cancelled
-      BaseIO.chainTask wait.result? fun completion => do
+      handle.services.scheduler.resume wait.result? fun completion => do
           let cancelled ← handle.resume
           -- A wait the service completed just as the job was cancelled reads
           -- as completed: the token still says the job is over.
@@ -1389,16 +1424,17 @@ partial def drive (handle : Handle) (finished : BaseIO Unit) :
 /-- The body of a job's task: applies `work`, then runs the program it gives.
 
 It is a function of its own, never inlined, so that `work ()` is evaluated
-when the task runs it and not where the task is made. Written in place, as
-`BaseIO.asTask do drive … (work ()).run`, the application is an argument of
-the action handed to `asTask`, and Lean evaluates it on the thread that
-calls `spawn`, before the task exists. -/
+when the scheduler runs it and not where it is handed over. Written in
+place, as `BaseIO.asTask do drive … (work ()).run`, the application is an
+argument of the action handed to `asTask`, and Lean evaluates it on the
+thread that calls `spawn`, before the task exists. -/
 @[noinline]
 def start (handle : Handle) (finished : BaseIO Unit) (work : Work) : BaseIO Unit :=
   drive handle finished (work ()).run
 
-/-- Starts `work` on the pool and returns at once: none of the job runs on
-the calling thread, its leading pure work included. `finished` is called once
+/-- Starts `work` on the services' scheduler and returns at once: none of
+the job runs in the call, its leading pure work included, and on the pool
+none of it runs on the calling thread. `finished` is called once
 the job has ended and its outcome is in the handle, and `posted` with each
 post the job makes while it is not cancelled, on the job's thread, in the
 order they were made. -/
@@ -1427,7 +1463,7 @@ def spawn (services : Services) (work : Work) (finished : BaseIO Unit)
     finished
     handle.retire
     handle.finishedRan.resolve ()
-  discard <| BaseIO.asTask (start handle ended work)
+  services.scheduler.start (start handle ended work)
   return handle
 
 end Editor.Job

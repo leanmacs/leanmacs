@@ -147,22 +147,32 @@ hang reaches it. -/
 def steppedGuard : HangGuard :=
   .on "a due completion or the job's end" 10000
 
-/-- Spawns `job` on `services`, whose job services answer on `pump`'s step,
-(`started` counting the requests the fakes were handed, each of which must
-have handed the pump its completion)
-and runs the pump on the check's thread until the job has ended
-(`FakePump.runToEnd`), moving `clock` as the job's own waits on it start:
-how it ended. Throws when a completion was finished
-on any thread but the check's, or when `quiescent` says something of the
-fakes is still in flight. -/
+/-- Spawns `job` on `services` with a fake scheduler (`FakeScheduler`), whose
+job services answer on `pump`'s step, and runs the job's code and the pump
+on the check's thread until the job has ended (`FakePump.runToEnd`), moving
+`clock` as the job's own waits on it start: how it ended. `started` counts
+the requests the fakes were handed, each of which must have handed the pump
+its completion, and `recorded` gives the thread each fake recorded each of
+its orders on. Throws when a request was recorded, a piece of the job run
+or a completion finished on any thread but the check's, or when `quiescent`
+says something of the fakes is still in flight. -/
 def runStepped (services : Job.Services) (pump : Job.FakePump) (clock : Job.FakeClock)
-    (job : JobM Bool) (quiescent : IO Bool) (started : IO Nat) : IO (Job.Outcome Bool) := do
+    (job : JobM Bool) (quiescent : IO Bool) (started : IO Nat) (recorded : IO (Array UInt64)) :
+    IO (Job.Outcome Bool) := do
   let thread ← IO.getTID
-  let handle ← Job.spawn services (reporting fun _ => job) (pure ())
-  pump.runToEnd handle.outcome.result? steppedGuard (some clock)
+  let jobs ← Job.FakeScheduler.new
+  let handle ←
+    Job.spawn { services with scheduler := jobs.scheduler } (reporting fun _ => job) (pure ())
+  pump.runToEnd handle.outcome.result? steppedGuard (some clock) (some jobs)
   let threads ← pump.finishedThreads
   unless threads.all (· == thread) do
     throw <| IO.userError s!"a completion was finished off the check's thread {thread}: {threads}"
+  let ran ← jobs.ranThreads
+  unless !ran.isEmpty && ran.all (· == thread) do
+    throw <| IO.userError s!"the job's code ran off the check's thread {thread}: {ran}"
+  let recordedOn ← recorded
+  unless recordedOn.all (· == thread) do
+    throw <| IO.userError s!"a request was recorded off the check's thread {thread}: {recordedOn}"
   let requests ← started
   unless (← pump.handed) ≥ requests do
     throw <|
@@ -197,6 +207,7 @@ def runFilesStepped (property : JobContract.FileProperty) :
       runStepped services pump clock (property.holds fileRoot) files.quiescent
         (return (← files.started).size + (← files.diffsStarted).size +
           (← files.grepsStarted).size)
+        (return (← files.log).map (·.2))
     catch error =>
       pure (.failed s!"the stepped run: {error}")
   return (outcome, filesIn (← files.model))
@@ -248,7 +259,7 @@ def runProcessesStepped (property : JobContract.ProcessProperty) : IO (Job.Outco
     { completions, timers := clock.timers, processes := processes.processes }
   try
     runStepped services pump clock (property.holds processRoot) processes.quiescent
-        (return (← processes.started).size)
+        (return (← processes.started).size) (return (← processes.log).map (·.2))
   catch error =>
     pure (.failed s!"the stepped run: {error}")
 
@@ -316,6 +327,7 @@ def runWatchesStepped (property : JobContract.FileWatchProperty) : IO (Job.Outco
     runStepped services pump clock (property.holds watchRoot)
         (return (← watches.quiescent) && (← processes.quiescent))
         (return (← processes.taken).size + (← watches.taken).size)
+        (return (← processes.log).map (·.2) ++ (← watches.log).map (·.2))
   catch error =>
     pure (.failed s!"the stepped run: {error}")
 
