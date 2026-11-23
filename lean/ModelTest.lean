@@ -75,6 +75,7 @@ import ModelTest.Editor.Job.Jobs
 import ModelTest.Editor.Job.Model
 import ModelTest.Editor.Job.Pool
 import ModelTest.Editor.Job.Protocol
+import ModelTest.Editor.Job.ProtocolContract
 import ModelTest.Editor.Job.Runner
 import ModelTest.Editor.Job.Table
 import ModelTest.Editor.Json
@@ -706,6 +707,16 @@ The job system is tested here with no Rust library:
   after the start it decorates, and the stepped driver fails a job stuck at
   idle at once. They hold a job in pure code, so they run after the checks
   that count pool threads;
+- `protocolContractChecks`: the runner's protocol contract
+  (`Editor/Job/ProtocolContract.lean`) on the fake clock and the fake files,
+  each recorded run on a rig of its own: a sleep woken, one cancelled while
+  parked, one already due, a cancel held at a job's ask, a load, and
+  several jobs at once each record a trace that replays on the model, in
+  the order the transitions took effect; and a transition held at its
+  record, inside its section, holds the table's lock, so a competing cancel
+  records after it. Each waits on the fake recorder's events and the jobs'
+  `finishedRan`, and holds a thread on a promise, so they run after the
+  checks that count pool threads;
 - `flushContractChecks`: the services' flush contract
   (`Editor/Job/FlushContract.lean`) on the fakes: the fake files, diffs and
   processes held by their held completions, so a flush asked behind held
@@ -1266,6 +1277,7 @@ def checks : List Check :=
     runnerChecks ++
     activityRunnerChecks ++
     rigChecks ++
+    protocolContractChecks ++
     flushContractChecks ++
     handleContractChecks ++
     queueContractChecks ++

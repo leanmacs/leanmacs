@@ -14,6 +14,7 @@ import Editor.Indent
 import Editor.InputScheme.Contract
 import Editor.Job.FlushContract
 import Editor.Job.HandleContract
+import Editor.Job.ProtocolContract
 import Editor.Job.Protocol.Theorems
 import Editor.Jumps.Go
 import Editor.Main

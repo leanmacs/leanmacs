@@ -12,6 +12,7 @@ import ConfigTest.Editor.Face
 import ConfigTest.Editor.Headless
 import ConfigTest.Editor.Headless.Stepped
 import ConfigTest.Editor.Indent
+import ConfigTest.Editor.Job.ProtocolContract
 import ConfigTest.Editor.Keymap
 import ConfigTest.Editor.Loop
 import ConfigTest.Editor.Minibuffer
@@ -125,6 +126,12 @@ show:
   hang once and, with a grace, gives up as a hang, handing the reload to
   `abandoned`, or with none waits on; and a loop a step stopped, or a turn that threw, makes
   later waits answer ended, the turn's error thrown by the bracket;
+- `protocolContractChecks`: the runner's protocol contract
+  (`Editor/Job/ProtocolContract.lean`) on a stepped host whose services
+  record to the fake recorder: a nap the clock wakes and one the loop's end
+  cancels record a trace that replays on the model and ends in the loop's
+  end, recorded once the jobs it cancelled are done. It waits only on the
+  recorder's events;
 - `threadChecks`: the editor answers events while a file elaborates, reloads
   are serialised, and a replaced config is not retained;
 - `jobChecks`: jobs from config through the host: a handler receives a job's
@@ -370,6 +377,7 @@ def checks (context : Context) : List Check :=
     hostChecks context ++
     bracketChecks context ++
     steppedChecks context ++
+    protocolContractChecks context ++
     threadChecks context ++
     jobChecks context ++
     idleChecks context ++

@@ -2582,7 +2582,9 @@ waits for it, after telling `Collaborators.endWaits`, when it has not
 ended: through `awaitReload`, a plain wait for its task unless a stepped
 host's bracket guards it. A cancelled job ends on a pool thread and then
 posts its wake-up, which nothing will take; the end does not wait for that,
-and hands `Collaborators.endCancelled` what to wait on, last. -/
+and hands `Collaborators.endCancelled` what to wait on. Last it records the
+loop's end in the runner's protocol (`Job.Services.recordLoopEnd`), which a
+host's real recorder does not keep. -/
 def Running.wind {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
     (running : Running β σ scheme)
     (awaitReload : Task (Except IO.Error Unit) → IO Unit := fun task => discard <| IO.wait task) :
@@ -2600,6 +2602,9 @@ def Running.wind {β σ : Type} {scheme : InputScheme} (collaborators : Collabor
       collaborators.endWaits "reload"
       awaitReload task
   collaborators.endCancelled cancelled
+  -- The loop's end, as the runner's protocol has it: once the jobs it
+  -- cancelled are waited for, where a stage waits for them.
+  collaborators.services.recordLoopEnd
 
 /-- The editor thread: pulls the editor queue and takes one turn of the loop
 for each event (`Running.turn`), until the driver ends the loop or the

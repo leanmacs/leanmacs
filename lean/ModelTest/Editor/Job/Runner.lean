@@ -1378,57 +1378,6 @@ def activityRunnerChecks : List Check :=
           let seen ← rig.services.activity.seen
           saw (!early && seen.running == 0) s!"early={early} seen={repr seen}"
         finally
-          gate.resolve () },
-    { name :=
-        "a job's sleep on the fake clock is recorded as one transition per section, in the order they took effect, and the trace is a run of the protocol"
-      run := do
-        let rig ← Rig.new
-        let recorder ← Job.FakeRecorder.new
-        let rig := { rig with services := { rig.services with recorder := recorder.recorder } }
-        let spawned ←
-          rig.spawn
-              (reporting fun _ => do
-                sleep 10
-                return 1)
-        discard <| awaitEvent "the job's park" (← recorder.reached (· matches .park _))
-        rig.clock.advance 10
-        discard <|
-            awaitEvent "the runner's last step for the job" spawned.handle.finishedRan.result?
-        let trace ← recorder.trace
-        let replayed := Job.Protocol.replay trace
-        saw
-            (trace ==
-                #[.start 0, .ask 0 1 .parks, .park 0, .wake 1 .completed, .resume 0, .done 0] &&
-              replayed matches .ok _)
-            s!"trace={repr trace}" },
-    { name :=
-        "a job cancelled while the clock is being asked for its sleep is recorded cancelled before its park, which withdraws the sleep, and the trace is a run of the protocol"
-      run := do
-        let rig ← Rig.new
-        let recorder ← Job.FakeRecorder.new
-        let rig := { rig with services := { rig.services with recorder := recorder.recorder } }
-        let starting ← rig.clock.holdStarts
-        let spawned ←
-          rig.spawn
-              (reporting fun _ => do
-                sleep 1000
-                return 0)
-        try
-          discard <|
-              awaitEvent "the job's call at the clock's hold"
-                (← rig.clock.arrivedAt (.held 1)).result?
-          spawned.handle.cancel
-          starting.resolve ()
-          discard <|
-              awaitEvent "the runner's last step for the job" spawned.handle.finishedRan.result?
-          let trace ← recorder.trace
-          let replayed := Job.Protocol.replay trace
-          saw
-              (trace == #[.start 0, .ask 0 1 .parks, .cancel 0, .park 0, .resume 0, .done 0] &&
-                replayed matches .ok _)
-              s!"trace={repr trace}"
-        finally
-          starting.resolve ()
-          spawned.handle.cancel }]
+          gate.resolve () }]
 
 end ModelTest
