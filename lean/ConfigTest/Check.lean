@@ -340,6 +340,46 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
       IO.println s!"config-test: {checks.length} checks passed"
       return 0
 
+/-- The checks of `run`'s timings: a run of two checks of its own, on the
+context's toolchain and `.olean` directories, with its timings in a file of
+a temporary directory. -/
+def runChecks (context : Context) : List Check :=
+  [{  name :=
+        "a run with timings makes the file and writes into it, as each ends, the base's import and each check, a line each of milliseconds, a tab and the name, there to read before the next check runs"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          let file := directory / "timings"
+          -- What the file held as each of the run's checks began.
+          let seen ← IO.mkRef (#[] : Array String)
+          let looks (name : String) : Check :=
+            { name
+              run := do
+                seen.modify (·.push (← IO.FS.readFile file))
+                return true }
+          -- The run's own line on stdout is caught: it is not this run's.
+          let caught ← IO.mkRef ({} : IO.FS.Stream.Buffer)
+          let before ← IO.setStdout (IO.FS.Stream.ofBuffer caught)
+          let status ←
+            try
+              run (fun _ => [looks "first", looks "second"]) context.sysroot
+                  (":".intercalate (context.oleanDirs.map toString)) context.syntaxFixtures
+                  context.defaultConfig context.packages none (some file)
+            finally
+              discard <| IO.setStdout before
+          -- Each line as its name, when what is before the tab is a number.
+          let names (text : String) : Array String :=
+            ((text.splitOn "\n").filter (· != "")).toArray.map fun line =>
+              match line.splitOn "\t" with
+              | [milliseconds, name] => if milliseconds.toNat?.isSome then name else s!"? {line}"
+              | _ => s!"? {line}"
+          let base := "the base's import, before any check"
+          let seen := (← seen.get).map names
+          let written := names (← IO.FS.readFile file)
+          saw
+              (status == 0 && seen == #[#[base], #[base, "first"]] &&
+                written == #[base, "first", "second"])
+              s!"status={status} seen={seen} written={written}" }]
+
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln

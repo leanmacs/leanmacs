@@ -45,7 +45,8 @@ default config (`config/default`) is no Lean module, so its checks are in
 modules use are in small support modules under `ConfigTest/Support/`, each
 of one kind of fixture, and `ConfigTest.Check` holds the `Check` type, the
 `Context` every check is given, `failures`, `saw`, their own checks
-(`checkChecks`), `run` (handed `checks` by `main`) and `usage`. Everything
+(`checkChecks`), `run` (handed `checks` by `main`) with the check of its
+timings (`runChecks`), and `usage`. Everything
 is in the namespace `ConfigTest`, so a list is `ConfigTest.<name>Checks`
 whichever module holds it. This module keeps
 only `checks`, which runs them in order, and `main`.
@@ -361,7 +362,8 @@ open Editor
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
-  checkChecks () ++ lakefileChecks () ++ lakefileEntryChecks () ++ packageSetEditChecks () ++
+  checkChecks () ++ runChecks context ++ lakefileChecks () ++ lakefileEntryChecks () ++
+    packageSetEditChecks () ++
     directoryChecks () ++
     moduleFilesChecks () ++
     hostChecks context ++
