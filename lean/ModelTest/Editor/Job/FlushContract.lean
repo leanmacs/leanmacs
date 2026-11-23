@@ -78,6 +78,34 @@ def flushFakeRigs (fakes : FlushFakes) : List FlushContract.FlushRig :=
     { name := "the fake watch service", flush := services.flushed .fileWatches },
     { name := "the fake grep service", flush := services.flushed .greps }]
 
+/-- The rigs of the fake file service in its step mode (`FakeAnswer.onStep`):
+its files, its diffs and its searches, each answering only when the fake
+pump is stepped, held by leaving the pump unstepped. -/
+def flushSteppedRigs : BaseIO (List FlushContract.FlushRig × FakePump) := do
+  let completions ← Completions.new
+  let pump ← FakePump.new completions
+  let files ← FakeFiles.new completions (answer := .onStep pump)
+  let services : Services :=
+    { completions, timers := (← FakeClock.new completions).timers, files := files.files
+      diffs := files.diffs, greps := files.greps }
+  let held (start : UInt64 → BaseIO Unit) : IO (IO Unit × IO Bool) := do
+    let (id, wait) ← completions.register
+    start id
+    return (pump.stepAll, IO.hasFinished wait.result?)
+  let files' : FlushContract.FlushRig :=
+    { name := "the fake file service, stepped", flush := services.flushed .files
+      step := pump.stepAll
+      held := some <| held fun id => services.files.start id (.stamp "/flushed") }
+  let diffs : FlushContract.FlushRig :=
+    { name := "the fake file service's diffs, stepped", flush := services.flushed .diffs
+      step := pump.stepAll
+      held := some <| held fun id => services.diffs.start id (.lines (.held ⟨1⟩) (.held ⟨2⟩) 10) }
+  let greps : FlushContract.FlushRig :=
+    { name := "the fake file service's searches, stepped", flush := services.flushed .greps
+      step := pump.stepAll }
+  let rigs := [files', diffs, greps]
+  return (rigs, pump)
+
 /-- The services' flush contract on the fakes, one check for each rig and
 property (`Editor/Job/FlushContract.lean`); and that it bites, on a file
 service whose flush completes at its call and on one whose flush never
@@ -90,6 +118,14 @@ def flushContractChecks : List Check :=
         unless failed.isEmpty do
           throw <| IO.userError s!"{failed}"
         return true },
+    { name :=
+        "the services' flush contract holds of the fake file service, its diffs and its searches in their step mode, held by leaving the fake pump unstepped, and the pump is quiescent after"
+      run := do
+        let (rigs, pump) ← flushSteppedRigs
+        let failed ← FlushContract.failures rigs
+        unless failed.isEmpty do
+          throw <| IO.userError s!"{failed}"
+        return (← pump.quiescent) },
     { name :=
         "the flush contract bites on a file service whose flush completes at its call: the held property fails"
       run := do

@@ -142,16 +142,70 @@ def runFilesOnFake (property : JobContract.FileProperty) :
   let outcome ← runOnFake (property.holds fileRoot) (some rig)
   return (outcome, filesIn (← files.model))
 
+/-- The guard of a stepped run's next completion or its job's end; only a
+hang reaches it. -/
+def steppedGuard : HangGuard :=
+  .on "a due completion or the job's end" 10000
+
+/-- Spawns `job` on `services`, whose job services answer on `pump`'s step,
+and runs the pump on the check's thread until the job has ended
+(`FakePump.runToEnd`), moving `clock` as the job's own waits on it start:
+how it ended. Throws when a completion was finished
+on any thread but the check's, or when `quiescent` says something of the
+fakes is still in flight. -/
+def runStepped (services : Job.Services) (pump : Job.FakePump) (clock : Job.FakeClock)
+    (job : JobM Bool) (quiescent : IO Bool) : IO (Job.Outcome Bool) := do
+  let thread ← IO.getTID
+  let handle ← Job.spawn services (reporting fun _ => job) (pure ())
+  pump.runToEnd handle.outcome.result? steppedGuard (some clock)
+  let threads ← pump.finishedThreads
+  unless threads.all (· == thread) do
+    throw <| IO.userError s!"a completion was finished off the check's thread {thread}: {threads}"
+  unless ← quiescent do
+    throw <| IO.userError "the stepped fakes still hold work once the job ended"
+  match (← handle.outcome?).map texts with
+  | some (.finished texts) =>
+    return .finished (texts == #["true"])
+  | some (.failed message) =>
+    return .failed message
+  | _ =>
+    return .cancelled
+
+/-- Runs a file property's job on the runner over the fake of the file
+service in its step mode (`FakeAnswer.onStep`), each completion handed to a
+fake pump the check steps on its own thread: how the job ended, and the
+files afterwards. -/
+def runFilesStepped (property : JobContract.FileProperty) :
+    IO (Job.Outcome Bool × Array (String × ByteArray)) := do
+  let completions ← Job.Completions.new
+  let clock ← Job.FakeClock.new completions
+  let pump ← Job.FakePump.new completions
+  let files ←
+    Job.FakeFiles.new completions (fileModelOf property.files property.directories) (.onStep pump)
+  let services : Job.Services :=
+    { completions, timers := clock.timers, files := files.files, diffs := files.diffs
+      greps := files.greps }
+  let outcome ←
+    try
+      runStepped services pump clock (property.holds fileRoot) files.quiescent
+    catch error =>
+      pure (.failed s!"the stepped run: {error}")
+  return (outcome, filesIn (← files.model))
+
 /-- The names of the job port's file, diff and search properties that do not
-hold of the job model, and of those that do not hold of the runner over the
-fake of the file service, whose model answers a diff and a search. -/
+hold of the job model, of those that do not hold of the runner over the
+fake of the file service, whose model answers a diff and a search, and of
+those that do not hold of it in its step mode, stepped on the check's
+thread. -/
 def fileFailures : IO (List String) := do
   let properties :=
     JobContract.fileProperties ++ JobContract.diffProperties ++ JobContract.grepProperties
   let onModel ← JobContract.fileFailures runFilesOnModel properties
   let onFake ← JobContract.fileFailures runFilesOnFake properties
+  let onStepped ← JobContract.fileFailures runFilesStepped properties
   return onModel.map (s!"the job model: {·}") ++
-      onFake.map (s!"the job runner over the fake file service: {·}")
+      onFake.map (s!"the job runner over the fake file service: {·}") ++
+      onStepped.map (s!"the job runner over the fake file service, stepped: {·}")
 
 /-- The model of the processes a process property's commands are scripted
 as. -/

@@ -53,6 +53,10 @@ structure FlushRig where
   gives back how to let it go and whether that work has ended; none for a
   port the rig cannot hold. -/
   held : Option (IO (IO Unit × IO Bool)) := none
+  /-- Works what the service was handed, for a service that answers only
+when stepped (`FakeAnswer.onStep`): the fake pump's `stepAll`; nothing for
+  a service that works by itself. -/
+  step : BaseIO Unit := pure ()
   /-- The guard of the flush's end: `patience`, but for a check that a flush
   that never ends is reported as a hang, which runs it out on purpose. -/
   patience : HangGuard := patience
@@ -74,7 +78,9 @@ def said (waited : Nat) : Option Completion → String
 def idle : Property where
   name := "a flush of an idle service is completed"
   holds rig := do
-    let ended ← awaitWithin rig.patience (← rig.flush)
+    let flushed ← rig.flush
+    rig.step
+    let ended ← awaitWithin rig.patience flushed
     unless ended == some .completed do
       throw <| IO.userError s!"the flush came to {said rig.patience.ms ended}"
     return true
@@ -91,6 +97,7 @@ def heldBehind : Property where
     let flushed ← rig.flush
     let early ← IO.hasFinished flushed
     release
+    rig.step
     let outcome ← awaitWithin rig.patience flushed
     let workEnded ← ended
     unless !early && outcome == some .completed && workEnded do

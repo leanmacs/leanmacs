@@ -284,9 +284,37 @@ def jobLoadCounts : Property where
       handle.cancel
       release
 
+/-- H-order: with the service's work held, two requests handed through
+handles have not ended; let go, the first's reply is noted before the
+second's: the service answers in the order it was handed requests, which
+the stepped fake promises and the real service's one in-order worker must
+keep. The order is read on the thread that ends each task, in the order
+they end. -/
+def handedOrder : Property where
+  name :=
+    "two requests handed through handles while the service's work is held have not ended; let go, the first's reply is noted before the second's"
+  holds rig := do
+    let release ← rig.held
+    let first ← rig.services.fileWorked (.append (rig.directory / "order-first") "a".toUTF8)
+    let second ← rig.services.fileWorked (.append (rig.directory / "order-second") "b".toUTF8)
+    let early := (← IO.hasFinished first) || (← IO.hasFinished second)
+    let log ← IO.mkRef (#[] : Array String)
+    let firstNoted ← BaseIO.mapTask (sync := true) (fun _ => log.modify (·.push "first")) first
+    let secondNoted ← BaseIO.mapTask (sync := true) (fun _ => log.modify (·.push "second")) second
+    release
+    awaited "the first request's reply" firstNoted
+    awaited "the second request's reply" secondNoted
+    let order ← log.get
+    unless !early && order == #["first", "second"] do
+      throw <|
+          IO.userError
+            s!"while held a reply had {if early then "ended" else "not ended"}; let go they were noted in the order {order}"
+    return true
+
 /-- Every property, in the order they run. -/
 def properties : List Property :=
-  [heldSeenOnlyThroughHandle, notedBeforeEnd, dropped, refusedAtStart, handleCounts, jobLoadCounts]
+  [heldSeenOnlyThroughHandle, notedBeforeEnd, dropped, refusedAtStart, handleCounts, jobLoadCounts,
+    handedOrder]
 
 /-- Runs every property on each of `rigs`, and returns the failures, each
 named `<rig>: <property>`, with what it saw. -/

@@ -11,9 +11,28 @@ import Editor.Process.Model
 Four fakes, published for `model-test` and `config-test`: the fake clock,
 below, the fake file service (`FakeFiles`, after it), the fake process
 service (`FakeProcesses`) and the fake watch service (`FakeFileWatches`),
-each of whose doc comment has its rules; and the fake of the recording port
-(`FakeRecorder`, at the end of this module), which keeps the trace of the
-runner's protocol transitions and holds a thread at one a check names.
+each of whose doc comment has its rules; the fake completion pump
+(`FakePump`), the one step point they answer through in their step mode;
+and the fake of the recording port (`FakeRecorder`, at the end of this
+module), which keeps the trace of the runner's protocol transitions and
+holds a thread at one a check names.
+
+## Answering on the check's step
+
+Each job service's fake takes `answer : FakeAnswer`. `.atOnce`, the
+default, is how every fake answered before: a completion is finished at
+once, on the thread that made it. `.onStep pump` hands every completion
+(a start's, a flush's, a `letGo`'s, a watch's wake) to the fake pump
+(`FakePump`) in place of finishing it, as a real service hands its
+completion to the library's one queue; the check steps the pump on its own
+thread, so every answer is on that thread, in one due order.
+`FakePump.runToEnd` is the stepped runner: it waits on events alone (the
+next completion handed, the next wait started on the fake clock, or the
+job's end), steps or moves the clock, and asserts at the end that nothing
+is left due. Each fake also logs what it was handed, with the thread that
+handed it (`FakeFiles.log`), and resolves an arrival once that many
+requests are started (`FakeFiles.startsArrivedAt`). The fakes start no
+thread: their state is one reference each and the promises they hand out.
 
 ## The fake clock
 
@@ -397,6 +416,48 @@ def source (pump : FakePump) : CompletionSource where
 def quiescent (pump : FakePump) : BaseIO Bool :=
   return (← pump.state.get).due.isEmpty
 
+/-- Runs the pump on the caller's thread until `ended` has ended: waits, on
+events alone, for whichever comes first, the next completion handed, the
+next wait started on `clock` when one is given, or `ended`; steps the pump,
+or moves the clock to the earliest deadline waiting, which completes that
+wait on this thread; and goes on. Then steps what is still due. A job's
+requests are handed on its pool thread, and each step finishes one on the
+check's, so the job runs to its end with every answer the check's, and
+stands in for time as the job's own waits start, never at an idle. Throws a
+hang when nothing comes within `guard`, which only a hang reaches; and
+throws when the pump is not quiescent at the end. -/
+partial def runToEnd {α : Type} (pump : FakePump) (ended : Task α) (guard : HangGuard)
+    (clock : Option FakeClock := none) (seen : Nat := 0) : IO Unit := do
+  if ← IO.hasFinished ended then
+    pump.stepAll
+    unless ← pump.quiescent do
+      throw <| IO.userError "the fake pump still holds a completion once the run ended"
+    return
+  if ← pump.step then
+    pump.runToEnd ended guard clock seen
+    return
+  if let some clock := clock then
+    let started := (← clock.started).size
+    if started > seen then
+      if let some deadline← clock.nextDeadline then
+        clock.advance (deadline - (← clock.now))
+      pump.runToEnd ended guard (some clock) started
+      return
+  let next ← pump.arrivedAt ((← pump.handed) + 1)
+  let wait ←
+    match clock with
+    | some clock => clock.arrivedAt (.started (seen + 1))
+    | none => IO.Promise.new
+  let expiry ← guard.expiry
+  let first ←
+    IO.waitAny
+        [next.result?.map (sync := true) fun _ => some (),
+          wait.result?.map (sync := true) fun _ => some (),
+          ended.map (sync := true) fun _ => some (), expiry.map (sync := true) fun _ => none]
+  IO.cancel expiry
+  let some () := first | throw <| IO.userError guard.hang
+  pump.runToEnd ended guard clock seen
+
 end FakePump
 
 /-- How a fake job service answers: at once, as each fake did before the
@@ -415,8 +476,32 @@ def FakeAnswer.complete (answer : FakeAnswer) (completions : Completions) (id : 
   | .atOnce => completions.finish id .completed
   | .onStep pump => pump.hand id
 
+/-- One thing a fake file service was handed, in its log (`FakeFiles.log`). -/
+inductive FakeFiles.Order where
+  /-- A file request started as the wait `id`. -/
+  | start (id : UInt64) (request : FileRequest)
+  /-- A flush of the files, the diffs or the searches as the wait `id`. -/
+  | flush (id : UInt64)
+  /-- The wait `id` withdrawn while its request was pending. -/
+  | withdraw (id : UInt64)
+  /-- A job's snapshot released. -/
+  | release (snapshot : JobSnapshotId)
+  /-- A diff started as the wait `id`. -/
+  | diff (id : UInt64)
+  /-- A search request started as the wait `id`. -/
+  | grep (id : UInt64)
+  /-- The search `id` cancelled while held. -/
+  | grepCancel (id : UInt64)
+
 /-- What a fake file service holds. -/
 structure FakeFiles.State where
+  /-- Everything the service was handed, in arrival order, each with the
+  thread that handed it: starts, flushes, withdrawals and releases. -/
+  log : Array (FakeFiles.Order × UInt64) := #[]
+  /-- The counts of requests started that tests wait for
+  (`startsArrivedAt`), each with the promise resolved when `started`
+  reaches it. -/
+  startArrivals : Array (Nat × IO.Promise Unit) := #[]
   /-- The files, and the snapshots a request may name. -/
   model : FileModel := {}
   /-- The requests that were started and have been neither taken nor
@@ -483,13 +568,17 @@ structure FakeFiles where
   completions : Completions
   /-- What the service holds. Every change to it is one atomic step. -/
   state : IO.Ref FakeFiles.State
+  /-- How it answers: at once, or on the check's step through a fake pump
+  (`FakeAnswer.onStep`). -/
+  answer : FakeAnswer := .atOnce
 
 namespace FakeFiles
 
 /-- A file service over `model`, through the table `completions`, with no
 request started. -/
-def new (completions : Completions) (model : FileModel := {}) : BaseIO FakeFiles :=
-  return { completions, state := ← IO.mkRef { model } }
+def new (completions : Completions) (model : FileModel := {}) (answer : FakeAnswer := .atOnce) :
+    BaseIO FakeFiles :=
+  return { completions, state := ← IO.mkRef { model }, answer }
 
 /-- Holds every completion from now on: a request started from now is not
 completed until `letGo`. So a test can act while a job is in a file wait. -/
@@ -505,7 +594,7 @@ def letGo (files : FakeFiles) : BaseIO Unit := do
           { state with
             holding := false, parked := #[] })
   for id in parked do
-    files.completions.finish id .completed
+    files.answer.complete files.completions id
 
 /-- Sets what the editor has published: the snapshots a save may name by a
 `SnapshotId`. -/
@@ -541,17 +630,22 @@ def takesArrivedAt (files : FakeFiles) (count : Nat) : BaseIO (IO.Promise Unit) 
 completes the wait unless completions are held. -/
 def start (files : FakeFiles) (id : UInt64) (request : FileRequest) : BaseIO Unit := do
   let thread ← IO.getTID
-  let held ←
+  let (held, reached) ←
     files.state.modifyGet fun state =>
         let state :=
           { state with
             pending := state.pending.push (id, request)
             started := state.started.push (id, request)
-            startThreads := state.startThreads.push thread }
-        if state.holding then (true, { state with parked := state.parked.push id })
-        else (false, state)
+            startThreads := state.startThreads.push thread
+            log := state.log.push (.start id request, thread) }
+        let (reached, rest) := state.startArrivals.partition (·.1 ≤ state.started.size)
+        let state := { state with startArrivals := rest }
+        if state.holding then ((true, reached), { state with parked := state.parked.push id })
+        else ((false, reached), state)
+  for (_, promise) in reached do
+    promise.resolve ()
   unless held do
-    files.completions.finish id .completed
+    files.answer.complete files.completions id
 
 /-- Parks the calling thread on the take hold, if there is one, until the
 test that made it resolves it, and counts the arrival. -/
@@ -637,32 +731,38 @@ def take (files : FakeFiles) (id : UInt64) : (request : FileRequest) → BaseIO 
 
 /-- Withdraws the wait `id`, if its request is pending: it is never
 completed here and never happens. -/
-def cancel (files : FakeFiles) (id : UInt64) : BaseIO Unit :=
+def cancel (files : FakeFiles) (id : UInt64) : BaseIO Unit := do
+  let thread ← IO.getTID
   files.state.modify fun state =>
     if state.pending.any (·.1 == id) then
       { state with
         pending := state.pending.filter (·.1 != id)
         parked := state.parked.filter (· != id)
-        withdrawn := state.withdrawn.push id }
+        withdrawn := state.withdrawn.push id
+        log := state.log.push (.withdraw id, thread) }
     else state
 
 /-- Gives up the job's snapshot `snapshot`: the model holds it no longer. -/
-def release (files : FakeFiles) (snapshot : JobSnapshotId) : BaseIO Unit :=
+def release (files : FakeFiles) (snapshot : JobSnapshotId) : BaseIO Unit := do
+  let thread ← IO.getTID
   files.state.modify fun state =>
     { state with
       model := state.model.released snapshot
-      released := state.released.push snapshot }
+      released := state.released.push snapshot
+      log := state.log.push (.release snapshot, thread) }
 
 /-- Flushes the files as the wait `id`: completed at once, unless completions
 are held, when it is parked behind them and `letGo` completes it after every
 wait held before it. -/
 def flush (files : FakeFiles) (id : UInt64) : BaseIO Unit := do
+  let thread ← IO.getTID
   let held ←
     files.state.modifyGet fun state =>
+        let state := { state with log := state.log.push (.flush id, thread) }
         if state.holding then (true, { state with parked := state.parked.push id })
         else (false, state)
   unless held do
-    files.completions.finish id .completed
+    files.answer.complete files.completions id
 
 /-- The service as the port the runner is given. -/
 def files (files : FakeFiles) : Files :=
@@ -672,16 +772,18 @@ def files (files : FakeFiles) : Files :=
 /-- Starts the diff `request` as the wait `id`, and completes the wait unless
 completions are held, as a file request's is. -/
 def startDiff (files : FakeFiles) (id : UInt64) (request : DiffRequest) : BaseIO Unit := do
+  let thread ← IO.getTID
   let held ←
     files.state.modifyGet fun state =>
         let state :=
           { state with
+            log := state.log.push (.diff id, thread)
             diffsPending := state.diffsPending.push id
             diffsStarted := state.diffsStarted.push (id, request) }
         if state.holding then (true, { state with parked := state.parked.push id })
         else (false, state)
   unless held do
-    files.completions.finish id .completed
+    files.answer.complete files.completions id
 
 /-- The model's answer to the diff `request`, started as the wait `id`, over
 the snapshots the model holds when it is taken. A request that is not
@@ -717,16 +819,18 @@ def diffs (files : FakeFiles) : Diffs :=
 /-- Starts the search `request` as the wait `id`, and completes the wait
 unless completions are held, as a file request's is. -/
 def startGrep (files : FakeFiles) (id : UInt64) (request : GrepRequest) : BaseIO Unit := do
+  let thread ← IO.getTID
   let held ←
     files.state.modifyGet fun state =>
         let state :=
           { state with
+            log := state.log.push (.grep id, thread)
             grepsPending := state.grepsPending.push id
             grepsStarted := state.grepsStarted.push (id, request) }
         if state.holding then (true, { state with parked := state.parked.push id })
         else (false, state)
   unless held do
-    files.completions.finish id .completed
+    files.answer.complete files.completions id
 
 /-- The model's answer to the search `request`, started as the wait `id`,
 over the files and snapshots the model holds when it is taken: a start names
@@ -752,7 +856,8 @@ def takeGrep (files : FakeFiles) (id : UInt64) : (request : GrepRequest) → Bas
 
 /-- Withdraws the search wait `id`, if its request is pending, or cancels the
 search `id`, if it is held. -/
-def cancelGrep (files : FakeFiles) (id : UInt64) : BaseIO Unit :=
+def cancelGrep (files : FakeFiles) (id : UInt64) : BaseIO Unit := do
+  let thread ← IO.getTID
   files.state.modify fun state =>
     let state :=
       if state.grepsPending.contains id then
@@ -764,7 +869,8 @@ def cancelGrep (files : FakeFiles) (id : UInt64) : BaseIO Unit :=
     if state.greps.searches.any (·.id == id.toNat) then
       { state with
         greps := { state.greps with searches := state.greps.searches.filter (·.id != id.toNat) }
-        grepsCancelled := state.grepsCancelled.push id }
+        grepsCancelled := state.grepsCancelled.push id
+        log := state.log.push (.grepCancel id, thread) }
     else state
 
 /-- Flushes the searches as the wait `id`, as `flush` flushes the files: the
@@ -824,6 +930,32 @@ def withdrawn (files : FakeFiles) : BaseIO (Array UInt64) :=
 /-- Every snapshot the service was asked to release, oldest first. -/
 def released (files : FakeFiles) : BaseIO (Array JobSnapshotId) :=
   return (← files.state.get).released
+
+/-- Everything the service was handed, in arrival order, each with the
+thread that handed it. -/
+def log (files : FakeFiles) : BaseIO (Array (Order × UInt64)) :=
+  return (← files.state.get).log
+
+/-- A promise resolved once at least `count` requests have been started: at
+once if they already have, else in the start that makes the count. What a
+check waits on for a start made on a job's thread, in place of polling
+`started`. -/
+def startsArrivedAt (files : FakeFiles) (count : Nat) : BaseIO (IO.Promise Unit) := do
+  let promise ← IO.Promise.new
+  let reached ←
+    files.state.modifyGet fun state =>
+        if state.started.size ≥ count then (true, state)
+        else (false, { state with startArrivals := state.startArrivals.push (count, promise) })
+  if reached then
+    promise.resolve ()
+  return promise
+
+/-- Whether nothing of the service is in flight: no request pending, no
+completion parked. -/
+def quiescent (files : FakeFiles) : BaseIO Bool := do
+  let state ← files.state.get
+  return state.pending.isEmpty && state.parked.isEmpty && state.diffsPending.isEmpty &&
+      state.grepsPending.isEmpty
 
 end FakeFiles
 

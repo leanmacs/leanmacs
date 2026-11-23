@@ -40,6 +40,26 @@ def handleFakeRig : BaseIO HandleContract.HandleRig := do
         let state ← files.state.get
         return state.pending.size + state.parked.size }
 
+/-- A rig over a fake file service of its own in its step mode
+(`FakeAnswer.onStep`), held by leaving its fake pump unstepped and let go by
+stepping it on the check's thread; and the pump. -/
+def handleSteppedRig : BaseIO (HandleContract.HandleRig × FakePump) := do
+  let completions ← Completions.new
+  let clock ← FakeClock.new completions
+  let pump ← FakePump.new completions
+  let files ←
+    FakeFiles.new completions (({} : FileModel).withDirectory handleDirectory) (.onStep pump)
+  let rig : HandleContract.HandleRig :=
+    { name := "the fake file service, stepped"
+      services := { completions, timers := clock.timers, files := files.files }
+      directory := handleDirectory
+      read := fun path => return ((← files.state.get).model.file? path).map (·.bytes)
+      held := return pump.stepAll
+      kept := do
+        let state ← files.state.get
+        return state.pending.size + state.parked.size }
+  return (rig, pump)
+
 /-- The contract of a file request's handle on the fake file service
 (`Editor/Job/HandleContract.lean`). -/
 def handleContractChecks : List Check :=
@@ -48,6 +68,14 @@ def handleContractChecks : List Check :=
         let failed ← HandleContract.failures [← handleFakeRig]
         unless failed.isEmpty do
           throw <| IO.userError s!"{failed}"
-        return true }]
+        return true },
+    { name :=
+        "the fake file service in its step mode answers its handles in the order the requests were handed, every completion finished on the check's thread"
+      run := do
+        let (rig, pump) ← handleSteppedRig
+        let thread ← IO.getTID
+        let held ← HandleContract.handedOrder.holds rig
+        let threads ← pump.finishedThreads
+        return held && threads.size == 2 && threads.all (· == thread) && (← pump.quiescent) }]
 
 end ModelTest
