@@ -698,9 +698,8 @@ The job system is tested here with no Rust library:
   job holds a unit while it can run and none in a sleep on the fake clock,
   the unit of a wait's end is taken on the thread that ends it, a sleep
   already due never lets the count read 0, a cancel in a park gives back
-  exactly one unit, a cancel made as a park is applied withdraws the sleep,
-  and a load on a file service that ends it by itself holds the job's. Each
-  waits on the count's own changes, or on the fake recorder's;
+  exactly one unit, and a load on a file service that ends it by itself
+  holds the job's. Each waits on the count's own changes;
 - `rigChecks`: the test kit's waits (`Editor/Test/Jobs.lean`), each forced
   into the order it must not get wrong: a rig's idle has not come while a
   job is held in its leading work, the start gate resolves at its count and
@@ -714,9 +713,12 @@ The job system is tested here with no Rust library:
   several jobs at once each record a trace that replays on the model, in
   the order the transitions took effect; and a transition held at its
   record, inside its section, holds the table's lock, so a competing cancel
-  records after it. Each waits on the fake recorder's events and the jobs'
-  `finishedRan`, and holds a thread on a promise, so they run after the
-  checks that count pool threads;
+  records after it. The park property (`parkHolds`): a job held just after
+  it gave its unit back for its sleep is in a wait the cancel made there
+  withdraws, on the runner over the fakes and on the model, and is in none
+  on the protocol before the runner-park fix (`PreFix`). Each waits on the
+  fake recorder's events and the jobs' `finishedRan`, and holds a thread on
+  a promise, so they run after the checks that count pool threads;
 - `flushContractChecks`: the services' flush contract
   (`Editor/Job/FlushContract.lean`) on the fakes: the fake files, diffs and
   processes held by their held completions, so a flush asked behind held

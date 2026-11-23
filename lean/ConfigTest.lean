@@ -130,8 +130,10 @@ show:
   (`Editor/Job/ProtocolContract.lean`) on a stepped host whose services
   record to the fake recorder: a nap the clock wakes and one the loop's end
   cancels record a trace that replays on the model and ends in the loop's
-  end, recorded once the jobs it cancelled are done. It waits only on the
-  recorder's events;
+  end, recorded once the jobs it cancelled are done; and a nap held just
+  after it gave its unit back for its sleep, where the body returns, is in
+  a wait the loop's end withdraws (`parkHolds`). They wait only on the
+  recorder's events, and hold the nap on a promise;
 - `threadChecks`: the editor answers events while a file elaborates, reloads
   are serialised, and a replaced config is not retained;
 - `jobChecks`: jobs from config through the host: a handler receives a job's

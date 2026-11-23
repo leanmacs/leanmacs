@@ -1178,10 +1178,12 @@ between the two steps: the cancel found no wait, and the job withdrew its
 own after the host's bracket had returned. With the two in one section
 there is no such place to be, and the model's counterexample shows the old
 order breaks `cancel_finds_running_or_recorded` ("The runner's protocol,
-modelled"). Pinned by `ModelTest.activityRunnerChecks`, on one thread's
-order: a cancel made as the job's park is applied (held in
-`Recorder.applied`) withdraws the sleep, and a job cancelled while the
-clock is asked for its sleep never lets the count read 0 before its end. A
+modelled"). Pinned, on one thread's order, by the protocol contract's park
+property (`ModelTest.protocolContractChecks`, `ConfigTest.protocolContractChecks`):
+a job held just after it gave its unit back, a cancel made there withdraws
+its sleep; and by `ModelTest.activityRunnerChecks`: a job cancelled while
+the clock is asked for its sleep never lets the count read 0 before its
+end. A
 test that needs the event itself, the wait recorded, waits on that `done`,
 never on the fake clock's arrival, which comes inside the clock's `start`,
 before the runner has its answer (`withdrawingHeld`,

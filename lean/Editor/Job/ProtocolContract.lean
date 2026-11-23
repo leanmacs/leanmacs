@@ -19,9 +19,9 @@ the order they took effect. It has two parts:
   thread held inside a section, at its record, holds the table's lock, so
   no other section can apply or record until it is let go.
 - **The park** (`ParkSubject`, `parkHolds`): a subject holds a job just after
-  the step at which its unit was given back, cancels it there, and reports
-  what the cancel withdrew. Wherever the unit has been given back, the
-  job's wait must be one the cancel withdraws.
+  the step at which its unit was given back (`ParkHold`), cancels it there,
+  and reports what the cancel withdrew. Wherever the unit has been given
+  back, the job's wait must be one the cancel withdraws.
 
 `model-test` runs both on the fakes and the park on the model and on the
 model of the protocol before the runner-park fix, where it fails
@@ -284,5 +284,111 @@ def recordedFailures (name : String) (fresh : IO ProtocolRig) : IO (List String)
     catch error =>
       failed := failed ++ [s!"{label} ({error})"]
   return failed
+
+/-! ## The park -/
+
+/-- What a park subject saw: the wait its job asked, whether the job's unit
+had been given back where the subject held it, and the waits the cancel made
+there withdrew before it returned. -/
+structure ParkObserved where
+  /-- The wait the job asked, if it asked one. -/
+  asked : Option Nat
+  /-- Whether the job's unit had been given back at the hold. -/
+  unitBack : Bool
+  /-- The waits the cancel withdrew before it returned. -/
+  withdrawn : Array Nat
+  deriving Repr
+
+/-- The park property: wherever the job's unit has been given back, its wait
+is one a cancel withdraws. A subject whose hold never came, its unit never
+given back, has hung, and says so. -/
+def parkHolds (observed : ParkObserved) : Bool :=
+  observed.unitBack && observed.asked.any (observed.withdrawn.contains ·)
+
+/-- A subject of the park property. Its `run` starts one job that sleeps on
+a clock only the check moves, holds it just after the step at which its
+unit was given back, cancels it there as a loop's end does, and reports
+what it saw (`ParkObserved`). -/
+structure ParkSubject where
+  /-- Which subject, as a failure names it. -/
+  name : String
+  /-- Runs the job to the hold, cancels it there, and reports. -/
+  run : IO ParkObserved
+
+/-- A count and a recorder that hold a job just after it gave its unit back:
+the count notes the thread of each `done`, and the recorder holds that
+thread at the first transition it is told was applied after it, until the
+check lets it go. The `done` is noted, and the hold made, on the job's own
+thread, so where it is held is the runner's order alone. -/
+structure ParkHold where
+  /-- The count, noting each `done`'s thread. -/
+  activity : Activity
+  /-- The recorder, holding the thread of a `done` at its next transition
+  told applied. -/
+  recorder : Recorder
+  /-- Resolved with the transition held at, once the job has arrived. -/
+  arrived : IO.Promise Protocol.Transition
+  /-- Resolved to let the job go. -/
+  release : IO.Promise Unit
+  /-- Whether the held thread had given a unit back when it was held. -/
+  unitBack : IO.Ref Bool
+
+/-- A park hold over `activity` and `inner`, which it forwards to. -/
+def ParkHold.over (activity : Activity) (inner : Recorder) : BaseIO ParkHold := do
+  let gaveBack ← IO.mkRef (none : Option UInt64)
+  let arrived ← IO.Promise.new
+  let release ← IO.Promise.new
+  let unitBack ← IO.mkRef false
+  return {
+      activity :=
+        { activity with
+          done := do
+            activity.done
+            gaveBack.set (some (← IO.getTID)) }
+      recorder :=
+        { inner with
+          applied := fun transition => do
+            inner.applied transition
+            let gave := (← gaveBack.get) == some (← IO.getTID)
+            if gave then
+              unless ← arrived.isResolved do
+                unitBack.set gave
+                arrived.resolve transition
+                discard <| IO.wait release.result? }
+      arrived, release, unitBack }
+
+/-- The wait the job `job` asked in `trace`, if it asked one. -/
+def askedIn (trace : Array Protocol.Transition) (job : Nat) : Option Nat :=
+  trace.findSome? fun
+    | .ask asker wait _ => if asker == job then some wait else none
+    | _ => none
+
+/-- The park subject of the runner over a fresh rig `fresh` makes: the job
+sleeps on its fake clock, the cancel is made on the check's thread at the
+hold, and what the clock had withdrawn as the cancel returned is what it
+withdrew. -/
+def ParkSubject.ofRig (name : String) (fresh : IO ProtocolRig) : ParkSubject where
+  name := name
+  run := do
+    let rig ← fresh
+    let hold ← ParkHold.over rig.services.activity rig.services.recorder
+    let services :=
+      { rig.services with
+        activity := hold.activity, recorder := hold.recorder }
+    let handle ← Job.spawn services (sleeper 10) (pure ())
+    try
+      let held ← awaitStep "the job's step after it gave its unit back" hold.arrived.result?
+      handle.cancel
+      let withdrawn ← rig.clock.withdrawn
+      hold.release.resolve ()
+      finishedAll #[handle]
+      let job := (held.bind (·.job?)).getD 0
+      return {
+          asked := askedIn (← rig.recorder.trace) job,
+          unitBack := held.isSome && (← hold.unitBack.get)
+          withdrawn := withdrawn.map (·.toNat) }
+    finally
+      hold.release.resolve ()
+      handle.cancel
 
 end Editor.ProtocolContract

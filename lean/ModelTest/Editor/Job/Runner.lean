@@ -1244,35 +1244,6 @@ def activityRunnerChecks : List Check :=
               (← activity.refused) == 0)
             s!"cancelled={cancelled} counts={counts} refused={← activity.refused}" },
     { name :=
-        "a job that has given its unit back for a sleep on the fake clock is in a wait a cancel withdraws: a cancel made as its park is applied withdraws the sleep before it returns"
-      run := do
-        let rig ← Rig.new
-        let recorder ← Job.FakeRecorder.new
-        let rig := { rig with services := { rig.services with recorder := recorder.recorder } }
-        -- The job is held just after the section of its park, which gave its
-        -- unit back: the cancel is made there, so the order is the runner's
-        -- alone.
-        let (parked, letGo) ← recorder.holdAt (· matches .park _)
-        let spawned ←
-          rig.spawn
-              (reporting fun _ => do
-                sleep 10
-                return 0)
-        try
-          discard <| awaitEvent "the job's park" parked
-          spawned.handle.cancel
-          let noted ← rig.clock.withdrawn
-          letGo
-          let cancelled ← spawned.endedAs .cancelled
-          let started := (← rig.clock.started).map (·.1)
-          saw
-              (cancelled && started.size == 1 && noted == started &&
-                (← rig.services.activity.refused) == 0)
-              s!"cancelled={cancelled} started={started} withdrawn as the cancel returned={noted}"
-        finally
-          letGo
-          spawned.handle.cancel },
-    { name :=
         "a job cancelled while the clock is being asked for its sleep keeps its own unit until it has ended: it withdraws the sleep itself, and the count goes from 1 to 0 only at its end"
       run := do
         let rig ← Rig.new
