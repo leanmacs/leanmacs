@@ -1,8 +1,10 @@
-//! Every call the timed-wait bans refuse, once each (the root
-//! `clippy.toml`; `Cargo.toml` says how the gate runs it). Clippy must
-//! refuse each line below under every config of the workspace: a line that
-//! stops being refused is a ban that no longer bites. It type-checks and
-//! never runs.
+//! Every call the timed-wait bans refuse, once each: each path of the root
+//! `clippy.toml`'s `wait-bans` block (`Cargo.toml` says how the gate runs
+//! it). Clippy must refuse each line below under every config of the
+//! workspace, and the gate reads the paths it must refuse from the block,
+//! so a line that stops being refused is a ban that no longer bites, and a
+//! path added to the block with no line here fails the gate too. It
+//! type-checks and never runs.
 
 #![allow(deprecated, reason = "the deprecated timed primitives are banned too")]
 

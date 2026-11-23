@@ -1,0 +1,4 @@
+# No block at all.
+disallowed-methods = [
+  { path = "std::thread::sleep", reason = "the crate's own" },
+]

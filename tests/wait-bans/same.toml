@@ -1,0 +1,13 @@
+# A crate's config whose block is the root's, beside entries of its own.
+disallowed-methods = [
+  # BEGIN wait-bans: the block's first line.
+  # A comment of the block, copied with it.
+  { path = "std::thread::sleep", reason = "the block's sleep" },
+  { path = "a::b::C::d", allow-invalid = true, reason = "a readout" },
+  # END wait-bans
+  { path = "std::thread::sleep", reason = "the crate's own reason, which clippy prints" },
+]
+
+disallowed-types = [
+  { path = "std::fs::File", reason = "the crate's own" },
+]

@@ -42,6 +42,41 @@
 # adapter and the entry that allows that edge exists, on the adapter.
 
 disallowed-methods = [
+  # BEGIN wait-bans: the root `clippy.toml` owns this block and says why;
+  # each `crates/*/clippy.toml` holds a copy that `tools/wait-bans.sh`
+  # writes from it. Edit it in the root only.
+  #
+  # The timed waits: a test's bound is an `editor_wait::HangGuard` or
+  # `editor_wait::RealTime`, and its wait goes through `editor-wait`.
+  { path = "std::thread::sleep", reason = "a test's sleep is `editor_wait::RealTime::sleep`, which names the timing under test; real-clock code says why at an `#[expect]`" },
+  { path = "std::thread::sleep_ms", reason = "a test's sleep is `editor_wait::RealTime::sleep`, which names the timing under test" },
+  { path = "std::thread::park_timeout", reason = "wait on the event itself, bounded by an `editor_wait::HangGuard`, not on a timed park" },
+  { path = "std::thread::park_timeout_ms", reason = "wait on the event itself, bounded by an `editor_wait::HangGuard`, not on a timed park" },
+  { path = "std::thread::yield_now", reason = "a yield hopes for a schedule: wait on the event itself (`editor_wait`)" },
+  { path = "std::sync::mpsc::Receiver::recv_timeout", reason = "a bounded receive is `editor_wait::recv`, whose bound is an `editor_wait::HangGuard` naming the event" },
+  { path = "std::sync::Condvar::wait_timeout", reason = "a bounded Condvar wait is `editor_wait::wait_while`, whose bound is an `editor_wait::HangGuard` naming the event" },
+  { path = "std::sync::Condvar::wait_timeout_ms", reason = "a bounded Condvar wait is `editor_wait::wait_while`, whose bound is an `editor_wait::HangGuard` naming the event" },
+  { path = "std::sync::Condvar::wait_timeout_while", reason = "a bounded Condvar wait is `editor_wait::wait_while`, whose bound is an `editor_wait::HangGuard` naming the event" },
+  { path = "std::thread::JoinHandle::is_finished", reason = "asking whether a thread has ended is a poll: join it, or wait on a channel it drops with `editor_wait::recv`" },
+  { path = "std::process::Child::try_wait", reason = "asking whether a child has exited is a poll: wait on its exit, bounded by an `editor_wait::HangGuard`" },
+  { path = "std::time::Instant::now", reason = "a deadline is `editor_wait::HangGuard::start` or `deadline`, and a timing measured is an `editor_wait::Stopwatch`; real-clock code says why at an `#[expect]`" },
+  # The readouts a test waits on, each a `HangGuard` wait of its owner's
+  # that a crate other than its owner can call. `allow-invalid`: a crate
+  # that does not reach the owner cannot resolve the path; a wrong one
+  # leaves an `#[expect]` at its sites unfulfilled, and the fixture's call
+  # unrefused.
+  { path = "editor_service::queue::Queue::await_waiting", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  { path = "editor_service::service::RecordingCompleter::wait_for", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  { path = "editor_platform::scripted::ScriptedPlatform::wait_parked", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  { path = "editor_process::service::Service::wait_held", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  { path = "editor_platform_winit::probe::await_requests_handled", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  { path = "editor_render::render_loop::RenderHandle::wait_resting", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  { path = "editor_syntax::session::Session::wait_for", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  { path = "editor_syntax::session::Session::wait_exact", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  { path = "editor_grep::service::Service::until_held_back", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  { path = "editor_ffi::syntax::Syntaxes::settle", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  { path = "editor_ffi::syntax::Syntaxes::settle_exact", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  # END wait-bans
   # Every free function of `std::fs`.
   { path = "std::fs::canonicalize", reason = "files are reached through the `Fs` port (`Fs::resolve`)" },
   { path = "std::fs::copy", reason = "files are reached through the `Fs` port" },
@@ -84,37 +119,6 @@ disallowed-methods = [
   # The port's real adapter, which is another crate. This crate does not
   # depend on it, and Cargo would allow a dev-dependency on it all the same.
   { path = "editor_fs_std::StdFs::system", reason = "the crate's tests run on the fake, `fs::FakeFs`; the real file system is the adapter's own tests' and `editor-ffi`'s wiring test's" },
-  # The timed waits (the root `clippy.toml` says why and where they are
-  # allowed): a test's bound is an `editor_wait::HangGuard` or
-  # `editor_wait::RealTime`, and its wait goes through `editor-wait`.
-  { path = "std::thread::sleep", reason = "a test's sleep is `editor_wait::RealTime::sleep`, which names the timing under test; real-clock code says why at an `#[expect]`" },
-  { path = "std::thread::sleep_ms", reason = "a test's sleep is `editor_wait::RealTime::sleep`, which names the timing under test" },
-  { path = "std::thread::park_timeout", reason = "wait on the event itself, bounded by an `editor_wait::HangGuard`, not on a timed park" },
-  { path = "std::thread::park_timeout_ms", reason = "wait on the event itself, bounded by an `editor_wait::HangGuard`, not on a timed park" },
-  { path = "std::thread::yield_now", reason = "a yield hopes for a schedule: wait on the event itself (`editor_wait`)" },
-  { path = "std::sync::mpsc::Receiver::recv_timeout", reason = "a bounded receive is `editor_wait::recv`, whose bound is an `editor_wait::HangGuard` naming the event" },
-  { path = "std::sync::Condvar::wait_timeout", reason = "a bounded Condvar wait is `editor_wait::wait_while`, whose bound is an `editor_wait::HangGuard` naming the event" },
-  { path = "std::sync::Condvar::wait_timeout_ms", reason = "a bounded Condvar wait is `editor_wait::wait_while`, whose bound is an `editor_wait::HangGuard` naming the event" },
-  { path = "std::sync::Condvar::wait_timeout_while", reason = "a bounded Condvar wait is `editor_wait::wait_while`, whose bound is an `editor_wait::HangGuard` naming the event" },
-  { path = "std::thread::JoinHandle::is_finished", reason = "asking whether a thread has ended is a poll: join it, or wait on a channel it drops with `editor_wait::recv`" },
-  { path = "std::process::Child::try_wait", reason = "asking whether a child has exited is a poll: wait on its exit, bounded by an `editor_wait::HangGuard`" },
-  # The readouts a test waits on, each a `HangGuard` wait of its owner's.
-  # `allow-invalid`: a crate that does not reach the owner cannot resolve
-  # the path; a wrong one leaves an `#[expect]` at its sites unfulfilled.
-  { path = "editor_service::queue::Queue::await_waiting", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_service::service::RecordingCompleter::wait_for", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_platform::scripted::ScriptedPlatform::wait_parked", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_process::service::Service::wait_held", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_platform_winit::probe::await_requests_handled", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_platform_winit::handled::Handled::wait_all", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_render::render_loop::RenderHandle::wait_resting", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_syntax::session::Session::wait_for", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_syntax::session::Session::wait_exact", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_grep::service::Service::until_held_back", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_ffi::syntax::Syntaxes::settle", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_ffi::syntax::Syntaxes::settle_exact", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_ffi::live::Live::await_at_most", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_ffi::events::Feeds::join", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
 ]
 
 disallowed-types = [

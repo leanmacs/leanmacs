@@ -2789,26 +2789,33 @@ lint`, never a script over source text:
   host's `waitWhile` and a kind, which needs the host. `ModelTest/Editor/Bound.lean`'s
   `fail_if_success` examples show that a number, an anonymous constructor
   and a structure instance are not a bound.
-- **Rust, by clippy** (`mise run lint`): a root `clippy.toml`, which governs
-  every crate with none of its own, and the same block in each
-  `crates/*/clippy.toml` (clippy reads only the first file it finds walking
-  up from a crate) ban, through `disallowed-methods`, the raw timed
-  primitives (`thread::sleep`, `sleep_ms`, `park_timeout`,
-  `park_timeout_ms`, `yield_now`, `Receiver::recv_timeout`,
-  `Condvar::wait_timeout`, `wait_timeout_ms`, `wait_timeout_while`,
-  `JoinHandle::is_finished`, `Child::try_wait`, `Instant::now`) and the
-  readout waits; `editor-wait`'s `HangGuard`, `recv`, `wait_while`,
-  `Deadline`, `Stopwatch` and `RealTime::sleep` take their place. An
+- **Rust, by clippy** (`mise run lint`): the root `clippy.toml`, which
+  governs every crate with none of its own, holds the block, from a line
+  `# BEGIN wait-bans` to a line `# END wait-bans`, that bans through
+  `disallowed-methods` the raw timed primitives (`thread::sleep`,
+  `sleep_ms`, `park_timeout`, `park_timeout_ms`, `yield_now`,
+  `Receiver::recv_timeout`, `Condvar::wait_timeout`, `wait_timeout_ms`,
+  `wait_timeout_while`, `JoinHandle::is_finished`, `Child::try_wait`,
+  `Instant::now`) and the readout waits; `editor-wait`'s `HangGuard`, `recv`, `wait_while`, `Deadline`,
+  `Stopwatch` and `RealTime::sleep` take their place. An
   `#[expect(clippy::disallowed_methods, reason = …)]`, which fails once
   stale, is at each named site the root `clippy.toml` lists.
+- **One source** (`tools/wait-bans.sh`): clippy reads only the first
+  `clippy.toml` it finds walking up from a crate, so each
+  `crates/*/clippy.toml` holds a copy of the root's block, which `sh
+  tools/wait-bans.sh write clippy.toml crates/*/clippy.toml` writes.
+  `mise run lint` fails, naming each, while a copy differs from the
+  root's block by a byte (`tools/wait-bans.sh check`), and `mise run test`
+  pins the script over the configs of `tests/wait-bans/`.
 - **It bites**: `mise run lint` runs clippy over `tests/wait-lints/`, a
   crate outside the workspace (its own lock, read `--locked --offline`)
-  that calls each banned primitive and each public readout once, under the
-  root config and under each `crates/*/clippy.toml` (`CLIPPY_CONF_DIR`),
-  into `target/wait-lints/`; every run must fail and print "use of a
-  disallowed method `<path>`" for each of the 23 banned paths, its output
-  shown only when it does not. The pre-commit hook's Rust step does not run
-  it.
+  that calls each path of the block once, under the root config and under
+  each `crates/*/clippy.toml` (`CLIPPY_CONF_DIR`), into
+  `target/wait-lints/`; every run must fail and print "use of a disallowed
+  method `<path>`" for each path the root's block bans, read from it
+  (`tools/wait-bans.sh paths`), its output shown only when it does not. So
+  a path added to the block that the fixture does not call fails the gate.
+  The pre-commit hook's Rust step does not run it.
 
 ## The toolchain check
 

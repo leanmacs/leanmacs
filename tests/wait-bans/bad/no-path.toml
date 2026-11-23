@@ -1,0 +1,5 @@
+# A root whose block bans nothing: a gate over it would pass for no reason.
+disallowed-methods = [
+  # BEGIN wait-bans
+  # END wait-bans
+]

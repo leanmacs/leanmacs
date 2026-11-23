@@ -16,10 +16,16 @@
 # (`editor-service`, `editor-platform`, `editor-platform-winit`,
 # `editor-syntax`, `editor-wait`, the adapters, `echo-service`, ...); a
 # crate with its own does not read it, so each of `crates/*/clippy.toml`
-# holds the same block, written alike, beside its own entries (where a
-# crate already banned `Instant::now` or `thread::sleep` for its own
-# reason, its entry stands and the block's is left out). `disallowed_methods`
-# is on by default at `warn`, and `mise run lint` denies warnings.
+# holds a copy of this file's block, the lines from `# BEGIN wait-bans` to
+# `# END wait-bans`, byte for byte. This file owns it: edit the block here
+# and write the copies with `sh tools/wait-bans.sh write clippy.toml
+# crates/*/clippy.toml`; `mise run lint` fails while a copy differs
+# (`tools/wait-bans.sh check`). A crate's copy is the first thing of its
+# list. Where a crate bans a path of the block for its own reason
+# (`Instant::now` or `thread::sleep`), its entry comes after the copy, and
+# clippy takes the last entry for a path, so the reason it prints is the
+# crate's (seen on clippy 1.98). `disallowed_methods` is on by default at
+# `warn`, and `mise run lint` denies warnings.
 #
 # Where the `#[expect(clippy::disallowed_methods, reason = "...")]` marks
 # are (`expect`, not `allow`, so a mark that no longer covers a banned call
@@ -54,9 +60,16 @@
 #   tests on the fake completer.
 #
 # `tests/wait-lints/` shows the bans bite under this file and under each
-# crate's: it calls every banned primitive and every public readout once,
-# and `mise run lint` requires clippy to refuse each of them there
-# (mise.toml, `[tasks.lint]`).
+# crate's: it calls every path of the block once, and `mise run lint`
+# requires clippy to refuse there, under every config, each path the block
+# bans, read from this file (`tools/wait-bans.sh paths`; mise.toml,
+# `[tasks.lint]`). So a path added to the block that the fixture does not
+# call fails the gate. The readouts no crate but their owner can call are
+# not in the block, since the fixture cannot call them and only the
+# owner's config needs them: `Handled::wait_all` (`pub(crate)`) below the
+# block here, for `editor-platform-winit`, and `Live::await_at_most` and
+# `Feeds::join` in `crates/editor-ffi/clippy.toml`. An `#[expect]` at each
+# of their sites fails the lint if their entry goes.
 #
 # Seen to bite once by hand, on 2026-11-23: with the `#[expect]` on the job
 # clock's read in `crates/editor-ffi/src/timers.rs` (`Monotonic::now_ms`)
@@ -64,8 +77,11 @@
 # `std::time::Instant::now`" at that line. With the mark put back it passes.
 
 disallowed-methods = [
-  # The timed waits (the root `clippy.toml` says why and where they are
-  # allowed): a test's bound is an `editor_wait::HangGuard` or
+  # BEGIN wait-bans: the root `clippy.toml` owns this block and says why;
+  # each `crates/*/clippy.toml` holds a copy that `tools/wait-bans.sh`
+  # writes from it. Edit it in the root only.
+  #
+  # The timed waits: a test's bound is an `editor_wait::HangGuard` or
   # `editor_wait::RealTime`, and its wait goes through `editor-wait`.
   { path = "std::thread::sleep", reason = "a test's sleep is `editor_wait::RealTime::sleep`, which names the timing under test; real-clock code says why at an `#[expect]`" },
   { path = "std::thread::sleep_ms", reason = "a test's sleep is `editor_wait::RealTime::sleep`, which names the timing under test" },
@@ -79,21 +95,24 @@ disallowed-methods = [
   { path = "std::thread::JoinHandle::is_finished", reason = "asking whether a thread has ended is a poll: join it, or wait on a channel it drops with `editor_wait::recv`" },
   { path = "std::process::Child::try_wait", reason = "asking whether a child has exited is a poll: wait on its exit, bounded by an `editor_wait::HangGuard`" },
   { path = "std::time::Instant::now", reason = "a deadline is `editor_wait::HangGuard::start` or `deadline`, and a timing measured is an `editor_wait::Stopwatch`; real-clock code says why at an `#[expect]`" },
-  # The readouts a test waits on, each a `HangGuard` wait of its owner's.
-  # `allow-invalid`: a crate that does not reach the owner cannot resolve
-  # the path; a wrong one leaves an `#[expect]` at its sites unfulfilled.
+  # The readouts a test waits on, each a `HangGuard` wait of its owner's
+  # that a crate other than its owner can call. `allow-invalid`: a crate
+  # that does not reach the owner cannot resolve the path; a wrong one
+  # leaves an `#[expect]` at its sites unfulfilled, and the fixture's call
+  # unrefused.
   { path = "editor_service::queue::Queue::await_waiting", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_service::service::RecordingCompleter::wait_for", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_platform::scripted::ScriptedPlatform::wait_parked", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_process::service::Service::wait_held", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_platform_winit::probe::await_requests_handled", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_platform_winit::handled::Handled::wait_all", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_render::render_loop::RenderHandle::wait_resting", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_syntax::session::Session::wait_for", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_syntax::session::Session::wait_exact", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_grep::service::Service::until_held_back", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_ffi::syntax::Syntaxes::settle", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_ffi::syntax::Syntaxes::settle_exact", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_ffi::live::Live::await_at_most", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
-  { path = "editor_ffi::events::Feeds::join", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  # END wait-bans
+  # The readout only its own crate can call: `editor-platform-winit`, which
+  # has no `clippy.toml` of its own, reads this one.
+  { path = "editor_platform_winit::handled::Handled::wait_all", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
 ]

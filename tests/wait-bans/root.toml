@@ -1,0 +1,10 @@
+# The root of the cases: its block, and an entry of its own after it,
+# which is not the block's.
+disallowed-methods = [
+  # BEGIN wait-bans: the block's first line.
+  # A comment of the block, copied with it.
+  { path = "std::thread::sleep", reason = "the block's sleep" },
+  { path = "a::b::C::d", allow-invalid = true, reason = "a readout" },
+  # END wait-bans
+  { path = "root::own", reason = "the root's own, not the block's" },
+]
