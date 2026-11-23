@@ -73,6 +73,10 @@ fn publish(display: &Display, snapshot: &Snapshot, width: u64, height: u64) {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the headless render session's wiring test: that the loop comes to rest is its subject, read on the loop's readout `RenderHandle::wait_resting`"
+)]
 fn a_bound_displays_frame_is_drawn_at_the_scenes_size_with_its_stamp_and_the_loop_rests() {
     let presenter = Presenter::new();
     let (drew, draws) = channel();

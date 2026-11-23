@@ -228,6 +228,10 @@ pub fn reported(record: &Record, count: usize, after: &str) -> Result<(), String
 /// Asks for `text` as the window's title, waits until the loop has carried
 /// out every request asked of it (`probe::await_requests_handled`), and
 /// reads the title once: the loop handled the wake-up and the request.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the winit adapter's contract example reads back what a request did once the loop has carried it out, on the adapter's readout `probe::await_requests_handled`"
+)]
 fn titled(platform: &WinitPlatform, text: &str, after: &str) -> Result<(), String> {
     platform.request(Request::Title(text.into()));
     if !probe::await_requests_handled(platform, STEP) {

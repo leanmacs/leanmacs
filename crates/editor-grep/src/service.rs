@@ -729,4 +729,8 @@ where
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the service's own tests: `Service::until_held_back` is their subject"
+)]
 mod tests;

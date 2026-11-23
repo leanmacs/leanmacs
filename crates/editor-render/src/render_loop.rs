@@ -240,6 +240,10 @@ impl Park for CondvarPark {
                         .unwrap_or_else(PoisonError::into_inner);
                 }
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "production on the real clock: the real park's own wait for the loop's deadline, not a test's bound"
+            )]
             Some(until) => {
                 let left = until.saturating_sub(self.clock.now_ns());
                 if !*notified && left > 0 {
@@ -763,6 +767,10 @@ impl<R: Renderer> RenderLoop<R> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the loop's own tests: `RenderHandle::wait_resting` is their subject"
+)]
 mod tests {
     use std::sync::mpsc::{Receiver, channel};
     use std::sync::{Arc, Mutex, PoisonError};

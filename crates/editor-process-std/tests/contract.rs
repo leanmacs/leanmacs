@@ -163,6 +163,10 @@ impl Ground for System {
             }
             // hang guard: the same line, read again once it may be there;
             // the sleep only spaces the reads.
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the adapter's contract ground: a read and retry of a file the child writes, spaced by the sleep, decided by the line appearing and bounded by `DEADLINE`"
+            )]
             thread::sleep(Duration::from_millis(2));
         }
     }

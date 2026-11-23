@@ -1523,6 +1523,10 @@ impl<G: Ground> Check<'_, G> {
     /// [`STREAM_COALESCED`]. Its bound is exactly what the child writes, so
     /// the child's readers are held once all of it has been read: then
     /// every chunk has been read while the one read was pending.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the process contract drives the service's streams on the adapter: it knows a child is held by the service's readout `Service::wait_held`"
+    )]
     fn stream_coalesced<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
         let service = Self::service(processes);
         let script = counting(COALESCED, ": > written; read x");
@@ -1551,6 +1555,10 @@ impl<G: Ground> Check<'_, G> {
 
     /// [`STREAM_HELD`]. The child cannot finish while it is held: what is
     /// outside it is at most the bound and a pipe's capacity.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the process contract drives the service's streams on the adapter: it knows a child is held by the service's readout `Service::wait_held`"
+    )]
     fn stream_held<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
         let service = Self::service(processes);
         let (count, bound) = HELD;
@@ -1640,6 +1648,10 @@ impl<G: Ground> Check<'_, G> {
     }
 
     /// [`STREAM_CANCEL`].
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the process contract drives the service's streams on the adapter: it knows a child is held by the service's readout `Service::wait_held`"
+    )]
     fn stream_cancel<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
         let service = Self::service(processes);
         let script = family("c-child", "c-grandchild", &format!("{YES}; wait"))
@@ -1707,6 +1719,10 @@ impl<G: Ground> Check<'_, G> {
     }
 
     /// [`STREAM_SHUTDOWN`].
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the process contract drives the service's streams on the adapter: it knows a child is held by the service's readout `Service::wait_held`"
+    )]
     fn stream_shutdown<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
         let service = Self::service(processes);
         let held_open = self.open(

@@ -12,6 +12,11 @@
 //! documents of its own. A wait for a delivery blocks on the session with a
 //! bound, and nothing sleeps.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "the syntax service's wiring tests: they wait for a delivery on its readouts `Syntaxes::settle` and `Syntaxes::settle_exact` before they read the highlights"
+)]
+
 use std::mem::MaybeUninit;
 use std::ops::Range;
 use std::slice;

@@ -293,6 +293,10 @@ pub mod probe {
     ///
     /// `guard` names the loop's count of what it carried out: only a loop
     /// that never carries a request out reaches it.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the readout forwards to the run's own count, `Handled::wait_all`"
+    )]
     pub fn await_requests_handled(
         platform: &crate::WinitPlatform,
         guard: editor_wait::HangGuard,
@@ -889,6 +893,10 @@ fn event_loop() -> Result<EventLoop, String> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's own tests: `probe::await_requests_handled` is their subject"
+)]
 mod tests {
     use super::*;
     use editor_wait::HangGuard;

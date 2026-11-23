@@ -10,6 +10,11 @@
 //! held is let go on every path, a failed assertion included, by a drop
 //! guard ([`Release`]) that drops before the scope joins its threads.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "the session's own integration tests: they wait for a delivery on `Session::wait_for` and `Session::wait_exact`, their subject"
+)]
+
 use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};

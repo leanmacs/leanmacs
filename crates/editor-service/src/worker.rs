@@ -88,6 +88,10 @@ impl Worker {
             return None;
         }
         #[cfg(test)]
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a test hook, told only when the join below will wait; it decides nothing and is no poll"
+        )]
         if !thread.is_finished()
             && let Some(told) = self.join_waits.get()
         {

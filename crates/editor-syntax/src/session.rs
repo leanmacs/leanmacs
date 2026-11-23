@@ -849,6 +849,10 @@ impl<S: Syntax> Session<S> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the session's own tests: `Session::wait_for` and `Session::wait_exact` are their subject"
+)]
 pub(crate) mod tests {
     use std::sync::Weak;
 

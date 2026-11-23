@@ -9,6 +9,11 @@
 //! Nothing sleeps. The consumer sends each revision it is handed on a
 //! channel, and the test waits on it, or on the session, with a bound.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "the session's own integration tests: they wait for a delivery on `Session::wait_for` and `Session::wait_exact`, their subject"
+)]
+
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread;

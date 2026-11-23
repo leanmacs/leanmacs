@@ -485,6 +485,10 @@ impl Platform for ScriptedPlatform {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the scripted platform's own tests: `ScriptedPlatform::wait_parked` is their subject"
+)]
 mod tests {
     use super::*;
     use crate::menu::{Action, Item, Menu, Submenu};

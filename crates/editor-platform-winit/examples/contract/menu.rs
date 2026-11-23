@@ -194,6 +194,10 @@ fn read() -> Option<Reading> {
 /// Waits until `platform`'s loop has carried out every request asked of
 /// it, the menu among them, then reads the menu bar once and gives the
 /// reading if it reads as `menu`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the winit adapter's contract example reads back what a request did once the loop has carried it out, on the adapter's readout `probe::await_requests_handled`"
+)]
 fn shown(platform: &WinitPlatform, menu: &Menu) -> Result<Reading, String> {
     if !probe::await_requests_handled(platform, STEP) {
         return Err(format!(

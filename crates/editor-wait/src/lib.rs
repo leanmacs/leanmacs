@@ -242,6 +242,10 @@ impl RealTime {
 
     /// Sleeps for the span: the one sleep of the tests.
     pub fn sleep(self) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the one sleep of the tests: the span is real time under test, named by `timing`"
+        )]
         std::thread::sleep(self.span);
     }
 }
@@ -314,7 +318,10 @@ pub fn recv<T>(receiver: &Receiver<T>, guard: HangGuard) -> Result<T, Unreceived
     if guard.deadline().is_none() {
         return receiver.recv().map_err(|_| Unreceived::Disconnected);
     }
-    // The one bounded receive: `guard` names the event it ends on.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one bounded receive: `guard` names the event it ends on"
+    )]
     receiver
         .recv_timeout(guard.bound())
         .map_err(|error| match error {
@@ -344,15 +351,22 @@ where
             .unwrap_or_else(PoisonError::into_inner);
         return (lock, true);
     }
-    // The one bounded Condvar wait: `guard` names the event it ends on.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one bounded Condvar wait: `guard` names the event it ends on"
+    )]
     let (lock, waited) = condvar
         .wait_timeout_while(lock, guard.bound(), condition)
         .unwrap_or_else(PoisonError::into_inner);
     (lock, !waited.timed_out())
 }
 
-/// The monotonic clock, read for a deadline.
+/// The monotonic clock, read for a deadline or a stopwatch.
 fn now() -> Instant {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one read of the clock: a guard's deadline and a stopwatch's start"
+    )]
     Instant::now()
 }
 

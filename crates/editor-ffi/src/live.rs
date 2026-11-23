@@ -136,6 +136,10 @@ fn of(kind: u8) -> Option<&'static Live> {
 /// `bound_ms` is a hang guard: only a handle that is never freed reaches
 /// it.
 #[unsafe(no_mangle)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a C function Lean calls: it makes the guard from the caller's `bound_ms` and forwards to the readout"
+)]
 pub extern "C" fn editor_ffi_live_await(kind: u8, target: u64, bound_ms: u64) -> bool {
     let guard = HangGuard::on(
         "the free of a handle, under a Lean caller's guard",
@@ -145,6 +149,10 @@ pub extern "C" fn editor_ffi_live_await(kind: u8, target: u64, bound_ms: u64) ->
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the count's own tests: `Live::await_at_most` is their subject"
+)]
 mod tests {
     use std::sync::mpsc::{Receiver, channel};
     use std::sync::{Arc, Mutex, PoisonError};

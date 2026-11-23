@@ -9,6 +9,11 @@
 //! wait for a delivery blocks on the session with a bound, and nothing
 //! sleeps.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "the syntax service's wiring tests: they wait for an exact delivery on its readout `Syntaxes::settle_exact` before they compare it with a fresh parse"
+)]
+
 use std::mem::MaybeUninit;
 use std::slice;
 use std::time::Duration;

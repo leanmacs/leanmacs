@@ -1,0 +1,40 @@
+# The negative fixture of the timed-wait bans (the root `clippy.toml`): a
+# crate whose only purpose is to be refused by clippy. `src/lib.rs` calls
+# every banned primitive once and every public readout once, and
+# `mise run lint` requires `cargo clippy` over it to fail with each ban's
+# message, under the root config and under each crate's (`CLIPPY_CONF_DIR`).
+# It type-checks, is never built for use and never runs.
+#
+# Not a member of the workspace: the empty `[workspace]` below makes it a
+# workspace of its own, so the gate's `cargo clippy --workspace`, `cargo
+# test --workspace`, rustdoc and cargo-deny never see it, and its lint
+# failures fail nothing but the check that wants them. Its path
+# dependencies are the crates that own the readouts. Its lock is the root
+# lock's versions for these crates, checked in and read `--locked
+# --offline`; when the root lock changes under it, seed it again from the
+# root's: `cp Cargo.lock tests/wait-lints/Cargo.lock && cargo metadata
+# --offline --manifest-path tests/wait-lints/Cargo.toml > /dev/null`.
+[package]
+name = "wait-lints"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+editor-wait = { path = "../../crates/editor-wait" }
+editor-service = { path = "../../crates/editor-service" }
+editor-platform = { path = "../../crates/editor-platform" }
+editor-platform-winit = { path = "../../crates/editor-platform-winit" }
+editor-process = { path = "../../crates/editor-process" }
+editor-render = { path = "../../crates/editor-render" }
+editor-syntax = { path = "../../crates/editor-syntax" }
+editor-text = { path = "../../crates/editor-text" }
+editor-grep = { path = "../../crates/editor-grep" }
+editor-search = { path = "../../crates/editor-search" }
+editor-ffi = { path = "../../crates/editor-ffi" }

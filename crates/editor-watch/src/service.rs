@@ -386,6 +386,10 @@ impl<W: Watch, C: Clock> Drop for Handle<W, C> {
             return;
         }
         #[cfg(test)]
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a test hook, told only when the join below will wait; it decides nothing and is no poll"
+        )]
         if !timer.is_finished()
             && let Some(told) = self.inner.drop_joins.get()
         {
@@ -940,6 +944,10 @@ impl<W: Watch, C: Clock> Inner<W, C> {
                 continue;
             }
             state = match next {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "production on the real clock: the timer thread's own wait for its next deadline, not a test's bound"
+                )]
                 Some(deadline) => {
                     self.timer
                         // real time under test: the timer thread's own wait

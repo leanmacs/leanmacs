@@ -225,6 +225,10 @@ pub extern "C" fn editor_ffi_events_waiting(queue: u8) -> u64 {
 /// bound past what the clock can count is no bound, so `u64::MAX` waits
 /// for the park however long it takes.
 #[unsafe(no_mangle)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a C function Lean calls: it makes the guard from the caller's `bound_ms` and forwards to the readout"
+)]
 pub extern "C" fn editor_ffi_events_await_waiting(queue: u8, pulls: u64, bound_ms: u64) -> bool {
     self::queue(queue).is_some_and(|queue| {
         queue.await_waiting(
@@ -278,6 +282,10 @@ pub extern "C" fn editor_ffi_events_script_feed(queue: u8, source_id: u64, count
 ///
 /// `bound_ms` is a hang guard: only a feed that never ends reaches it.
 #[unsafe(no_mangle)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a C function Lean calls: it makes the guard from the caller's `bound_ms` and forwards to the readout"
+)]
 pub extern "C" fn editor_ffi_events_script_join(feed: u64, bound_ms: u64) -> bool {
     FEEDS.join(
         feed,
@@ -416,6 +424,10 @@ impl Feeds {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the feeds' own tests: `Feeds::join` is their subject"
+)]
 mod tests {
     use super::*;
 

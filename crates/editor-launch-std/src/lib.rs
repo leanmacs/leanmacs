@@ -95,6 +95,10 @@ pub struct StdClock(Instant);
 
 impl Default for StdClock {
     fn default() -> Self {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the launcher's real clock: the `Clock` port's adapter"
+        )]
         Self(Instant::now())
     }
 }
@@ -105,6 +109,10 @@ impl Clock for StdClock {
     }
 
     fn sleep_ms(&mut self, ms: u64) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the launcher's real clock: the `Clock` port's adapter sleeps as the core asks"
+        )]
         std::thread::sleep(Duration::from_millis(ms));
     }
 }
@@ -122,6 +130,10 @@ fn raw(pid: Pid) -> Option<rustix::process::Pid> {
 }
 
 /// `kill(pid, 0)` until it says no such process, or the time is up.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the launcher's exit wait where no exit event can be had (no kqueue or pidfd): `kill(pid, 0)` every 50 ms on the real clock, production and never a test's wait"
+)]
 fn poll_exit(pid: rustix::process::Pid, timeout_ms: u64) -> Waited {
     let start = Instant::now();
     loop {

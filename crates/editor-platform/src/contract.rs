@@ -331,7 +331,10 @@ impl Shared {
         .0
     }
 }
-
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the window contract's own measurements on the real clock: when the run started, was asked to close and returned, which a return is judged by"
+)]
 impl Check {
     /// A check that opens the window as `options` say, and gives the
     /// platform `bound` to report [`Input::Opened`] and `bound` again to

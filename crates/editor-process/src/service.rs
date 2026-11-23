@@ -2711,6 +2711,10 @@ mod tests {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the service's own streaming tests: `Service::wait_held` is their subject"
+)]
 mod streaming {
     use std::sync::mpsc::{self, Receiver, TryRecvError};
     use std::time::Duration;

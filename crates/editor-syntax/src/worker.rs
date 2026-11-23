@@ -280,6 +280,10 @@ impl<S: Syntax> Worker<S> {
                             .ready
                             .wait(queue)
                             .unwrap_or_else(PoisonError::into_inner),
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "production on the real clock: the worker's own park until its next refresh is due, not a test's bound"
+                        )]
                         Some(due) => {
                             let now = self.shared.clock.now_ms();
                             let park =

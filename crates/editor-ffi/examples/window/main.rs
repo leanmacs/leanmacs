@@ -353,6 +353,10 @@ fn edit(
 /// as it opens (on macOS the system asks for its content while that frame
 /// is being drawn), and a wait that began the moment the first frame was
 /// presented would see that drawn and nothing ask for it.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the window check waits for the render loop's rest on its readout `RenderHandle::wait_resting`: a loop that never rests is what it finds"
+)]
 fn watch(session: &Session<Watched>, shared: &Shared, stay: Option<Duration>) {
     if shared
         .ledger

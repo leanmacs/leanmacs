@@ -139,6 +139,10 @@ fn contract(args: &[OsString]) -> ExitCode {
     }
     // real time under test: `--sleep`, the child's lifetime, which the
     // contract starts on purpose and ends by kill or exit.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "real time under test: the probe's `--sleep`, the child's lifetime, which the launcher's contract starts on purpose and ends by kill or exit"
+    )]
     std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
     ExitCode::SUCCESS
 }

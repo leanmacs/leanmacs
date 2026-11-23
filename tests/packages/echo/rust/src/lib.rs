@@ -139,6 +139,10 @@ impl<C: Completer + 'static> Echo<C> {
             return false;
         };
         let mut workers = self.workers();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "reaps the workers that have ended, so the list stays short; it never waits and decides nothing a test sees"
+        )]
         let (ended, running): (Vec<_>, Vec<_>) =
             workers.drain(..).partition(JoinHandle::is_finished);
         for ended in ended {
@@ -214,6 +218,10 @@ mod tests {
     /// they were, waited for on each report
     /// ([`RecordingCompleter::wait_for`]); panics if they are not by the
     /// deadline.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the service's tests wait for its reports on the published fake's readout, `RecordingCompleter::wait_for`"
+    )]
     fn reported(echo: &Echo<&'static RecordingCompleter>, count: usize) -> Vec<u64> {
         let completer = echo.shared.completer;
         assert!(

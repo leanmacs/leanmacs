@@ -800,6 +800,10 @@ pub extern "C" fn editor_ffi_render_await_rest(bound_ms: u64) -> u8 {
 }
 
 /// What [`editor_ffi_render_await_rest`] answers for the session `last`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "what the C function Lean calls, `editor_ffi_render_await_rest`, answers: it forwards to the loop's readout"
+)]
 fn await_rest(last: Option<RenderHandle>, guard: HangGuard) -> u8 {
     match last {
         None => 0,

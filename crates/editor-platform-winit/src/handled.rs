@@ -82,6 +82,10 @@ impl Handled {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the counts' own tests: `Handled::wait_all` is their subject"
+)]
 mod tests {
     use super::*;
     use std::sync::Arc;

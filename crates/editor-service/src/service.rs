@@ -211,6 +211,10 @@ pub fn completer_contract(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the completer's own tests: `RecordingCompleter::wait_for` is their subject"
+)]
 mod tests {
     use super::*;
     use std::sync::mpsc::{self, Receiver};

@@ -780,6 +780,10 @@ impl Syntaxes {
     /// `snapshot`'s revision, or a newer one, to be delivered, with layers
     /// found with the injections as they are now (`Session::wait_for`);
     /// whether one was. False at once when its document is not attached.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a readout that forwards to the session's own, `Session::wait_for`"
+    )]
     pub fn settle(&self, snapshot: &Snapshot, guard: HangGuard) -> bool {
         self.session(snapshot.key()).is_some_and(|session| {
             session
@@ -794,6 +798,10 @@ impl Syntaxes {
     /// found equal to it, once the text is quiet (`Session::wait_exact`);
     /// whether it was. False at once when its document is not attached. For
     /// tests.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a readout that forwards to the session's own, `Session::wait_exact`"
+    )]
     pub fn settle_exact(&self, snapshot: &Snapshot, guard: HangGuard) -> bool {
         self.session(snapshot.key()).is_some_and(|session| {
             session
@@ -1305,6 +1313,10 @@ pub unsafe extern "C" fn editor_ffi_syntax_kept_captures(
 ///
 /// `snapshot` is a live snapshot handle.
 #[unsafe(no_mangle)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a C function Lean calls: it makes the guard from the caller's `bound_ms` and forwards to the readout"
+)]
 pub unsafe extern "C" fn editor_ffi_syntax_settle(
     snapshot: *const Snapshot,
     bound_ms: u64,
@@ -1327,6 +1339,10 @@ pub extern "C" fn editor_ffi_syntax_refresh_after(milliseconds: u64) {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the syntax service's own tests: `Syntaxes::settle` and `Syntaxes::settle_exact` are their subject"
+)]
 mod tests {
     use super::*;
     use editor_syntax::clock::ManualClock;

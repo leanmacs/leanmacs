@@ -732,6 +732,10 @@ pub extern "C" fn editor_ffi_processes_held(child: u64) -> u64 {
 /// reaches it. A bound past what the clock can count is no bound, so
 /// `u64::MAX` waits for the park however long it takes.
 #[unsafe(no_mangle)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a C function Lean calls: it makes the guard from the caller's `bound_ms` and forwards to the readout"
+)]
 pub extern "C" fn editor_ffi_processes_await_held(child: u64, bound_ms: u64) -> bool {
     PROCESSES.wait_held(
         child,

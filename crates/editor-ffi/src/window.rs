@@ -264,6 +264,10 @@ impl Monotonic {
 
 impl InputClock for Monotonic {
     fn now_ns(&self) -> u64 {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "production on the real clock: the clock that stamps the window's input"
+        )]
         let elapsed = self.began.get_or_init(Instant::now).elapsed();
         // One more than the time since the clock began, so that the first
         // reading is not 0.
@@ -1281,6 +1285,10 @@ pub extern "C" fn editor_ffi_window_close(platform: u8) -> bool {
 ///
 /// `bound_ms` is a hang guard: only a run that never parks reaches it.
 #[unsafe(no_mangle)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a C function Lean calls: it makes the guard from the caller's `bound_ms` and forwards to the readout"
+)]
 pub extern "C" fn editor_ffi_window_await_parked(platform: u8, bound_ms: u64) -> bool {
     PlatformId::from_tag(platform)
         .and_then(PlatformId::scripted)
@@ -2619,6 +2627,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the window session's test of a run left going: it knows the run is parked by the scripted platform's readout, `ScriptedPlatform::wait_parked`"
+    )]
     fn the_platform_is_run_with_the_options_it_was_given_and_a_close_ends_the_run() {
         let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
         let queue = Arc::new(Queue::new());

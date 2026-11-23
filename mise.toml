@@ -55,8 +55,72 @@ description = "Check Rust formatting"
 run = "cargo fmt --all --check"
 
 [tasks.lint]
-description = "Clippy over every crate and target, warnings are errors"
-run = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+description = "Clippy over every crate and target, warnings are errors; and the timed-wait bans bite under every clippy config (tests/wait-lints)"
+run = [
+  "cargo clippy --workspace --all-targets --locked -- -D warnings",
+  # The timed-wait bans bite (the root clippy.toml): over the negative
+  # fixture tests/wait-lints, which calls each banned primitive and each
+  # public readout once, clippy must fail under the root config and under
+  # each crate's (`CLIPPY_CONF_DIR`, every crates/*/clippy.toml there is),
+  # and print "use of a disallowed method `<path>`" for every path in the
+  # list below: the same list for every config, since every config holds
+  # the same block (a crate's own `Instant::now` or `thread::sleep` entry
+  # stands for the block's and prints the same message), and none leaves a
+  # readout out. The three readouts no other crate can call
+  # (`Handled::wait_all`, `Live::await_at_most`, `Feeds::join`) are not in
+  # the fixture: an `#[expect]` at each of their sites fails the lint above
+  # if their path stops resolving. The fixture is read `--locked
+  # --offline`, its lock checked in (tests/wait-lints/Cargo.toml says how
+  # to seed it again), and builds into target/wait-lints/ alone, one
+  # directory for every config: clippy records `CLIPPY_CONF_DIR` and the
+  # config file it read in its dep-info, so a run under another config
+  # lints the fixture again and never replays an earlier run's messages
+  # (seen: under crates/editor-launch it adds `std::process::Command::new`,
+  # and the root's run after it does not). Output is shown only when the
+  # expectation fails.
+  '''
+  set -- clippy.toml crates/*/clippy.toml
+  for conf; do
+    dir=$(cd "$(dirname "$conf")" && pwd)
+    status=0
+    out=$(CLIPPY_CONF_DIR="$dir" cargo clippy --offline --locked --color never \
+      --manifest-path tests/wait-lints/Cargo.toml --target-dir target/wait-lints \
+      -- -D warnings 2>&1) || status=$?
+    missing=
+    for path in \
+    std::thread::sleep \
+    std::thread::sleep_ms \
+    std::thread::park_timeout \
+    std::thread::park_timeout_ms \
+    std::thread::yield_now \
+    std::sync::mpsc::Receiver::recv_timeout \
+    std::sync::Condvar::wait_timeout \
+    std::sync::Condvar::wait_timeout_ms \
+    std::sync::Condvar::wait_timeout_while \
+    std::thread::JoinHandle::is_finished \
+    std::process::Child::try_wait \
+    std::time::Instant::now \
+    editor_service::queue::Queue::await_waiting \
+    editor_service::service::RecordingCompleter::wait_for \
+    editor_platform::scripted::ScriptedPlatform::wait_parked \
+    editor_process::service::Service::wait_held \
+    editor_platform_winit::probe::await_requests_handled \
+    editor_render::render_loop::RenderHandle::wait_resting \
+    editor_syntax::session::Session::wait_for \
+    editor_syntax::session::Session::wait_exact \
+    editor_grep::service::Service::until_held_back \
+    editor_ffi::syntax::Syntaxes::settle \
+    editor_ffi::syntax::Syntaxes::settle_exact; do
+      printf '%s\n' "$out" | grep -qF "use of a disallowed method \`$path\`" || missing="$missing $path"
+    done
+    { test "$status" -ne 0 && test -z "$missing"; } || {
+      printf '%s\n' "$out"
+      echo "lint: under $conf, clippy over tests/wait-lints exited $status, and these bans did not bite:$missing"
+      exit 1
+    }
+  done
+  ''',
+]
 
 [tasks.deny]
 description = "cargo-deny's bans over the dependency graph (deny.toml); stale `wrappers` are errors"

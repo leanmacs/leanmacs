@@ -172,6 +172,10 @@ impl Monotonic {
 
 impl Clock for Monotonic {
     fn now_ms(&self) -> u64 {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "production on the real clock: the job clock, the monotonic clock the timers run on"
+        )]
         let elapsed = self.began.get_or_init(Instant::now).elapsed();
         u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
     }
@@ -327,6 +331,10 @@ impl<C: Clock> Timers<C> {
                     .changed
                     .wait(state)
                     .unwrap_or_else(PoisonError::into_inner),
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "production on the real clock: the timer thread's own park until its next deadline, not a test's bound"
+                )]
                 Some(deadline) => {
                     let park =
                         Duration::from_millis(deadline.saturating_sub(now)).min(LONGEST_PARK);

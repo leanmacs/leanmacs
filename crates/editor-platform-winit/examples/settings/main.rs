@@ -100,6 +100,10 @@ mod macos {
     /// as the loop counts them, never a poll) and reads it once, on the
     /// main thread, after them: the control, and the reading; `None` when
     /// it did not open.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the adapter's settings check reads the window back once the loop has carried the requests out, on the adapter's readout `probe::await_requests_handled`"
+    )]
     fn scenario(views: &Receiver<usize>, opened: &Receiver<()>) -> Option<(Reading, Reading)> {
         let view = wait::recv(views, OPEN).ok()?;
         wait::recv(opened, OPEN).ok()?;

@@ -506,6 +506,10 @@ pub fn complete(service: u64, request: u64) -> bool {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the queue's own tests: `Queue::await_waiting` is their subject"
+)]
 mod tests {
     use super::*;
     use std::sync::Arc;
