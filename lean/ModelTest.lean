@@ -673,7 +673,11 @@ The job system is tested here with no Rust library:
   among the trace's starts and naming where it is refused, the checker
   seeing a state that breaks each invariant, and a bounded search
   (`search`, iterative deepening over `protocolMoves`) finding no broken
-  invariant within 6 steps of one job and 5 of two. Each is pure;
+  invariant within 6 steps of one job and 5 of two. The same search over
+  the protocol as it was before the runner-park fix (`PreFix`,
+  `ModelTest/Support/Protocol.lean`) finds the shortest counterexample, a
+  job that gives its unit back before it records its wait, which breaks
+  `cancelFindsRunningOrRecorded`. Each is pure;
 - `waitChecks`: a wait that reaches its guard throws the hang its guard
   says (`Job.awaitOrHang`), and the table of waits and the fake clock, with
   no job;

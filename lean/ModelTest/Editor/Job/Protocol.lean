@@ -1,5 +1,6 @@
 import Editor.Job.Protocol
 import ModelTest.Check
+import ModelTest.Support.Protocol
 
 /-!
 # Model tests: `Editor/Job/Protocol.lean`
@@ -46,6 +47,13 @@ def protocolMoves (jobs : Nat) (state : State) : List Transition :=
           .resume job, .cancel job, .done job]) ++
     state.table.flatMap (fun wait => [.wake wait .completed, .wake wait .cancelled]) ++
     [.loopEnd]
+
+/-- The pre-fix steps the search tries in `state`, with at most `jobs` jobs:
+the protocol's (`protocolMoves`), through `of`, and each job's two halves of
+the old park. -/
+def preFixMoves (jobs : Nat) (state : State) : List PreFix.Transition :=
+  (protocolMoves jobs state).map .of ++
+    (List.range state.jobs.length).flatMap fun job => [.giveBack job, .record job]
 
 /-- The state `transitions` reach, or `none`. -/
 def reached (transitions : List Transition) : Option State :=
@@ -175,6 +183,14 @@ def protocolChecks : List Check :=
           (match replay #[.start 1, .done 2] with
           | .error refusal => refusal.index == 1
           | .ok _ => false) },
+    { name :=
+        "the checker finds the pre-fix park's counterexample: a job that gives its unit back before it records its wait is one a cancel cannot find"
+      run :=
+        pure
+          (search (preFixMoves 1) PreFix.step State.violation? 6 {} ==
+            some
+              ([.of (.start 0), .of (.ask 0 0 .parks), .giveBack 0],
+                .cancelFindsRunningOrRecorded)) },
     { name :=
         "the checker finds no broken invariant in the protocol within 6 steps of one job and 5 of two"
       run :=
