@@ -1,6 +1,7 @@
 import Editor.Bound
 import Editor.Job
 import Editor.Job.Activity
+import Editor.Job.Protocol
 import Std.Data.HashMap
 
 /-!
@@ -283,14 +284,6 @@ thread.
 -/
 
 namespace Editor.Job
-
-/-- How a wait ended. -/
-inductive Completion where
-  /-- The service completed it. -/
-  | completed
-  /-- It was withdrawn: the job that made it was cancelled. -/
-  | cancelled
-  deriving DecidableEq, Repr, Inhabited
 
 /-- What the table of waits holds. -/
 structure Pending where

@@ -74,6 +74,7 @@ import ModelTest.Editor.Job.HandleContract
 import ModelTest.Editor.Job.Jobs
 import ModelTest.Editor.Job.Model
 import ModelTest.Editor.Job.Pool
+import ModelTest.Editor.Job.Protocol
 import ModelTest.Editor.Job.Runner
 import ModelTest.Editor.Job.Table
 import ModelTest.Editor.Json
@@ -666,6 +667,13 @@ The job system is tested here with no Rust library:
 - `jobModelChecks`: the job port's pure model (`Editor/Job/Model.lean`), its
   clock and its cancellation, and what only the model's exact clock can
   show: that a timer does not drift;
+- `protocolChecks`: the job runner's protocol as a pure transition system
+  (`Editor/Job/Protocol.lean`): each transition enabled and refused as its
+  row of the table says, a replay renaming each job's number to its place
+  among the trace's starts and naming where it is refused, the checker
+  seeing a state that breaks each invariant, and a bounded search
+  (`search`, iterative deepening over `protocolMoves`) finding no broken
+  invariant within 6 steps of one job and 5 of two. Each is pure;
 - `waitChecks`: a wait that reaches its guard throws the hang its guard
   says (`Job.awaitOrHang`), and the table of waits and the fake clock, with
   no job;
@@ -1247,6 +1255,7 @@ pure code on a promise: pure code blocked in `Task.get` on a pool thread
 makes Lean add a thread to the pool, which a later burst can land on. -/
 def checks : List Check :=
   typedPathChecks ++ poolChecks ++ programChecks ++ jobModelChecks ++ snapshotReadChecks ++
+    protocolChecks ++
     waitChecks ++
     activityChecks ++
     runnerChecks ++
