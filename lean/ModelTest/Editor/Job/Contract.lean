@@ -297,13 +297,37 @@ def runWatchesOnFake (property : JobContract.FileWatchProperty) : IO (Job.Outcom
   let (rig, _, _) ← Rig.withWatches processes fileWatches
   runOnFake (property.holds watchRoot) (some rig)
 
+/-- Runs a watch property's job on the runner over the fake watch service and
+the fake process service, both in their step mode (`FakeAnswer.onStep`),
+each completion handed to one fake pump the check steps on its own thread:
+how the job ended. -/
+def runWatchesStepped (property : JobContract.FileWatchProperty) : IO (Job.Outcome Bool) := do
+  let (processModel, watchModel) := watchModelsOf property
+  let completions ← Job.Completions.new
+  let clock ← Job.FakeClock.new completions
+  let pump ← Job.FakePump.new completions
+  let watches ← Job.FakeFileWatches.new completions watchModel (.onStep pump)
+  let processes ← Job.FakeProcesses.new completions processModel watches.ran (.onStep pump)
+  let services : Job.Services :=
+    { completions, timers := clock.timers, processes := processes.processes
+      fileWatches := watches.fileWatches }
+  try
+    runStepped services pump clock (property.holds watchRoot)
+        (return (← watches.quiescent) && (← processes.quiescent))
+        (return (← processes.taken).size + (← watches.taken).size)
+  catch error =>
+    pure (.failed s!"the stepped run: {error}")
+
 /-- The names of the job port's watch properties that do not hold of the job
-model, and of those that do not hold of the runner over the fakes. -/
+model, of those that do not hold of the runner over the fakes, and of those
+that do not hold of it over the fakes in their step mode. -/
 def fileWatchFailures : IO (List String) := do
   let onModel ← JobContract.fileWatchFailures runWatchesOnModel JobContract.fileWatchProperties
   let onFake ← JobContract.fileWatchFailures runWatchesOnFake JobContract.fileWatchProperties
+  let onStepped ← JobContract.fileWatchFailures runWatchesStepped JobContract.fileWatchProperties
   return onModel.map (s!"the job model: {·}") ++
-      onFake.map (s!"the job runner over the fake watch service: {·}")
+      onFake.map (s!"the job runner over the fake watch service: {·}") ++
+      onStepped.map (s!"the job runner over the fake watch service, stepped: {·}")
 
 -- inferred-waits W30: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
 set_option linter.inferredWait false in

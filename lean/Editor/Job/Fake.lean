@@ -1171,8 +1171,20 @@ def quiescent (processes : FakeProcesses) : BaseIO Bool := do
 
 end FakeProcesses
 
+/-- One thing a fake watch service was handed, in its log. -/
+inductive FakeFileWatches.Order where
+  /-- A request started as the wait `id`. -/
+  | start (id : UInt64) (request : FileWatchRequest)
+  /-- A flush of the watches as the wait `id`. -/
+  | flush (id : UInt64)
+  /-- The wait or the watch `id` withdrawn. -/
+  | withdraw (id : UInt64)
+
 /-- What a fake watch service holds. -/
 structure FakeFileWatches.State where
+  /-- Everything the service was handed, in arrival order, each with the
+  thread that handed it. -/
+  log : Array (FakeFileWatches.Order × UInt64) := #[]
   /-- What the watches see. -/
   model : FileWatchModel := {}
   /-- The requests that were started and have been neither taken nor
@@ -1219,13 +1231,18 @@ structure FakeFileWatches where
   completions : Completions
   /-- What the service holds. Every change to it is one atomic step. -/
   state : IO.Ref FakeFileWatches.State
+  /-- How it answers: at once, or on the check's step through a fake pump
+  (`FakeAnswer.onStep`). A job in a parked `next` holds no unit either way
+  (`FileWatches.outside`). -/
+  answer : FakeAnswer := .atOnce
 
 namespace FakeFileWatches
 
 /-- A watch service over `model`, through the table `completions`, with no
 request started. -/
-def new (completions : Completions) (model : FileWatchModel := {}) : BaseIO FakeFileWatches :=
-  return { completions, state := ← IO.mkRef { model } }
+def new (completions : Completions) (model : FileWatchModel := {}) (answer : FakeAnswer := .atOnce) :
+    BaseIO FakeFileWatches :=
+  return { completions, state := ← IO.mkRef { model }, answer }
 
 /-- Whether the model's watch `watch` has a change recorded, or is not
 there: a `next` of it can be answered. -/
@@ -1237,10 +1254,12 @@ def answerable (model : FileWatchModel) (watch : Nat) : Bool :=
 /-- Starts `request` as the wait `id`, and completes the wait when it can be
 taken. -/
 def start (watches : FakeFileWatches) (id : UInt64) (request : FileWatchRequest) : BaseIO Unit := do
+  let thread ← IO.getTID
   let now ←
     watches.state.modifyGet fun state =>
         let state :=
           { state with
+            log := state.log.push (.start id request, thread)
             pending := state.pending.push (id, request)
             started := state.started.push (id, request) }
         match request with
@@ -1249,7 +1268,7 @@ def start (watches : FakeFileWatches) (id : UInt64) (request : FileWatchRequest)
           if answerable state.model watch.number then (true, state)
           else (false, { state with parked := state.parked.push (id, watch.number) })
   if now then
-    watches.completions.finish id .completed
+    watches.answer.complete watches.completions id
 
 /-- Completes every parked `next` whose watch can now be answered. -/
 def wake (watches : FakeFileWatches) : BaseIO Unit := do
@@ -1258,7 +1277,7 @@ def wake (watches : FakeFileWatches) : BaseIO Unit := do
         let (due, parked) := state.parked.partition fun (_, watch) => answerable state.model watch
         (due, { state with parked })
   for (id, _) in due do
-    watches.completions.finish id .completed
+    watches.answer.complete watches.completions id
 
 /-- Records `changes` in the model, and completes each `next` that can now be
 answered. -/
@@ -1296,8 +1315,10 @@ def take (watches : FakeFileWatches) (id : UInt64) (request : FileWatchRequest) 
 
 /-- Withdraws the wait `id`, if its request is pending; or, if `id` names a
 watch of the model's, ends it as the library drops one. -/
-def cancel (watches : FakeFileWatches) (id : UInt64) : BaseIO Unit :=
+def cancel (watches : FakeFileWatches) (id : UInt64) : BaseIO Unit := do
+  let thread ← IO.getTID
   watches.state.modify fun state =>
+    let state := { state with log := state.log.push (.withdraw id, thread) }
     if state.pending.any (·.1 == id) then
       { state with
         pending := state.pending.filter (·.1 != id)
@@ -1311,8 +1332,10 @@ def cancel (watches : FakeFileWatches) (id : UInt64) : BaseIO Unit :=
 
 /-- Flushes the watches as the wait `id`: completed at once, since the fake
 completes every start at once. -/
-def flush (watches : FakeFileWatches) (id : UInt64) : BaseIO Unit :=
-  watches.completions.finish id .completed
+def flush (watches : FakeFileWatches) (id : UInt64) : BaseIO Unit := do
+  let thread ← IO.getTID
+  watches.state.modify fun state => { state with log := state.log.push (.flush id, thread) }
+  watches.answer.complete watches.completions id
 
 /-- The service as the port the runner is given. -/
 def fileWatches (watches : FakeFileWatches) : FileWatches :=
@@ -1343,6 +1366,19 @@ def started (watches : FakeFileWatches) : BaseIO (Array (UInt64 × FileWatchRequ
 /-- The waits withdrawn while pending, and the watches ended, oldest first. -/
 def withdrawn (watches : FakeFileWatches) : BaseIO (Array UInt64) :=
   return (← watches.state.get).withdrawn
+
+/-- The waits whose replies were taken, oldest first. -/
+def taken (watches : FakeFileWatches) : BaseIO (Array UInt64) :=
+  return (← watches.state.get).taken
+
+/-- Everything the service was handed, in arrival order, each with the
+thread that handed it. -/
+def log (watches : FakeFileWatches) : BaseIO (Array (Order × UInt64)) :=
+  return (← watches.state.get).log
+
+/-- Whether nothing of the service is in flight: no request pending. -/
+def quiescent (watches : FakeFileWatches) : BaseIO Bool :=
+  return (← watches.state.get).pending.isEmpty
 
 end FakeFileWatches
 
