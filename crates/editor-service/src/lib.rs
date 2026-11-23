@@ -14,6 +14,9 @@
 //! - [`worker`]: a thread and the owner that ends it ([`Worker`]), whose
 //!   drop asks the thread to stop and joins it on every path, so a thread a
 //!   test starts never outlives the test.
+//! - [`wait`]: the typed time bounds (`editor-wait`, re-exported), so that
+//!   a package's crate bounds its tests' waits with a [`wait::HangGuard`]
+//!   while depending on this crate alone.
 //!
 //! A package's crate depends on this crate and on nothing else of the
 //! editor's. All of the editor is linked from one Rust archive, generated
@@ -39,3 +42,8 @@ pub use service::{
     Completer, FIRST_PACKAGE_ID, RecordingCompleter, Service, completer_contract, registered,
 };
 pub use worker::Worker;
+
+/// The typed time bounds: `editor-wait`, re-exported for the crates of
+/// packages, which depend on this crate and on nothing else of the
+/// editor's.
+pub use editor_wait as wait;

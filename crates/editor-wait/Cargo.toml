@@ -1,0 +1,15 @@
+[package]
+name = "editor-wait"
+version = "0.1.0"
+description = "Typed time bounds for the Rust library's tests and readouts: a hang guard naming the event its wait ends on, one run out on purpose naming what is held for good, real time naming the timing under test, and the bounded waits that take them"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# No dependency and no dev-dependency: the crate wraps std's own bounded
+# primitives (a channel's receive, a Condvar's wait, a sleep) and every
+# crate of the editor may depend on it. A package's crate reaches it
+# through `editor-service` (`editor_service::wait`), the one crate of the
+# editor a package's crate depends on (docs/design/packages.md, "Rust in a
+# package").
+[dependencies]

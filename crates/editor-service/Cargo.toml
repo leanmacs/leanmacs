@@ -6,8 +6,12 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-# No dependency and no dev-dependency: this crate is what `editor-ffi` and
-# the crate of every package that holds Rust depend on, so it depends on
-# nothing of the editor's (docs/design/packages.md, "Rust in a package").
-# `deny.toml` gives it no entry: any crate may depend on it.
+# This crate is what `editor-ffi` and the crate of every package that holds
+# Rust depend on, so it depends on nothing of the editor's
+# (docs/design/packages.md, "Rust in a package") but `editor-wait`, the
+# typed time bounds, which itself depends on nothing and which it
+# re-exports (`editor_service::wait`) so that a package's crate bounds its
+# waits with them and still depends on this crate alone. `deny.toml` gives
+# neither crate an entry: any crate may depend on them. No dev-dependency.
 [dependencies]
+editor-wait = { path = "../editor-wait" }

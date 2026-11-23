@@ -652,6 +652,9 @@ dependencies = [
 [[package]]
 name = "editor-service"
 version = "0.1.0"
+dependencies = [
+ "editor-wait",
+]
 
 [[package]]
 name = "editor-shape-parley"
@@ -690,6 +693,10 @@ dependencies = [
  "proptest",
  "ropey",
 ]
+
+[[package]]
+name = "editor-wait"
+version = "0.1.0"
 
 [[package]]
 name = "editor-watch"
