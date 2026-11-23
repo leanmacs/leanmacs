@@ -231,6 +231,10 @@ fn captures(
     (raw.status, words(&take(raw.words, raw.len)))
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "inferred-waits W84: a delivery of the snapshot's revision or a newer one, on the C function `editor_ffi_syntax_settle`"
+)]
 #[test]
 fn a_query_is_answered_only_from_a_tree_of_the_snapshots_revision() {
     // SAFETY: the text's bytes are alive for the call.

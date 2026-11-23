@@ -119,6 +119,10 @@ fn next(queue: u8) -> Option<Event> {
 /// Waits until `pulls` pulls are parked on the queue `queue`, on the park
 /// itself (`editor_ffi_events_await_waiting`); panics if they are not by the
 /// deadline, a hang guard.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "inferred-waits W71: the first pulls parked on a process-wide queue, on the C function `editor_ffi_events_await_waiting`"
+)]
 fn wait_for_parked(queue: u8, pulls: u64) {
     assert!(
         editor_ffi_events_await_waiting(queue, pulls, DEADLINE.as_millis()),
@@ -156,6 +160,10 @@ fn find_bytes(haystack: &[u8], needle: &[u8], start: Option<usize>) -> Option<(u
 /// Runs `free`, which frees one handle of `kind`, on a thread of its own,
 /// as a finaliser may, and waits on the free for the count of `kind` to
 /// come down to `target` (`editor_ffi_live_await`).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "inferred-waits W80: the process-wide live count of a kind come down to a target, on the C function `editor_ffi_live_await`"
+)]
 fn freed_on_another_thread(kind: u8, target: u64, free: impl FnOnce() + Send + 'static) {
     let freeing = thread::spawn(free);
     assert!(
@@ -362,6 +370,10 @@ fn find_searches_bytes_that_are_not_utf8_as_text_with_replacement_characters() {
 
 /// The whole life of the two process-wide queues, in order, because quit is
 /// for good.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "inferred-waits W71: the C functions' own check; `editor_ffi_events_script_join` joins the test's own feed, and `editor_ffi_events_await_waiting` refuses at once a tag that names no queue"
+)]
 #[test]
 fn the_process_wide_queues_carry_events_until_they_are_quit() {
     // A post is pulled back from the queue it went to, whole.

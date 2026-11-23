@@ -426,7 +426,7 @@ impl Feeds {
 #[cfg(test)]
 #[expect(
     clippy::disallowed_methods,
-    reason = "the feeds' own tests: `Feeds::join` is their subject"
+    reason = "the feeds' own tests: `Feeds::join` and the C function over it, `editor_ffi_events_script_join`, are their subject"
 )]
 mod tests {
     use super::*;

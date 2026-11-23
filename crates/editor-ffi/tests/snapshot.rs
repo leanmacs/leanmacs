@@ -239,6 +239,10 @@ unsafe fn slice_read(snapshot: *const Snapshot, start: usize, end: usize) -> Opt
     unsafe { text_read(found, raw) }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "inferred-waits W81: the process-wide live count of snapshots come down, on the C function `editor_ffi_live_await`"
+)]
 #[test]
 fn a_snapshot_is_taken_and_read_through_c_and_is_live_from_the_call_that_made_it_until_its_free() {
     let before = editor_ffi_snapshot_live();

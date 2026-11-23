@@ -66,3 +66,17 @@ pub fn readouts(
     let _ = syntaxes.settle(snapshot, GUARD);
     let _ = syntaxes.settle_exact(snapshot, GUARD);
 }
+
+/// Each C function Lean calls to wait, once, its `bound_ms` made from the
+/// guard as a Rust check makes it.
+pub fn c_functions(snapshot: &editor_ffi::snapshot::Snapshot) {
+    let bound_ms = GUARD.as_millis();
+    let _ = editor_ffi::events::editor_ffi_events_await_waiting(0, 1, bound_ms);
+    let _ = editor_ffi::events::editor_ffi_events_script_join(1, bound_ms);
+    let _ = editor_ffi::live::editor_ffi_live_await(1, 0, bound_ms);
+    let _ = editor_ffi::processes::editor_ffi_processes_await_held(1, bound_ms);
+    let _ = editor_ffi::window::editor_ffi_window_await_parked(0, bound_ms);
+    // SAFETY: never run; the snapshot is a live one, borrowed for the call.
+    let _ = unsafe { editor_ffi::syntax::editor_ffi_syntax_settle(snapshot, bound_ms) };
+    let _ = editor_ffi::render::editor_ffi_render_await_rest(bound_ms);
+}

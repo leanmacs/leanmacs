@@ -257,6 +257,10 @@ fn assert_arrives(expected: Vec<Seen>) {
 }
 
 /// The whole life of the process's window, in order.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "inferred-waits W82: the scripted run parked with nothing left to report, on the C function `editor_ffi_window_await_parked`"
+)]
 #[test]
 fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     // A tag that names no platform is refused with a reason, at once.

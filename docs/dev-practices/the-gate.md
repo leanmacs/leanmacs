@@ -2796,10 +2796,15 @@ lint`, never a script over source text:
   `sleep_ms`, `park_timeout`, `park_timeout_ms`, `yield_now`,
   `Receiver::recv_timeout`, `Condvar::wait_timeout`, `wait_timeout_ms`,
   `wait_timeout_while`, `JoinHandle::is_finished`, `Child::try_wait`,
-  `Instant::now`) and the readout waits; `editor-wait`'s `HangGuard`, `recv`, `wait_while`, `Deadline`,
-  `Stopwatch` and `RealTime::sleep` take their place. An
+  `Instant::now`), the readout waits and the C functions Lean calls to
+  wait, whose bound is a number of milliseconds; `editor-wait`'s
+  `HangGuard`, `recv`, `wait_while`, `Deadline`, `Stopwatch` and
+  `RealTime::sleep` take their place, and a Rust check of a C function
+  makes its number from a guard (`HangGuard::as_millis`). An
   `#[expect(clippy::disallowed_methods, reason = …)]`, which fails once
-  stale, is at each named site the root `clippy.toml` lists.
+  stale, is at each named site the root `clippy.toml` lists; at a check
+  that waits through a C function its reason names the row of
+  `inferred-waits.md`.
 - **One source** (`tools/wait-bans.sh`): clippy reads only the first
   `clippy.toml` it finds walking up from a crate, so each
   `crates/*/clippy.toml` holds a copy of the root's block, which `sh

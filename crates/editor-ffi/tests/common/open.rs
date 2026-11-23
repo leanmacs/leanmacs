@@ -48,6 +48,10 @@ const HELD: HangGuard = HangGuard::on(
 
 /// Whether the child `id` comes to be held at its bound, on the park
 /// itself (`editor_ffi_processes_await_held`).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "inferred-waits W83: a reader of the child parked on its bound, on the C function `editor_ffi_processes_await_held`"
+)]
 pub fn comes_to_be_held(id: u64) -> bool {
     editor_ffi_processes_await_held(id, HELD.as_millis())
 }

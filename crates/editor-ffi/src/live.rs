@@ -151,7 +151,7 @@ pub extern "C" fn editor_ffi_live_await(kind: u8, target: u64, bound_ms: u64) ->
 #[cfg(test)]
 #[expect(
     clippy::disallowed_methods,
-    reason = "the count's own tests: `Live::await_at_most` is their subject"
+    reason = "the count's own tests: `Live::await_at_most` and the C function over it, `editor_ffi_live_await`, are their subject"
 )]
 mod tests {
     use std::sync::mpsc::{Receiver, channel};

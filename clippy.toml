@@ -52,7 +52,13 @@
 # - the C functions Lean calls, which make the guard from `bound_ms`
 #   (`editor_ffi_events_await_waiting`, `_events_script_join`,
 #   `_live_await`, `_processes_await_held`, `_render_await_rest` through
-#   `await_rest`, `_window_await_parked`, `_syntax_settle`);
+#   `await_rest`, `_window_await_parked`, `_syntax_settle`). Each is
+#   banned in its turn, since in Rust its number would stand for a guard:
+#   it is called only by its own module's tests (`events`, `live`) and by
+#   the Rust checks of the C API, each at an `#[expect]` whose reason
+#   names its row of `docs/dev-practices/inferred-waits.md` (W71 and W80
+#   to W84: `c_api.rs`, `snapshot.rs`, `window.rs`, `common/open.rs`,
+#   `syntax.rs`), with its `bound_ms` made by `HangGuard::as_millis`;
 # - the tests outside a readout's module that wait on it for their
 #   subject: the syntax session's own integration tests, `editor-ffi`'s
 #   highlight, syntax and headless render tests, its window example, the
@@ -75,6 +81,10 @@
 # clock's read in `crates/editor-ffi/src/timers.rs` (`Monotonic::now_ms`)
 # taken out, `mise run lint` fails with "use of a disallowed method
 # `std::time::Instant::now`" at that line. With the mark put back it passes.
+# And for the C functions Lean calls to wait, on the same day: with their
+# entries in the block and no `#[expect]` yet at the C API checks, clippy
+# failed at each of the twelve calls there, with "use of a disallowed
+# method `editor_ffi::live::editor_ffi_live_await`" and the like.
 
 disallowed-methods = [
   # BEGIN wait-bans: the root `clippy.toml` owns this block and says why;
@@ -111,6 +121,16 @@ disallowed-methods = [
   { path = "editor_grep::service::Service::until_held_back", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_ffi::syntax::Syntaxes::settle", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_ffi::syntax::Syntaxes::settle_exact", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  # The C functions Lean calls to wait, each a readout's or a join's with
+  # its guard made from a `bound_ms`: in Rust a number would stand for the
+  # guard, so only a check that names its inventory row calls one.
+  { path = "editor_ffi::events::editor_ffi_events_await_waiting", allow-invalid = true, reason = "a C function Lean calls to wait, bounded by `bound_ms`: a Rust check calls it only at an `#[expect]` that names its row of `docs/dev-practices/inferred-waits.md`, with the number made by `editor_wait::HangGuard::as_millis`" },
+  { path = "editor_ffi::events::editor_ffi_events_script_join", allow-invalid = true, reason = "a C function Lean calls to wait, bounded by `bound_ms`: a Rust check calls it only at an `#[expect]` that names its row of `docs/dev-practices/inferred-waits.md`, with the number made by `editor_wait::HangGuard::as_millis`" },
+  { path = "editor_ffi::live::editor_ffi_live_await", allow-invalid = true, reason = "a C function Lean calls to wait, bounded by `bound_ms`: a Rust check calls it only at an `#[expect]` that names its row of `docs/dev-practices/inferred-waits.md`, with the number made by `editor_wait::HangGuard::as_millis`" },
+  { path = "editor_ffi::processes::editor_ffi_processes_await_held", allow-invalid = true, reason = "a C function Lean calls to wait, bounded by `bound_ms`: a Rust check calls it only at an `#[expect]` that names its row of `docs/dev-practices/inferred-waits.md`, with the number made by `editor_wait::HangGuard::as_millis`" },
+  { path = "editor_ffi::window::editor_ffi_window_await_parked", allow-invalid = true, reason = "a C function Lean calls to wait, bounded by `bound_ms`: a Rust check calls it only at an `#[expect]` that names its row of `docs/dev-practices/inferred-waits.md`, with the number made by `editor_wait::HangGuard::as_millis`" },
+  { path = "editor_ffi::syntax::editor_ffi_syntax_settle", allow-invalid = true, reason = "a C function Lean calls to wait, bounded by `bound_ms`: a Rust check calls it only at an `#[expect]` that names its row of `docs/dev-practices/inferred-waits.md`, with the number made by `editor_wait::HangGuard::as_millis`" },
+  { path = "editor_ffi::render::editor_ffi_render_await_rest", allow-invalid = true, reason = "a C function Lean calls to wait, bounded by `bound_ms`: a Rust check calls it only at an `#[expect]` that names its row of `docs/dev-practices/inferred-waits.md`, with the number made by `editor_wait::HangGuard::as_millis`" },
   # END wait-bans
   # The readout only its own crate can call: `editor-platform-winit`, which
   # has no `clippy.toml` of its own, reads this one.
