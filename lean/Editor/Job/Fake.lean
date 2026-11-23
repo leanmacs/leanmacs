@@ -670,8 +670,10 @@ inductive FakeFiles.Order where
 
 /-- What a fake file service holds. -/
 structure FakeFiles.State where
-  /-- Everything the service was handed, in arrival order, each with the
-  thread that handed it: starts, flushes, withdrawals and releases. -/
+  /-- Every order that changed what the service holds, in arrival order,
+  each with the thread that handed it: starts, flushes, withdrawals of a
+  pending wait, releases and cancels of a held search. A cancel of a wait it
+  does not hold, which the runner hands every service, is not logged. -/
   log : Array (FakeFiles.Order × UInt64) := #[]
   /-- The counts of requests started that tests wait for
   (`startsArrivedAt`), each with the promise resolved when `started`
@@ -970,14 +972,16 @@ def takeDiff (files : FakeFiles) (id : UInt64) (request : DiffRequest) : BaseIO 
     else (request.refused (.failed "the request is not pending"), state)
 
 /-- Withdraws the diff wait `id`, if its request is pending. -/
-def cancelDiff (files : FakeFiles) (id : UInt64) : BaseIO Unit :=
+def cancelDiff (files : FakeFiles) (id : UInt64) : BaseIO Unit := do
+  let thread ← IO.getTID
   files.state.modify fun state =>
-    if state.diffsPending.contains id then
-      { state with
-        diffsPending := state.diffsPending.erase id
-        parked := state.parked.filter (· != id)
-        withdrawn := state.withdrawn.push id }
-    else state
+      if state.diffsPending.contains id then
+        { state with
+          diffsPending := state.diffsPending.erase id
+          parked := state.parked.filter (· != id)
+          withdrawn := state.withdrawn.push id
+          log := state.log.push (.withdraw id, thread) }
+      else state
 
 /-- Flushes the diffs as the wait `id`, as `flush` flushes the files: the
 diffs share the files' held completions. -/
@@ -1039,7 +1043,8 @@ def cancelGrep (files : FakeFiles) (id : UInt64) : BaseIO Unit := do
           { state with
             grepsPending := state.grepsPending.erase id
             parked := state.parked.filter (· != id)
-            withdrawn := state.withdrawn.push id }
+            withdrawn := state.withdrawn.push id
+            log := state.log.push (.withdraw id, thread) }
         else state
       if state.greps.searches.any (·.id == id.toNat) then
         { state with
@@ -1106,8 +1111,8 @@ def withdrawn (files : FakeFiles) : BaseIO (Array UInt64) :=
 def released (files : FakeFiles) : BaseIO (Array JobSnapshotId) :=
   return (← files.state.get).released
 
-/-- Everything the service was handed, in arrival order, each with the
-thread that handed it. -/
+/-- Every order that changed what the service holds, in arrival order, each
+with the thread that handed it (`State.log`). -/
 def log (files : FakeFiles) : BaseIO (Array (Order × UInt64)) :=
   return (← files.state.get).log
 
@@ -1142,6 +1147,8 @@ inductive FakeProcesses.Order where
   | flush (id : UInt64)
   /-- The wait `id` withdrawn while its request was pending. -/
   | withdraw (id : UInt64)
+  /-- The streaming child `id` killed. -/
+  | kill (id : UInt64)
 
 /-- What a fake process service holds. -/
 structure FakeProcesses.State where
@@ -1164,8 +1171,10 @@ structure FakeProcesses.State where
   parked : Array UInt64 := #[]
   /-- The thread that started each request of `started`. -/
   startThreads : Array UInt64 := #[]
-  /-- Everything the service was handed, in arrival order, each with the
-  thread that handed it: starts, flushes and withdrawals. -/
+  /-- Every order that changed what the service holds, in arrival order,
+  each with the thread that handed it: starts, flushes, withdrawals of a
+  pending wait and kills of a streaming child. A cancel of an id it does not
+  hold is not logged. -/
   log : Array (FakeProcesses.Order × UInt64) := #[]
 
 /-- The fake of the process port (`Job.Processes`, `Editor/Job/Runner.lean`):
@@ -1286,7 +1295,8 @@ def cancel (processes : FakeProcesses) (id : UInt64) : BaseIO Unit := do
       else
         if state.model.children.any (·.id == id.toNat) then
           { state with
-            model := state.model.kill id.toNat, withdrawn := state.withdrawn.push id }
+            model := state.model.kill id.toNat, withdrawn := state.withdrawn.push id
+            log := state.log.push (.kill id, thread) }
         else state
 
 /-- Flushes the processes as the wait `id`: completed at once, unless
@@ -1333,8 +1343,8 @@ def taken (processes : FakeProcesses) : BaseIO (Array UInt64) :=
 def startThreads (processes : FakeProcesses) : BaseIO (Array UInt64) :=
   return (← processes.state.get).startThreads
 
-/-- Everything the service was handed, in arrival order, each with the
-thread that handed it. -/
+/-- Every order that changed what the service holds, in arrival order, each
+with the thread that handed it (`State.log`). -/
 def log (processes : FakeProcesses) : BaseIO (Array (Order × UInt64)) :=
   return (← processes.state.get).log
 
@@ -1357,8 +1367,10 @@ inductive FakeFileWatches.Order where
 
 /-- What a fake watch service holds. -/
 structure FakeFileWatches.State where
-  /-- Everything the service was handed, in arrival order, each with the
-  thread that handed it. -/
+  /-- Every order that changed what the service holds, in arrival order,
+  each with the thread that handed it: starts, flushes, withdrawals of a
+  pending wait and ends of a watch. A cancel of an id it does not hold is
+  not logged. -/
   log : Array (FakeFileWatches.Order × UInt64) := #[]
   /-- What the watches see. -/
   model : FileWatchModel := {}
@@ -1493,16 +1505,17 @@ watch of the model's, ends it as the library drops one. -/
 def cancel (watches : FakeFileWatches) (id : UInt64) : BaseIO Unit := do
   let thread ← IO.getTID
   watches.state.modify fun state =>
-      let state := { state with log := state.log.push (.withdraw id, thread) }
       if state.pending.any (·.1 == id) then
         { state with
           pending := state.pending.filter (·.1 != id)
           parked := state.parked.filter (·.1 != id)
-          withdrawn := state.withdrawn.push id }
+          withdrawn := state.withdrawn.push id
+          log := state.log.push (.withdraw id, thread) }
       else
         if state.model.watches.any (·.id == id.toNat) then
           { state with
-            model := state.model.endWatch id.toNat, withdrawn := state.withdrawn.push id }
+            model := state.model.endWatch id.toNat, withdrawn := state.withdrawn.push id
+            log := state.log.push (.withdraw id, thread) }
         else state
 
 /-- Flushes the watches as the wait `id`: completed at once, since the fake
@@ -1546,8 +1559,8 @@ def withdrawn (watches : FakeFileWatches) : BaseIO (Array UInt64) :=
 def taken (watches : FakeFileWatches) : BaseIO (Array UInt64) :=
   return (← watches.state.get).taken
 
-/-- Everything the service was handed, in arrival order, each with the
-thread that handed it. -/
+/-- Every order that changed what the service holds, in arrival order, each
+with the thread that handed it (`State.log`). -/
 def log (watches : FakeFileWatches) : BaseIO (Array (Order × UInt64)) :=
   return (← watches.state.get).log
 

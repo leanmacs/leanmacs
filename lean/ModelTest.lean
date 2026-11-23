@@ -772,7 +772,10 @@ The job system is tested here with no Rust library:
 - `jobFakeChecks`: what the job services' fakes promise of themselves
   (`Editor/Job/Fake.lean`): the stepped runner (`FakePump.runToEnd`) steps
   a completion handed off its thread just after a step that found nothing
-  due;
+  due; the fake file, process and watch services each log, in order and
+  with the check's thread, every order that changed what they hold and no
+  cancel of an id they do not hold; and the file service resolves a starts
+  arrival in the start that makes the count, or at once;
 - `journalContractChecks`: the contract of the session journal's port
   (`Editor/Headless/Journal/Contract.lean`) on its recording fake
   (`RecordingJournal`), held by not stepping it, and the fake's own
