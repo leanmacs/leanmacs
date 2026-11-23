@@ -2812,19 +2812,43 @@ lint`, never a script over source text:
 - **It bites**: `ModelTest/Lint/Wait.lean` holds `#guard_msgs` fixtures,
   built by `mise run lean-test` and `mise run lean` and never run, that
   expect the error for a raw sleep, a raw clock read, a count read outside
-  its modules, a laundering wrapper, a new count read in a check list
+  its modules, a laundering wrapper, one through a private wrapper, a new
+  count read in a check list
   beside a check under an allow and a mark of the wrong type or worked
   out, and a `fail_if_success` that `Job.awaitWithin` takes no number;
   `ContractTest/Lint/Wait.lean` expects it for a first-after wait, which
   needs the linked kit, and `ConfigTest/Lint/Wait.lean` for an idle wait
   put together from a host's `waitWhile` and a kind, which needs the host.
-  The rules they apply, which module is a test module, which mirrors
+  `FfiTest/Lint/Wait.lean` and the fixture package `greeting`'s
+  `GreetingTest/Lint/Wait.lean` expect it for a raw sleep, so the plugin is
+  seen loaded by `lintPlugin` into the `ffi-test` executable's library and
+  by a package lakefile's `plugins` line into a package's. The rules they apply, which module is a test module, which mirrors
   which, and how a mark is read, are `LintTest.lintWaitChecks`, which
   `mise run lean-test` runs (`lake exe lint-test`): those checks call the
   linters' functions, so they import `Lint` and are an executable of their
   own, whose library loads no plugin. `ModelTest/Editor/Bound.lean`'s
   `fail_if_success` examples show that a number, an anonymous constructor
   and a structure instance are not a bound.
+- **It is loaded** (`tools/lint-plugins-check.sh`, in `mise run lean`): a
+  library that loads no plugin is never linted, and no fixture there would
+  say so, so the gate asks Lake (`lake -d <set dir> query
+  :editorLintPlugins`, a facet of `lean/lakefile.lean`) for every
+  `lean_lib` and `lean_exe` of the core and of each package a set holds in
+  its own directory, and the plugins Lake resolves for it, its package's
+  among them. Each must load the core's `Lint` as a plugin, or have it by
+  import (a module of it is, or imports, one of `Lint`'s: `Lint`,
+  `LintTests` and `lint-test`, where loading it too would register the
+  linters twice); the check prints each that does neither and exits 1. It
+  runs over the default set (`packages/`) and the fixture set
+  (`tests/packages/`), so a package added to either without the `plugins`
+  line fails the gate. A package a set reaches from outside its directory
+  is not read: `docs/packages/word-count`, which the fixture set reaches,
+  is written as a user's, as `tests/user-link/package` is, and names no
+  plugin. It bites on `tests/lint-plugins/`, a set whose package
+  `unlinted` has a library and an executable that load no plugin and a
+  library that imports `Lint`, and whose package `linted` names the plugin
+  for the whole package: the check must exit 1 and print exactly
+  `tests/lint-plugins/expected`, the first two.
 - **Rust, by clippy** (`mise run lint`): the root `clippy.toml`, which
   governs every crate with none of its own, holds the block, from a line
   `# BEGIN wait-bans` to a line `# END wait-bans`, that bans through

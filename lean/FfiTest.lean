@@ -30,6 +30,7 @@ import FfiTest.Editor.State
 import FfiTest.Editor.Theme.Picture
 import FfiTest.Editor.Window.Real
 import FfiTest.Editor.WindowCheck.Real
+import FfiTest.Lint.Wait
 
 /-!
 # Checks of the boundary with the Rust library

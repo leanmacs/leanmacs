@@ -14,7 +14,9 @@
 #   them: the root of the executable the core's `editorLinked` facet links
 #   as the editor is linked, with the Rust library. It checks the package
 #   against the library and in a config session on the real elaborator,
-#   whose config is `tests/linked/config/`.
+#   whose config is `tests/linked/config/`. `GreetingTest/Lint/Wait.lean`
+#   holds a wait linters' fixture, which shows the `plugins` line below
+#   loading the core's linters into a package.
 # - `tests/headless/` holds its headless fixtures.
 #
 # Every Lean linter is on and a warning fails the build, as in the core,

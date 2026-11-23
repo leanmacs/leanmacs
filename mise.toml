@@ -354,7 +354,7 @@ run = [
 # once: the Lake tasks run in one chain, `lean-test`, `lean`, then `lean-fmt`
 # and `ffi-test`.
 [tasks.lean]
-description = "Build the Lean core and the test executables with Lake, which runs Cargo for the Rust static library, then the editor from the default package set (packages/), the fixture set with its packages (tests/packages/) and the editor from the core alone (tests/empty-set/); every linter is on and a warning fails the build (lean/lakefile.lean)"
+description = "Build the Lean core and the test executables with Lake, which runs Cargo for the Rust static library, check that every library and executable of the core and of each package loads the wait linters as a plugin (tools/lint-plugins-check.sh), then the editor from the default package set (packages/), the fixture set with its packages (tests/packages/) and the editor from the core alone (tests/empty-set/); every linter is on and a warning fails the build (lean/lakefile.lean)"
 depends = ["lean-test"]
 dir = "lean"
 # On macOS the executables must be compiled and linked by the system compiler:
@@ -369,6 +369,17 @@ env = { LEAN_CC = "/usr/bin/cc" }
 # the lakefile does not reach.
 run = [
   "lake build --wfail",
+  # The lint plugins check (tools/lint-plugins-check.sh;
+  # docs/dev-practices/the-gate.md, "The wait lints"): every library and
+  # executable of the core, and of each package the default set and the
+  # fixture set hold in their directories, loads the build's linters as a
+  # Lean plugin, or imports them, as Lake resolves its configuration. First
+  # the check itself, on the set tests/lint-plugins/, whose package
+  # `unlinted` has a library and an executable that load none: it must exit
+  # 1 and print exactly tests/lint-plugins/expected. Then the real sets.
+  "status=0; out=$(sh ../tools/lint-plugins-check.sh ../tests/lint-plugins 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/lint-plugins/expected -; } || { echo \"lean: the lint plugins check exited $status on tests/lint-plugins\"; exit 1; }",
+  "sh ../tools/lint-plugins-check.sh ../packages",
+  "sh ../tools/lint-plugins-check.sh ../tests/packages",
   # The editor, from the default package set (packages/lakefile.toml): the
   # package-set build, a facet the core's lakefile defines, writes the
   # set's root module, builds it and links

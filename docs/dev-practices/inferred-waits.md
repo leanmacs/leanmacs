@@ -49,7 +49,8 @@ the marked waits it names.
 The mark is plain data and the linter a Lean plugin: the build loads the
 library `Lint` into every module it elaborates of the core's libraries and
 of every package (`lintPlugin`, `lean/lakefile.lean`; `plugins` in each
-package's lakefile), and no module imports it. The linter imports `Lean`,
+package's lakefile), which the lint plugins check holds every library and
+executable to (`tools/lint-plugins-check.sh`), and no module imports it. The linter imports `Lean`,
 which the config base and the model tests may not reach
 (`docs/design/overview.md`, "Config is elaborated behind a port, and two
 adapters link Lean's frontend"), and the core imports check holds them to

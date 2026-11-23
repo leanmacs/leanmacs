@@ -1,0 +1,30 @@
+# The lint plugins check's fixture (tools/lint-plugins-check.sh;
+# docs/dev-practices/the-gate.md, "The wait lints"): a package set
+# that holds, in its own directory, the fixture package `unlinted`, a
+# library and an executable of which load no lint plugin, and a third
+# library of which imports the linters' own module, and the fixture package
+# `linted`, which names the plugin for the whole package. The gate runs the
+# check on it and requires it to refuse exactly the library and the
+# executable that load no plugin (expected), so the check is seen to read
+# the plugins Lake resolves for each library and executable, a package's
+# own among them, and to refuse on Lake's configuration. It declares no
+# target and is never built: `lake query` reads configuration and headers
+# alone.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../tests/lint-plugins update --keep-toolchain
+# and commit lake-manifest.json: a query fetches nothing and fails on a
+# dependency the manifest does not hold.
+name = "lint-plugins-set"
+
+[[require]]
+name = "unlinted"
+path = "unlinted"
+
+[[require]]
+name = "linted"
+path = "linted"
+
+[[require]]
+name = "editor-core"
+path = "../../lean"

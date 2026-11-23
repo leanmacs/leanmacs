@@ -51,7 +51,9 @@ each of its modules, and each package's lakefile names the same way
 which register the wait linters and their options, and the modules it is
 loaded for import nothing of it, so the linters reach no import closure.
 It is the shared library of `Lint`, named with this package's name, so a
-package set that requires this package by path loads the same one. -/
+package set that requires this package by path loads the same one. That
+every library and executable loads it, or imports `Lint`, is the lint
+plugins check's (`editorLintPlugins`, `tools/lint-plugins-check.sh`). -/
 def lintPlugin : TargetArray Dynlib :=
   #[`@«editor-core»/Lint:shared]
 
@@ -99,14 +101,14 @@ lean_lib FilesApiTest where
 (`InterpretedFixture.lean`; `mise run ffi-overflow`). It is a library of its
 own that no executable imports, so it is compiled to an `.olean` and never
 linked. -/
-@[default_target] lean_lib InterpretedFixture
+@[default_target] lean_lib InterpretedFixture where plugins := lintPlugin
 
 /-- A module with state of its own (`ConfigFixture.lean`), for the check that
 compiled code and config share one copy of a module's globals. `config-test`
 imports it, so it is linked into that executable, and the same executable
 imports its `.olean` again at runtime as part of the base config is
 elaborated on. -/
-lean_lib ConfigFixture
+lean_lib ConfigFixture where plugins := lintPlugin
 
 /-- An extension point and a compiled package that reads it
 (`ExtensionFixture.lean`), for the checks that config elaborated at runtime
@@ -114,7 +116,7 @@ registers at a compiled package's extension point. `config-test` imports
 it, so it is linked into that executable, and the same executable imports
 its `.olean` again at runtime as part of the base config is elaborated
 on. -/
-lean_lib ExtensionFixture
+lean_lib ExtensionFixture where plugins := lintPlugin
 
 /-- Whether the build is for Linux, read from the target triple of the Lean
 toolchain Lake runs on (`aarch64-unknown-linux-gnu`): `System.Platform` has a
@@ -1577,6 +1579,67 @@ package_facet editorPackageGraph pkg : Array String := do
     lines :=
       lines.push s!"{dep.baseName.toString (escape := false)}\t{layerOf dep}\t{dep.dir}\t{requires}"
   return Job.pure lines
+
+/-- Whether two plugins' keys name one target. -/
+def samePlugin (plugin lint : Target Dynlib) : Bool :=
+  @BEq.beq BuildKey _ plugin.key lint.key
+
+/-- Whether the modules of `lib`, a library or an executable's
+(`LeanExe.toLeanLib`), load the build's linters: one of its plugins, its
+package's among them (`LeanLib.plugins`), is `lintPlugin`'s, the core's
+`Lint` as a shared library, however the lakefile writes the key. -/
+def loadsLint (lib : LeanLib) : Bool :=
+  lib.plugins.any fun plugin => lintPlugin.any (samePlugin plugin)
+
+/-- Whether `mod` is a module of the core's library `Lint`, the build's
+linters. -/
+def isLintModule (mod : Module) : Bool :=
+  mod.pkg.keyName == __name__ && mod.lib.name == `Lint
+
+/-- What the lint plugins check reads (`tools/lint-plugins-check.sh`;
+`lake -d <set dir> query :editorLintPlugins`; `docs/dev-practices/the-gate.md`,
+"The wait lints"): for this package, the core, and each package of
+the set (`setPackages`) that is a path dependency in the set's own
+directory, each `lean_lib` and `lean_exe`, one line, its fields separated
+by tabs: the package's name, the target's kind and name, and `loads` when
+its modules load the build's linters as a plugin (`loadsLint`), `imports`
+when one of them is or imports a module of `Lint` (`isLintModule`), so it
+has the linters by import and loading them too would register them twice
+(`Lint`, `LintTests`, `lint-test`), and `none` otherwise. A package the set
+reaches from outside its directory is not listed: one written as a user's
+is (`docs/packages/word-count`), which names no plugin. It reads each module's
+header, as Lake does to resolve imports, only for a target that does not
+load the plugin, and builds nothing. -/
+package_facet editorLintPlugins pkg : Array String := do
+  let ws ← getWorkspace
+  let setDir ← IO.FS.realPath pkg.dir
+  let mut jobs : Array (Job (Array String)) := #[]
+  for dep in setPackages ws pkg do
+    let inSet := (relativeUnder setDir (← IO.FS.realPath dep.dir)).isSome
+    unless dep.remoteUrl.isEmpty && (dep.keyName == __name__ || inSet) do
+      continue
+    let name := dep.baseName.toString (escape := false)
+    let mut targets : Array (String × LeanLib × Job (Array Module)) := #[]
+    for lib in dep.leanLibs do
+      targets := targets.push ("lean_lib", lib, ← lib.modules.fetch)
+    for exe in dep.leanExes do
+      targets := targets.push ("lean_exe", exe.toLeanLib, Job.pure #[exe.root])
+    for (kind, lib, modules) in targets do
+      let line (verdict : String) :=
+        s!"{name}\t{kind}\t{lib.name.toString (escape := false)}\t{verdict}"
+      if loadsLint lib then
+        jobs := jobs.push (Job.pure #[line "loads"])
+        continue
+      let job ←
+        modules.bindM fun mods => do
+            let reached ←
+              mods.mapM fun mod => do
+                  (← mod.transImports.fetch).mapM fun imports =>
+                      return isLintModule mod || imports.any isLintModule
+            return (Job.collectArray reached).map fun reached =>
+                #[line (if reached.any id then "imports" else "none")]
+      jobs := jobs.push job
+  return (Job.collectArray jobs).map (·.flatten)
 
 /-- The checks of the boundary with the Rust library (`FfiTest.lean`), linked
 exactly like the editor (`linkAsEditor`): `supportInterpreter` exports the

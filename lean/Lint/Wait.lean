@@ -62,8 +62,13 @@ are marked where they are declared, in one place each.
 
 Its checks are `LintTest.lintWaitChecks` (`LintTest/Lint/Wait.lean`), run
 by `lint-test`, and the `#guard_msgs` fixtures of
-`ModelTest/Lint/Wait.lean`, `ContractTest/Lint/Wait.lean` and
-`ConfigTest/Lint/Wait.lean`, which a build of those modules runs.
+`ModelTest/Lint/Wait.lean`, `ContractTest/Lint/Wait.lean`,
+`ConfigTest/Lint/Wait.lean`, `FfiTest/Lint/Wait.lean` and the fixture
+package `greeting`'s `GreetingTest/Lint/Wait.lean`, which a build of those
+modules runs. That every library and executable of the core and of the
+packages under `packages/` and `tests/packages/` loads the plugin is the
+lint plugins check's (`tools/lint-plugins-check.sh`, over Lake's
+configuration).
 -/
 
 open Lean Elab Command
