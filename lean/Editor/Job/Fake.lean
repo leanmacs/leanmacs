@@ -312,6 +312,15 @@ structure FakePump.State where
   /-- Whether the source is closed: once nothing is due, a pull of it says
   quit. -/
   closed : Bool := false
+  /-- What a step that finds nothing due parks on before it returns, if
+  empty steps are held (`holdEmptySteps`). -/
+  emptyHold : Option (IO.Promise Unit) := none
+  /-- How many steps that found nothing due have arrived at the hold. -/
+  emptyHeld : Nat := 0
+  /-- The counts of empty steps held that checks wait for
+  (`emptyStepsArrivedAt`), each with the promise resolved when `emptyHeld`
+  reaches it. -/
+  emptyArrivals : Array (Nat × IO.Promise Unit) := #[]
 
 /-- The fake of the completion pump (`Editor/Job/Pump.lean`): the one step
 point of the job services' fakes. A stepped fake hands it each completion
@@ -360,12 +369,55 @@ private def takeDue (pump : FakePump) : BaseIO (Option UInt64) := do
             finishedThreads := state.finishedThreads.push thread })
       | none => (none, state)
 
+/-- Parks the caller of a step that found nothing due on the hold, if
+empty steps are held, once it has counted the arrival. -/
+private def parkEmpty (pump : FakePump) : BaseIO Unit := do
+  let (hold?, reached) ←
+    pump.state.modifyGet fun state =>
+        match state.emptyHold with
+        | some hold =>
+          let emptyHeld := state.emptyHeld + 1
+          let (reached, rest) := state.emptyArrivals.partition (·.1 ≤ emptyHeld)
+          ((some hold, reached),
+            { state with
+              emptyHeld, emptyArrivals := rest })
+        | none => ((none, #[]), state)
+  for (_, promise) in reached do
+    promise.resolve ()
+  if let some hold := hold? then
+    discard <| IO.wait hold.result?
+
 /-- Finishes the oldest due completion, as completed, on the caller's
-thread; `false` when none was due. -/
+thread; `false` when none was due, once the empty step has passed the
+hold, if empty steps are held. -/
 def step (pump : FakePump) : BaseIO Bool := do
-  let some id ← pump.takeDue | return false
+  let some id ← pump.takeDue |
+    pump.parkEmpty
+    return false
   pump.completions.finish id .completed
   return true
+
+/-- Holds every step that finds nothing due from now on: it parks, before
+it returns `false`, until the promise this returns is resolved. So a check
+can hand a completion while a stepper is between finding nothing and what
+it does next, which no amount of sleeping would arrange. -/
+def holdEmptySteps (pump : FakePump) : BaseIO (IO.Promise Unit) := do
+  let hold ← IO.Promise.new
+  pump.state.modify fun state => { state with emptyHold := some hold }
+  return hold
+
+/-- A promise resolved once at least `count` empty steps have arrived at
+the hold: at once if they already have, else in the step that counts the
+last. -/
+def emptyStepsArrivedAt (pump : FakePump) (count : Nat) : BaseIO (IO.Promise Unit) := do
+  let promise ← IO.Promise.new
+  let reached ←
+    pump.state.modifyGet fun state =>
+        if state.emptyHeld ≥ count then (true, state)
+        else (false, { state with emptyArrivals := state.emptyArrivals.push (count, promise) })
+  if reached then
+    promise.resolve ()
+  return promise
 
 /-- Finishes every due completion, oldest first, with `step`, those a
 finish hands on the way included. -/
@@ -427,9 +479,12 @@ or moves the clock to the earliest deadline waiting, which completes that
 wait on this thread; and goes on. Then steps what is still due. A job's
 requests are handed on its pool thread, and each step finishes one on the
 check's, so the job runs to its end with every answer the check's, and
-stands in for time as the job's own waits start, never at an idle. Throws a
-hang when nothing comes within `guard`, which only a hang reaches; and
-throws when the pump is not quiescent at the end. -/
+stands in for time as the job's own waits start, never at an idle. The
+next hand it waits for is the one after the count it read before its step,
+so a hand made on another thread just after a step that found nothing due
+is not lost (`ModelTest.jobFakeChecks`). Throws a hang when nothing comes
+within `guard`, which only a hang reaches; and throws when the pump is not
+quiescent at the end. -/
 partial def runToEnd {α : Type} (pump : FakePump) (ended : Task α) (guard : HangGuard)
     (clock : Option FakeClock := none) (seen : Nat := 0) : IO Unit := do
   if ← IO.hasFinished ended then
@@ -437,6 +492,11 @@ partial def runToEnd {α : Type} (pump : FakePump) (ended : Task α) (guard : Ha
     unless ← pump.quiescent do
       throw <| IO.userError "the fake pump still holds a completion once the run ended"
     return
+  -- The count of hands is read before the step, and the wait is for the
+  -- hand after it: a hand that lands after the step found nothing due
+  -- resolves that wait at once, where a count read after the step would
+  -- have counted it and waited for the next.
+  let handed ← pump.handed
   if ← pump.step then
     pump.runToEnd ended guard clock seen
     return
@@ -447,19 +507,19 @@ partial def runToEnd {α : Type} (pump : FakePump) (ended : Task α) (guard : Ha
         clock.advance (deadline - (← clock.now))
       pump.runToEnd ended guard (some clock) started
       return
-  let next ← pump.arrivedAt ((← pump.handed) + 1)
-  let wait ←
+  let next ← pump.arrivedAt (handed + 1)
+  let clockStart ←
     match clock with
     | some clock =>
-      clock.arrivedAt (.started (seen + 1))
+      pure [(← clock.arrivedAt (.started (seen + 1))).result?.map (sync := true) fun _ => some ()]
     | none =>
-      IO.Promise.new
+      pure []
   let expiry ← guard.expiry
   let first ←
     IO.waitAny
-        [next.result?.map (sync := true) fun _ => some (),
-          wait.result?.map (sync := true) fun _ => some (),
-          ended.map (sync := true) fun _ => some (), expiry.map (sync := true) fun _ => none]
+        ([next.result?.map (sync := true) fun _ => some (),
+            ended.map (sync := true) fun _ => some (), expiry.map (sync := true) fun _ => none] ++
+          clockStart)
   IO.cancel expiry
   let some () := first | throw <| IO.userError guard.hang
   pump.runToEnd ended guard clock seen
