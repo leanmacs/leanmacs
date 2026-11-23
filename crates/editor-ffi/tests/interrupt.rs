@@ -12,6 +12,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_ffi::events::{EventKind, QueueId, RawEvent, editor_ffi_events_next};
 use editor_ffi::interrupt::{
     editor_ffi_interrupt_key_clear, editor_ffi_interrupt_key_set, editor_ffi_interrupt_lower,
@@ -26,7 +28,8 @@ use editor_platform::{Input, Key, LogicalKey, Modifiers};
 
 /// hang guard: the next event on the editor queue; only a hang reaches the bound, and the test then fails as a hang. Each
 /// wait on it is for something that should happen at once.
-const DEADLINE: Duration = Duration::from_secs(5);
+const DEADLINE: HangGuard =
+    HangGuard::on("the next event on the editor queue", Duration::from_secs(5));
 
 /// The bytes of `words`, as they cross.
 fn buffer(words: &[u64]) -> Vec<u8> {
@@ -101,9 +104,8 @@ fn next_code() -> u64 {
         }
         let _ = done.send(raw.code);
     });
-    result
-        .recv_timeout(DEADLINE)
-        .unwrap_or_else(|_| panic!("no event reached the editor queue within {DEADLINE:?}"))
+    editor_wait::recv(&result, DEADLINE)
+        .unwrap_or_else(|_| panic!("no event reached the editor queue: {DEADLINE}"))
 }
 
 /// The whole life of the process's interrupt flag, in order.

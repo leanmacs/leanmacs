@@ -17,6 +17,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_ffi::events::{Event, EventKind, QueueId, RawEvent, editor_ffi_events_next};
 use editor_ffi::log::RawWords;
 use editor_ffi::text::editor_ffi_text_free;
@@ -31,7 +33,10 @@ use editor_platform::{Input, Key, LogicalKey, Modifiers, PhysicalKey, ScriptedPl
 /// hang guard: the next event on the editor queue, or the run's return;
 /// only a hang reaches the bound, and the test then fails as a hang. Each wait on it is for something that should
 /// happen at once.
-const DEADLINE: Duration = Duration::from_secs(5);
+const DEADLINE: HangGuard = HangGuard::on(
+    "the next event on the editor queue, or the run's return",
+    Duration::from_secs(5),
+);
 
 /// hang guard: the scripted run parks to wait for its close
 /// (`editor_ffi_window_await_parked`), in milliseconds; only a hang reaches the bound, and the test then fails as a hang.
@@ -99,9 +104,8 @@ fn next_event() -> Seen {
             stamp: raw.stamp,
         });
     });
-    result
-        .recv_timeout(DEADLINE)
-        .unwrap_or_else(|_| panic!("no event reached the editor queue within {DEADLINE:?}"))
+    editor_wait::recv(&result, DEADLINE)
+        .unwrap_or_else(|_| panic!("no event reached the editor queue: {DEADLINE}"))
 }
 
 /// Runs the window on the platform `platform` as the glue does: `Ok` when it
@@ -249,8 +253,7 @@ fn assert_arrives(expected: Vec<Seen>) {
 #[test]
 fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     // A tag that names no platform is refused with a reason, at once.
-    let refused = run(NO_PLATFORM, true)
-        .recv_timeout(DEADLINE)
+    let refused = editor_wait::recv(&run(NO_PLATFORM, true), DEADLINE)
         .expect("a refused run returns at once");
     assert!(refused.is_err_and(|reason| !reason.is_empty()));
     assert!(!editor_ffi_window_close(NO_PLATFORM));
@@ -272,7 +275,7 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     assert!(editor_ffi_window_request(SCRIPTED, 2));
     assert!(editor_ffi_window_close(SCRIPTED));
     // The recording renderer drew in it: there is no reason to give.
-    assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(None)));
+    assert_eq!(editor_wait::recv(&done, DEADLINE), Ok(Ok(None)));
     assert_eq!(asked(SCRIPTED), (0, vec![2, 9]));
     // Nothing runs now: a wait for a park can only run out.
     assert!(!editor_ffi_window_await_parked(SCRIPTED, 0));
@@ -289,7 +292,7 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     assert!(without.len() < sample(true).len());
     assert_arrives(without);
     assert!(editor_ffi_window_close(SCRIPTED));
-    assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(None)));
+    assert_eq!(editor_wait::recv(&done, DEADLINE), Ok(Ok(None)));
 
     // The scripted platform whose window nothing can draw in runs, reports
     // its sample and waits for its close all the same, and then says why
@@ -298,7 +301,7 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     assert_arrives(sample(true));
     assert!(editor_ffi_window_close(SCRIPTED_UNDRAWN));
     assert_eq!(
-        done.recv_timeout(DEADLINE),
+        editor_wait::recv(&done, DEADLINE),
         Ok(Ok(Some(SCRIPTED_NO_RENDERER.to_owned())))
     );
 
@@ -311,9 +314,8 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     assert_arrives(sample(true));
     assert_eq!(opened_with(SCRIPTED), (0, vec![1, STANDARD.into()]));
     assert!(editor_ffi_window_close(SCRIPTED));
-    assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(None)));
-    let refused = run_with(SCRIPTED, true, 2)
-        .recv_timeout(DEADLINE)
+    assert_eq!(editor_wait::recv(&done, DEADLINE), Ok(Ok(None)));
+    let refused = editor_wait::recv(&run_with(SCRIPTED, true, 2), DEADLINE)
         .expect("a refused run returns at once");
     assert!(refused.is_err_and(|reason| !reason.is_empty()));
     assert_eq!(opened_with(SCRIPTED), (0, vec![1, STANDARD.into()]));
@@ -325,8 +327,7 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     // The scripted platform that cannot open a window is refused with its
     // reason, at once and on every run, and a close of it does nothing.
     for _ in 0..2 {
-        let refused = run(SCRIPTED_FAILING, true)
-            .recv_timeout(DEADLINE)
+        let refused = editor_wait::recv(&run(SCRIPTED_FAILING, true), DEADLINE)
             .expect("a run that cannot open returns at once");
         assert_eq!(refused, Err(SCRIPTED_FAILURE.to_owned()));
         assert!(editor_ffi_window_close(SCRIPTED_FAILING));
@@ -337,7 +338,7 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     let done = run(SCRIPTED, true);
     assert_arrives(sample(true));
     assert!(editor_ffi_window_close(SCRIPTED));
-    assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(None)));
+    assert_eq!(editor_wait::recv(&done, DEADLINE), Ok(Ok(None)));
 
     // An input posted as a window would report it arrives on the editor
     // queue as the window's event, stamped on the input clock; malformed

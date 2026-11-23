@@ -10,6 +10,8 @@ use std::mem::MaybeUninit;
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
+
+use editor_wait::HangGuard;
 use std::{slice, thread};
 
 use editor_ffi::events::{EventKind, QueueId, RawEvent, SourceKind, editor_ffi_events_next};
@@ -22,7 +24,10 @@ use editor_ffi::text::editor_ffi_text_free;
 /// hang guard: each event a test waits for with it, a completion on the
 /// queue or a child's end, which must come; only a hang reaches the bound,
 /// and the check then fails as a hang.
-pub const DEADLINE: Duration = Duration::from_secs(10);
+pub const DEADLINE: HangGuard = HangGuard::on(
+    "a completion on the completion queue",
+    Duration::from_secs(10),
+);
 
 /// A limit no output of the tests is over.
 pub const ROOMY: u64 = 1 << 20;
@@ -55,9 +60,8 @@ pub fn next_completion() -> Seen {
             raw.code,
         ));
     });
-    result
-        .recv_timeout(DEADLINE)
-        .unwrap_or_else(|_| panic!("no event reached the completion queue within {DEADLINE:?}"))
+    editor_wait::recv(&result, DEADLINE)
+        .unwrap_or_else(|_| panic!("no event reached the completion queue: {DEADLINE}"))
 }
 
 /// The completion of the run `id`, as it should arrive.

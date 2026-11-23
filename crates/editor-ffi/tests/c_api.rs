@@ -14,6 +14,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_ffi::counter::{
     Counter, editor_ffi_counter_free, editor_ffi_counter_increment, editor_ffi_counter_live,
     editor_ffi_counter_new,
@@ -33,7 +35,8 @@ use editor_ffi::text::{ByteRange, editor_ffi_text_find, editor_ffi_text_free};
 /// hang guard: the event each wait here ends on; only a hang reaches the
 /// bound, and the test then fails as a hang. How long a test waits for
 /// something that should happen at once: only broken code takes this long.
-const DEADLINE: Duration = Duration::from_secs(5);
+const DEADLINE: HangGuard =
+    HangGuard::on("the event each wait here ends on", Duration::from_secs(5));
 
 /// hang guard: as [`DEADLINE`], in milliseconds, as the C functions take
 /// it.
@@ -108,9 +111,8 @@ fn within_deadline<T: Send + 'static>(what: &str, call: impl FnOnce() -> T + Sen
     thread::spawn(move || {
         let _ = done.send(call());
     });
-    result
-        .recv_timeout(DEADLINE)
-        .unwrap_or_else(|_| panic!("{what} did not return within {DEADLINE:?}"))
+    editor_wait::recv(&result, DEADLINE)
+        .unwrap_or_else(|_| panic!("{what} did not return: {DEADLINE}"))
 }
 
 /// One pull from the queue `queue`, bounded by the deadline.
@@ -124,7 +126,7 @@ fn next(queue: u8) -> Option<Event> {
 fn wait_for_parked(queue: u8, pulls: u64) {
     assert!(
         editor_ffi_events_await_waiting(queue, pulls, DEADLINE_MS),
-        "{pulls} pulls were not parked on queue {queue} after {DEADLINE:?}"
+        "{pulls} pulls were not parked on queue {queue}: {DEADLINE}"
     );
 }
 
@@ -162,7 +164,7 @@ fn freed_on_another_thread(kind: u8, target: u64, free: impl FnOnce() + Send + '
     let freeing = thread::spawn(free);
     assert!(
         editor_ffi_live_await(kind, target, DEADLINE_MS),
-        "the count of kind {kind} did not come down to {target} after {DEADLINE:?}"
+        "the count of kind {kind} did not come down to {target}: {DEADLINE}"
     );
     freeing.join().expect("the free's thread");
 }
@@ -408,9 +410,7 @@ fn the_process_wide_queues_carry_events_until_they_are_quit() {
     assert_eq!(editor_ffi_events_waiting(EDITOR), 0);
     assert!(post(COMPLETION, 1, 2, "wake"));
     assert_eq!(
-        parked
-            .recv_timeout(DEADLINE)
-            .expect("the parked pull returns"),
+        editor_wait::recv(&parked, DEADLINE).expect("the parked pull returns"),
         Some(message(SourceKind::Lean, 1, 2, "wake"))
     );
 

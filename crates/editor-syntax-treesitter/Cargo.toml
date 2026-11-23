@@ -155,3 +155,7 @@ tree-sitter-toml-ng = { version = "=0.7.0" }
 # - A git dependency on upstream: it would make a fetch from GitHub part of
 #   a `--locked` build.
 tree-sitter-lean = { path = "../../vendor/tree-sitter-lean", version = "=0.2.0" }
+
+[dev-dependencies]
+# The stopwatch the `round` example times a parse with.
+editor-wait = { path = "../editor-wait" }

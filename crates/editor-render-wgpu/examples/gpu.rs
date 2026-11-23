@@ -51,7 +51,9 @@
 
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use editor_wait::Stopwatch;
 
 use editor_layout::face::Color;
 use editor_layout::frame::Frame;
@@ -92,11 +94,7 @@ fn on_this_machine(settings: Settings) -> Result<WgpuRenderer, NoAdapter> {
 
 /// What `run` gave, and how long it took.
 fn timed<T>(run: impl FnOnce() -> T) -> (T, Duration) {
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "this example is the one place a draw on a real adapter is timed, for a person to read; the times are printed and never asserted, and editor-render publishes no real clock"
-    )]
-    let start = Instant::now();
+    let start = Stopwatch::start("a draw on a real adapter");
     let value = run();
     // real time under test: how long the draw took, printed for a person
     // and never asserted.

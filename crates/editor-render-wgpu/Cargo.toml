@@ -65,6 +65,8 @@ pollster = "=1.0.1"
 png = "=0.18.1"
 
 [dev-dependencies]
+# The stopwatch the `gpu` example times a draw with (`editor_wait::Stopwatch`).
+editor-wait = { path = "../editor-wait" }
 # wgpu's no-op back end, for this crate's own tests and no other build:
 # it validates every call and draws nothing, so the gate checks the
 # shader, the pipeline and every draw on a machine with no GPU.

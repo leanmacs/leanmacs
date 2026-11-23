@@ -12,9 +12,9 @@
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use editor_wait::HangGuard;
+use editor_wait::{HangGuard, Stopwatch};
 
 use editor_syntax::clock::{Clock, ManualClock};
 use editor_syntax::fake::{GRAMMAR, Parens, ParensParser};
@@ -175,7 +175,7 @@ fn the_loop_refreshes_a_quiet_text_once_the_clock_passes_the_interval_and_it_is_
 
 /// A clock that moves by itself: the milliseconds since it was made, on
 /// the platform's monotonic clock, as the job clock is.
-struct Monotonic(Instant);
+struct Monotonic(Stopwatch);
 
 impl Clock for Monotonic {
     fn now_ms(&self) -> u64 {
@@ -198,7 +198,7 @@ fn the_loop_parked_until_a_deadline_refreshes_the_text_when_it_passes_with_no_wa
     let session = Arc::new(Session::new(&Parens, GrammarName::new(GRAMMAR), source).unwrap());
     let worker = Worker::new(
         Arc::new(Parens),
-        Arc::new(Monotonic(Instant::now())),
+        Arc::new(Monotonic(Stopwatch::start("the refresh deadline"))),
         REAL_REFRESH_AFTER,
     );
     let handle = worker.handle();

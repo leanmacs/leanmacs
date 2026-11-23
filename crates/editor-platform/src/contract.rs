@@ -562,6 +562,7 @@ where
 mod tests {
     use super::*;
     use crate::{Resize, ScriptedPlatform};
+    use editor_wait::Stopwatch;
 
     /// hang guard: the run's reports and its return once asked to close;
     /// only a hang reaches the bound, and the check then fails as a hang. No
@@ -1174,7 +1175,7 @@ mod tests {
         let platform = Arc::new(ScriptedPlatform::sample());
         let settle = HangGuard::held("the run left alone", Duration::from_millis(30));
         let check = Check::new(WindowOptions::default(), GENEROUS).settling_for(settle);
-        let began = Instant::now();
+        let began = Stopwatch::start("the settling time");
 
         let runner = check.clone();
         thread::spawn(move || runner.run(&*platform));
@@ -1363,7 +1364,7 @@ mod tests {
     #[test]
     fn a_platform_that_ignores_a_close_is_refused_at_the_bound_and_the_check_does_not_hang() {
         let platform = Arc::new(Deaf::default());
-        let began = Instant::now();
+        let began = Stopwatch::start("the platform's whole bound");
 
         let verdict = check(Arc::clone(&platform), WindowOptions::default(), SHORT);
 

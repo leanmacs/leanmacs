@@ -10,6 +10,8 @@ use std::mem::MaybeUninit;
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
+
+use editor_wait::HangGuard;
 use std::{slice, thread};
 
 use editor_ffi::events::{EventKind, QueueId, RawEvent, SourceKind, editor_ffi_events_next};
@@ -21,7 +23,8 @@ use editor_ffi::watches::{
 
 /// hang guard: the next completion or event; only a hang reaches the bound, and the test then fails as a hang.
 /// Each wait on it is for something that should happen at once.
-pub const DEADLINE: Duration = Duration::from_secs(10);
+pub const DEADLINE: HangGuard =
+    HangGuard::on("the next completion or event", Duration::from_secs(10));
 
 /// What one event of the completion queue says: its source's kind and id,
 /// its kind and its code.
@@ -51,9 +54,8 @@ pub fn next_completion() -> Seen {
             raw.code,
         ));
     });
-    result
-        .recv_timeout(DEADLINE)
-        .unwrap_or_else(|_| panic!("no event reached the completion queue within {DEADLINE:?}"))
+    editor_wait::recv(&result, DEADLINE)
+        .unwrap_or_else(|_| panic!("no event reached the completion queue: {DEADLINE}"))
 }
 
 /// The completion of the wait `id`, as it should arrive.

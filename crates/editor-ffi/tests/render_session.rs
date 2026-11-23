@@ -27,6 +27,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_ffi::display::{Display, WireFace, WireScene};
 use editor_ffi::events::{EventKind, Queue};
 use editor_ffi::interrupt::Interrupt;
@@ -48,7 +50,10 @@ use editor_render::port::{DrawRequest, Drawn, Renderer, Target};
 
 /// hang guard: a word from another thread, a draw asked of the renderer or
 /// a run's return; only a hang reaches the bound, and the test then fails as a hang.
-const BOUND: Duration = Duration::from_secs(10);
+const BOUND: HangGuard = HangGuard::on(
+    "a word from another thread, a draw asked of the renderer or the run's return",
+    Duration::from_secs(10),
+);
 
 /// A long time on the loop's clock: longer than the loop waits between two
 /// draws, whatever its interval.
@@ -168,9 +173,7 @@ impl Rig {
     /// The next thing a renderer says; panics if it says nothing by the
     /// bound.
     fn next_word(&self) -> Word {
-        self.words
-            .recv_timeout(BOUND)
-            .expect("the renderer says its next thing")
+        editor_wait::recv(&self.words, BOUND).expect("the renderer says its next thing")
     }
 }
 
@@ -191,10 +194,7 @@ fn publishing_at_open(rig: &Rig, frame: Arc<Frame>, draws: Receiver<()>) -> Draw
         if opened {
             let handle = session.handle().expect("an open window has a loop");
             handle.submit(Arc::clone(&frame), None);
-            draws
-                .lock()
-                .expect("nothing panics holding it")
-                .recv_timeout(BOUND)
+            editor_wait::recv(&draws.lock().expect("nothing panics holding it"), BOUND)
                 .expect("the frame is drawn");
             clock.advance(LONG);
         }
@@ -233,9 +233,7 @@ fn kinds(queue: &Arc<Queue>, count: usize) -> Vec<EventKind> {
     });
     (0..count)
         .map(|_| {
-            events
-                .recv_timeout(BOUND)
-                .expect("the window's next event reaches the queue")
+            editor_wait::recv(&events, BOUND).expect("the window's next event reaches the queue")
         })
         .collect()
 }
@@ -269,7 +267,7 @@ fn the_scripted_window_draws_once_for_its_frame_and_once_for_its_resize() {
     // loop's clock moves on a long way and nothing is asked.
     rig.clock.advance(LONG);
     platform.close();
-    let (result, _) = done.recv_timeout(BOUND).expect("the run returns");
+    let (result, _) = editor_wait::recv(&done, BOUND).expect("the run returns");
     assert_eq!(result, Ok(()));
     // The next thing the renderer says is that it was dropped: there was no
     // third draw.
@@ -302,7 +300,7 @@ fn when_the_window_closes_the_render_thread_has_ended_and_the_renderer_is_droppe
     assert_eq!(kinds(&queue, 1), [EventKind::WindowOpened]);
     platform.close();
 
-    let (result, window_thread) = done.recv_timeout(BOUND).expect("the run returns");
+    let (result, window_thread) = editor_wait::recv(&done, BOUND).expect("the run returns");
     assert_eq!(result, Ok(()));
     // The renderer was given back by the loop, so the loop had returned and
     // its thread was at its end; and it was dropped on the thread that ran
@@ -409,7 +407,7 @@ fn a_render_thread_that_panicked_is_a_reason_and_the_window_still_closes() {
     assert_eq!(session.failure(), None);
     // The draw panics, on the render thread.
     handle.submit(frame_of("one"), None);
-    draws.recv_timeout(BOUND).expect("the renderer is asked");
+    editor_wait::recv(&draws, BOUND).expect("the renderer is asked");
     // Closing waits for that thread all the same, and neither hangs nor
     // panics here.
     drawer(Canvas::Closing);
@@ -442,7 +440,7 @@ fn a_factory_that_fails_leaves_a_window_that_runs_and_a_reason() {
         ]
     );
     platform.close();
-    let (result, _) = done.recv_timeout(BOUND).expect("the run returns");
+    let (result, _) = editor_wait::recv(&done, BOUND).expect("the run returns");
     assert_eq!(result, Ok(()));
     // Nothing draws in it, and the session says why.
     assert!(session.handle().is_none());
@@ -490,7 +488,7 @@ fn a_published_scenes_title_reaches_the_scripted_window_as_the_title_it_sets_onc
     publish_titled(&display, "notes.txt");
     publish_titled(&display, "todo.txt");
     platform.close();
-    let (result, _) = done.recv_timeout(BOUND).expect("the run returns");
+    let (result, _) = editor_wait::recv(&done, BOUND).expect("the run returns");
     assert_eq!(result, Ok(()));
 
     // The frames' ground, the base paper since no face sets one, goes
@@ -572,7 +570,7 @@ fn a_published_scenes_paper_reaches_the_scripted_window_as_its_background_after_
     publish_on(&display, light);
     let shown = platform.shown().background;
     platform.close();
-    let (result, _) = done.recv_timeout(BOUND).expect("the run returns");
+    let (result, _) = editor_wait::recv(&done, BOUND).expect("the run returns");
     assert_eq!(result, Ok(()));
 
     assert_eq!(
@@ -639,7 +637,7 @@ fn a_published_scenes_menu_reaches_the_scripted_window_as_one_request_for_each_c
     publish_menu(&display, Some(menu_titled("Edit")));
     let shown = platform.shown().menu;
     platform.close();
-    let (result, _) = done.recv_timeout(BOUND).expect("the run returns");
+    let (result, _) = editor_wait::recv(&done, BOUND).expect("the run returns");
     assert_eq!(result, Ok(()));
 
     assert_eq!(

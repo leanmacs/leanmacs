@@ -24,7 +24,9 @@
 
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use editor_wait::Stopwatch;
 
 use editor_syntax::{GrammarName, Latest, Session, Source, Syntax};
 use editor_syntax_treesitter::TreeSitter;
@@ -109,7 +111,7 @@ fn main() -> ExitCode {
         session.policy()
     );
 
-    let start = Instant::now();
+    let start = Stopwatch::start("the first parse");
     session.touch(Revision::new(0));
     session.parse_once(&TreeSitter);
     // real time under test: the first parse's time, printed and never
@@ -137,12 +139,12 @@ fn main() -> ExitCode {
             text.current().revision()
         };
         session.touch(revision);
-        let start = Instant::now();
+        let start = Stopwatch::start("a round's parse");
         session.parse_once(&TreeSitter);
         // real time under test: each round's and each refresh's time,
         // printed and never asserted.
         rounds.push(start.elapsed());
-        let start = Instant::now();
+        let start = Stopwatch::start("a refresh");
         session.refresh_once(&TreeSitter);
         // real time under test: as above, the refresh's.
         refreshes.push(start.elapsed());

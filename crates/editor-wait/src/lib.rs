@@ -53,8 +53,9 @@
 //! The crate owns the bounded primitives a test waits with: a channel's
 //! receive ([`recv`]), a Condvar's wait while a condition holds
 //! ([`wait_while`]), a guard's deadline and what is left of it
-//! ([`HangGuard::deadline`], [`HangGuard::start`], [`Deadline::rest`]), and
-//! real time's sleep ([`RealTime::sleep`]). `mise run lint` bans std's raw
+//! ([`HangGuard::deadline`], [`HangGuard::start`], [`Deadline::rest`]),
+//! real time's sleep ([`RealTime::sleep`]) and real time measured from a
+//! start ([`Stopwatch`]). `mise run lint` bans std's raw
 //! timed primitives everywhere else (the root `clippy.toml` and each
 //! crate's), so these wrappers are where a time bound meets the clock.
 //!
@@ -242,6 +243,39 @@ impl RealTime {
     /// Sleeps for the span: the one sleep of the tests.
     pub fn sleep(self) {
         std::thread::sleep(self.span);
+    }
+}
+
+/// Real time measured from a start, which is itself under test: a clock
+/// that moves by itself for a test of a real clock's deadline, or a timing
+/// that is the subject, measured and printed or held to a lower bound.
+/// Built by [`start`](Self::start); nothing else makes one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stopwatch {
+    /// The timing that is the subject.
+    timing: &'static str,
+    /// When it started, on the monotonic clock.
+    started: Instant,
+}
+
+impl Stopwatch {
+    /// A stopwatch of `timing`, the timing that is the subject, started
+    /// now.
+    pub fn start(timing: &'static str) -> Self {
+        Self {
+            timing,
+            started: now(),
+        }
+    }
+
+    /// The timing that is the subject.
+    pub const fn timing(&self) -> &'static str {
+        self.timing
+    }
+
+    /// The real time since it started.
+    pub fn elapsed(&self) -> Duration {
+        self.started.elapsed()
     }
 }
 
@@ -485,6 +519,17 @@ mod tests {
         let (set, ended) = wait_while(&flag.1, lock, DEADLINE, |set| !*set);
         assert!(ended);
         assert!(*set);
+    }
+
+    #[test]
+    fn a_stopwatch_names_its_timing_and_measures_at_least_the_real_time_slept() {
+        const SPAN: RealTime = RealTime::under("a sleep, measured", Duration::from_millis(2));
+        let stopwatch = Stopwatch::start("a sleep");
+        assert_eq!(stopwatch.timing(), "a sleep");
+        SPAN.sleep();
+        // real time under test: a lower bound, which load only makes
+        // surer.
+        assert!(stopwatch.elapsed() >= SPAN.span());
     }
 
     #[test]

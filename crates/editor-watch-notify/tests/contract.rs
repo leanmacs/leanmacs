@@ -8,9 +8,9 @@
 
 use std::path::Path;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use editor_wait::HangGuard;
+use editor_wait::{HangGuard, Stopwatch};
 
 use editor_watch::clock::Clock;
 use editor_watch::contract::{self, Ground};
@@ -32,14 +32,17 @@ const DEADLINE: HangGuard = HangGuard::on(
 #[derive(Debug, Default, Clone)]
 struct Monotonic {
     /// When the clock was first read.
-    began: std::sync::Arc<OnceLock<Instant>>,
+    began: std::sync::Arc<OnceLock<Stopwatch>>,
 }
 
 impl Clock for Monotonic {
     fn now_ms(&self) -> u64 {
         // real time under test: the service's coalescing window, which
         // passes on this clock.
-        let elapsed = self.began.get_or_init(Instant::now).elapsed();
+        let elapsed = self
+            .began
+            .get_or_init(|| Stopwatch::start("the service's coalescing window"))
+            .elapsed();
         u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
     }
 }

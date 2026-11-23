@@ -640,6 +640,7 @@ dependencies = [
  "editor-raster",
  "editor-render",
  "editor-shape-parley",
+ "editor-wait",
  "etagere",
  "png",
  "pollster",
@@ -690,6 +691,7 @@ version = "0.1.0"
 dependencies = [
  "editor-syntax",
  "editor-text",
+ "editor-wait",
  "tree-sitter",
  "tree-sitter-json",
  "tree-sitter-lean",

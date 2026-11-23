@@ -12,6 +12,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use editor_wait::HangGuard;
+
 use editor_ffi::events::{
     EventKind, QueueId, RawEvent, SourceKind, editor_ffi_events_next, editor_ffi_events_waiting,
 };
@@ -23,7 +25,7 @@ use editor_ffi::timers::{
 
 /// hang guard: the next completion; only a hang reaches the bound, and the test then fails as a hang. Each
 /// wait on it is for something that should happen at once.
-const DEADLINE: Duration = Duration::from_secs(5);
+const DEADLINE: HangGuard = HangGuard::on("the next completion", Duration::from_secs(5));
 
 /// The tag of the completion queue.
 const COMPLETION: u8 = QueueId::Completion.tag();
@@ -57,9 +59,8 @@ fn next_completion() -> Seen {
             raw.text_len == 0,
         ));
     });
-    result
-        .recv_timeout(DEADLINE)
-        .unwrap_or_else(|_| panic!("no event reached the completion queue within {DEADLINE:?}"))
+    editor_wait::recv(&result, DEADLINE)
+        .unwrap_or_else(|_| panic!("no event reached the completion queue: {DEADLINE}"))
 }
 
 /// The completion of the timer request `id`, as it should arrive.

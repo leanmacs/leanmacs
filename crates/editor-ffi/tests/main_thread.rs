@@ -6,8 +6,11 @@
 //! process's own main thread. `main` below is on it.
 
 use std::process::exit;
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+
+use editor_wait::HangGuard;
 
 use editor_ffi::main_thread::{
     editor_ffi_is_main_thread, editor_ffi_main_thread_open, editor_ffi_main_thread_probe,
@@ -18,13 +21,21 @@ use editor_ffi::main_thread::{
 /// process before the watchdog wakes; only a hang reaches the bound, and the test then fails as a hang. It is how long the whole test
 /// may take: the service loop never returns, so a probe that is never
 /// answered would otherwise hang `cargo test`.
-const LIMIT: Duration = Duration::from_secs(30);
+const LIMIT: HangGuard = HangGuard::on(
+    "every probe answered and `main` ending the process",
+    Duration::from_secs(30),
+);
 
 fn main() {
-    thread::spawn(|| {
-        thread::sleep(LIMIT);
-        eprintln!("main_thread: no result after {LIMIT:?}");
-        exit(2);
+    // The watchdog waits on a channel nothing sends on: `main` holds its
+    // sender while it serves, which never returns, and the process ends by
+    // `exit`, so only the guard ends the wait.
+    let (_held, watched) = mpsc::channel::<()>();
+    thread::spawn(move || {
+        if editor_wait::recv(&watched, LIMIT).is_err_and(|missed| missed.is_hang()) {
+            eprintln!("main_thread: {LIMIT}");
+            exit(2);
+        }
     });
 
     assert!(

@@ -3591,8 +3591,11 @@ mod streaming {
                 // hang guard: the read's completion, which the child's end
                 // brings; only a hang reaches the bound, and the order
                 // asserted below then fails.
-                let after_read = after_read.lock().unwrap_or_else(PoisonError::into_inner);
-                editor_wait::recv(&after_read, DEADLINE).ok();
+                editor_wait::recv(
+                    &after_read.lock().unwrap_or_else(PoisonError::into_inner),
+                    DEADLINE,
+                )
+                .ok();
             }
             sender
                 .lock()

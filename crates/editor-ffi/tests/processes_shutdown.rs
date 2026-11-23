@@ -50,7 +50,7 @@ fn written(path: &Path) -> Option<u32> {
     };
     // hang guard: the child's `echo` opening the FIFO and closing it; only
     // a hang reaches the bound, and the check then fails as a hang.
-    let text = read.recv_timeout(DEADLINE).unwrap_or_else(|_| {
+    let text = editor_wait::recv(&read, DEADLINE).unwrap_or_else(|_| {
         // The child never opened it: open its write end, without waiting
         // for a reader, so a reader still waiting in its open ends with
         // nothing read.
@@ -124,7 +124,7 @@ fn after_shutdown_the_child_is_reaped_its_grandchild_ends_and_a_later_run_is_ref
     // exit event, the launcher's own wait for a process's end.
     // hang guard: the grandchild's exit; only a hang reaches the bound, and
     // the check then fails as a hang.
-    let guard = u64::try_from(DEADLINE.as_millis()).unwrap_or(u64::MAX);
+    let guard = u64::try_from(DEADLINE.bound().as_millis()).unwrap_or(u64::MAX);
     assert_eq!(
         StdPids.wait_exit(LaunchPid(grandchild), guard),
         Waited::Exited,
