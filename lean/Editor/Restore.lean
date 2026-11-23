@@ -251,8 +251,8 @@ def Order.path (order : Order) : String :=
 /-- What `reply`, the reply to `order`'s request, says of the order: its path
 and why it failed, in `FileError.describe`'s words, as the model driver says
 it (`Loop.Driver.journaled`); `none` once it was worked. For a journal that
-hands its orders through handles (`Job.Services.fileWorked`), as the restore
-checks' does. -/
+works its orders and reads each reply, as the journal's recording fake does
+(`Headless.RecordingJournal`). -/
 def Order.failed (order : Order) (reply : order.request.Reply) : Option (String × String) :=
   (order.request.refusal reply).map fun error => (order.path, error.describe)
 

@@ -2,6 +2,7 @@ import ContractTest.Check
 import ContractTest.Support.FileHold
 import Editor.Api
 import Editor.Ffi.Files
+import Editor.Headless.Journal.Real
 import Editor.InputScheme.Test
 import Editor.Loop
 import Editor.Test.Linked.Rig
@@ -14,39 +15,44 @@ import FilesApiTest.Fake
 
 The tests of session restore over the real bindings: `restoreRunChecks`,
 with the library's text store and file service in a temporary directory,
-through a restart: typing is journalled by the file service, each order a
-file request with a task of its reply (`Job.Services.fileWorked`), which the
-checks drop, and a second loop restores it; and two tabs, the first split,
-come back. The host's own journal hands its orders unobserved instead, for
-its editor-thread cost (`Headless.Journal.real`, `docs/design/concurrency.md`,
-"The session journal"); a check pays no such cost, so these hand theirs
-through handles and read their own tasks, never a count of the service's.
+through a restart: typing is journalled by the file service and a second
+loop restores it; and two tabs, the first split, come back. The orders go
+through the host's own journal, the port `Headless.Journal`
+(`Editor/Headless/Journal.lean`) and its real adapter `Headless.Journal.real`
+(`Editor/Headless/Journal/Real.lean`), as the executable's hosts hand them:
+each an unobserved request of the file service, its drain a flush of that
+service (`docs/design/concurrency.md`, "The session journal"). The checks
+wrap it (`ownedJournal`) so that each order is followed by a drain of the
+journal asked at once, the order's own signal, kept for the check to wait
+on; they never read a count of the service's.
 
 A restore check's directory is removed only once its journal has drained
-(`withJournalledDirectory`, over the checks' `Journal` port): the second
-loop hands the stale index's remove to the file service as its last order,
-and nothing else waits for it, so without the drain that remove can land
-while the directory is being removed, which then fails with ENOENT. The
-first two checks run one contract of the port (`drainsBeforeRemoval`) on the
-journal that holds its orders (`HeldJournal`) and on the real one
-(`Journal.real`), whose drain, a flush of the file service, is what keeps
-the race out; the real case holds the file service's worker with its
-in-process hold (`FileHold`) and releases it right after the drain asks for
-its flush, so a drain that does not flush never releases it and finds the
-remove unworked every time. That flush is the check's own signal, not an
-inference: the worker is held, the drain asks its own flush, and what the
-case reads as left is how many of the orders' tasks it handed have not
-ended. The third pins the drain when the body throws; the fourth that a
-journal that does not drain fails the check.
+(`withJournalledDirectory`): the second loop hands the stale index's remove
+to the file service as its last order, and nothing else waits for it, so
+without the drain that remove can land while the directory is being
+removed, which then fails with ENOENT. The first two checks run one
+property of the scaffold (`drainsBeforeRemoval`) on a journal that holds its
+orders (`HeldJournal`) and on the real one (`ownedJournal`), whose drain, a
+flush of the file service, is what keeps the race out; the real case holds
+the file service's worker with its in-process hold (`FileHold`) and
+releases it right after the drain asks for its flush, so a drain that does
+not flush never releases it and finds the remove unworked every time. That
+flush is the check's own signal, not an inference: the worker is held, the
+drain asks its own flush, and what the case reads as left is how many of
+the orders' own drains have not ended. The third pins the drain when the
+body throws; the fourth that a journal that does not drain fails the check.
+The held journal is the scaffold's alone: it works its orders on the real
+directory the scaffold removes, which the port's recording fake
+(`RecordingJournal`), over a model of files, does not touch.
 
-The typing and two-tabs restores wait on their own orders: `runRestoring`
-keeps each order's task, and the wait before the second loop and the
-directory's drain are `ownDrained`, a wait on those tasks, never on the
+The typing and two-tabs restores wait on their own orders: `ownedJournal`
+keeps each order's own drain, and the wait before the second loop and the
+directory's drain are `ownDrained`, a wait on those, never on the
 process-wide service. And the stale-index remove's order is forced
 (`tabsHeldAtStaleRemove`): as the second loop hands it, the worker is held,
 so it is queued behind the hold; the teardown's drain then runs, and what
 it saw is read before the directory goes. On the flush and on the orders'
-own tasks the remove has been worked when the drain returns; on the old
+own drains the remove has been worked when the drain returns; on the old
 wait for the service's pending count, reconstructed (`pendingDrained`,
 row W85 of `docs/dev-practices/inferred-waits.md`), the wait runs out with
 the file still there and its remove unended, the order in which the
@@ -102,43 +108,30 @@ def restoreKeys : Loop.Keys TestScheme.scheme :=
         | _ => none
     registered := { jobs := fun name => restoreJobs.any (·.name == name) } }
 
-/-- What a restore check hands the journal's orders to, and how it waits
-until every order handed is worked. -/
-structure Journal where
-  /-- Hands one order to be worked, without waiting for it, and returns the
-  task of what it came to: `none` once worked, or its path and why it
-  failed. A caller that does not need it drops it. -/
-  perform : Restore.Order → IO (Task (Option (String × String)))
-  /-- Waits until every order handed to `perform` has been worked; `false`
-  if that does not happen within `patience`. -/
-  drained : IO Bool
-
-/-- Flushes the library's file service through `services`, runs `asked` once
-the flush is asked, and says whether the flush was completed: the service
-works requests in order, so every order handed to it before has been worked
-by then. The wait is bounded by `patience` only as a guard against a hang. -/
-def filesDrained (services : Job.Services) (asked : IO Unit := pure ()) : IO Bool := do
-  let flushed ← services.flushed .files
+/-- Asks `journal` to drain, runs `asked` once the drain is asked, and says
+whether it ended `true`: the file service works requests in order, so every
+order handed to it before has been worked by then. The wait is bounded by
+`patience` only as a guard against a hang. -/
+def journalDrained (journal : Headless.Journal) (asked : IO Unit := pure ()) : IO Bool := do
+  let drained ← journal.drained
   asked
-  return (← Job.awaitWithin patience flushed) == some .completed
+  return (← Job.awaitWithin patience drained) == some true
 
-/-- The checks' journal over the library's file service: each order a file
-request with a task of its reply (`Job.Services.fileWorked`), each task kept
-in `handed`, oldest first; its drain is a flush of the service
-(`filesDrained`), as the host's journal's is (`Headless.Journal.real`, whose
-module reaches the elaborator, which this executable does not link), and
-`asked` runs once the flush is asked. -/
-def Journal.real (rig : ProjectRig) (handed : IO.Ref (Array (Task (Option (String × String)))))
-    (asked : IO Unit := pure ()) : Journal :=
-  { perform := fun order => do
-      let worked ← rig.services.fileWorked order.request
-      let task := worked.map (sync := true) order.failed
-      handed.modify (·.push task)
-      return task
-    drained := filesDrained rig.services asked }
+/-- The host's journal over the library's file service
+(`Headless.Journal.real`), the texts' snapshots read from `rig`'s table and
+its drain a flush through `rig`'s services, with each order followed by a
+drain of the journal asked at once, kept in `handed`, oldest first: the
+order's own signal, which ends once the order has been worked. -/
+def ownedJournal (rig : ProjectRig) (handed : IO.Ref (Array (Task Bool))) : Headless.Journal :=
+  let journal := Headless.Journal.real rig.published.reader rig.services
+  { journal with
+    perform := fun order => do
+      journal.perform order
+      let own ← journal.drained
+      handed.modify (·.push own) }
 
 /-- How many of `handed`'s tasks have not ended, each read once. -/
-def unended (handed : IO.Ref (Array (Task (Option (String × String))))) : IO Nat := do
+def unended (handed : IO.Ref (Array (Task Bool))) : IO Nat := do
   let tasks ← handed.get
   return (← tasks.filterM fun task => return !(← IO.hasFinished task)).size
 
@@ -155,12 +148,10 @@ structure HeldJournal where
 def HeldJournal.new : IO HeldJournal :=
   return { held := ← IO.mkRef #[], events := ← IO.mkRef #[] }
 
-/-- The `Journal` port over `held`. An order's task ends at once, saying
-nothing: no check reads it, and what this journal holds is `held`. -/
-def HeldJournal.journal (held : HeldJournal) : Journal :=
-  { perform := fun order => do
-      held.held.modify (·.push order)
-      return .pure none
+/-- The journal's port (`Headless.Journal`) over `held`: an order is held,
+and the drain works every order held, then ends at once. -/
+def HeldJournal.journal (held : HeldJournal) : Headless.Journal :=
+  { perform := fun order => held.held.modify (·.push order)
     drained := do
       for order in ← held.held.swap #[] do
         match order.request with
@@ -173,7 +164,7 @@ def HeldJournal.journal (held : HeldJournal) : Journal :=
           held.events.modify (·.push s!"worked append {path}")
         | _ =>
           pure ()
-      return true }
+      return .pure true }
 
 /-- Runs `body` in a fresh temporary directory, then waits for the journal
 to drain (`drained`) before the directory is removed, even when `body`
@@ -188,23 +179,25 @@ def withJournalledDirectory (drained : IO Bool) (body : System.FilePath → IO B
             emptied.set (← drained))
     return held && (← emptied.get)
 
-/-- The contract of the `Journal` port, which `HeldJournal.journal` and
-`Journal.real` both keep: run under `withJournalledDirectory`, a remove the
-body hands out for a file that exists is worked by the time `drained`
-returns, before the directory goes, and the journal then holds nothing. The
-scaffold returns true, nothing throws, and the directory is gone after.
+/-- What the scaffold keeps of a journal, which `HeldJournal.journal` and
+`ownedJournal` both keep: run under `withJournalledDirectory`, a remove the
+body hands out for a file that exists is worked by the time the journal's
+drain returns (`journalDrained`), before the directory goes, and the
+journal then holds nothing. The scaffold returns true, nothing throws, and
+the directory is gone after.
 
 `hold` runs in the directory before the remove is handed out (the real case
-holds the file service's worker with it); `left` counts what the journal
-still holds, read as `drained` returns; `settle` runs after that read, before
-the directory goes, so a failing journal still leaves nothing in flight.
-Throws, saying what it saw, when the property fails. -/
-def drainsBeforeRemoval (journal : Journal) (hold : System.FilePath → IO Unit) (left : IO Nat)
-    (settle : IO Unit) : IO Bool := do
+holds the file service's worker with it); `asked` runs once the drain is
+asked (the real case lets the worker go there); `left` counts what the
+journal still holds, read as the drain returns; `settle` runs after that
+read, before the directory goes, so a failing journal still leaves nothing
+in flight. Throws, saying what it saw, when the property fails. -/
+def drainsBeforeRemoval (journal : Headless.Journal) (hold : System.FilePath → IO Unit)
+    (left : IO Nat) (settle : IO Unit) (asked : IO Unit := pure ()) : IO Bool := do
   let used ← IO.mkRef (none : Option System.FilePath)
   let seen ← IO.mkRef (none : Option (Bool × Nat))
   let drained := do
-    let emptied ← journal.drained
+    let emptied ← journalDrained journal asked
     if let some directory← used.get then
       seen.set (some (← (directory / "session-1.json").pathExists, ← left))
     settle
@@ -214,7 +207,7 @@ def drainsBeforeRemoval (journal : Journal) (hold : System.FilePath → IO Unit)
         let stale := directory / "session-1.json"
         IO.FS.writeFile stale "{}"
         hold directory
-        discard <| journal.perform { request := .remove stale }
+        journal.perform { request := .remove stale }
         used.set (some directory)
         return true
   let some directory ← used.get | return false
@@ -226,12 +219,12 @@ def drainsBeforeRemoval (journal : Journal) (hold : System.FilePath → IO Unit)
           s!"the scaffold returned {held}; when the drain returned the stale file was {if there then "there" else "gone"} and {count} orders were left; the directory was {if gone then "gone" else "there"} after"
   return true
 
-/-- Waits for every task of `handed` to end, each the reply of one order the
-checks' journal handed (`Journal.real`): the orders' own handles, so this
-waits on the check's own work and nothing else of the process's file
-service. `false` if one has not ended within `patience`, which only a hang
-reaches. -/
-def ownDrained (handed : IO.Ref (Array (Task (Option (String × String))))) : IO Bool := do
+/-- Waits for every task of `handed` to end, each the drain the checks'
+journal asked right after one of its orders (`ownedJournal`): the orders'
+own signals, so this waits on the check's own work and nothing else of the
+process's file service. `false` if one has not ended within `patience`,
+which only a hang reaches. -/
+def ownDrained (handed : IO.Ref (Array (Task Bool))) : IO Bool := do
   for task in ← handed.get do
     unless (← Job.awaitWithin patience task).isSome do
       return false
@@ -239,29 +232,28 @@ def ownDrained (handed : IO.Ref (Array (Task (Option (String × String))))) : IO
 
 /-- The loop of a host started fresh over `rig`, with `state` as its state
 directory, once each of `invocations` has run and settled, the journal's
-orders handed to the library's file service through the checks' journal
-(`wrap` of it), each order's task kept in `handed`, oldest first, for the
-check to wait on (`ownDrained`). -/
+orders handed to the library's file service through the host's journal
+(`wrap` of `ownedJournal`), each order's own drain kept in `handed`, oldest
+first, for the check to wait on (`ownDrained`). -/
 def runRestoring (rig : ProjectRig) (state : System.FilePath) (invocations : List Invocation)
-    (handed : IO.Ref (Array (Task (Option (String × String))))) (wrap : Journal → Journal := id) :
+    (handed : IO.Ref (Array (Task Bool))) (wrap : Headless.Journal → Headless.Journal := id) :
     IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   let begin : EditorM (Loop TestScheme.scheme) := do
     let loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
     return { loop with state := loop.state.hostedBy "/" none (some state) }
   let (started, texts) ← begin.runReal (RealTexts.over rig.published) rig.display
   let .ok loop := started | return none
-  let journal := wrap (Journal.real rig handed)
-  runSettledFrom rig loop texts invocations restoreKeys restoreJobs (journal := fun order =>
-      discard <| journal.perform order)
+  let journal := wrap (ownedJournal rig handed)
+  runSettledFrom rig loop texts invocations restoreKeys restoreJobs (journal := journal.perform)
 
 /-- Two tabs, the first split, typed into and restored in `directory`: a
 first loop over the state directory, a wait on its orders' own tasks, then
 a second loop over the same state directory, whose journal is `wrap` of the
-checks' journal; every order's task kept in `handed`. Whether the second
+checks' journal; every order's own drain kept in `handed`. Whether the second
 loop has both tabs, the split, the second tab's name, and every window on
 the file's buffer. -/
 def twoTabsRestored (services : Job.Services) (directory : System.FilePath)
-    (handed : IO.Ref (Array (Task (Option (String × String))))) (wrap : Journal → Journal := id) :
+    (handed : IO.Ref (Array (Task Bool))) (wrap : Headless.Journal → Headless.Journal := id) :
     IO Bool := do
   let state := directory / "state"
   let a := directory / "a.txt"
@@ -289,10 +281,10 @@ def twoTabsRestored (services : Job.Services) (directory : System.FilePath)
 /-- How `tabsHeldAtStaleRemove`'s teardown waits for the journal before the
 directory goes. -/
 inductive TabsDrain where
-  /-- A flush of the file service (`filesDrained`), the hold let go once
-  the flush is asked. -/
+  /-- The second loop's journal's drain (`journalDrained`), a flush of the
+  file service, the hold let go once the flush is asked. -/
   | flush
-  /-- Every order's own task (`ownDrained`), the hold let go as the wait
+  /-- Every order's own drain (`ownDrained`), the hold let go as the wait
   begins. -/
   | ownTasks
   /-- The old wait, reconstructed for this check alone: the service's
@@ -310,7 +302,7 @@ structure TabsSeen where
   drained : Bool
   /-- Whether the stale index was there when the drain returned. -/
   there : Bool
-  /-- Whether the stale index's remove's task had ended then. -/
+  /-- Whether the stale index's remove's own drain had ended then. -/
   removeEnded : Bool
   deriving DecidableEq, Repr
 
@@ -337,25 +329,34 @@ checks' journal is handed it, the file service's worker is held first
 (`FileHold`), so the remove is queued behind the hold. Then the directory's
 teardown waits as `drain` says, and what it saw is read before the
 directory goes: whether the stale index was there and whether its remove's
-task had ended. After that read the hold is let go and the service flushed,
+own drain had ended. After that read the hold is let go and the journal
+drained,
 so the directory is removed with nothing in flight whatever `drain` did:
 the order the restore checks' ENOENT came from is forced every time, and
 never raced. -/
 def tabsHeldAtStaleRemove (services : Job.Services) (drain : TabsDrain) : IO TabsSeen := do
   let handed ← IO.mkRef #[]
   let hold ← IO.mkRef (none : Option FileHold)
-  let removed ← IO.mkRef (none : Option (Task (Option (String × String))))
+  let journal ← IO.mkRef (none : Option Headless.Journal)
+  let removed ← IO.mkRef (none : Option (Task Bool))
   let used ← IO.mkRef (none : Option System.FilePath)
   let seen ← IO.mkRef (none : Option (Bool × Bool × Bool))
   let scenario ← IO.mkRef false
   let release := do
     if let some held← hold.get then
       held.release
+  let drainJournal (asked : IO Unit) : IO Bool := do
+    match ← journal.get with
+    | some journal =>
+      journalDrained journal asked
+    | none =>
+      asked
+      return true
   let drained : IO Bool := do
     let ended ←
       match drain with
       | .flush =>
-        filesDrained services (asked := release)
+        drainJournal release
       | .ownTasks =>
         do
           release
@@ -372,18 +373,19 @@ def tabsHeldAtStaleRemove (services : Job.Services) (drain : TabsDrain) : IO Tab
           pure false
       seen.set (some (ended, there, removeEnded))
     release
-    discard <| filesDrained services
+    discard <| drainJournal (pure ())
     return ended
-  let wrap (journal : Journal) : Journal :=
-    { journal with
+  let wrap (inner : Headless.Journal) : Headless.Journal :=
+    { inner with
       perform := fun order => do
+        journal.set (some inner)
         if let some directory← used.get then
           if order.request == .remove (Restore.indexPath (directory / "state") 1) then
             hold.set (some (← FileHold.hold services.completions))
-            let task ← journal.perform order
-            removed.set (some task)
-            return task
-        journal.perform order }
+            inner.perform order
+            removed.set (← handed.get).back?
+            return
+        inner.perform order }
   discard <|
       withJournalledDirectory drained fun directory => do
         used.set (some directory)
@@ -420,10 +422,12 @@ def restoreRunChecks (services : Job.Services) : List Check :=
         let hold (_ : System.FilePath) := do
           held.set (some (← FileHold.hold services.completions))
         let handed ← IO.mkRef #[]
-        drainsBeforeRemoval (Journal.real rig handed release) hold (unended handed)
+        let journal := ownedJournal rig handed
+        drainsBeforeRemoval journal hold (unended handed)
             (do
               release
-              discard <| filesDrained services) },
+              discard <| journalDrained journal)
+            release },
     { name :=
         "a restore check's journal is drained even when its body throws: the scaffold rethrows the body's error, and a remove the body handed out before throwing is worked"
       run := do
@@ -432,10 +436,10 @@ def restoreRunChecks (services : Job.Services) : List Check :=
         let outcome ←
           try
             discard <|
-                withJournalledDirectory journal.journal.drained fun directory => do
+                withJournalledDirectory (journalDrained journal.journal) fun directory => do
                   let stale := directory / "session-1.json"
                   IO.FS.writeFile stale "{}"
-                  discard <| journal.journal.perform { request := .remove stale }
+                  journal.journal.perform { request := .remove stale }
                   used.set (some directory)
                   throw <| IO.userError "the body failed"
             pure "returned"
@@ -450,8 +454,8 @@ def restoreRunChecks (services : Job.Services) : List Check :=
     { name :=
         "a restore check whose journal does not drain fails: the scaffold returns false though its body held"
       run := do
-        let stuck : Journal := { perform := fun _ => pure (.pure none), drained := return false }
-        let held ← withJournalledDirectory stuck.drained fun _ => return true
+        let stuck : Headless.Journal := { drained := pure (.pure false) }
+        let held ← withJournalledDirectory (journalDrained stuck) fun _ => return true
         if held then
           throw <| IO.userError "the scaffold returned true though its journal did not drain"
         return true },
@@ -470,8 +474,8 @@ def restoreRunChecks (services : Job.Services) : List Check :=
                     { command := "type-text", arguments := [.str "typed "] },
                     { command := "type-text", arguments := [.str "more "] }]
                   handed | return false
-            -- The journal's writes are done once each order's own task has
-            -- ended.
+            -- The journal's writes are done once each order's own drain
+            -- has ended.
             unless ← ownDrained handed do
               return false
             let edited ← bufferText rig texts typed "a.txt"
