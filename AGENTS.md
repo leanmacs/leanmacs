@@ -173,12 +173,15 @@ or given a longer timeout. Threads, queues and the clock are described in
   idle signal exists yet, add one.
 - A timeout is only a guard against a hang. When it runs out, the test reports
   a hang. It is not a result, and the test does not pass or fail on time.
-- A bound left in a test says which it is, in a comment on its line, among
-  the three lines above it, or at the head of the doc of the constant it
-  names, in one of these words: `hang guard: <the event the wait ends on>`,
-  `hang guard, run out on purpose: <what is held for good>`, or
-  `real time under test: <the timing that is the subject>`.
-  `mise run wait-inventory` lists the ones that do not.
+- A time bound in a test is a value that says which kind it is:
+  `HangGuard.on <event> <ms>`, `HangGuard.held <what is held for good> <ms>`
+  or `RealTime.under <timing> <ms>` in Lean, and `HangGuard::on`,
+  `HangGuard::held` or `RealTime::under` of `editor-wait` in Rust. A wait
+  takes only those, so a bare number does not compile; a raw sleep or clock
+  read is refused by `lake build`'s `linter.rawClock` and by `mise run lint`.
+- A count or idle wait, or a "first X after Y" wait (`@[inferred_wait]`), is
+  callable only from its subject modules; `lake build` refuses one elsewhere
+  (`docs/dev-practices/inferred-waits.md`).
 - Pin results that do not depend on scheduling. Check the final state, or
   what was published last, and not how many times something happened when
   that count changes with timing.

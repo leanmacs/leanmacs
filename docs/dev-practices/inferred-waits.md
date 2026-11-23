@@ -166,3 +166,29 @@ Each open flaky task, with the rows it is matched to (the `Task` column):
 - `package-linked-real-thread-inventory`: W34, W36 to W42, W52, W53, W55
   and W58 to W62, the package linked tests over a real host or real
   services; phase 6 supersedes the task.
+
+## What replaced the wait inventory
+
+The wait inventory, a script under `tools/`, was a review aid that read source text and listed
+each bound whose comment did not say which kind it was. It is retired, and
+each of its rules is now a type, a Lean linter or a clippy lint:
+
+| The script's rule | What holds it now |
+|---|---|
+| Lean: `IO.sleep` | `linter.rawClock`, in every module but `Editor.Bound`; real time is `RealTime.sleep` |
+| Lean: `monoMsNow` (and `monoNanosNow`) | `linter.rawClock`; a deadline is `HangGuard.deadline` |
+| Lean: `eventually`, a bare `within`, `Headless.within`, `Pool.within`, `Session.within`, a name holding `patience` or ending in `Guard` | the bound is a `HangGuard` parameter: `Job.awaitWithin`, the hosts' waits, the pool's, the brackets' guard and grace and the bindings' readouts take nothing else, so a number does not elaborate (`ModelTest/Editor/Bound.lean`, `ModelTest/Editor/Lint/Wait.lean`) |
+| Rust: `sleep(`, `sleep_ms(` | clippy bans `std::thread::sleep` and `sleep_ms`; real time is `editor_wait::RealTime::sleep`, and a fake clock's `sleep` was never a wait |
+| Rust: `recv_timeout`, `wait_timeout*`, `park_timeout`, `yield_now` | clippy bans each; a bounded wait is `editor_wait::recv` or `wait_while` |
+| Rust: `Instant::now() +`, `.elapsed()` | clippy bans `Instant::now`, which both need; a deadline is `HangGuard::start`, a measurement `Stopwatch` |
+| Rust: `is_finished()` or `try_wait()` in a `while` | clippy bans `JoinHandle::is_finished` and `Child::try_wait` |
+| The comment forms (`hang guard:`, `hang guard, run out on purpose:`, `real time under test:`) | the three constructors, `HangGuard.on`, `HangGuard.held` and `RealTime.under` (`HangGuard::on`, `::held`, `RealTime::under` in Rust), each naming its event, what it holds or its timing |
+| The files it scanned | the Lean linters are active in every module that imports `Editor.Lint.Wait` (`Editor.Bound`, `Editor.Job.Activity` and the test roots' and packages' `Check` modules, which reach every test module that writes a check), and clippy runs over every target of every crate, under a config that holds the bans |
+
+What each holds is pinned by a fixture that must fail: the `#guard_msgs`
+fixtures of `ModelTest/Editor/Lint/Wait.lean` and
+`ContractTest/Editor/Lint/Wait.lean`, the `fail_if_success` examples of
+`ModelTest/Editor/Bound.lean`, `editor-wait`'s `compile_fail` doctests, and
+`tests/wait-lints/` under every clippy config (`the-gate.md`, "The wait
+lints").
+

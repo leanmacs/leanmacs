@@ -1126,6 +1126,15 @@ Status: built by deterministic-test-concurrency phase 4. A check that
 something did not happen, or a driver's wait that something cannot end,
 answers at idle instead of after a deadline.
 
+The count and its idle are the subject of the hosts' and the runner's
+waits, and a stand-in for one piece of work anywhere else: a test that
+waits for idle to know that its own load has ended infers it from
+something shared. So the reads of the count and the waits built on it are
+marked `@[inferred_wait]` (`lean/Editor/Lint/Wait.lean`), and
+`linter.inferredWait` refuses them outside the modules whose subject they
+are and the tests that mirror those; each site that remains is listed,
+with the phase that removes it, in `docs/dev-practices/inferred-waits.md`.
+
 **What idle is.** A host is idle when all three hold:
 
 1. **Up to date.** The editor thread has handled every event posted before
@@ -1209,7 +1218,16 @@ journal's unobserved writes, which `journalled` waits for by a flush.
 **The readouts a test waits on outside idle** (deterministic-test-concurrency
 phase 6). Each is a test readout, not a path the editor takes: a wait on an
 event its owner signals as the thing happens, bounded only by a hang guard,
-never a poll.
+never a poll. Each takes the guard as a `HangGuard` (`Editor.Bound` in Lean,
+`editor_wait` in Rust), and none takes a number of milliseconds; the C
+functions Lean calls take a guard's milliseconds and build the guard at
+the edge. In Rust they are banned by clippy outside their own tests, their
+adapters' contracts and the C functions (`clippy.toml`), and so are the
+syntax session's `wait_for` and `wait_exact` with the bindings'
+`Syntaxes::settle` and `settle_exact`, the grep service's
+`until_held_back`, the live-handle wait and the script feeds' join. In
+Lean the ones that infer done from something shared are
+`@[inferred_wait]` (`Ffi.awaitWaiting`).
 
 - **A render loop's rest** (`RenderHandle::wait_resting`, for C
   `editor_ffi_render_await_rest`): the step that records rest signals it,
@@ -1248,23 +1266,35 @@ never a poll.
   task's start resolves a counter; nothing is decided by a task that does
   not start.
 
-**What a test may still wait on time for.** Three things, each said at the
-site in one of three forms (AGENTS.md, "Deterministic concurrency in
-tests"; `mise run wait-inventory` lists any site that says none): a **hang
-guard**, the bound on a wait for an event that must come, which only a hang
-reaches (`Editor.Test.Linked.hangGuard` and the other guards, set to ten times the
-slowest the event was seen to take under the stress loop's load: 260 000 ms
-for `hangGuard`, from a config check of 13.2 s on macOS, 10.4 s in the
-Linux container and 25.1 s on `ubuntu-24.04`, and 120 000 ms for the
-guards of events nothing slower was measured for); a **hang guard run out on
-purpose**, where a check holds something for good and pins the hang; and
-**real time under test**, where the timing is the subject: a lower bound
-("not before the limit"), which load only makes pass more surely, or a
-real clock's deadline being waited out. A negative decided by a window
-("nothing happened within N ms") is none of these: it is decided at idle,
-after a flush or another barrier, or by a forced order. An upper bound on
-latency is never a result: the auto-reload's one second is a measurement
-(`config-bench`'s `bench-auto-reload` row), not a check.
+**What a test may still wait on time for.** Three things, each a value of
+its own type, so a bound says which it is and a bare number of
+milliseconds does not compile (AGENTS.md, "Deterministic concurrency in
+tests"; `lean/Editor/Bound.lean`, and `crates/editor-wait` in Rust): a
+**hang guard** (`HangGuard.on <event> <ms>`), the bound on a wait for an
+event that must come, which only a hang reaches (`Editor.Test.Linked.hangGuard`
+and the other guards, set to ten times the slowest the event was seen to
+take under the stress loop's load: 260 000 ms for `hangGuard`, from a
+config check of 13.2 s on macOS, 10.4 s in the Linux container and 25.1 s
+on `ubuntu-24.04`, and 120 000 ms for the guards of events nothing slower
+was measured for); a **hang guard run out on purpose**
+(`HangGuard.held <what> <ms>`), where a check holds something for good and
+pins the hang; and **real time under test** (`RealTime.under <timing> <ms>`),
+where the timing is the subject: a lower bound ("not before the limit"),
+which load only makes pass more surely, or a real clock's deadline being
+waited out. Every bounded wait takes a `HangGuard` (`Job.awaitWithin`, the
+hosts' waits, the bindings' readouts, and in Rust the readout waits and
+`editor_wait::recv`/`wait_while`), and the one sleep is `RealTime.sleep`.
+`Editor.Bound` owns the clock reads a bound needs; anywhere else a raw
+`IO.sleep`, `IO.monoMsNow` or `IO.monoNanosNow` fails `lake build`
+(`linter.rawClock`), and in Rust a raw sleep, timed receive, timed
+condition wait, `Instant::now` or poll fails `mise run lint` (clippy's
+`disallowed-methods`). A measurement of real time, a bench or
+`config-test --timings`, says so with `set_option linter.rawClock false`
+and its reason. A negative decided by a window ("nothing happened within N
+ms") is none of these: it is decided at idle, after a flush or another
+barrier, or by a forced order. An upper bound on latency is never a
+result: the auto-reload's one second is a measurement (`config-bench`'s
+`bench-auto-reload` row), not a check.
 
 **Per host, never per stage.** A host whose collaborators track it
 (`Collaborators.tracksIdle`: a test stage's and the headless mode's) starts

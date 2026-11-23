@@ -572,7 +572,7 @@ Built by the process service's phase 3. A job asks to be told when a file,
 a directory's entries or a directory's whole tree changes on disk, and
 waits for each delivery as it waits for a stream read. The port, its fake,
 its contract, the coalescing rule and the service are `crates/editor-watch`,
-which has no dependencies; the adapter is `crates/editor-watch-notify`; the
+whose one dependency is `editor-wait`, the typed time bounds; the adapter is `crates/editor-watch-notify`; the
 C functions are `crates/editor-ffi/src/watches.rs`.
 
 - **The port** is `editor_watch::Watch`. `watch(directory, depth, sink)`
@@ -762,7 +762,7 @@ C functions are `crates/editor-ffi/src/watches.rs`.
     waited for and nothing of the service runs once the drop returns. The
     service keeps the timer's `JoinHandle` itself rather than an
     `editor_service::Worker`, since `editor-watch` depends on nothing of
-    the editor's; the rule is the same. A drop on the timer thread itself
+    the editor's but `editor-wait`; the rule is the same. A drop on the timer thread itself
     does not join it. The starts' threads are waited for by their count,
     not joined.
 - **The adapter** (`editor-watch-notify`) is over `notify`, pinned

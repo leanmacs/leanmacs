@@ -2754,6 +2754,60 @@ wrapper of `editor-ffi` and of each package crate, and
   query. It writes the generated crates under `target/editor-rust/` and
   Lake's configuration in the sets' `.lake`, which no other task reads.
 
+## The wait lints
+
+Every time bound in a test is a value that says which kind it is, and a
+wait takes only that type (`docs/design/concurrency.md`, "What a test may
+still wait on time for"; `docs/dev-practices/inferred-waits.md`). What a
+type cannot say is held by lints, each part of the build or of `mise run
+lint`, never a script over source text:
+
+- **`linter.rawClock`** (`lean/Editor/Lint/Wait.lean`, part of every `lake
+  build`): a call of `IO.sleep` or a read of `IO.monoMsNow` or
+  `IO.monoNanosNow` in any module but `Editor.Bound` is a lint, and
+  `warningAsError` makes it an error. It reads the constants the command's
+  terms resolved to (its info trees), never text. It is on through
+  `linter.all`, in the core and in every package's lakefile, and active in
+  every module that imports `Editor.Lint.Wait`: `Editor.Bound`,
+  `Editor.Job.Activity`, and the `Check` modules of the test roots and of
+  the packages. A bench, or `config-test --timings`'s wall clock, says it
+  measures real time with `set_option linter.rawClock false` and its reason.
+- **`linter.inferredWait`** (the same module): a reference to a constant
+  marked `@[inferred_wait <kind> <subject module>*]` outside its own module,
+  its subject modules and the test modules that mirror them is an error,
+  and so is a public declaration of an allowed test module that hands one
+  on untagged. Each site left is under `set_option linter.inferredWait
+  false in` with its row of `inferred-waits.md`.
+- **It bites**: `ModelTest/Editor/Lint/Wait.lean` holds `#guard_msgs`
+  fixtures, built by `mise run lean-test` and `mise run lean` and never
+  run, that expect the error for a raw sleep, a raw clock read, a count
+  read outside its modules and a laundering wrapper, and a
+  `fail_if_success` that `Job.awaitWithin` takes no number;
+  `ContractTest/Editor/Lint/Wait.lean` expects it for a first-after wait,
+  which needs the linked kit. `ModelTest/Editor/Bound.lean`'s
+  `fail_if_success` examples show that a number, an anonymous constructor
+  and a structure instance are not a bound.
+- **Rust, by clippy** (`mise run lint`): a root `clippy.toml`, which governs
+  every crate with none of its own, and the same block in each
+  `crates/*/clippy.toml` (clippy reads only the first file it finds walking
+  up from a crate) ban, through `disallowed-methods`, the raw timed
+  primitives (`thread::sleep`, `sleep_ms`, `park_timeout`,
+  `park_timeout_ms`, `yield_now`, `Receiver::recv_timeout`,
+  `Condvar::wait_timeout`, `wait_timeout_ms`, `wait_timeout_while`,
+  `JoinHandle::is_finished`, `Child::try_wait`, `Instant::now`) and the
+  readout waits; `editor-wait`'s `HangGuard`, `recv`, `wait_while`,
+  `Deadline`, `Stopwatch` and `RealTime::sleep` take their place. An
+  `#[expect(clippy::disallowed_methods, reason = …)]`, which fails once
+  stale, is at each named site the root `clippy.toml` lists.
+- **It bites**: `mise run lint` runs clippy over `tests/wait-lints/`, a
+  crate outside the workspace (its own lock, read `--locked --offline`)
+  that calls each banned primitive and each public readout once, under the
+  root config and under each `crates/*/clippy.toml` (`CLIPPY_CONF_DIR`),
+  into `target/wait-lints/`; every run must fail and print "use of a
+  disallowed method `<path>`" for each of the 23 banned paths, its output
+  shown only when it does not. The pre-commit hook's Rust step does not run
+  it.
+
 ## The toolchain check
 
 ```sh
