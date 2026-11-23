@@ -119,6 +119,7 @@ def shutdown : IO Unit := do
 /-- How many children the library's process service has started and not yet
 reaped. A check reads it before it starts a child and requires it again
 afterwards. -/
+@[inferred_wait count]
 def pendingChildren : IO UInt64 :=
   Ffi.processesPending
 
@@ -149,6 +150,7 @@ completed once every run started before it has ended and every child
 cancelled before it has been reaped, and `pendingChildren` is then read
 once. It replaces a poll of the count: a check reads `pendingChildren`
 before it starts a child and asks this afterwards. -/
+@[inferred_wait count]
 def childrenReapedTo (jobs : Job.Services) (before : UInt64) : IO Bool := do
   let flushed ← Job.awaitWithin reapPatience (← jobs.flushed .processes)
   return flushed == some .completed && (← pendingChildren) == before

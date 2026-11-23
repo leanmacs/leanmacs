@@ -215,7 +215,9 @@ opaque grepFlush (id : UInt64) : IO Bool
 
 /-- How many searches are held, and how many waits are not answered or not
 taken, together. A readout for tests. -/
-@[extern "editor_glue_grep_pending"]
+@[extern "editor_glue_grep_pending",
+  inferred_wait count Editor.Job.Real Editor.Job.Contract Editor.Job.FlushContract
+      Editor.Job.HandleContract Editor.Test.Linked.Services]
 opaque grepPending : IO UInt64
 
 /-- Shuts the library's grep service down: ends every search, once each

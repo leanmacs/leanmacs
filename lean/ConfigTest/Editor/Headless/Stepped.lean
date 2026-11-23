@@ -56,6 +56,8 @@ def scenesOf (kept : IO.Ref (Option Headless.Host.Display)) : IO Nat := do
   | none =>
     return 0
 
+-- inferred-waits W11: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of a host stepped on the check's own thread. -/
 def steppedChecks (context : Context) : List Check :=
   [{  name :=

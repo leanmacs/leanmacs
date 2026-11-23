@@ -27,6 +27,8 @@ open Editor
 open Editor.Test.Linked
 open VcApiTest.Linked
 
+-- inferred-waits W48: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- Whether the records `lister` lists at `root`, filtered by the fixture
 filter under `fixtures` with the empty text, which keeps them all, as
 `FindFile.found` answers them over `services`, are `expected` as a set

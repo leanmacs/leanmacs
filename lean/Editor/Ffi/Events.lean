@@ -208,6 +208,7 @@ whether they were: false once `guard` has run out first. A readout for
 tests, which use it to know a pull is parked before they post: it returns
 on the park itself, never by a poll of `waiting`. Only a pull that never
 parks reaches the guard. -/
+@[inferred_wait firstAfter]
 def awaitWaiting (queue : Queue) (pulls : UInt64) (guard : HangGuard) : IO Bool :=
   awaitWaitingRaw queue pulls guard.ms.toUInt64
 

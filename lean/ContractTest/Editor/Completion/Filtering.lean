@@ -34,6 +34,8 @@ def fixtureFiltering (fixtures base : System.FilePath) (arguments : Array String
   { lister := { program := "/bin/cat", arguments := #["list"], directory := base }
     filter := { program := (fixtures / "filter").toString, arguments, directory := base } }
 
+-- inferred-waits W14: stays (an adapter's contract over the real service, whose count is its subject)
+set_option linter.inferredWait false in
 /-- Whether what `filtering.found text` answers over `services`, run as a
 job, the error on the left and the records on the right, is as `expected`
 says, and every child it ran was reaped. -/

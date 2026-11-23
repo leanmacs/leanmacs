@@ -41,6 +41,8 @@ def snapshotRig (table : Array (Option String)) : BaseIO Rig := do
   return { rig with
       services := { rig.services with snapshots := fun id => pure (table[id.index]?).join } }
 
+-- inferred-waits W23: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
 /-- The checks of the job port's snapshot read that need equality, against
 the job model and the runner over the fake clock (`JobContract`, "Snapshots",
 `Editor/Job/Contract.lean`). -/
@@ -65,12 +67,16 @@ def snapshotReadChecks : List Check :=
             state.started.isEmpty &&
             (← rig.services.completions.waiting) == 0 }]
 
+-- inferred-waits W24: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
 /-- The names of the job port's contract properties that do not hold of the
 runner over the fake clock. -/
 def jobRunnerFailures : IO (List String) := do
   let failed ← JobContract.failures (runOnFake ·) JobContract.properties
   return failed.map (s!"the job runner over the fake clock: {·}")
 
+-- inferred-waits W25: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
 /-- Runs `job` on the runner over a fake clock of its own, spawned with a host
 that records each post it is handed, and answers the posts once the job has
 ended. The clock is advanced to each deadline at the rig's idle, as
@@ -94,6 +100,8 @@ def postFailures : IO (List String) := do
   return onModel.map (s!"the job model: {·}") ++
       onFake.map (s!"the job runner over the fake clock: {·}")
 
+-- inferred-waits W26: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
 /-- The names of the job port's fuzzy properties that do not hold of the job
 model, and of those that do not hold of the runner over the fake clock given
 the fuzzy model as its fuzzy service (`FuzzyModel.handler`). -/
@@ -118,6 +126,8 @@ def runFilesOnModel (property : JobContract.FileProperty) :
     (property.holds fileRoot).runModel { files := fileModelOf property.files property.directories }
   pure (outcome, filesIn model.files)
 
+-- inferred-waits W27: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
 /-- Runs a file property's job on the runner over a fake clock and the fake
 of the file service, over the model of its files: how the job ended, and the
 files afterwards. -/
@@ -148,6 +158,8 @@ model of its processes: how the job ended. -/
 def runProcessesOnModel (property : JobContract.ProcessProperty) : IO (Job.Outcome Bool) :=
   pure ((property.holds processRoot).runModel { processes := processModelOf property }).1
 
+-- inferred-waits W28: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
 /-- Runs a process property's job on the runner over a fake clock and the
 fake of the process service, over the model of its processes: how the job
 ended. -/
@@ -190,6 +202,8 @@ def runWatchesOnModel (property : JobContract.FileWatchProperty) : IO (Job.Outco
   let (processes, fileWatches) := watchModelsOf property
   pure ((property.holds watchRoot).runModel { processes, fileWatches }).1
 
+-- inferred-waits W29: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
 /-- Runs a watch property's job on the runner over a fake clock, the fake of
 the process service and the fake of the watch service: how the job ended. -/
 def runWatchesOnFake (property : JobContract.FileWatchProperty) : IO (Job.Outcome Bool) := do
@@ -205,6 +219,8 @@ def fileWatchFailures : IO (List String) := do
   return onModel.map (s!"the job model: {·}") ++
       onFake.map (s!"the job runner over the fake watch service: {·}")
 
+-- inferred-waits W30: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
 /-- The names of the snapshot properties of the job port that do not hold of
 the job model, with the table published as its files' snapshots, and of
 those that do not hold of the runner over the fake clock, with the table as

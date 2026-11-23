@@ -172,6 +172,8 @@ def materializeProjects (base compile : System.FilePath) : IO Unit := do
     copyTree (compile / tree) (base / tree)
   copyTree (compile / "cargo") (base / "cargo-wt")
 
+-- inferred-waits W34: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- Runs `check` in a base of its own holding the project trees
 (`materializeProjects`), its real path, as a finder names it, on a rig whose
 children find the fixture programs of `compile` first on their `PATH`; then

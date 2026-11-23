@@ -157,6 +157,8 @@ it. -/
 def processLeakName : String :=
   "every child the process properties ran is reaped, and the process service keeps no result"
 
+-- inferred-waits W16: stays (an adapter's contract over the real service, whose count is its subject)
+set_option linter.inferredWait false in
 /-- The names of the job port's process properties that do not hold of the
 runner over the library's process service, on real processes.
 `processLeakName` is among them if the service then has a run or a result

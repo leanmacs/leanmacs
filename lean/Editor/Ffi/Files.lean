@@ -344,7 +344,9 @@ opaque filesHold (id : UInt64) : IO Bool
 included, and how many results have not been taken, together. A readout for
 tests, which use it to see that a cancel left nothing behind, and for a
 host's end, which waits for the journal's writes to be worked. -/
-@[extern "editor_glue_files_pending"]
+@[extern "editor_glue_files_pending",
+  inferred_wait count Editor.Job.Real Editor.Job.Contract Editor.Job.FlushContract
+      Editor.Job.HandleContract Editor.Test.Linked.Services]
 opaque filesPending : IO UInt64
 
 end Editor.Ffi

@@ -69,6 +69,8 @@ def noPendingDrawn (lines : Array String) : Bool :=
       line.startsWith "status " &&
         (line.splitOn s!"{ModeLine.secondaryFace.name} \"{schemeLeader}").length > 1
 
+-- inferred-waits W3: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of when and where the key hints are shown, and of the pending
 keys drawn, through a host of the test scheme (`withTestHost`),
 with the real elaborator, the fake clock the host's waits are on and the

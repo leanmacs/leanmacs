@@ -1,4 +1,3 @@
-import Editor.Lint.Wait
 import GreetingApiTest.GreetingApi
 
 /-!

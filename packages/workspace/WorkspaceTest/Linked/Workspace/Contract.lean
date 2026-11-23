@@ -48,6 +48,8 @@ nothing is, which the process service refuses as `notFound`. -/
 def gitOf (world : Workspace.World) (fixtures base : System.FilePath) : String :=
   if world.git then (fixtures / "git").toString else (base / "no-git").toString
 
+-- inferred-waits W46: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The names of the workspace finder's contract properties
 (`WorkspaceTest/Finder/Contract.lean`) that do not hold of `Workspace.find`
 over the library's process and file services, each world written out in a

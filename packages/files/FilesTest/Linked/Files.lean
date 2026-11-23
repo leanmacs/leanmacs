@@ -214,6 +214,8 @@ def withRealLanguageHost (context : HostContext) (more : String)
         session.ask [.reload]
         check session asked
 
+-- inferred-waits W36: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- What the host's `language-report` says of the focused buffer once the
 command `name` has opened its file: its language and its major mode,
 quoted as the scene line has the echo area, or none when the open's jobs
@@ -363,6 +365,8 @@ def languageChecks (context : HostContext) : List Check :=
                   !requests.contains "shippedQuery rust highlights" &&
                   (← noHighlightsRefusal session) }]
 
+-- inferred-waits W37: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of files through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue, the real text binding and the
 library's file service: the checks of this executable whose hosts are over a
@@ -583,6 +587,8 @@ def placing (name : String) (offset : Nat) : Config.Registration :=
             { current with
               ranges := #[⟨offset, offset⟩], primary := 0 } }
 
+-- inferred-waits W38: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of reloading a buffer from its file (`Files.reload`,
 `packages/files/Files.lean`) through the headless host, on real files, with the
 library's file and diff services. -/
@@ -699,6 +705,8 @@ def withPromptHost (context : HostContext) (files : List (String × String))
   withShippedHost TestScheme.scheme context files check fileModel realFiles workingDirectory home
     (context.packages.push promptTyping)
 
+-- inferred-waits W39: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- Runs `check` on a host of the test scheme (`withPromptHost`) over
 `promptFiles`, with `open-file` run, its listing of `/` waited for, `w/`
 committed after its `/`, and the listing of `/w/` waited for. -/
@@ -712,6 +720,8 @@ def atW (context : HostContext) (check : Session → IO Bool) : IO Bool :=
       return false
     check session
 
+-- inferred-waits W40: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of the file prompt and of putting a candidate into the
 minibuffer, over the recorder, under the test scheme with keys of the
 checks' own (`promptTyping`): which keys a shipped scheme puts the
@@ -891,6 +901,8 @@ def rewriteFromOutside (path : System.FilePath) (text : String) : IO Bool := do
               text] }
   return child.exitCode == 0
 
+-- inferred-waits W41: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of auto-reload through the headless host on real files, with
 the library's watch service (`Editor/Loop.lean`, "Auto-reload"): criteria 9
 and 10, that the rewrite is shown and the edited buffer marked, each seen on

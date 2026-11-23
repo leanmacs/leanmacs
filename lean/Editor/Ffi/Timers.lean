@@ -1,3 +1,5 @@
+import Editor.Lint.Wait
+
 /-!
 # Bindings: the timer service
 
@@ -38,7 +40,9 @@ opaque timersFlush (id : UInt64) : IO Bool
 
 /-- How many timer requests are waiting. A readout for tests, which use it to
 see that a request reached the service and that a cancel removed it. -/
-@[extern "editor_glue_timers_pending"]
+@[extern "editor_glue_timers_pending",
+  inferred_wait count Editor.Job.Real Editor.Job.Contract Editor.Job.FlushContract
+      Editor.Job.HandleContract Editor.Test.Linked.Services]
 opaque timersPending : IO UInt64
 
 end Editor.Ffi

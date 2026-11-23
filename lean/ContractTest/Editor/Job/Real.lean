@@ -139,6 +139,8 @@ def timedCheck (services : Job.Services)
             Job.realProcesses services.completions (← Job.RefusedRuns.new) services.timers timed }
       check directory services timed
 
+-- inferred-waits W18: stays (an adapter's contract over the real service, whose count is its subject)
+set_option linter.inferredWait false in
 /-- What only the real process service can show: that cancelling a job
 whose child is running kills the child, which the service then reaps; and
 that a run the library does not take is refused at once by the adapter,
@@ -329,6 +331,8 @@ measured as. -/
 def warmPatience : HangGuard :=
   .on "each pool task's start" 120000
 
+-- inferred-waits W19: stays (an adapter's contract over the real service, whose count is its subject)
+set_option linter.inferredWait false in
 /-- The checks of the runner over the library's timer service
 (`Editor/Job/Real.lean`): what only the real service can show. It is a
 function, not a constant, because it calls bindings.
@@ -460,6 +464,8 @@ def withNote (completions : Job.Completions) (check : System.FilePath → IO Boo
       IO.FS.writeBinFile (directory / "note.txt") noteBytes
       check directory
 
+-- inferred-waits W20: stays (an adapter's contract over the real service, whose count is its subject)
+set_option linter.inferredWait false in
 /-- The checks of the runner over the library's file service and the real
 text binding (`Editor/Job/Real.lean`, `Editor/Text/Real.lean`): what only the
 two together can show. It is a function, not a constant, because it calls
@@ -640,6 +646,8 @@ def fileChecks (completions : Job.Completions) : List Check :=
               (← IO.FS.readBinFile (directory / "taken.txt")) == noteBytes &&
               !(← (directory / "released.txt").pathExists) }]
 
+-- inferred-waits W21: stays (an adapter's contract over the real service, whose count is its subject)
+set_option linter.inferredWait false in
 /-- The checks of the runner over the library's grep service
 (`realGreps`): what only the library can show. A job's search does not
 outlive the job; and an overlay of a snapshot a command took, published in

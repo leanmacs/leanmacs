@@ -97,6 +97,8 @@ partial def settle (services : Job.Services) (display : DisplayHandler) (texts :
     texts := after
   return some (loop, texts)
 
+-- inferred-waits W43: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- What only the real process service shows of `:!` and a filter, with the
 loop's working directory the fixtures' (`fixtures`, `tests/shell`). Each
 check runs `shell-command` or `shell-filter` by name, with the arguments

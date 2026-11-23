@@ -1,4 +1,3 @@
-import Editor.Lint.Wait
 import WindowCommandsApiTest.WindowCommandsApi
 
 /-!

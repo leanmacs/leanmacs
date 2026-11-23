@@ -38,13 +38,13 @@ user's editor elaborates is never linted.
 
 The linters are active in every module that imports this one, directly or
 through another: `Editor.Bound` and `Editor.Job.Activity` do, so every
-module that can name a bound or a count wait has them; so do the `Check`
-modules of the four test roots and of the packages, which every module
-that writes a check imports; and, in a test library with no `Check` module
+module that can name a bound or a count wait has them, and so do the
+`Check` modules of the four test roots and of the packages, which every
+module that writes a check imports. A test library with no `Check` module
 (an interface package's, and the fixture packages' under `tests/packages`
-and `docs/packages`), its driver roots, `<P>Test.Model` and
-`<P>Test.Linked`. A module that imports none of these, such as an
-interface package's `<P>Test.Fake`, is not linted.
+and `docs/packages`) reaches it through the modules its driver roots
+import, and `EchoTest.Model` imports it itself. A module that imports none
+of these is not linted.
 
 Its checks are `ModelTest.lintWaitChecks` and the `#guard_msgs` fixtures of
 `ModelTest/Editor/Lint/Wait.lean`.
@@ -201,7 +201,7 @@ def inferredWaitLinter : Linter where
           let homes := #[owner] ++ wait.subjects
           if !allowedIn wait owner here then
             Linter.logLint linter.inferredWait stx
-                m!"`{name}` is an inferred wait ({wait.kind}): it infers done from something shared, not from a signal for this work. It is allowed only in {", ".intercalate (homes.toList.map toString)} and the test modules that mirror them; wait on the work's own handle, promise or flush, or, for a site a later phase removes, `set_option linter.inferredWait false in` with its row of docs/dev-practices/inferred-waits.md"
+                m!"`{name}`{(user.map fun user => s!", in `{user}`,").getD ""} is an inferred wait ({wait.kind}): it infers done from something shared, not from a signal for this work. It is allowed only in {", ".intercalate (homes.toList.map toString)} and the test modules that mirror them; wait on the work's own handle, promise or flush, or, for a site a later phase removes, `set_option linter.inferredWait false in` with its row of docs/dev-practices/inferred-waits.md"
           else if let some user := user then
             if launders env wait owner here user then
               Linter.logLint linter.inferredWait stx

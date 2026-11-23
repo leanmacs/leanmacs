@@ -54,6 +54,7 @@ request has been handed to the library, which counts it from then. What a
 check waits on for a job that has reached its wait on a real service: the
 job keeps its unit there, so no idle can say it is in. A `count` of 0 is
 resolved at once. -/
+@[inferred_wait firstAfter]
 def startsArrive {ρ : Type} (start : UInt64 → ρ → BaseIO Unit) (count : Nat) :
     BaseIO ((UInt64 → ρ → BaseIO Unit) × IO.Promise Unit) := do
   let arrived ← IO.Promise.new
@@ -73,6 +74,7 @@ ended. Waited for on the count's own changes, never by time; the bound is a
 hang guard. It is sound after a cancel too: a job parking gives back its
 unit only once its wait is recorded as its own or withdrawn (`Job.drive`),
 so a cancelled job holds a unit until it has ended. -/
+@[inferred_wait idle Editor.Job.Runner Editor.Job.Activity]
 def untilIdle (activity : Job.Activity) : IO Unit := do
   unless activity.tracked do
     throw <| IO.userError "this count is not kept: it is never idle"

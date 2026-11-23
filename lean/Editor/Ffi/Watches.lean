@@ -1,4 +1,5 @@
 import Editor.Ffi.Words
+import Editor.Lint.Wait
 
 /-!
 # Bindings: the watch service
@@ -147,7 +148,9 @@ opaque watchesFlush (id : UInt64) : IO Bool
 
 /-- How many watches are starting or live, and how many waits are not
 answered or not taken, together. A readout for tests. -/
-@[extern "editor_glue_watches_pending"]
+@[extern "editor_glue_watches_pending",
+  inferred_wait count Editor.Job.Real Editor.Job.Contract Editor.Job.FlushContract
+      Editor.Job.HandleContract Editor.Test.Linked.Services]
 opaque watchesPending : IO UInt64
 
 /-- Shuts the library's watch service down: ends every watch. A start asked

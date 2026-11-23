@@ -3030,6 +3030,7 @@ def await (host : Host) (waitGuard : HangGuard) (answer : HangGuard := waitGuard
 thread has handled everything sent so far and no job is running; `settled`,
 `working` once the host is idle with a job still running, or `busy`, a
 hang, at its guard `waitGuard`. -/
+@[inferred_wait idle Editor.Headless.Wait Editor.Test.Linked.Host]
 def join (host : Host) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=

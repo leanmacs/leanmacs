@@ -96,6 +96,8 @@ def interruptPulled : IO (Option Ffi.Event) := do
       return some event
   return none
 
+-- inferred-waits W12: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of key dispatch through the headless host, on the real queue,
 the real text binding, the library's interrupt flag and the real elaborator,
 with the test scheme and compiled commands and bindings written here. -/

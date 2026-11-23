@@ -65,6 +65,46 @@ Note: This linter can be disabled with `set_option linter.rawClock false`
 def ModelTest.LintFixture.deadline (bound : Nat) : IO Nat :=
   return (← IO.monoMsNow) + bound
 
+/-! A count wait (kind a of `docs/dev-practices/inferred-waits.md`) is
+refused by `linter.inferredWait` outside its own module, its subject modules
+and the test modules that mirror them. -/
+
+/--
+error: `Editor.Job.Activity.seen`, in `ModelTest.LintFixture.countRead`, is an inferred wait (count): it infers done from something shared, not from a signal for this work. It is allowed only in Editor.Job.Activity, Editor.Job.Runner, Editor.Headless, Editor.Headless.Stepped, Editor.Headless.Wait, Editor.Loop, Editor.Job.HandleContract, Editor.Test.Jobs, Editor.Test.Linked.Jobs and the test modules that mirror them; wait on the work's own handle, promise or flush, or, for a site a later phase removes, `set_option linter.inferredWait false in` with its row of docs/dev-practices/inferred-waits.md
+
+Note: This linter can be disabled with `set_option linter.inferredWait false`
+-/
+#guard_msgs in
+/-- A bad declaration: the count read to know that one job has ended. -/
+def ModelTest.LintFixture.countRead (activity : Editor.Job.Activity) : BaseIO Bool :=
+  return (← activity.seen).running == 0
+
+/-! In the module that declares an inferred wait, or one of its subject
+modules, when that is a test module, a public declaration that references
+it must carry the attribute itself: a kit cannot hand it on to everyone. -/
+
+/-- A stand-in for an inferred wait, declared here so this test module is
+its own module, where a reference to it is allowed. -/
+@[inferred_wait count]
+def ModelTest.LintFixture.sharedCount : BaseIO Nat :=
+  pure 0
+
+/--
+error: `ModelTest.LintFixture.launders` is public and hands on `ModelTest.LintFixture.sharedCount`, an inferred wait (count): tag it `@[inferred_wait count …]` or make it private
+
+Note: This linter can be disabled with `set_option linter.inferredWait false`
+-/
+#guard_msgs in
+/-- A bad declaration: a public wrapper of an inferred wait, untagged. -/
+def ModelTest.LintFixture.launders : BaseIO Nat :=
+  ModelTest.LintFixture.sharedCount
+
+/-- A wrapper that carries the attribute is itself restricted, and is
+refused nothing here. -/
+@[inferred_wait count]
+def ModelTest.LintFixture.tagged : BaseIO Nat :=
+  ModelTest.LintFixture.sharedCount
+
 /-! A wait does not take a number of milliseconds: `Job.awaitWithin` takes a
 `HangGuard`. -/
 

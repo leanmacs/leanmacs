@@ -21,6 +21,8 @@ namespace ContractTest
 open Editor
 open Editor.Job
 
+-- inferred-waits W17: stays (an adapter's contract over the real service, whose count is its subject)
+set_option linter.inferredWait false in
 /-- The rigs of the real ports among `services`. -/
 def flushRealRigs (services : Job.Services) : List FlushContract.FlushRig :=
   let completions := services.completions

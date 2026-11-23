@@ -1058,6 +1058,8 @@ def meetingAnswer {α : Type} (check : BaseIO Unit → (String → IO Unit) → 
   finally
     release.resolve ()
 
+-- inferred-waits W5: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- Runs `check` with `stage`'s collaborators, for one host's run of
 `jobScript` that reaches its end: the loop's withdrawal of the job's wait, as
 the loop ends, is held (`hold`) and then noted in `withdrew`, and each
@@ -1433,6 +1435,8 @@ def setup : SetupM Unit := do
   command \"start-nap\" (discard <| startJob \"nap\")
 ")]
 
+-- inferred-waits W6: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of jobs through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue and the real text binding. The
 host's jobs wait on a fake clock the check moves, so a job ends when the
@@ -2061,6 +2065,8 @@ def agreementChecks (_ : Unit) : List Check :=
           (Headless.Running.agreement agreementScene 10 #[agreementAsked agreementRows] none ==
             "agree view 2: the frame has no such view") }]
 
+-- inferred-waits W7: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of the headless mode's script and its driver
 (`Headless.script`, `Headless.run`, `Headless.runAndDispose`), and of what
 the executable's hosts dispose of when they end (`Headless.shippedOver`).
@@ -3190,6 +3196,8 @@ def setup : SetupM Unit := do
     message s!\"courier read {← held}\"
 "
 
+-- inferred-waits W8: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of commands the headless host runs through its loop that no
 key ran, and of the jobs commands start (`Editor/Headless.lean`), on the
 real queue, the real text binding, the library's interrupt flag and the
@@ -3582,6 +3590,8 @@ job `follow` of version `v1`. -/
 def followConfig : List (String × String) :=
   [("Config/Greet.lean", greetText "v1"), ("init.lean", overGreet (followText "v1"))]
 
+-- inferred-waits W9: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of a config's watches across a reload, through the headless
 host over the fake watch service: after a reload installs, only the watches
 the new config made deliver; a rejected reload leaves the old one's
@@ -3956,6 +3966,8 @@ def withFailingJournal (context : Context) (files : List (String × String))
               services := { stage.collaborators.services with processes := processes.processes } } }
       onStage stage fun host stage => check host stage.output failing
 
+-- inferred-waits W10: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of the restore at start-up in the host (`Editor/Headless.lean`,
 "Restoring a session"), on the real elaborator: it runs before the start-up
 reload, which it holds, and `await` waits for it; a restore whose job fails

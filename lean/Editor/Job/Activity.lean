@@ -1,3 +1,5 @@
+import Editor.Lint.Wait
+
 /-!
 # A host's activity count
 
@@ -132,5 +134,18 @@ def untracked : Activity where
   tracked := false
 
 end Activity
+
+/-! The count and its idle are what the host's idle is made of, and so the
+subject of the hosts' and the runner's waits; a test that reads them to
+know that one piece of its own work is done infers it from something
+shared (`docs/dev-practices/inferred-waits.md`, kind a). So they are
+inferred waits (`Editor/Lint/Wait.lean`): allowed here, in the modules
+that build the hosts' idle on them, and in the tests that mirror those. -/
+
+attribute
+  [inferred_wait count Editor.Job.Runner Editor.Headless Editor.Headless.Stepped
+      Editor.Headless.Wait Editor.Loop Editor.Job.HandleContract Editor.Test.Jobs
+      Editor.Test.Linked.Jobs]
+  Activity.seen Activity.changedSince Activity.Seen.idleSince
 
 end Editor.Job

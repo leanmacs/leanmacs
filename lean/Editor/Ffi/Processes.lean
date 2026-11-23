@@ -395,7 +395,9 @@ opaque processesFlush (id : UInt64) : IO Bool
 /-- How many runs have a child not yet reaped, and how many results have not
 been taken, together. A readout for tests, which use it to see that a
 cancelled run's child was reaped. -/
-@[extern "editor_glue_processes_pending"]
+@[extern "editor_glue_processes_pending",
+  inferred_wait count Editor.Job.Real Editor.Job.Contract Editor.Job.FlushContract
+      Editor.Job.HandleContract Editor.Test.Linked.Services]
 opaque processesPending : IO UInt64
 
 /-- Shuts the library's process service down: kills every child's process

@@ -208,6 +208,7 @@ def HandleRig.counted (rig : HandleRig) : BaseIO (Services × Activity) := do
 
 /-- The count `activity` reads at its next change after `seen`, waited for on
 the change itself; a hang thrown past `patience`. -/
+@[inferred_wait count Editor.Job.Runner Editor.Job.Activity]
 def changedAfter (activity : Activity) (seen : Activity.Seen) : IO Activity.Seen := do
   discard <| awaited s!"a change of the count from {repr seen}" (← activity.changedSince seen.epoch)
   activity.seen

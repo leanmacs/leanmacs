@@ -1,4 +1,3 @@
-import Editor.Lint.Wait
 import WordCountTest.WordCount
 
 /-!

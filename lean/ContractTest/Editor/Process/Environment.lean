@@ -71,6 +71,8 @@ def printedThrough (services : Job.Services) (command : Process.Command) : IO (O
   | _ =>
     return none
 
+-- inferred-waits W22: stays (an adapter's contract over the real service, whose count is its subject)
+set_option linter.inferredWait false in
 /-- What the job port shows only over the real process service: the lookup
 of a child's environment with mise standing in as the fixtures under
 `fixtures` (`tests/process-environment`). Each check works in temporary

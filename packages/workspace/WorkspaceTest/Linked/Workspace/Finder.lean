@@ -24,6 +24,8 @@ namespace WorkspaceTest.Linked
 open Editor
 open Editor.Test.Linked
 
+-- inferred-waits W47: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- Whether `Workspace.find`, with git standing in as the fixture under
 `fixtures`, answers each directory of `asked` with its answer, over
 `services`; and that every child it ran is reaped. -/

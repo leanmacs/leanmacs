@@ -73,6 +73,8 @@ def timedRun (command : String) (arguments : Array String) (directory : System.F
     throw (IO.userError s!"{command} exited with status {output.exitCode}: {output.stderr}")
   return (ended - started, output.stdout)
 
+-- inferred-waits W45: stays (an opt-in bench over real time, never part of `ci`)
+set_option linter.inferredWait false in
 /-- `bench-workspace-files`: what a key costs in `find-file-in-workspace`'s
 prompt over the repository at `repository`, a key in a prompt with no
 candidates as the floor, the keys `m`, `1`, `2`, `f`, `3` and `4` each

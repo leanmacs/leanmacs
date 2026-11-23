@@ -27,6 +27,8 @@ def taken (result : Option (Job.Entry Job.Handle × Job.Outcome (EditorM Unit)))
     Option (Nat × String × Job.Outcome (Array String)) :=
   result.map fun (entry, outcome) => (entry.id, entry.name, texts outcome)
 
+-- inferred-waits W31: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
 /-- The checks of the shell over the job table and the runner
 (`Editor/Job/Jobs.lean`), on a fake clock. -/
 def ownerChecks : List Check :=

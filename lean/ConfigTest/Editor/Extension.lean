@@ -33,6 +33,8 @@ def noGreeterConfig : String :=
 def extensionCompiled : Compiled :=
   { packages := #[ExtensionFixture.package] }
 
+-- inferred-waits W4: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of extension points with the real elaborator: config
 elaborated at runtime registers at a compiled package's point, and a reload
 replaces config's value and keeps the package's. -/

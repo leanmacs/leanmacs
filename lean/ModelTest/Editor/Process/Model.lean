@@ -45,6 +45,8 @@ def modelRun (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) (command
     (limit : Nat) : Except ProcessError Process.Ran × ProcessModel × Nat :=
   model.handle now cancelAt (.run command limit)
 
+-- inferred-waits W32: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
 /-- The checks of processes a job runs: the model's order of refusals and its
 record of what was killed, and the runner's process waits on the fake of the
 process service, where cancelling a job withdraws its wait, which is how the

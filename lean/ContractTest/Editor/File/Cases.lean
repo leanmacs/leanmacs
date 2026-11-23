@@ -88,6 +88,8 @@ def playOnLibrary (completions : Job.Completions) (case : FileCases.Case) : IO (
 def caseLeakName : String :=
   "the cases across the two ports leave nothing behind: each store is dropped with its case, what its job held was released, and the library holds the documents and the snapshots it held before, with no request left in the file service"
 
+-- inferred-waits W15: stays (an adapter's contract over the real service, whose count is its subject)
+set_option linter.inferredWait false in
 /-- The names of the cases across the text port and the job port that do not
 hold of the real binding and the library's file service, each with what
 went wrong. `caseLeakName` is among them if the library's counts are not

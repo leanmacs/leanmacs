@@ -285,6 +285,7 @@ def heldShort : HangGuard :=
 (`Job.FakeClock.arrivedAt`): on the step that makes it, on whichever thread
 takes it, never by a poll of the readout. Whether it came before
 `hangGuard`, which only a hang reaches. -/
+@[inferred_wait firstAfter]
 def clockReaches (clock : Job.FakeClock) (arrival : Job.FakeClockArrival) : IO Bool := do
   let reached ← clock.arrivedAt arrival
   return (← Job.awaitWithin hangGuard reached.result?).isSome
@@ -569,6 +570,7 @@ def await (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitG
 /-- `Headless.Host.join` on the driven host: a `join`'s wait
 (`Headless.Wait.Kind.join`).
  -/
+@[inferred_wait idle]
 def join (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
@@ -591,6 +593,7 @@ def handled (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
 replaces a poll for a state the host reaches by itself, such as a job in
 its sleep, so the scene count stays the poll's.
  -/
+@[inferred_wait idle]
 def idle (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
   driven.waitWhile waitGuard { Headless.Wait.Kind.join with marker := false } waitGuard none
     IO.eprintln fun _ => pure ()
@@ -601,6 +604,7 @@ no fake-clock wait due), publishing nothing: what it waits for always
 holds, so it answers only at idle, `settled`. What replaces a poll for a
 state work reaches by itself after the jobs table has let it go, such as a
 cancelled job's end. -/
+@[inferred_wait idle]
 def quiet (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
   driven.waitWhile waitGuard
     { what := "idle", busy := fun _ => pure true, still := some .settled, hung := .busy
@@ -733,11 +737,13 @@ def settle (session : Session) : IO Bool :=
 
 /-- `join` with `hangGuard` that publishes nothing (`Driven.idle`): what a
 check waits on in place of a poll for a job in its sleep. -/
+@[inferred_wait idle]
 def idle (session : Session) : IO Headless.Wait :=
   session.drive.idle hangGuard
 
 /-- Waits until the host is idle, with `hangGuard`, publishing nothing
 (`Driven.quiet`): whether it came to idle. -/
+@[inferred_wait idle]
 def quiet (session : Session) : IO Bool :=
   return (← session.drive.quiet hangGuard) == .settled
 
@@ -749,6 +755,7 @@ def handled (session : Session) : IO Bool :=
 /-- Waits until the host has handled everything sent so far and no job is
 running, with `hangGuard` and the session's `waitHung` and `waitBlocked`:
 `settled`, `working` at idle with a job still running, or a hang. -/
+@[inferred_wait idle]
 def join (session : Session) : IO Headless.Wait :=
   session.drive.join hangGuard (waitHung := session.waitHung) (waitBlocked := session.waitBlocked)
 
@@ -1011,6 +1018,7 @@ def Session.echo (session : Session) : IO String :=
 
 /-- Runs the command called `name` through the host and waits for the jobs
 it started: whether the wait settled. -/
+@[inferred_wait idle]
 def Session.ran (session : Session) (name : String) : IO Bool := do
   session.ask [.run name]
   return (← session.join) == .settled

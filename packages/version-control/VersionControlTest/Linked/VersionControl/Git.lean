@@ -197,6 +197,8 @@ def inLanesChecks : List Check :=
     { name := "inLanes fails only the item that threw in a single lane"
       run := return (← runInLanes 1 6 0) == ranInLanes 6 0 }]
 
+-- inferred-waits W44: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The names of the version-control contract's properties
 (`VersionControl/Contract.lean`) that do not hold of the git
 implementation over the library's process service, each property's

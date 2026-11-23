@@ -15,6 +15,7 @@ import ContractTest.Editor.Job.Contract
 import ContractTest.Editor.Job.FlushContract
 import ContractTest.Editor.Job.HandleContract
 import ContractTest.Editor.Job.Real
+import ContractTest.Editor.Lint.Wait
 import ContractTest.Editor.Process.Environment
 import ContractTest.Editor.Restore.Run
 import ContractTest.Editor.SyntaxTree.Contract

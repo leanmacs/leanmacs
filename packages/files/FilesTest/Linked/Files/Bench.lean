@@ -29,6 +29,8 @@ namespace FilesTest.Linked.Bench
 open Editor
 open Editor.Test.Linked
 
+-- inferred-waits W42: stays (an opt-in bench over real time, never part of `ci`)
+set_option linter.inferredWait false in
 /-- The auto-reload row of `config-bench` (`FilesTest-Linked
 bench-auto-reload`): the latency, in milliseconds, from another process's
 rewrite of an open, unmodified buffer's file (the rewriting process's exit,

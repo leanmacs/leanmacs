@@ -1,5 +1,4 @@
 import EchoTest.Linked.Echo.Real
-import Editor.Lint.Wait
 import Editor.Test.Linked.Services
 
 /-!

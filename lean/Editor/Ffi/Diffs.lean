@@ -100,7 +100,9 @@ opaque diffsFlush (id : UInt64) : IO Bool
 
 /-- How many diff requests are waiting or being worked, and how many answers
 (scripts or hunks) have not yet been taken, together. A readout for tests. -/
-@[extern "editor_glue_diffs_pending"]
+@[extern "editor_glue_diffs_pending",
+  inferred_wait count Editor.Job.Real Editor.Job.Contract Editor.Job.FlushContract
+      Editor.Job.HandleContract Editor.Test.Linked.Services]
 opaque diffsPending : IO UInt64
 
 end Editor.Ffi

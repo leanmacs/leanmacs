@@ -656,6 +656,8 @@ def makeWordBuffers : EditorM Unit := do
   for index in [0:20] do
     discard <| createBuffer s!"words-{index}" (wordText (index * 5000))
 
+-- inferred-waits W1: stays (an opt-in bench over real time, never part of `ci`)
+set_option linter.inferredWait false in
 /-- `bench-prompt`: what a key costs in a prompt with no candidates, over
 1,000, 10,000 and 100,000 candidates listed inline (the limit lifted), and
 over 100,000 matched off the editor thread, keys joined and back to back;

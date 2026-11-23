@@ -123,6 +123,8 @@ def withAtPointHost (context : Context) (files : List (String × String))
   withShippedHost TestScheme.scheme context files check (packages :=
     withKitAtPoint shippedPackages ++ #[atPointTyping])
 
+-- inferred-waits W2: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of completion at point through the headless host of the
 test scheme (`withAtPointHost`), with the real elaborator, the real text
 binding, the recorder and the stage's fake clock

@@ -74,6 +74,8 @@ def compilationText (loop : Loop TestScheme.scheme) : EditorM (Option String) :=
   | none =>
     return none
 
+-- inferred-waits W33: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- What only the real process service shows of a compile: its output in
 the compilation buffer before the child ends, with the fixture
 `three-lines` (`fixtures`, `tests/compile`), which waits for files the

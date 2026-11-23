@@ -209,6 +209,8 @@ def ranScript (context : HostContext) (directives : List Headless.Directive) :
       Headless.run stage.collaborators (scriptOf directives) hangGuard (grace := some hangGuard)
     return (failure, ← stage.output.get)
 
+-- inferred-waits W35: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of a script that a command ends (`lean/Editor/Headless.lean`,
 "The driver, and the command line"), with `Headless.run` on scripts built
 here, over the real elaborator, the real queue, the real text binding and

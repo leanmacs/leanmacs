@@ -314,6 +314,8 @@ def echoSourceText : String :=
     (sources := [.named \"echo\"]))
 "
 
+-- inferred-waits W13: removed by host-tests-on-fakes phase 4
+set_option linter.inferredWait false in
 /-- The checks of prompts through the headless host (`Editor/Headless.lean`),
 on the real queue, the real text binding and the real elaborator, with the
 test scheme: the host is handed the kit's minibuffer's commands and its

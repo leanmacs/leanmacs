@@ -93,6 +93,7 @@ def startGate {ρ : Type} (start : UInt64 → ρ → BaseIO Unit) (count : Nat) 
 /-- The count `activity` reads at its next change after `seen`, waited for on
 the change itself (`changedSince`). The bound is `patience`, a hang guard:
 past it this throws a hang. -/
+@[inferred_wait count Editor.Job.Runner Editor.Job.Activity]
 def changedAfter (activity : Job.Activity) (seen : Job.Activity.Seen) : IO Job.Activity.Seen := do
   awaitEvent s!"a change of the count from {repr seen}" (← activity.changedSince seen.epoch)
   activity.seen
@@ -101,6 +102,7 @@ def changedAfter (activity : Job.Activity) (seen : Job.Activity.Seen) : IO Job.A
 `epoch`: the steps a check knows will come, counted from a fresh count, so
 it never waits for a change that already happened. The bound is a hang
 guard: past it this throws a hang. -/
+@[inferred_wait count Editor.Job.Runner Editor.Job.Activity]
 def untilEpoch (activity : Job.Activity) (epoch : Nat) : IO Unit := do
   repeat
     let seen ← activity.seen
@@ -154,6 +156,7 @@ an event that idle now implies.
 Waited for on the count's own changes, never by time; the bound is a hang
 guard (`changedAfter`). A rig whose services keep no count is refused: it
 is never idle. -/
+@[inferred_wait idle Editor.Job.Runner Editor.Job.Activity]
 def Rig.idle (rig : Rig) : IO Job.Activity.Seen := do
   let activity := rig.services.activity
   unless activity.tracked do
@@ -211,6 +214,7 @@ def endedAs (spawned : Spawned) (expected : Job.Outcome (Array String)) : IO Boo
 end Spawned
 
 /-- Spawns `work` on `rig`, counting the calls of its `finished`. -/
+@[inferred_wait idle Editor.Job.Runner Editor.Job.Activity]
 def Rig.spawn (rig : Rig) (work : Work) : BaseIO Spawned := do
   let finishes ← IO.mkRef 0
   return {
@@ -224,6 +228,7 @@ waits for the next idle; else the job is stuck in a wait nothing here ends,
 and it says so. `none` once the job has ended, else why it has not, the job
 then cancelled. Only the idle's hang guard bounds it; a hang is said as
 well. -/
+@[inferred_wait idle Editor.Job.Runner Editor.Job.Activity]
 def Rig.stepToEnd (rig : Rig) (handle : Job.Handle) : IO (Option String) := do
   try
     repeat
@@ -245,6 +250,7 @@ def Rig.stepToEnd (rig : Rig) (handle : Job.Handle) : IO (Option String) := do
 ended. The driver stands in for time, stepped on the rig's idle
 (`Rig.stepToEnd`): at each idle it advances the clock to the earliest
 deadline. A job stuck at idle, or one that hangs, has failed. -/
+@[inferred_wait idle]
 def runOnFake (job : JobM Bool) (rig? : Option Rig := none) : IO (Job.Outcome Bool) := do
   let rig ←
     match rig? with
