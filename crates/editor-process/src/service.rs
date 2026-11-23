@@ -3586,7 +3586,40 @@ mod streaming {
                 Step::AwaitInputClosed,
             ])),
         )]);
-        let (service, completed) = service(&fake);
+        // The close's completion and the read's come from two threads: the
+        // close tells the writer before it completes, so the child can end
+        // and the read be answered first, which a loaded runner showed. The
+        // close's completion is held here until the read's has been sent,
+        // so the order is that one every run.
+        let (sender, completed) = mpsc::channel();
+        let sender = Mutex::new(sender);
+        let (read_sent, after_read) = mpsc::channel();
+        let read_sent = Mutex::new(read_sent);
+        let after_read = Mutex::new(after_read);
+        let service = Service::new(fake.clone(), move |id| {
+            if id == 3 {
+                // hang guard: the read's completion, which the child's end
+                // brings; only a hang reaches the bound, and the order
+                // asserted below then fails.
+                after_read
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .recv_timeout(DEADLINE)
+                    .ok();
+            }
+            sender
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(id)
+                .ok();
+            if id == 2 {
+                read_sent
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .send(())
+                    .ok();
+            }
+        });
         opened(
             &service,
             &completed,
@@ -3609,10 +3642,12 @@ mod streaming {
             "not too long while the stream may yet end"
         );
         assert!(fake.record().killed.is_empty());
+        // The close returns once it has completed, which the hold above
+        // puts after the read's completion: the child ended on the close.
         assert!(service.close_input(1, 3));
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(2));
         assert_eq!(completed.recv_timeout(DEADLINE), Ok(3));
 
-        assert_eq!(completed.recv_timeout(DEADLINE), Ok(2));
         let Some(StreamReply::Delivered(mut delivered)) = service.take_stream(2) else {
             panic!("a delivery");
         };
