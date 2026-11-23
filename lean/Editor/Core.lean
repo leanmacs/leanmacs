@@ -22,6 +22,8 @@ import Editor.Job.PumpContract
 import Editor.Jumps.Go
 import Editor.Main
 import Editor.SearchRoot
+import Editor.SyntaxTree.DeliveryContract
+import Editor.SyntaxTree.Fake
 import Editor.Test.AtPoint
 import Editor.Test.Excerpt
 import Editor.Test.Frame

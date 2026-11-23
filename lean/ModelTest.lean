@@ -73,6 +73,7 @@ import ModelTest.Editor.Job.Contract
 import ModelTest.Editor.Job.FlushContract
 import ModelTest.Editor.Job.HandleContract
 import ModelTest.Editor.Job.PumpContract
+import ModelTest.Editor.SyntaxTree.DeliveryContract
 import ModelTest.Editor.Job.Jobs
 import ModelTest.Editor.Job.Model
 import ModelTest.Editor.Job.Pool
@@ -748,6 +749,12 @@ The job system is tested here with no Rust library:
   held completions: a held request's handle has not ended until it is let
   go, then ends with its reply, and a dropped handle's reply is still
   taken, so the service keeps nothing;
+- `syntaxDeliveryChecks`: the contract of the syntax service's deliveries
+  (`Editor/SyntaxTree/DeliveryContract.lean`) on the fake
+  (`FakeSyntaxService`), settled by stepping it, and the fake's own
+  promises: captures refused as not parsed until a step, each step posting
+  once on the stepping thread, every request on the check's thread, a new
+  snapshot of an attached text pending, quiescent once stepped;
 - `pumpContractChecks`: the contract of the completion pump
   (`Editor/Job/PumpContract.lean`) on the fake pump (`FakePump`), `pumpFrom`
   run over its source on the check's thread, and the fake's own promises:
@@ -1299,6 +1306,7 @@ def checks : List Check :=
     handleContractChecks ++
     journalContractChecks ++
     pumpContractChecks ++
+    syntaxDeliveryChecks ++
     queueContractChecks ++
     queueMemoryChecks ++
     waitRoundChecks ++

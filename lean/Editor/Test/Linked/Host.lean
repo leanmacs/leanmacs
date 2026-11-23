@@ -15,6 +15,7 @@ import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.Headless.Journal.Fake
 import Editor.Headless.Stepped
+import Editor.SyntaxTree.Fake
 import Editor.InferredWait
 import Editor.InputScheme.Test
 import Editor.Job.Fake
@@ -506,6 +507,26 @@ def Stage.recordingJournal {β σ : Type} (stage : Stage β σ) (state : System.
   let collaborators :=
     { stage.collaborators with
       journal := fake.journal, stateDirectory := some state }
+  return ({ stage with collaborators }, fake)
+
+/-- `stage` with its host's syntax tree handler the fake of the syntax
+service's deliveries (`FakeSyntaxService`, `Editor/SyntaxTree/Fake.lean`),
+and the fake, which the check steps on its own thread. The fake learns a
+snapshot's text from the stage's published table the first time a request
+names it; the table does not say which document a snapshot is of, so each
+snapshot is a text of its own, as the model's contract runs have it, until
+phase 4 meets an edit. Each step posts the library's report that a parse
+was delivered (`Event.parsed`, from the library's source) to the stage's
+memory queue, so on a stepped host the delivery reaches the loop as it
+would from the library. -/
+def Stage.fakeSyntaxService {β σ : Type} (stage : Stage β σ) :
+    IO (Stage β σ × FakeSyntaxService) := do
+  let parsed : Ffi.Event :=
+    { source := { kind := .library, id := 0 }, kind := .parsed, code := 0, text := "", stamp := 0 }
+  let fake ←
+    FakeSyntaxService.new (post := discard <| stage.memory.push parsed)
+        (learn := Job.realSnapshots stage.collaborators.published.reader)
+  let collaborators := { stage.collaborators with syntaxTree := fun _ => pure fake.handle }
   return ({ stage with collaborators }, fake)
 
 /-- A host as a check drives it, whichever kind it is: a real one, whose loop
