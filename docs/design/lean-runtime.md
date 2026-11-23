@@ -2705,7 +2705,13 @@ What the figures show:
 - **A build from the app compiles nothing it ships.** The unchanged set's
   first build is the elaboration of the core's lakefile into the config's
   `.lake`, the generated root's compile and the link; the second only
-  links. A small package costs a few seconds more.
+  links. A small package costs a few seconds more. Since the build's
+  linters became a Lean plugin that every library loads (the library
+  `Lint`, `lean/Lint/Wait.lean`), the plugin's trace is in every module's,
+  so the bundle ships that library built too, its shared library among its
+  files (`shipsLibrary`, `editorShipped` in `lean/lakefile.lean`): without
+  it the build from the bundle would compile the plugin and every module
+  after it.
 - **Start-up and memory are a little higher than the closure's**, the same
   day: about 0.05 s and 38 MB for `Editor` alone, 0.35 s and 147 MB for a
   config that imports `Lean`. The modules imported are the same files; the

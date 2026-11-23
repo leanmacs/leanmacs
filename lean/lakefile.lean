@@ -1208,12 +1208,16 @@ def stagedInterfaceLibraries : List Lean.Name :=
 
 /-- Whether a library of `pkg` ships its modules built in the bundle
 (`editorShipped`): of the core, `Editor`, the library
-`coreIdentity` reads, and the interface libraries staged in it
+`coreIdentity` reads, the interface libraries staged in it
 (`stagedInterfaceLibraries`), whose changes reach the identity through the
-traces of the core's modules that import them; of another package, each
-library but its tests, `<P>Test`. -/
+traces of the core's modules that import them, and the build's linters,
+`Lint`, which every library of a set loads as a plugin (`lintPlugin`), so
+the plugin's trace is in every module's and a build from the bundle needs
+it built to read them as up to date; of another package, each library but
+its tests, `<P>Test`. -/
 def shipsLibrary (pkg : Package) (lib : LeanLib) : Bool :=
-  if pkg.keyName == __name__ then lib.name == `Editor || stagedInterfaceLibraries.contains lib.name
+  if pkg.keyName == __name__ then
+    lib.name == `Editor || lib.name == `Lint || stagedInterfaceLibraries.contains lib.name
   else
     match toUpperCamelCase pkg.baseName with
     | .str namespace_ base => lib.name != .str namespace_ (base ++ "Test")
@@ -1275,8 +1279,9 @@ the packages' lakefiles name the bundle's core unchanged; a package
 elsewhere is refused. For each package of the set (`setPackages`): its
 lakefile, `lake-manifest.json` and `lean-toolchain`; and for every module
 of each library that ships (`shipsLibrary`, `libraryModules`: of the core,
-`Editor`; of the others, each library but its tests), its
-source and every file Lake wrote for it (`builtFiles`). Of the core, also
+`Editor` and `Lint`; of the others, each library but its tests), its
+source and every file Lake wrote for it (`builtFiles`), and of `Lint` its
+plugin, the shared library and every file Lake wrote beside it. Of the core, also
 its glue, `ffi/glue.c`, with `glue.o` built and its trace and hash. Then
 the core's Rust archive and its system libraries
 (`prebuiltRustFiles`), at `target/` under `lean`, which is where a user's
@@ -1297,6 +1302,7 @@ package_facet editorShipped pkg : Array String := do
   let setDir := (← IO.FS.realPath pkg.dir).toString
   let mut placed : Array (Package × String) := #[]
   let mut libraries : Array (Job (Array Module)) := #[]
+  let mut plugins : Array (Job Dynlib) := #[]
   for dep in setPackages ws pkg do
     let dir := (← IO.FS.realPath dep.dir).toString
     let some place := shippedPlace coreDir setDir dir
@@ -1308,6 +1314,8 @@ package_facet editorShipped pkg : Array String := do
       if shipsLibrary dep lib then
         libraries :=
           libraries.push (← (← lib.modules.fetch).mapM fun listed => libraryModules lib listed)
+      if dep.keyName == __name__ && lib.name == `Lint then
+        plugins := plugins.push (← lib.shared.fetch)
   let directories ← moduleDirectories pkg
   let glueJob ← glue.o.fetch
   let root ← repositoryRoot
@@ -1316,7 +1324,8 @@ package_facet editorShipped pkg : Array String := do
     modulesJob.bindM fun modules => do
         let jobs ← modules.mapM (·.oExport.fetch)
         return (Job.collectArray jobs).map fun _ => modules
-  (builtJob.zipWith Prod.mk glueJob).mapM fun (modules, _) => do
+  let pluginsJob := Job.collectArray plugins
+  ((builtJob.zipWith Prod.mk glueJob).zipWith Prod.mk pluginsJob).mapM fun ((modules, _), dynlibs) => do
       let placeOf (dep : Package) : Option String :=
         (placed.find? (·.1.keyName == dep.keyName)).map (·.2)
       let mut lines : Array String := #[]
@@ -1341,6 +1350,15 @@ package_facet editorShipped pkg : Array String := do
         for file in #[mod.leanFile] ++ (← builtFiles mod) do
           let some relative := relativeUnder mod.pkg.dir file
             | error s!"{file} is not under its package's directory {mod.pkg.dir}"
+          lines := lines.push (line file s!"{place}/{relative}")
+      for dynlib in dynlibs do
+        let some dir := dynlib.path.parent | error s!"{dynlib.path} has no directory"
+        let some stem := dynlib.path.fileName | error s!"{dynlib.path} has no file name"
+        let some place := gluePlace | error "the core's package is of no place in the set"
+        let entries := (← dir.readDir).filter (·.fileName.startsWith stem)
+        for file in (entries.map (·.path)).qsort (·.toString < ·.toString) do
+          let some relative := relativeUnder core.dir file
+            | error s!"{file} is not under the core's directory {core.dir}"
           lines := lines.push (line file s!"{place}/{relative}")
       let (archive, libraries) := prebuiltRustFiles root
       for file in [archive, libraries] do
