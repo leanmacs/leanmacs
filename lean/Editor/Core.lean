@@ -14,6 +14,7 @@ import Editor.Indent
 import Editor.InputScheme.Contract
 import Editor.Job.FlushContract
 import Editor.Job.HandleContract
+import Editor.Job.Protocol.Theorems
 import Editor.Jumps.Go
 import Editor.Main
 import Editor.SearchRoot
@@ -104,9 +105,12 @@ evil's (`EvilTest.Kit`, with the linked kit's host of the Vim scheme,
 `EvilTest.Linked.Support.Vim`) into the package `evil`. Everything else comes with them: the kit is the support the
 core's own tests are written on, so it imports the driver of the loop that
 tests run it with (`Editor.Loop.Driver`) and the modules that define the
-packages its fixtures register, and those are not named here again. The theorem modules are also the config base's imports
+packages its fixtures register, and those are not named here again. The theorem modules of
+the editor API and the undo tree are also the config base's imports
 (`Editor.lean`); they are named here because no core module imports the
-base.
+base. The job runner protocol's theorems (`Editor.Job.Protocol.Theorems`)
+are not: config has no use for them, and this module is what has the build
+check them.
 
 ## The check
 
