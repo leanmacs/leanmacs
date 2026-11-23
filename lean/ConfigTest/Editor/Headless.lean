@@ -4413,4 +4413,83 @@ def journalDrainChecks (context : Context) : List Check :=
             saw (waiting && ended == some true && !there)
                 s!"the drain waiting while held {waiting}, ended {ended}, the file there after {there}" }]
 
+/-- A job registered as `restore` that does nothing: with it registered the
+loop's journal reconciler is enabled (`Restore.journalOrders`), and no check
+of `journalOrderChecks` starts it. -/
+def idleRestoreJob : Config.JobRegistration :=
+  { name := Restore.restoreJob, work := fun _ => Work.of (fun _ => pure ()) fun _ => pure () }
+
+/-- The commands of `journalOrderChecks`: `journal-run` gives the session its
+run number, 1, and says the restore done, as a restore that found nothing
+would; `journal-unmodify` undoes the window's buffer until its history is
+at its saved head, so it is journalled no longer. -/
+def journalOrderCommands : Array Config.Registration :=
+  #[{ name := "journal-run"
+      action :=
+        .call fun _ => do
+          let state ← editorState
+          Restore.setKept { state.restore with run := some 1, restored := true } },
+    { name := "journal-unmodify"
+      action :=
+        .call fun call => do
+          let buffer := call.target.window.buffer
+          for _ in [0:16] do
+            let .ok true ← buffer.isModified | return
+            discard <| buffer.undo }]
+
+/-- An order as `journalOrderChecks` compares it: its kind and its path. -/
+def orderShape (order : Restore.Order) : String × String :=
+  match order.request with
+  | .save _ path _ => ("save", path.toString)
+  | .append path _ => ("append", path.toString)
+  | .remove path => ("remove", path.toString)
+  | _ => ("other", order.path)
+
+/-- The checks of the host's hand-off of the session journal's orders
+(`Running.journaled`, `Collaborators.journal`), on a stepped host over the
+journal's recording fake (`Stage.recordingJournal`): the orders are compared
+by kind and path, computed with the reconciler's own path functions, never
+by their bytes, which `ModelTest.restoreChecks` pin. -/
+def journalOrderChecks (context : Context) : List Check :=
+  [{  name :=
+        "the host hands the session journal its base, edit-record and remove orders in order, on its own thread, and the journal's drain ends only on the check's step: a scratch buffer typed into twice and undone to unmodified gives the base's save, the header's append, one record's append, then the base's and the log's removes"
+      run := do
+        let stage ←
+          Stage.new context context.elaborator (memorySource [])
+              { jobs := #[idleRestoreJob], commands := journalOrderCommands }
+        let state : System.FilePath := "/state"
+        let (stage, fake) ← stage.recordingJournal state
+        let thread ← IO.getTID
+        onStage stage fun drive _ => do
+            drive.send (.run "journal-run")
+            unless ← drive.settle hangGuard do
+              return false
+            drive.commit "a"
+            unless ← drive.settle hangGuard do
+              return false
+            drive.commit "b"
+            unless ← drive.settle hangGuard do
+              return false
+            drive.send (.run "journal-unmodify")
+            unless ← drive.settle hangGuard do
+              return false
+            let orders := (← fake.orders).map orderShape
+            -- The scratch buffer, buffer 0, in run 1, at the first generation
+            -- the reconciler gives a journal.
+            let generation := ({} : Restore.Kept).nextGeneration
+            let base := (Restore.basePath state 1 0 generation).toString
+            let log := (Restore.logPath state 1 0 generation).toString
+            let expected :=
+              #[("save", base), ("append", log), ("append", log), ("remove", base),
+                ("remove", log)]
+            let threads ← fake.orderThreads
+            let drain ← fake.journal.drained
+            let early ← IO.hasFinished drain
+            fake.stepAll
+            let ended ← Job.awaitWithin hangGuard drain
+            saw
+                (orders == expected && threads.all (· == thread) && !early && ended == some true &&
+                  (← fake.quiescent))
+                s!"orders {orders}, handed on {threads} (the check's thread {thread}); the drain ended before the step {early}, after it {ended}" }]
+
 end ConfigTest

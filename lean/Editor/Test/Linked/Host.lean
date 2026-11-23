@@ -13,6 +13,7 @@ import Editor.FileWatch.Model
 import Editor.Fuzzy
 import Editor.Fuzzy.Real
 import Editor.Headless
+import Editor.Headless.Journal.Fake
 import Editor.Headless.Stepped
 import Editor.InferredWait
 import Editor.InputScheme.Test
@@ -489,6 +490,23 @@ def Stage.new {β σ : Type} (context : HostContext) (elaborator : Config.Elabor
               return loop },
       output, threads, outputWaits, clock, watches, log, disposed
       memory := ← Headless.Queue.Memory.new }
+
+/-- `stage` with its host's session journal the recording fake
+(`Headless.RecordingJournal`, `Editor/Headless/Journal/Fake.lean`) and its
+state directory `state`, and the fake, which the check steps on its own
+thread. The fake reads a save's text from the stage's published table when
+the host hands the order, as the real journal finds the library's snapshot
+then. Nothing is written to `state`: the fake works its orders on a model
+of files. -/
+def Stage.recordingJournal {β σ : Type} (stage : Stage β σ) (state : System.FilePath) :
+    IO (Stage β σ × Headless.RecordingJournal) := do
+  let fake ←
+    Headless.RecordingJournal.new (snapshots :=
+        some (Job.realSnapshots stage.collaborators.published.reader))
+  let collaborators :=
+    { stage.collaborators with
+      journal := fake.journal, stateDirectory := some state }
+  return ({ stage with collaborators }, fake)
 
 /-- A host as a check drives it, whichever kind it is: a real one, whose loop
 runs on a thread of its own (`Headless.Host`, `Driven.ofHost`), or one

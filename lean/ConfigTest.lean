@@ -295,6 +295,11 @@ show:
   (`Headless.Journal.real`): with the service's worker held its drain has
   not ended, and let go it ends true with the order handed before it
   worked. It shares `fileChecks`' table of waits;
+- `journalOrderChecks`: the host's hand-off of the session journal's
+  orders, on a stepped host over the journal's recording fake
+  (`Stage.recordingJournal`): the base's save, the header's and a record's
+  appends and the removes, in order, each handed on the check's thread,
+  and the drain ended only by the check's step;
 - `reloadEchoChecks`: a rejected reload's first error is said in the echo
   area, while the old config runs; a reload that installs says nothing;
   and one rejected before the frame is made is said once it is;
@@ -405,6 +410,7 @@ def checks (context : Context) : List Check :=
     restoreOrderChecks context ++
     journalFailureChecks context ++
     journalDrainChecks context ++
+    journalOrderChecks context ++
     leaderChecks context ++
     hintChecks context ++
     keyHintChecks context ++

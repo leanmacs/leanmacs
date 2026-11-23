@@ -24,9 +24,11 @@ reference and the promises it hands out. Once `stepAll` has run, nothing is
 unworked and no drain is waiting (`quiescent`), so a check that ends there
 leaves nothing to drain.
 
-A save names a snapshot (`File.Source.snapshot`). Its text is read when the
-save is worked: from `snapshots` when the fake was made with a reader of a
-host's published table, and from the model's own snapshots otherwise.
+A save names a snapshot (`File.Source.snapshot`). When the fake was made
+with a reader of a host's published table (`snapshots`), the text is read
+when the order is handed, as the real journal finds the library's snapshot
+then (`Journal.real`), since the host releases the snapshot right after;
+otherwise the save reads the model's own snapshots when it is worked.
 
 ## Where an addition goes
 
@@ -71,10 +73,29 @@ def new (model : FileModel := {}) (snapshots : Option (SnapshotId → BaseIO (Op
     BaseIO RecordingJournal :=
   return { state := ← IO.mkRef { model }, snapshots }
 
-/-- Records `order`, with the calling thread. -/
+/-- `model` with `text` in the slot of the snapshot `id`. -/
+private def withSnapshot (model : FileModel) (id : SnapshotId) (text : String) : FileModel :=
+  let size := max model.snapshots.size (id.index + 1)
+  let slots :=
+    (model.snapshots ++ Array.replicate (size - model.snapshots.size) none).setIfInBounds id.index
+      (some { contents := text })
+  { model with snapshots := slots }
+
+/-- Records `order`, with the calling thread; for a save of a snapshot,
+with the text the fake's reader finds for it now. -/
 def perform (journal : RecordingJournal) (order : Restore.Order) : BaseIO Unit := do
   let thread ← IO.getTID
-  journal.state.modify fun state => { state with recorded := state.recorded.push (order, thread) }
+  let text : Option (SnapshotId × String) ←
+    match journal.snapshots, order.request with
+    | some read, .save (.snapshot id) _ _ => pure ((← read id).map (id, ·))
+    | _, _ => pure none
+  journal.state.modify fun state =>
+    let model :=
+      match text with
+      | some (id, text) => withSnapshot state.model id text
+      | none => state.model
+    { state with
+      model, recorded := state.recorded.push (order, thread) }
 
 /-- Resolves, with `true`, every drain of `state` that its worked orders
 cover, on the caller's thread, and returns the state without them. -/
@@ -99,19 +120,6 @@ def drained (journal : RecordingJournal) : BaseIO (Task Bool) := do
     promise.resolve true
   return promise.result?.map (sync := true) (·.getD false)
 
-/-- The model with the text of the snapshot a save of `order` names put in
-its slot, read from the fake's reader; the model as it is for any other
-order, or with no reader. -/
-private def withSnapshot (journal : RecordingJournal) (order : Restore.Order) (model : FileModel) :
-    BaseIO FileModel := do
-  let some read := journal.snapshots | return model
-  let .save (.snapshot id) _ _ := order.request | return model
-  let some text ← read id | return model
-  let size := max model.snapshots.size (id.index + 1)
-  let slots := (model.snapshots ++ Array.replicate (size - model.snapshots.size) none).setIfInBounds
-      id.index (some { contents := text })
-  return { model with snapshots := slots }
-
 /-- Works the oldest unworked order on the model, on the caller's thread,
 keeping a refusal as a failure, then resolves every drain now covered.
 `false` when nothing was left to work. -/
@@ -119,10 +127,9 @@ def step (journal : RecordingJournal) : BaseIO Bool := do
   let thread ← IO.getTID
   let state ← journal.state.get
   let some (order, _) := state.recorded[state.worked]? | return false
-  let model ← journal.withSnapshot order state.model
   let resolved ←
     journal.state.modifyGet fun state =>
-        let (reply, model) := FileModel.handle order.request model
+        let (reply, model) := FileModel.handle order.request state.model
         let failures :=
           match order.failed reply with
           | some failure => state.failures.push failure

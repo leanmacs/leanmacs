@@ -1482,6 +1482,38 @@ a real loop (A1 to A7 in the page above). A check that holds something a
 turn waits on drives that one drain from a dedicated task it joins, and
 lets every hold go in a `finally`.
 
+### Recording fakes for the host's background collaborators
+
+Each collaborator that does background work a host check would otherwise
+wait on has a recording fake a check hands the host (host-tests-on-fakes
+phase 3). The rules every one keeps:
+
+- **It records each order it receives, with the thread that handed it.**
+  An order from the host arrives on the editor thread, which on a stepped
+  host is the check's own; a job's request arrives on the job's pool
+  thread, and a check reads it after the event that guarantees it is
+  there.
+- **It answers only in `step`**, on the thread that calls it: every
+  completion, delivery and drain. Nothing is worked, and no drain ends,
+  before the check steps.
+- **It starts no thread** and calls nothing that does: its state is a
+  reference and the promises it hands out.
+- **It is quiescent once stepped to its end**: nothing is left unworked and
+  no drain waits, so a check that ends there leaves nothing to drain.
+
+Each fake and its real adapter run one shared contract: over the fake in
+`model-test`, and over the real adapter in `contract-test`, where the real
+run waits on its own flush, handle or wait, never on a count or the idle.
+
+| Port (today's type) | The fake a host check gets, and how | Contract module | Fake's run | Real adapter pinned in |
+|---|---|---|---|---|
+| Session journal, `Headless.Journal` (`Editor/Headless/Journal.lean`) | `RecordingJournal` (`Editor/Headless/Journal/Fake.lean`), through `Collaborators.journal`, made over a stage by `Stage.recordingJournal` | `Editor/Headless/Journal/Contract.lean` | `ModelTest.journalContractChecks` | `ContractTest.journalContractChecks` (`Journal.real`, held by `FileHold`, its own flush) |
+
+The host's own use of each is pinned over the fake: the journal's by
+`ConfigTest.journalOrderChecks`, which drives a stepped host and asserts
+the base, edit-record and remove orders it hands, in order, on the check's
+thread, and that the drain ends only on the check's step.
+
 ### Prompts
 
 Status: decided 2026-11-14 and built, by the command loop's phase 10; a
@@ -2862,6 +2894,12 @@ process aborts (session-restore phase 1; `lean/Editor/Restore.lean`).
   a count. It waits at most `drainPatience`, on purpose in real time, so
   quitting never hangs on a stuck file system. A script's `journalled`, and
   `indexed` once the index is written, wait for the same drain.
+- **The port and its adapters.** The port is `Headless.Journal`
+  (`lean/Editor/Headless/Journal.lean`), which imports no binding; the
+  library's adapter is `Journal.real` (`Journal/Real.lean`), and a host
+  check is handed the recording fake (`Journal/Fake.lean`), both held to
+  one contract (`Journal/Contract.lean`; "Recording fakes for the host's
+  background collaborators", above).
 - **Compaction**: past max(1 MiB, the base's size), or when the log was
   forgotten past the record's revision, a new base generation is written
   (an atomic save of a snapshot), then the old one's files removed.
