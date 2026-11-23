@@ -91,6 +91,10 @@ readout whose fake exists. Phase 3 marked each as its fake landed:
 - `Ffi.filesFailure`, with the session journal's recording fake
   (`RecordingJournal`), its subject the real journal
   (`Editor.Headless.Journal.Real`).
+- `Ffi.processesHeld` and `Ffi.processesAwaitHeld`, with the process
+  service's step mode (`FakeProcesses`, `FakeAnswer.onStep`), with no
+  subject beside their own module: their one user is the binding's own
+  check (`FfiTest/Editor/Ffi/Processes.lean`).
 
 A site that a later phase removes, or that stays, keeps an explicit allow,
 `set_option linter.inferredWait false in` on the declaration that holds it,

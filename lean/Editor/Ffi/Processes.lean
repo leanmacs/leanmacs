@@ -219,6 +219,18 @@ completed at once. -/
 @[extern "editor_glue_processes_close_input"]
 opaque processesCloseInput (child wait : UInt64) : IO Bool
 
+/-- `processesHeld` is an inferred wait (`Editor/InferredWait.lean`): a real
+service's readout whose fake exists, the process service's step mode
+(`FakeProcesses`, `FakeAnswer.onStep`), so a host check reads the fake's
+log, never this. Its one user is the binding's own check. -/
+def processesHeld.inferredWait : InferredWait :=
+  .realEffect []
+
+/-- `processesAwaitHeld` is an inferred wait (`Editor/InferredWait.lean`), as
+`processesHeld` is. -/
+def processesAwaitHeld.inferredWait : InferredWait :=
+  .realEffect []
+
 /-- Whether the readers of the child `child` are held at its bound: 0 no, 1
 yes, 2 no such child. A readout for tests. -/
 @[extern "editor_glue_processes_held"]

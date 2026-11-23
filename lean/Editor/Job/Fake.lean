@@ -959,6 +959,15 @@ def quiescent (files : FakeFiles) : BaseIO Bool := do
 
 end FakeFiles
 
+/-- One thing a fake process service was handed, in its log. -/
+inductive FakeProcesses.Order where
+  /-- A request started as the wait `id`. -/
+  | start (id : UInt64) (request : ProcessRequest)
+  /-- A flush of the processes as the wait `id`. -/
+  | flush (id : UInt64)
+  /-- The wait `id` withdrawn while its request was pending. -/
+  | withdraw (id : UInt64)
+
 /-- What a fake process service holds. -/
 structure FakeProcesses.State where
   /-- What each command does, and what was started and killed. -/
@@ -978,6 +987,11 @@ structure FakeProcesses.State where
   holding : Bool := false
   /-- The waits whose completion is held, oldest first. -/
   parked : Array UInt64 := #[]
+  /-- The thread that started each request of `started`. -/
+  startThreads : Array UInt64 := #[]
+  /-- Everything the service was handed, in arrival order, each with the
+  thread that handed it: starts, flushes and withdrawals. -/
+  log : Array (FakeProcesses.Order × UInt64) := #[]
 
 /-- The fake of the process port (`Job.Processes`, `Editor/Job/Runner.lean`):
 the pure model of processes (`Editor/Process/Model.lean`) behind a
@@ -1009,6 +1023,9 @@ structure FakeProcesses where
   ran : Process.Command → BaseIO Unit
   /-- What the service holds. Every change to it is one atomic step. -/
   state : IO.Ref FakeProcesses.State
+  /-- How it answers: at once, or on the check's step through a fake pump
+  (`FakeAnswer.onStep`). -/
+  answer : FakeAnswer := .atOnce
 
 namespace FakeProcesses
 
@@ -1016,8 +1033,9 @@ namespace FakeProcesses
 request started, which tells `ran` the command of each run once it has
 run. -/
 def new (completions : Completions) (model : ProcessModel := {})
-    (ran : Process.Command → BaseIO Unit := fun _ => pure ()) : BaseIO FakeProcesses :=
-  return { completions, ran, state := ← IO.mkRef { model } }
+    (ran : Process.Command → BaseIO Unit := fun _ => pure ()) (answer : FakeAnswer := .atOnce) :
+    BaseIO FakeProcesses :=
+  return { completions, ran, state := ← IO.mkRef { model }, answer }
 
 /-- Holds every completion from now on: a request started from now is not
 completed until `letGo`. So a test can act while a job is in a process
@@ -1034,21 +1052,24 @@ def letGo (processes : FakeProcesses) : BaseIO Unit := do
           { state with
             holding := false, parked := #[] })
   for id in parked do
-    processes.completions.finish id .completed
+    processes.answer.complete processes.completions id
 
 /-- Starts `request` as the wait `id`, and completes the wait unless
 completions are held. -/
 def start (processes : FakeProcesses) (id : UInt64) (request : ProcessRequest) : BaseIO Unit := do
+  let thread ← IO.getTID
   let held ←
     processes.state.modifyGet fun state =>
         let state :=
           { state with
             pending := state.pending.push (id, request)
-            started := state.started.push (id, request) }
+            started := state.started.push (id, request)
+            startThreads := state.startThreads.push thread
+            log := state.log.push (.start id request, thread) }
         if state.holding then (true, { state with parked := state.parked.push id })
         else (false, state)
   unless held do
-    processes.completions.finish id .completed
+    processes.answer.complete processes.completions id
 
 /-- The model's answer to `request`, which was started as the wait `id`, and
 the request is pending no longer. A request that is not pending, because it
@@ -1078,13 +1099,15 @@ def take (processes : FakeProcesses) (id : UInt64) (request : ProcessRequest) :
 completed here and never runs. Or, if `id` names a streaming child of the
 model's, ends it as the library kills one: the model records it as killed
 and forgets it. -/
-def cancel (processes : FakeProcesses) (id : UInt64) : BaseIO Unit :=
+def cancel (processes : FakeProcesses) (id : UInt64) : BaseIO Unit := do
+  let thread ← IO.getTID
   processes.state.modify fun state =>
     if state.pending.any (·.1 == id) then
       { state with
         pending := state.pending.filter (·.1 != id)
         parked := state.parked.filter (· != id)
-        withdrawn := state.withdrawn.push id }
+        withdrawn := state.withdrawn.push id
+        log := state.log.push (.withdraw id, thread) }
     else
       if state.model.children.any (·.id == id.toNat) then
         { state with
@@ -1095,12 +1118,14 @@ def cancel (processes : FakeProcesses) (id : UInt64) : BaseIO Unit :=
 completions are held, when it is parked behind them and `letGo` completes it
 after every wait held before it. -/
 def flush (processes : FakeProcesses) (id : UInt64) : BaseIO Unit := do
+  let thread ← IO.getTID
   let held ←
     processes.state.modifyGet fun state =>
+        let state := { state with log := state.log.push (.flush id, thread) }
         if state.holding then (true, { state with parked := state.parked.push id })
         else (false, state)
   unless held do
-    processes.completions.finish id .completed
+    processes.answer.complete processes.completions id
 
 /-- The service as the port the runner is given. -/
 def processes (processes : FakeProcesses) : Processes :=
@@ -1128,6 +1153,21 @@ def withdrawn (processes : FakeProcesses) : BaseIO (Array UInt64) :=
 /-- The waits whose replies were taken, oldest first. -/
 def taken (processes : FakeProcesses) : BaseIO (Array UInt64) :=
   return (← processes.state.get).taken
+
+/-- The thread that started each request of `started`. -/
+def startThreads (processes : FakeProcesses) : BaseIO (Array UInt64) :=
+  return (← processes.state.get).startThreads
+
+/-- Everything the service was handed, in arrival order, each with the
+thread that handed it. -/
+def log (processes : FakeProcesses) : BaseIO (Array (Order × UInt64)) :=
+  return (← processes.state.get).log
+
+/-- Whether nothing of the service is in flight: no request pending, no
+completion parked. -/
+def quiescent (processes : FakeProcesses) : BaseIO Bool := do
+  let state ← processes.state.get
+  return state.pending.isEmpty && state.parked.isEmpty
 
 end FakeProcesses
 

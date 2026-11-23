@@ -103,7 +103,16 @@ def flushSteppedRigs : BaseIO (List FlushContract.FlushRig × FakePump) := do
   let greps : FlushContract.FlushRig :=
     { name := "the fake file service's searches, stepped", flush := services.flushed .greps
       step := pump.stepAll }
-  let rigs := [files', diffs, greps]
+  let processes ← FakeProcesses.new completions (answer := .onStep pump)
+  let processRig : FlushContract.FlushRig :=
+    { name := "the fake process service, stepped"
+      flush := ({ services with processes := processes.processes } : Services).flushed .processes
+      step := pump.stepAll
+      held :=
+        some <|
+          held fun id =>
+            processes.processes.start id (.run { program := "/bin/true", directory := "/" } 10) }
+  let rigs := [files', diffs, greps, processRig]
   return (rigs, pump)
 
 /-- The services' flush contract on the fakes, one check for each rig and

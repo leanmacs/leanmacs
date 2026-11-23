@@ -148,19 +148,26 @@ def steppedGuard : HangGuard :=
   .on "a due completion or the job's end" 10000
 
 /-- Spawns `job` on `services`, whose job services answer on `pump`'s step,
+(`started` counting the requests the fakes were handed, each of which must
+have handed the pump its completion)
 and runs the pump on the check's thread until the job has ended
 (`FakePump.runToEnd`), moving `clock` as the job's own waits on it start:
 how it ended. Throws when a completion was finished
 on any thread but the check's, or when `quiescent` says something of the
 fakes is still in flight. -/
 def runStepped (services : Job.Services) (pump : Job.FakePump) (clock : Job.FakeClock)
-    (job : JobM Bool) (quiescent : IO Bool) : IO (Job.Outcome Bool) := do
+    (job : JobM Bool) (quiescent : IO Bool) (started : IO Nat) : IO (Job.Outcome Bool) := do
   let thread ← IO.getTID
   let handle ← Job.spawn services (reporting fun _ => job) (pure ())
   pump.runToEnd handle.outcome.result? steppedGuard (some clock)
   let threads ← pump.finishedThreads
   unless threads.all (· == thread) do
     throw <| IO.userError s!"a completion was finished off the check's thread {thread}: {threads}"
+  let requests ← started
+  unless (← pump.handed) ≥ requests do
+    throw <|
+        IO.userError
+          s!"{requests} requests were started and only {← pump.handed} completions handed to the pump: the rest were answered off the step"
   unless ← quiescent do
     throw <| IO.userError "the stepped fakes still hold work once the job ended"
   match (← handle.outcome?).map texts with
@@ -188,6 +195,8 @@ def runFilesStepped (property : JobContract.FileProperty) :
   let outcome ←
     try
       runStepped services pump clock (property.holds fileRoot) files.quiescent
+        (return (← files.started).size + (← files.diffsStarted).size +
+          (← files.grepsStarted).size)
     catch error =>
       pure (.failed s!"the stepped run: {error}")
   return (outcome, filesIn (← files.model))
@@ -226,14 +235,32 @@ def runProcessesOnFake (property : JobContract.ProcessProperty) : IO (Job.Outcom
   let (rig, _) ← Rig.withProcesses (processModelOf property)
   runOnFake (property.holds processRoot) (some rig)
 
+/-- Runs a process property's job on the runner over the fake of the process
+service in its step mode (`FakeAnswer.onStep`), each completion handed to a
+fake pump the check steps on its own thread: how the job ended. -/
+def runProcessesStepped (property : JobContract.ProcessProperty) : IO (Job.Outcome Bool) := do
+  let completions ← Job.Completions.new
+  let clock ← Job.FakeClock.new completions
+  let pump ← Job.FakePump.new completions
+  let processes ← Job.FakeProcesses.new completions (processModelOf property) (answer := .onStep pump)
+  let services : Job.Services :=
+    { completions, timers := clock.timers, processes := processes.processes }
+  try
+    runStepped services pump clock (property.holds processRoot) processes.quiescent
+      (return (← processes.started).size)
+  catch error =>
+    pure (.failed s!"the stepped run: {error}")
+
 /-- The names of the job port's process properties that do not hold of the
-job model, and of those that do not hold of the runner over the fake of the
-process service. -/
+job model, of those that do not hold of the runner over the fake of the
+process service, and of those that do not hold of it in its step mode. -/
 def processFailures : IO (List String) := do
   let onModel ← JobContract.processFailures runProcessesOnModel JobContract.processProperties
   let onFake ← JobContract.processFailures runProcessesOnFake JobContract.processProperties
+  let onStepped ← JobContract.processFailures runProcessesStepped JobContract.processProperties
   return onModel.map (s!"the job model: {·}") ++
-      onFake.map (s!"the job runner over the fake process service: {·}")
+      onFake.map (s!"the job runner over the fake process service: {·}") ++
+      onStepped.map (s!"the job runner over the fake process service, stepped: {·}")
 
 /-- The models a watch property's directories, files and scripts are, for
 the job model and the fake, in `watchRoot`: the directory and its
