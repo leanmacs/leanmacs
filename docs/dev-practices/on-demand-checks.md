@@ -1231,11 +1231,11 @@ hogs unless it says otherwise:
   GitHub CI runs while the roadmap is implemented, so it is deferred to
   landing: `.github/workflows/stress.yml` is dispatched then, must print
   `config: 50/50`, `contract: 50/50`, `rust: 50/50` and `open-file: 50/50`,
-  and its run id is recorded on the phase. It is still not run
-  (2026-11-22): each shard gates with `mise run ci` first, and the gate
-  fails on both runners at the default-config headless fixture, which
-  needs fzf (task default-config-fixture-needs-fzf), so the loop would not
-  start.
+  and its run id is recorded on the phase. It was run for task
+  linux-stress-config-hangs on 2026-11-23, once the default-config headless
+  fixture no longer needed fzf: run 45097785021, at d3be1632, printed
+  `config: 50/50`, `contract: 49/50`, `rust: 50/50` and `open-file: 50/50`
+  ("The load on Linux", below, has every run).
 - Every run above was taken before `main` at 2df0ce08 was merged into the
   branch. That merge brought the features-as-packages roadmap, which moved
   most features' checks out of `config-test` and `contract-test` into the
@@ -1280,7 +1280,15 @@ measured level to macOS's 11 times (116 to 121 s a config run under 36
 hogs against 10.7 s), with the slowest check at 10.2 s, against 12.1 s on
 macOS, so ten times either is inside the 130 s of
 `Editor.Test.Linked.hangGuard`, which the macOS figure raised from 120 s
-(its doc has both). Nice 10 would need
+(its doc has both). That slowest check, on every machine, is "the real
+elaborator: a handle is one version of a file…", six elaborations in a row
+with no wait in them, so its time bounds no wait the guard guards and the
+sizing by it is on the safe side. It took up to 13.2 s on macOS in later
+rounds and 16.1 to 25.1 s on `ubuntu-24.04` (run 45097785021's 50
+rounds), where ten times it would be past the guard. The slowest check that
+does wait under the guard, a reload's settle, took 5.9 s at most on macOS,
+8.4 s in the container and 11.3 s on `ubuntu-24.04`, so ten times it is
+inside 130 s on all three. Nice 10 would need
 every guard near 340 s, past the 300 s limit `ffi-test` has in the gate,
 so a real hang there would be killed before it named itself. The peak
 memory of the container was 3.0 GB in every run: nothing was killed for
@@ -1324,28 +1332,55 @@ with a check that forces it:
   job's wake-up goes to the library's queue, which the next check shares.
   At nice 0 it failed "a key a compiled binding binds runs its compiled
   command…" in 3 of 5 runs, and at nice 5 in 1 of 4 rounds (`a stepped
-  host's check posted to the library's editor queue`). The four checks'
-  helper now waits for that post before it returns. Other real hosts that
-  end with a job in its wait can still leave theirs late (task
-  real-host-leaves-an-event-on-the-library-queue).
+  host's check posted to the library's editor queue`), and on
+  `ubuntu-24.04` it failed "a wait's later rounds publish nothing…" once
+  in 39 rounds (`twoRounds=(some 3) oneRound=(some 4)`). A test stage's
+  loop now waits, as it ends, for the jobs it cancels
+  (`docs/design/concurrency.md`, "The idle signal").
 
-Runs on the fixed tree (8ff52f1c with these docs, `hangGuard` still at
-120 s), 2026-11-22:
+Two more were found by the runs on `ubuntu-24.04` and fixed the same way:
+the order of two completions in an `editor-process` test
+(`a_partial_line_exactly_the_bound_long_waits_for_the_stream_to_go_on_or_end`,
+CI run 45085691720), and the model test's log of the activity count, which
+read the count after the step it noted ("a job in a next of a fake watch
+holds no unit…", stress run 45095260790).
 
-- macOS, an 18-core Mac under 36 hogs, `mise run stress -- 10 config`:
-  `config: 10/10`, no `a hang` line in any log.
-- The Linux container, `tools/stress.sh 10 config` after `mise run lean`
-  and the probe, `STRESS_LIMIT=1800`, 16 hogs: `config: 10/10`, no `a
-  hang` line in any log. The container's gate was not run first: it stops
-  at bundle-test (linux-gate-bundle-test-wants-ld64-lld), and the Docker
-  VM's disk had 2.8 GB left.
-- `ubuntu-24.04` and `macos-26`, CI runs 45067913272 (683d69ce) and
-  45075679628 (408e2021): `config-test: 283 checks passed` on both legs of
-  both, where main's run had failed in it, and the second, which has the
-  loop-end guards, says no hang line. Both legs then fail the gate at the
-  default-config headless fixture,
-  which needs fzf on the `PATH` (task default-config-fixture-needs-fzf),
-  so no run of the branch is green and `stress.yml` was not dispatched.
+The runs, 2026-11-22 and 2026-11-23. The owner decided on 2026-11-22 that
+stress no longer gates task linux-stress-config-hangs: first the local
+runs at the final head, then the `stress.yml` runs, two of which were
+cancelled. Roadmap host-tests-on-fakes replaces it with proofs and forced
+tests, and keeps stress for its last phase.
+
+- Local, `tools/stress.sh 10 config`, macOS (18 cores, 36 hogs) and the
+  Linux container (after `mise run lean` and the probe, `STRESS_LIMIT=1800`,
+  16 hogs), at 8ff52f1c, d3be1632 and 83a3529e, and the container at
+  717a3bcf: each `config: 10/10`, no `a hang` line in any log. The
+  container's gate was not run first: it stops at bundle-test
+  (linux-gate-bundle-test-wants-ld64-lld), and one attempt took the Docker
+  VM's disk from 2.8 GB free to 1.0 GB before it was stopped.
+- `stress.yml` on `ubuntu-24.04`:
+
+  | Run | Head | Rounds | Result |
+  |---|---|---|---|
+  | 45092070171 | 717a3bcf | 5 | config 5/5, contract 5/5, rust 5/5, open-file 5/5 |
+  | 45095260790 | 717a3bcf | 50 | config 39/50, contract 39/50, rust 40/50, open-file 40/50: one shard's gate failed in model-test, one config round and one contract round failed (the two fixes above, and task contract-test-file-leak-baseline-read-before-earlier-snapshots-are-freed) |
+  | 45097785021 | d3be1632 | 50 | config 50/50, contract 49/50 (the same contract check), rust 50/50, open-file 50/50; no hang line |
+  | 45109056333 | 83a3529e | 5 | config 5/5, contract 5/5, rust 5/5, open-file 5/5 |
+  | 45109078669 | 83a3529e | 50 | cancelled; two shards' gates had failed with an editor that did not end (task gate-hangs-at-an-editors-end-on-ubuntu-stress-shards) |
+  | 45113730071 | 83a3529e | 50 | cancelled; all five gates had passed |
+
+- CI on the branch. Until f5512746 both legs failed at the default-config
+  headless fixture, which needed fzf on the `PATH` (runs 45067913272,
+  45075679628 and 45082155878), with `config-test` passing in each where
+  main's run had failed in it. The fixture now stands
+  `tests/completion/filter` in for fzf. Green on both legs: 45089296006
+  (717a3bcf, second attempt), 45096886654 (d3be1632, first and third
+  attempts) and 45109040776 (83a3529e, second and third attempts). The
+  attempts that
+  failed did so in the gate's other tasks, each filed:
+  bundle-test-reaches-its-600-s-limit-on-macos-ci,
+  bundle-sets-restarted-editor-killed-at-60-s-on-macos-ci (twice) and
+  vc-contract-hook-refusal-lines-flaky-on-ubuntu-ci.
 
 `mise run linux-stress` runs the same loop in the Linux container of
 `linux-ci` ([below](#the-gate-on-linux-on-demand)), after one `mise run ci`
