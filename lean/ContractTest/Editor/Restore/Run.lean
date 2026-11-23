@@ -40,7 +40,9 @@ not flush never releases it and finds the remove unworked every time. That
 flush is the check's own signal, not an inference: the worker is held, the
 drain asks its own flush, and what the case reads as left is how many of
 the orders' own drains have not ended. The third pins the drain when the
-body throws; the fourth that a journal that does not drain fails the check.
+body throws; the fourth that a journal that does not drain fails the check;
+the fifth that the wait on the orders' own drains (`ownDrained`) fails, as a
+failed drain, on one that ended `false`.
 The held journal is the scaffold's alone: it works its orders on the real
 directory the scaffold removes, which the port's recording fake
 (`RecordingJournal`), over a model of files, does not touch.
@@ -219,15 +221,24 @@ def drainsBeforeRemoval (journal : Headless.Journal) (hold : System.FilePath →
           s!"the scaffold returned {held}; when the drain returned the stale file was {if there then "there" else "gone"} and {count} orders were left; the directory was {if gone then "gone" else "there"} after"
   return true
 
-/-- Waits for every task of `handed` to end, each the drain the checks'
-journal asked right after one of its orders (`ownedJournal`): the orders'
-own signals, so this waits on the check's own work and nothing else of the
-process's file service. `false` if one has not ended within `patience`,
-which only a hang reaches. -/
+/-- Waits for every task of `handed` to end `true`, each the drain the
+checks' journal asked right after one of its orders (`ownedJournal`): the
+orders' own signals, so this waits on the check's own work and nothing else
+of the process's file service. `true` once every one has. A drain that
+ended `false`, a flush the file service refused or cancelled, says nothing
+of its order's work, so once every drain has ended it is thrown as a failed
+drain; one that has not ended within `patience`, which only a hang
+reaches, is thrown as a hang. -/
 def ownDrained (handed : IO.Ref (Array (Task Bool))) : IO Bool := do
-  for task in ← handed.get do
-    unless (← Job.awaitWithin patience task).isSome do
-      return false
+  let tasks ← handed.get
+  let mut failed := 0
+  for task in tasks do
+    unless ← Job.awaitOrHang (.on "an order's own drain" patience.ms) task do
+      failed := failed + 1
+  unless failed == 0 do
+    throw <|
+        IO.userError
+          s!"a failed drain: {failed} of {tasks.size} orders' own drains ended false, their flushes refused or cancelled by the file service"
   return true
 
 /-- The loop of a host started fresh over `rig`, with `state` as its state
@@ -352,29 +363,34 @@ def tabsHeldAtStaleRemove (services : Job.Services) (drain : TabsDrain) : IO Tab
     | none =>
       asked
       return true
-  let drained : IO Bool := do
-    let ended ←
-      match drain with
-      | .flush =>
-        drainJournal release
-      | .ownTasks =>
-        do
-          release
-          ownDrained handed
-      | .pendingCount =>
-        pendingDrained
-    if let some directory← used.get then
-      let there ← (Restore.indexPath (directory / "state") 1).pathExists
-      let removeEnded ←
-        match ← removed.get with
-        | some task =>
-          IO.hasFinished task
-        | none =>
-          pure false
-      seen.set (some (ended, there, removeEnded))
-    release
-    discard <| drainJournal (pure ())
-    return ended
+  -- The hold is let go and the journal drained after the read even when
+  -- the wait throws (`ownDrained`'s failed drain or hang).
+  let drained : IO Bool :=
+    tryFinally
+      (do
+        let ended ←
+          match drain with
+          | .flush =>
+            drainJournal release
+          | .ownTasks =>
+            do
+              release
+              ownDrained handed
+          | .pendingCount =>
+            pendingDrained
+        if let some directory← used.get then
+          let there ← (Restore.indexPath (directory / "state") 1).pathExists
+          let removeEnded ←
+            match ← removed.get with
+            | some task =>
+              IO.hasFinished task
+            | none =>
+              pure false
+          seen.set (some (ended, there, removeEnded))
+        return ended)
+      (do
+        release
+        discard <| drainJournal (pure ()))
   let wrap (inner : Headless.Journal) : Headless.Journal :=
     { inner with
       perform := fun order => do
@@ -458,6 +474,19 @@ def restoreRunChecks (services : Job.Services) : List Check :=
         let held ← withJournalledDirectory (journalDrained stuck) fun _ => return true
         if held then
           throw <| IO.userError "the scaffold returned true though its journal did not drain"
+        return true },
+    { name :=
+        "a restore check's wait on its orders' own drains fails on a drain that ended false, a flush the file service refused or cancelled: it reports a failed drain, not a drain and not a hang"
+      run := do
+        let handed ← IO.mkRef #[Task.pure true, Task.pure false]
+        let outcome ←
+          try
+            discard <| ownDrained handed
+            pure "returned"
+          catch error =>
+            pure s!"threw {error}"
+        unless outcome.startsWith "threw a failed drain: " do
+          throw <| IO.userError s!"the wait {outcome} on a drain that ended false"
         return true },
     { name :=
         "typing in a file's buffer is journalled by the library's file service, the base and the log on disk replaying to the text; a second loop over the same state directory, with no shutdown between, restores the buffer modified, at its file"
