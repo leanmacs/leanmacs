@@ -17,6 +17,7 @@ import ConfigTest.Editor.Headless.Real.Waits
 import ConfigTest.Editor.Headless.Stepped
 import ConfigTest.Editor.Indent
 import ConfigTest.Editor.Job.ProtocolContract
+import ConfigTest.Editor.Job.Real
 import ConfigTest.Editor.Keymap
 import ConfigTest.Editor.Loop
 import ConfigTest.Editor.Minibuffer
@@ -198,6 +199,9 @@ show:
   result is on its way; an editor thread held inside an event still lets a
   join answer; a wait that runs out on an unanswering editor thread says
   so; and a stepped host publishes the scenes a real host does;
+- `jobServiceChecks` (`ConfigTest/Editor/Job/Real.lean`, of the wiring
+  set): a host's job's diff answered by the library's diff service, and its
+  search by the library's grep service, each end to end;
 - `realSyntaxChecks` (`ConfigTest/Editor/SyntaxTree/Real.lean`, of the
   wiring set): a parse the library's syntax service delivers makes a real
   host publish a scene;
@@ -467,6 +471,7 @@ def checks (context : Context) : List Check :=
     protocolContractChecks context ++
     threadChecks context ++
     jobChecks context ++
+    jobServiceChecks context ++
     realSyntaxChecks context ++
     realWaitChecks context ++
     indentChecks context ++
