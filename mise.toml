@@ -423,8 +423,12 @@ description = "Check Lean formatting and lean-fmt's lints, over the core and eac
 depends = ["lean"]
 dir = "lean"
 run = [
-  "lake -d ../tools/lean-fmt exe lean-fmt format --check --root .",
-  "lake -d ../tools/lean-fmt exe lean-fmt check --root .",
+  # The formatter's workers, sized to the machine's memory
+  # (tools/lean-fmt-workers.sh): its fixtures first, then every run below
+  # takes the count it prints.
+  "test \"$(sh ../tools/lean-fmt-workers.sh --cores 8 --memory-kib 8126944)\" = 3 && test \"$(sh ../tools/lean-fmt-workers.sh --cores 18 --memory-kib 134217728)\" = 18 && test \"$(sh ../tools/lean-fmt-workers.sh --cores 4 --memory-kib 1048576)\" = 1 || { echo 'lean-fmt: tools/lean-fmt-workers.sh did not size the workers to the memory'; exit 1; }",
+  "lake -d ../tools/lean-fmt exe lean-fmt format --check --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root .",
+  "lake -d ../tools/lean-fmt exe lean-fmt check --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root .",
   # The same two over each package of the fixture set (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps").
   "sh ../tools/package-set.sh fmt ../tests/packages",
@@ -435,8 +439,8 @@ description = "Rewrite the Lean sources of the core and of each package of the f
 depends = ["lean"]
 dir = "lean"
 run = [
-  "lake -d ../tools/lean-fmt exe lean-fmt format --root .",
-  "lake -d ../tools/lean-fmt exe lean-fmt check --fix --root .",
+  "lake -d ../tools/lean-fmt exe lean-fmt format --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root .",
+  "lake -d ../tools/lean-fmt exe lean-fmt check --fix --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root .",
   "sh ../tools/package-set.sh format ../tests/packages",
 ]
 

@@ -42,7 +42,8 @@
 #   (`lake -d <package> build --wfail +<Name>Test.Linked:editorLinked`, a
 #   facet the core defines).
 # - `fmt`: `lean-fmt format --check` and `lean-fmt check` over each package
-#   (`--root <package>`), run from the formatter's host
+#   (`--root <package>`, `--workers` sized by tools/lean-fmt-workers.sh),
+#   run from the formatter's host
 #   (`lake -d ../tools/lean-fmt exe lean-fmt`); it changes nothing. The
 #   formatter requires a `lean-toolchain` in the root it is given, so each
 #   package holds a copy of the pin. `format` rewrites instead: `lean-fmt
@@ -192,8 +193,10 @@ if [ -n "$only" ]; then
   ')
 fi
 
-# The formatter's host, from `lean/`.
+# The formatter's host, from `lean/`, and its workers, sized to the
+# machine's memory (tools/lean-fmt-workers.sh).
 host=../tools/lean-fmt
+case $step in fmt | format) workers=$(sh ../tools/lean-fmt-workers.sh) ;; esac
 
 case $step in
   build)
@@ -251,12 +254,12 @@ while IFS=$tab read -r name dir linked linked_exe <&3; do
       fi
       ;;
     fmt)
-      lake -d "$host" exe lean-fmt format --check --root "$dir"
-      lake -d "$host" exe lean-fmt check --root "$dir"
+      lake -d "$host" exe lean-fmt format --check --workers "$workers" --root "$dir"
+      lake -d "$host" exe lean-fmt check --workers "$workers" --root "$dir"
       ;;
     format)
-      lake -d "$host" exe lean-fmt format --root "$dir"
-      lake -d "$host" exe lean-fmt check --fix --root "$dir"
+      lake -d "$host" exe lean-fmt format --workers "$workers" --root "$dir"
+      lake -d "$host" exe lean-fmt check --fix --workers "$workers" --root "$dir"
       ;;
     run)
       if [ "$linked" != - ]; then
