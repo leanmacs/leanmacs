@@ -7,7 +7,7 @@ the area you are changing before you change it, and record new facts about
 the system there. How to build, run and check the code, and what must pass
 before a change lands, is in `docs/dev-practices/`. Narrower working rules
 (planning with rdm, naming, text-rendering choices, how a gate decides) are
-in `.agent/rules/`;
+in `.agents/rules/`;
 read the ones for the work you are doing.
 
 ## Test-driven development
