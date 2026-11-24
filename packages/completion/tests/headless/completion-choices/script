@@ -1,4 +1,6 @@
-# The script `mise run ffi-test` has the editor's headless mode run against
+# The script the set's fixture harness runs stepped (`fixture-test`, through
+# tools/package-set.sh; docs/dev-practices/headless-mode.md, "How the gate
+# runs a fixture") against
 # the config in `config/`, which names the shipped completion style
 # orderless and the shipped minibuffer display. What it prints must be
 # exactly `expected`. It touches no file.

@@ -1,4 +1,6 @@
-# The script `mise run ffi-test` has the editor's headless mode run against
+# The script the set's fixture harness runs stepped (`fixture-test`, through
+# tools/package-set.sh; docs/dev-practices/headless-mode.md, "How the gate
+# runs a fixture") against
 # the config in `config/`, to list a binding of config's in the binding
 # search (`search-bindings`), to run it through the search, and to run a
 # command of config's that names a declaration of the search's module. What

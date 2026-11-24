@@ -978,8 +978,9 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
 ```
 
 A tenth is a fixture of the default package `shipped-themes`, which the
-package steps run on the editor of each set that holds the package
-(`tools/package-set.sh run`, in `mise run ffi-test`), not a line of the
+package steps run on the fixture harness of each set that holds the
+package, stepped ("How the gate runs a fixture", below;
+`tools/package-set.sh run`, in `mise run ffi-test`), not a line of the
 task: `packages/shipped-themes/tests/headless/themes/script` switches the
 theme, on the config in `themes/config` beside it, which defines two themes, `first` and
 `second`, and names `first` (`useTheme`). The first scene is drawn in
@@ -2339,9 +2340,12 @@ A package outside the core keeps its headless fixtures in its own
 directory: `<package>/tests/headless/<name>/`, each a `config/`
 directory, a `script` and an `expected`
 ([packages.md](../design/packages.md), "A package's tests and the gate's
-steps over them"). `mise run ffi-test` runs each on the editor built from
-the package set that holds the package (`tools/package-set.sh run`), which
-must print exactly `expected`:
+steps over them"). `mise run ffi-test` runs them on the fixture harness of
+each package set that holds the package, stepped, once a package
+(`tools/package-set.sh run`, "How the gate runs a fixture", above): each
+must print exactly `expected`, and the harness's count line must cover
+every fixture the step found, or the step fails. Run through the CLI, the
+set's editor prints the same:
 
 ```console
 $ cd lean
@@ -2353,11 +2357,13 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-- **The editor is the set's**, `tests/packages/.lake/build/bin/editor` for
-  the fixture set: the package's command is compiled into it. The editor
-  of the default set, which does not hold the fixture package, answers
-  `run greeting-hello: no such command` to the same script, and `ffi-test`
-  checks that too.
+- **The harness is the set's**, `tests/packages/.lake/build/bin/fixture-test`
+  for the fixture set, as the editor is: the package's command is
+  compiled into both. The editor of the default set, which does not hold
+  the fixture package, answers `run greeting-hello: no such command` to
+  the same script, and `ffi-test` checks that too, through the CLI: the
+  fixture is in the real-thread set for it, and for its run on a per-user
+  install.
 - **The `.olean` directory given is the core's.** Config is elaborated on
   the set's base, `Editor` and then the entry module of each package of
   the set outside the core, and the editor finds a package's modules

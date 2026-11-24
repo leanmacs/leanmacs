@@ -1,4 +1,6 @@
-# The script `mise run ffi-test` has the editor's headless mode run against
+# The script the set's fixture harness runs stepped (`fixture-test`, through
+# tools/package-set.sh; docs/dev-practices/headless-mode.md, "How the gate
+# runs a fixture") against
 # the config in `config/`, to list commands in the command prompt
 # (`execute-command`), to run a command through it that asks in turn, and to
 # run a command of config's that names a declaration of the prompt's module.

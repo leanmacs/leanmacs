@@ -662,14 +662,17 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   `compile`", below);
 - **its headless fixtures** are the directories
   `<package>/tests/headless/<name>/`, each a `config/`, a `script` and an
-  `expected`, run on the editor built from the set.
+  `expected`, run stepped by the fixture harness built from the set
+  (`fixture-test`, the `editorFixtures` facet;
+  [headless-mode.md](../dev-practices/headless-mode.md), "How the gate
+  runs a fixture"), but those the real-thread set leaves to the CLI.
 
 | Step | Per package | In task |
 |---|---|---|
 | `test` | `lake -d <package> test --wfail`; a package with no test driver fails the step | `lean-test`, with the `cargo` that fails first on the `PATH` |
 | `build` | Once, the set's `editor` and its fixture harness, `fixture-test`; then `lake -d <package> build --wfail`, the package's default targets under its own linter options; and its linked test's executable | `lean` |
 | `fmt` (`format` rewrites) | `lean-fmt format --check` and `lean-fmt check`, with `--root <package>`, from the formatter's host | `lean-fmt` (`lean-format`) |
-| `run` | The linked test, in the package's directory; then each headless fixture on the set's `editor`, compared with its `expected`. It prints what it ran, and the gate requires the fixture packages' and the default packages' linked tests and fixtures among it | `ffi-test`, over the fixture set and over the default set |
+| `run` | The linked test, in the package's directory; then the package's headless fixtures on the set's `fixture-test`, once a package, each run stepped and compared with its `expected`, the harness's count line required to cover every fixture the step found. It prints what it ran, and the gate requires the fixture packages' and the default packages' linked tests and fixtures among it | `ffi-test`, over the fixture set and over the default set |
 
 - **The packages a step runs over** are those of the set that are path
   dependencies and hold a Lean library, other than the core, which the
@@ -681,10 +684,10 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   it, and `lean-test` requires the line the `test` step prints as it
   reaches each of them, the twenty-five default packages and the eighteen
   interface packages. The default set's own
-  `editor` is built beside it, for the standing fixtures under
-  `tests/headless/`, and **`run` is also given the default set**, so the
-  default packages' linked tests and fixtures hold of the editor that is
-  shipped, not only of the fixture set's.
+  `editor` and `fixture-test` are built beside it, for the standing
+  fixtures under `tests/headless/`, and **`run` is also given the default
+  set**, so the default packages' linked tests and fixtures hold of the
+  set that is shipped, not only of the fixture set.
 - **A package's linked-only test modules are under `<P>Test/Linked/`**,
   each mirroring the module it tests
   (`ShippedThemesTest/Linked/ShippedThemes.lean`), and `<P>Test/Linked.lean`

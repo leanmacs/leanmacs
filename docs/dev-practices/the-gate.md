@@ -2173,7 +2173,7 @@ package's tests are by convention are in
 | `build` | Once, `lake -d <set dir> build --wfail :editor :editorFixtures`, the set's editor and its fixture harness. Then `lake -d <package> build --wfail`, its default targets under its own linter options, and `+<P>Test.Linked:editorLinked` when the package has that module | `lean` |
 | `fmt` | `lean-fmt format --check --root <package>`, then `lean-fmt check --root <package>`, from the formatter's host | `lean-fmt` |
 | `format` | `lean-fmt format` and `lean-fmt check --fix`, which rewrite | `lean-format` |
-| `run <sysroot> <core olean dir>` | The package's linked test, in its directory, with those two arguments. Then each `<package>/tests/headless/<name>/` on the set's editor: `editor headless <sysroot> <core olean dir> <name>/config <name>/script` must print exactly `<name>/expected` | `ffi-test` |
+| `run <sysroot> <core olean dir>` | The package's linked test, in its directory, with those two arguments. Then its fixtures, each `<package>/tests/headless/<name>/`, on the set's fixture harness, once for the package: `fixture-test <sysroot> <core olean dir> --repo <repository> run <package>/tests/headless` runs each stepped, on the fakes, and each must print exactly `<name>/expected`, but those the real-thread set leaves to the CLI ([headless-mode.md](headless-mode.md), "How the gate runs a fixture"); its count line must cover every fixture the step found | `ffi-test` |
 
 - **The gate gives every step the fixture set**, `tests/packages/`, which
   requires the fixture package `greeting-loud`, through it `greeting`, the

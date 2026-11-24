@@ -47,12 +47,16 @@
 #   format` and `lean-fmt check --fix`.
 # - `run`: for each package, its linked test, when it has one, run in the
 #   package's directory with the toolchain's directory and the core's
-#   `.olean` directory as its arguments; then each of its headless fixtures,
-#   the directories `<package>/tests/headless/<name>/` that hold `config/`,
-#   `script` and `expected`, run on the set's editor
-#   (`<set dir>/.lake/build/bin/editor headless <sysroot> <core olean dir>
-#   <fixture>/config <fixture>/script`), whose output must be exactly
-#   `expected`. `run` builds nothing: `build` comes first. It prints a
+#   `.olean` directory as its arguments; then its headless fixtures, the
+#   directories `<package>/tests/headless/<name>/` that hold `config/`,
+#   `script` and `expected`, run by the set's fixture harness, once for the
+#   package (`<set dir>/.lake/build/bin/fixture-test <sysroot> <core olean
+#   dir> --repo <repository> run <package>/tests/headless`): each stepped
+#   on the fakes, its output exactly `expected`, but those the real-thread
+#   set leaves to the CLI (docs/dev-practices/headless-mode.md, "How the
+#   gate runs a fixture"). The harness's count line must cover every
+#   fixture found here, or the step fails. `run` builds nothing: `build`
+#   comes first. It prints a
 #   line for each thing it runs, `package-set: linked test <module> of
 #   <package>` and `package-set: headless fixture <name> of <package>`, and
 #   a last line with the counts, `package-set: ran <n> linked test(s) and
@@ -158,7 +162,10 @@ case $step in
     # A linked test runs in its package's directory, so the paths it and
     # the fixtures are handed are absolute.
     oleans=$(cd "$2" && pwd)
-    editor=$(cd "$set_dir" && pwd)/.lake/build/bin/editor
+    harness=$(cd "$set_dir" && pwd)/.lake/build/bin/fixture-test
+    # Run in `lean/`: the repository's root, which the harness names each
+    # fixture from, is the directory above.
+    repo=$(cd .. && pwd -P)
     ;;
 esac
 
@@ -196,6 +203,7 @@ while IFS=$tab read -r name dir linked linked_exe <&3; do
         (cd "$dir" && "$linked_exe" "$sysroot" "$oleans")
         linked_count=$((linked_count + 1))
       fi
+      fixtures=0
       for fixture in "$dir"/tests/headless/*; do
         # With no entry under `tests/headless/` the pattern stays as written.
         [ -e "$fixture" ] || continue
@@ -206,10 +214,26 @@ while IFS=$tab read -r name dir linked linked_exe <&3; do
           fi
         done
         echo "package-set: headless fixture ${fixture##*/} of $name"
-        out=$("$editor" headless "$sysroot" "$oleans" "$fixture/config" "$fixture/script")
-        printf '%s\n' "$out" | diff "$fixture/expected" -
-        fixture_count=$((fixture_count + 1))
+        fixtures=$((fixtures + 1))
       done
+      if [ "$fixtures" -gt 0 ]; then
+        # The package's fixtures, run by the set's harness: each stepped
+        # with the fakes but those the real-thread set leaves to the CLI.
+        # Its count line must name every fixture found above, so none of
+        # them can pass unrun.
+        out=$("$harness" "$sysroot" "$oleans" --repo "$repo" run "$dir/tests/headless") || {
+          printf '%s\n' "$out"
+          exit 1
+        }
+        printf '%s\n' "$out"
+        ran=$(printf '%s\n' "$out" | sed -n 's/^fixture-test: ran \([0-9]*\) fixtures stepped under .*, \([0-9]*\) left to the CLI$/\1 \2/p')
+        set -- $ran
+        if [ "$#" -ne 2 ] || [ "$(($1 + $2))" -ne "$fixtures" ]; then
+          echo "package-set: the fixture harness ran ${1:-no} fixtures and left ${2:-no} to the CLI of the $fixtures headless fixtures of $name" >&2
+          exit 1
+        fi
+        fixture_count=$((fixture_count + fixtures))
+      fi
       ;;
   esac
 done 3<<LIST

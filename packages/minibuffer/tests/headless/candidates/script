@@ -1,4 +1,6 @@
-# The script `mise run ffi-test` has the editor's headless mode run against
+# The script the set's fixture harness runs stepped (`fixture-test`, through
+# tools/package-set.sh; docs/dev-practices/headless-mode.md, "How the gate
+# runs a fixture") against
 # the config in `config/`, under the editor's input scheme and with the
 # library's fuzzy matcher, to ask for a prompt with candidates, to choose
 # one with the keys the editor ships, to put one in the input and to accept

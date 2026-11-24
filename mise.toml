@@ -250,7 +250,8 @@ run = [
   # (tools/lean-packages.sh, the `lean-packages` task): for `compile`, a
   # default package, and `greeting`, a fixture package, exactly
   # tests/hook-targets/lean-packages/compile-expected, whose last two
-  # commands build the default set's editor and run `compile` over it;
+  # commands build the default set's editor and its fixture harness and
+  # run `compile` over it;
   # for `greeting` alone, exactly greeting-expected, which never names the
   # default set. It asks Lake for the default set's packages and builds
   # nothing. With no name it is exit 2.

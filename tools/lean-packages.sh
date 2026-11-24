@@ -9,14 +9,15 @@
 # Run it in `lean/`. In order: the toolchain check; then, over the named
 # packages of the fixture set (tools/package-set.sh --only): the `test`
 # step, with the `cargo` that fails first on the PATH; the `build` step,
-# under the system's C compiler, which builds the set's editor first; the
+# under the system's C compiler, which builds the set's editor and its
+# fixture harness first; the
 # `fmt` step; the layer and package imports checks over the set, kept
 # because the targeting is sound only while no package imports an
 # implementation package; and the `run` step, with `--allow-empty-run` so
 # an interface package, which holds no linked test and no fixture, passes.
 # Last, for the named packages that are also packages of the default set
-# (packages/), as Lake names them, that set's editor and the same `run`
-# over it.
+# (packages/), as Lake names them, that set's editor and fixture harness
+# and the same `run` over it.
 #
 # With `--dry-run` it prints each command instead of running it, one a
 # line, `lean-packages: <command>`, with `no-cargo` or `system-cc` before a
@@ -95,7 +96,7 @@ for name in "$@"; do
   fi
 done
 if [ -n "$default_only" ]; then
-  run system-cc lake -d ../packages build --wfail :editor
+  run system-cc lake -d ../packages build --wfail :editor :editorFixtures
   # shellcheck disable=SC2086
   run sh ../tools/package-set.sh $default_only --allow-empty-run run ../packages "$sysroot" .lake/build/lib/lean
 fi
