@@ -1250,6 +1250,25 @@ hogs unless it says otherwise:
   gate's, which the merge shortened. The loop was not run on the merged
   tree.
 
+Measured for the stress search over the wiring set (host-tests-on-fakes,
+phase 7), locally on both legs, the macOS leg on an 18-core Mac under 36
+hogs and the Linux leg in the container (8 CPUs, 7.75 GiB) under 16, 10
+rounds each; the runs' ids, archives and outcomes are on the phase:
+
+- The smoke rounds, idle, at 0e14277b: the macOS round ran every wiring
+  suite and its coverage once in about 60 s (53 items expected). The
+  Linux container's gate failed three times before its loop ran, each a
+  find of the phase: F1, the Docker VM's disk full (Cargo's `target/` in
+  the volume, emptied); F2, the linker killed by the VM's memory during
+  the cold rebuild F1 left; F3, user-sets-test's scrub of the repository's
+  path, which at `/work` also took the `/work` inside
+  `packages/workspace` (34ded915: the scrub takes a path only as a whole,
+  checked first on that case); and F4, lean-fmt's frontend children
+  killed by the VM's OOM killer at one worker a core, a child for a module
+  that imports `Lean` holding about 2 GB (ca174c4b:
+  tools/lean-fmt-workers.sh sizes the workers to the memory, 3 in the
+  container). At ca174c4b the Linux smoke round passed whole.
+
 A bound that a loaded run reaches on an event that does come is a hang
 guard set too short: it is raised to ten times the slowest that event was
 seen to take, and the measurement goes in its doc.
