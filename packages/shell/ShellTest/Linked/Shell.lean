@@ -4,7 +4,6 @@ import Editor.Command.Call
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Config.Packages
-import Editor.Display
 import Editor.DisplayRules
 import Editor.InputScheme
 import Editor.InputScheme.Test
