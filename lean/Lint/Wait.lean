@@ -1,4 +1,4 @@
-import Lean
+import Lint.Marks
 
 /-!
 # The wait linters
@@ -33,7 +33,7 @@ it.
   everyone (no laundering). A declaration of the module that no other
   module can name, a private or an auxiliary one, that references one,
   directly or through another such, is a reference to it wherever it is
-  referenced (`referencedWait?`), so no laundering holds through a private
+  referenced (`referencedMark?`, `Lint/Marks.lean`), so no laundering holds through a private
   wrapper either. A public declaration of an own or subject module that is
   no test module may hand one on: those are the drivers' workings
   (`Round.judge`, `Host.waitWhile`). A site that a later phase removes says so with
@@ -149,16 +149,6 @@ def clockModule : Name :=
 def rawClockReads : List Name :=
   [``IO.sleep, ``IO.monoMsNow, ``IO.monoNanosNow]
 
-/-- Whether `module` is a test module: its first name component ends in
-`Test` (the four test roots, `FilesApiTest`, a package's `<P>Test`), or it
-is `Editor.Test` or under it (the core's test kits). A rule on the module's
-name, kept here alone. -/
-def isTestModule (module : Name) : Bool :=
-  match module.components with
-  | first :: rest =>
-    first.toString.endsWith "Test" || (first == `Editor && rest.head? == some `Test)
-  | [] => false
-
 /-- Whether `module` is the test module that mirrors `target`: `target`
 under a test root, `<Root>.<target>`, as `ModelTest.Editor.Job.Activity`
 mirrors `Editor.Job.Activity`. -/
@@ -166,25 +156,6 @@ def mirrors (module target : Name) : Bool :=
   match module.components with
   | root :: rest => root.toString.endsWith "Test" && rest == target.components
   | [] => false
-
-/-- Every constant a term of `tree` resolved to, and every field a
-structure instance of it sets (`{ busy := … }`, `{ kind with busy := … }`)
-as its projection, with the syntax it was written at and the declaration it
-was written in, once for each place: a term elaborated twice (a `←` lifted
-out of an expression) is one reference. -/
-def referenced (tree : InfoTree) : Array (Syntax × Name × Option Name) :=
-  let found :=
-    tree.foldInfo (init := #[]) fun context info found =>
-      match info with
-      | .ofTermInfo term =>
-        match term.expr.consumeMData with
-        | .const name _ => found.push (term.stx, name, context.parentDecl?)
-        | _ => found
-      | .ofFieldInfo field => found.push (field.stx, field.projName, context.parentDecl?)
-      | _ => found
-  found.foldl (init := #[]) fun kept (stx, name, user) =>
-    if kept.any fun (other, seen, _) => seen == name && other.getRange? == stx.getRange? then kept
-    else kept.push (stx, name, user)
 
 /-- `linter.rawClock`: refuses a raw clock read outside `clockModule`. -/
 def rawClockLinter : Linter where
@@ -204,12 +175,6 @@ def rawClockLinter : Linter where
 initialize
   addLinter rawClockLinter
 
-/-- The module `name` was declared in, `here` for one of this module. -/
-def declaringModule (env : Environment) (here name : Name) : Name :=
-  match env.getModuleIdxFor? name with
-  | some index => env.header.moduleNames[index.toNat]?.getD here
-  | none => here
-
 /-- Whether a reference to a constant declared in `owner`, with the
 mark `wait`, is allowed in the module `here`: `owner` itself, a
 subject module, or a test module that mirrors one of them. -/
@@ -226,54 +191,6 @@ def launders (env : Environment) (wait : InferredWait) (owner here user : Name) 
     !user.isInternal &&
     !env.contains (markOf user)
 
-/-- Whether `name` is a declaration of the module being elaborated that no
-other module can name: a private one, or an auxiliary one (its name
-internal, as a `match`'s). A reference to one that hands an inferred wait
-on (`handedOn?`) is a reference to that wait. -/
-def isLocalHelper (env : Environment) (name : Name) : Bool :=
-  env.contains name && (env.getModuleIdxFor? name).isNone && (isPrivateName name || name.isInternal)
-
-/-- The inferred wait the declaration `name` of this module hands on: the
-first marked constant its value references, directly or through a
-declaration of this module that no other module can name
-(`isLocalHelper`), with what its mark says; `none` when it references
-none. A `partial` declaration's value is its implementation's
-(`_unsafe_rec`). So no laundering holds through a private wrapper: what a
-private declaration references is what a reference to it references. -/
-partial def handedOn? (env : Environment) (name : Name) :
-    Option (Name × Except String InferredWait) :=
-  (visit name).run' {}
-where
-  /-- `handedOn?` of `name`, skipping the declarations the state holds, those already visited. -/
-  visit (name : Name) : StateM NameSet (Option (Name × Except String InferredWait)) := do
-    if (← get).contains name then
-      return none
-    modify (·.insert name)
-    let values :=
-      [name, name.str "_unsafe_rec"].filterMap fun name =>
-        (env.find? name).bind (·.value? (allowOpaque := true))
-    for value in values do
-      for used in value.getUsedConstants do
-        if let some marked := markedWait? env used then
-          return some (used, marked)
-        if isLocalHelper env used then
-          if let some found← visit used then
-            return some found
-    return none
-
-/-- The inferred wait a reference to `name` is, with the declaration of
-this module it is reached through, if any: `name`'s own mark, or, for a
-declaration of this module that no other module can name and that has no
-mark, the wait it hands on (`handedOn?`). -/
-def referencedWait? (env : Environment) (name : Name) :
-    Option (Name × Except String InferredWait × Option Name) :=
-  match markedWait? env name with
-  | some marked => some (name, marked, none)
-  | none =>
-    if isLocalHelper env name then
-      (handedOn? env name).map fun (wait, marked) => (wait, marked, some name)
-    else none
-
 /-- `linter.inferredWait`: refuses a reference to a marked constant outside
 the modules it is allowed in, and a public test-kit declaration that hands
 one on unmarked, directly or through a private declaration. -/
@@ -289,7 +206,8 @@ def inferredWaitLinter : Linter where
         for (stx, referencedName, user) in referenced tree do
           if user == some referencedName then
             continue
-          let some (name, marked, through) := referencedWait? env referencedName | continue
+          let some (name, marked, through) := referencedMark? (markedWait? env) env referencedName
+            | continue
           let via := (through.map fun helper => s!", through `{privateToUserName helper}`").getD ""
           -- A mark it cannot read is refused at each reference written in a
           -- declaration, not at the name a declaration is given.
