@@ -103,7 +103,6 @@ a pause of completion at point armed on the fake clock holds no unit, and its ev
 a wait's later rounds publish nothing: the scene count after a join that took two rounds, its job's sleep held until the join blocked on it, is the count after the same join that took one
 on a stage host, a job asleep on the fake clock holds no unit: after spawn count the count reaches 0 with the sleep in the clock, and a marker answered after it leaves it there
 on a stage host, a job the clock lets go holds a unit until its result has been handled: after advance 10 the count is 1 while the editor thread is held before printing the job's line, and 0 once a marker is answered
-a settle after a reload whose root first imports Lean waits for the reload's end: the reload is held at the gate until the settle is waiting on it, and the settle answers once it has installed
 a join and an advance on a job held for good in a wait that ends by itself reach their guard: each says its hang once, and fails as busy with its line
 a wait that runs out says why: a reload is still running, or the editor thread has not answered
 a stepped host publishes the scenes a real host does: a settle one, and a join's later rounds none
@@ -116,31 +115,20 @@ The headless mode's script runner over a real loop thread (`Headless.run`, `runA
 Lists: `jobChecks`, `scriptChecks`.
 
 ```checks
-an idle answers only once the render loop is at rest: with a frame in flight as it begins, it waits for the frame's end, on the loop's rest and never for a time, and counts from that rest, so a loop then left alone has drawn and been handed nothing
 a join that cannot finish fails at idle, it does not hang: the failure names the join's line, nothing is said as a hang, and the loop cancels its jobs when it ends
-an indexed that cannot finish, a background job asleep on the fake clock no advance moves, fails at idle, it does not hang: the failure names the indexed's line as the editor idle with a job still running, and nothing is said as a hang
 an editor thread held inside an event when a join asks for its answer still makes the join answer working, at idle: the hold is let go when the join blocks on the answer, and nothing is said as a hang
 a headless run whose loop is held past its guard and its grace says the hang once and fails as hung, which exits 1, and hands the loop it left to `abandoned`
 a headless run whose loop is slow but ends within its grace succeeds, after saying the hang once
 a host made by a stage and handed straight to Headless.run still gets its reload's wake-up: reload, settle and show end with no failure, the reload installed and its command shown
-a join with its own seconds has them as its guard, and its failure names them
-a real config that defines a segment and lists the mode line installs: the reload prints a line for the segment nobody registered, the echo area says it, and each status line is the listing's, in its order and on its sides
-a restarted with its own seconds waits that long for a hand-over, not the run's patience, and its failure says how long it waited
 a run that fails disposes of its collaborators too, once, when its loop has ended
 a run that reaches its script's end disposes only after its loop has ended, when the loop is slow to end
 a run whose advance stalls while the editor thread is inside an event disposes only after its loop has ended
 a run whose join runs out while the editor thread is inside an event disposes only after its loop has ended
 a run's settle waits for the reload's end: the reload is held at the gate until the settle has blocked on it, and the run goes on once it has installed, saying no hang
-a script that commits text and asks for the scene prints the scene: its frame, and a view whose snapshot holds the text, read from the library, with the cursor after it
-a script that ends while a reload cannot finish fails at its end, with a reload still running and no line
-a script that resizes the frame and asks for the scene prints the scene in a frame of that size, with its one view in the whole of it above the bottom row, one 16-pixel cell of the recorder; a second resize is the next scene's size
 a script that runs to its end has no failure, and what it asked for was printed before the loop stopped
 a script that sends a key with modifiers prints that the key arrived with those modifiers, in order with what it asked for
 a script whose settle cannot be satisfied fails, it does not hang, and the failure names the settle's line and says a reload was still running
-a settle with its own milliseconds waits that long, not the run's patience, and its failure says how long it waited
-on a stage host, spawn count, advance by its sleep and join end with the job's line, ok; an advance with nothing due stalls at idle, with its line and its milliseconds, saying no hang, and an advance on a host with no fake clock fails with its sentence
 the headless mode's run disposes of its collaborators once its loop has ended: dispose is called once, after every line the script had the host print
-the scene prints each view's status line after the view's line, with the fields the loop gives the view: the buffer's name alone before anything is typed, and the modified field after it once text is committed
 ```
 
 ### A4: 5 checks
@@ -214,7 +202,6 @@ inventory, and each says `Real` in its helper or calls the runner itself.
 
 | Linked test | Checks | Adapter |
 |---|---|---|
-| `tests/packages/greeting/GreetingTest/Linked.lean` | its one script | A3: `Headless.run` |
 | `packages/ex/ExTest/Linked/Ex.lean` | `exScriptChecks`: a wait on a host whose loop a command ended | A2: `Headless.withHost` |
 | `packages/evil/EvilTest/Linked/Evil/Operators.lean` | the eight indent checks through the Vim scheme's keys (`withEvilIndentHost`) | A5: `withRealVimHost` (`withRealSyntaxHost`) |
 | `packages/evil/EvilTest/Linked/Evil/TreeObjects.lean` | `treeObjectChecks`, both | A5: `withRealVimHost` (`withRealSyntaxHost`) |

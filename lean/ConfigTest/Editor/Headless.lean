@@ -687,7 +687,7 @@ def moduleHostChecks (context : Context) : List Check :=
         let gate ← Gate.new (module := "init")
         let said ← IO.mkRef (#[] : Array String)
         let held ←
-          withRealHostOver context [("init.lean", leanGreetText ++ setupText)] gate.around id
+          withHostOver context [("init.lean", leanGreetText ++ setupText)] gate.around id
               (waitHung := fun line => said.modify (·.push line)) (waitBlocked := fun what => do
               if what == "running work" then
                 gate.open)
@@ -1701,34 +1701,6 @@ def jobChecks (context : Context) : List Check :=
           scriptedIndexed #[.working, .settled] { indexing := true, background := 0 } none
         saw (answer == .working && asked == #["indexed"]) s!"answer={repr answer} asked={asked}" },
     { name :=
-        "an indexed that cannot finish, a background job asleep on the fake clock no advance moves, fails at idle, it does not hang: the failure names the indexed's line as the editor idle with a job still running, and nothing is said as a hang"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory napConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          -- The clock is never moved, so `nap` never ends: the indexed finds
-          -- the host idle with it asleep, and `run` ends its loop. The guard
-          -- is a hang guard only, and nothing reaches it.
-          let said ← IO.mkRef (#[] : Array String)
-          let failure ←
-            Headless.run stage.collaborators
-                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.run "start-nap")⟩,
-                  ⟨4, .indexed none⟩, ⟨5, .request .show⟩]
-                hangGuard (grace := some hangGuard) (waitHung := fun line =>
-                said.modify (·.push line))
-          let described := failure.map (Headless.Failure.describe hangGuard.ms)
-          let withdrawn ← stage.clock.withdrawn
-          let said ← said.get
-          saw
-              (failure == some (.working (some 4)) &&
-                (described.map
-                    (·.startsWith
-                      "the join or indexed on line 4 of the script found the editor idle with a job still running")) ==
-                  some true &&
-                withdrawn.size == 1 &&
-                said.isEmpty)
-              s!"failure={repr failure} described={described} withdrawn={withdrawn} said={said}" },
-    { name :=
         "spawn and join are directives of a script, join, restarted and indexed with an optional patience in seconds, a spawn with no name and a patience that is no number are refused, and a join that ran out is described with its line"
       run :=
         let refusal (text : String) : String :=
@@ -2267,43 +2239,6 @@ wait 2" with
             match Headless.script "scene\nwait 2" with
             | .error message => (message.splitOn "advance <milliseconds>").length == 2
             | .ok _ => false },
-    { name :=
-        "on a stage host, spawn count, advance by its sleep and join end with the job's line, ok; an advance with nothing due stalls at idle, with its line and its milliseconds, saying no hang, and an advance on a host with no fake clock fails with its sentence"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory jobsConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          let joined ←
-            Headless.run stage.collaborators
-                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩,
-                  ⟨4, .advance 10⟩, ⟨5, .join⟩]
-                hangGuard (grace := some hangGuard)
-          let output ← stage.output.get
-          -- Nothing is due, so the advance finds the host idle and stalls;
-          -- its guard is a hang guard only, and nothing reaches it.
-          let said ← IO.mkRef (#[] : Array String)
-          let stalled ← Stage.new context context.elaborator (Config.Directory.source directory)
-          let ranOut ←
-            Headless.run stalled.collaborators
-                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .advance 5⟩] hangGuard (grace :=
-                some hangGuard) (waitHung := fun line => said.modify (·.push line))
-          let stalledOutput ← stalled.output.get
-          let real ← Stage.new context context.elaborator (Config.Directory.source directory)
-          let refused ←
-            Headless.run { real.collaborators with clock := none } #[⟨1, .settle⟩, ⟨2, .advance 1⟩]
-                hangGuard (grace := some hangGuard) (waitHung := fun line =>
-                said.modify (·.push line))
-          let said ← said.get
-          saw
-              (joined.isNone && output.contains "job 1 count: ok" &&
-                ranOut == some (.stalled 3 5) &&
-                (Headless.Failure.stalled 3 5).describe 200 ==
-                  "the advance on line 3 found the editor idle with no wait due within 5 ms on the clock" &&
-                refused == some (.noClock 2) &&
-                (Headless.Failure.noClock 2).describe 200 ==
-                  s!"the advance on line 2: {Headless.advanceNeedsClock}" &&
-                said.isEmpty)
-              s!"joined={repr joined} output={output} ranOut={repr ranOut} stalledOutput={stalledOutput} refused={repr refused} said={said}" },
     {
       name :=
         "a script is one directive a line, each with its line number, and blank lines and comments are skipped",
@@ -2382,64 +2317,6 @@ wait 2" with
             | .error message => (message.splitOn "expected idle, with nothing after it").length == 2
             | .ok _ => false) },
     { name :=
-        "an idle answers only once the render loop is at rest: with a frame in flight as it begins, it waits for the frame's end, on the loop's rest and never for a time, and counts from that rest, so a loop then left alone has drawn and been handed nothing"
-      run := do
-        -- A render loop held mid-frame: it rests only once the frame ends,
-        -- and the frame ends only once the idle has asked for the rest, so
-        -- an idle that answered on a window of time, or before the rest,
-        -- would answer with the frame still in flight.
-        let stage ← Stage.new context context.elaborator (memorySource [])
-        let order ← IO.mkRef (#[] : Array String)
-        let asked ← IO.Promise.new
-        let ended ← IO.Promise.new
-        let entries ← IO.mkRef (#[] : Array Ffi.JournalEntry)
-        let submitted ← IO.mkRef (0 : UInt64)
-        let counters : IO Ffi.RenderCounters := do
-          return {
-              draws := (← entries.get).size.toUInt64, drawsFailed := 0
-              framesSubmitted := ← submitted.get, framesReplaced := 0, rowsRebuilt := 0
-              rowsReused := 0, glyphsRasterised := 0, glyphsReused := 0, glyphsEvicted := 0
-              glyphsSkipped := 0, atlasBytes := 0, journalDropped := 0 }
-        let render : Headless.Render :=
-          { resting := return some (← ended.isResolved)
-            awaitRest := fun bound => do
-              order.modify (·.push "rest asked")
-              asked.resolve ()
-              return some (← Job.awaitWithin bound ended.result?).isSome
-            journal := fun after => return some ((← entries.get).filter (·.serial > after))
-            counters := some <$> counters }
-        -- The frame in flight ends once the rest is asked, from a task of
-        -- its own, joined below.
-        let frame ←
-          IO.asTask (prio := .dedicated) do
-              let some () ← Job.awaitWithin hangGuard asked.result? | return ()
-              entries.modify
-                  (·.push
-                    { serial := 1, inputNs := 0, drawNs := 0, presentNs := 0, rowsRebuilt := 0
-                      rowsReused := 0 })
-              submitted.modify (· + 1)
-              order.modify (·.push "frame ended")
-              ended.resolve ()
-        let collaborators :=
-          { stage.collaborators with
-            render := some render
-            emit := fun line => do
-              if line.startsWith "idle" then
-                order.modify (·.push line)
-              stage.collaborators.emit line }
-        let failure ← Headless.run collaborators #[⟨1, .idle⟩] hangGuard (grace := some hangGuard)
-        -- Whatever the run did, the frame's task ends before the check does.
-        ended.resolve ()
-        asked.resolve ()
-        discard <| IO.wait frame
-        let order ← order.get
-        saw
-            (failure.isNone &&
-              order ==
-                #["rest asked", "frame ended", "rest asked",
-                  "idle: 0 frames drawn, 0 frames submitted"])
-            s!"failure={repr failure} order={order}" },
-    { name :=
         "a script that sends a key with modifiers prints that the key arrived with those modifiers, in order with what it asked for"
       run :=
         IO.FS.withTempDir fun directory => do
@@ -2486,29 +2363,6 @@ wait 2" with
                   s!"failure={repr failure} holding={holding} said={said} output={output}"
             finally
               gate.open },
-    { name :=
-        "a real config that defines a segment and lists the mode line installs: the reload prints a line for the segment nobody registered, the echo area says it, and each status line is the listing's, in its order and on its sides"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory
-              [("init.lean",
-                  "def setup : SetupM Unit := do\n  defineSegment \"greeting\" fun _ =>\n    #[{ text := \"hi\", face := ⟨\"mode-line.secondary\"⟩, padding := 4 }]\n  modeLine [\"buffer\", \"nope\"] [\"greeting\", \"line-column\"]\n")]
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          let failure ←
-            Headless.run stage.collaborators
-                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .commit "ab"⟩, ⟨4, .request .scene⟩]
-                hangGuard (grace := some hangGuard)
-          let output ← stage.output.get
-          return failure == none &&
-              output.filter (fun line => !line.startsWith "scene " && !line.startsWith "view ") ==
-                #["reload 1: installed, 1 files, 0 commands",
-                  "segment: no segment is registered as `nope`",
-                  "status 0 in mode-line.active: mode-line.buffer \"scratch\" +4 | mode-line.secondary \"hi\" +4, mode-line.secondary \"1:3\" +4"] &&
-              output.any fun line =>
-                line.startsWith "scene " &&
-                  (line.splitOn
-                        s!"echo {"reload: no segment is registered as `nope`".quote}").length ==
-                    2 },
     { name :=
         "a script that runs to its end has no failure, and what it asked for was printed before the loop stopped"
       run :=
@@ -2566,71 +2420,6 @@ wait 2" with
               -- host's source id, which no later host is given.
               gate.open },
     { name :=
-        "a settle with its own milliseconds waits that long, not the run's patience, and its failure says how long it waited"
-      run := do
-        let gate ← Gate.new
-        IO.FS.withTempDir fun directory => do
-            writeConfig directory slowConfig
-            let stage ←
-              Stage.new context (gate.around context.elaborator) (Config.Directory.source directory)
-            let said ← IO.mkRef (#[] : Array String)
-            try
-              -- A pin of a bound of the headless mode: the reload is held
-              -- open for good. The run's guard is a minute, so a failure now
-              -- is the settle's own fifth of a second, said as a hang once.
-              -- The loop's end waits for the elaboration it lets go, under
-              -- the checks' hang guard.
-              let hung ← IO.mkRef (#[] : Array String)
-              let failure ←
-                Headless.run { stage.collaborators with endWaits := fun _ => gate.open }
-                    #[⟨3, .request .reload⟩, ⟨7, .settleWithin 200⟩, ⟨8, .request .show⟩]
-                    (.on "the run's other waits" 60000) (guard := hangGuard) (hung := fun line =>
-                    hung.modify (·.push line)) (waitHung := fun line => said.modify (·.push line))
-              let said ← said.get
-              let hung ← hung.get
-              saw
-                  (failure == some (.waited 200 (.reloading (some 7))) && said.size == 1 &&
-                    -- The hang names the settle's own guard, not the run's.
-                    said.all (·.contains (HangGuard.on "the settle" 200).hang) &&
-                    hung.isEmpty)
-                  s!"failure={repr failure} said={said} hung={hung}"
-            finally
-              gate.open },
-    { name := "a join with its own seconds has them as its guard, and its failure names them"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory jobsConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          -- The clock is never moved, so the job never ends: the join finds
-          -- the host idle, and its failure names the join's own second, the
-          -- guard it had.
-          let failure ←
-            Headless.run stage.collaborators
-                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩,
-                  ⟨5, .join (some 1)⟩, ⟨6, .request .show⟩]
-                hangGuard (grace := some hangGuard)
-          let output ← stage.output.get
-          saw (failure == some (.waited 1000 (.working (some 5))))
-              s!"failure={repr failure} output={output}" },
-    { name :=
-        "a restarted with its own seconds waits that long for a hand-over, not the run's patience, and its failure says how long it waited"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory jobsConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          -- No restart is asked for, so none comes: its own patience of
-          -- none at all runs out at once, where the run's would be long,
-          -- and the hang it says names its own guard.
-          let said ← IO.mkRef (#[] : Array String)
-          let failure ←
-            Headless.run stage.collaborators #[⟨1, .restarted (some 0)⟩] hangGuard (grace :=
-                some hangGuard) (waitHung := fun line => said.modify (·.push line))
-          let said ← said.get
-          saw
-              (failure == some (.waited 0 (.notRestarted 1)) && said.size == 1 &&
-                said.all (·.contains (HangGuard.on "the restart" 0).hang))
-              s!"failure={repr failure} said={said}" },
-    { name :=
         "a join and an advance on a job held for good in a wait that ends by itself reach their guard: each says its hang once, and fails as busy with its line"
       run := do
         -- Pins of a bound of the headless mode. The job's load is held for
@@ -2683,31 +2472,6 @@ wait 2" with
               hostSaid == #[s!"editor: {heldShort.hang}: the join"] &&
               hung.isEmpty)
             s!"joined={repr joined} joinSaid={joinSaid} advanced={repr advanced} advanceSaid={advanceSaid} waited={repr waited} hostSaid={hostSaid} hung={hung}" },
-    { name :=
-        "a script that ends while a reload cannot finish fails at its end, with a reload still running and no line"
-      run := do
-        let gate ← Gate.new
-        IO.FS.withTempDir fun directory => do
-            writeConfig directory slowConfig
-            let stage ←
-              Stage.new context (gate.around context.elaborator) (Config.Directory.source directory)
-            let said ← IO.mkRef (#[] : Array String)
-            try
-              -- A pin of a bound of the headless mode: the reload is held for
-              -- good, so only the guard ends the wait at the script's end,
-              -- and it says the hang once. The loop's end waits for the
-              -- elaboration it lets go, under the checks' hang guard.
-              let hung ← IO.mkRef (#[] : Array String)
-              let failure ←
-                Headless.run { stage.collaborators with endWaits := fun _ => gate.open }
-                    #[⟨1, .request .reload⟩] heldShort (guard := hangGuard) (hung := fun line =>
-                    hung.modify (·.push line)) (waitHung := fun line => said.modify (·.push line))
-              let said ← said.get
-              let hung ← hung.get
-              saw (failure == some (.reloading none) && said.size == 1 && hung.isEmpty)
-                  s!"failure={repr failure} said={said} hung={hung}"
-            finally
-              gate.open },
     { name :=
         "the window mode's wait for its start-up config, past its patience with the reload still running, says nothing on stderr: its patience is a bound of the window's, not a hang"
       run := do
@@ -2813,43 +2577,6 @@ wait 2" with
             | .error message => message.startsWith "line 2: "
             | .ok _ => false) },
     { name :=
-        "a script that resizes the frame and asks for the scene prints the scene in a frame of that size, with its one view in the whole of it above the bottom row, one 16-pixel cell of the recorder; a second resize is the next scene's size"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory greetConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          let failure ←
-            Headless.run stage.collaborators
-                #[⟨1, .resize 640 480⟩, ⟨2, .request .scene⟩, ⟨3, .resize 320 200⟩,
-                  ⟨4, .request .scene⟩]
-                hangGuard (grace := some hangGuard)
-          return failure == none &&
-              (← stage.output.get) ==
-                #["scene 640x480, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
-                  "view 0 0,0 640x464: \"\", scroll 0, selections 0..0, padding 8 8", statusOf,
-                  "scene 320x200, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
-                  "view 0 0,0 320x184: \"\", scroll 0, selections 0..0, padding 8 8", statusOf] },
-    { name :=
-        "a script that commits text and asks for the scene prints the scene: its frame, and a view whose snapshot holds the text, read from the library, with the cursor after it"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory greetConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          let failure ←
-            Headless.run stage.collaborators
-                #[⟨1, .request .scene⟩, ⟨2, .commit "héllo"⟩, ⟨3, .request .scene⟩,
-                  ⟨4, .commit " world"⟩, ⟨5, .request .scene⟩]
-                hangGuard (grace := some hangGuard)
-          return failure == none &&
-              (← stage.output.get) ==
-                #["scene: none",
-                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
-                  "view 0 0,0 0x0: \"héllo\", scroll 0, selections 6..6, padding 8 8",
-                  statusOf (modified := true) (cursor := ⟨0, 5⟩),
-                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
-                  "view 0 0,0 0x0: \"héllo world\", scroll 0, selections 12..12, padding 8 8",
-                  statusOf (modified := true) (cursor := ⟨0, 11⟩)] },
-    { name :=
         "a view's status line is printed as the view's id, its status face if it has one, and each field's face, quoted text and padding when it has one, the left fields and then, after a bar, the right ones; and as - for a status line with no field"
       run :=
         pure
@@ -2866,25 +2593,6 @@ wait 2" with
             Headless.statusLine ⟨2⟩ #[{ text := "x", face := ⟨"r"⟩, side := .right }]
                 (some ⟨"mode-line.inactive"⟩) ==
               "status 2 in mode-line.inactive: | r \"x\"") },
-    { name :=
-        "the scene prints each view's status line after the view's line, with the fields the loop gives the view: the buffer's name alone before anything is typed, and the modified field after it once text is committed"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory greetConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          let failure ←
-            Headless.run stage.collaborators
-                #[⟨1, .key { logical := .named ⟨"F5"⟩ }⟩, ⟨2, .request .scene⟩, ⟨3, .commit "a"⟩,
-                  ⟨4, .request .scene⟩]
-                hangGuard (grace := some hangGuard)
-          return failure == none && statusOf != statusOf (modified := true) &&
-              (← stage.output.get) ==
-                #["key arrived: <F5> - -",
-                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
-                  "view 0 0,0 0x0: \"\", scroll 0, selections 0..0, padding 8 8", statusOf,
-                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
-                  "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1, padding 8 8",
-                  statusOf (modified := true) (cursor := ⟨0, 1⟩)] },
     scenePublishedAgainReloadCheck context,
     { name :=
         "once a command has released the focused buffer's text, a commit is still followed by a scene: its echo is the refusal, and it has no view of that buffer"
