@@ -892,9 +892,8 @@ version control over real git were `contract-test`'s until the seven
 features of the files cluster moved out of the core (features-as-packages
 phase 6), and are their packages' linked tests' now, on their own
 fixtures: `packages/workspace/tests/workspaces` (git's stand-in) and
-`packages/workspace/tests/completion` (a byte-for-byte copy of fzf's),
-and `packages/shell/tests/shell` (the fixture `:!` runs, and the editor's
-working directory in those checks). The
+`packages/workspace/tests/completion` (a byte-for-byte copy of fzf's);
+the shell's run on a rig over fakes, with no fixture. The
 checks of a compile over the real process service, which `contract-test`
 ran on `tests/compile` until the compile mode moved out of the core, are
 its package's linked test's now, on `packages/compile/tests/compile` (the

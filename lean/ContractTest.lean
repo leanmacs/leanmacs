@@ -293,10 +293,10 @@ package's (`packages/working-set/`), whose linked test runs them
 Nor is project search over the grep and file services: it is the
 `project-search` package's (`packages/project-search/`), whose linked test
 runs it (`ProjectSearchTest.Linked.projectSearchChecks`, which was this
-executable's). Nor is `:!` over the real process service: it is the `shell`
-package's (`packages/shell/`), whose linked test runs it
-(`ShellTest.Linked.shellChecks`, which was this executable's), with the
-fixture `hello` under that package's `tests/shell`.
+executable's). Nor is `:!`: it is the `shell` package's
+(`packages/shell/`), whose linked test runs it
+(`ShellTest.Linked.shellChecks`, which was this executable's), on a rig over
+fakes since host-tests-on-fakes phase 4.
 Nor is version control over real git: the version-control interface's
 contract against the git implementation, in lanes of their own, the git
 implementation's own checks, and the status, worktree, review, log and blame

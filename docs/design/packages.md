@@ -1433,8 +1433,9 @@ the modules drop `Editor.` from their names.
   `<P>Test.Linked`, run by the package's linked root, which prints
   `<p> linked test: N checks passed`. A feature's kit (`Editor.<F>.Kit`)
   is `<P>Test.Kit`. Their fixtures moved with them: `tests/workspaces/` is
-  `packages/workspace/tests/workspaces/`, `tests/shell/` is
-  `packages/shell/tests/shell/`, and the workspace's lister checks run on a
+  `packages/workspace/tests/workspaces/`, `tests/shell/` was
+  `packages/shell/tests/shell/` until the shell's checks moved onto a rig
+  over fakes (host-tests-on-fakes phase 4), and the workspace's lister checks run on a
   byte-for-byte copy of the core's `tests/completion/filter` in
   `packages/workspace/tests/completion/`, so `contract-test` takes three
   arguments, not five. The workspace finder's benchmark is an opt-in

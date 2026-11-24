@@ -21,6 +21,7 @@ import Editor.Scene
 import Editor.State
 import Editor.SyntaxTree
 import Editor.TabBar
+import Editor.Test.Shell
 import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Services
@@ -35,8 +36,8 @@ import ShellTest.Check
 /-!
 # Linked tests: `Shell.lean`
 
-The tests of `Shell.lean`: `shellChecks`, `:!` over the real process
-service. They were the contract test's (`ContractTest.shellChecks`) while
+The tests of `Shell.lean`: `shellChecks`, `:!` and a filter on the loop
+over the real text binding, the shell's jobs on a stepped rig. They were the contract test's (`ContractTest.shellChecks`) while
 the shell was modules of the core. The linked test's root,
 `ShellTest/Linked.lean`, runs them; its module doc says what each shows.
 -/
@@ -62,107 +63,103 @@ def shellKeys : Loop.Keys TestScheme.scheme :=
     registered := { jobs := (· == Shell.runJob) } }
 
 /-- `stepped`'s loop once what the step asked for is done, as a host does
-it: each invocation it answered run as a step of its own, and each job it
-started spawned on `services`, waited for, and its command delivered, each
-taken in the same way, at most `depth` deep. `none` when a job did not end
-in time or ended otherwise than finished, or a step was refused. -/
-partial def settle (services : Job.Services) (display : DisplayHandler) (texts : RealTexts)
-    (stepped : Loop.Stepped TestScheme.scheme) (depth : Nat := 8) :
-    IO (Option (Loop TestScheme.scheme × RealTexts)) := do
+it, on `rig`: each invocation it answered run as a step of its own, and each
+job it started spawned on the rig's services, run to its end
+(`ProjectRig.ran`: on a stepped rig, on the check's thread), and its command
+delivered, each taken in the same way, at most `depth` deep. `none` when a
+job did not end or ended otherwise than finished, or a step was refused. -/
+partial def settle (rig : ProjectRig) (texts : RealTexts) (stepped : Loop.Stepped TestScheme.scheme)
+    (depth : Nat := 8) : IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   if depth == 0 then
     return none
   let mut loop := stepped.loop
   let mut texts := texts
   for invocation in stepped.answered do
-    let (next, after) ← (loop.invoke shellKeys invocation).runReal texts display
+    let (next, after) ← (loop.invoke shellKeys invocation).runReal texts rig.display
     let .ok next := next | return none
-    let some (settled, after) ← settle services display after next (depth - 1) | return none
+    let some (settled, after) ← settle rig after next (depth - 1) | return none
     loop := settled
     texts := after
   for start in stepped.starts do
     let some work :=
       (Shell.package.registered.jobs.find? (·.name == start.name)).map
         (·.work start.arguments) | return none
-    let handle ← Job.spawn services work (pure ())
-    -- hang guard: the job's end, on its outcome.
-    if (← Job.awaitWithin patience handle.outcome.result?).isNone then
+    let handle ← Job.spawn rig.services work (pure ())
+    unless ← rig.ran handle do
       handle.cancel
       return none
     let some (.finished command) ← handle.outcome? | return none
     handle.settle
-    let (next, after) ← (loop.deliver shellKeys s!"job {start.name}" command).runReal texts display
+    let (next, after) ←
+      (loop.deliver shellKeys s!"job {start.name}" command).runReal texts rig.display
     let .ok next := next | return none
-    let some (settled, after) ← settle services display after next (depth - 1) | return none
+    let some (settled, after) ← settle rig after next (depth - 1) | return none
     loop := settled
     texts := after
   return some (loop, texts)
 
-/-- Runs `invocation` on a loop over the real process service `services`, its
-working directory `fixtures` and its buffer holding `contents`, until it
-has settled: what the echo area says and the buffer's text after, or none if
-a step refused. -/
-def ranOver (services : Job.Services) (fixtures : System.FilePath) (invocation : Invocation)
-    (contents : String) : IO (Option (String × String)) := do
-  let published ← Snapshots.new
-  let recorder ← DisplayRecorder.new { advance := 8, lineHeight := 16 } published.reader
-  let display := recorder.handle
+/-- The made-up working directory of the shell checks' loop, which only the
+rig's process fake's scripts name. -/
+def shellDirectory : System.FilePath :=
+  "/s"
+
+/-- Runs `invocation` on a loop over a stepped rig (`ProjectRig.stepped`)
+whose process fake runs `scripts`, its working directory `shellDirectory`
+and its buffer holding `contents`, until it has settled: what the echo area
+says, the buffer's text after, and the process fake's model then; none if a
+step refused. -/
+def ranOver (scripts : Array Process.Script) (invocation : Invocation) (contents : String) :
+    IO (Option (String × String × ProcessModel)) := do
+  let (rig, stepped) ← ProjectRig.stepped (processes := { scripts })
   let begin : EditorM (Loop TestScheme.scheme) := do
     let loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
     let some target := loop.state.focusedTarget? | throw TextError.noSuchText
     target.buffer.text.insert 0 contents
-    return { loop with state := { loop.state with workingDirectory := fixtures } }
-  let (started, texts) ← begin.runReal (RealTexts.over published) display
+    return { loop with state := { loop.state with workingDirectory := shellDirectory } }
+  let (started, texts) ← begin.runReal (RealTexts.over rig.published) rig.display
   let .ok loop := started | return none
-  let (stepped, texts) ← (loop.invoke shellKeys invocation).runReal texts display
-  let .ok stepped := stepped | return none
-  let some (loop, texts) ← settle services display texts stepped | return none
+  let (stepped', texts) ← (loop.invoke shellKeys invocation).runReal texts rig.display
+  let .ok stepped' := stepped' | return none
+  let some (loop, texts) ← settle rig texts stepped' | return none
   let read : EditorM String := do
     let some target := loop.state.focusedTarget? | throw TextError.noSuchText
     target.buffer.text.read
-  let (text, _) ← read.runReal texts display
+  let (text, _) ← read.runReal texts rig.display
   let .ok text := text | return none
-  return some (loop.state.echo, text)
+  return some (loop.state.echo, text, ← stepped.processes.model)
 
--- inferred-waits W43: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `shellChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
-def criterion16RealProcessCheck (services : Job.Services) (fixtures : System.FilePath) : Check :=
+/-- A check of `shellChecks`, a declaration of its own. -/
+def criterion16Check : Check :=
   { name :=
-      "criterion 16: over the real process service, `:!` running the fixture `hello` leaves `hello` in the echo area, and its child is reaped"
+      "criterion 16: on the loop over the real text binding, `:!hello` running a child whose reply is `hello` leaves `hello` in the echo area, the child run once in the loop's working directory"
     run := do
-      let ran := ranOver services fixtures
-      let before ← Ffi.processesPending
-      let hello := s!"'{fixtures / "hello"}'"
+      let command := Test.shellCommand shellDirectory "hello"
       let said ←
-        ran { command := Shell.commandName, arguments := [.str hello, .str s!"!{hello}"] } ""
-      let reaped ← Editor.Test.Linked.childrenReapedTo services before
-      return said == some ("hello", "") && reaped }
+        ranOver #[{ command, reply := Test.shellReply "hello\n" }]
+            { command := Shell.commandName, arguments := [.str "hello", .str "!hello"] } ""
+      return said.map (fun (echo, text, model) => (echo, text, model.started)) ==
+          some ("hello", "", #[command]) }
 
--- inferred-waits W43: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `shellChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
-def criterion17RealProcessCheck (services : Job.Services) (fixtures : System.FilePath) : Check :=
+/-- A check of `shellChecks`, a declaration of its own. -/
+def criterion17Check : Check :=
   { name :=
-      "criterion 17: over the real process service, `:%!/usr/bin/sort` over the lines b, c and a leaves a, b and c, and its child is reaped"
+      "criterion 17: on the loop over the real text binding, `:%!sort` over the lines b, c and a feeds the child those lines and leaves the reply's a, b and c in the buffer"
     run := do
-      let ran := ranOver services fixtures
-      let before ← Ffi.processesPending
+      let command := Test.shellCommand shellDirectory "sort"
       let said ←
-        ran { command := Shell.filterName
-              arguments := [.nat 1, .nat 3, .str "/usr/bin/sort", .str "%!/usr/bin/sort"] }
-            "b\nc\na\n"
-      let reaped ← Editor.Test.Linked.childrenReapedTo services before
-      return said == some ("3 lines filtered", "a\nb\nc\n") && reaped }
+        ranOver #[{ command, reply := Test.shellReply "a\nb\nc\n" }]
+            { command := Shell.filterName
+              arguments := [.nat 1, .nat 3, .str "sort", .str "%!sort"] } "b\nc\na\n"
+      return said.map (fun (echo, text, model) => (echo, text, model.fed)) ==
+          some ("3 lines filtered", "a\nb\nc\n", #[(command, "b\nc\na\n".toUTF8)]) }
 
-/-- What only the real process service shows of `:!` and a filter, with the
-loop's working directory the fixtures' (`fixtures`, `tests/shell`). Each
-check runs `shell-command` or `shell-filter` by name, with the arguments
-ex's line hands it (`Ex.run`): that ex hands a `:!` line to those names is
-ex's, held by the model checks of the shell typed through the kit's ex line
-(`ShellTest.shellChecks`). -/
-def shellChecks (services : Job.Services) (fixtures : System.FilePath) : List Check :=
-  [criterion16RealProcessCheck services fixtures, criterion17RealProcessCheck services fixtures]
+/-- What `:!` and a filter do on the loop over the real text binding, the
+shell's jobs on a stepped rig whose process fake answers each child
+(`ranOver`). Each check runs `shell-command` or `shell-filter` by name,
+with the arguments ex's line hands it (`Ex.run`): that ex hands a `:!` line
+to those names is ex's, held by the model checks of the shell typed
+through the kit's ex line (`ShellTest.shellChecks`). -/
+def shellChecks : List Check :=
+  [criterion16Check, criterion17Check]
 
 end ShellTest.Linked

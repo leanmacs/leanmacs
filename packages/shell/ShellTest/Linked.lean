@@ -14,33 +14,27 @@ that do not, and 2 for a command line that is not the two directories. The
 exit is explicit, after the library's services are shut down and its queues
 quit: a task may still be blocked in the library.
 
-Its checks run over the library's real process service
-(`Editor.Test.Linked.Services`), on the linked test kit's rig, with the
-command loop over the real text binding and the editor's working directory
-the fixture's, `tests/shell` under the package's directory. The test module
-mirrors the module it tests; its list was the contract test's
+Its checks run on the linked test kit's rig over fakes
+(`Editor.Test.Linked.ProjectRig.stepped`), with the command loop over the
+real text binding: the shell's jobs run to their end on the check's thread,
+each child answered by the rig's process fake. The test module mirrors the
+module it tests; its list was the contract test's
 (`ContractTest.shellChecks`) while the shell was modules of the core:
 
 - `shellChecks` (`ShellTest/Linked/Shell.lean`): `shell-command` and
   `shell-filter` run by name as a host runs them, each job spawned on the
-  runner over the library's services and its command delivered once the
-  job has ended: the fixture `hello` leaves `hello` in the echo area, a sort
-  filter over `b`, `c`, `a` leaves `a`, `b`, `c`, and every child is
-  reaped.
+  runner over the rig's fakes and its command delivered once the job has
+  ended: a child that replies `hello` leaves `hello` in the echo area, and
+  a sort filter over `b`, `c`, `a` is fed those lines and leaves `a`, `b`,
+  `c`. The real process service's end-to-end check is the compile
+  package's (`CompileTest.criterion11RealProcessCheck`).
 -/
-
-/-- The fixtures' directory of the shell's checks, under the package's
-directory, which the linked test runs in. -/
-def shellFixtures : System.FilePath :=
-  "tests" / "shell"
 
 /-- Runs the checks (the module docs). -/
 def main (arguments : List String) : IO UInt32 := do
   match arguments with
   | [_, _] =>
-    let fixtures ← IO.FS.realPath shellFixtures
-    let running ← Editor.Test.Linked.Services.start
-    let checks := ShellTest.Linked.shellChecks running.jobs fixtures
+    let checks := ShellTest.Linked.shellChecks
     let failed ← ShellTest.failures checks
     for name in failed do
       IO.eprintln s!"FAILED: {name}"

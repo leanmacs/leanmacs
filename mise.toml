@@ -826,8 +826,8 @@ run = [
   # packages/workspace/WorkspaceTest/Linked.lean,
   # packages/shell/ShellTest/Linked.lean), which the package steps run below
   # on those packages' own fixtures (packages/compile/tests/compile,
-  # packages/workspace/tests/workspaces and tests/completion,
-  # packages/shell/tests/shell).
+  # packages/workspace/tests/workspaces and tests/completion); the shell's
+  # run on a rig over fakes, with no fixture.
   ".lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
