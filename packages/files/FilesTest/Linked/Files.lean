@@ -826,7 +826,7 @@ holds `fileModel`. -/
 def withPromptHost (context : HostContext) (files : List (String × String))
     (check : Session → IO Bool) (fileModel : Option FileModel := none)
     (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none) : IO Bool :=
-  withShippedHost TestScheme.scheme context files check fileModel false workingDirectory home
+  withShippedHost TestScheme.scheme context files check fileModel workingDirectory home
     (context.packages.push promptTyping)
 
 /-- Runs `check` on a host of the test scheme (`withPromptHost`) over

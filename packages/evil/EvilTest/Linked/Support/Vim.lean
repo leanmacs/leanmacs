@@ -25,12 +25,11 @@ open Editor
 check's own thread (`withShippedHost Vim.Default.scheme`, which says what
 the host is made of and what each argument is). -/
 def withVimHost (context : HostContext) (files : List (String × String)) (check : Session → IO Bool)
-    (fileModel : Option FileModel := none) (realFiles : Bool := false)
-    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
-    (packages : Array Package := context.packages)
+    (fileModel : Option FileModel := none) (workingDirectory : System.FilePath := "/")
+    (home : Option System.FilePath := none) (packages : Array Package := context.packages)
     (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
-  withShippedHost Vim.Default.scheme context files check fileModel realFiles workingDirectory home
-    packages emitting
+  withShippedHost Vim.Default.scheme context files check fileModel workingDirectory home packages
+    emitting
 
 -- inferred-waits W87: stays (A5: evil's real-host checks are the Vim scheme over the library's shipped Rust textObjects and indents queries, which the syntax model does not hold)
 set_option linter.inferredWait false in
@@ -39,10 +38,10 @@ bracket (`withRealSyntaxHost Vim.Default.scheme`), which returns once its
 loop has ended. -/
 def withRealVimHost (context : HostContext) (files : List (String × String))
     (check : RealSession → IO Bool) (fileModel : Option FileModel := none)
-    (realFiles : Bool := false) (workingDirectory : System.FilePath := "/")
-    (home : Option System.FilePath := none) (packages : Array Package := context.packages)
+    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
+    (packages : Array Package := context.packages)
     (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
-  withRealSyntaxHost Vim.Default.scheme context files check fileModel realFiles workingDirectory
-    home packages emitting
+  withRealSyntaxHost Vim.Default.scheme context files check fileModel workingDirectory home packages
+    emitting
 
 end Editor.Test.Linked

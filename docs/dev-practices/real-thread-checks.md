@@ -25,12 +25,11 @@ check's step, held to its real adapter by one contract
 ([concurrency.md](../design/concurrency.md), "Recording fakes for the
 host's background collaborators"). A stepped check gets them by default
 (host-tests-on-fakes phase 4): the plain helpers (`staged`, `withHostOver`,
-`withHost`, `withShippedHost` and `withTestHost` but with `realFiles`)
+`withHost`, `withShippedHost` and `withTestHost`) always
 build a stepped stage (`Stage.stepped`), whose jobs, file, diff, grep and
 process services are fakes the check steps (`Session.step`), and whose
 syntax tree is the stage's syntax fake. The stages that stay on the real
-services, named: `Stage.overFiles` and a shipped host with `realFiles`,
-every `Real` helper, the syntax hosts of the A5 checks
+services, named: `Stage.overFiles`, every `Real` helper, the syntax hosts of the A5 checks
 (`withRealSyntaxHost`, `withRealSyntaxTestHost`), and the protocol
 contract's stages (`ConfigTest/Editor/Job/ProtocolContract.lean`), whose
 subject is the runner's protocol on real job threads.
@@ -43,9 +42,7 @@ plain names are the stepped helpers. The helpers are the linked test kit's
 and `withRealSyntaxHost`, `lean/Editor/Test/Linked/Shipped.lean`), the
 config tests' own (`withRealTestHost` and `withRealSyntaxTestHost`,
 `lean/ConfigTest/Support/Shipped.lean`;
-`withRealRestoreHost`, `withRealJournalHost`,
-`withRealEnvironments`, `withRealRecordedSyntaxTree`, `hostedReal`,
-`lean/ConfigTest/Editor/Headless.lean`), and a package's linked test's
+`withRealRecordedSyntaxTree`, `lean/ConfigTest/Editor/Headless.lean`), and a package's linked test's
 (`withRealVimHost`, evil's; `withRealFileHost` and `withRealLanguageHost`,
 the files package's).
 

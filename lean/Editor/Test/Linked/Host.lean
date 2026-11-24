@@ -944,21 +944,15 @@ def onRealStage {β σ : Type} (stage : Stage β σ) (check : Headless.Host → 
   refuseFakes stage "onRealStage"
   hostingReal stage.collaborators (fun host => check host stage) waitHung waitBlocked
 
-/-- Runs `check` against a stepped host started on a stage of its own over
-`elaborator` and `source`, with what `compiled` hands it; with `stepped`,
-the default, the stage's jobs and services are the fakes the check steps
-(`Stage.stepped`), and without it they run on Lean's pool. `false` if the check did not hold or the host did not
-settle. -/
+/-- Runs `check` against a stepped host started on a stepped stage of its
+own over `elaborator` and `source`, with what `compiled` hands it: the
+stage's jobs and services are the fakes the check steps (`Stage.stepped`).
+`false` if the check did not hold or the host did not settle. -/
 def staged {β σ : Type} (context : HostContext) (elaborator : Config.Elaborator β σ)
     (source : Config.Source) (check : Driven → Stage β σ → IO Bool) (compiled : Compiled := {})
     (fuzzy : FuzzyHandler := Fuzzy.real) (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) (stepped : Bool := true) : IO Bool := do
-  let stage ← Stage.new context elaborator source compiled (fuzzy := fuzzy)
-  let stage ←
-    if stepped then
-      stage.stepped
-    else
-      pure stage
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool := do
+  let stage ← (← Stage.new context elaborator source compiled (fuzzy := fuzzy)).stepped
   onStage stage check waitHung waitBlocked
 
 /-- `staged` with a real host (`onRealStage`). -/
@@ -981,12 +975,12 @@ def withHostOver (context : HostContext) (files : List (String × String))
     (through : Config.Source → Config.Source) (check : Session → IO Bool)
     (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
     (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) (stepped : Bool := true) : IO Bool :=
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeConfig directory files
     staged context (around context.elaborator) (through (Config.Directory.source directory))
         (fun drive stage => check (Session.ofStage drive directory stage waitHung waitBlocked))
-        compiled fuzzy waitHung waitBlocked stepped
+        compiled fuzzy waitHung waitBlocked
 
 /-- `withHostOver` with a real host (`stagedReal`). -/
 def withRealHostOver (context : HostContext) (files : List (String × String))
@@ -1010,8 +1004,8 @@ ask `fuzzy` for the matcher, the library's unless a check holds it. -/
 def withHost (context : HostContext) (files : List (String × String)) (check : Session → IO Bool)
     (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
     (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) (stepped : Bool := true) : IO Bool :=
-  withHostOver context files id id check compiled fuzzy waitHung waitBlocked stepped
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+  withHostOver context files id id check compiled fuzzy waitHung waitBlocked
 
 /-- `withHost` with a real host (`withRealHostOver`). -/
 def withRealHost (context : HostContext) (files : List (String × String))

@@ -105,17 +105,15 @@ handed the package `listings`, so its listings are matched and shown by the
 style and the display written for these tests whatever else registers one
 (`Editor/Test/Linked/Listings.lean`), then `packages`, with the
 real elaborator and the stage's services and source ids; its syntax tree is
-what `syntaxTree` makes of the stage. With `realFiles`, the jobs reach
-real files through the library's file service, as a file check's do
-(`Stage.overFiles`); with a model, they reach its files and no real one.
-With `stepped`, the stage is stepped (`Stage.stepped`, over the model's
+what `syntaxTree` makes of the stage. With a model, the jobs reach its
+files and no real one. With `stepped`, the stage is stepped (`Stage.stepped`, over the model's
 files if there is one): its jobs and services are fakes the check steps,
 and its loop's end steps the jobs it cancels. A check that holds the
 editor thread at a line hands `emitting`, which the host's output goes
 through. -/
 private def shippedStagedWith (scheme : InputScheme) (context : HostContext)
     (directory : System.FilePath) (files : List (String × String)) (fileModel : Option FileModel)
-    (realFiles : Bool) (workingDirectory : System.FilePath) (home : Option System.FilePath)
+    (workingDirectory : System.FilePath) (home : Option System.FilePath)
     (emitting : (String → IO Unit) → String → IO Unit) (packages : Array Package) (stepped : Bool)
     (syntaxTree :
       Stage Config.Elaborate.Base Config.Elaborate.Handle →
@@ -128,11 +126,7 @@ private def shippedStagedWith (scheme : InputScheme) (context : HostContext)
   do
   writeConfig directory files
   let source := Config.Directory.source directory
-  let stage ←
-    if realFiles then
-      Stage.overFiles context source
-    else
-      Stage.new context context.elaborator source
+  let stage ← Stage.new context context.elaborator source
   let stage ←
     if stepped then
       stage.stepped (fileModel.getD {})
@@ -169,15 +163,15 @@ private def shippedStagedWith (scheme : InputScheme) (context : HostContext)
 step on a stepped stage: the default of every shipped host, whose subject
 is not the library's syntax service. -/
 def shippedStaged (scheme : InputScheme) (context : HostContext) (directory : System.FilePath)
-    (files : List (String × String)) (fileModel : Option FileModel) (realFiles : Bool)
+    (files : List (String × String)) (fileModel : Option FileModel)
     (workingDirectory : System.FilePath) (home : Option System.FilePath)
     (emitting : (String → IO Unit) → String → IO Unit) (packages : Array Package)
     (stepped : Bool := false) :
     IO
       (Stage Config.Elaborate.Base Config.Elaborate.Handle ×
         Headless.Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme) :=
-  shippedStagedWith scheme context directory files fileModel realFiles workingDirectory home
-    emitting packages stepped fun stage => do
+  shippedStagedWith scheme context directory files fileModel workingDirectory home emitting packages
+    stepped fun stage => do
     let (stage, fake) ← stage.fakeSyntaxService
     return (stage, fun _ => pure fake.handle)
 
@@ -192,14 +186,14 @@ text's captures, waits, with a bound, for the text's tree to be delivered:
 for a check whose subject is the library's syntax service, on a real
 host (A5 of `docs/dev-practices/real-thread-checks.md`). -/
 def shippedStagedReal (scheme : InputScheme) (context : HostContext) (directory : System.FilePath)
-    (files : List (String × String)) (fileModel : Option FileModel) (realFiles : Bool)
+    (files : List (String × String)) (fileModel : Option FileModel)
     (workingDirectory : System.FilePath) (home : Option System.FilePath)
     (emitting : (String → IO Unit) → String → IO Unit) (packages : Array Package) :
     IO
       (Stage Config.Elaborate.Base Config.Elaborate.Handle ×
         Headless.Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme) :=
-  shippedStagedWith scheme context directory files fileModel realFiles workingDirectory home
-    emitting packages false fun stage => do
+  shippedStagedWith scheme context directory files fileModel workingDirectory home emitting packages
+    false fun stage => do
     let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
       let real ← RealSyntaxTree.new snapshots
       return fun request => do
@@ -219,19 +213,18 @@ def shippedStagedReal (scheme : InputScheme) (context : HostContext) (directory 
 (`shippedStaged`), of `packages`: by default the packages the harness's set
 hands its editor (`HostContext.packages`); stepped on the check's own thread
 (`stepping`, over the stage's memory queue), over a stepped stage
-(`Stage.stepped`) unless it is told `realFiles` or `stepped := false`.
+(`Stage.stepped`).
 `false` if the check did not hold or the host did not settle after it. The
 directory is removed. -/
 def withShippedHost (scheme : InputScheme) (context : HostContext) (files : List (String × String))
-    (check : Session → IO Bool) (fileModel : Option FileModel := none) (realFiles : Bool := false)
+    (check : Session → IO Bool) (fileModel : Option FileModel := none)
     (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
     (packages : Array Package := context.packages)
-    (emitting : (String → IO Unit) → String → IO Unit := id) (stepped : Bool := !realFiles) :
-    IO Bool :=
+    (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     let (stage, collaborators) ←
-      shippedStaged scheme context directory files fileModel realFiles workingDirectory home
-          emitting packages stepped
+      shippedStaged scheme context directory files fileModel workingDirectory home emitting packages
+          (stepped := true)
     stepping collaborators stage.memory (fun drive => check (Session.ofStage drive directory stage))
         (fakes := stage.fakes)
 
@@ -256,14 +249,13 @@ of the syntax service, which no one steps: a real host's check whose
 subject is not the library's syntax service. -/
 def withRealShippedHost (scheme : InputScheme) (context : HostContext)
     (files : List (String × String)) (check : RealSession → IO Bool)
-    (fileModel : Option FileModel := none) (realFiles : Bool := false)
-    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
-    (packages : Array Package := context.packages)
+    (fileModel : Option FileModel := none) (workingDirectory : System.FilePath := "/")
+    (home : Option System.FilePath := none) (packages : Array Package := context.packages)
     (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
   IO.FS.withTempDir fun directory =>
     realShipped
-      (shippedStaged scheme context directory files fileModel realFiles workingDirectory home
-        emitting packages)
+      (shippedStaged scheme context directory files fileModel workingDirectory home emitting
+        packages)
       directory check
 
 /-- `withRealSyntaxHost` is an inferred wait (`Editor/InferredWait.lean`):
@@ -276,14 +268,13 @@ library's syntax service (`shippedStagedReal`): for a check whose subject is
 the library's syntax service (A5). -/
 def withRealSyntaxHost (scheme : InputScheme) (context : HostContext)
     (files : List (String × String)) (check : RealSession → IO Bool)
-    (fileModel : Option FileModel := none) (realFiles : Bool := false)
-    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
-    (packages : Array Package := context.packages)
+    (fileModel : Option FileModel := none) (workingDirectory : System.FilePath := "/")
+    (home : Option System.FilePath := none) (packages : Array Package := context.packages)
     (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
   IO.FS.withTempDir fun directory =>
     realShipped
-      (shippedStagedReal scheme context directory files fileModel realFiles workingDirectory home
-        emitting packages)
+      (shippedStagedReal scheme context directory files fileModel workingDirectory home emitting
+        packages)
       directory check
 
 end Editor.Test.Linked

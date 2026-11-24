@@ -50,10 +50,9 @@ The editor's loop over the real services, as the checks of a feature over
 them drive it: its jobs, commands and keys (`ProjectRig`, `rigJobs`,
 `rigCommands`, `rigKeys`), over the real services or stepped over fakes
 (`ProjectRig.stepped`), runs settled until every job has run, an opened
-file and a buffer's text; and a
-child's `PATH`, set for every child a rig's services start (`withPath`,
-`onChanged`, `onFixturePath`). Shared by several test modules; it holds no
-checks of its own.
+file and a buffer's text; and services whose children's commands are
+changed, set for every child a rig's services start (`onChanged`). Shared
+by several test modules; it holds no checks of its own.
 
 **The rig names no file feature.** A check passes the keys and jobs it
 runs with (`runSettled`'s `keys` and `jobs`), which `rigKeys` and `rigJobs`
@@ -81,14 +80,6 @@ core's `contract-test` does.
 namespace Editor.Test.Linked
 
 open Editor
-
-/-- `command` with `PATH` set to `path` in its own environment, in place of
-any `PATH` it sets. -/
-def withPath (path : String) (command : Process.Command) : Process.Command :=
-  { command with
-    environment :=
-      { command.environment with
-        set := (command.environment.set.filter (·.1 != "PATH")).push ("PATH", path) } }
 
 /-- `services` whose process service starts every child with its command
 changed by `change`, after the environment its directory's lookup gives it:
@@ -123,12 +114,6 @@ def onChanged (services : Job.Services) (change : Process.Command → Process.Co
           | .closeInput process => processes.take id (.closeInput process)
         cancel := processes.cancel
         flush := processes.flush } }
-
-/-- `services` whose process service starts every child with `PATH` set to
-`path`, after the environment its directory's lookup gives it
-(`onChanged`). -/
-def onFixturePath (services : Job.Services) (path : String) : Job.Services :=
-  onChanged services (withPath path)
 
 /-- The jobs a rig's checks run over `packages`: every package's, as a host
 registers them. -/
@@ -227,11 +212,6 @@ def ProjectRig.ran (rig : ProjectRig) (handle : Job.Handle) : IO Bool := do
   | none =>
     -- hang guard: the job's end, on its outcome.
     return (← Job.awaitWithin patience handle.outcome.result?).isSome
-
-/-- A rig over `services`, whose children get `path` as their `PATH`
-(`onFixturePath`), with a file service of its own. -/
-def ProjectRig.new (services : Job.Services) (path : String) : IO ProjectRig :=
-  ProjectRig.over (onFixturePath services path)
 
 /-- `stepped`'s loop once what the step asked for is done, as a host does
 it, with `keys` and the jobs `jobs`, the rig's by default:

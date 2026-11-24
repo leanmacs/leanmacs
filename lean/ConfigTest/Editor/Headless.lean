@@ -88,11 +88,6 @@ def hosted {β σ : Type} (context : Context) (elaborator : Config.Elaborator β
     (source : Config.Source) (check : Driven → IO.Ref (Array String) → IO Bool) : IO Bool :=
   staged context elaborator source fun drive stage => check drive stage.output
 
-/-- `hosted` with a real host (`stagedReal`). -/
-def hostedReal {β σ : Type} (context : Context) (elaborator : Config.Elaborator β σ)
-    (source : Config.Source) (check : Headless.Host → IO.Ref (Array String) → IO Bool) : IO Bool :=
-  stagedReal context elaborator source fun host stage => check host stage.output
-
 /-- A config whose `setup` registers `greet`. -/
 def setupText : String :=
   "def setup : SetupM Unit := do\n  command \"greet\" greet\n"
@@ -3825,20 +3820,6 @@ def withEnvironments (context : Context) (files : List (String × String))
     onStage { stage with collaborators } fun drive stage =>
         check (Session.ofStage drive directory stage) state environments
 
-/-- `withEnvironments` with a real host, whose environments report to the
-library's editor queue (`onRealStage`). -/
-def withRealEnvironments (context : Context) (files : List (String × String))
-    (check : RealSession → IO.Ref Process.Environments → Job.Environments → IO Bool) : IO Bool :=
-  IO.FS.withTempDir fun directory => do
-    writeConfig directory files
-    let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-    let state ← IO.mkRef ({} : Process.Environments)
-    let environments := Headless.reportedEnvironments state stage.collaborators.environment
-    let collaborators :=
-      { stage.collaborators with services := { stage.collaborators.services with environments } }
-    onRealStage { stage with collaborators } fun host stage =>
-        check (RealSession.ofStage host directory stage) state environments
-
 /-- A config whose `setup` sets the process environment to `setting`, written
 as Lean. -/
 def environmentText (setting : String) : String :=
@@ -3929,13 +3910,6 @@ def withRestoreHost (context : Context) (files : List (String × String))
   IO.FS.withTempDir fun directory => do
     let (stage, fake) ← restoreStage context directory files
     onStage stage fun drive stage => check drive stage.output fake
-
-/-- `withRestoreHost` with a real host (`onRealStage`). -/
-def withRealRestoreHost (context : Context) (files : List (String × String))
-    (check : Headless.Host → IO.Ref (Array String) → Job.FakeFiles → IO Bool) : IO Bool :=
-  IO.FS.withTempDir fun directory => do
-    let (stage, fake) ← restoreStage context directory files
-    onRealStage stage fun host stage => check host stage.output fake
 
 /-- The state directory of the stepped restore checks' hosts: a made-up
 path, which only the fake files' model holds. -/
@@ -4372,13 +4346,6 @@ def withJournalHost (context : Context)
   IO.FS.withTempDir fun directory => do
     let (stage, failed) ← journalStage context directory
     onStage stage fun drive stage => check (Session.ofStage drive directory stage) failed
-
-/-- `withJournalHost` with a real host (`onRealStage`). -/
-def withRealJournalHost (context : Context)
-    (check : RealSession → IO.Ref (Array (String × String)) → IO Bool) : IO Bool :=
-  IO.FS.withTempDir fun directory => do
-    let (stage, failed) ← journalStage context directory
-    onRealStage stage fun host stage => check (RealSession.ofStage host directory stage) failed
 
 /-- The checks of the journal's failures in the host (`Editor/Headless.lean`,
 "Restoring a session", `Running.journalFailed`): what the file service kept

@@ -63,16 +63,15 @@ which says what the host is made of and what each argument is), handed
 `packages` and then the kit's editing commands and keys
 (`Test.editingPackage`, `Editor/Test/Editing.lean`), so that a printable
 key types its character and the keys that print nothing move and edit: the
-host a config test whose subject is no scheme's keys runs on. With
-`stepped`, over a stepped stage (`Stage.stepped`). -/
+host a config test whose subject is no scheme's keys runs on, over a
+stepped stage (`Stage.stepped`). -/
 def withTestHost (context : Test.Linked.HostContext) (files : List (String × String))
     (check : Test.Linked.Session → IO Bool) (fileModel : Option FileModel := none)
-    (realFiles : Bool := false) (workingDirectory : System.FilePath := "/")
-    (home : Option System.FilePath := none) (packages : Array Package := context.packages)
-    (emitting : (String → IO Unit) → String → IO Unit := id) (stepped : Bool := !realFiles) :
-    IO Bool :=
-  Test.Linked.withShippedHost TestScheme.scheme context files check fileModel realFiles
-    workingDirectory home (packages.push Test.editingPackage) emitting stepped
+    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
+    (packages : Array Package := context.packages)
+    (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
+  Test.Linked.withShippedHost TestScheme.scheme context files check fileModel workingDirectory home
+    (packages.push Test.editingPackage) emitting
 
 /-- `withTestHost` with a real host, on a loop thread of its own
 (`Editor.Test.Linked.withRealShippedHost`, its syntax tree the stage's fake
@@ -80,11 +79,11 @@ of the syntax service): for a check of what only a loop thread shows
 (`docs/dev-practices/real-thread-checks.md`). -/
 def withRealTestHost (context : Test.Linked.HostContext) (files : List (String × String))
     (check : Test.Linked.RealSession → IO Bool) (fileModel : Option FileModel := none)
-    (realFiles : Bool := false) (workingDirectory : System.FilePath := "/")
-    (home : Option System.FilePath := none) (packages : Array Package := context.packages)
+    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
+    (packages : Array Package := context.packages)
     (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
-  Test.Linked.withRealShippedHost TestScheme.scheme context files check fileModel realFiles
-    workingDirectory home (packages.push Test.editingPackage) emitting
+  Test.Linked.withRealShippedHost TestScheme.scheme context files check fileModel workingDirectory
+    home (packages.push Test.editingPackage) emitting
 
 /-- `withRealSyntaxTestHost` is an inferred wait (`Editor/InferredWait.lean`):
 its host's syntax tree is the real binding (`withRealSyntaxHost`). -/
@@ -98,10 +97,10 @@ syntax service (`Editor.Test.Linked.withRealSyntaxHost`): for a check whose
 subject is the library's syntax service (A5). -/
 def withRealSyntaxTestHost (context : Test.Linked.HostContext) (files : List (String × String))
     (check : Test.Linked.RealSession → IO Bool) (fileModel : Option FileModel := none)
-    (realFiles : Bool := false) (workingDirectory : System.FilePath := "/")
-    (home : Option System.FilePath := none) (packages : Array Package := context.packages)
+    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
+    (packages : Array Package := context.packages)
     (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
-  Test.Linked.withRealSyntaxHost TestScheme.scheme context files check fileModel realFiles
-    workingDirectory home (packages.push Test.editingPackage) emitting
+  Test.Linked.withRealSyntaxHost TestScheme.scheme context files check fileModel workingDirectory
+    home (packages.push Test.editingPackage) emitting
 
 end ConfigTest
