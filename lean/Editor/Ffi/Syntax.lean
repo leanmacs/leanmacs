@@ -1,6 +1,7 @@
 import Editor.Bound
 import Editor.Ffi.Snapshot
 import Editor.Ffi.Words
+import Editor.InferredWait
 
 /-!
 # Bindings: the syntax service
@@ -482,6 +483,17 @@ def treeGuard : HangGuard :=
 /-- `syntaxSettle` as it crosses: its guard in milliseconds. -/
 @[extern "editor_glue_syntax_settle"]
 private opaque syntaxSettleRaw (snapshot : @& Snapshot) (boundMs : UInt64) : IO Bool
+
+/-- `syntaxSettle` is an inferred wait (`Editor/InferredWait.lean`): a real
+service's readout whose fake exists (`FakeSyntaxService`), allowed only in
+the real binding's adapter (`Editor.SyntaxTree.Real`), its delivery
+contract (`Editor.SyntaxTree.DeliveryContract`), and the linked kit's
+modules that hand it on, each under a mark of its own
+(`Editor.Test.Linked.Shipped`, `Editor.Test.Linked.Syntax`). -/
+def syntaxSettle.inferredWait : InferredWait :=
+  .realEffect
+    [`Editor.SyntaxTree.Real, `Editor.SyntaxTree.DeliveryContract, `Editor.Test.Linked.Shipped,
+      `Editor.Test.Linked.Syntax]
 
 /-- For tests: waits, within the hang guard `guard`, for the library to
 deliver a tree of `snapshot`'s revision, or a newer one, with layers found

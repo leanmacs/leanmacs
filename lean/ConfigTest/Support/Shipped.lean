@@ -74,14 +74,33 @@ def withTestHost (context : Test.Linked.HostContext) (files : List (String × St
     workingDirectory home (packages.push Test.editingPackage) emitting stepped
 
 /-- `withTestHost` with a real host, on a loop thread of its own
-(`Editor.Test.Linked.withRealShippedHost`): for a check of what only a loop
-thread shows (`docs/dev-practices/real-thread-checks.md`). -/
+(`Editor.Test.Linked.withRealShippedHost`, its syntax tree the stage's fake
+of the syntax service): for a check of what only a loop thread shows
+(`docs/dev-practices/real-thread-checks.md`). -/
 def withRealTestHost (context : Test.Linked.HostContext) (files : List (String × String))
     (check : Test.Linked.RealSession → IO Bool) (fileModel : Option FileModel := none)
     (realFiles : Bool := false) (workingDirectory : System.FilePath := "/")
     (home : Option System.FilePath := none) (packages : Array Package := context.packages)
     (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
   Test.Linked.withRealShippedHost TestScheme.scheme context files check fileModel realFiles
+    workingDirectory home (packages.push Test.editingPackage) emitting
+
+/-- `withRealSyntaxTestHost` is an inferred wait (`Editor/InferredWait.lean`):
+its host's syntax tree is the real binding (`withRealSyntaxHost`). -/
+def withRealSyntaxTestHost.inferredWait : InferredWait :=
+  .realEffect []
+
+-- inferred-waits W89: stays (A5: the library's syntax service, whose deliveries come over its own queue, is the subject of this host's checks)
+set_option linter.inferredWait false in
+/-- `withRealTestHost` with the real syntax tree binding over the library's
+syntax service (`Editor.Test.Linked.withRealSyntaxHost`): for a check whose
+subject is the library's syntax service (A5). -/
+def withRealSyntaxTestHost (context : Test.Linked.HostContext) (files : List (String × String))
+    (check : Test.Linked.RealSession → IO Bool) (fileModel : Option FileModel := none)
+    (realFiles : Bool := false) (workingDirectory : System.FilePath := "/")
+    (home : Option System.FilePath := none) (packages : Array Package := context.packages)
+    (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
+  Test.Linked.withRealSyntaxHost TestScheme.scheme context files check fileModel realFiles
     workingDirectory home (packages.push Test.editingPackage) emitting
 
 end ConfigTest

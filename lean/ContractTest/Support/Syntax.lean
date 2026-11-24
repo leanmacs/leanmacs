@@ -19,6 +19,8 @@ namespace ContractTest
 
 open Editor
 
+-- inferred-waits W90: stays (the syntax adapter's contract support: its subject is the real binding's deliveries)
+set_option linter.inferredWait false in
 /-- `handler`, a real syntax tree binding's over `table`, which after an
 attach waits, with a bound, for the attached text's tree to be delivered:
 so a highlighter set after the attach sees no delivery of that parse, and
@@ -33,6 +35,8 @@ def settlingAttach (table : Snapshots) (handler : SyntaxTreeHandler) : SyntaxTre
       discard (Ffi.syntaxSettle found Ffi.treeGuard)
   return reply
 
+-- inferred-waits W90: stays (the syntax adapter's contract support: its subject is the real binding's deliveries)
+set_option linter.inferredWait false in
 /-- `handler`, a real syntax tree binding's over `table`, which waits, with
 a bound, for a snapshot's tree to be delivered before it forwards a question
 of its captures or of a kept query's, and after an attach

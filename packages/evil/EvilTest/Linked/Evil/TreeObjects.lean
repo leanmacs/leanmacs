@@ -171,6 +171,8 @@ def offsetOfNeedle (text needle : String) (atEnd : Bool := false) : Option Nat :
   | before :: _ :: _ => some (before.utf8ByteSize + if atEnd then needle.utf8ByteSize - 1 else 0)
   | _ => none
 
+-- inferred-waits W88: stays (no host: the real binding's delivery of the check's own text, over the shipped Rust textObjects query, which the syntax model does not hold)
+set_option linter.inferredWait false in
 /-- What is wrong with each of `rows` over the text of `held`, a text of
 the Rust fixture `source` parsed with the Rust grammar, each row's covered
 text edited by `edited`, through the real syntax tree binding. -/
@@ -198,6 +200,32 @@ def objectRowsWrong (held : SyntaxText) (source : String) (edited : String → S
         else some s!"{row.object.name} at {repr row.needle}: {repr covers}"
       | none => some s!"{row.object.name} at {repr row.needle}: refused"
 
+-- inferred-waits W88: stays (no host: the real binding's delivery of the check's own text, over the shipped Rust textObjects query, which the syntax model does not hold)
+set_option linter.inferredWait false in
+/-- A check of `treeObjectFixtureChecks`, a declaration of its own so that
+the allow above it covers it alone. -/
+def treeObjectsEditedCheck (syntaxFixtures : System.FilePath) : Check :=
+  { name :=
+      "the tree's text objects of the Rust fixture, through the Lean editor API, cover the ranges written by hand, and still do after a function is inserted above and a line added inside a method's body"
+    run := do
+      let source ← IO.FS.readFile (syntaxFixtures / "rust" / "objects.rs")
+      let some held ← SyntaxText.over source "rust" | return false
+      let before ← objectRowsWrong held source id objectRows
+      let line := "        let add = |v| v + extra;\n"
+      let added := line ++ "        let unused = 1;\n"
+      let inserted := "fn inserted() {}\n\n"
+      let some at_ := offsetOfNeedle source line | return false
+      let some () ←
+        held.run fun text => do
+            text.insert (at_ + line.utf8ByteSize) "        let unused = 1;\n"
+            text.insert 0 inserted | return false
+      let edited := inserted ++ source.replace line added
+      let after ← objectRowsWrong held edited (·.replace line added) objectRows
+      let some now ← held.run fun text => text.read | return false
+      unless before.isEmpty && after.isEmpty do
+        throw (IO.userError ("; ".intercalate (before ++ after)))
+      return now == edited }
+
 /-- What only the real syntax tree binding shows of the tree's text objects
 over the fixtures in `syntaxFixtures` (the repository's `tests/syntax`), with
 no host, through the linked kit's text over the real bindings
@@ -209,25 +237,6 @@ def treeObjectFixtureChecks (syntaxFixtures : System.FilePath) : List Check :=
       run := do
         let some names ← shippedCaptureNames "rust" .textObjects | return false
         return !names.isEmpty && names.all Evil.TreeObjects.names.contains },
-    { name :=
-        "the tree's text objects of the Rust fixture, through the Lean editor API, cover the ranges written by hand, and still do after a function is inserted above and a line added inside a method's body"
-      run := do
-        let source ← IO.FS.readFile (syntaxFixtures / "rust" / "objects.rs")
-        let some held ← SyntaxText.over source "rust" | return false
-        let before ← objectRowsWrong held source id objectRows
-        let line := "        let add = |v| v + extra;\n"
-        let added := line ++ "        let unused = 1;\n"
-        let inserted := "fn inserted() {}\n\n"
-        let some at_ := offsetOfNeedle source line | return false
-        let some () ←
-          held.run fun text => do
-              text.insert (at_ + line.utf8ByteSize) "        let unused = 1;\n"
-              text.insert 0 inserted | return false
-        let edited := inserted ++ source.replace line added
-        let after ← objectRowsWrong held edited (·.replace line added) objectRows
-        let some now ← held.run fun text => text.read | return false
-        unless before.isEmpty && after.isEmpty do
-          throw (IO.userError ("; ".intercalate (before ++ after)))
-        return now == edited }]
+    treeObjectsEditedCheck syntaxFixtures]
 
 end EvilTest.Linked

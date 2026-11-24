@@ -88,14 +88,16 @@ def setup : SetupM Unit := do
     "\n".intercalate commands ++
     "\n"
 
-/-- Runs `check` against a real host of the test scheme (`withRealTestHost`)
-over `reindentText` of the mangled Rust indent fixture, with the config
+-- inferred-waits W89: stays (A5: the indent checks' subject is the library's shipped indents query over the real syntax service)
+set_option linter.inferredWait false in
+/-- Runs `check` against a real host of the test scheme with the real syntax
+binding (`withRealSyntaxTestHost`) over `reindentText` of the mangled Rust indent fixture, with the config
 loaded: handed the fixture's text and the mangled one. -/
 def withIndentHost (context : Context) (check : RealSession → String → String → IO Bool) :
     IO Bool := do
   let source ← IO.FS.readFile (context.syntaxFixtures / "rust" / "indent.rs")
   let mangled := mangledRust source indentKept
-  withRealTestHost context [("init.lean", reindentText mangled)] fun session => do
+  withRealSyntaxTestHost context [("init.lean", reindentText mangled)] fun session => do
       session.ask [.reload]
       check session source mangled
 

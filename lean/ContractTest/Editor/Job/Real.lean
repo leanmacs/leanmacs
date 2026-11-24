@@ -634,39 +634,45 @@ def cancellingJobWhoseLoadCheck (completions : Job.Completions) : Check :=
           discard <| Editor.Test.Linked.filesFlushed completions
           discard <| Ffi.Snapshot.awaitLive (live + 1) patience }
 
+-- inferred-waits W90: stays (the syntax adapter's contract: a job's command over the real binding, settled on its own snapshot)
+set_option linter.inferredWait false in
+/-- A check of `fileChecks`, a declaration of its own so that the allow
+above it covers it alone. -/
+def jobCommandReachesSyntaxTreeCheck (completions : Job.Completions) : Check :=
+  { name :=
+      "a job's command run by Job.finishWith reaches the syntax tree it is handed: its text, highlighted as a mode with a syntax tree is entered, is attached in the library, and a query of it answers"
+    run := do
+      let rig ← FileRig.new completions
+      let handle ← Job.spawn rig.services (reporting fun _ => pure 1) (pure ())
+      discard <| hangGuarded "the job's end" handle.outcome.result?
+      let real ← RealSyntaxTree.new rig.published.reader
+      let syntaxTree := settlingAttach rig.published real.handle
+      let command : EditorM SnapshotId := do
+        let text ← createText "[1, 2]"
+        Highlight.enter "json" text { grammar := "json" }
+        text.snapshot
+      let display := (← recorderOf rig.published).handle
+      let (.ok snapshot, texts) ←
+        Job.finishWith rig.held handle command (.over rig.published) display (syntaxTree :=
+            syntaxTree) | return false
+      let numbers : SyntaxTreeM Nat := do
+        let query ← SyntaxTree.compile "json" "(number) @n"
+        return (← SyntaxTree.captures snapshot query 0 6).size
+      let some found ← rig.published.find? snapshot | return false
+      unless ← Ffi.syntaxSettle found patience do
+        return false
+      let answered ← numbers.runWith syntaxTree
+      -- The text's document is held until here: a document freed is
+      -- detached.
+      return answered matches .ok 2 && texts.documents.size == 1 }
+
 /-- The checks of the runner over the library's file service and the real
 text binding (`Editor/Job/Real.lean`, `Editor/Text/Real.lean`): what only the
 two together can show. It is a function, not a constant, because it calls
 bindings. Every file is in a temporary directory its check makes and
 removes. -/
 def fileChecks (completions : Job.Completions) : List Check :=
-  [loadWritesNothingEditorCheck completions,
-    { name :=
-        "a job's command run by Job.finishWith reaches the syntax tree it is handed: its text, highlighted as a mode with a syntax tree is entered, is attached in the library, and a query of it answers"
-      run := do
-        let rig ← FileRig.new completions
-        let handle ← Job.spawn rig.services (reporting fun _ => pure 1) (pure ())
-        discard <| hangGuarded "the job's end" handle.outcome.result?
-        let real ← RealSyntaxTree.new rig.published.reader
-        let syntaxTree := settlingAttach rig.published real.handle
-        let command : EditorM SnapshotId := do
-          let text ← createText "[1, 2]"
-          Highlight.enter "json" text { grammar := "json" }
-          text.snapshot
-        let display := (← recorderOf rig.published).handle
-        let (.ok snapshot, texts) ←
-          Job.finishWith rig.held handle command (.over rig.published) display (syntaxTree :=
-              syntaxTree) | return false
-        let numbers : SyntaxTreeM Nat := do
-          let query ← SyntaxTree.compile "json" "(number) @n"
-          return (← SyntaxTree.captures snapshot query 0 6).size
-        let some found ← rig.published.find? snapshot | return false
-        unless ← Ffi.syntaxSettle found patience do
-          return false
-        let answered ← numbers.runWith syntaxTree
-        -- The text's document is held until here: a document freed is
-        -- detached.
-        return answered matches .ok 2 && texts.documents.size == 1 },
+  [loadWritesNothingEditorCheck completions, jobCommandReachesSyntaxTreeCheck completions,
     { name :=
         "a snapshot a job loaded that no command adopted is freed when the job is settled: the library holds what it held, and the editor's table never grew"
       run :=

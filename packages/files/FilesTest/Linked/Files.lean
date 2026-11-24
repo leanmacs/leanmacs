@@ -217,6 +217,8 @@ def rustOverride : String :=
       syntaxTree := { Language.rust.syntaxTree with highlights := some \"(identifier) @variable\" } }
 "
 
+-- inferred-waits W91: stays (A5: the grammars and shipped queries of rust, markdown, toml and lean, which the syntax model does not hold, over the real binding)
+set_option linter.inferredWait false in
 /-- Runs `check` against a host over the library's file service
 (`Stage.overFiles`), with a config directory of its own holding
 `languageReportText` with `more` lines of its `setup`, that is handed the file commands and

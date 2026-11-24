@@ -6,6 +6,7 @@ import Editor.Ffi.Syntax
 import Editor.File.Model
 import Editor.Headless
 import Editor.Highlight
+import Editor.InferredWait
 import Editor.Job.Fake
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
@@ -56,6 +57,13 @@ def recordedRequest : SyntaxTreeRequest → String
   | .capturesOf _ kind .. => s!"capturesOf {kind.name}"
   | .refreshAfter milliseconds => s!"refreshAfter {milliseconds}"
 
+/-- `recordingSyntaxTree` is an inferred wait (`Editor/InferredWait.lean`):
+it hands on `Ffi.syntaxSettle`, the real syntax service's readout, whose
+fake is `FakeSyntaxService`. A check over the real binding says why with an
+allow. -/
+def recordingSyntaxTree.inferredWait : InferredWait :=
+  .realEffect []
+
 /-- The real syntax tree binding over the library's syntax service, with
 every request recorded (`recordedRequest`) in `asked`, which after an
 attach waits, with a bound, for the attached text's tree to be delivered. -/
@@ -97,21 +105,23 @@ handed the package `listings`, so its listings are matched and shown by the
 style and the display written for these tests whatever else registers one
 (`Editor/Test/Linked/Listings.lean`), then `packages`, with the
 real elaborator and the stage's services and source ids; its syntax tree is
-the real binding over the library's syntax service, which after an attach,
-and before a question of a text's captures, waits, with a bound, for the
-text's tree to be delivered. With `realFiles`, the jobs reach real files
-through the library's file service, as a file check's do
+what `syntaxTree` makes of the stage. With `realFiles`, the jobs reach
+real files through the library's file service, as a file check's do
 (`Stage.overFiles`); with a model, they reach its files and no real one.
 With `stepped`, the stage is stepped (`Stage.stepped`, over the model's
 files if there is one): its jobs and services are fakes the check steps,
 and its loop's end steps the jobs it cancels. A check that holds the
 editor thread at a line hands `emitting`, which the host's output goes
 through. -/
-def shippedStaged (scheme : InputScheme) (context : HostContext) (directory : System.FilePath)
-    (files : List (String × String)) (fileModel : Option FileModel) (realFiles : Bool)
-    (workingDirectory : System.FilePath) (home : Option System.FilePath)
-    (emitting : (String → IO Unit) → String → IO Unit) (packages : Array Package)
-    (stepped : Bool := false) :
+private def shippedStagedWith (scheme : InputScheme) (context : HostContext)
+    (directory : System.FilePath) (files : List (String × String)) (fileModel : Option FileModel)
+    (realFiles : Bool) (workingDirectory : System.FilePath) (home : Option System.FilePath)
+    (emitting : (String → IO Unit) → String → IO Unit) (packages : Array Package) (stepped : Bool)
+    (syntaxTree :
+      Stage Config.Elaborate.Base Config.Elaborate.Handle →
+        IO
+          (Stage Config.Elaborate.Base Config.Elaborate.Handle ×
+            (SnapshotReader → IO SyntaxTreeHandler))) :
     IO
       (Stage Config.Elaborate.Base Config.Elaborate.Handle ×
         Headless.Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme) :=
@@ -128,6 +138,7 @@ def shippedStaged (scheme : InputScheme) (context : HostContext) (directory : Sy
       stage.stepped (fileModel.getD {})
     else
       pure stage
+  let (stage, syntaxTree) ← syntaxTree stage
   let staged := stage.collaborators
   let services ←
     match fileModel, stepped with
@@ -141,19 +152,6 @@ def shippedStaged (scheme : InputScheme) (context : HostContext) (directory : Sy
     Headless.shippedOver scheme (#[listingsPackage] ++ packages) #[`Editor] "" [] ""
       (emitting staged.emit) services staged.published staged.held
       (← Config.Elaborate.ModuleFiles.temporary)
-  let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
-    let real ← RealSyntaxTree.new snapshots
-    return fun request => do
-      -- A question of the captures waits for its snapshot's tree, so keys
-      -- that edit and then ask are answered of a delivered tree.
-      if let .capturesOf snapshot .. := request then
-        if let some found← snapshots.find? snapshot then
-          discard (Ffi.syntaxSettle found Ffi.treeGuard)
-      let reply ← real.handle request
-      if let .attach snapshot _ := request then
-        if let some found← snapshots.find? snapshot then
-          discard (Ffi.syntaxSettle found Ffi.treeGuard)
-      return reply
   let collaborators :=
     { shipped with
       elaborator := context.elaborator, source, requests := staged.requests
@@ -165,6 +163,57 @@ def shippedStaged (scheme : InputScheme) (context : HostContext) (directory : Sy
     if stage.fakes.isSome then { collaborators with endCancelled := staged.endCancelled }
     else collaborators
   return (stage, collaborators)
+
+/-- `shippedStagedWith` with the stage's fake of the syntax service
+(`Stage.fakeSyntaxService`) as its syntax tree, which the session's steps
+step on a stepped stage: the default of every shipped host, whose subject
+is not the library's syntax service. -/
+def shippedStaged (scheme : InputScheme) (context : HostContext) (directory : System.FilePath)
+    (files : List (String × String)) (fileModel : Option FileModel) (realFiles : Bool)
+    (workingDirectory : System.FilePath) (home : Option System.FilePath)
+    (emitting : (String → IO Unit) → String → IO Unit) (packages : Array Package)
+    (stepped : Bool := false) :
+    IO
+      (Stage Config.Elaborate.Base Config.Elaborate.Handle ×
+        Headless.Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme) :=
+  shippedStagedWith scheme context directory files fileModel realFiles workingDirectory home
+    emitting packages stepped fun stage => do
+    let (stage, fake) ← stage.fakeSyntaxService
+    return (stage, fun _ => pure fake.handle)
+
+/-- `shippedStagedReal` is an inferred wait (`Editor/InferredWait.lean`): it
+hands on `Ffi.syntaxSettle`, the real syntax service's readout. -/
+def shippedStagedReal.inferredWait : InferredWait :=
+  .realEffect []
+
+/-- `shippedStagedWith` with the real syntax tree binding over the
+library's syntax service, which after an attach, and before a question of a
+text's captures, waits, with a bound, for the text's tree to be delivered:
+for a check whose subject is the library's syntax service, on a real
+host (A5 of `docs/dev-practices/real-thread-checks.md`). -/
+def shippedStagedReal (scheme : InputScheme) (context : HostContext) (directory : System.FilePath)
+    (files : List (String × String)) (fileModel : Option FileModel) (realFiles : Bool)
+    (workingDirectory : System.FilePath) (home : Option System.FilePath)
+    (emitting : (String → IO Unit) → String → IO Unit) (packages : Array Package) :
+    IO
+      (Stage Config.Elaborate.Base Config.Elaborate.Handle ×
+        Headless.Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme) :=
+  shippedStagedWith scheme context directory files fileModel realFiles workingDirectory home
+    emitting packages false fun stage => do
+    let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
+      let real ← RealSyntaxTree.new snapshots
+      return fun request => do
+        -- A question of the captures waits for its snapshot's tree, so keys
+        -- that edit and then ask are answered of a delivered tree.
+        if let .capturesOf snapshot .. := request then
+          if let some found← snapshots.find? snapshot then
+            discard (Ffi.syntaxSettle found Ffi.treeGuard)
+        let reply ← real.handle request
+        if let .attach snapshot _ := request then
+          if let some found← snapshots.find? snapshot then
+            discard (Ffi.syntaxSettle found Ffi.treeGuard)
+        return reply
+    return (stage, syntaxTree)
 
 /-- Runs `check` against a host of the input scheme `scheme`
 (`shippedStaged`), of `packages`: by default the packages the harness's set
@@ -184,22 +233,55 @@ def withShippedHost (scheme : InputScheme) (context : HostContext) (files : List
     stepping collaborators stage.memory (fun drive => check (Session.ofStage drive directory stage))
         (fakes := stage.fakes)
 
+/-- A real host over `staged`, in its bracket (`Headless.withHost`), which
+returns once its loop has ended. -/
+private def realShipped {scheme : InputScheme}
+    (staged :
+      IO
+        (Stage Config.Elaborate.Base Config.Elaborate.Handle ×
+          Headless.Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme))
+    (directory : System.FilePath) (check : RealSession → IO Bool) : IO Bool := do
+  let (stage, collaborators) ← staged
+  refuseFakes stage "withRealShippedHost"
+  Headless.withHost collaborators (guard := hangGuard) (grace := some hangGuard) fun host => do
+      let held ← check (RealSession.ofStage host directory stage)
+      let wait ← host.await hangGuard
+      return held && (wait == .settled || wait == .ended)
+
 /-- `withShippedHost` with a real host, in its bracket (`Headless.withHost`),
-which returns once its loop has ended. -/
+which returns once its loop has ended; its syntax tree is the stage's fake
+of the syntax service, which no one steps: a real host's check whose
+subject is not the library's syntax service. -/
 def withRealShippedHost (scheme : InputScheme) (context : HostContext)
     (files : List (String × String)) (check : RealSession → IO Bool)
     (fileModel : Option FileModel := none) (realFiles : Bool := false)
     (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
     (packages : Array Package := context.packages)
     (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
-  IO.FS.withTempDir fun directory => do
-    let (stage, collaborators) ←
-      shippedStaged scheme context directory files fileModel realFiles workingDirectory home
-          emitting packages
-    refuseFakes stage "withRealShippedHost"
-    Headless.withHost collaborators (guard := hangGuard) (grace := some hangGuard) fun host => do
-        let held ← check (RealSession.ofStage host directory stage)
-        let wait ← host.await hangGuard
-        return held && (wait == .settled || wait == .ended)
+  IO.FS.withTempDir fun directory =>
+    realShipped
+      (shippedStaged scheme context directory files fileModel realFiles workingDirectory home
+        emitting packages)
+      directory check
+
+/-- `withRealSyntaxHost` is an inferred wait (`Editor/InferredWait.lean`):
+its host's syntax tree is the real binding (`shippedStagedReal`). -/
+def withRealSyntaxHost.inferredWait : InferredWait :=
+  .realEffect []
+
+/-- `withRealShippedHost` with the real syntax tree binding over the
+library's syntax service (`shippedStagedReal`): for a check whose subject is
+the library's syntax service (A5). -/
+def withRealSyntaxHost (scheme : InputScheme) (context : HostContext)
+    (files : List (String × String)) (check : RealSession → IO Bool)
+    (fileModel : Option FileModel := none) (realFiles : Bool := false)
+    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
+    (packages : Array Package := context.packages)
+    (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
+  IO.FS.withTempDir fun directory =>
+    realShipped
+      (shippedStagedReal scheme context directory files fileModel realFiles workingDirectory home
+        emitting packages)
+      directory check
 
 end Editor.Test.Linked

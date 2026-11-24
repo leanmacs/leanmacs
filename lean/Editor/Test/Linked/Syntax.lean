@@ -4,6 +4,7 @@ import Editor.Display.Recorder
 import Editor.Ffi.Snapshot
 import Editor.Ffi.Syntax
 import Editor.Highlight
+import Editor.InferredWait
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
 import Editor.Text
@@ -53,6 +54,12 @@ structure SyntaxText where
   /-- The text. -/
   text : TextId
 
+/-- `SyntaxText.run` is an inferred wait (`Editor/InferredWait.lean`): it
+hands on `Ffi.syntaxSettle`, the real syntax service's readout, so a check
+that runs a program over the real binding says why with an allow. -/
+def SyntaxText.run.inferredWait : InferredWait :=
+  .realEffect []
+
 /-- Runs `program` over the texts of `held`, with a display recorder over
 its table and the real syntax tree binding, which waits, with a bound, for
 a snapshot's tree to be delivered before it forwards a question of its
@@ -80,6 +87,11 @@ def SyntaxText.run {α : Type} (held : SyntaxText) (program : TextId → EditorM
     (program held.text).runReal (← held.texts.get) recorder.handle (syntaxTree := settling)
   held.texts.set texts
   return answer.toOption
+
+/-- `SyntaxText.over` is an inferred wait (`Editor/InferredWait.lean`): it
+runs `SyntaxText.run`, over the real syntax service. -/
+def SyntaxText.over.inferredWait : InferredWait :=
+  .realEffect []
 
 /-- A text of `source`, parsed with the grammar `grammar` and drawn by the
 shipped default (`Highlight.enter`), over the real bindings; none when the

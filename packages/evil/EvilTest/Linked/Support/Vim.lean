@@ -32,15 +32,17 @@ def withVimHost (context : HostContext) (files : List (String × String)) (check
   withShippedHost Vim.Default.scheme context files check fileModel realFiles workingDirectory home
     packages emitting
 
-/-- `withVimHost` with a real host, in its bracket
-(`withRealShippedHost Vim.Default.scheme`), which returns once its loop has
-ended. -/
+-- inferred-waits W87: stays (A5: evil's real-host checks are the Vim scheme over the library's shipped Rust textObjects and indents queries, which the syntax model does not hold)
+set_option linter.inferredWait false in
+/-- `withVimHost` with a real host and the real syntax binding, in its
+bracket (`withRealSyntaxHost Vim.Default.scheme`), which returns once its
+loop has ended. -/
 def withRealVimHost (context : HostContext) (files : List (String × String))
     (check : RealSession → IO Bool) (fileModel : Option FileModel := none)
     (realFiles : Bool := false) (workingDirectory : System.FilePath := "/")
     (home : Option System.FilePath := none) (packages : Array Package := context.packages)
     (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
-  withRealShippedHost Vim.Default.scheme context files check fileModel realFiles workingDirectory
+  withRealSyntaxHost Vim.Default.scheme context files check fileModel realFiles workingDirectory
     home packages emitting
 
 end Editor.Test.Linked

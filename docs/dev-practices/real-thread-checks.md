@@ -199,8 +199,8 @@ inventory, and each says `Real` in its helper or calls the runner itself.
 |---|---|---|
 | `tests/packages/greeting/GreetingTest/Linked.lean` | its one script | A3: `Headless.run` |
 | `packages/ex/ExTest/Linked/Ex.lean` | `exScriptChecks`: a wait on a host whose loop a command ended | A2: `Headless.withHost` |
-| `packages/evil/EvilTest/Linked/Evil/Operators.lean` | the eight indent checks through the Vim scheme's keys (`withEvilIndentHost`) | A5: `withRealVimHost` |
-| `packages/evil/EvilTest/Linked/Evil/TreeObjects.lean` | `treeObjectChecks`, both | A5: `withRealVimHost` |
+| `packages/evil/EvilTest/Linked/Evil/Operators.lean` | the eight indent checks through the Vim scheme's keys (`withEvilIndentHost`) | A5: `withRealVimHost` (`withRealSyntaxHost`) |
+| `packages/evil/EvilTest/Linked/Evil/TreeObjects.lean` | `treeObjectChecks`, both | A5: `withRealVimHost` (`withRealSyntaxHost`) |
 | `packages/files/FilesTest/Linked/Files.lean` | `languageChecks` over the grammars the syntax model does not hold: rust, markdown, toml and lean | A5: `withRealLanguageHost` |
 | `packages/files/FilesTest/Linked/Files.lean` | `autoReloadChecks`, and the auto-reload row of `config-bench` (`FilesTest/Linked/Files/Bench.lean`) | A7: `withRealFileHost` |
 

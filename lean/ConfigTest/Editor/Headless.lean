@@ -888,6 +888,8 @@ def setup : SetupM Unit := do
     discard <| (⟨0⟩ : ViewId).setMajorMode \"json\"
 "
 
+-- inferred-waits W89: stays (A5: the stage of parseHighlightedTextLibraryCheck, whose subject is the library's deliveries over its own queue)
+set_option linter.inferredWait false in
 /-- The stage of a host over a config of `highlightText`, in `directory`,
 whose syntax tree collaborator is the real binding over the library's syntax
 service with every request recorded (`recordedRequest`) in the array handed
