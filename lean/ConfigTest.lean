@@ -19,10 +19,10 @@ import ConfigTest.Editor.Indent
 import ConfigTest.Editor.Job.ProtocolContract
 import ConfigTest.Editor.Keymap
 import ConfigTest.Editor.Loop
-import ConfigTest.Editor.SyntaxTree.Real
 import ConfigTest.Editor.Minibuffer
 import ConfigTest.Editor.PackageSet.Edit
 import ConfigTest.Editor.Setup
+import ConfigTest.Editor.SyntaxTree.Real
 import ConfigTest.Editor.Test.Fixture.Stepped
 import ConfigTest.Editor.Test.Linked.Bench
 import ConfigTest.Editor.Test.Linked.Host
@@ -30,6 +30,7 @@ import ConfigTest.Editor.Theme.Check
 import ConfigTest.Editor.Window.Real
 import ConfigTest.Lint.Wait
 import ConfigTest.Lsp
+import Editor.RealHost
 
 /-!
 # Checks of the config session against the real elaborator
@@ -443,6 +444,10 @@ The themes' checks through a host, `themeChecks`, are the default package
 `themes`' linked test's since that phase too
 (`packages/themes/ThemesTest/Linked.lean`).
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.ConfigTest : Editor.WiringSet :=
+  .edge "its main runs the benches and hands the context's services to the wiring set's checks"
 
 namespace ConfigTest
 

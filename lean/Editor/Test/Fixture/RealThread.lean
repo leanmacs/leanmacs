@@ -1,3 +1,4 @@
+import Editor.RealHost
 import Editor.Test.Fixture.Fixture
 
 /-!
@@ -32,10 +33,18 @@ names no discovered script fails the run; a script that aborts or waits for
 a restart is refused stepped unless it has an entry. Model-test holds the
 data well formed (`ModelTest/Editor/Test/Fixture/RealThread.lean`).
 
-Phase 6 of host-tests-on-fakes makes this module one of its wiring-set
-modules, so every CLI fixture run is found here. Pure: it imports nothing
-that reaches `Lean` or the library.
+This module is of the wiring set (`wiringSet.Editor.Test.Fixture.RealThread`,
+`docs/dev-practices/real-thread-checks.md`), so every CLI fixture run over
+a real loop thread is found here: the CLI's runs happen in gate steps,
+which a Lean linter cannot see. It references no mark. Pure: it imports
+nothing that reaches `Lean` or the library; its declaration is plain data
+(`Editor/RealHost.lean`).
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.Editor.Test.Fixture.RealThread : Editor.WiringSet :=
+  .wiring "the headless CLI, editor headless, over a real loop thread"
+    "the CLI runs in gate steps, which a Lean linter cannot see; the harness refuses stepped a script that has no entry and fails on a stale entry"
 
 namespace Editor.Test.Fixture.RealThread
 

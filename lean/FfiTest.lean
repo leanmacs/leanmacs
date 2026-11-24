@@ -1,4 +1,5 @@
 import Editor.Ffi.Events
+import Editor.RealHost
 import FfiTest.Check
 import FfiTest.Editor.Display.Real
 import FfiTest.Editor.Event.Queue
@@ -87,6 +88,10 @@ through the same `pullTask`, behind everything the check handed out, and
 only says a hang on stderr, once, when that takes longer than the hang
 guard.
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.FfiTest : Editor.WiringSet :=
+  .edge "its main runs the window scenarios of the wiring set"
 
 namespace FfiTest
 

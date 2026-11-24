@@ -12,6 +12,7 @@ import Editor.Ffi.Window
 import Editor.InputScheme.Test
 import Editor.Menu
 import Editor.Process.Environment
+import Editor.RealHost
 import Editor.Test.AtPoint
 import Editor.Test.Editing
 import Editor.Test.Minibuffer
@@ -46,7 +47,19 @@ it. It imports `ConfigFixture` for the link too: `window-host-base` hands
 the window mode a base that holds that module, which `Editor` does not
 import, as an editor's generated root hands it the entry modules of its
 set's packages.
+
+A module of the wiring set, declared in place (`AGENTS.md`, "Deterministic
+concurrency in tests"; `docs/dev-practices/real-thread-checks.md`): its
+scenarios run `Editor.Window.host` on the scripted platform, the window
+mode's wiring; shutdown before close and exec after close are their
+subject. The model halves are `ModelTest/Editor/Window.lean`'s and
+`ModelTest/Editor/Restart/Handover.lean`'s.
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.FfiTest.Editor.Window.Real : Editor.WiringSet :=
+  .wiring "the window mode's host on the scripted platform (Editor.Window.host)"
+    "the window mode's wiring, its restart's exec and its real timers are the edge, which only a real loop and platform show"
 
 namespace FfiTest
 
