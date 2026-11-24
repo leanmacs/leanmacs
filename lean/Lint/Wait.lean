@@ -27,7 +27,9 @@ it.
   or a real service's readout whose fake exists (`realEffect`). It is
   allowed in the constant's own module, in the subject modules its mark
   names, and in a test module that mirrors either (`<Root>.<module>`);
-  anywhere else it is refused. In the own or a subject module, when that is
+  anywhere else it is refused. A module of the wiring set beside a mirror
+  (`<Root>.<module>.Real`, `<Root>.<module>.Real.<Subject>`) mirrors it
+  too (`mirrors`). In the own or a subject module, when that is
   a test module, a public declaration that references one must have a mark
   itself, written before it, so a kit cannot hand a restricted wait to
   everyone (no laundering). A declaration of the module that no other
@@ -151,10 +153,22 @@ def rawClockReads : List Name :=
 
 /-- Whether `module` is the test module that mirrors `target`: `target`
 under a test root, `<Root>.<target>`, as `ModelTest.Editor.Job.Activity`
-mirrors `Editor.Job.Activity`. -/
+mirrors `Editor.Job.Activity`; or a module of the wiring set beside that
+mirror, `<Root>.<target>.Real` or `<Root>.<target>.Real.<Subject>`, which
+holds the mirror's checks over a real adapter that has no module of its
+own (`docs/dev-practices/real-thread-checks.md`), as
+`ConfigTest.Editor.Headless.Real.Waits` holds `Editor.Headless`'s waits
+across a real loop thread. -/
 def mirrors (module target : Name) : Bool :=
   match module.components with
-  | root :: rest => root.toString.endsWith "Test" && rest == target.components
+  | root :: rest =>
+    let target := target.components
+    root.toString.endsWith "Test" &&
+      (rest == target ||
+        (rest.take target.length == target &&
+          match rest.drop target.length with
+          | [real] | [real, _] => real == `Real
+          | _ => false))
   | [] => false
 
 /-- `linter.rawClock`: refuses a raw clock read outside `clockModule`. -/

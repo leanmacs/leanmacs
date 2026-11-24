@@ -49,6 +49,15 @@ def lintWaitChecks : List Check :=
             !Lint.mirrors `ModelTest.Editor.Job.Activity `Editor.Job.Runner &&
             !Lint.mirrors `Editor.Job.Activity `Editor.Job.Activity &&
             !Lint.mirrors `ModelTest `Editor.Job.Activity },
+    { name :=
+        "a module of the wiring set beside a mirror, its Real module or a subject under it, mirrors the module too, and no deeper module or other name does"
+      run :=
+        return Lint.mirrors `ConfigTest.Editor.Headless.Real `Editor.Headless &&
+            Lint.mirrors `ConfigTest.Editor.Headless.Real.Waits `Editor.Headless &&
+            !Lint.mirrors `ConfigTest.Editor.Headless.Real.Waits.More `Editor.Headless &&
+            !Lint.mirrors `ConfigTest.Editor.Headless.Stepped `Editor.Headless &&
+            !Lint.mirrors `ConfigTest.Editor.Headless.Fake.Waits `Editor.Headless &&
+            !Lint.mirrors `ConfigTest.Editor.Real `Editor.Headless },
     { name := "the mark of a constant is the constant's name with inferredWait added"
       run :=
         return Lint.markOf `Editor.Job.Activity.seen == `Editor.Job.Activity.seen.inferredWait },
