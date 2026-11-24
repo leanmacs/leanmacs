@@ -19,7 +19,7 @@ builds this root's executable with the Rust library linked, and runs it in
 the package's directory with the Lean toolchain's directory and the core's
 `.olean` directory. It prints `evil linked test: N checks passed`, and
 exits 0 when all hold, 1 after naming on stderr the ones that do not, and 2
-for a command line that is not the two directories. The exit is explicit,
+for a command line it does not take. The exit is explicit,
 after the library's services are shut down and its queues quit: a task may
 still be blocked in the library.
 
@@ -76,6 +76,17 @@ the executable.
 **The syntax fixtures** are the repository's `tests/syntax`, which the
 core's syntax checks read too, named from the package's directory, where
 the gate runs this executable (`syntaxFixtures`).
+
+Its checks are a check set (`EvilTest.Linked.checks`, `Editor.CheckGroup`,
+`docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
+the lists of its modules of the wiring set in groups of their module, which
+the build's `linter.wiringSet` holds true and complete. A run prints, after
+its count, `wiring-set: ran evil <module> <n> checks` for each module of
+the wiring set it ran, which the gate's once-check reads
+(`tools/wiring-ledger.sh`). With `--wiring` after the two directories it
+runs those groups alone, the stress loop's `linked-wiring` suite
+(`tools/package-set.sh run --wiring`), and `wiring-modules` prints their
+modules, one a line, building nothing.
 -/
 
 /-- The packages a set that holds this Lake package hands its editor, as
@@ -109,35 +120,66 @@ package's directory, where the gate runs this executable. -/
 def syntaxFixtures : System.FilePath :=
   "../../tests/syntax"
 
-/-- Every check of the linked test, in the order they run, over `context`
-and the syntax fixtures in `fixtures`. -/
-def EvilTest.Linked.checks (context : Editor.Test.Linked.HostContext) (fixtures : System.FilePath) :
-    List EvilTest.Check :=
-  EvilTest.Linked.treeObjectChecks context ++ EvilTest.Linked.treeObjectFixtureChecks fixtures ++
-    EvilTest.Linked.evilIndentChecks context fixtures ++
-    EvilTest.Linked.evilChecks context ++
-    EvilTest.Linked.evilLeaderChecks context
+/-- What every check is handed: the harness's context and the directory of
+the syntax fixtures. -/
+abbrev EvilTest.Linked.Context :=
+  Editor.Test.Linked.HostContext × System.FilePath
+
+/-- Every check of the linked test, in the order they run, over the
+harness's context and the syntax fixtures: its check set
+(`Editor.CheckGroup`), the lists of `EvilTest/Linked/Evil/TreeObjects.lean`
+and `EvilTest/Linked/Evil/Operators.lean`, of the wiring set, in groups of
+their module. -/
+def EvilTest.Linked.checks : List (Editor.CheckGroup EvilTest.Linked.Context EvilTest.Check) :=
+  [.wired "EvilTest.Linked.Evil.TreeObjects" wiringSet.EvilTest.Linked.Evil.TreeObjects
+      fun (context, fixtures) =>
+      EvilTest.Linked.treeObjectChecks context ++ EvilTest.Linked.treeObjectFixtureChecks fixtures,
+    .wired "EvilTest.Linked.Evil.Operators" wiringSet.EvilTest.Linked.Evil.Operators
+      fun (context, fixtures) => EvilTest.Linked.evilIndentChecks context fixtures,
+    .plain fun (context, _) =>
+      EvilTest.Linked.evilChecks context ++ EvilTest.Linked.evilLeaderChecks context]
+
+/-- Runs the checks `select` takes from the check set, and says which
+failed, or how many passed, as `what`; then a line for each module of the
+wiring set the run ran (`Editor.CheckGroup.ranLines`). -/
+private def EvilTest.Linked.runSelected (sysroot oleans : String)
+    (select : EvilTest.Linked.Context → List EvilTest.Check)
+    (wiring : List (String × (EvilTest.Linked.Context → List EvilTest.Check))) (what : String) :
+    IO UInt32 := do
+  let fixtures ← IO.FS.realPath syntaxFixtures
+  let failed ←
+    Editor.Test.Linked.HostContext.run sysroot (":".intercalate (oleans :: oleanDirectories))
+        setPackages
+        (fun context => do
+          let checks := select (context, fixtures)
+          let failed ← EvilTest.failures checks
+          for name in failed do
+            IO.eprintln s!"FAILED: {name}"
+          if failed.isEmpty then
+            IO.println s!"evil linked test: {checks.length} {what} passed"
+          for line in Editor.CheckGroup.ranLines "evil" wiring (context, fixtures) do
+            IO.println line
+          return failed)
+        (imports := #[`Editor, `Evil.EditorPackage])
+  (← IO.getStdout).flush
+  Editor.Test.Linked.shutdown
+  IO.Process.exit (if failed.isEmpty then 0 else 1)
 
 /-- Runs the checks (the module docs). -/
 def main (arguments : List String) : IO UInt32 := do
+  let wiring := Editor.CheckGroup.wiring EvilTest.Linked.checks
   match arguments with
   | [sysroot, oleans] =>
-    let fixtures ← IO.FS.realPath syntaxFixtures
-    let failed ←
-      Editor.Test.Linked.HostContext.run sysroot (":".intercalate (oleans :: oleanDirectories))
-          setPackages
-          (fun context => do
-            let checks := EvilTest.Linked.checks context fixtures
-            let failed ← EvilTest.failures checks
-            for name in failed do
-              IO.eprintln s!"FAILED: {name}"
-            if failed.isEmpty then
-              IO.println s!"evil linked test: {checks.length} checks passed"
-            return failed)
-          (imports := #[`Editor, `Evil.EditorPackage])
-    (← IO.getStdout).flush
-    Editor.Test.Linked.shutdown
-    IO.Process.exit (if failed.isEmpty then 0 else 1)
+    EvilTest.Linked.runSelected sysroot oleans (Editor.CheckGroup.all EvilTest.Linked.checks) wiring
+        "checks"
+  | [sysroot, oleans, "--wiring"] =>
+    EvilTest.Linked.runSelected sysroot oleans (fun context => wiring.flatMap (·.2 context)) wiring
+        "wiring-set checks"
+  | ["wiring-modules"] =>
+    for module in Editor.CheckGroup.modules EvilTest.Linked.checks do
+      IO.println module
+    return 0
   | _ =>
-    IO.eprintln "usage: EvilTest-Linked <sysroot> <core olean dir>"
+    IO.eprintln
+        "usage: EvilTest-Linked <sysroot> <core olean dir> [--wiring], or EvilTest-Linked wiring-modules"
     return 2
