@@ -53,7 +53,7 @@ reference is inside a declaration that has a mark itself. A private wrapper
 launders nothing, and a public helper of a wiring module that hands a mark
 on must be marked, `main` or a check. Its fixtures are
 `ConfigTest/Lint/RealHost.lean`, the greeting package's
-`GreetingTest/Lint/RealHost.lean` and model-test's `ModelTest/Lint/RealHost.lean`
+`GreetingTest/Linked/Lint/RealHost.lean` and model-test's `ModelTest/Lint/RealHost.lean`
 and `ModelTest/Lint/RealHost/`.
 
 ## Where a module of the wiring set goes

@@ -34,7 +34,7 @@ editor imports (`lean/lakefile.lean`, `lintPlugin`).
 
 Its checks are the linter's fixtures (`ModelTest/Lint/RealHost.lean` and the
 modules under `ModelTest/Lint/RealHost/`, `ConfigTest/Lint/RealHost.lean`,
-the fixture package `greeting`'s `GreetingTest/Lint/RealHost.lean`).
+the fixture package `greeting`'s `GreetingTest/Linked/Lint/RealHost.lean`).
 -/
 
 namespace Editor

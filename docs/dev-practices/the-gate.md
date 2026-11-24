@@ -2858,7 +2858,7 @@ lint`, never a script over source text:
   ([real-thread-checks.md](real-thread-checks.md)). Its fixtures are
   `ModelTest/Lint/RealHost.lean` and the modules under
   `ModelTest/Lint/RealHost/`, `ConfigTest/Lint/RealHost.lean` and greeting's
-  `GreetingTest/Lint/RealHost.lean`, and its rules' checks
+  `GreetingTest/Linked/Lint/RealHost.lean`, and its rules' checks
   `LintTest.lintRealHostChecks`.
 - **It bites**: `ModelTest/Lint/Wait.lean` holds `#guard_msgs` fixtures,
   built by `mise run lean-test` and `mise run lean` and never run, that

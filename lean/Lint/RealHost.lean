@@ -52,7 +52,7 @@ Its checks are `LintTest.lintRealHostChecks` (`LintTest/Lint/RealHost.lean`),
 run by `lint-test`, and the `#guard_msgs` fixtures of
 `ModelTest/Lint/RealHost.lean`, the modules under `ModelTest/Lint/RealHost/`,
 `ConfigTest/Lint/RealHost.lean` and the fixture package `greeting`'s
-`GreetingTest/Lint/RealHost.lean`, which a build of those modules runs.
+`GreetingTest/Linked/Lint/RealHost.lean`, which a build of those modules runs.
 -/
 
 open Lean Elab Command
