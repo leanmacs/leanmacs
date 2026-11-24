@@ -25,7 +25,8 @@ candidates that answer later taken, as the default editor's are. The
 core's Lake package registers no package of its own, so the list holds
 none of it. And the host
 of the test scheme the config tests type on (`withTestHost`, stepped, and
-`withRealTestHost`, on a loop thread of its own), with that
+`withRealSyntaxTestHost`, on a loop thread of its own over the library's
+syntax service), with that
 scheme's leader as a key string (`schemeLeader`). Shared by
 several test modules; it holds no checks of its own.
 -/
@@ -73,18 +74,6 @@ def withTestHost (context : Test.Linked.HostContext) (files : List (String × St
   Test.Linked.withShippedHost TestScheme.scheme context files check fileModel workingDirectory home
     (packages.push Test.editingPackage) emitting
 
-/-- `withTestHost` with a real host, on a loop thread of its own
-(`Editor.Test.Linked.withRealShippedHost`, its syntax tree the stage's fake
-of the syntax service): for a check of what only a loop thread shows
-(`docs/dev-practices/real-thread-checks.md`). -/
-def withRealTestHost (context : Test.Linked.HostContext) (files : List (String × String))
-    (check : Test.Linked.RealSession → IO Bool) (fileModel : Option FileModel := none)
-    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
-    (packages : Array Package := context.packages)
-    (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
-  Test.Linked.withRealShippedHost TestScheme.scheme context files check fileModel workingDirectory
-    home (packages.push Test.editingPackage) emitting
-
 /-- `withRealSyntaxTestHost` is an inferred wait (`Editor/InferredWait.lean`):
 its host's syntax tree is the real binding (`withRealSyntaxHost`). -/
 def withRealSyntaxTestHost.inferredWait : InferredWait :=
@@ -92,7 +81,8 @@ def withRealSyntaxTestHost.inferredWait : InferredWait :=
 
 -- inferred-waits W89: stays (A5: the library's syntax service, whose deliveries come over its own queue, is the subject of this host's checks)
 set_option linter.inferredWait false in
-/-- `withRealTestHost` with the real syntax tree binding over the library's
+/-- `withTestHost` with a real host, on a loop thread of its own, and the
+real syntax tree binding over the library's
 syntax service (`Editor.Test.Linked.withRealSyntaxHost`): for a check whose
 subject is the library's syntax service (A5). -/
 def withRealSyntaxTestHost (context : Test.Linked.HostContext) (files : List (String × String))

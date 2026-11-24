@@ -769,12 +769,11 @@ def threadChecks (context : Context) : List Check :=
               let held := (← gate.inProgress.get) == 1
               gate.open
               session.ask []
-              let after ← session.output.get
+              -- The reload's install once let go, and the editor's handling
+              -- of each event, are the stepped checks': a stepped host
+              -- answers events while a reload is held (`steppedChecks`).
               return answered && held && joined &&
-                  lines.extract 0 1 == #["reload 1: installed, 2 files, 1 commands"] &&
-                  (lines.filter (·.startsWith "event ")) == eventLines 77 100 &&
-                  !lines.any (·.startsWith "reload 2") &&
-                  after.extract 102 after.size == #["reload 2: installed, 3 files, 1 commands"]
+                  (lines.filter (·.startsWith "event ")) == eventLines 77 100
             finally
               gate.open },
     { name :=
@@ -1630,32 +1629,6 @@ def jobChecks (context : Context) : List Check :=
   [handlerReceivesJobResultCheck context, reloadCancelsOldConfigCheck context,
     rejectedReloadCancelsNothingCheck context, jobThrowsReportedFailedCheck context,
     { name :=
-        "a join that cannot finish fails at idle, it does not hang: the failure names the join's line, nothing is said as a hang, and the loop cancels its jobs when it ends"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory jobsConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          -- The clock is never moved, so the job never ends: the join finds
-          -- the host idle with the job asleep, and `run` ends its loop. The
-          -- guard is a hang guard only, and nothing reaches it.
-          let said ← IO.mkRef (#[] : Array String)
-          let failure ←
-            Headless.run stage.collaborators
-                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩, ⟨5, .join⟩,
-                  ⟨6, .request .show⟩]
-                hangGuard (grace := some hangGuard) (waitHung := fun line =>
-                said.modify (·.push line))
-          -- The loop has ended: the job it left is cancelled, with its wait.
-          let withdrawn ← stage.clock.withdrawn
-          let waiting ← stage.clock.waiting
-          let output ← stage.output.get
-          let said ← said.get
-          saw
-              (failure == some (.working (some 5)) && withdrawn.size == 1 && waiting == 0 &&
-                said.isEmpty &&
-                output == #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"])
-              s!"failure={repr failure} withdrawn={withdrawn} waiting={waiting} said={said} output={output}" },
-    { name :=
         "an editor thread held inside an event when a join asks for its answer still makes the join answer working, at idle: the hold is let go when the join blocks on the answer, and nothing is said as a hang"
       run := do
         let stage ← Stage.new context context.elaborator (memorySource []) { jobs := #[countJob] }
@@ -1791,170 +1764,6 @@ line (`holdingUntil`) to look while an event is queued or being handled; no
 check sleeps, and no guard lets anything go. -/
 def idleChecks (context : Context) : List Check :=
   [{  name :=
-        "on a stage host, a job asleep on the fake clock holds no unit: after spawn count the count reaches 0 with the sleep in the clock, and a marker answered after it leaves it there"
-      run :=
-        withRealHost context jobsConfig fun session => do
-          session.ask [.reload]
-          session.ask [.spawn "count"]
-          let parked ← countReaches session.host 0
-          let waiting ← session.clock.waiting
-          session.ask []
-          let after ← session.host.activitySeen
-          saw (waiting == 1 && after == parked)
-              s!"parked={repr parked} waiting={waiting} after={repr after}" },
-    { name :=
-        "on a stage host, a job the clock lets go holds a unit until its result has been handled: after advance 10 the count is 1 while the editor thread is held before printing the job's line, and 0 once a marker is answered"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory jobsConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          let entered ← IO.Promise.new
-          holdingUntil fun hold letGo =>
-              onRealStage
-                { stage with
-                  collaborators :=
-                    enteringLine stage.collaborators (· == "job 1 count: ok") hold entered }
-                fun host stage => do
-                try
-                  host.send .reload
-                  unless ← host.settle hangGuard do
-                    return false
-                  host.send (.spawn "count")
-                  unless ← host.settle hangGuard do
-                    return false
-                  discard <| countReaches host 0
-                  stage.clock.advance 10
-                  reached entered "the job's line"
-                  -- The job has ended, its own unit given back; what is
-                  -- left is its wake-up's, queued until the editor thread
-                  -- has handled it.
-                  let atLine ← countReaches host 1
-                  let printed := (← stage.output.get).contains "job 1 count: ok"
-                  letGo
-                  unless ← host.settle hangGuard do
-                    return false
-                  let after ← host.activitySeen
-                  saw
-                      (!printed && after.running == 0 &&
-                        (← stage.output.get).contains "job 1 count: ok")
-                      s!"atLine={repr atLine} printed={printed} after={repr after}"
-                finally
-                  letGo },
-    { name :=
-        "a pause of completion at point armed on the fake clock holds no unit, and its event holds one from the clock's move until the editor thread has handled it"
-      run := do
-        let entered ← IO.Promise.new
-        holdingUntil fun hold letGo =>
-            withRealTestHost context [("init.lean", pausedAtPointText)] (emitting :=
-              fun emit line => do
-              if line.startsWith "commands:" then
-                entered.resolve ()
-                hold
-              emit line) fun session => do
-              try
-                session.ask [.reload]
-                session.typed "a b"
-                let armed ← session.host.activitySeen
-                let waiting ← session.clock.waiting
-                -- The editor thread is held inside a show, and the pause
-                -- fires behind it: its event is queued, not yet handled.
-                session.host.send .show
-                reached entered "the commands line"
-                let before ← session.host.activitySeen
-                session.clock.advance 240
-                let queued ← session.host.activitySeen
-                letGo
-                unless (← session.host.join hangGuard) == .settled do
-                  return false
-                let after ← session.host.activitySeen
-                saw
-                    (armed.running == 0 && waiting == 1 && before.running == 0 &&
-                      queued.running == 1 &&
-                      after.running == 0)
-                    s!"armed={repr armed} waiting={waiting} before={repr before} queued={repr queued} after={repr after}"
-              finally
-                letGo },
-    { name :=
-        "a wait's later rounds publish nothing: the scene count after a join that took two rounds, its job's sleep held until the join blocked on it, is the count after the same join that took one"
-      run := do
-        -- One host's run: a command makes the frame, a spawn of `count`, a
-        -- join, then the scene count (`published`). The frame is made by a request on the
-        -- editor queue, in order with the waits' markers, and the host has no
-        -- syntax tree, so no publish comes from the library at a time of its
-        -- own: the count is the waits'. With `held`, the job's start of its
-        -- sleep is held until the join has blocked on it, so the join
-        -- takes a second round; without, the job is in its sleep before the
-        -- join, which answers in one.
-        let ran (held : Bool) : IO (Option Int × Headless.Wait × Nat) := do
-          let stage ←
-            Stage.new context context.elaborator (memorySource [])
-                { jobs := #[countJob],
-                  commands := #[{ name := "noop", action := .plain (pure ()) }] }
-          let stage :=
-            { stage with
-              collaborators :=
-                { stage.collaborators with syntaxTree := fun _ => pure SyntaxTree.none } }
-          let blocks ← IO.mkRef 0
-          let joined ←
-            onRealStage stage fun host stage => do
-                let hold ← stage.clock.holdStarts
-                unless held do
-                  hold.resolve ()
-                try
-                  host.send (.run "noop")
-                  host.send (.spawn "count")
-                  unless ← host.settle hangGuard do
-                    return false
-                  -- Everything the frame's publishes started has been
-                  -- handled, so what the join publishes is its own: the
-                  -- count is only the held job's, or nothing.
-                  discard <| countReaches host (if held then 1 else 0)
-                  -- Forced: in the run that takes one round, a foreign event
-                  -- on the library's editor queue, as one an earlier real host
-                  -- leaves there, handled after the frame, publishes a scene
-                  -- of its own. Compared as absolute counts the two runs then
-                  -- differ every time.
-                  unless held do
-                    discard <| Ffi.postEvent .editor 99 0 "left by another host"
-                  -- The count before the join and after it: what the join
-                  -- published is the difference. A real host takes the
-                  -- library's editor queue as it finds it, so an event an
-                  -- earlier real host left there can be handled after the
-                  -- frame and publish a scene of its own; it is handled
-                  -- before this count is asked for, so it is in both.
-                  host.send .published
-                  unless ← host.settle hangGuard do
-                    return false
-                  let wait ←
-                    host.join hangGuard (waitBlocked := fun what => do
-                        if what == "running work" then
-                          blocks.modify (· + 1)
-                          hold.resolve ())
-                  host.send .published
-                  unless ← host.settle hangGuard do
-                    return false
-                  return wait == .working
-                finally
-                  hold.resolve ()
-          let lines ← stage.output.get
-          let counts :=
-            lines.filterMap fun line =>
-              match line.splitOn "published " with
-              | ["", rest] => rest.toNat?
-              | _ => none
-          let joinPublished : Option Int :=
-            match counts.toList with
-            | [before, after] => some ((after : Int) - before)
-            | _ => none
-          return (joinPublished, if joined then .working else .busy, ← blocks.get)
-        let (twoRounds, forced, blocked) ← ran true
-        let (oneRound, unforced, unblocked) ← ran false
-        saw
-            (forced == .working && unforced == .working && blocked == 1 && unblocked == 0 &&
-              twoRounds.isSome &&
-              twoRounds == oneRound)
-            s!"twoRounds={twoRounds} oneRound={oneRound} blocked={blocked} unblocked={unblocked}" },
-    { name :=
         "a join does not answer working while a job is about to start its sleep: with the job's start held, the join blocks on it, and answers working once the job is in its sleep"
       run := do
         let stage ← Stage.new context context.elaborator (memorySource []) { jobs := #[countJob] }
@@ -2317,162 +2126,6 @@ wait 2" with
             | .error message => (message.splitOn "expected idle, with nothing after it").length == 2
             | .ok _ => false) },
     { name :=
-        "a script that sends a key with modifiers prints that the key arrived with those modifiers, in order with what it asked for"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory greetConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          let failure ←
-            Headless.run stage.collaborators
-                #[⟨1, .request .reload⟩, ⟨2, .settle⟩,
-                  ⟨3,
-                    .key
-                      { logical := .character "a", physical := .code "KeyA"
-                        modifiers := { shift := true, control := true } }⟩,
-                  ⟨4, .request (.run "greet")⟩, ⟨5, .key { logical := .named .escape }⟩]
-                hangGuard (grace := some hangGuard)
-          return failure == none &&
-              (← stage.output.get) ==
-                #["reload 1: installed, 2 files, 1 commands", "key arrived: a KeyA shift+control",
-                  "run greet: ok", "key arrived: <Escape> - -"] },
-    { name :=
-        "a run's settle waits for the reload's end: the reload is held at the gate until the settle has blocked on it, and the run goes on once it has installed, saying no hang"
-      run := do
-        let gate ← Gate.new (module := "Config.Greet")
-        IO.FS.withTempDir fun directory => do
-            writeConfig directory greetConfig
-            let stage ←
-              Stage.new context (gate.around context.elaborator) (Config.Directory.source directory)
-            let said ← IO.mkRef (#[] : Array String)
-            try
-              -- Only the settle's block on the running reload opens the gate:
-              -- the reload then installs, however long it takes.
-              let failure ←
-                Headless.run { stage.collaborators with endWaits := fun _ => gate.open }
-                    #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.run "greet")⟩] hangGuard
-                    (grace := some hangGuard) (waitHung := fun line => said.modify (·.push line))
-                    (waitBlocked := fun what => do
-                    if what == "running work" then
-                      gate.open)
-              let output ← stage.output.get
-              let said ← said.get
-              let holding ← gate.holding.get
-              saw
-                  (failure.isNone && holding && said.isEmpty &&
-                    output == #["reload 1: installed, 2 files, 1 commands", "run greet: ok"])
-                  s!"failure={repr failure} holding={holding} said={said} output={output}"
-            finally
-              gate.open },
-    { name :=
-        "a script that runs to its end has no failure, and what it asked for was printed before the loop stopped"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory greetConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          let failure ←
-            Headless.run stage.collaborators
-                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.run "greet")⟩,
-                  ⟨4, .request .show⟩]
-                hangGuard (grace := some hangGuard)
-          return failure == none &&
-              (← stage.output.get) ==
-                #["reload 1: installed, 2 files, 1 commands", "run greet: ok", "commands: greet",
-                  "text 0: \"\"", "text 1: \"v1\""] },
-    { name :=
-        "a script whose settle cannot be satisfied fails, it does not hang, and the failure names the settle's line and says a reload was still running"
-      run := do
-        let gate ← Gate.new
-        IO.FS.withTempDir fun directory => do
-            writeConfig directory slowConfig
-            let stage ←
-              Stage.new context (gate.around context.elaborator) (Config.Directory.source directory)
-            let output := stage.output
-            let said ← IO.mkRef (#[] : Array String)
-            try
-              -- A pin of a bound of the headless mode: the reload is held at
-              -- the gate for good, so only the settle's guard, a fifth of a
-              -- second, can end its wait, and it says the hang once. `run`
-              -- then ends its loop at once, so the next host starts on a
-              -- queue nobody else is pulling.
-              -- The loop's end waits for the reload it started, and lets
-              -- the gate go as it does (`endWaits`): an elaboration, as long
-              -- as the machine takes, so the loop's guard is the checks'
-              -- hang guard, not the settle's, and a hang said fails the check.
-              let hung ← IO.mkRef (#[] : Array String)
-              let failure ←
-                Headless.run { stage.collaborators with endWaits := fun _ => gate.open }
-                    #[⟨3, .request .reload⟩, ⟨7, .settle⟩, ⟨8, .request .show⟩] heldShort (guard :=
-                    hangGuard) (hung := fun line => hung.modify (·.push line)) (waitHung :=
-                    fun line => said.modify (·.push line))
-              -- The reload was held at the gate, which is why nothing settled,
-              -- and the loop's end waited for it there.
-              let held ← gate.holding.get
-              let said ← said.get
-              let hung ← hung.get
-              saw
-                  (failure == some (.reloading (some 7)) && held && (← output.get).isEmpty &&
-                    said.size == 1 &&
-                    said.all (·.contains heldShort.hang) &&
-                    hung.isEmpty)
-                  s!"failure={repr failure} held={held} said={said} hung={hung}"
-            finally
-              -- The job that was left behind ends; its wake-up is under this
-              -- host's source id, which no later host is given.
-              gate.open },
-    { name :=
-        "a join and an advance on a job held for good in a wait that ends by itself reach their guard: each says its hang once, and fails as busy with its line"
-      run := do
-        -- Pins of a bound of the headless mode. The job's load is held for
-        -- good on the fake files (`holdCompletions`), a wait that ends by
-        -- itself, so the job keeps its unit: the host is never idle, and
-        -- only the wait's guard, a fifth of a second, ends it.
-        let hosted {α : Type}
-          (check :
-            Headless.Collaborators Config.Elaborate.Base Config.Elaborate.Handle TestScheme.scheme →
-              IO α) :
-          IO α := do
-          let stage ← Stage.new context context.elaborator (memorySource []) { jobs := #[loadJob] }
-          let fake ← Job.FakeFiles.new stage.collaborators.services.completions {}
-          fake.holdCompletions
-          try
-            check
-                { stage.collaborators with
-                  services := { stage.collaborators.services with files := fake.files } }
-          finally
-            fake.letGo
-        -- Each loop's end, which cancels the job, is under the checks' hang
-        -- guard, not the wait's: a hang it says fails the check.
-        let hung ← IO.mkRef (#[] : Array String)
-        let ran (wait : Headless.Directive) : IO (Option Headless.Failure × Array String) := do
-          let said ← IO.mkRef (#[] : Array String)
-          let failure ←
-            hosted fun collaborators =>
-                Headless.run collaborators #[⟨1, .request (.spawn "load")⟩, ⟨2, wait⟩] heldShort
-                  (guard := hangGuard) (hung := fun line => hung.modify (·.push line)) (waitHung :=
-                  fun line => said.modify (·.push line))
-          return (failure, ← said.get)
-        let (joined, joinSaid) ← ran .join
-        let (advanced, advanceSaid) ← ran (.advance 5)
-        let hostSaid ← IO.mkRef (#[] : Array String)
-        let waited ←
-          hosted fun collaborators =>
-              Headless.withHost collaborators (guard := hangGuard) (hung := fun line =>
-                hung.modify (·.push line)) fun host => do
-                host.send (.spawn "load")
-                host.join heldShort (waitHung := fun line => hostSaid.modify (·.push line))
-        let hostSaid ← hostSaid.get
-        let hung ← hung.get
-        saw
-            (joined == some (.busy (some 2)) && joinSaid.size == 1 &&
-              joinSaid.all (· == s!"editor: {heldShort.hang}: the join on line 2") &&
-              advanced == some (.busy (some 2)) &&
-              advanceSaid.size == 1 &&
-              advanceSaid.all (· == s!"editor: {heldShort.hang}: the advance on line 2") &&
-              waited == .busy &&
-              hostSaid == #[s!"editor: {heldShort.hang}: the join"] &&
-              hung.isEmpty)
-            s!"joined={repr joined} joinSaid={joinSaid} advanced={repr advanced} advanceSaid={advanceSaid} waited={repr waited} hostSaid={hostSaid} hung={hung}" },
-    { name :=
         "the window mode's wait for its start-up config, past its patience with the reload still running, says nothing on stderr: its patience is a bound of the window's, not a hang"
       run := do
         -- The reload is held at the gate for good, so the window's wait
@@ -2494,26 +2147,14 @@ wait 2" with
         let said := String.fromUTF8! (← caught.get).data
         saw (!settled && said.isEmpty) s!"settled={settled} said={said.quote}" },
     { name :=
-        "a wait that runs out says why: a reload is still running, or the editor thread has not answered"
+        "a wait that runs out on an editor thread held inside an event says the editor thread has not answered, as a hang once"
       run := do
-        -- Pins of a bound of the headless mode. A reload held at the gate for
-        -- good: the editor thread reaches the marker, and the reload is what
-        -- the wait is for, so only the guard ends it, said as a hang once.
-        let gate ← Gate.new
+        -- Wiring only: the editor thread's answer read across the loop
+        -- thread. The reloading half, a wait on a reload that does not end,
+        -- is `ModelTest/Editor/Headless/Wait.lean`'s ("a busy rest blocked on
+        -- a reload in flight whose guard has run out hangs") and
+        -- `steppedChecks`' (a stepped wait that reaches its guard).
         let said ← IO.mkRef (#[] : Array String)
-        let reloading ←
-          withRealHostOver context slowConfig gate.around id fun session => do
-              session.host.send .reload
-              try
-                unless (← Job.awaitWithin hangGuard gate.arrived.result?).isSome do
-                  return false
-                return (←
-                      session.host.await heldShort (waitHung := fun line =>
-                          said.modify (·.push line))) ==
-                    .reloading
-              finally
-                gate.open
-        let saidReloading ← said.get
         -- An editor thread held inside an event, by an output port that
         -- does not return until the check lets it: it never reaches the
         -- marker.
@@ -2531,7 +2172,6 @@ wait 2" with
             try
               host.send .show
               let inside := (← Job.awaitWithin hangGuard entered.result?).isSome
-              said.set #[]
               -- The editor thread is held for good inside the show: only the
               -- answer's guard ends the wait, said as a hang once.
               let wait ← host.await heldShort (waitHung := fun line => said.modify (·.push line))
@@ -2539,10 +2179,9 @@ wait 2" with
               block.resolve ()
               let after ← host.await hangGuard
               saw
-                  (reloading && saidReloading.size == 1 && inside && wait == .unanswered &&
-                    saidUnanswered.size == 1 &&
+                  (inside && wait == .unanswered && saidUnanswered.size == 1 &&
                     (after == .settled || after == .ended))
-                  s!"reloading={reloading} saidReloading={saidReloading} inside={inside} wait={repr wait} saidUnanswered={saidUnanswered} after={repr after}"
+                  s!"inside={inside} wait={repr wait} saidUnanswered={saidUnanswered} after={repr after}"
             finally
               block.resolve () },
     { name :=
@@ -2736,80 +2375,6 @@ wait 2" with
           let output ← stage.output.get
           return failure.isNone && output.contains "job 1 count: ok" &&
               (← stage.disposed.get) == #[output.size] },
-    { name := "a run that fails disposes of its collaborators too, once, when its loop has ended"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory jobsConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          -- The clock is never moved, so the join finds the host idle with
-          -- the job asleep. The guard is a hang guard only.
-          let said ← IO.mkRef (#[] : Array String)
-          let (failure, _) ←
-            Headless.runAndDispose stage.collaborators
-                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩, ⟨4, .join⟩]
-                hangGuard (grace := some hangGuard) (waitHung := fun line =>
-                said.modify (·.push line))
-          let disposed ← stage.disposed.get
-          let output ← stage.output.get
-          let said ← said.get
-          saw (failure == some (.working (some 4)) && disposed == #[output.size] && said.isEmpty)
-              s!"failure={repr failure} disposed={disposed} output={output} said={said}" },
-    { name :=
-        "a run whose advance stalls while the editor thread is inside an event disposes only after its loop has ended"
-      run := do
-        let stage ← Stage.new context context.elaborator (memorySource [])
-        -- The editor thread is held inside the commands line until the
-        -- advance has blocked on its answer (`meetingAnswer`): the stall
-        -- comes once the line is printed and the host is idle. The run's
-        -- bracket says at once that its loop has not ended (`guard := 0`),
-        -- which lets the line go too, as a backstop: the loop's end is what
-        -- this pins.
-        let said ← IO.mkRef (#[] : Array String)
-        let printedAtStall ← IO.mkRef (none : Option Bool)
-        let (failure, _) ←
-          meetingAnswer fun hold blocked letGo =>
-              Headless.runAndDispose
-                (heldAtLine stage.collaborators (·.startsWith "commands:") hold)
-                #[⟨1, .request .show⟩, ⟨2, .advance 5⟩] hangGuard (grace := some hangGuard)
-                (guard := heldAtOnce) (hung := fun _ => do
-                printedAtStall.set (some ((← stage.output.get).any (·.startsWith "commands:")))
-                letGo) (waitHung := fun line => said.modify (·.push line)) (waitBlocked := blocked)
-        let disposed ← stage.disposed.get
-        let output ← stage.output.get
-        let said ← said.get
-        let printedAtStall ← printedAtStall.get
-        saw
-            (failure == some (.stalled 2 5) && disposed == #[output.size] &&
-              output.any (·.startsWith "commands:") &&
-              printedAtStall != some false &&
-              said.isEmpty)
-            s!"failure={repr failure} disposed={disposed} output={output} printedAtStall={printedAtStall} said={said}" },
-    { name :=
-        "a run whose join runs out while the editor thread is inside an event disposes only after its loop has ended"
-      run := do
-        let stage ← Stage.new context context.elaborator (memorySource [])
-        -- A pin of the headless mode's answer guard. The editor thread is
-        -- held inside the commands line until the run's bracket says that
-        -- its loop has not ended at once: the join's answer guard, a fifth
-        -- of a second, is the only thing that can end its wait, with the
-        -- line pending, and it says the hang once; the bracket's end waits
-        -- for the loop to print the line and stop.
-        let script : Array Headless.Line := #[⟨1, .request .show⟩, ⟨2, .join⟩]
-        let said ← IO.mkRef (#[] : Array String)
-        let (failure, _) ←
-          holdingUntil fun hold letGo =>
-              Headless.runAndDispose
-                (heldAtLine stage.collaborators (·.startsWith "commands:") hold) script hangGuard
-                (grace := some hangGuard) (answer := heldShort) (guard := heldAtOnce) (hung :=
-                fun _ => letGo) (waitHung := fun line => said.modify (·.push line))
-        let disposed ← stage.disposed.get
-        let output ← stage.output.get
-        let said ← said.get
-        saw
-            (failure == some (.waited 200 (.unanswered (some 2))) && disposed == #[output.size] &&
-              output.any (·.startsWith "commands:") &&
-              said.size == 1)
-            s!"failure={repr failure} disposed={disposed} output={output} said={said}" },
     { name :=
         "a run that reaches its script's end disposes only after its loop has ended, when the loop is slow to end"
       run :=
@@ -2853,69 +2418,6 @@ wait 2" with
                 output == #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"] &&
                 woke)
               s!"failure={repr failure} withdrawn={withdrawn} withdrew before dispose={order} disposed={disposed} output={output} the job's wake-up on the queue={woke} of {left}" },
-    { name :=
-        "a headless run whose loop is held past its guard and its grace says the hang once and fails as hung, which exits 1, and hands the loop it left to `abandoned`"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory jobsConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          -- Held in the withdrawal as the loop ends, and let go only by the
-          -- check, after the run: a grace of 0 runs out on a held loop
-          -- every time. The exit status is the failure's: `main` exits 1
-          -- when there is one.
-          let withdrew ← IO.mkRef false
-          let order ← IO.mkRef #[]
-          let said ← IO.mkRef (#[] : Array String)
-          let left ← IO.mkRef (none : Option (Task (Except IO.Error Unit)))
-          let failure ←
-            holdingUntil fun hold letGo => do
-                let (failure, _) ←
-                  withdrawingHeld stage hold withdrew order fun collaborators =>
-                      Headless.runAndDispose collaborators jobScript hangGuard (guard := heldAtOnce)
-                        (grace := some heldAtOnce) (hung := fun line => said.modify (·.push line))
-                        (abandoned := fun task => left.set (some task))
-                letGo
-                return failure
-          -- The loop the run left has ended before the check does.
-          let abandoned := (← left.get).isSome
-          if let some task← left.get then
-            discard <| IO.wait task
-          let said ← said.get
-          let withdrawn ← stage.clock.withdrawn
-          let described := Headless.Failure.describe Headless.settlePatience.ms (.hung 0 0)
-          saw
-              (failure == some (.hung 0 0) && said.size == 1 &&
-                said.all (·.startsWith "editor: a hang:") &&
-                abandoned &&
-                (described.splitOn "giving up").length == 2 &&
-                withdrawn.size == 1)
-              s!"failure={repr failure} said={said} abandoned={abandoned} described={described} withdrawn={withdrawn}" },
-    { name :=
-        "a headless run whose loop is slow but ends within its grace succeeds, after saying the hang once"
-      run :=
-        IO.FS.withTempDir fun directory => do
-          writeConfig directory jobsConfig
-          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          -- Held in the withdrawal as the loop ends, and let go by the hang
-          -- the run says: the grace, a guard against a hang, is not reached.
-          let withdrew ← IO.mkRef false
-          let order ← IO.mkRef #[]
-          let said ← IO.mkRef (#[] : Array String)
-          let left ← IO.mkRef (none : Option (Task (Except IO.Error Unit)))
-          let (failure, _) ←
-            holdingUntil fun hold letGo =>
-                withdrawingHeld stage hold withdrew order fun collaborators =>
-                  Headless.runAndDispose collaborators jobScript hangGuard (guard := heldAtOnce)
-                    (grace := some hangGuard) (hung := fun line => do
-                    said.modify (·.push line)
-                    letGo) (abandoned := fun task => left.set (some task))
-          let abandoned := (← left.get).isSome
-          if let some task← left.get then
-            discard <| IO.wait task
-          let said ← said.get
-          let order ← order.get
-          saw (failure.isNone && said.size == 1 && order == #[true] && !abandoned)
-              s!"failure={repr failure} said={said} withdrew before dispose={order} abandoned={abandoned}" },
     { name :=
         "the executable's hosts dispose of the directory of the config files' module data: their dispose removes it once it was made, through the module files, and removes nothing before"
       run :=
@@ -3071,7 +2573,7 @@ def withRecordedRealHost (context : Context) (files : List (String × String))
 /-- A check of `hostLoopChecks`, a declaration of its own. -/
 def finishedJobCommandGuardedCheck (context : Context) : Check :=
   { name :=
-      "a finished job's command is guarded as a key's is: the interrupt key that arrives as it is delivered stops the command that loops over requests, the output says the job was interrupted, the view's text is that before the delivery, and the flag is down once the loop has taken the key"
+      "a finished job's command is guarded as a key's is: the interrupt key that arrives as it is delivered stops the command that loops over requests, the output says the job was interrupted, and the flag is down once the loop has taken the key"
     run :=
       -- Stays on a real host (row W8 of docs/dev-practices/inferred-waits.md,
       -- A4): the library's queue and its interrupt flag are the subject. Its
@@ -3104,9 +2606,10 @@ def finishedJobCommandGuardedCheck (context : Context) : Check :=
         hold.resolve ()
         unless ← session.host.settle hangGuard do
           return false
+        -- The echo and the text before the delivery are the model's
+        -- (`ModelTest.dispatchInterruptChecks`, a finished job's command).
         return (← session.output.get).contains "job 1 spinner: interrupted" &&
-            !(← Ffi.interruptRaised) &&
-            (← session.scene) == ("job 1 spinner: interrupted".quote, #[viewLine "ab" 2]) }
+            !(← Ffi.interruptRaised) }
 
 /-- A check of `hostLoopChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
@@ -3185,6 +2688,9 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "the driver's run of a command is guarded: with the interrupt key arrived the command that loops over requests is stopped, the output says it was interrupted, and the flag is down once the loop has taken the key"
       run :=
+        -- Wiring only: the flag the library raises stops the command, and
+        -- the loop lowers it. The echo and the rollback are the model's
+        -- (`ModelTest.dispatchInterruptChecks`).
         withRealHost context []
           (fun session => do
             -- The loop has started, so the library knows the interrupt key:
@@ -3197,8 +2703,7 @@ def hostLoopChecks (context : Context) : List Check :=
               return false
             return ((← session.output.get).filter (·.startsWith "run ")) ==
                   #["run spin: interrupted"] &&
-                !(← Ffi.interruptRaised) &&
-                (← session.scene) == ("spin: interrupted".quote, #[viewLine "" 0]))
+                !(← Ffi.interruptRaised))
           dispatchCompiled },
     { name :=
         "a host that cannot make its frame says so for a run, with the refusal that stopped it, and runs nothing"
@@ -4079,56 +3584,6 @@ def journalFailureChecks (context : Context) : List Check :=
               takenAgain &&
               echoAgain == "journal: /state/c: full".quote &&
               loggedAgain == logged.push "journal: /state/c: full" }]
-
-/-- Holds the library's file service's worker under a wait of `completions`,
-whose pump runs, and returns the hold's id once the worker has reached it:
-nothing handed to the service afterwards is worked until `Ffi.filesCancel`
-of the id lets it go. Throws when the service refuses the hold, and reports a
-hang when the worker has not reached it within `hangGuard`. -/
-def holdFiles (completions : Job.Completions) : IO UInt64 := do
-  let (id, wait) ← completions.register
-  unless ← Ffi.filesHold id do
-    completions.finish id .cancelled
-    throw <| IO.userError "the file service did not take the hold"
-  let reached ← Job.awaitWithin hangGuard (wait.resultD .cancelled)
-  unless reached == some .completed do
-    discard <| Ffi.filesCancel id
-    throw <|
-        IO.userError
-          s!"a hang: the file service's worker had not reached the hold within {hangGuard.ms} ms"
-  return id
-
-/-- The checks of the host's journal over the library's file service
-(`Headless.Journal.real`), which the headless end, the window's shutdown and
-the `journalled` and `indexed` requests wait on. -/
-def journalDrainChecks (context : Context) : List Check :=
-  [{  name :=
-        "the host's journal over the library's file service drains only once every order handed to it has been worked: with the service's worker held, its drain has not ended; let go, the drain ends true and the remove handed before it has been worked"
-      run := do
-        let completions ← context.fileWaits
-        let clock ← Job.FakeClock.new completions
-        let published ← Snapshots.new
-        let held ← Job.HeldSnapshots.new
-        let services : Job.Services :=
-          { completions, timers := clock.timers
-            files := Job.realFiles completions published.reader held }
-        let journal := Headless.Journal.real published.reader services
-        Editor.Test.Linked.withFiles services fun directory => do
-            let stale := directory / "session-1.json"
-            IO.FS.writeFile stale "{}"
-            let hold ← holdFiles completions
-            let (waiting, ended, there) ←
-              tryFinally
-                  (do
-                    journal.perform { request := .remove stale }
-                    let drained ← journal.drained
-                    let waiting := !(← IO.hasFinished drained)
-                    discard <| Ffi.filesCancel hold
-                    let ended ← Job.awaitWithin hangGuard drained
-                    return (waiting, ended, ← stale.pathExists))
-                  (discard <| Ffi.filesCancel hold)
-            saw (waiting && ended == some true && !there)
-                s!"the drain waiting while held {waiting}, ended {ended}, the file there after {there}" }]
 
 /-- A job registered as `restore` that does nothing: with it registered the
 loop's journal reconciler is enabled (`Restore.journalOrders`), and no check

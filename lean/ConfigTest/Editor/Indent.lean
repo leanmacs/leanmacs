@@ -1,6 +1,5 @@
 import ConfigTest.Check
 import ConfigTest.Support.Shipped
-import Editor.SyntaxTree
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Syntax
@@ -110,58 +109,27 @@ def _root_.Editor.Test.Linked.Session.loadedAndRan (session : Session) (name com
   return (lastViewLine (← session.sceneLines), ← session.echo)
 
 /-- The checks of the core's indent levels through a host of the test
-scheme (`withRealTestHost`), with the real elaborator, the real text binding
+scheme (`withRealSyntaxTestHost`), with the real elaborator, the real text binding
 and the library's syntax service with Rust's shipped indents query, each
-through a command of config's run by name: the rows re-indented, and the
-level of a line opened, in a Rust buffer, in a buffer with no language and
-in one whose language has no indents query. Which level a row gets is
+through a command of config's run by name: the rows of a mangled Rust
+buffer re-indented. Which level a row gets, and the refusals, are
 `Editor/Indent.lean`'s, pinned by `ModelTest`'s indent checks and, over the
 library, by `ContractTest`. -/
 def indentChecks (context : Context) : List Check :=
   [{  name :=
-        "in a Rust buffer whose indentation was mangled, a command of config's that applies the edits TextId.reindentEdits answers of every row gives text equal to the rustfmt-formatted fixture it came from, through the host's loop and the library's syntax tree, the rows inside its multi-line string and block comment kept; in a buffer with no language it is refused as a text with no syntax tree and the text is left, and in a JSON buffer, whose language has no indents query, as one with no query"
-      run := do
-        let said (refusal : SyntaxTreeError) := s!"refused: {refusal.describe}".quote
-        -- A host of its own for the buffers of no Rust: the scratch buffer
-        -- keeps the language a load gave it.
-        let refused ←
-          withIndentHost context fun session _ _ => do
-              let (plain, plainEcho) ← session.loadedAndRan "plain" "reindent"
-              let (json, jsonEcho) ← session.loadedAndRan "json" "reindent"
-              unless
-                showsText plain "    ab" 5 5 && plainEcho == said .notAttached &&
-                  showsText json "[\n  1\n]" 4 4 &&
-                  jsonEcho == said .noQuery do
-                throw (IO.userError s!"{plain} {plainEcho} / {json} {jsonEcho}")
-              return true
-        let reindented ←
-          withIndentHost context fun session source mangled => do
-              let (line, _) ← session.loadedAndRan "mangled" "reindent"
-              unless showsText line source 0 0 do
-                throw (IO.userError line)
-              return mangled != source &&
-                  indentKept.all fun row => (source.splitOn ("\n" ++ row ++ "\n")).length == 2
-        return refused && reindented },
-    { name :=
-        "in a Rust buffer, TextId.openingLevel asked by a command of config's answers one level after an opening brace, above a closing brace and at the text's end with none, and two in a method of an impl at the text's end; in a buffer with no language it is refused as a text with no syntax tree, and in a JSON buffer as one with no indents query"
-      run := do
-        let said (refusal : SyntaxTreeError) := s!"refused: {refusal.describe}".quote
-        let refused ←
-          withIndentHost context fun session _ _ => do
-              let (_, plain) ← session.loadedAndRan "plain" "opening"
-              let (_, json) ← session.loadedAndRan "json" "opening"
-              unless plain == said .notAttached && json == said .noQuery do
-                throw (IO.userError s!"{plain} / {json}")
-              return true
-        let levels ←
-          withIndentHost context fun session _ _ => do
-              let (_, closed) ← session.loadedAndRan "closed" "opening"
-              let (_, eof) ← session.loadedAndRan "eof" "opening"
-              let (_, nested) ← session.loadedAndRan "nested-eof" "opening"
-              unless
-                closed == "level 1".quote && eof == "level 1".quote && nested == "level 2".quote do
-                throw (IO.userError s!"{closed} / {eof} / {nested}")
-              return true
-        return refused && levels }]
+        "in a Rust buffer whose indentation was mangled, a command of config's that applies the edits TextId.reindentEdits answers of every row gives text equal to the rustfmt-formatted fixture it came from, through the host's loop and the library's syntax tree, the rows inside its multi-line string and block comment kept"
+      run :=
+        -- Wiring only: the shipped Rust indents query is reached over the
+        -- library's syntax service and answers. The refusals of a text with
+        -- no syntax tree and of one with no indents query are
+        -- `ModelTest.Editor.Indent`'s; the levels a row gets,
+        -- `ContractTest/Editor/SyntaxTree/Real.lean`'s (its indents
+        -- checks) and `ModelTest/Editor/Indent.lean`'s.
+        withIndentHost context fun session source mangled => do
+          let (line, _) ← session.loadedAndRan "mangled" "reindent"
+          unless showsText line source 0 0 do
+            throw (IO.userError line)
+          return mangled != source &&
+              indentKept.all fun row => (source.splitOn ("\n" ++ row ++ "\n")).length == 2 }]
 
 end ConfigTest

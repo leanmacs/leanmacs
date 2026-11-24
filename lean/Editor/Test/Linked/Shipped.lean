@@ -21,7 +21,7 @@ A host made as the executable's hosts are made (`shippedStaged`, over
 (a test of the core or of a package hands it the test scheme,
 `TestScheme.scheme`; the Vim scheme's host is evil's,
 `packages/evil/EvilTest/Linked/Support/Vim.lean`), stepped
-(`withShippedHost`) or real (`withRealShippedHost`), and the real
+(`withShippedHost`) or real (`withRealSyntaxHost`), and the real
 syntax tree binding as a check observes it: each request recorded
 (`recordingSyntaxTree`, `recordedRequest`), and the faces the library's
 shipped highlights query draws (`shippedFaces`). It holds no checks of its
@@ -98,7 +98,7 @@ def rustObjectsText : String :=
   "struct S;\n\nimpl S {\n    fn one(&self) -> u8 {\n        let x = 1;\n        x\n    }\n}\n"
 
 /-- What a host of the input scheme `scheme` is made of, for
-`withShippedHost` and `withRealShippedHost`: a stage of its own over a
+`withShippedHost` and `withRealSyntaxHost`: a stage of its own over a
 config directory of `files` in `directory`, and collaborators made over the
 collaborators the executable's hosts are made of (`Headless.shippedOver`),
 handed the package `listings`, so its listings are matched and shown by the
@@ -237,34 +237,20 @@ private def realShipped {scheme : InputScheme}
           Headless.Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme))
     (directory : System.FilePath) (check : RealSession → IO Bool) : IO Bool := do
   let (stage, collaborators) ← staged
-  refuseFakes stage "withRealShippedHost"
+  refuseFakes stage "withRealSyntaxHost"
   Headless.withHost collaborators (guard := hangGuard) (grace := some hangGuard) fun host => do
       let held ← check (RealSession.ofStage host directory stage)
       let wait ← host.await hangGuard
       return held && (wait == .settled || wait == .ended)
-
-/-- `withShippedHost` with a real host, in its bracket (`Headless.withHost`),
-which returns once its loop has ended; its syntax tree is the stage's fake
-of the syntax service, which no one steps: a real host's check whose
-subject is not the library's syntax service. -/
-def withRealShippedHost (scheme : InputScheme) (context : HostContext)
-    (files : List (String × String)) (check : RealSession → IO Bool)
-    (fileModel : Option FileModel := none) (workingDirectory : System.FilePath := "/")
-    (home : Option System.FilePath := none) (packages : Array Package := context.packages)
-    (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
-  IO.FS.withTempDir fun directory =>
-    realShipped
-      (shippedStaged scheme context directory files fileModel workingDirectory home emitting
-        packages)
-      directory check
 
 /-- `withRealSyntaxHost` is an inferred wait (`Editor/InferredWait.lean`):
 its host's syntax tree is the real binding (`shippedStagedReal`). -/
 def withRealSyntaxHost.inferredWait : InferredWait :=
   .realEffect []
 
-/-- `withRealShippedHost` with the real syntax tree binding over the
-library's syntax service (`shippedStagedReal`): for a check whose subject is
+/-- `withShippedHost` with a real host, in its bracket (`Headless.withHost`),
+which returns once its loop has ended, and the real syntax tree binding
+over the library's syntax service (`shippedStagedReal`): for a check whose subject is
 the library's syntax service (A5). -/
 def withRealSyntaxHost (scheme : InputScheme) (context : HostContext)
     (files : List (String × String)) (check : RealSession → IO Bool)

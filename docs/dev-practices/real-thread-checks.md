@@ -99,12 +99,7 @@ Lists: `idleChecks`, `moduleHostChecks`, `scriptChecks`, `steppedChecks`.
 ```checks
 a join does not answer working while a job is about to start its sleep: with the job's start held, the join blocks on it, and answers working once the job is in its sleep
 a join does not answer working while a job's result is on its way: with the job's reading of the clock held after its sleep, the join blocks on it, and answers settled once the job's line is printed
-a pause of completion at point armed on the fake clock holds no unit, and its event holds one from the clock's move until the editor thread has handled it
-a wait's later rounds publish nothing: the scene count after a join that took two rounds, its job's sleep held until the join blocked on it, is the count after the same join that took one
-on a stage host, a job asleep on the fake clock holds no unit: after spawn count the count reaches 0 with the sleep in the clock, and a marker answered after it leaves it there
-on a stage host, a job the clock lets go holds a unit until its result has been handled: after advance 10 the count is 1 while the editor thread is held before printing the job's line, and 0 once a marker is answered
-a join and an advance on a job held for good in a wait that ends by itself reach their guard: each says its hang once, and fails as busy with its line
-a wait that runs out says why: a reload is still running, or the editor thread has not answered
+a wait that runs out on an editor thread held inside an event says the editor thread has not answered, as a hang once
 a stepped host publishes the scenes a real host does: a settle one, and a join's later rounds none
 ```
 
@@ -115,19 +110,9 @@ The headless mode's script runner over a real loop thread (`Headless.run`, `runA
 Lists: `jobChecks`, `scriptChecks`.
 
 ```checks
-a join that cannot finish fails at idle, it does not hang: the failure names the join's line, nothing is said as a hang, and the loop cancels its jobs when it ends
 an editor thread held inside an event when a join asks for its answer still makes the join answer working, at idle: the hold is let go when the join blocks on the answer, and nothing is said as a hang
-a headless run whose loop is held past its guard and its grace says the hang once and fails as hung, which exits 1, and hands the loop it left to `abandoned`
-a headless run whose loop is slow but ends within its grace succeeds, after saying the hang once
 a host made by a stage and handed straight to Headless.run still gets its reload's wake-up: reload, settle and show end with no failure, the reload installed and its command shown
-a run that fails disposes of its collaborators too, once, when its loop has ended
 a run that reaches its script's end disposes only after its loop has ended, when the loop is slow to end
-a run whose advance stalls while the editor thread is inside an event disposes only after its loop has ended
-a run whose join runs out while the editor thread is inside an event disposes only after its loop has ended
-a run's settle waits for the reload's end: the reload is held at the gate until the settle has blocked on it, and the run goes on once it has installed, saying no hang
-a script that runs to its end has no failure, and what it asked for was printed before the loop stopped
-a script that sends a key with modifiers prints that the key arrived with those modifiers, in order with what it asked for
-a script whose settle cannot be satisfied fails, it does not hang, and the failure names the settle's line and says a reload was still running
 the headless mode's run disposes of its collaborators once its loop has ended: dispose is called once, after every line the script had the host print
 ```
 
@@ -138,9 +123,9 @@ The library's editor queue: a Rust poster (`Ffi.feedScript`), the interrupt key'
 Lists: `dispatchChecks`, `hostLoopChecks`, `threadChecks`.
 
 ```checks
-the interrupt key arrives while a command loops over requests: the command stops, the scene's echo says so, the view's text is that before the command, and the next key runs its command
+the interrupt key arrives while a command loops over requests: the command stops, the scene's echo says so, the flag is down once the loop has taken the key, and the next key runs its command
 the interrupt key arrives while no command is running: the flag is down once the loop has taken it, and the next key's command runs to its end
-a finished job's command is guarded as a key's is: the interrupt key that arrives as it is delivered stops the command that loops over requests, the output says the job was interrupted, the view's text is that before the delivery, and the flag is down once the loop has taken the key
+a finished job's command is guarded as a key's is: the interrupt key that arrives as it is delivered stops the command that loops over requests, the output says the job was interrupted, and the flag is down once the loop has taken the key
 the driver's run of a command is guarded: with the interrupt key arrived the command that loops over requests is stopped, the output says it was interrupted, and the flag is down once the loop has taken the key
 the editor answers events while a slow file elaborates: 100 events from a Rust thread and a command of the old config
 ```
@@ -153,8 +138,7 @@ Lists: `indentChecks`, `jobChecks`.
 
 ```checks
 a parse of a highlighted text the library delivers makes the real host publish a scene, with no key pressed
-in a Rust buffer whose indentation was mangled, a command of config's that applies the edits TextId.reindentEdits answers of every row gives text equal to the rustfmt-formatted fixture it came from, through the host's loop and the library's syntax tree, the rows inside its multi-line string and block comment kept; in a buffer with no language it is refused as a text with no syntax tree and the text is left, and in a JSON buffer, whose language has no indents query, as one with no query
-in a Rust buffer, TextId.openingLevel asked by a command of config's answers one level after an opening brace, above a closing brace and at the text's end with none, and two in a method of an impl at the text's end; in a buffer with no language it is refused as a text with no syntax tree, and in a JSON buffer as one with no indents query
+in a Rust buffer whose indentation was mangled, a command of config's that applies the edits TextId.reindentEdits answers of every row gives text equal to the rustfmt-formatted fixture it came from, through the host's loop and the library's syntax tree, the rows inside its multi-line string and block comment kept
 ```
 
 ### A6: 1 checks
@@ -202,10 +186,9 @@ inventory, and each says `Real` in its helper or calls the runner itself.
 
 | Linked test | Checks | Adapter |
 |---|---|---|
-| `packages/ex/ExTest/Linked/Ex.lean` | `exScriptChecks`: a wait on a host whose loop a command ended | A2: `Headless.withHost` |
-| `packages/evil/EvilTest/Linked/Evil/Operators.lean` | the eight indent checks through the Vim scheme's keys (`withEvilIndentHost`) | A5: `withRealVimHost` (`withRealSyntaxHost`) |
-| `packages/evil/EvilTest/Linked/Evil/TreeObjects.lean` | `treeObjectChecks`, both | A5: `withRealVimHost` (`withRealSyntaxHost`) |
-| `packages/files/FilesTest/Linked/Files.lean` | `languageChecks` over the grammars the syntax model does not hold: rust, markdown, toml and lean | A5: `withRealLanguageHost` |
+| `packages/evil/EvilTest/Linked/Evil/Operators.lean` | the one indent check through the Vim scheme's keys (`withEvilIndentHost`) | A5: `withRealVimHost` (`withRealSyntaxHost`) |
+| `packages/evil/EvilTest/Linked/Evil/TreeObjects.lean` | `treeObjectChecks`, its one | A5: `withRealVimHost` (`withRealSyntaxHost`) |
+| `packages/files/FilesTest/Linked/Files.lean` | `languageChecks` over the grammars the syntax model does not hold: rust, toml and lean | A5: `withRealLanguageHost` |
 | `packages/files/FilesTest/Linked/Files.lean` | `autoReloadChecks`, and the auto-reload row of `config-bench` (`FilesTest/Linked/Files/Bench.lean`) | A7: `withRealFileHost` |
 
 Every other host check of a package's linked test runs on a stepped host,

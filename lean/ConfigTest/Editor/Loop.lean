@@ -150,8 +150,12 @@ def dispatchChecks (context : Context) : List Check :=
                 after == ("".quote, #[viewLine "abcd!" 5]))
           dispatchCompiled },
     { name :=
-        "the interrupt key arrives while a command loops over requests: the command stops, the scene's echo says so, the view's text is that before the command, and the next key runs its command"
+        "the interrupt key arrives while a command loops over requests: the command stops, the scene's echo says so, the flag is down once the loop has taken the key, and the next key runs its command"
       run :=
+        -- Wiring only: the library raises its flag as the key arrives on its
+        -- queue, and the loop reads and lowers it. The rollback of the
+        -- command's edit is the model's (`ModelTest.dispatchInterruptChecks`,
+        -- `ModelTest/Editor/Loop.lean`, and `Command/Dispatch.lean`'s).
         withRealHost context []
           (fun session => do
             session.type "C-c l"
@@ -166,7 +170,7 @@ def dispatchChecks (context : Context) : List Check :=
             let lowered ← Ffi.interruptRaised
             session.typed "C-c s"
             let after ← session.scene
-            return interrupted == ("spin: interrupted".quote, #[viewLine "" 0]) && !lowered &&
+            return interrupted.1 == "spin: interrupted".quote && !lowered &&
                 after == ("".quote, #[viewLine "!" 1]))
           dispatchCompiled },
     { name :=

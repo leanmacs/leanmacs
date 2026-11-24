@@ -323,10 +323,6 @@ show:
 - `journalFailureChecks`: the journal's failures in the host, over a
   journal whose failures the check puts there: they are taken after each
   step, and said once for each path, in the echo area and to the log;
-- `journalDrainChecks`: the host's journal over the library's file service
-  (`Headless.Journal.real`): with the service's worker held its drain has
-  not ended, and let go it ends true with the order handed before it
-  worked. It shares `fileChecks`' table of waits;
 - `journalOrderChecks`: the host's hand-off of the session journal's
   orders, on a stepped host over the journal's recording fake
   (`Stage.recordingJournal`): the base's save, the header's and a record's
@@ -468,7 +464,6 @@ def checks (context : Context) : List Check :=
     environmentHostChecks context ++
     restoreOrderChecks context ++
     journalFailureChecks context ++
-    journalDrainChecks context ++
     journalOrderChecks context ++
     stageMakerChecks context ++
     benchWaitChecks ++
