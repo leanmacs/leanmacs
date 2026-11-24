@@ -17,11 +17,14 @@ request on the check's thread; a step leaves a job asleep on the clock
 held and the rest quiescent; the loop's end steps a cancelled job that was
 never stepped to its end; a check that leaves a completion unstepped fails
 at the bracket; a stepped stage refuses the library's services and a real
-host refuses it; and a stall is said at once. A stage's fake syntax service
-(`Stage.fakeSyntaxService`) on a stepped host: it is the host's syntax
-handler, it learns a text from the stage's published table, and each step
-posts a `parsed` event to the stage's memory queue that the host's loop
-takes. The root module `ConfigTest` runs them; its module doc says what
+host refuses it, and refuses a stage stepped already; a stall is said at
+once; the loop's end throws, naming the job, when a cancelled job has not
+ended and nothing of the fakes can run; and a session's ask throws a stall
+when a restore is in flight and nothing of the fakes can run. A stage's
+fake syntax service (`Stage.fakeSyntaxService`) on a stepped host: it is
+the host's syntax handler, it learns a text from the stage's published
+table, and each step posts a `parsed` event to the stage's memory queue
+that the host's loop takes. The root module `ConfigTest` runs them; its module doc says what
 they show.
 -/
 
@@ -184,6 +187,67 @@ def steppedStageChecks (context : Context) : List Check :=
             pure true
         saw (refusedReal && refusedHost)
             s!"Stage.stepped refused overFiles {refusedReal}; onRealStage refused a stepped stage {refusedHost}" },
+    { name := "a stepped stage refuses a stage that is stepped already, saying so"
+      run := do
+        let stage ← steppedStage context
+        let said ←
+          try
+            discard <| stage.stepped
+            pure "it was stepped again"
+          catch error =>
+            pure (toString error)
+        saw (said == "the stage is stepped already") s!"Stage.stepped of a stepped stage: {said}" },
+    { name :=
+        "a stepped stage's loop's end throws, naming the job, when a job it cancelled has not ended and nothing of the stage's fakes can run"
+      run := do
+        let stage ← steppedStage context
+        -- A job the end is handed that nothing of the fakes can end: the
+        -- task of a promise the check holds and never resolves.
+        let never : IO.Promise Unit ← IO.Promise.new
+        let said ←
+          try
+            stage.collaborators.endCancelled #[never.result?.map (sync := true) fun _ => ()]
+            pure "the end returned"
+          catch error =>
+            pure (toString error)
+        let unresolved := !(← never.isResolved)
+        saw
+            (unresolved &&
+              said ==
+                "the loop's end cancelled 1 jobs, and the job 1 of them had not ended when nothing of the stage's fakes could run")
+            s!"the end said: {said}" },
+    { name :=
+        "a stepped session's ask throws a stall when a restore is in flight and nothing of the stage's fakes can run: the restore asleep on the fake clock, which only the check moves"
+      run := do
+        let compiled : Compiled :=
+          {
+            jobs :=
+              #[{ name := Restore.restoreJob
+                  work := fun _ => Work.of (fun _ => sleep 10) fun _ => pure () }] }
+        let stage ← (← Stage.new context context.elaborator (memorySource []) compiled).stepped
+        let stage :=
+          { stage with
+            collaborators := { stage.collaborators with stateDirectory := some "/state" } }
+        onStage stage fun drive stage => do
+            let session := Session.ofStage drive "/" stage
+            let said ←
+              try
+                session.ask [.restore none]
+                pure "the ask returned"
+              catch error =>
+                pure (toString error)
+            let asleep := (← session.clock.waiting) == 1
+            -- The check moves the clock past the restore's sleep and steps it
+            -- to its end, so the bracket's settle finds no restore in flight.
+            session.clock.advance 10
+            session.step
+            let ended := !(← session.drive.progress).restoring
+            saw
+                (said ==
+                    "a stall: a restore is in flight and nothing of the stepped stage's fakes can run" &&
+                  asleep &&
+                  ended)
+                s!"the ask said: {said}; the restore asleep on the clock {asleep}, ended once it was moved {ended}" },
     { name :=
         "a stepped session's stepUntil answers false at once on a stall: nothing it steps can move its output to what it waits for"
       run := do

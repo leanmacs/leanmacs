@@ -310,8 +310,11 @@ show:
   check's thread; a step leaves a job asleep on the fake clock held; the
   loop's end steps a cancelled job never stepped to its end; the bracket
   fails a check that left a completion unstepped; a stepped stage refuses
-  the library's services and a real host refuses it; and `stepUntil` says
-  a stall at once. And a stage's fake syntax service
+  the library's services and a real host refuses it, and refuses a stage
+  stepped already; `stepUntil` says a stall at once; the loop's end
+  throws, naming the job, when a job it cancelled has not ended and nothing
+  of the fakes can run; and a session's ask throws a stall when a restore
+  is in flight and nothing of the fakes can run. And a stage's fake syntax service
   (`Stage.fakeSyntaxService`, `Editor/Test/Linked/Host.lean`) on a stepped
   host: it is the host's syntax handler, learns a text the host published
   from the stage's table, refuses its captures as not parsed until the
