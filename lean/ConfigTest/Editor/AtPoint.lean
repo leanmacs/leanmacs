@@ -117,16 +117,14 @@ def atPointTyping : Package :=
 hosts are made (`withShippedHost TestScheme.scheme`), handed the packages
 the config tests host with the kit's at-point package
 (`withKitAtPoint shippedPackages`) and then the checks' keys
-(`atPointTyping`). -/
+(`atPointTyping`), over a stepped stage (`Stage.stepped`): its jobs run on
+the check's steps. -/
 def withAtPointHost (context : Context) (files : List (String × String))
     (check : Session → IO Bool) : IO Bool :=
   withShippedHost TestScheme.scheme context files check (packages :=
-    withKitAtPoint shippedPackages ++ #[atPointTyping])
+    withKitAtPoint shippedPackages ++ #[atPointTyping]) (stepped := true)
 
--- inferred-waits W2: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `atPointChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `atPointChecks`, a declaration of its own. -/
 def keyPointNextTypingCheck (context : Context) : Check :=
   { name :=
       "the key of at-point-next, where typing is text, lists what config's source that answers later answers that matches the word before the cursor, its job started"
@@ -136,8 +134,7 @@ def keyPointNextTypingCheck (context : Context) : Check :=
         session.resize 640 480
         session.commit "alpha beta al"
         session.typed "C-n"
-        unless (← session.join) == .settled do
-          return false
+        session.step
         let lines ← session.sceneLines
         let rows ← realOrder "al" listedTexts
         let some listId := listViewId lines | return false
@@ -152,10 +149,7 @@ def keyPointNextTypingCheck (context : Context) : Check :=
             output.any (fun line => line.startsWith "job " && line.endsWith " listed: started") &&
             !output.any (·.startsWith "loop: refused") }
 
--- inferred-waits W2: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `atPointChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `atPointChecks`, a declaration of its own. -/
 def pausingTypingTwoCharactersCheck (context : Context) : Check :=
   { name :=
       "pausing after typing two characters of a word opens a session of config's source that pauses, with nothing chosen, and after one character it answers nothing and nothing opens"
@@ -170,8 +164,7 @@ def pausingTypingTwoCharactersCheck (context : Context) : Check :=
             let before ← session.sceneLines
             let started := (← session.lines).filter (·.startsWith "job ")
             session.clock.advance 240
-            unless (← session.join) == .settled do
-              return false
+            session.step
             let lines ← session.sceneLines
             let rows ← realOrder "al" listedTexts
             return armed == 1 && started.isEmpty && (listViewId before).isNone &&
@@ -185,18 +178,14 @@ def pausingTypingTwoCharactersCheck (context : Context) : Check :=
             session.commit "beta"
             session.typed "RET a"
             session.clock.advance 240
-            unless (← session.join) == .settled do
-              return false
+            session.step
             return (listViewId (← session.sceneLines)).isNone
       return first && second }
 
--- inferred-waits W2: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `atPointChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `atPointChecks`, a declaration of its own. -/
 def typedKeyArmsPauseCheck (context : Context) : Check :=
   { name :=
-      "a typed key arms one pause wait and starts no job: after a b the clock holds one wait and has withdrawn one, the table of waits holds one, no job line is printed, and a join returns at once"
+      "a typed key arms one pause wait and starts no job: after a b the clock holds one wait and has withdrawn one, the table of waits holds one, no job line is printed, and the fake scheduler holds no job's code"
     run :=
       withAtPointHost context [("init.lean", listedText)] fun session => do
         session.ask [.reload]
@@ -206,21 +195,19 @@ def typedKeyArmsPauseCheck (context : Context) : Check :=
         session.typed "c d e"
         let afterMore ← session.clock.waiting
         let withdrawnMore := (← session.clock.withdrawn).size
-        let joined ← session.join
+        let some fakes := session.fakes | return false
+        let held ← fakes.services.scheduler.size
         let jobLines := (← session.lines).filter (·.startsWith "job ")
         let table ← session.clock.completions.waiting
         return waiting == 1 && withdrawn == 1 && afterMore == 1 && withdrawnMore == 4 &&
             table == 1 &&
-            joined == .settled &&
+            held == 0 &&
             jobLines.isEmpty }
 
--- inferred-waits W2: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `atPointChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `atPointChecks`, a declaration of its own. -/
 def pauseEventQueuedClockCheck (context : Context) : Check :=
   { name :=
-      "the pause's event is queued before the clock's move returns: advance then join, five times over, each time finds the session the pause opened listed"
+      "the pause's event is queued before the clock's move returns: advance then a drain that steps nothing, five times over, each time finds the session the pause opened started, and a step then lists it"
     run :=
       withAtPointHost context [("init.lean", listedText)] fun session => do
         session.ask [.reload]
@@ -229,13 +216,20 @@ def pauseEventQueuedClockCheck (context : Context) : Check :=
         let mut held := true
         for _ in [0:5] do
           session.typed "RET a l"
-          -- No settle between the move and the join: the join's marker
-          -- must find the pause's event ahead of it.
+          let before := (← session.output.get).size
+          -- No settle between the move and the drain: the drain, which
+          -- steps no job, must find the pause's event queued, and the
+          -- session it opens started.
           session.clock.advance 240
-          unless (← session.join) == .settled do
+          unless ← session.handled do
             return false
+          let after ← session.output.get
+          let opened :=
+            (after.extract before after.size).any fun line =>
+              line.startsWith "job " && line.endsWith " listed: started"
+          session.step
           let lines ← session.sceneLines
-          held := held && (listViewId lines).isSome
+          held := held && opened && (listViewId lines).isSome
           session.typed "C-g"
         return held }
 
