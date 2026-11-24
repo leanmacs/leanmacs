@@ -538,11 +538,19 @@ on_host() {
   copy_source "$root" "$cache/work"
 
   # No debug information in Cargo's development builds: see the header.
+  # STRESS_HOGS, when it is set, is the stress loop's in the container too,
+  # as `STRESS_HOGS=0 mise run linux-stress -- 1` runs the idle smoke round
+  # (docs/dev-practices/on-demand-checks.md, "The stress loop, on demand").
+  local hogs=()
+  if [ -n "${STRESS_HOGS:-}" ]; then
+    hogs=(--env "STRESS_HOGS=$STRESS_HOGS")
+  fi
   docker run --rm --init \
     --volume "$cache/work:/work" \
     --volume "$cache/home:/cache" \
     --volume "$volume:/cargo" \
     --env CARGO_PROFILE_DEV_DEBUG=0 \
+    ${hogs[@]+"${hogs[@]}"} \
     "$image" /work/tools/linux/run.sh inside "$mode" "$@"
 }
 

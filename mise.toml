@@ -1395,16 +1395,23 @@ run = "tools/user-link-check.sh lean"
 # Opt-in, never part of `ci` or hk.pkl: it runs for hours and loads every
 # core. The stress loop (tools/stress.sh; docs/dev-practices/on-demand-checks.md,
 # "The stress loop, on demand"): `mise run stress -- <rounds> [suite ...]`
-# runs config-test, contract-test, the Rust tests and the open-file fixture
-# (or the suites named, `ffi` for every fixture) that many times under
-# `2 x cores` `yes` hogs at lowered priority, and prints each suite's
-# passes. Run it after `mise run ci` has built everything.
-# `tools/stress-probe.sh` runs first, in under a second: it interrupts and
+# runs the wiring set, read from code (its six default suites: config-test's
+# and ffi-test's wiring groups and the window scenarios, contract-test, each
+# linked test's wiring groups, the CLI's runs of the real-thread entries at
+# ffi-test and those at bundle-test over a staged bundle;
+# docs/dev-practices/real-thread-checks.md, "How stress runs the set"), or
+# the suites named (`rust`, `gate-ffi` for the whole of ffi-test), that many
+# times under `2 x cores` `yes` hogs at lowered priority, checks each
+# round's coverage of the wiring set, and prints each suite's passes and
+# coverage's. Run it after `mise run ci` has built everything.
+# `tools/stress-probe.sh` runs first, in about a second: it interrupts and
 # terminates the loop mid-round, on a stand-in suite, and proves that the
-# loop then leaves neither the suite's run nor its guard running; and that a
-# run past the limit is killed with its group and fails as a hang.
+# loop then leaves neither the suite's run nor its guard running; that a
+# run past the limit is killed with its group and fails as a hang; that a
+# run with a hang line fails though it exits 0; and that a round which
+# misses an item of the wiring set fails its coverage.
 [tasks.stress]
-description = "Opt-in, never part of ci: run the thread-heavy suites over and over under a CPU load of twice the cores, and print each suite's passes (tools/stress.sh), after the probe that an interrupted loop leaves nothing running and that a run past its limit fails as a hang (tools/stress-probe.sh). Run after `mise run ci`"
+description = "Opt-in, never part of ci: run the wiring set over and over under a CPU load of twice the cores, check each round ran every item of it once, and print each suite's passes and coverage's (tools/stress.sh), after the probe that an interrupted loop leaves nothing running, that a run past its limit or with a hang line fails, and that a round missing an item fails its coverage (tools/stress-probe.sh). Run after `mise run ci`"
 run = [
   "sh tools/stress-probe.sh",
   "sh tools/stress.sh",
@@ -1888,7 +1895,7 @@ run = "tools/linux/run.sh ci"
 # container (tools/linux/run.sh stress): the gate once, then
 # `tools/stress.sh` with the task's arguments under `2 x nproc` hogs.
 [tasks.linux-stress]
-description = "Opt-in, never part of ci: run the gate and then the stress loop on Linux, in a container (tools/linux/run.sh stress). Needs Docker"
+description = "Opt-in, never part of ci: run the gate and then the stress loop, the wiring set, on Linux, in a container (tools/linux/run.sh stress). Needs Docker"
 run = "tools/linux/run.sh stress"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It needs

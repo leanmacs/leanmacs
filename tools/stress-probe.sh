@@ -159,5 +159,47 @@ if [ -s "$dir/said" ]; then
   sed 's/^/  /' "$dir/said" >&2
 fi
 
+# A hang line fails a run that exits 0: a probe suite that says `a hang:`
+# and exits 0 must give `probe: 0/1`, its hang line listed, and the loop
+# exit 1. Run against a loop that judged a run by its exit status alone, it
+# gave `probe: 1/1`.
+dir="$work/hang-line"
+mkdir "$dir"
+status=0
+STRESS_PROBE='echo "editor: a hang: a stand-in guard ran out"; exit 0' STRESS_HOGS=1 \
+  STRESS_OUT=$dir/out sh "$root/tools/stress.sh" 1 probe >"$dir/output" 2>&1 || status=$?
+if [ "$status" -ne 1 ] || ! grep -qx 'probe: 0/1' "$dir/output" ||
+  ! grep -qx '  editor: a hang: a stand-in guard ran out' "$dir/output"; then
+  fail "the loop did not fail a run that exited 0 with a hang line in its log (exit $status):"
+  sed 's/^/  /' "$dir/output" >&2
+fi
+
+# Coverage: a probe suite that runs and prints nothing of the wiring set,
+# against an expected item it does not print (STRESS_PROBE_EXPECTED), must
+# give `probe: 1/1` and `coverage: 0/1`, the item listed as not run, and
+# the loop exit 1. Run against a loop with no coverage check, it passed.
+# The same suite saying the item once must pass both.
+dir="$work/coverage"
+mkdir "$dir"
+echo 'probe-root Probe.Module' >"$dir/expected"
+status=0
+STRESS_PROBE='echo "the probe ran nothing of the wiring set"' STRESS_PROBE_EXPECTED=$dir/expected \
+  STRESS_HOGS=1 STRESS_OUT=$dir/out sh "$root/tools/stress.sh" 1 probe >"$dir/output" 2>&1 || status=$?
+if [ "$status" -ne 1 ] || ! grep -qx 'probe: 1/1' "$dir/output" || ! grep -qx 'coverage: 0/1' "$dir/output" ||
+  ! grep -qx '  wiring-ledger: did not run: probe-root Probe.Module' "$dir/output"; then
+  fail "the loop did not fail the coverage of a round that missed an expected item (exit $status):"
+  sed 's/^/  /' "$dir/output" >&2
+fi
+dir="$work/covered"
+mkdir "$dir"
+echo 'probe-root Probe.Module' >"$dir/expected"
+status=0
+STRESS_PROBE='echo "wiring-set: ran probe-root Probe.Module 1 checks"' STRESS_PROBE_EXPECTED=$dir/expected \
+  STRESS_HOGS=1 STRESS_OUT=$dir/out sh "$root/tools/stress.sh" 1 probe >"$dir/output" 2>&1 || status=$?
+if [ "$status" -ne 0 ] || ! grep -qx 'coverage: 1/1' "$dir/output"; then
+  fail "the loop did not pass the coverage of a round that ran its expected item once (exit $status):"
+  sed 's/^/  /' "$dir/output" >&2
+fi
+
 [ -z "$failed" ] || exit 1
-echo "stress-probe: the loop sent INT or TERM ended its suite's run and its guard, each with its group; a run past its limit was killed with its group and failed as a hang"
+echo "stress-probe: the loop sent INT or TERM ended its suite's run and its guard, each with its group; a run past its limit was killed with its group and failed as a hang; a run with a hang line failed though it exited 0; and a round that missed an item of the wiring set failed its coverage"
