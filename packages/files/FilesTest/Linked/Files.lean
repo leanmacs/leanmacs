@@ -245,21 +245,43 @@ def languageStage (context : HostContext) (directory : System.FilePath) (more : 
         collaborators := { stage.collaborators with syntaxTree := recordingSyntaxTree asked } },
       asked)
 
-/-- Runs `check` against a stepped host over `languageStage`'s stage, with
-the config loaded first. -/
+/-- Runs `check` against a host stepped on the check's thread over a stepped
+stage (`Stage.stepped`) whose file fake holds `files`, handed what
+`languageStage` hands its host, whose syntax tree is the stage's fake of the
+syntax service (`Stage.fakeSyntaxService`) with every request recorded
+(`recordedRequest`) in the array `check` is handed: the requests the host
+hands the syntax port are the subject, and the fake records them on the
+check's thread. The config is loaded before `check` runs. -/
 def withLanguageHost (context : HostContext) (more : String)
-    (opens : List (String × System.FilePath)) (check : Session → IO.Ref (Array String) → IO Bool) :
-    IO Bool :=
+    (opens : List (String × System.FilePath)) (files : FileModel)
+    (check : Session → IO.Ref (Array String) → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    let (stage, asked) ← languageStage context directory more opens
+    writeConfig directory [("init.lean", languageReportText more)]
+    let stage ←
+      Stage.new context context.elaborator (Config.Directory.source directory)
+          { commands :=
+              Files.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
+                (opens.map fun (name, path) => opening name path).toArray
+            jobs := Files.package.registered.jobs
+            modes := Test.Minibuffer.package.registered.modes ++ Language.modes
+            languages := Language.shipped }
+    let (stage, fake) ← (← stage.stepped files).fakeSyntaxService
+    let asked ← IO.mkRef #[]
+    let recorded : SyntaxTreeHandler := fun request => do
+      asked.modify (·.push (recordedRequest request))
+      fake.handle request
+    let stage :=
+      { stage with
+        collaborators := { stage.collaborators with syntaxTree := fun _ => pure recorded } }
     onStage stage fun drive stage => do
         let session := Session.ofStage drive directory stage
         session.ask [.reload]
         check session asked
 
-/-- `withLanguageHost` with a real host (`onRealStage`): for a buffer that
+/-- A real host (`onRealStage`) over `languageStage`'s stage: for a buffer that
 attaches to the library's syntax service, whose parses come back over the
-library's editor queue. -/
+library's editor queue, with a grammar and shipped queries only the
+library holds (row W91 of `docs/dev-practices/inferred-waits.md`). -/
 def withRealLanguageHost (context : HostContext) (more : String)
     (opens : List (String × System.FilePath))
     (check : RealSession → IO.Ref (Array String) → IO Bool) : IO Bool :=
@@ -270,15 +292,24 @@ def withRealLanguageHost (context : HostContext) (more : String)
         session.ask [.reload]
         check session asked
 
--- inferred-waits W36: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- What the host's `language-report` says of the focused buffer once the
 command `name` has opened its file: its language and its major mode,
 quoted as the scene line has the echo area, or none when the open's jobs
-did not settle. -/
+did not end. On a stepped stage the run is stepped to rest
+(`Session.ranStepped`); on a real host it waits for the run's own jobs'
+end lines (`Session.outputReaches`). -/
 def reportedAfter (session : Session) (name : String) : IO (Option String) := do
-  unless ← session.ran name do
-    return none
+  if session.fakes.isSome then
+    unless ← session.ranStepped name do
+      return none
+  else
+    let before := (← session.output.get).size
+    session.ask [.run name]
+    let ended (lines : Array String) : Bool :=
+      let since := lines.extract before lines.size
+      since.any (·.endsWith ": started") && startedJobsEnded since
+    unless ← session.outputReaches ended do
+      return none
   session.ask [.run "language-report"]
   return some (← session.scene).1
 
@@ -297,9 +328,14 @@ def shippedHighlightRequests (grammar : String) (captures : List (String × Opti
 
 /-- The checks of a file's language through the headless host
 (`packages/files/Files.lean`, "Open"; `Editor/Language.lean`): the file commands
-and the languages that ship as compiled code registers them, on real files,
-with the real elaborator and the real syntax binding. They share the file
-checks' table of waits (`Stage.overFiles`). -/
+and the languages that ship as compiled code registers them, with the real
+elaborator. A json file and a file of no language are on a stepped stage
+over the file fake and the syntax fake (`withLanguageHost`), whose model
+holds json; the grammars and shipped queries the model does not hold, rust,
+markdown, toml and lean, are the real syntax binding's, on a real host over
+real files (`withRealLanguageHost`, row W91 of
+`docs/dev-practices/inferred-waits.md`), sharing the file checks' table of
+waits (`Stage.overFiles`). -/
 def languageChecks (context : HostContext) : List Check :=
   [{  name :=
         "opening a .rs file gives its buffer the language rust and the major mode code, and its text is attached with rust and highlighted with Rust's shipped query in the default faces, with no refusal said"
@@ -317,16 +353,26 @@ def languageChecks (context : HostContext) : List Check :=
         "opening a .json file and a .md file gives each buffer that language and the major mode code, and highlights its text with that grammar's shipped query; Markdown's inline grammar is injected"
       run :=
         context.withFiles fun files => do
-          let json := files / "data.json"
           let markdown := files / "notes.md"
-          IO.FS.writeFile json "{\"a\": [1, true]}\n"
           IO.FS.writeFile markdown "# Title\n\nSome *text* here.\n"
+          -- json on the syntax fake, whose model holds json and its
+          -- highlights: the requests are the model's answers.
+          let jsonModel :=
+            filesModel [(filesDirectory / "data.json", "{\"a\": [1, true]}\n".toUTF8)]
           let jsonHeld ←
-            withRealLanguageHost context "" [("open-json", json)] fun session asked => do
+            withLanguageHost context "" [("open-json", filesDirectory / "data.json")] jsonModel
+                fun session asked => do
                 let report ← reportedAfter session "open-json"
-                return report == some "json code".quote &&
-                    (← asked.get).extract 0 7 == (← shippedHighlightRequests "json") &&
-                    (← noHighlightsRefusal session)
+                let requests ← asked.get
+                saw
+                    (report == some "json code".quote &&
+                      requests.extract 0 7 ==
+                        #["refreshAfter 500", "attach json", "shippedQuery json highlights",
+                          "compile json", "captureNames",
+                          "highlight syntax.string, syntax.string, syntax.number, syntax.constant",
+                          "release"] &&
+                      (← noHighlightsRefusal session))
+                    s!"report {report}, requests {requests}"
           let markdownHeld ←
             withRealLanguageHost context "" [("open-md", markdown)] fun session asked => do
                 let report ← reportedAfter session "open-md"
@@ -380,12 +426,11 @@ def languageChecks (context : HostContext) : List Check :=
     { name :=
         "opening a file whose name matches no language gives its buffer no language and no major mode, and asks the syntax tree port nothing"
       run :=
-        context.withFiles fun files => do
-          let path := files / "notes.txt"
-          IO.FS.writeFile path "plain\n"
-          withLanguageHost context "" [("open-txt", path)] fun session asked => do
-              let report ← reportedAfter session "open-txt"
-              return report == some "none none".quote && (← asked.get).isEmpty },
+        let path := filesDirectory / "notes.txt"
+        withLanguageHost context "" [("open-txt", path)] (filesModel [(path, "plain\n".toUTF8)])
+          fun session asked => do
+          let report ← reportedAfter session "open-txt"
+          return report == some "none none".quote && (← asked.get).isEmpty },
     { name :=
         "a major mode with no syntax tree set over the code mode of an opened .rs file detaches its text"
       run :=
