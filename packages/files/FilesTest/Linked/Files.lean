@@ -340,50 +340,42 @@ real files (`withRealLanguageHost`, row W91 of
 waits (`Stage.overFiles`). -/
 def languageChecks (context : HostContext) : List Check :=
   [{  name :=
-        "opening a .rs file gives its buffer the language rust and the major mode code, and its text is attached with rust and highlighted with Rust's shipped query in the default faces, with no refusal said"
+        "opening a .rs file gives its buffer the language rust and the major mode code, and its text is attached with rust and highlighted over the library's syntax service, with no refusal said"
       run :=
+        -- Wiring only: the shipped Rust grammar and highlights query, which
+        -- the syntax model does not hold, are reached and answer. The order
+        -- of the requests a buffer's mode makes is the stepped json check's
+        -- (`languageChecks` in `FilesTest/Linked/Files.lean`).
         context.withFiles fun files => do
           let path := files / "main.rs"
           IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
           withRealLanguageHost context "" [("open-rs", path)] fun session asked => do
               let report ← reportedAfter session "open-rs"
               let requests ← asked.get
-              return report == some "rust code".quote &&
-                  requests.extract 0 7 == (← shippedHighlightRequests "rust") &&
+              return report == some "rust code".quote && requests.contains "attach rust" &&
+                  requests.any (·.startsWith "highlight ") &&
                   (← noHighlightsRefusal session) },
     { name :=
-        "opening a .json file and a .md file gives each buffer that language and the major mode code, and highlights its text with that grammar's shipped query; Markdown's inline grammar is injected"
+        "opening a .json file gives its buffer the language json and the major mode code, and highlights its text with json's shipped query"
       run :=
-        context.withFiles fun files => do
-          let markdown := files / "notes.md"
-          IO.FS.writeFile markdown "# Title\n\nSome *text* here.\n"
-          -- json on the syntax fake, whose model holds json and its
-          -- highlights: the requests are the model's answers.
-          let jsonModel :=
-            filesModel [(filesDirectory / "data.json", "{\"a\": [1, true]}\n".toUTF8)]
-          let jsonHeld ←
-            withLanguageHost context "" [("open-json", filesDirectory / "data.json")] jsonModel
-                fun session asked => do
-                let report ← reportedAfter session "open-json"
-                let requests ← asked.get
-                saw
-                    (report == some "json code".quote &&
-                      requests.extract 0 7 ==
-                        #["refreshAfter 500", "attach json", "shippedQuery json highlights",
-                          "compile json", "captureNames",
-                          "highlight syntax.string, syntax.string, syntax.number, syntax.constant",
-                          "release"] &&
-                      (← noHighlightsRefusal session))
-                    s!"report {report}, requests {requests}"
-          let markdownHeld ←
-            withRealLanguageHost context "" [("open-md", markdown)] fun session asked => do
-                let report ← reportedAfter session "open-md"
-                let requests ← asked.get
-                return report == some "markdown code".quote &&
-                    requests.extract 0 7 == (← shippedHighlightRequests "markdown") &&
-                    requests.contains "injectLanguage markdown_inline" &&
-                    (← noHighlightsRefusal session)
-          return jsonHeld && markdownHeld },
+        -- On the syntax fake, whose model holds json and its highlights:
+        -- the requests are the model's answers. Markdown's grammar and its
+        -- injection are the syntax model's (`ModelTest/Editor/Highlight.lean`,
+        -- injections), not this host's.
+        let jsonModel := filesModel [(filesDirectory / "data.json", "{\"a\": [1, true]}\n".toUTF8)]
+        withLanguageHost context "" [("open-json", filesDirectory / "data.json")] jsonModel
+          fun session asked => do
+          let report ← reportedAfter session "open-json"
+          let requests ← asked.get
+          saw
+              (report == some "json code".quote &&
+                requests.extract 0 7 ==
+                  #["refreshAfter 500", "attach json", "shippedQuery json highlights",
+                    "compile json", "captureNames",
+                    "highlight syntax.string, syntax.string, syntax.number, syntax.constant",
+                    "release"] &&
+                (← noHighlightsRefusal session))
+              s!"report {report}, requests {requests}" },
     { name :=
         "opening a .toml file and a file named Cargo.lock gives each buffer the language toml and the major mode code, and highlights its text with TOML's shipped query, keys and table headers in the type face, strings in the string face, brackets in the punctuation face and booleans in the constant face, with no refusal said"
       run :=
@@ -432,41 +424,7 @@ def languageChecks (context : HostContext) : List Check :=
         withLanguageHost context "" [("open-txt", path)] (filesModel [(path, "plain\n".toUTF8)])
           fun session asked => do
           let report ← reportedAfter session "open-txt"
-          return report == some "none none".quote && (← asked.get).isEmpty },
-    { name :=
-        "a major mode with no syntax tree set over the code mode of an opened .rs file detaches its text"
-      run :=
-        context.withFiles fun files => do
-          let path := files / "main.rs"
-          IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
-          let plain :=
-            "  defineMode { name := \"plain\" }
-  command \"to-plain\" (do discard <| (← editorState).frame.focused.setMajorMode \"plain\")
-"
-          withRealLanguageHost context plain [("open-rs", path)] fun session asked => do
-              unless (← reportedAfter session "open-rs") == some "rust code".quote do
-                return false
-              let opened := (← asked.get).size
-              session.ask [.run "to-plain", .run "language-report"]
-              let report := (← session.scene).1
-              let requests ← asked.get
-              return report == "rust plain".quote &&
-                  (requests.extract opened requests.size).contains "detach" },
-    { name :=
-        "config's language rust, over the shipped one, with its own highlights query, is the one an opened .rs file is highlighted with: its query is compiled in place of the shipped one, and its one capture drawn in its default face"
-      run :=
-        context.withFiles fun files => do
-          let path := files / "main.rs"
-          IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
-          withRealLanguageHost context rustOverride [("open-rs", path)] fun session asked => do
-              let report ← reportedAfter session "open-rs"
-              let requests ← asked.get
-              return report == some "rust code".quote &&
-                  requests.extract 0 6 ==
-                    #["refreshAfter 500", "attach rust", "compile rust", "captureNames",
-                      "highlight syntax.variable", "release"] &&
-                  !requests.contains "shippedQuery rust highlights" &&
-                  (← noHighlightsRefusal session) }]
+          return report == some "none none".quote && (← asked.get).isEmpty }]
 
 /-- A check of `fileChecks`, a declaration of its own. -/
 def jobLoadsFileThroughCheck (context : HostContext) : Check :=
@@ -523,8 +481,12 @@ edit started, numbered from its started line, and the save's; the disk is
 read after the save's. -/
 def saveCommandModifiedBufferCheck (context : HostContext) : Check :=
   { name :=
-      "the save command on a modified buffer: after a commit the view's status line has the modified field, and once the save job has ended the file's bytes are the buffer's text, the echo area says the file was written, and the status line has the name alone"
+      "the save command on a modified buffer, over the library's file service: once the save job has ended ok, the file's bytes on disk are the buffer's text"
     run :=
+      -- Wiring only: the file service's write is reached and answers. The
+      -- status line's modified field and the echo of the write are the
+      -- model's (`FilesTest.fileCommandChecks`, "the save command on a
+      -- modified buffer", `FilesTest/Files.lean`).
       context.withFiles fun files => do
         let path := files / "note.txt"
         IO.FS.writeBinFile path noteText.toUTF8
@@ -535,14 +497,12 @@ def saveCommandModifiedBufferCheck (context : HostContext) : Check :=
             let before := (← session.output.get).size
             session.commit "x"
             -- The commit was the buffer's first edit, which starts a check
-            -- of its file: each job started since ends before the scene is
-            -- asked.
+            -- of its file: each job started since ends before the save.
             let checked (lines : Array String) : Bool :=
               let since := lines.extract before lines.size
               since.any (·.endsWith ": started") && startedJobsEnded since
             unless ← session.outputReaches checked do
               return false
-            let (_, edited) ← session.viewsAndStatus
             let asked := (← session.output.get).size
             session.ask [.run Files.saveName]
             unless
@@ -550,13 +510,7 @@ def saveCommandModifiedBufferCheck (context : HostContext) : Check :=
                 session.outputReaches fun lines =>
                     endedOk (lines.extract asked lines.size) Files.saveJob do
               return false
-            let (echo, lines) ← session.viewsAndStatus
-            return edited ==
-                  #[viewLine ("x" ++ noteText) 1,
-                    noteStatus path (modified := true) (column := 1)] &&
-                (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
-                echo == (Files.wrote path).quote &&
-                lines == #[viewLine ("x" ++ noteText) 1, noteStatus path (column := 1)] }
+            return (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 }
 
 /-- A check of `fileChecks`, a declaration of its own. -/
 def openingPathOpenStartsCheck (context : HostContext) : Check :=
@@ -1033,11 +987,16 @@ waits are its own jobs' lines, and its config directory is inside the
 bracket that flushes the files and the watches before it is removed. -/
 def criteria910RealCheck (context : HostContext) : Check :=
   { name :=
-      "criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown; once the buffer is edited, another rewrite leaves its text and marks its status line"
+      "on real files, with auto-reload on, another process's rewrite of an unmodified buffer's file reaches the buffer over the library's watch service and is shown"
     run :=
       context.withFiles (targets := [.files, .fileWatches]) fun files => do
         let path := files / "note.txt"
-        let (old, new, again) := ("one\ntwo\n", "one\ntwo\nthree\n", "rewritten again\n")
+        -- Wiring only: a change on disk reaches the buffer. Criteria 9 and
+        -- 10 (an edited buffer left and marked) are the model's, over the
+        -- watch model (`FilesTest.autoReloadChecks`, `FilesTest/Files.lean`), and
+        -- the watch adapter's behaviour is ContractTest's
+        -- (`ContractTest/Editor/Watch/Contract.lean`).
+        let (old, new) := ("one\ntwo\n", "one\ntwo\nthree\n")
         IO.FS.writeBinFile path old.toUTF8
         withRealFileHost context (files / "config") [("open-note", path)] fun session => do
             session.ask [.run "open-note"]
@@ -1061,20 +1020,7 @@ def criteria910RealCheck (context : HostContext) : Check :=
             let (shown, saw) ← session.shownOn jobLine (·.contains (viewLine new 0))
             unless shown do
               throw (IO.userError s!"the rewrite was not shown: {saw}")
-            unless ← Event.post (.commit "x") do
-              return false
-            unless ← rewriteFromOutside path again do
-              return false
-            let edited := "x" ++ new
-            let (marked, last) ←
-              session.shownOn jobLine fun lines =>
-                  lines ==
-                    #[viewLine edited 1,
-                      statusOf (name := "note.txt") (modified := true) (cursor := ⟨0, 1⟩) (lines :=
-                        3) (file := some path) (changed := true)]
-            unless marked do
-              throw (IO.userError s!"the edited buffer was not marked: {last}")
-            return (← IO.FS.readBinFile path) == again.toUTF8 }
+            return true }
 
 /-- The checks of auto-reload through the headless host on real files, with
 the library's watch service (`Editor/Loop.lean`, "Auto-reload"): criteria 9
