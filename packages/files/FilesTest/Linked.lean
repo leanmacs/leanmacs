@@ -104,8 +104,8 @@ def FilesTest.Linked.checks :
 (`Editor.CheckGroup.select`), over the harness's context, and says which
 failed, or how many passed; then a line for each module of the wiring set
 the run ran (`Editor.CheckGroup.ranLines`). -/
-private def FilesTest.Linked.runSelected (sysroot oleans : String)
-    (mode : Editor.CheckGroup.Mode) : IO UInt32 := do
+private def FilesTest.Linked.runSelected (sysroot oleans : String) (mode : Editor.CheckGroup.Mode) :
+    IO UInt32 := do
   let failed ←
     Editor.Test.Linked.HostContext.run sysroot oleans setPackages fun context => do
         let checks := Editor.CheckGroup.select mode FilesTest.Linked.checks context
@@ -116,7 +116,7 @@ private def FilesTest.Linked.runSelected (sysroot oleans : String)
           IO.println s!"files linked test: {checks.length} {mode.what} passed"
         for line in
           Editor.CheckGroup.ranLines "files" (Editor.CheckGroup.wiring FilesTest.Linked.checks)
-              context do
+            context do
           IO.println line
         return failed
   (← IO.getStdout).flush
@@ -153,6 +153,9 @@ def main (arguments : List String) : IO UInt32 := do
       return 2
   | sysroot :: oleans :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
-    | some mode => FilesTest.Linked.runSelected sysroot oleans mode
-    | none => FilesTest.Linked.usage
-  | _ => FilesTest.Linked.usage
+    | some mode =>
+      FilesTest.Linked.runSelected sysroot oleans mode
+    | none =>
+      FilesTest.Linked.usage
+  | _ =>
+    FilesTest.Linked.usage

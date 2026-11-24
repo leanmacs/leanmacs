@@ -62,7 +62,7 @@ private def EchoTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : IO UIn
         s!"echo linked test: the contract's {Echo.Contract.properties.length} properties hold on the Rust-backed binding, each request completed through the completion queue"
   for line in
     Editor.CheckGroup.ranLines "echo" (Editor.CheckGroup.wiring EchoTest.Linked.checks)
-        services.completions do
+      services.completions do
     IO.println line
   (← IO.getStdout).flush
   let stopped ← services.stop
@@ -87,6 +87,9 @@ def main (arguments : List String) : IO UInt32 := do
     return 0
   | _ :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
-    | some mode => EchoTest.Linked.runSelected mode
-    | none => EchoTest.Linked.usage
-  | _ => EchoTest.Linked.usage
+    | some mode =>
+      EchoTest.Linked.runSelected mode
+    | none =>
+      EchoTest.Linked.usage
+  | _ =>
+    EchoTest.Linked.usage

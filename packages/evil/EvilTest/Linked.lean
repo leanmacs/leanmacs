@@ -158,7 +158,7 @@ private def EvilTest.Linked.runSelected (sysroot oleans : String) (mode : Editor
             IO.println s!"evil linked test: {checks.length} {mode.what} passed"
           for line in
             Editor.CheckGroup.ranLines "evil" (Editor.CheckGroup.wiring EvilTest.Linked.checks)
-                (context, fixtures) do
+              (context, fixtures) do
             IO.println line
           return failed)
         (imports := #[`Editor, `Evil.EditorPackage])
@@ -181,6 +181,9 @@ def main (arguments : List String) : IO UInt32 := do
     return 0
   | sysroot :: oleans :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
-    | some mode => EvilTest.Linked.runSelected sysroot oleans mode
-    | none => EvilTest.Linked.usage
-  | _ => EvilTest.Linked.usage
+    | some mode =>
+      EvilTest.Linked.runSelected sysroot oleans mode
+    | none =>
+      EvilTest.Linked.usage
+  | _ =>
+    EvilTest.Linked.usage

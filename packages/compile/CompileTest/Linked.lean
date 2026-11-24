@@ -151,7 +151,7 @@ private def CompileTest.Linked.runSelected (sysroot oleans : String)
           IO.println s!"compile linked test: {checks.length} {mode.what} passed"
         for line in
           Editor.CheckGroup.ranLines "compile" (Editor.CheckGroup.wiring CompileTest.Linked.checks)
-              (context, services.jobs, fixtures) do
+            (context, services.jobs, fixtures) do
           IO.println line
         return failed
   (← IO.getStdout).flush
@@ -176,6 +176,9 @@ def main (arguments : List String) : IO UInt32 := do
     return 0
   | sysroot :: oleans :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
-    | some mode => CompileTest.Linked.runSelected sysroot oleans mode
-    | none => CompileTest.Linked.usage
-  | _ => CompileTest.Linked.usage
+    | some mode =>
+      CompileTest.Linked.runSelected sysroot oleans mode
+    | none =>
+      CompileTest.Linked.usage
+  | _ =>
+    CompileTest.Linked.usage

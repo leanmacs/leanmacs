@@ -116,7 +116,7 @@ private def WorkspaceTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : I
     IO.println s!"workspace linked test: {checks.length} {mode.what} passed"
   for line in
     Editor.CheckGroup.ranLines "workspace" (Editor.CheckGroup.wiring WorkspaceTest.Linked.checks)
-        context do
+      context do
     IO.println line
   (← IO.getStdout).flush
   Editor.Test.Linked.shutdown
@@ -151,6 +151,9 @@ def main (arguments : List String) : IO UInt32 := do
       return 2
   | _ :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
-    | some mode => WorkspaceTest.Linked.runSelected mode
-    | none => WorkspaceTest.Linked.usage
-  | _ => WorkspaceTest.Linked.usage
+    | some mode =>
+      WorkspaceTest.Linked.runSelected mode
+    | none =>
+      WorkspaceTest.Linked.usage
+  | _ =>
+    WorkspaceTest.Linked.usage

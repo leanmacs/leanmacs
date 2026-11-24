@@ -77,8 +77,7 @@ def VersionControlTest.Linked.checks :
 (`Editor.CheckGroup.select`) over the real services, started here, and says
 which failed, or how many passed, with the contract's properties and lanes; then a line for each
 module of the wiring set the run ran (`Editor.CheckGroup.ranLines`). -/
-private def VersionControlTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) :
-    IO UInt32 := do
+private def VersionControlTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : IO UInt32 := do
   let services ← Editor.Test.Linked.Services.start
   let jobs := services.jobs
   let checks := Editor.CheckGroup.select mode VersionControlTest.Linked.checks jobs
@@ -90,7 +89,7 @@ private def VersionControlTest.Linked.runSelected (mode : Editor.CheckGroup.Mode
         s!"version-control linked test: {checks.length} {mode.what} passed, the contract's {Editor.VersionControlContract.properties.length} properties in {VersionControlTest.Linked.versionControlLanes} lanes"
   for line in
     Editor.CheckGroup.ranLines "version-control"
-        (Editor.CheckGroup.wiring VersionControlTest.Linked.checks) jobs do
+      (Editor.CheckGroup.wiring VersionControlTest.Linked.checks) jobs do
     IO.println line
   (← IO.getStdout).flush
   Editor.Test.Linked.shutdown
@@ -111,6 +110,9 @@ def main (arguments : List String) : IO UInt32 := do
     return 0
   | _ :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
-    | some mode => VersionControlTest.Linked.runSelected mode
-    | none => VersionControlTest.Linked.usage
-  | _ => VersionControlTest.Linked.usage
+    | some mode =>
+      VersionControlTest.Linked.runSelected mode
+    | none =>
+      VersionControlTest.Linked.usage
+  | _ =>
+    VersionControlTest.Linked.usage
