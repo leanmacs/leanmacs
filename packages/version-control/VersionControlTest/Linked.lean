@@ -10,9 +10,9 @@ The package-set step `run` (`tools/package-set.sh`, in `mise run ffi-test`)
 builds this root's executable with the Rust library linked, and runs it in
 the package's directory with the Lean toolchain's directory and the core's
 `.olean` directory, which it does not need. It prints `version-control
-linked test: N checks passed`, and exits 0 when all hold, 1 after naming
-on stderr the ones that do not, and 2 for a command line that is not the
-two directories. The exit is explicit, after the library's services are
+linked test: N checks passed, the contract's P properties in L lanes`, and
+exits 0 when all hold, 1 after naming on stderr the ones that do not, and 2
+for a command line it does not take. The exit is explicit, after the library's services are
 shut down and its queues quit: a task may still be blocked in the library.
 
 Its checks run over real git, in temporary repositories removed only once
@@ -23,11 +23,13 @@ end-to-end checks. The test module mirrors the module it tests; its lists
 were the contract test's (`ContractTest.<name>`) while version control was
 modules of the core:
 
-- `inLanesChecks` and `versionControlFailures`
-  (`VersionControlTest/Linked/VersionControl/Git.lean`): the lanes the
-  version-control interface's contract runs in, and that contract
-  (`VcApiTest/Contract.lean`) against the git implementation over real git
-  (each property is one of the `N` checks the line counts);
+- `inLanesChecks` (`VersionControlTest/Linked/VersionControl/Lanes.lean`):
+  the lanes the version-control interface's contract runs in, over plain
+  numbers;
+- `versionControlContractChecks`
+  (`VersionControlTest/Linked/VersionControl/Git.lean`): that contract
+  (`VcApiTest/Contract.lean`) against the git implementation over real git,
+  one check of the `N`, its `P` properties run `L` at a time;
 - `versionControlChecks` (the same module): what only git makes, a
   branch's change asked from two worktrees, a status read of files added
   with intent to add, what to watch in a linked worktree, and a commit's
@@ -42,32 +44,73 @@ itself does of each request is this contract's, so they went.
 
 The real services are started here (`Editor.Test.Linked.Services.start`),
 with the process's one completion pump.
+
+Its checks are a check set (`VersionControlTest.Linked.checks`, `Editor.CheckGroup`,
+`docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
+the lists of its modules of the wiring set in groups of their module, which
+the build's `linter.wiringSet` holds true and complete. A run prints, after
+its count, `wiring-set: ran version-control <module> <n> checks` for each module of
+the wiring set it ran, which the gate's once-check reads
+(`tools/wiring-ledger.sh`). With `--wiring` after the two directories it
+runs those groups alone, the stress loop's `linked-wiring` suite
+(`tools/package-set.sh run --wiring`), and `wiring-modules` prints their
+modules, one a line, building nothing.
 -/
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
 def wiringSet.VersionControlTest.Linked : Editor.WiringSet :=
   .edge "its main starts the library's services and pump and hands them to the contract modules"
 
+/-- Every check of the linked test, in the order they run, over the job
+services `main` starts: its check set (`Editor.CheckGroup`), the lanes'
+checks in a plain group, then `VersionControl/Git.lean`'s, of the wiring
+set, the contract over git among them as one check. -/
+def VersionControlTest.Linked.checks :
+    List (Editor.CheckGroup Editor.Job.Services VersionControlTest.Check) :=
+  [.plain fun _ => VersionControlTest.Linked.inLanesChecks,
+    .wired "VersionControlTest.Linked.VersionControl.Git"
+      wiringSet.VersionControlTest.Linked.VersionControl.Git fun jobs =>
+      VersionControlTest.Linked.versionControlChecks jobs ++
+        VersionControlTest.Linked.versionControlContractChecks jobs]
+
+/-- Runs the checks `select` takes from the check set over the real
+services, started here, and says which failed, or how many passed, as
+`what`, with the contract's properties and lanes; then a line for each
+module of the wiring set the run ran (`Editor.CheckGroup.ranLines`). -/
+private def VersionControlTest.Linked.runSelected
+    (select : Editor.Job.Services → List VersionControlTest.Check)
+    (wiring : List (String × (Editor.Job.Services → List VersionControlTest.Check)))
+    (what : String) : IO UInt32 := do
+  let services ← Editor.Test.Linked.Services.start
+  let jobs := services.jobs
+  let checks := select jobs
+  let failed ← VersionControlTest.failures checks
+  for name in failed do
+    IO.eprintln s!"FAILED: {name}"
+  if failed.isEmpty then
+    IO.println
+        s!"version-control linked test: {checks.length} {what} passed, the contract's {Editor.VersionControlContract.properties.length} properties in {VersionControlTest.Linked.versionControlLanes} lanes"
+  for line in Editor.CheckGroup.ranLines "version-control" wiring jobs do
+    IO.println line
+  (← IO.getStdout).flush
+  Editor.Test.Linked.shutdown
+  IO.Process.exit (if failed.isEmpty then 0 else 1)
+
 /-- Runs the checks (the module docs). -/
 def main (arguments : List String) : IO UInt32 := do
+  let wiring := Editor.CheckGroup.wiring VersionControlTest.Linked.checks
   match arguments with
   | [_, _] =>
-    let services ← Editor.Test.Linked.Services.start
-    let jobs := services.jobs
-    let checks :=
-      VersionControlTest.Linked.inLanesChecks ++ VersionControlTest.Linked.versionControlChecks jobs
-    let failed :=
-      (← VersionControlTest.failures checks) ++
-        (← VersionControlTest.Linked.versionControlFailures jobs)
-    for name in failed do
-      IO.eprintln s!"FAILED: {name}"
-    -- Each property of the contract is a check of this test too.
-    let count := checks.length + Editor.VersionControlContract.properties.length
-    if failed.isEmpty then
-      IO.println s!"version-control linked test: {count} checks passed"
-    (← IO.getStdout).flush
-    Editor.Test.Linked.shutdown
-    IO.Process.exit (if failed.isEmpty then 0 else 1)
+    VersionControlTest.Linked.runSelected (Editor.CheckGroup.all VersionControlTest.Linked.checks)
+        wiring "checks"
+  | [_, _, "--wiring"] =>
+    VersionControlTest.Linked.runSelected (fun jobs => wiring.flatMap (·.2 jobs)) wiring
+        "wiring-set checks"
+  | ["wiring-modules"] =>
+    for module in Editor.CheckGroup.modules VersionControlTest.Linked.checks do
+      IO.println module
+    return 0
   | _ =>
-    IO.eprintln "usage: VersionControlTest-Linked <sysroot> <core olean dir>"
+    IO.eprintln
+        "usage: VersionControlTest-Linked <sysroot> <core olean dir> [--wiring], or VersionControlTest-Linked wiring-modules"
     return 2

@@ -10,13 +10,14 @@ import VersionControl.Git
 import VersionControlTest.Check
 import VersionControlTest.Git.Model
 import VersionControlTest.Linked.Support.Git
+import VersionControlTest.Linked.VersionControl.Lanes
 
 /-!
 # Linked tests: `VersionControl/Git.lean`
 
 The tests of `VersionControl/Git.lean`: `versionControlChecks`, the git
 implementation of the version-control interface over real git, and
-`inLanesChecks` and `versionControlFailures`, the contract of the interface
+`versionControlContractChecks`, the contract of the interface
 library `vc-api` (`VcApiTest/Contract.lean`) run against the git
 implementation over real git, the implementation version control registers
 as `vc-api`'s backend (D7 (c): `vc-api` keeps the model's run,
@@ -136,104 +137,40 @@ def versionControlChecks (services : Job.Services) : List Check :=
           let object ← gitIn home directory #["cat-file", "commit", "HEAD"]
           return ran == .finished true && object.endsWith s!"\n\n{message}" }]
 
-/-- How many of the version-control contract's properties run at once. It
-is bounded, not one lane per property, so that on a runner with few cores
-and every core busy, every property's git at once does not crowd the
-machine. A property's job is waited for on its end, and `patience` is only
-a hang guard. -/
-def versionControlLanes : Nat :=
-  8
-
-/-- Runs `run` on each of `items` in `width` lanes, each a dedicated task
-that takes every `width`-th item in turn: one result per item, in `items`'
-order. A width of 0 is taken as 1, so no item is ever left unrun. An item
-whose run throws gives `failed` its error, and only that item: the lane
-goes on to its next item, whose result is its own. The lanes are dedicated
-threads, because each item may block on a process or on a job's end, and
-Lean's task pool must stay as the job checks measure it. -/
-def inLanes {α β : Type} (width : Nat) (items : List α) (run : α → IO β)
-    (failed : α → IO.Error → β) : IO (List β) := do
-  let width := max width 1
-  let numbered := items.zipIdx
-  let lanes :=
-    (List.range width).map fun lane => numbered.filter fun (_, index) => index % width == lane
-  let tasks ←
-    lanes.mapM fun lane =>
-        IO.asTask (prio := .dedicated)
-          (lane.mapM fun (item, index) => do
-            try
-              return (index, ← run item)
-            catch error =>
-              return (index, failed item error))
-  let results ←
-    tasks.flatMapM fun task => do
-        -- A lane catches each item's error, so it cannot throw.
-        IO.ofExcept (← IO.wait task)
-  return (results.mergeSort fun a b => a.1 ≤ b.1).map (·.2)
-
-/-- Runs `inLanes` at `width` over the numbers below `count`, where running
-`thrown` throws and running any other number gives `ran` and the number. -/
-def runInLanes (width count thrown : Nat) : IO (List String) :=
-  inLanes width (List.range count) (failed := fun item error => s!"failed {item}: {error}")
-    fun item => if item == thrown then throw (IO.userError "thrown") else return s!"ran {item}"
-
-/-- What `runInLanes width count thrown` must give: one result per number, in
-order, only the thrown one failed. -/
-def ranInLanes (count thrown : Nat) : List String :=
-  (List.range count).map fun item =>
-    if item == thrown then s!"failed {item}: thrown" else s!"ran {item}"
-
-/-- The checks of `inLanes` itself, over plain numbers, with no git and no
-process: that it gives one result per item, in the items' order, at any
-width, at a width of 0 too, so the version-control properties can never be
-run as none; and that an item that throws fails alone, its lane's other
-items run and keep their own results. -/
-def inLanesChecks : List Check :=
-  [{  name := "inLanes gives each item's result in the items' order in one lane"
-      run := return (← runInLanes 1 7 7) == ranInLanes 7 7 },
-    { name := "inLanes gives each item's result in the items' order in three lanes"
-      run := return (← runInLanes 3 10 10) == ranInLanes 10 10 },
-    { name := "inLanes gives each item's result in order with more lanes than items"
-      run := return (← runInLanes 20 5 5) == ranInLanes 5 5 },
-    { name := "inLanes at a width of 0 runs every item, as in one lane"
-      run := return (← runInLanes 0 5 5) == ranInLanes 5 5 },
-    { name := "inLanes over no items gives no results"
-      run := return (← runInLanes 3 0 0) == [] },
-    { name :=
-        "inLanes fails only the item that threw, and its lane's other items keep their results"
-      run := return (← runInLanes 3 10 4) == ranInLanes 10 4 },
-    { name := "inLanes fails only the item that threw in a single lane"
-      run := return (← runInLanes 1 6 0) == ranInLanes 6 0 }]
-
-/-- The names of the version-control contract's properties
-(`VersionControl/Contract.lean`) that do not hold of the git
-implementation over the library's process service, each property's
-repository written out with real git in a temporary directory and home of
-its own (`writeGitRepository`), every child's git kept from the system's
-config and given `pinnedAwayConfig` as the user's (`onIsolatedGit`). Each
+/-- The version-control contract's properties
+(`VersionControl/Contract.lean`) against the git implementation over the
+library's process service, as one check: each property's repository
+written out with real git in a temporary directory and home of its own
+(`writeGitRepository`), every child's git kept from the system's config
+and given `pinnedAwayConfig` as the user's (`onIsolatedGit`). Each
 property's directory is removed only once the process and file services
 have worked what was handed to them (`withRepository`, a flushed bracket);
 that each child is reaped is the process service's own contract
-(`ContractTest.processFailures`), not pinned here. The properties run `versionControlLanes` at a time (`inLanes`), and their
-failures are reported in the contract's order. Property 1 is the phase's
-adapter test of git against the model. -/
-def versionControlFailures (services : Job.Services) : IO (List String) := do
-  let outcomes ←
-    inLanes versionControlLanes VersionControlContract.properties (failed := fun property error =>
-        some s!"{property.name} ({error})") fun property =>
-        withRepository services fun home directory => do
-          try
-            writeGitRepository home directory property.repository
-            let config := home / "gitconfig"
-            IO.FS.writeFile config pinnedAwayConfig
-            let outcome ←
-              runOnTimers (onIsolatedGit services home config)
-                  (property.holds.runM (VersionControl.Git.handler "git" directory))
-            return if outcome == .finished true then none
-              else some s!"{property.name} ({repr outcome})"
-          catch error =>
-            return some s!"{property.name} (writing its repository: {error})"
-  let failed := outcomes.filterMap id
-  return failed.map (s!"the version-control interface over git: {·}")
+(`ContractTest.processFailures`), not pinned here. The properties run
+`versionControlLanes` at a time (`inLanes`, `Lanes.lean`), and the check
+fails through `saw` with the name and outcome of each that does not hold,
+in the contract's order. Property 1 is the phase's adapter test of git
+against the model. -/
+def versionControlContractChecks (services : Job.Services) : List Check :=
+  [{  name :=
+        s!"the version-control interface's contract holds over git, its {VersionControlContract.properties.length} properties in {versionControlLanes} lanes"
+      run := do
+        let outcomes ←
+          inLanes versionControlLanes VersionControlContract.properties (failed :=
+              fun property error => some s!"{property.name} ({error})") fun property =>
+              withRepository services fun home directory => do
+                try
+                  writeGitRepository home directory property.repository
+                  let config := home / "gitconfig"
+                  IO.FS.writeFile config pinnedAwayConfig
+                  let outcome ←
+                    runOnTimers (onIsolatedGit services home config)
+                        (property.holds.runM (VersionControl.Git.handler "git" directory))
+                  return if outcome == .finished true then none
+                    else some s!"{property.name} ({repr outcome})"
+                catch error =>
+                  return some s!"{property.name} (writing its repository: {error})"
+        let failed := outcomes.filterMap id
+        saw failed.isEmpty s!"{failed.map (s!"the version-control interface over git: {·}")}" }]
 
 end VersionControlTest.Linked
