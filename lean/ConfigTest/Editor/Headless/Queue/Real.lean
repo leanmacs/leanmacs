@@ -27,7 +27,8 @@ finished job's delivered command) and `Command/Dispatch.lean`'s:
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
 def wiringSet.ConfigTest.Editor.Headless.Queue.Real : Editor.WiringSet :=
-  .wiring "the library's editor queue (Queue.library) and its interrupt flag" "a stepped host never pulls the library's queue and tells the library no interrupt key"
+  .wiring "the library's editor queue (Queue.library) and its interrupt flag"
+    "a stepped host never pulls the library's queue and tells the library no interrupt key"
 
 namespace ConfigTest
 

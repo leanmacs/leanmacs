@@ -40,7 +40,8 @@ no thread to join.
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
 def wiringSet.ConfigTest.Editor.Headless.Real.Bracket : Editor.WiringSet :=
-  .wiring "the editor loop thread and its join (Headless.withHost, withHostEnding)" "the thread and its join are the subject, and a stepped host has no thread to join"
+  .wiring "the editor loop thread and its join (Headless.withHost, withHostEnding)"
+    "the thread and its join are the subject, and a stepped host has no thread to join"
 
 namespace ConfigTest
 
@@ -280,24 +281,24 @@ def bracketChecks (context : Context) : List Check :=
         let after ← context.realLoops.get
         saw (started.size == 1 && started.all (· != mine) && ran && after == before)
             s!"started on {started}, the check on {mine}, real loops {before} then {after}" },
-      { name :=
-          "a stepped stage refuses a stage over the library's services, and a real host refuses a stepped stage"
-        run := do
-          let real ← Stage.overFiles context (memorySource [])
-          let refusedReal ←
-            try
-              discard <| real.stepped
-              pure false
-            catch _ =>
-              pure true
-          let stage ← steppedStage context
-          let refusedHost ←
-            try
-              discard <| onRealStage stage fun _ _ => pure true
-              pure false
-            catch _ =>
-              pure true
-          saw (refusedReal && refusedHost)
-              s!"Stage.stepped refused overFiles {refusedReal}; onRealStage refused a stepped stage {refusedHost}" }]
+    { name :=
+        "a stepped stage refuses a stage over the library's services, and a real host refuses a stepped stage"
+      run := do
+        let real ← Stage.overFiles context (memorySource [])
+        let refusedReal ←
+          try
+            discard <| real.stepped
+            pure false
+          catch _ =>
+            pure true
+        let stage ← steppedStage context
+        let refusedHost ←
+          try
+            discard <| onRealStage stage fun _ _ => pure true
+            pure false
+          catch _ =>
+            pure true
+        saw (refusedReal && refusedHost)
+            s!"Stage.stepped refused overFiles {refusedReal}; onRealStage refused a stepped stage {refusedHost}" }]
 
 end ConfigTest

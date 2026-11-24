@@ -29,7 +29,8 @@ runner's logic is the `Headless.Driven` port's and is pinned stepped
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
 def wiringSet.ConfigTest.Editor.Headless.Real.Runner : Editor.WiringSet :=
-  .wiring "the headless CLI's runner over a real loop (Headless.run, runAndDispose, Hosting.real)" "the runner's logic is pinned stepped, and its hosting on a real loop thread, with dispose after the join, is what the CLI runs"
+  .wiring "the headless CLI's runner over a real loop (Headless.run, runAndDispose, Hosting.real)"
+    "the runner's logic is pinned stepped, and its hosting on a real loop thread, with dispose after the join, is what the CLI runs"
 
 namespace ConfigTest
 

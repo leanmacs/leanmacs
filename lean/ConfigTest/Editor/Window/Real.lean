@@ -19,7 +19,8 @@ wiring only.
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
 def wiringSet.ConfigTest.Editor.Window.Real : Editor.WiringSet :=
-  .wiring "the window mode's start-up wait on a real host (Window.awaitConfig)" "it is the window mode's edge, which runs over a real loop thread"
+  .wiring "the window mode's start-up wait on a real host (Window.awaitConfig)"
+    "it is the window mode's edge, which runs over a real loop thread"
 
 namespace ConfigTest
 

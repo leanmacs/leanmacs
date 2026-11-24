@@ -31,7 +31,8 @@ its turns on the waiting thread, so neither crossing exists there.
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
 def wiringSet.ConfigTest.Editor.Headless.Real.Waits : Editor.WiringSet :=
-  .wiring "the driver's waits across the editor loop thread (Host.waitWhile)" "a stepped host takes its turns on the waiting thread, so the idle read across threads and an unanswering editor thread exist only on a real one"
+  .wiring "the driver's waits across the editor loop thread (Host.waitWhile)"
+    "a stepped host takes its turns on the waiting thread, so the idle read across threads and an unanswering editor thread exist only on a real one"
 
 namespace ConfigTest
 
@@ -195,6 +196,6 @@ def realWaitChecks (context : Context) : List Check :=
                   s!"inside={inside} wait={repr wait} saidUnanswered={saidUnanswered} after={repr after}"
             finally
               block.resolve () },
-  steppedHostPublishesScenesCheck context]
+    steppedHostPublishesScenesCheck context]
 
 end ConfigTest
