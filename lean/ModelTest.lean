@@ -747,6 +747,13 @@ The job system is tested here with no Rust library:
   with none; another round when the count is 0 but moved or a wait is due;
   and otherwise a block on the count's next change, or the hang at the
   guard. A host that keeps no count is never idle. Each is a pure verdict;
+- `restVerdictChecks`: a stepped host's wait over its fakes, judged at their
+  rest (`Rest.judge`, `Editor/Headless/Wait.lean`), which reads no
+  activity count: settled once the wait is no longer busy; a block on the
+  reload's wake-up while a reload is in flight, the one work off the
+  caller's thread, and the hang once its guard has run out; and otherwise
+  the wait's idle outcome at once, `working` for a wait with none, never a
+  hang. Each is a pure verdict;
 - `handleContractChecks`: the contract of a file request's handle
   (`Editor/Job/HandleContract.lean`) on the fake file service, held by its
   held completions: a held request's handle has not ended until it is let
@@ -1338,6 +1345,7 @@ def checks : List Check :=
     queueContractChecks ++
     queueMemoryChecks ++
     waitRoundChecks ++
+    restVerdictChecks ++
     tableChecks ++
     ownerChecks ++
     fileRunnerChecks ++

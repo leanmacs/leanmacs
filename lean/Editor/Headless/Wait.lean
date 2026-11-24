@@ -33,8 +33,31 @@ The verdict, once the loop is up to date:
   and on what else its driver wakes it with.
 
 A host that keeps no count is never idle and never goes round again at
-once. This module imports nothing that imports `Editor.Ffi`, so the model
-tests pin the verdict (`ModelTest/Editor/Headless/Wait.lean`).
+once.
+
+## At the rest of a stepped host's fakes
+
+A stepped host whose collaborators are the fakes its driver steps
+(`Stepped.Work`, `Editor/Headless/Stepped.lean`) is judged otherwise, and
+never by the activity count: its driver runs rounds, each draining the
+queue through the turn and then stepping the fakes until none can run,
+until a round moves nothing. That is the **rest**, and what it found is a
+`Rest`, judged by `Rest.judge`:
+
+- the wait is no longer busy: `settled`;
+- busy with a reload in flight (`offThread`), the one piece of work that
+  runs off the driver's thread (the real elaborator, on the reload's own
+  task): a block on the queue's next push, the reload's wake-up
+  (`blockOnReload`), or, once the wait's guard has run out, the hang
+  (`hung`), said once;
+- busy with nothing off the thread: nothing left can run, so the wait's
+  idle outcome (`still`) at once, or `working` for a wait with none (a
+  `settle`'s), and never a hang.
+
+`Rest` has no field for the count, so the verdict cannot read it.
+
+This module imports nothing that imports `Editor.Ffi`, so the model
+tests pin both verdicts (`ModelTest/Editor/Headless/Wait.lean`).
 -/
 
 namespace Editor.Headless
@@ -110,5 +133,44 @@ def Round.judge (round : Round) : Round.Verdict :=
     | _, _ =>
       if round.tracked && !idle && round.now.running == 0 then .again
       else if round.remaining == 0 then .hang round.hung else .block round.now.epoch
+
+/-- What a stepped host's wait over its fakes found at their rest (the
+module docs, "At the rest of a stepped host's fakes"): what its verdict
+(`Rest.judge`) is made of. It has no activity count. -/
+structure Rest where
+  /-- Whether what the wait waits for still holds of the loop's progress. -/
+  busy : Bool
+  /-- Whether a reload is in flight, its elaboration on a task of its own:
+  the one piece of work off the driver's thread (`Progress.reloading`). -/
+  offThread : Bool
+  /-- How many milliseconds are left before the wait's guard. -/
+  remaining : Nat
+  /-- What the wait answers at rest with it still busy and nothing off the
+  thread: `working` for a join's, a stall for an advance's, none for a
+  settle's, which then answers `working`. -/
+  still : Option Wait
+  /-- What the wait answers once its guard has run out on a block: the
+  hang. -/
+  hung : Wait
+
+/-- What a stepped wait's rest comes to (`Rest.judge`). -/
+inductive Rest.Verdict where
+  /-- The wait is over and answers this. -/
+  | answer (wait : Wait)
+  /-- The wait's guard ran out on a reload in flight: it says the hang once
+  and answers this. -/
+  | hang (wait : Wait)
+  /-- A reload is in flight: the wait blocks on the queue's next push, the
+  reload's wake-up, and then goes to rest again. -/
+  | blockOnReload
+  deriving DecidableEq, Repr
+
+/-- The verdict of a stepped wait at the rest of its fakes (the module
+docs, "At the rest of a stepped host's fakes"). -/
+def Rest.judge (rest : Rest) : Rest.Verdict :=
+  if !rest.busy then .answer .settled
+  else
+    if rest.offThread then if rest.remaining == 0 then .hang rest.hung else .blockOnReload
+    else .answer (rest.still.getD .working)
 
 end Editor.Headless
