@@ -1410,9 +1410,9 @@ loop's end waiting for its reload, and a check's bracket's grace, are in
 Status: built by deterministic-test-concurrency phase 5. Most of
 `config-test`'s host checks run with no loop thread: the host's loop is
 stepped on the check's own thread. The checks that still start a loop
-thread, and the adapter each covers, are listed in
-`docs/dev-practices/real-thread-checks.md`, which the gate holds to what
-runs.
+thread or a real service live in the wiring set's modules, each of which
+states the adapter its checks cover, and `lake build`'s `linter.realHost`
+confines them there (`docs/dev-practices/real-thread-checks.md`).
 
 **One turn, two drivers.** The headless loop is one turn per event
 (`Running.turn`: handle the event, then give back the unit of the activity

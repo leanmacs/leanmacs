@@ -1,8 +1,8 @@
 #!/bin/sh
 # Runs each fixture of the real-thread set whose subject is the script runner
 # itself both ways, and compares them (docs/dev-practices/headless-mode.md,
-# "How the gate runs a fixture"; row A3 of
-# docs/dev-practices/real-thread-checks.md): the CLI over a real loop thread,
+# "How the gate runs a fixture"; docs/dev-practices/real-thread-checks.md,
+# "The CLI's runs in the gate"): the CLI over a real loop thread,
 # and the fixture harness's stepped run.
 #
 #   tools/fixture-compare.sh <editor> <fixture-test> <sysroot> <olean dirs> <repository>

@@ -1467,10 +1467,9 @@ what only Lean's elaborator can show of a config file as a module, the
 directory source, and the adapter that reads a lakefile's requires, and
 runs the headless host in-process, on the real text binding: most checks on a
 host stepped on the check's own thread over an in-memory editor queue, and
-the ones listed in [real-thread-checks.md](real-thread-checks.md), each
-with the adapter it covers, on a real loop thread over the library's queue.
-`ffi-test` runs it with `--real-threads` and fails when the checks that
-started a loop thread are not exactly that page's list. A reload replaces a command; a type error, a throwing `setup` and
+the checks of the wiring set's modules, each with the adapter it covers, on
+a real loop thread or a real service ([real-thread-checks.md](real-thread-checks.md)):
+`lake build`'s `linter.realHost` confines them to those modules. A reload replaces a command; a type error, a throwing `setup` and
 a file that declares `initialize` each keep the old config; after a change
 to one config file a reload elaborates that file and the files that import
 it, and no other; a root that imports a module that is not linked is
@@ -2848,6 +2847,19 @@ lint`, never a script over source text:
   mark of its own, or a reference to a constant whose mark the linter
   cannot read. Each site left is under `set_option linter.inferredWait
   false in` with its row of `inferred-waits.md`.
+- **`linter.realHost`** (`lean/Lint/RealHost.lean`, loaded with the
+  others): a reference to a constant marked a real host or a real service
+  (`<constant>.realHost`, `lean/Editor/RealHost.lean`) in a test module
+  that declares no wiring set (`wiringSet.<module>`) is a lint, unless it is
+  inside a declaration that has a mark itself; a `.contract` module and
+  contract-test may reach a service and never a loop, an `.edge` root only
+  in its `main`, and a public helper of a wiring module that hands one on
+  must be marked, `main` or a check
+  ([real-thread-checks.md](real-thread-checks.md)). Its fixtures are
+  `ModelTest/Lint/RealHost.lean` and the modules under
+  `ModelTest/Lint/RealHost/`, `ConfigTest/Lint/RealHost.lean` and greeting's
+  `GreetingTest/Lint/RealHost.lean`, and its rules' checks
+  `LintTest.lintRealHostChecks`.
 - **It bites**: `ModelTest/Lint/Wait.lean` holds `#guard_msgs` fixtures,
   built by `mise run lean-test` and `mise run lean` and never run, that
   expect the error for a raw sleep, a raw clock read, a count read outside

@@ -42,7 +42,9 @@ it.
   `set_option linter.inferredWait false in` and the row of
   `docs/dev-practices/inferred-waits.md` beside it.
 
-Both options default to `false`, and our builds turn them on with
+Both options default to `false`, as does the real-host linter's
+(`linter.realHost`, `Lint/RealHost.lean`), the build's other linter, which
+the same plugin loads; and our builds turn them on with
 `linter.all` (`lean/lakefile.lean` and every package's lakefile): config a
 user's editor elaborates is never linted.
 

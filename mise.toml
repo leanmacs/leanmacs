@@ -855,12 +855,12 @@ run = [
   # from the environment; its third argument is the directory of the syntax
   # fixtures, whose Rust indent fixture the indent checks read (tests/syntax),
   # and its fourth the default config `mise run install` ships, which the
-  # default config checks read (config/default). With `--real-threads` it
-  # also writes the names of the checks that started a real editor loop
-  # thread, sorted, which must be exactly the names
-  # docs/dev-practices/real-thread-checks.md lists in its `checks` blocks:
-  # every other host check runs on a host stepped on its own thread.
-  "f=$(mktemp) && trap 'rm -f \"$f\"' EXIT && .lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default --real-threads \"$f\" && { awk '/^```checks$/{on=1;next} /^```$/{on=0} on' ../docs/dev-practices/real-thread-checks.md | LC_ALL=C sort | diff - \"$f\" || { echo 'ffi-test: the checks that ran a real editor loop thread (>) are not the ones docs/dev-practices/real-thread-checks.md lists (<)' >&2; exit 1; }; }",
+  # default config checks read (config/default). Which of its checks may
+  # run a real editor loop thread or a real service is no list here: `lake
+  # build`'s `linter.realHost` confines them to the wiring set's modules
+  # (docs/dev-practices/real-thread-checks.md); every other host check runs
+  # on a host stepped on its own thread.
+  ".lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default",
   # The demonstration. With no arguments the editor is the window mode on
   # an empty buffer, which opens a window, so the gate never runs that.
   "../packages/.lake/build/bin/editor demo",
@@ -875,7 +875,8 @@ run = [
   # each of the 29 it runs and its count line, 19 left to the CLI.
   "out=$(../packages/.lake/build/bin/fixture-test \"$(lean --print-prefix)\" .lake/build/lib/lean --repo .. run ../tests/headless) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; { test \"$(printf '%s\\n' \"$out\" | grep -c ': stepped, as expected$')\" -eq 29 && printf '%s\\n' \"$out\" | grep -qxF 'fixture-test: ran 29 fixtures stepped under tests/headless, 19 left to the CLI'; } || { echo 'ffi-test: the fixture harness did not run the 29 fixtures of tests/headless stepped'; exit 1; }",
   # The fixtures whose subject is the script runner over a real loop thread
-  # (row A3 of docs/dev-practices/real-thread-checks.md), the real-thread
+  # (docs/dev-practices/real-thread-checks.md, "The CLI's runs in the
+  # gate"), the real-thread
   # set's runner entries, run both ways and compared
   # (tools/fixture-compare.sh): each through the CLI, `editor headless`,
   # over a real loop thread, which must exit 0, and stepped by the harness,

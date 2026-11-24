@@ -98,47 +98,34 @@ def failures (checks : List Check) : IO (List String) :=
     finally
       discard <| IO.setStderr before
 
-/-- One line of the timings (`inventory`): how long `what` took on the
+/-- One line of the timings (`timedFailures`): how long `what` took on the
 clock, in milliseconds, a tab, and `what`. -/
 def timingLine (milliseconds : Nat) (what : String) : String :=
   s!"{milliseconds}\t{what}"
 
-/-- Runs `checks` as `failures` does, and also names, sorted, the checks
-during which `realLoops` moved: those that started a real editor loop
-thread. As each check ends it hands `timed` the check's line of the
-timings (`timingLine`): how far `clock`, which reads milliseconds, moved
-while the check ran. No result reads the clock. -/
-def inventory (realLoops : IO.Ref Nat) (checks : List Check) (clock : IO Nat := pure 0)
-    (timed : String → IO Unit := fun _ => pure ()) : IO (List String × List String) := do
+/-- Runs `checks` as `failures` does, and as each check ends hands
+`timed` the check's line of the timings (`timingLine`): how far `clock`,
+which reads milliseconds, moved while the check ran. No result reads the
+clock. -/
+def timedFailures (checks : List Check) (clock : IO Nat := pure 0)
+    (timed : String → IO Unit := fun _ => pure ()) : IO (List String) := do
   let mut failed := []
-  let mut real := #[]
   for check in checks do
-    let before ← realLoops.get
     let started ← clock
     failed := failed ++ (← failures [check])
     timed (timingLine ((← clock) - started) check.name)
-    if (← realLoops.get) != before then
-      real := real.push check.name
-  return (failed, (real.qsort (· < ·)).toList)
+  return failed
 
 /-- What follows the four directories on the checks' command line: the file
-of `--real-threads` and the file of `--timings`, each at most once, in
-either order; `none` for anything else. -/
-def options : List String → Option (Option System.FilePath × Option System.FilePath)
-  | [] => some (none, none)
-  | "--real-threads" :: file :: rest =>
-    match options rest with
-    | some (none, timings) => some (some file, timings)
-    | _ => none
-  | "--timings" :: file :: rest =>
-    match options rest with
-    | some (realThreads, none) => some (realThreads, some file)
-    | _ => none
+of `--timings`, at most once; `none` for anything else. -/
+def options : List String → Option (Option System.FilePath)
+  | [] => some none
+  | ["--timings", file] => some (some file)
   | _ => none
 
-/-- The checks of `failures`, `saw` and `inventory`: what a failing check
-saw is printed after its name, and the inventory names the checks during
-which a loop thread started. -/
+/-- The checks of `failures`, `saw` and `timedFailures`: what a failing
+check saw is printed after its name, and a run's timings are handed over
+as each check ends. -/
 def checkChecks (_ : Unit) : List Check :=
   [{  name :=
         "a check that ends with saw of what does not hold fails with what it saw after its name, and saw of what holds holds"
@@ -218,25 +205,8 @@ def checkChecks (_ : Unit) : List Check :=
               raw == [0xff, 0x0a] &&
               last == "config-test: during \"throws\": d\nafter\n")
             s!"failed={failed} first={first.quote} raw={raw} last={last.quote}" },
-    { name := "the inventory names, sorted, only the checks during which a loop thread started"
-      run := do
-        let loops ← IO.mkRef 0
-        let started : Check :=
-          { name := "b starts"
-            run := do
-              loops.modify (· + 1)
-              return true }
-        let quiet : Check := { name := "a starts none", run := pure true }
-        let also : Check :=
-          { name := "a also starts"
-            run := do
-              loops.modify (· + 2)
-              return false }
-        let (failed, real) ← inventory loops [started, quiet, also]
-        saw (failed == ["a also starts"] && real == ["a also starts", "b starts"])
-            s!"failed {failed}, real {real}" },
     { name :=
-        "the inventory hands over, as each check ends, how far its clock moved during the check and the check's name, a failing check's too"
+        "a timed run hands over, as each check ends, how far its clock moved during the check and the check's name, a failing check's too"
       run := do
         -- A scripted clock: each reading is the next of these.
         let readings ← IO.mkRef [10, 25, 25, 100]
@@ -253,28 +223,22 @@ def checkChecks (_ : Unit) : List Check :=
             run := do
               seen.modify (·.push (← lines.get).size)
               return false }
-        let (failed, _) ←
-          inventory (← IO.mkRef 0) [first, second] clock fun line => lines.modify (·.push line)
+        let failed ← timedFailures [first, second] clock fun line => lines.modify (·.push line)
         let lines ← lines.get
         let seen ← seen.get
         saw (failed == ["b"] && lines == #["15\ta", "75\tb"] && seen == #[0, 1])
             s!"failed={failed} lines={lines} seen={seen}" },
     { name :=
-        "the checks' command line takes --real-threads and --timings after its directories, each once and in either order, and nothing else"
-      run := do
-        let real : Option System.FilePath := some "r"
-        let timings : Option System.FilePath := some "t"
-        let both := some (real, timings)
+        "the checks' command line takes --timings after its directories, once, and nothing else"
+      run :=
         saw
-            (options [] == some (none, none) &&
-              options ["--real-threads", "r"] == some (real, none) &&
-              options ["--timings", "t"] == some (none, timings) &&
-              options ["--real-threads", "r", "--timings", "t"] == both &&
-              options ["--timings", "t", "--real-threads", "r"] == both &&
-              options ["--timings", "t", "--timings", "u"] == none &&
-              options ["--timings"] == none &&
-              options ["--other", "x"] == none)
-            "an option was not read as said" }]
+          (options [] == some none &&
+            options ["--timings", "t"] == some (some ("t" : System.FilePath)) &&
+            options ["--timings", "t", "--timings", "u"] == none &&
+            options ["--timings"] == none &&
+            options ["--real-threads", "r"] == none &&
+            options ["--other", "x"] == none)
+          "an option was not read as said" }]
 
 /-- The directories a directory argument of the executable names: one, or
 several joined with `:`, as the editor reads its own
@@ -294,16 +258,13 @@ failed, and returns the exit status, 0 when all hold and 1 otherwise.
 
 `sysroot` is the Lean toolchain's directory and `oleanDir` the directory
 holding the package's `.olean` files, or several joined with `:`
-(`oleanDirs`). With `realThreads`, it writes there the names of the checks
-that ran a real editor loop thread (`inventory`), sorted, one per line.
-With `timings`, it writes there, as each ends, the wall time of the base's
+(`oleanDirs`). With `timings`, it writes there, as each ends, the wall time of the base's
 import and of each check (`timingLine`), a line each, flushed as written, so
 a run that is killed keeps the lines of what had ended: what a guard is
 sized from (`Editor.Test.Linked.hangGuard`). -/
 def run (checks : Context → List Check) (sysroot oleanDir : String)
     (syntaxFixtures defaultConfig : System.FilePath) (packages : Array Package)
-    (realThreads : Option System.FilePath := none) (timings : Option System.FilePath := none) :
-    IO UInt8 := do
+    (timings : Option System.FilePath := none) : IO UInt8 := do
   let timed ←
     match timings with
     | some file =>
@@ -336,9 +297,7 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
         { elaborator, bumped, ids := ← IO.mkRef 100, waits := ← IO.mkRef none, sysroot
           oleanDirs := oleanDirs oleanDir, packages, realLoops, syntaxFixtures, defaultConfig }
       let checks := checks context
-      let (failed, real) ← inventory realLoops checks clock timed
-      if let some file := realThreads then
-        IO.FS.writeFile file (String.join (real.map (· ++ "\n")))
+      let failed ← timedFailures checks clock timed
       for name in failed do
         IO.eprintln s!"FAILED: {name}"
       unless failed.isEmpty do
@@ -369,7 +328,7 @@ def runChecks (context : Context) : List Check :=
             try
               run (fun _ => [looks "first", looks "second"]) context.sysroot
                   (":".intercalate (context.oleanDirs.map toString)) context.syntaxFixtures
-                  context.defaultConfig context.packages none (some file)
+                  context.defaultConfig context.packages (some file)
             finally
               discard <| IO.setStdout before
           -- Each line as its name, when what is before the tab is a number.
@@ -389,7 +348,7 @@ def runChecks (context : Context) : List Check :=
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: config-test <sysroot> <olean dir> <syntax fixtures> <default config> [--real-threads <file>] [--timings <file>] | config-test lsp <sysroot> <config dir> <line> <column> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-reload-directory <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-soak-modules <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples>"
+      "usage: config-test <sysroot> <olean dir> <syntax fixtures> <default config> [--timings <file>] | config-test lsp <sysroot> <config dir> <line> <column> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-reload-directory <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-soak-modules <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples>"
   return 2
 
 end ConfigTest

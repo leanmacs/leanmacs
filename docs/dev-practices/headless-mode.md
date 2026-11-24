@@ -2306,7 +2306,7 @@ the real-thread set, which says what each covers and the gate step that
 runs it through the CLI:
 
 - a **`runner`** entry's subject is the script runner over a real loop
-  thread itself (row A3 of [real-thread-checks.md](real-thread-checks.md)):
+  thread itself (the CLI's runner, [real-thread-checks.md](real-thread-checks.md)):
   it runs both ways, the CLI over a real loop thread and the harness
   stepped, and `tools/fixture-compare.sh` requires the two outputs to be
   the same and to be the expected file (`fixture-test … compared` lists

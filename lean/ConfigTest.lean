@@ -409,9 +409,9 @@ a host stepped on the check's own thread (`Headless.withStepped`, through
 the plain helpers `withHost`, `withTestHost`, `onStage` and the rest of
 `Editor/Test/Linked/Host.lean`): its loop's turns are taken by the check's
 waits, which end on events and at idle, with a guard against a hang only.
-The checks listed in `docs/dev-practices/real-thread-checks.md` run a real
-loop thread (the `Real` helpers), and `config-test --real-threads <file>`
-names the checks that did, which `mise run ffi-test` holds to that list.
+The checks of the wiring set's modules run a real loop thread or a real
+service (the `Real` helpers, `docs/dev-practices/real-thread-checks.md`),
+and `lake build`'s `linter.realHost` confines them to those modules.
 On those, a wait that is a poll still has a bound, so broken code fails a
 check instead of hanging the executable. Each line a host emits is recorded
 with the thread that emitted it, which is how a check sees that a handler
@@ -513,9 +513,7 @@ end ConfigTest
 
 /-- `config-test <sysroot> <olean dir> <syntax fixtures> <default config>`
 runs the checks: exits 0 when all hold, and 1 after naming the ones that do
-not. With `--real-threads <file>` after them, it also writes to `<file>`
-the names of the checks that ran a real editor loop thread, one per line
-(`ConfigTest.inventory`). With `--timings <file>`, it writes to `<file>`, as
+not. With `--timings <file>` after them, it writes to `<file>`, as
 each ends, the wall time in milliseconds of the base's import and of each
 check, a tab and its name (`ConfigTest.run`): what the stress loop keeps of
 each round, to size the hang guards from. The third argument is the directory of the syntax fixtures
@@ -602,11 +600,11 @@ def main (args : List String) : IO UInt32 := do
       ConfigTest.usage
   | sysroot :: oleanDir :: syntaxFixtures :: defaultConfig :: rest =>
     match ConfigTest.options rest with
-    | some (realThreads, timings) =>
+    | some timings =>
       IO.Process.exit
           (←
             ConfigTest.run ConfigTest.checks sysroot oleanDir syntaxFixtures defaultConfig
-                ConfigTest.shippedPackages realThreads timings)
+                ConfigTest.shippedPackages timings)
     | none =>
       ConfigTest.usage
   | _ =>

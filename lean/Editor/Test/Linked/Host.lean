@@ -99,8 +99,10 @@ structure HostContext where
   packages : Array Package
   /-- How many real editor loop threads the harness's hosts have started: a
   stage's host bumps it on its loop's own thread
-  (`Headless.Collaborators.loopStarted`), so a harness that keeps an
-  inventory (`ConfigTest.inventory`) names the checks that ran one. -/
+  (`Headless.Collaborators.loopStarted`), so a check can show that a
+  stepped host, or a refused real one, started none. Which checks may run
+  one at all is `lake build`'s `linter.realHost`'s
+  (`docs/dev-practices/real-thread-checks.md`). -/
   realLoops : IO.Ref Nat
 
 /-- Runs `run` with the context of a harness of hosts over the real

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Checks that the build's linters, the wait linters (lean/Lint/Wait.lean),
-# are loaded as a Lean plugin into every library and executable they guard:
+# Checks that the build's linters, the wait linters (lean/Lint/Wait.lean)
+# and the real-host linter (lean/Lint/RealHost.lean), are loaded as a Lean plugin into every library and executable they guard:
 # each of the core's, and each of every package a set holds in its own
 # directory (docs/dev-practices/the-gate.md, "The wait lints"). A
 # library that loads no plugin is never linted, and nothing else would say
