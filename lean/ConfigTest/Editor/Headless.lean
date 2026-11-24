@@ -929,35 +929,39 @@ def recordedStage (context : Context) (directory : System.FilePath) :
             syntaxTree, display } },
       asked, published, settleShown)
 
-/-- Runs `check` against a stepped host over `recordedStage`'s stage. The
-library's syntax service queues a `parsed` event on the library's editor
-queue for each delivery of a highlighted text's parse, which a stepped host
-never takes: once the check has run, while the host is still up, this
-waits for the shown text's tree (`syntaxSettle`, after which no delivery of
-it is still to come) and takes the `parsed` events off the queue, so the
-check leaves the library's queue as it found it (`leavingLibraryQueue`)
-whenever the parse is delivered. -/
-def withRecordedSyntaxTree (context : Context)
-    (check : Session → IO.Ref (Array String) → IO Nat → IO Bool) : IO Bool :=
+/-- Runs `check` against a stepped host over a config of `highlightText`,
+on a stepped stage (`Stage.stepped`) whose syntax tree is the stage's fake
+of the syntax service (`Stage.fakeSyntaxService`), with every request the
+host hands it recorded (`recordedRequest`) in the array the check is handed:
+the requests are the subject, and the fake records them on the check's
+thread, its deliveries stepped with the session (`Session.step`). -/
+def withRecordedSyntaxTree (context : Context) (check : Session → IO.Ref (Array String) → IO Bool) :
+    IO Bool :=
   IO.FS.withTempDir fun directory => do
-    let (stage, asked, published, settleShown) ← recordedStage context directory
-    onStage stage fun drive stage => do
-        let held ← check (Session.ofStage drive directory stage) asked published
-        let settled ← settleShown
-        -- Every event the queue holds is taken: none is this host's, and
-        -- the queue held them, so no pull parks.
-        for _ in [0:(← Ffi.queued .editor).toNat] do
-          discard <| Ffi.takeQueued .editor
-        return held && settled
+    writeConfig directory [("init.lean", highlightText)]
+    let stage ← (← Stage.new context context.elaborator (Config.Directory.source directory)).stepped
+    let (stage, fake) ← stage.fakeSyntaxService
+    let asked ← IO.mkRef #[]
+    let recorded : SyntaxTreeHandler := fun request => do
+      asked.modify (·.push (recordedRequest request))
+      fake.handle request
+    let stage :=
+      { stage with
+        collaborators := { stage.collaborators with syntaxTree := fun _ => pure recorded } }
+    onStage stage fun drive stage => check (Session.ofStage drive directory stage) asked
 
-/-- `withRecordedSyntaxTree` with a real host (`onRealStage`), handed the
-stage's wait for the shown text's tree too. -/
+/-- A real host (`onRealStage`) over `recordedStage`'s stage, the real
+syntax binding's, whose services record to a fake recorder
+(`Job.FakeRecorder`, `recording`): handed the recorder, the stage's count of
+published scenes and its wait for the shown text's tree. -/
 def withRealRecordedSyntaxTree (context : Context)
-    (check : RealSession → IO.Ref (Array String) → IO Nat → IO Bool → IO Bool) : IO Bool :=
+    (check : RealSession → Job.FakeRecorder → IO Nat → IO Bool → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    let (stage, asked, published, settleShown) ← recordedStage context directory
+    let (stage, _, published, settleShown) ← recordedStage context directory
+    let recorder ← Job.FakeRecorder.new
+    let stage := { stage with collaborators := recording stage.collaborators recorder }
     onRealStage stage fun host stage =>
-        check (RealSession.ofStage host directory stage) asked published settleShown
+        check (RealSession.ofStage host directory stage) recorder published settleShown
 
 /-- The thread that emitted the first line of the host's output that is
 `line`, if there is one. -/
@@ -1058,8 +1062,6 @@ def meetingAnswer {α : Type} (check : BaseIO Unit → (String → IO Unit) → 
   finally
     release.resolve ()
 
--- inferred-waits W5: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- Runs `check` with `stage`'s collaborators, for one host's run of
 `jobScript` that reaches its end: the loop's withdrawal of the job's wait, as
 the loop ends, is held (`hold`) and then noted in `withdrew`, and each
@@ -1071,7 +1073,12 @@ the job's own `done`, the unit it gives back as it parks, which the runner
 gives only after it has recorded the wait (`Job.drive`). The clock's own
 arrival (`.waiting 1`) is too early: the clock has the wait inside its
 `start`, before the runner has its answer, and a loop that ends then finds
-no wait to withdraw and is never held.
+no wait to withdraw and is never held. And it is not the job's own: any
+wait on the stage's clock reaches it. The spawn's line waits first for the
+check's own wrapper of the clock's `start` to have started the job's wait
+(`started`), its own signal (row W5 of
+`docs/dev-practices/inferred-waits.md`, which stays: the loop's end
+withdrawing the job's wait is the subject, A3).
 
 - **The hold at the clock's `start`** keeps the job's thread there, the
   wait on the clock and not yet recorded, until the spawn's line has seen
@@ -1107,6 +1114,9 @@ def withdrawingHeld {α β σ : Type} (stage : Stage β σ) (hold : BaseIO Unit)
   let count ← Job.Activity.counting
   -- Resolved to let the job's thread go on from the clock's `start`.
   let entering ← IO.Promise.new
+  -- Resolved by the wrapper of the clock's `start` once it has started the
+  -- job's wait.
+  let started : IO.Promise Unit ← IO.Promise.new
   -- The thread held at the clock's `start`: the job's.
   let holder ← IO.mkRef (none : Option UInt64)
   -- Resolved by the job's `done`, after the count has taken it.
@@ -1134,7 +1144,9 @@ def withdrawingHeld {α β σ : Type} (stage : Stage β σ) (hold : BaseIO Unit)
             staged.endCancelled cancelled
           emit := fun line => do
             if line == "spawn count: job 1" then
-              unless ← clockReaches stage.clock (.waiting 1) do
+              -- hang guard: the job's wait started on the clock, by the
+              -- wrapper of its `start`; only a hang reaches the bound.
+              unless (← Job.awaitWithin hangGuard started.result?).isSome do
                 throw <|
                     IO.userError
                       s!"a hang: the job's sleep had not reached the clock within {hangGuard.ms} ms"
@@ -1154,6 +1166,7 @@ def withdrawingHeld {α β σ : Type} (stage : Stage β σ) (hold : BaseIO Unit)
                   start := fun id deadline => do
                     timers.start id deadline
                     holder.set (some (← IO.getTID))
+                    started.resolve ()
                     discard <| IO.wait entering.result?
                   cancel := fun id => do
                     hold
@@ -1435,8 +1448,6 @@ def setup : SetupM Unit := do
   command \"start-nap\" (discard <| startJob \"nap\")
 ")]
 
--- inferred-waits W6: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- A check of `jobChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
 def handlerReceivesJobResultCheck (context : Context) : Check :=
@@ -1447,24 +1458,24 @@ def handlerReceivesJobResultCheck (context : Context) : Check :=
       -- Seen to bite once by hand: a host that prints a job's line where
       -- the job ended, from the runner's `finished`, prints it from a pool
       -- thread, and the thread ids differ.
-      withHost context jobsConfig fun session => do
+      withSteppedHost context jobsConfig fun session => do
         session.ask [.reload]
         session.ask [.run "greet", .spawn "count"]
-        unless (← session.idle) == .working && (← session.clock.waiting) == 1 do
+        session.step
+        unless (← session.clock.waiting) == 1 do
           return false
         -- The job is in its sleep: nothing has been said of its result, and
         -- the editor still answers.
         session.ask [.run "greet"]
         let waiting ← session.output.get
         session.clock.advance 10
-        let joined ← session.join
+        session.step
         session.ask [.show]
         let command ← session.threadOf "run greet: ok"
         let handler ← session.threadOf "job 1 count: ok"
         return waiting ==
               #["reload 1: installed, 2 files, 1 commands", "run greet: ok", "spawn count: job 1",
                 "run greet: ok"] &&
-            joined == .settled &&
             (← session.output.get) ==
               waiting ++
                 #["job 1 count: ok", "commands: greet", "text 0: \"\"", "text 1: \"v1\"",
@@ -1473,18 +1484,17 @@ def handlerReceivesJobResultCheck (context : Context) : Check :=
             handler == command &&
             command == some (← IO.getTID) }
 
--- inferred-waits W6: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- A check of `jobChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
 def reloadCancelsOldConfigCheck (context : Context) : Check :=
   { name :=
       "a reload cancels the old config's jobs when it installs: the job is cancelled before the reload is reported, its wait is withdrawn, and its handler never runs"
     run :=
-      withHost context jobsConfig fun session => do
+      withSteppedHost context jobsConfig fun session => do
         session.ask [.reload]
         session.ask [.spawn "count"]
-        unless (← session.idle) == .working && (← session.clock.waiting) == 1 do
+        session.step
+        unless (← session.clock.waiting) == 1 do
           return false
         session.write "Config/Greet.lean" (greetText "v2")
         session.ask [.reload]
@@ -1492,6 +1502,7 @@ def reloadCancelsOldConfigCheck (context : Context) : Check :=
         -- Past the job's sleep: a job that was still there would end, and
         -- its handler would make a text.
         session.clock.advance 10
+        session.step
         session.ask [.show]
         return withdrawn.size == 1 && (← session.clock.waiting) == 0 &&
             (← session.output.get) ==
@@ -1499,55 +1510,50 @@ def reloadCancelsOldConfigCheck (context : Context) : Check :=
                 "job 1 count: cancelled", "reload 2: installed, 2 files, 1 commands",
                 "commands: greet"] }
 
--- inferred-waits W6: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- A check of `jobChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
 def rejectedReloadCancelsNothingCheck (context : Context) : Check :=
   { name :=
       "a rejected reload cancels nothing: the old config's job runs on, and its handler runs when it finishes"
     run :=
-      withHost context jobsConfig fun session => do
+      withSteppedHost context jobsConfig fun session => do
         session.ask [.reload]
         session.ask [.spawn "count"]
-        unless (← session.idle) == .working && (← session.clock.waiting) == 1 do
+        session.step
+        unless (← session.clock.waiting) == 1 do
           return false
         session.write "Config/Greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
         session.ask [.reload]
         let stillWaiting := (← session.clock.waiting) == 1 && (← session.clock.withdrawn).isEmpty
         session.clock.advance 10
-        let joined ← session.join
-        return stillWaiting && joined == .settled &&
+        session.step
+        return stillWaiting &&
             (← session.lines) ==
               #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1",
                 "reload 2: rejected", "diagnostic: Config/Greet.lean: error", "job 1 count: ok"] }
 
--- inferred-waits W6: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- A check of `jobChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
 def jobThrowsReportedFailedCheck (context : Context) : Check :=
   { name :=
       "a job that throws is reported as failed with its message, a handler whose command the library refuses as refused, and a name that is not registered as no such job"
     run :=
-      withHost context jobsConfig fun session => do
+      withSteppedHost context jobsConfig fun session => do
         session.ask [.reload]
         session.ask [.spawn "boom", .spawn "bad", .spawn "nope"]
-        unless (← session.idle) == .working && (← session.clock.waiting) == 2 do
+        session.step
+        unless (← session.clock.waiting) == 2 do
           return false
         let spawned ← session.output.get
         session.clock.advance 10
-        let joined ← session.join
+        session.step
         -- The two jobs end at one instant, in either order.
         let ended := ((← session.output.get).extract spawned.size).qsort (· < ·)
         return spawned ==
               #["reload 1: installed, 2 files, 1 commands", "spawn boom: job 1", "spawn bad: job 2",
                 "spawn nope: no such job"] &&
-            joined == .settled &&
             ended == #["job 1 boom: failed: no thanks", "job 2 bad: refused: no such text"] }
 
--- inferred-waits W6: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- A check of `jobChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
 def jobCommandSetsModeCheck (context : Context) : Check :=
@@ -1557,27 +1563,30 @@ def jobCommandSetsModeCheck (context : Context) : Check :=
       -- Seen to bite once by hand: with `Running.ended` handing
       -- `Job.finishWith` no syntax tree, the job's command reaches
       -- `SyntaxTree.none`, the recorder sees nothing, and the echo area
-      -- says the attach was refused.
-      withRecordedSyntaxTree context fun session asked _ => do
+      -- says the attach was refused. The requests are the subject, so the
+      -- syntax tree is the stage's fake (`withRecordedSyntaxTree`).
+      withRecordedSyntaxTree context fun session asked => do
         session.ask [.reload]
         session.ask [.spawn "highlight"]
-        unless (← session.idle) == .working && (← session.clock.waiting) == 1 do
+        session.step
+        unless (← session.clock.waiting) == 1 do
           return false
         session.clock.advance 10
-        let joined ← session.join
+        session.step
         let scene ← session.sceneLines
-        return joined == .settled && (← session.output.get).contains "job 1 highlight: ok" &&
+        return (← session.output.get).contains "job 1 highlight: ok" &&
             (← asked.get) ==
               #["refreshAfter 500", "attach json", "shippedQuery json highlights", "compile json",
-                "captureNames", ← shippedFaces "json", "release", "shippedQuery json injections",
-                "shippedQuery json textObjects", "shippedQuery json indents"] &&
+                "captureNames",
+                -- The faces of the syntax model's json query's captures, which
+                -- the fake answers, in the shipped defaults.
+                "highlight syntax.string, syntax.string, syntax.number, syntax.constant", "release",
+                "shippedQuery json injections", "shippedQuery json textObjects",
+                "shippedQuery json indents"] &&
             scene.any fun line =>
               line.startsWith "scene " && (line.splitOn "highlights:").length == 1 }
 
--- inferred-waits W6: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `jobChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `jobChecks`, a declaration of its own. -/
 def parseHighlightedTextLibraryCheck (context : Context) : Check :=
   { name :=
       "a parse of a highlighted text the library delivers makes the real host publish a scene, with no key pressed"
@@ -1585,13 +1594,20 @@ def parseHighlightedTextLibraryCheck (context : Context) : Check :=
       -- Seen to bite once by hand: a host whose `handle` returns at once
       -- for an event from the library's source publishes nothing for the
       -- parse, and the count stays at the edit's.
-      withRealRecordedSyntaxTree context fun session _ published settleShown => do
+      -- Stays on a real host (row W6 of docs/dev-practices/inferred-waits.md,
+      -- A5): the library's deliveries over its own queue are the subject.
+      -- Its waits are its own job's: the job's park, its sleep's wait
+      -- recorded (the recorder), and the job's end line.
+      withRealRecordedSyntaxTree context fun session recorder published settleShown => do
         session.ask [.reload]
         session.ask [.spawn "highlight"]
-        unless ← clockReaches session.clock (.waiting 1) do
+        -- hang guard: the highlight job's park on its sleep, recorded; only
+        -- a hang reaches the bound.
+        let parked ← recorder.reached (· matches .park _)
+        unless (← Job.awaitWithin hangGuard parked).isSome do
           return false
         session.clock.advance 10
-        unless (← session.host.join hangGuard) == .settled do
+        unless ← session.outputReaches (·.contains "job 1 highlight: ok") do
           return false
         let before ← published
         -- Waited on with no marker that publishes: the edit's command
@@ -2101,31 +2117,29 @@ def agreementChecks (_ : Unit) : List Check :=
           (Headless.Running.agreement agreementScene 10 #[agreementAsked agreementRows] none ==
             "agree view 2: the frame has no such view") }]
 
--- inferred-waits W7: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- A check of `scriptChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
 def scenePublishedAgainReloadCheck (context : Context) : Check :=
   { name :=
       "the scene is published again after a reload installs and after a job's command runs, once a frame exists"
     run :=
-      withHost context jobsConfig fun session => do
+      withSteppedHost context jobsConfig fun session => do
         session.ask [.reload]
         session.commit "kept"
         session.ask [.published, .scene]
         session.ask [.spawn "count"]
-        unless (← session.idle) == .working && (← session.clock.waiting) == 1 do
+        session.step
+        unless (← session.clock.waiting) == 1 do
           return false
         session.clock.advance 10
-        unless (← session.join) == .settled do
-          return false
+        session.step
         session.ask [.reload]
         session.ask [.published, .scene]
         -- Between the first published request and the second the editor
-        -- thread handles ten events, each followed by a scene: the first
+        -- thread handles nine events, each followed by a scene: the first
         -- published and scene requests, the spawn, the job's wake-up, the
-        -- reload, the reload's wake-up, and the four markers the waits
-        -- posted. Had the
+        -- reload, the reload's wake-up, and the three markers the asks'
+        -- settles posted (a step drains with no marker). Had the
         -- job's command or the reload's install published nothing, the
         -- count would be short. Nothing outside idle publishes here: the
         -- host has no syntax tree and no poster of its own.
@@ -2134,7 +2148,7 @@ def scenePublishedAgainReloadCheck (context : Context) : Check :=
               "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
               "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4, padding 8 8",
               statusOf (modified := true) (cursor := ⟨0, 4⟩), "spawn count: job 1",
-              "job 1 count: ok", "reload 2: installed, 2 files, 1 commands", "published 11",
+              "job 1 count: ok", "reload 2: installed, 2 files, 1 commands", "published 10",
               "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, theme \"default\"",
               "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4, padding 8 8",
               statusOf (modified := true) (cursor := ⟨0, 4⟩)] }
@@ -3246,15 +3260,13 @@ def setup : SetupM Unit := do
     message s!\"courier read {← held}\"
 "
 
--- inferred-waits W8: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- A check of `hostLoopChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
 def hostKeepsClipboardOwnCheck (context : Context) : Check :=
   { name :=
       "the host keeps a clipboard of its own: before a write a command of config's reads no text, after one command wrote a text the next reads it, and so does a finished job's command"
     run :=
-      withHost context [("init.lean", clipboardText)] fun session => do
+      withSteppedHost context [("init.lean", clipboardText)] fun session => do
         session.ask [.reload]
         session.ask [.run "paste"]
         let (empty, _) ← session.scene
@@ -3263,57 +3275,71 @@ def hostKeepsClipboardOwnCheck (context : Context) : Check :=
         session.ask [.run "paste"]
         let (pasted, _) ← session.scene
         session.ask [.spawn "courier"]
-        unless (← session.join) == .working && (← session.clock.waiting) == 1 do
+        session.step
+        unless (← session.clock.waiting) == 1 do
           return false
         session.clock.advance 10
-        let joined ← session.join
+        session.step
         return empty == "no text".quote && written == "written".quote &&
             pasted == "kept by the host".quote &&
-            joined == .settled &&
             (← session.scene).1 == "courier read kept by the host".quote }
 
--- inferred-waits W8: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- A check of `hostLoopChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
 def keyCommandStartsJobCheck (context : Context) : Check :=
   { name :=
       "a key's command starts a job with an argument: the host says it started, keys sent while the job sleeps are handled before its result, and once the clock lets it go its command runs after them, with the value the job computed in the text and in the scene's echo"
     run :=
-      withHost context [("init.lean", startingText)]
+      withSteppedHost context [("init.lean", startingText)]
         (fun session => do
           session.ask [.reload]
           session.typed "C-c a"
-          unless (← session.join) == .working && (← session.clock.waiting) == 1 do
+          session.step
+          unless (← session.clock.waiting) == 1 do
             return false
           session.typed "C-c s C-c s"
           let sleeping ← session.scene
           let before ← session.output.get
           session.clock.advance 10
-          let joined ← session.join
+          session.step
           let after := (← session.output.get).extract before.size
           return before.contains "job 1 double: started" &&
               !before.any (·.startsWith "job 1 double: ok") &&
               sleeping == ("".quote, #[viewLine "!!" 2]) &&
-              joined == .settled &&
               after == #["job 1 double: ok"] &&
               (← session.scene) == ("doubled to 42".quote, #[viewLine "!![42]" 6]))
         dispatchCompiled }
 
--- inferred-waits W8: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `hostLoopChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- `withRealHost` over a stage whose services record to a fake recorder
+(`Job.FakeRecorder`, `recording`), handed to `check` beside the session:
+for a real-host check that waits on its own job's protocol transitions. -/
+def withRecordedRealHost (context : Context) (files : List (String × String))
+    (check : RealSession → Job.FakeRecorder → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeConfig directory files
+    let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+    let recorder ← Job.FakeRecorder.new
+    let stage := { stage with collaborators := recording stage.collaborators recorder }
+    onRealStage stage fun host stage => check (RealSession.ofStage host directory stage) recorder
+
+/-- A check of `hostLoopChecks`, a declaration of its own. -/
 def finishedJobCommandGuardedCheck (context : Context) : Check :=
   { name :=
       "a finished job's command is guarded as a key's is: the interrupt key that arrives as it is delivered stops the command that loops over requests, the output says the job was interrupted, the view's text is that before the delivery, and the flag is down once the loop has taken the key"
     run :=
-      withRealHost context [("init.lean", startingText)] fun session => do
+      -- Stays on a real host (row W8 of docs/dev-practices/inferred-waits.md,
+      -- A4): the library's queue and its interrupt flag are the subject. Its
+      -- waits are its own: the spinner's park on its sleep, recorded (the
+      -- recorder), and the arrival of the clock read it holds itself.
+      withRecordedRealHost context [("init.lean", startingText)] fun session recorder => do
         session.ask [.reload]
         unless ← Event.post (.commit "ab") do
           return false
         session.ask [.spawn "spinner"]
-        unless ← clockReaches session.clock (.waiting 1) do
+        -- hang guard: the spinner's park on its sleep, recorded; only a
+        -- hang reaches the bound.
+        let parked ← recorder.reached (· matches .park _)
+        unless (← Job.awaitWithin hangGuard parked).isSome do
           return false
         -- The loop reads the clock just before a command it runs: held
         -- there, the editor thread is inside the delivery, and the
@@ -3321,7 +3347,11 @@ def finishedJobCommandGuardedCheck (context : Context) : Check :=
         let arrivals ← session.clock.held
         let hold ← session.clock.holdReads
         session.clock.advance 10
-        unless ← clockReaches session.clock (.held (arrivals + 1)) do
+        -- hang guard: the loop's read of the clock arrived at the check's
+        -- own hold, installed once the job had parked; only a hang reaches
+        -- the bound.
+        let reached ← session.clock.arrivedAt (.held (arrivals + 1))
+        unless (← Job.awaitWithin hangGuard reached.result?).isSome do
           hold.resolve ()
           return false
         session.host.press Watch.interruptKey
@@ -3332,27 +3362,25 @@ def finishedJobCommandGuardedCheck (context : Context) : Check :=
             !(← Ffi.interruptRaised) &&
             (← session.scene) == ("job 1 spinner: interrupted".quote, #[viewLine "ab" 2]) }
 
--- inferred-waits W8: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- A check of `hostLoopChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
 def hostHandedCompiledJobsCheck (context : Context) : Check :=
   { name :=
       "a host is handed compiled jobs: a compiled command starts one before any config is loaded, a reload that installs does not cancel it, and once the clock lets it go its command runs"
     run :=
-      withHost context [("init.lean", emptyText)]
+      withSteppedHost context [("init.lean", emptyText)]
         (fun session => do
           session.ask [.run "rest"]
-          unless (← session.join) == .working && (← session.clock.waiting) == 1 do
+          session.step
+          unless (← session.clock.waiting) == 1 do
             return false
           session.ask [.reload]
           let reloaded ← session.output.get
           session.clock.advance 10
-          let joined ← session.join
+          session.step
           return reloaded ==
                 #["run rest: ok", "job 1 nap: started",
                   "reload 1: installed, 1 files, 0 commands"] &&
-              joined == .settled &&
               (← session.output.get).extract reloaded.size == #["job 1 nap: ok"] &&
               (← session.scene) == ("".quote, #[viewLine "napped" 6]))
         nappingCompiled }
@@ -3665,38 +3693,38 @@ job `follow` of version `v1`. -/
 def followConfig : List (String × String) :=
   [("Config/Greet.lean", greetText "v1"), ("init.lean", overGreet (followText "v1"))]
 
--- inferred-waits W9: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- A check of `watchReloadChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
 def reloadInstallsWatchesNewCheck (context : Context) : Check :=
   { name :=
       "after a reload installs, only the watches the new config made deliver: the old config's job is cancelled before the reload is reported, its watch ends, and the new config's job is told of the change and says the new version"
     run :=
-      withHost context followConfig fun session => do
+      withSteppedHost context followConfig fun session => do
         session.ask [.reload]
         session.ask [.spawn "follow"]
-        unless (← session.idle) == .working && (← session.watches.watching) == 1 do
+        session.step
+        unless (← session.watches.watching) == 1 do
           return false
         let firstWatch := ((← session.watches.started)[0]?.map (·.1.toNat)).getD 0
         session.write "init.lean" (overGreet (followText "v2"))
         session.ask [.reload]
         -- The jobs table let the old job go at the cancel; its end, which
-        -- ends its watch, runs on its own thread, under a unit of the
-        -- host's activity: at idle it has ended. Read once.
+        -- ends its watch, runs on a step of the fake scheduler, so once
+        -- stepped to rest it has ended. Read once.
+        session.step
         let oldEnded :=
-          (← session.quiet) && (← session.watches.watching) == 0 &&
-            (← session.watches.ended) == #[firstWatch]
+          (← session.watches.watching) == 0 && (← session.watches.ended) == #[firstWatch]
         let afterReload ← session.output.get
         session.ask [.spawn "follow"]
-        unless (← session.idle) == .working && (← session.watches.watching) == 1 do
+        session.step
+        unless (← session.watches.watching) == 1 do
           return false
         session.watches.change "/watched/f" #[.written]
-        let joined ← session.join
+        let joined ← session.stepUntil (·.contains "job 2 follow: ok")
         session.ask [.show]
         let lines ← session.output.get
         let later := lines.extract afterReload.size lines.size
-        return oldEnded && joined == .settled &&
+        return oldEnded && joined &&
             afterReload ==
               #["reload 1: installed, 2 files, 1 commands", "spawn follow: job 1",
                 "job 1 follow: cancelled", "reload 2: installed, 2 files, 1 commands"] &&
@@ -3704,27 +3732,26 @@ def reloadInstallsWatchesNewCheck (context : Context) : Check :=
             later.contains "text 1: \"v2\"" &&
             !later.any (·.startsWith "job 1") }
 
--- inferred-waits W9: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- A check of `watchReloadChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
 def rejectedReloadLeavesOldCheck (context : Context) : Check :=
   { name :=
       "a rejected reload leaves the old config's watch watching: its job is told of the change and says the old version"
     run :=
-      withHost context followConfig fun session => do
+      withSteppedHost context followConfig fun session => do
         session.ask [.reload]
         session.ask [.spawn "follow"]
-        unless (← session.idle) == .working && (← session.watches.watching) == 1 do
+        session.step
+        unless (← session.watches.watching) == 1 do
           return false
         session.write "Config/Greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
         session.ask [.reload]
         let stillWatching := (← session.watches.watching) == 1 && (← session.watches.ended).isEmpty
         session.watches.change "/watched/f" #[.written]
-        let joined ← session.join
+        let joined ← session.stepUntil (·.contains "job 1 follow: ok")
         session.ask [.show]
         let lines ← session.lines
-        return stillWatching && joined == .settled && lines.contains "reload 2: rejected" &&
+        return stillWatching && joined && lines.contains "reload 2: rejected" &&
             lines.contains "job 1 follow: ok" &&
             lines.contains "text 1: \"v1\"" }
 

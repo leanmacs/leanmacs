@@ -42,11 +42,6 @@ namespace ConfigTest
 open Editor
 open Editor.Test.Linked
 
-/-- `collaborators` with `recorder` as what the runner records to. -/
-def recording {β σ : Type} (collaborators : Headless.Collaborators β σ TestScheme.scheme)
-    (recorder : Job.FakeRecorder) : Headless.Collaborators β σ TestScheme.scheme :=
-  { collaborators with services := { collaborators.services with recorder := recorder.recorder } }
-
 /-- Whether `transition` is a park of a job other than `job`. -/
 def parksOther (job : Nat) : Job.Protocol.Transition → Bool
   | .park other => other != job

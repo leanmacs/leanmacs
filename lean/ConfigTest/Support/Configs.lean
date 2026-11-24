@@ -17,6 +17,7 @@ import Editor.Headless
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
+import Editor.Job.Fake
 import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
@@ -154,5 +155,10 @@ def nappingCompiled : Compiled :=
           work := fun _ =>
             Work.of (fun _ => sleep 10) fun _ =>
               discard <| (⟨0⟩ : ViewId).insertAtSelections "napped" }] }
+
+/-- `collaborators` with `recorder` as what the runner records to. -/
+def recording {β σ : Type} (collaborators : Headless.Collaborators β σ TestScheme.scheme)
+    (recorder : Job.FakeRecorder) : Headless.Collaborators β σ TestScheme.scheme :=
+  { collaborators with services := { collaborators.services with recorder := recorder.recorder } }
 
 end ConfigTest
