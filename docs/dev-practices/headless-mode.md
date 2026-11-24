@@ -2294,7 +2294,9 @@ empty file, as the gate's `lean/` is never empty. Each fixture gets fresh
 fakes; only the elaborator's base is shared. Its output must be its
 expected file line for line, the fakes quiescent and the library's queue
 as it was; a fixture that differs fails, naming its first differing line
-with both texts. It prints `fixture-test: <script>: stepped, as expected`
+with both texts, and one whose run throws (a hang given up at its guard
+among them) fails with `fixture-test: <script>: its run threw: <error>`,
+and the harness goes on to the next fixture. It prints `fixture-test: <script>: stepped, as expected`
 for each and `fixture-test: ran <n> fixtures stepped under <root>, <m>
 left to the CLI` for each root, and fails a root that holds no fixture.
 

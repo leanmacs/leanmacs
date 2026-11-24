@@ -172,6 +172,49 @@ def fixtureRunChecks (context : Context) : List Check :=
                 #["fixture-test: tests holds no headless fixture, so nothing ran stepped there"])
             s!"status={status} said={said}" },
     { name :=
+        "a fixture whose run throws fails, naming it and the error, and the run goes on to the next fixture and its root's count line; a hang given up at its guard is said as the hang"
+      run := do
+        -- The setup's seed is a checked-in file that is not there, so the
+        -- run throws as it reads it.
+        let (status, said) ←
+          runFixtures context
+              [("tests/a/script", nothingScript), ("tests/a/expected", nothingExpected),
+                ("tests/b/script", nothingScript), ("tests/b/expected", nothingExpected)]
+              #[("tests/a/script", .oneFile "tests/a/missing.txt" "missing.txt")]
+        let threw (line : String) : Bool :=
+          line.startsWith "fixture-test: tests/a/script: its run threw: " &&
+            (line.splitOn "tests/a/missing.txt").length > 1
+        -- The error a stepped run's end throws when it gives up as a hang.
+        let hang := "a hang: the stepped host's end had not ended; giving up"
+        let hung ← caught (throw (IO.userError hang))
+        saw
+            (status == 1 && said.any threw &&
+              said.contains "fixture-test: tests/b/script: stepped, as expected" &&
+              said.contains "fixture-test: ran 1 fixtures stepped under tests, 0 left to the CLI" &&
+              hung == #[s!"its run threw: {hang}"])
+            s!"status={status} said={said} hung={hung}" },
+    { name := "compare fails a runner entry whose run throws, naming it and the error"
+      run :=
+        IO.FS.withTempDir fun repository => do
+          writeFixtures repository
+              [("tests/a/script", nothingScript), ("tests/a/expected", nothingExpected),
+                ("same", nothingExpected)]
+          let said ← IO.mkRef #[]
+          let harness ←
+            fixtureHarness context repository said
+                #[("tests/a/script", .oneFile "tests/a/missing.txt" "missing.txt")]
+                #[runnerEntry "tests/a/script"]
+          let status ←
+            compare harness (realTree repository.toString) "tests/a/script"
+                (repository / "same").toString
+          let said ← said.get
+          saw
+              (status == 1 &&
+                said.any fun line =>
+                  line.startsWith "fixture-test: tests/a/script: its run threw: " &&
+                    (line.splitOn "tests/a/missing.txt").length > 1)
+              s!"status={status} said={said}" },
+    { name :=
         "compare passes a runner entry whose CLI output is its stepped output and its expected file, fails one whose CLI output differs, saying the lines each side alone has, and fails one whose CLI output is its stepped output but not its expected file, naming the first line that differs"
       run :=
         IO.FS.withTempDir fun repository => do

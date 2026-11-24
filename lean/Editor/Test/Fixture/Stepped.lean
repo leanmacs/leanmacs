@@ -40,7 +40,9 @@ After a run: the fakes must be quiescent (`SteppedFakes.unquiet`), the
 library's editor queue as it was (`leavingLibraryQueue`), the output,
 scrubbed (`Setup.scrub`), the expected file line for line, and the setup's
 after-checks must hold. A failure says the first differing line, with its
-number and both texts, or which check failed.
+number and both texts, or which check failed. A run that throws, a hang
+given up at its guard among them, fails under the fixture's name with the
+error, and the harness goes on to the next fixture (`caught`).
 
 `runRoots` runs every fixture of the discovery roots it is handed, but
 those the real-thread set leaves to the CLI (`RealThread.entries`), and
@@ -265,12 +267,22 @@ def runFixture {scheme : InputScheme} (harness : Harness scheme) (fixture : Part
   let ran ← runStepped harness fixture setup (setup.substitute script)
   judged harness.repository setup expected ran
 
+/-- What `run`, a fixture's run, says is wrong, or, when it throws, its
+error as its one problem: so a fixture whose run throws, a hang given up at
+its guard among them, fails under its own name, and the run goes on. -/
+def caught (run : IO (Array String)) : IO (Array String) := do
+  try
+    run
+  catch error =>
+    return #[s!"its run threw: {error}"]
+
 /-- Runs every fixture of each discovery root in `roots` (the module docs):
 each stepped, its line `fixture-test: <script>: stepped, as expected`, or
 skipped, left to the CLI by its entry, its line saying its site and what it
 covers; then the root's count line. A failure says what is wrong, and the
-run goes on to the next fixture. Exit 0 when every fixture held, and 1
-otherwise, as for a root that held no fixture or a stale entry. -/
+run goes on to the next fixture, as it does when a fixture's run throws
+(`caught`). Exit 0 when every fixture held, and 1 otherwise, as for a root
+that held no fixture or a stale entry. -/
 def runRoots {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO)
     (roots : Array String) : IO UInt32 := do
   let mut failed := false
@@ -303,7 +315,7 @@ def runRoots {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO)
               s!"fixture-test: {fixture.script}: left to the CLI ({entry.site}): {entry.covers}"
           left := left + 1
           continue
-      let problems ← runFixture harness fixture
+      let problems ← caught (runFixture harness fixture)
       if problems.isEmpty then
         harness.say s!"fixture-test: {fixture.script}: stepped, as expected"
         stepped := stepped + 1
@@ -348,7 +360,7 @@ def printCompared {scheme : InputScheme} (harness : Harness scheme) (tree : Tree
 /-- Runs the runner entry `script` stepped and compares it with the CLI's
 output read from `file` (`compared`): its line
 `fixture-compare: <script>: the CLI over a real loop thread and the stepped run printed the same, and it is expected`,
-or what is wrong. -/
+or what is wrong, the error among it when the run throws (`caught`). -/
 def compare {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO)
     (script file : String) : IO UInt32 := do
   let script := underRepository harness.repository script
@@ -371,11 +383,13 @@ def compare {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO)
     harness.say s!"fixture-test: {script} has no expected file"
     return 1
   let setup := Setup.of script harness.setups
-  let text ← IO.FS.readFile (joinPath harness.repository script)
-  let ran ← runStepped harness fixture setup (setup.substitute text)
-  let cli := textLines (← IO.FS.readFile file)
-  let expected := textLines (← IO.FS.readFile (joinPath harness.repository expectedPath))
-  let problems := ran.problems ++ compared cli ran.output expected
+  let problems ←
+    caught do
+        let text ← IO.FS.readFile (joinPath harness.repository script)
+        let ran ← runStepped harness fixture setup (setup.substitute text)
+        let cli := textLines (← IO.FS.readFile file)
+        let expected := textLines (← IO.FS.readFile (joinPath harness.repository expectedPath))
+        return ran.problems ++ compared cli ran.output expected
   if problems.isEmpty then
     harness.say
         s!"fixture-compare: {script}: the CLI over a real loop thread and the stepped run printed the same, and it is expected"
