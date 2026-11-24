@@ -125,14 +125,19 @@
 #
 #   stress-trigger     `workflow_dispatch` alone, so a push never runs it,
 #                      with the one input `rounds`
-#   stress-runner      every job runs on ubuntu-24.04, the gate's Linux leg
-#   stress-matrix      the `stress` job's matrix is exactly shard: [1, 2, 3,
-#                      4, 5], with fail-fast off
+#   stress-runner      the `stress` job runs on `${{ matrix.os }}`, its
+#                      matrix's os exactly ci.yml's legs, and every other
+#                      job on a leg of ci.yml's matrix
+#   stress-matrix      the `stress` job's matrix is exactly os × shard: [1,
+#                      2, 3, 4, 5], with fail-fast off
 #   stress-steps       the `stress` job runs `mise run ci` in exactly one
 #                      step, with no if:, and after it exactly one step
-#                      that runs tools/stress.sh over config, contract,
-#                      rust and open-file
-#   stress-summary     a `summary` job that needs exactly `stress`
+#                      that runs tools/stress.sh on its rounds alone,
+#                      naming no suite, so the loop runs the script's
+#                      default, the wiring set
+#   stress-summary     a `summary` job that needs exactly `stress` and adds
+#                      up the counts for each of ci.yml's legs (its env
+#                      LEGS)
 #
 # The other files, ci.yml for build.yml's and release.yml's rules among
 # them, are read from
@@ -749,25 +754,39 @@ stress_rules() {
   fi
 
   # ---- stress-runner
-  bad=$(q '[.jobs | to_entries[] | select(.value["runs-on"] != "ubuntu-24.04") | .key] | join(" ")')
-  if [ -n "$bad" ]; then
-    fail stress-runner "jobs not on ubuntu-24.04: $bad"
+  # The shards on each of the gate's legs, ci.yml's, and the summary on one.
+  legs=$(yq -o=json -I=0 '.jobs.ci.strategy.matrix.os' "$ci_wf")
+  if [ "$(q '.jobs.stress["runs-on"]')" != "\${{ matrix.os }}" ]; then
+    fail stress-runner 'jobs.stress.runs-on must be ${{ matrix.os }}'
   fi
+  if [ "$(q '.jobs.stress.strategy.matrix.os')" != "$legs" ]; then
+    fail stress-runner "jobs.stress.strategy.matrix.os must be exactly ci.yml's legs, $legs"
+  fi
+  for job in $(q '.jobs | keys | .[]'); do
+    [ "$job" != stress ] || continue
+    on=$(J=$job q '.jobs[strenv(J)]["runs-on"]')
+    if [ "$(R=$on yq '.jobs.ci.strategy.matrix.os | contains([strenv(R)])' "$ci_wf")" != true ]; then
+      fail stress-runner "jobs.$job.runs-on $on is not a leg of ci.yml's matrix"
+    fi
+  done
 
   # ---- stress-matrix
-  if [ "$(q '.jobs.stress.strategy.matrix')" != '{"shard":[1,2,3,4,5]}' ]; then
-    fail stress-matrix 'jobs.stress.strategy.matrix must be exactly shard: [1, 2, 3, 4, 5]'
+  if [ "$(q '.jobs.stress.strategy.matrix | keys')" != '["os","shard"]' ] ||
+    [ "$(q '.jobs.stress.strategy.matrix.shard')" != '[1,2,3,4,5]' ]; then
+    fail stress-matrix 'jobs.stress.strategy.matrix must be exactly os and shard: [1, 2, 3, 4, 5]'
   fi
   if [ "$(q '.jobs.stress.strategy["fail-fast"]')" != false ]; then
     fail stress-matrix 'jobs.stress.strategy["fail-fast"] must be false'
   fi
 
   # ---- stress-steps
+  # The loop on its rounds alone, a fifth of them a shard: what follows the
+  # rounds is the pipe to tee or the end of the line, never a suite.
   gate_at=$(q '[.jobs.stress.steps | to_entries[] | select(.value.run == "mise run ci") | .key] | join(" ")')
-  loop_at=$(q '[.jobs.stress.steps | to_entries[] | select(.value.run // "" | test("sh tools/stress.sh .* config contract rust open-file")) | .key] | join(" ")')
+  loop_at=$(q '[.jobs.stress.steps | to_entries[] | select(.value.run // "" | test("sh tools/stress.sh ")) | .key] | join(" ")')
   case "$gate_at $loop_at" in
   ' '* | *' ' | *' '*' '*)
-    fail stress-steps 'jobs.stress must have exactly one `mise run ci` step and exactly one tools/stress.sh step over config contract rust open-file'
+    fail stress-steps 'jobs.stress must have exactly one `mise run ci` step and exactly one tools/stress.sh step'
     ;;
   *)
     if [ "$loop_at" -le "$gate_at" ]; then
@@ -776,12 +795,18 @@ stress_rules() {
     if [ "$(q '[.jobs.stress.steps[]? | select(.run == "mise run ci" and has("if"))] | length')" != 0 ]; then
       fail stress-steps 'the `mise run ci` step must have no if:'
     fi
+    if [ "$(q '[.jobs.stress.steps[]? | select(.run // "" | test("(?m)sh tools/stress.sh \\$\\(\\(ROUNDS / 5\\)\\) *(\\||$)"))] | length')" != 1 ]; then
+      fail stress-steps 'the tools/stress.sh step must name its rounds alone and no suite, so the loop runs the wiring set'
+    fi
     ;;
   esac
 
   # ---- stress-summary
   if [ "$(q '[.jobs.summary.needs] | flatten')" != '["stress"]' ]; then
     fail stress-summary 'jobs.summary.needs must be exactly stress'
+  fi
+  if [ "$(q '.jobs.summary.env.LEGS')" != "$(yq '.jobs.ci.strategy.matrix.os | join(" ")' "$ci_wf")" ]; then
+    fail stress-summary "jobs.summary.env.LEGS must be ci.yml's legs, $(yq '.jobs.ci.strategy.matrix.os | join(" ")' "$ci_wf")"
   fi
 }
 

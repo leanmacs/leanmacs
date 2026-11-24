@@ -250,15 +250,19 @@ mutate_release pages-job 'the deploy without its id' "del(($deploy).id)"
 mutate_release pages-concurrency 'the deploy cancelled in progress' '.jobs.pages.concurrency["cancel-in-progress"] = true'
 mutate_release pages-concurrency 'the pages group renamed' '.jobs.pages.concurrency.group = "deploy"'
 
-# stress.yml: on dispatch only, on the gate's Linux leg, five shards, the
-# gate before the loop, and the summary after the shards.
+# stress.yml: on dispatch only, on both of the gate's legs, five shards
+# each, the gate before the loop, a loop that names no suite, and the
+# summary after the shards, over both legs.
 mutate_in stress.yml stress-trigger 'stress.yml also run on push' '.on.push = {}'
 mutate_in stress.yml stress-trigger 'no rounds input' 'del(.on.workflow_dispatch.inputs)'
-mutate_in stress.yml stress-runner 'the summary on macos-26' '.jobs.summary["runs-on"] = "macos-26"'
+mutate_in stress.yml stress-runner 'the macOS leg dropped' '.jobs.stress.strategy.matrix.os = ["ubuntu-24.04"]'
+mutate_in stress.yml stress-runner 'the shards on one runner' '.jobs.stress["runs-on"] = "ubuntu-24.04"'
+mutate_in stress.yml stress-runner 'the summary off the legs' '.jobs.summary["runs-on"] = "macos-15"'
 mutate_in stress.yml stress-matrix 'four shards' '.jobs.stress.strategy.matrix.shard = [1, 2, 3, 4]'
 mutate_in stress.yml stress-steps 'the loop before the gate' '(.jobs.stress.steps[] | select(.name == "Gate")) as $g | del(.jobs.stress.steps[] | select(.name == "Gate")) | .jobs.stress.steps += [$g]'
-mutate_in stress.yml stress-steps 'the loop without open-file' '(.jobs.stress.steps[] | select(.name == "Stress") | .run) |= sub(" open-file"; "")'
+mutate_in stress.yml stress-steps 'the loop naming a suite' '(.jobs.stress.steps[] | select(.name == "Stress") | .run) |= sub("\\) \\| tee"; ")) config-wiring | tee")'
 mutate_in stress.yml stress-summary 'a summary that does not wait for the shards' 'del(.jobs.summary.needs)'
+mutate_in stress.yml stress-summary 'a summary over one leg' '.jobs.summary.env.LEGS = "ubuntu-24.04"'
 mutate_in stress.yml sha-pin 'upload-artifact pinned by a tag' '(.jobs.stress.steps[] | select(.uses // "" | test("^actions/upload-artifact@")) | .uses) = "actions/upload-artifact@v7.0.2"'
 
 # The unbroken copies, rewritten by the same yq as the mutations.

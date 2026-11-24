@@ -1,11 +1,14 @@
 name: Stress
 
 # The stress loop (tools/stress.sh; docs/dev-practices/on-demand-checks.md,
-# "The stress loop, on demand") on the ubuntu leg of the gate: config-test,
-# contract-test, the Rust tests and the open-file fixture, `rounds` rounds
-# (50 by default) under 2 x nproc CPU hogs, in five shards of a fifth each. On dispatch only: a push never runs it. A failure is a
-# bug, fixed and then dispatched again from round 1, never re-run shard by
-# shard to collect passes.
+# "The stress loop, on demand") on both legs of the gate, ci.yml's: the
+# wiring set, the script's default suites (config-wiring, ffi-wiring,
+# contract, linked-wiring, cli-wiring and bundle-wiring, with each round's
+# coverage), `rounds` rounds (50 by default) on each leg under 2 x cores CPU
+# hogs, in five shards of a fifth each. The loop names no suite, so it runs
+# what the script reads from code. On dispatch only: a push never runs it.
+# A failure is a bug, fixed and then dispatched again from round 1, never
+# re-run shard by shard to collect passes.
 on:
   workflow_dispatch:
     inputs:
@@ -19,15 +22,17 @@ permissions:
   contents: read
 
 jobs:
-  # Five shards of the loop, each its own runner, so one job stays well
-  # inside GitHub's six hours. Each builds and gates with `mise run ci`,
-  # exactly as ci.yml's ubuntu leg, then runs its rounds.
+  # Five shards of the loop on each of ci.yml's legs, each its own runner,
+  # so one job stays well inside GitHub's six hours. Each builds and gates
+  # with `mise run ci`, exactly as ci.yml's leg of its OS, then runs its
+  # rounds.
   stress:
     strategy:
       fail-fast: false
       matrix:
+        os: [macos-26, ubuntu-24.04]
         shard: [1, 2, 3, 4, 5]
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 350
     env:
       MISE_AUTO_INSTALL: "false"
@@ -72,17 +77,19 @@ jobs:
           case "$ROUNDS" in '' | *[!0-9]*) echo "stress: rounds must be a number: $ROUNDS"; exit 2 ;; esac
           [ $((ROUNDS % 5)) -eq 0 ] && [ "$ROUNDS" -gt 0 ] || { echo "stress: rounds must be a positive multiple of 5: $ROUNDS"; exit 2; }
           mkdir -p stress-out
-          STRESS_OUT="$PWD/stress-out/logs" sh tools/stress.sh $((ROUNDS / 5)) config contract rust open-file | tee stress-out/summary.txt
+          STRESS_OUT="$PWD/stress-out/logs" sh tools/stress.sh $((ROUNDS / 5)) | tee stress-out/summary.txt
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: stress-${{ matrix.shard }}
+          name: stress-${{ matrix.os }}-${{ matrix.shard }}
           path: stress-out
           if-no-files-found: error
 
-  # The shards' counts added up. It must print the pass line, each suite's
-  # 50/50 for the default 50 rounds, and exits 1 on any other count, a
-  # shard with no summary among them.
+  # The shards' counts added up, for each leg (LEGS, ci.yml's) and each
+  # suite the shards' summaries count, `coverage` among them. It prints
+  # `<leg> <suite>: <passed>/<rounds>`, and exits 1 on any count short of
+  # the rounds, a leg with no five summaries, a suite a shard did not
+  # count, or any `a hang:` line in a shard's logs.
   summary:
     needs: stress
     if: ${{ !cancelled() }}
@@ -90,6 +97,7 @@ jobs:
     env:
       MISE_AUTO_INSTALL: "false"
       ROUNDS: ${{ inputs.rounds }}
+      LEGS: macos-26 ubuntu-24.04
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -99,20 +107,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "stress: ubuntu-24.04, 5 shards x $((ROUNDS / 5)) rounds, 2 x nproc hogs"
           status=0
-          for suite in config contract rust open-file; do
-            passed=0
-            total=0
-            for f in shards/stress-*/summary.txt; do
-              line=$(grep "^$suite: [0-9]*/[0-9]*$" "$f" || true)
-              [ -n "$line" ] || continue
-              p=${line#*: }
-              passed=$((passed + ${p%/*}))
-              total=$((total + ${p#*/}))
+          for leg in $LEGS; do
+            echo "stress: $leg, 5 shards x $((ROUNDS / 5)) rounds, 2 x cores hogs"
+            summaries=$(ls shards/stress-"$leg"-*/summary.txt 2>/dev/null || true)
+            if [ "$(printf '%s\n' "$summaries" | grep -c .)" -ne 5 ]; then
+              echo "stress: $leg has $(printf '%s\n' "$summaries" | grep -c .) shard summaries, not 5"
+              status=1
+              continue
+            fi
+            # The suites the shards counted, coverage among them.
+            suites=$(cat $summaries | sed -n 's/^\([a-z-]*\): [0-9]*\/[0-9]*$/\1/p' | sort -u)
+            printf '%s\n' "$suites" | grep -qx coverage || { echo "stress: $leg: no shard counted coverage"; status=1; }
+            for suite in $suites; do
+              passed=0
+              total=0
+              for f in $summaries; do
+                line=$(grep "^$suite: [0-9]*/[0-9]*$" "$f" || true)
+                [ -n "$line" ] || { echo "stress: $leg: $f does not count $suite"; status=1; continue; }
+                p=${line#*: }
+                passed=$((passed + ${p%/*}))
+                total=$((total + ${p#*/}))
+              done
+              echo "$leg $suite: $passed/$ROUNDS"
+              [ "$passed" -eq "$ROUNDS" ] && [ "$total" -eq "$ROUNDS" ] || status=1
             done
-            echo "$suite: $passed/$ROUNDS"
-            [ "$passed" -eq "$ROUNDS" ] && [ "$total" -eq "$ROUNDS" ] || status=1
+            if grep -rl 'a hang:' shards/stress-"$leg"-*/logs 2>/dev/null; then
+              echo "stress: $leg: a hang line in the logs above"
+              status=1
+            fi
+            grep -h '^failed: \|^  ' $summaries || true
           done
-          grep -h '^failed: \|^  ' shards/stress-*/summary.txt || true
           exit "$status"
