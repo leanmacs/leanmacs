@@ -15,6 +15,14 @@ structure Check where
   /-- Observes the behaviour; `true` when it holds. -/
   run : IO Bool
 
+/-- How a check ends that says what it saw when it fails: `true` when `holds`,
+and otherwise it throws `observed`, which `failures` reports after the
+check's name, as `(saw <observed>)`. -/
+def saw (holds : Bool) (observed : String) : IO Bool := do
+  unless holds do
+    throw (IO.userError s!"saw {observed}")
+  return true
+
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
 def failures (checks : List Check) : IO (List String) :=

@@ -28,14 +28,14 @@ fixture of the same name, standing in for fzf. Each test module mirrors the
 module it tests; they were the contract test's (`ContractTest.<name>`)
 while the workspaces were modules of the core:
 
-- `workspaceFailures` (`WorkspaceTest/Linked/Workspace/Contract.lean`): the
+- `workspaceFinderContractChecks` (`WorkspaceTest/Linked/Workspace/Contract.lean`): the
   workspace finder's contract (`Workspace.FinderContract`) over the process
   and file services, each world written out: the main checkout and a
   worktree as one project, with and without an origin, and a marker-only
   directory among them;
-- `modeMarkerFailures` (the same module): the mode marker search's contract
+- `modeMarkerContractChecks` (the same module): the mode marker search's contract
   (`Workspace.MarkerContract`) over the file service (each property of the
-  two contracts is one of the `N` checks the line counts);
+  two contracts is one check of the `N` the line counts);
 - `workspaceListerChecks` (`WorkspaceTest/Linked/Workspace/Lister.lean`):
   git's lister lists a repository's tracked and untracked files and none
   that `.gitignore`, `info/exclude` or the global excludes file ignore, and
@@ -53,6 +53,17 @@ elaborator on the config base `Editor`, which this root imports for the
 link alone, as every root that links the elaborator does: the elaborator
 imports the base's modules from their `.olean` files at runtime, and each
 must already be linked into the executable.
+
+Its checks are a check set (`WorkspaceTest.Linked.checks`, `Editor.CheckGroup`,
+`docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
+the lists of its modules of the wiring set in groups of their module, which
+the build's `linter.wiringSet` holds true and complete. A run prints, after
+its count, `wiring-set: ran workspace <module> <n> checks` for each module of
+the wiring set it ran, which the gate's once-check reads
+(`tools/wiring-ledger.sh`). With `--wiring` after the two directories it
+runs those groups alone, the stress loop's `linked-wiring` suite
+(`tools/package-set.sh run --wiring`), and `wiring-modules` prints their
+modules, one a line, building nothing.
 -/
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
@@ -70,30 +81,62 @@ in for fzf. -/
 def completionFixtures : System.FilePath :=
   "tests" / "completion"
 
+/-- What every check is handed: the job services `main` starts, and the
+fixtures' directories of the finder's checks and of the listers'. -/
+abbrev WorkspaceTest.Linked.Context :=
+  Editor.Job.Services × System.FilePath × System.FilePath
+
+/-- Every check of the linked test, in the order they run: its check set
+(`Editor.CheckGroup`), the two contracts' properties, a check each, then
+the listers', each list in a group of its module of the wiring set. -/
+def WorkspaceTest.Linked.checks :
+    List (Editor.CheckGroup WorkspaceTest.Linked.Context WorkspaceTest.Check) :=
+  [.wired "WorkspaceTest.Linked.Workspace.Contract"
+      wiringSet.WorkspaceTest.Linked.Workspace.Contract fun (services, workspaces, _) =>
+      WorkspaceTest.Linked.workspaceFinderContractChecks services workspaces ++
+        WorkspaceTest.Linked.modeMarkerContractChecks services,
+    .wired "WorkspaceTest.Linked.Workspace.Lister" wiringSet.WorkspaceTest.Linked.Workspace.Lister
+      fun (services, _, completion) =>
+      WorkspaceTest.Linked.workspaceListerChecks services completion]
+
+/-- Runs the checks `select` takes from the check set over the real
+services, started here, and says which failed, or how many passed, as
+`what`; then a line for each module of the wiring set the run ran
+(`Editor.CheckGroup.ranLines`). -/
+private def WorkspaceTest.Linked.runSelected
+    (select : WorkspaceTest.Linked.Context → List WorkspaceTest.Check)
+    (wiring : List (String × (WorkspaceTest.Linked.Context → List WorkspaceTest.Check)))
+    (what : String) : IO UInt32 := do
+  let workspaces ← IO.FS.realPath workspaceFixtures
+  let completion ← IO.FS.realPath completionFixtures
+  let running ← Editor.Test.Linked.Services.start
+  let context := (running.jobs, workspaces, completion)
+  let checks := select context
+  let failed ← WorkspaceTest.failures checks
+  for name in failed do
+    IO.eprintln s!"FAILED: {name}"
+  if failed.isEmpty then
+    IO.println s!"workspace linked test: {checks.length} {what} passed"
+  for line in Editor.CheckGroup.ranLines "workspace" wiring context do
+    IO.println line
+  (← IO.getStdout).flush
+  Editor.Test.Linked.shutdown
+  IO.Process.exit (if failed.isEmpty then 0 else 1)
+
 /-- Runs the checks (the module docs). -/
 def main (arguments : List String) : IO UInt32 := do
+  let wiring := Editor.CheckGroup.wiring WorkspaceTest.Linked.checks
   match arguments with
   | [_, _] =>
-    let workspaces ← IO.FS.realPath workspaceFixtures
-    let completion ← IO.FS.realPath completionFixtures
-    let running ← Editor.Test.Linked.Services.start
-    let services := running.jobs
-    let checks := WorkspaceTest.Linked.workspaceListerChecks services completion
-    let failed :=
-      (← WorkspaceTest.Linked.workspaceFailures services workspaces) ++
-        (← WorkspaceTest.Linked.modeMarkerFailures services) ++
-        (← WorkspaceTest.failures checks)
-    for name in failed do
-      IO.eprintln s!"FAILED: {name}"
-    -- Each property of the two contracts is a check of this test too.
-    let count :=
-      checks.length + (Editor.Workspace.FinderContract.properties "/").length +
-        (Editor.Workspace.MarkerContract.properties "/").length
-    if failed.isEmpty then
-      IO.println s!"workspace linked test: {count} checks passed"
-    (← IO.getStdout).flush
-    Editor.Test.Linked.shutdown
-    IO.Process.exit (if failed.isEmpty then 0 else 1)
+    WorkspaceTest.Linked.runSelected (Editor.CheckGroup.all WorkspaceTest.Linked.checks) wiring
+        "checks"
+  | [_, _, "--wiring"] =>
+    WorkspaceTest.Linked.runSelected (fun context => wiring.flatMap (·.2 context)) wiring
+        "wiring-set checks"
+  | ["wiring-modules"] =>
+    for module in Editor.CheckGroup.modules WorkspaceTest.Linked.checks do
+      IO.println module
+    return 0
   | ["bench-workspace-files", sysroot, oleanDir, repository, samples] =>
     match samples.toNat? with
     | some samples =>
@@ -110,5 +153,5 @@ def main (arguments : List String) : IO UInt32 := do
       return 2
   | _ =>
     IO.eprintln
-        "usage: WorkspaceTest-Linked <sysroot> <core olean dir>, or WorkspaceTest-Linked bench-workspace-files <sysroot> <core olean dir> <repository> <samples>"
+        "usage: WorkspaceTest-Linked <sysroot> <core olean dir> [--wiring], WorkspaceTest-Linked wiring-modules, or WorkspaceTest-Linked bench-workspace-files <sysroot> <core olean dir> <repository> <samples>"
     return 2
