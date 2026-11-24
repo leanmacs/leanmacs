@@ -1,4 +1,5 @@
 import EchoTest.Linked.Echo.Real
+import Editor.RealHost
 import Editor.Test.Linked.Services
 
 /-!
@@ -17,6 +18,10 @@ It starts the linked test kit's services and pump, runs the contract of the
 echo port against the Rust-backed binding over them
 (`EchoTest.Linked.echoRealChecks`), and says so.
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.EchoTest.Linked : Editor.WiringSet :=
+  .edge "its main starts the library's services and pump and hands them to the echo contract"
 
 /-- Runs the checks and exits 0 when all hold, 1 when one does not, and 2
 for a command line that is not the two directories. The exit is explicit,

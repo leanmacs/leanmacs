@@ -1,5 +1,6 @@
 import Echo.Contract
 import Echo.Real
+import Editor.RealHost
 import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Services
 
@@ -13,7 +14,14 @@ runs. Each id a property uses is a wait registered in that table, and a
 request has completed when its wait has ended: the pump ends it only for a
 completion on the completion queue whose code is the id, which only the
 crate's service posts for it.
+
+It runs the echo port's contract against its Rust-backed binding, outside
+the rule of the wiring set (`docs/dev-practices/real-thread-checks.md`).
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.EchoTest.Linked.Echo.Real : Editor.WiringSet :=
+  .contract "Echo.Contract on the Rust-backed binding"
 
 namespace EchoTest.Linked
 
