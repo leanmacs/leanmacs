@@ -1129,7 +1129,9 @@ contract checks as they are), and are the opt-in `rust`. Run it after
 would build a changed tree inside the loop. Before the hogs start, a
 prepare stage stages, once, what the chosen suites build before their
 runs (`tools/wiring-runs.sh prepare`, the greeting entry's install;
-`tools/bundle-test.sh stage`), and writes `<out>/prepared/expected`, the
+`tools/bundle-test.sh stage`, together about 4 GB) into a temporary
+directory of its own, never under `$STRESS_OUT`, which the trap removes
+when the loop ends, however it ends; and it writes `<out>/expected`, the
 items of the wiring set each chosen suite must run, from the same
 listings the gate's once-check reads (`tools/wiring-ledger.sh list`). A
 listing that fails ends the loop there, with status 2, before a hog or a
@@ -1182,13 +1184,19 @@ as not run, while the same suite saying the item once gives
 (`STRESS_PROBE_EXPECTED` names no file) must end the loop in its prepare
 stage with status 2, naming the listing, its suite never run; against a
 prepare stage that piped each listing into its keys, the loop ran the
-round and passed its coverage over no item.
+round and passed its coverage over no item. And the INT, TERM and limit
+cases, and one that ends as a loop does with a suite that reads what was
+staged, each stage a stand-in tree (`STRESS_PROBE_STAGE`) and fail unless
+it is gone once the loop has exited and was never under `$STRESS_OUT`;
+against a loop that staged under its logs and never removed them, each
+failed.
 
 `.github/workflows/stress.yml` runs the same loop on both of the gate's
 legs, macOS and ubuntu, five shards each, and names no suite, so it runs
 the script's default; its summary adds the counts up per leg and suite,
 `coverage` among them, and fails on any count short of the rounds or any
-hang line. `tools/workflow-check.sh` holds it to that, and
+hang line. Each shard uploads its summary and its logs alone, never what
+the loop staged. `tools/workflow-check.sh` holds it to that, and
 `tools/workflow-lint-probe.sh` shows each rule biting. It runs on dispatch
 alone.
 

@@ -138,6 +138,11 @@
 #   stress-summary     a `summary` job that needs exactly `stress` and adds
 #                      up the counts for each of ci.yml's legs (its env
 #                      LEGS)
+#   stress-upload      the `stress` job uploads, in exactly one
+#                      actions/upload-artifact, the shard's summary and its
+#                      logs alone (paths stress-out/summary.txt and
+#                      stress-out/logs, the loop's STRESS_OUT), so nothing
+#                      the loop stages is uploaded
 #
 # The other files, ci.yml for build.yml's and release.yml's rules among
 # them, are read from
@@ -807,6 +812,19 @@ stress_rules() {
   fi
   if [ "$(q '.jobs.summary.env.LEGS')" != "$(yq '.jobs.ci.strategy.matrix.os | join(" ")' "$ci_wf")" ]; then
     fail stress-summary "jobs.summary.env.LEGS must be ci.yml's legs, $(yq '.jobs.ci.strategy.matrix.os | join(" ")' "$ci_wf")"
+  fi
+
+  # ---- stress-upload
+  # The logs, the loop's STRESS_OUT, and the summary the loop's output is
+  # teed into: the loop stages outside STRESS_OUT and removes it
+  # (tools/stress-probe.sh), so these hold nothing staged.
+  if [ "$(q '[.jobs.stress.steps[]? | select(.uses // "" | test("^actions/upload-artifact@"))] | length')" != 1 ]; then
+    fail stress-upload 'jobs.stress must have exactly one actions/upload-artifact step'
+  elif [ "$(q '[.jobs.stress.steps[]? | select(.uses // "" | test("^actions/upload-artifact@")) | .with.path | split("\n") | .[] | select(. != "")]')" != '["stress-out/summary.txt","stress-out/logs"]' ]; then
+    fail stress-upload "the actions/upload-artifact step's path must be exactly stress-out/summary.txt and stress-out/logs, the shard's summary and logs"
+  fi
+  if [ "$(q '[.jobs.stress.steps[]? | select(.run // "" | test("(?m)^STRESS_OUT=\"\$PWD/stress-out/logs\" sh tools/stress.sh .*\| tee stress-out/summary.txt$"))] | length')" != 1 ]; then
+    fail stress-upload 'the tools/stress.sh step must log to STRESS_OUT="$PWD/stress-out/logs" and tee its output to stress-out/summary.txt'
   fi
 }
 

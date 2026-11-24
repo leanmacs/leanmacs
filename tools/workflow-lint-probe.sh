@@ -263,6 +263,8 @@ mutate_in stress.yml stress-steps 'the loop before the gate' '(.jobs.stress.step
 mutate_in stress.yml stress-steps 'the loop naming a suite' '(.jobs.stress.steps[] | select(.name == "Stress") | .run) |= sub("\\) \\| tee"; ")) config-wiring | tee")'
 mutate_in stress.yml stress-summary 'a summary that does not wait for the shards' 'del(.jobs.summary.needs)'
 mutate_in stress.yml stress-summary 'a summary over one leg' '.jobs.summary.env.LEGS = "ubuntu-24.04"'
+mutate_in stress.yml stress-upload 'the upload of all of stress-out' '(.jobs.stress.steps[] | select(.uses // "" | test("^actions/upload-artifact@")) | .with.path) = "stress-out"'
+mutate_in stress.yml stress-upload 'the loop logging elsewhere' '(.jobs.stress.steps[] | select(.name == "Stress") | .run) |= sub("stress-out/logs"; "stress-out")'
 mutate_in stress.yml sha-pin 'upload-artifact pinned by a tag' '(.jobs.stress.steps[] | select(.uses // "" | test("^actions/upload-artifact@")) | .uses) = "actions/upload-artifact@v7.0.2"'
 
 # The unbroken copies, rewritten by the same yq as the mutations.

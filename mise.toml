@@ -1429,8 +1429,9 @@ run = "tools/user-link-check.sh lean"
 # loop then leaves neither the suite's run nor its guard running; that a
 # run past the limit is killed with its group and fails as a hang; that a
 # run with a hang line fails though it exits 0; that a round which
-# misses an item of the wiring set fails its coverage; and that a listing
-# that fails ends the loop before its first round.
+# misses an item of the wiring set fails its coverage; that a listing
+# that fails ends the loop before its first round; and that what the loop
+# stages is gone when it ends, and never under its logs.
 [tasks.stress]
 description = "Opt-in, never part of ci: run the wiring set over and over under a CPU load of twice the cores, check each round ran every item of it once, and print each suite's passes and coverage's (tools/stress.sh), after the probe that an interrupted loop leaves nothing running, that a run past its limit or with a hang line fails, that a round missing an item fails its coverage, and that a failed listing ends the loop before its first round (tools/stress-probe.sh). Run after `mise run ci`"
 run = [

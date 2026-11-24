@@ -78,11 +78,17 @@ jobs:
           [ $((ROUNDS % 5)) -eq 0 ] && [ "$ROUNDS" -gt 0 ] || { echo "stress: rounds must be a positive multiple of 5: $ROUNDS"; exit 2; }
           mkdir -p stress-out
           STRESS_OUT="$PWD/stress-out/logs" sh tools/stress.sh $((ROUNDS / 5)) | tee stress-out/summary.txt
+      # The shard's logs and its summary, and nothing else: what the loop
+      # stages (the bundle and the greeting's install, about 4 GB) is in a
+      # temporary directory of its own, never under STRESS_OUT, and gone
+      # when the loop ends (tools/stress-probe.sh).
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: stress-${{ matrix.os }}-${{ matrix.shard }}
-          path: stress-out
+          path: |
+            stress-out/summary.txt
+            stress-out/logs
           if-no-files-found: error
 
   # The shards' counts added up, for each leg (LEGS, ci.yml's) and each

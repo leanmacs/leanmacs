@@ -26,6 +26,12 @@
 # running; against one that killed nothing, on every count, once its hang
 # guard had run out.
 #
+# Each of those cases, and one that ends as a loop does, stages a stand-in
+# tree (STRESS_PROBE_STAGE) and fails unless that tree is gone once the
+# loop has exited, and was never under STRESS_OUT, the logs stress.yml
+# uploads (left_staged). Run against a loop that staged under STRESS_OUT
+# and never removed it, each of them failed.
+#
 # The loop sends TERM to each group before it exits, so a process of it
 # never runs again and never reads the release. Nothing here waits for a
 # time but the release's hang guard. It needs no build, leaves nothing
@@ -41,6 +47,29 @@ failed=
 fail() {
   printf 'stress-probe: FAIL: %s\n' "$1" >&2
   failed=1
+}
+
+# What the prepare stage stages: a stand-in for the bundle and the
+# greeting's install, a tree under STRESS_PREPARED (STRESS_PROBE_STAGE,
+# which the loop runs in its prepare stage when `probe` is chosen). Each
+# case that stages runs the loop with TMPDIR its own `tmp`, where the loop
+# makes its staging directory.
+stage='mkdir "$STRESS_PREPARED/bundle" && echo "a staged stand-in" >"$STRESS_PREPARED/bundle/staged"'
+
+# Fails unless, once the loop of the case in the directory $1 has exited,
+# nothing it staged is left in its TMPDIR, and its STRESS_OUT, the logs
+# stress.yml uploads beside the summary, holds no staged tree: no
+# directory at all and no staged file. $2 names the case.
+left_staged() {
+  if [ -n "$(ls -A "$1/tmp")" ]; then
+    fail "$2 left what it staged in its TMPDIR:"
+    find "$1/tmp" -mindepth 1 | sed 's/^/  /' >&2
+  fi
+  if [ -n "$(find "$1/out" -mindepth 1 -type d)" ] ||
+    grep -rqx 'a staged stand-in' "$1/out"; then
+    fail "$2 staged into its STRESS_OUT, the upload set:"
+    find "$1/out" -mindepth 1 | sed 's/^/  /' >&2
+  fi
 }
 
 # The guard's sleep: it says it has started, on the fifo STRESS_PROBE_GUARD,
@@ -69,7 +98,7 @@ wait'
 for signal in INT TERM; do
   case $signal in INT) expected=130 ;; TERM) expected=143 ;; esac
   dir="$work/$signal"
-  mkdir "$dir"
+  mkdir "$dir" "$dir/tmp"
   mkfifo "$dir/guard"
   # The release is the pipe out of the holder, which says its pid on it and
   # then sleeps; the loop runs with it as fd 3 and the pipe into `cat` as
@@ -87,7 +116,8 @@ for signal in INT TERM; do
       exec 3<&0 </dev/null 4>&1 >"$dir/output" 2>&1
       status=0
       STRESS_PROBE=$suite STRESS_PROBE_SIGNAL=$signal STRESS_PROBE_LOOP=$dir/loop \
-        STRESS_PROBE_GUARD=$dir/guard STRESS_HOGS=1 STRESS_OUT=$dir/out PATH="$work/bin:$PATH" \
+        STRESS_PROBE_GUARD=$dir/guard STRESS_PROBE_STAGE=$stage TMPDIR=$dir/tmp \
+        STRESS_HOGS=1 STRESS_OUT=$dir/out PATH="$work/bin:$PATH" \
         sh -c 'echo "$$" >"$1" && shift && exec sh "$@"' loop "$dir/loop" \
         "$root/tools/stress.sh" 1 probe || status=$?
       echo "$status" >"$dir/status"
@@ -103,6 +133,7 @@ for signal in INT TERM; do
     fail "the loop sent $signal left processes running:"
     sed 's/^/  /' "$dir/said" >&2
   fi
+  left_staged "$dir" "the loop sent $signal"
 done
 
 # The limit: `STRESS_LIMIT=1 tools/stress.sh 1 probe` on a suite that hangs,
@@ -125,7 +156,7 @@ read -r _ <&3 || true
 echo "the hung run outlived the loop" >&4
 wait'
 dir="$work/limit"
-mkdir "$dir"
+mkdir "$dir" "$dir/tmp"
 mkfifo "$dir/guard"
 # hang guard: the holder's sleep, as above. Only a guard that does not kill
 # the run's group reaches it: the run is then released and passes.
@@ -135,7 +166,7 @@ mkfifo "$dir/guard"
     exec 3<&0 </dev/null 4>&1 >"$dir/output" 2>&1
     status=0
     STRESS_PROBE=$hung STRESS_PROBE_GUARD=$dir/guard STRESS_LIMIT=1 STRESS_HOGS=1 \
-      STRESS_OUT=$dir/out PATH="$work/limit-bin:$PATH" \
+      STRESS_PROBE_STAGE=$stage TMPDIR=$dir/tmp STRESS_OUT=$dir/out PATH="$work/limit-bin:$PATH" \
       sh "$root/tools/stress.sh" 1 probe || status=$?
     echo "$status" >"$dir/status"
     kill "$holder" 2>/dev/null || true
@@ -158,6 +189,7 @@ if [ -s "$dir/said" ]; then
   fail "the loop whose run hung past its limit left processes running:"
   sed 's/^/  /' "$dir/said" >&2
 fi
+left_staged "$dir" "the run past its limit"
 
 # A hang line fails a run that exits 0: a probe suite that says `a hang:`
 # and exits 0 must give `probe: 0/1`, its hang line listed, and the loop
@@ -201,6 +233,23 @@ if [ "$status" -ne 0 ] || ! grep -qx 'coverage: 1/1' "$dir/output"; then
   sed 's/^/  /' "$dir/output" >&2
 fi
 
+# What the prepare stage stages is the loop's while it runs, and gone once
+# it ends: a suite that reads the stand-in staged tree, and says so in its
+# log, must pass, and leave nothing staged behind (left_staged). Run against
+# a loop that staged under STRESS_OUT and never removed it, it failed on
+# both counts, as the INT, TERM and limit cases did.
+dir="$work/staged"
+mkdir "$dir" "$dir/tmp"
+status=0
+STRESS_PROBE='echo "read: $(cat "$STRESS_PREPARED/bundle/staged")"' STRESS_PROBE_STAGE=$stage \
+  TMPDIR=$dir/tmp STRESS_HOGS=1 STRESS_OUT=$dir/out sh "$root/tools/stress.sh" 1 probe >"$dir/output" 2>&1 || status=$?
+if [ "$status" -ne 0 ] || ! grep -qx 'probe: 1/1' "$dir/output" ||
+  ! grep -qx 'read: a staged stand-in' "$dir/out/probe-1.log"; then
+  fail "the loop's suite did not read what its prepare stage staged (exit $status):"
+  sed 's/^/  /' "$dir/output" >&2
+fi
+left_staged "$dir" "the loop that ended"
+
 # A listing that fails ends the loop in its prepare stage: a probe suite
 # whose expected items cannot be read (STRESS_PROBE_EXPECTED names no file)
 # must make the loop exit 2, naming the listing, before any round, so the
@@ -219,4 +268,4 @@ if [ "$status" -ne 2 ] || [ -e "$dir/ran" ] ||
 fi
 
 [ -z "$failed" ] || exit 1
-echo "stress-probe: the loop sent INT or TERM ended its suite's run and its guard, each with its group; a run past its limit was killed with its group and failed as a hang; a run with a hang line failed though it exited 0; a round that missed an item of the wiring set failed its coverage; and a listing that failed ended the loop before its first round"
+echo "stress-probe: the loop sent INT or TERM ended its suite's run and its guard, each with its group; a run past its limit was killed with its group and failed as a hang; a run with a hang line failed though it exited 0; a round that missed an item of the wiring set failed its coverage; a listing that failed ended the loop before its first round; and what the loop staged was gone when it ended, and never under its logs"

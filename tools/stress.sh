@@ -34,11 +34,13 @@
 # FfiTest.windowScenarios and the real-thread set's entries), with no list
 # here. Before the hogs start, a prepare stage stages what the chosen
 # suites build before their runs, once (tools/wiring-runs.sh prepare,
-# tools/bundle-test.sh stage), and writes `<out>/prepared/expected`: for
-# each chosen suite, the wiring set's items it must run, a line each,
+# tools/bundle-test.sh stage), into a temporary directory of its own, never
+# under the logs, which the loop removes when it ends, however it ends; and
+# writes `<out>/expected`: for each chosen suite, the wiring set's items it must run, a line each,
 # `<suite>\t<key>`, from the same listings the gate's once-check reads
 # (tools/wiring-ledger.sh), and for `probe` the keys in the file
-# STRESS_PROBE_EXPECTED, if it is set.
+# STRESS_PROBE_EXPECTED, if it is set (and for `probe` runs the command in
+# STRESS_PROBE_STAGE, a stand-in for what is staged, if it is set).
 #
 # Coverage, each round: the round's `wiring-set: ran` lines, from every
 # suite's log, are checked against the chosen suites' expected items
@@ -112,9 +114,6 @@ if [ -z "$single" ]; then
   mkdir -p "$out"
   # Absolute: config-test is handed a file beside its log from `lean/`.
   out=$(cd "$out" && pwd)
-  # What the prepare stage stages, which a bounded run (`--run`) reads.
-  STRESS_PREPARED=$out/prepared
-  export STRESS_PREPARED
 fi
 prepared=${STRESS_PREPARED:-}
 
@@ -148,7 +147,8 @@ end_group() {
 
 # Ends everything this script started: the round's run and its guard, each
 # with its whole group, out of reach of a terminal's Ctrl-C, and waited
-# for; then the hogs.
+# for; then the hogs; and last removes what the prepare stage staged, once
+# nothing that reads it is left running.
 stop() {
   for group in $run $guard; do end_group "$group"; done
   for group in $run $guard; do wait "$group" 2>/dev/null || true; done
@@ -157,10 +157,25 @@ stop() {
   for pid in $pids; do kill "$pid" 2>/dev/null || true; done
   for pid in $pids; do wait "$pid" 2>/dev/null || true; done
   pids=
+  if [ -z "$single" ] && [ -n "$prepared" ]; then
+    rm -rf "$prepared"
+    prepared=
+  fi
 }
 trap stop EXIT
 trap 'stop; exit 130' INT
 trap 'stop; exit 143' TERM
+
+# What the prepare stage stages (about 4 GB: the bundle and the greeting's
+# install), which a bounded run (`--run`) reads: a fresh temporary
+# directory of its own, never under $out, the logs stress.yml uploads, and
+# removed by `stop` when the loop ends, however it ends
+# (tools/stress-probe.sh).
+if [ -z "$single" ]; then
+  prepared=$(mktemp -d "${TMPDIR:-/tmp}/stress-prepared.XXXXXXXX")
+  STRESS_PREPARED=$prepared
+  export STRESS_PREPARED
+fi
 
 prefix=
 for suite in config-wiring linked-wiring; do
@@ -203,14 +218,13 @@ run_suite() {
 
 # The prepare stage (the header): what the chosen suites build before their
 # runs, staged once into $prepared, and the items of the wiring set each
-# must run, `<suite>\t<key>`, into $prepared/expected, each listing read
+# must run, `<suite>\t<key>`, into $out/expected, each listing read
 # with tools/wiring-ledger.sh's `list`, as the gate's once-check reads it.
 # It runs before the hogs start, at the machine's own priority, and builds
 # nothing the gate did not. A listing that fails ends the loop with status
 # 2, naming it, before a hog or a round starts (tools/stress-probe.sh).
 prepare() {
-  mkdir -p "$prepared"
-  : >"$prepared/expected"
+  : >"$out/expected"
   if chosen ffi-wiring || chosen cli-wiring; then
     (cd "$root/lean" && sh ../tools/wiring-runs.sh prepare "$prepared/runs")
   fi
@@ -236,6 +250,9 @@ prepare() {
   if chosen bundle-wiring; then
     expect bundle-wiring ledger_list real-thread-bundle-test
   fi
+  if chosen probe && [ -n "${STRESS_PROBE_STAGE:-}" ]; then
+    sh -c "$STRESS_PROBE_STAGE"
+  fi
   if chosen probe && [ -n "${STRESS_PROBE_EXPECTED:-}" ]; then
     expect probe sed '/^$/d' "$STRESS_PROBE_EXPECTED"
   fi
@@ -246,7 +263,7 @@ ledger_list() {
   (cd "$root/lean" && sh ../tools/wiring-ledger.sh list "$1")
 }
 
-# Appends to $prepared/expected the keys the command after $1 prints, each
+# Appends to $out/expected the keys the command after $1 prints, each
 # after the suite $1 and a tab, each once. The command writes a file of its
 # own and its status is checked before the file is read, so a listing that
 # fails is never lost in a pipeline whose status is its last command's: it
@@ -258,7 +275,7 @@ expect() {
     echo "stress: prepare: a listing of the wiring set failed: $*" >&2
     exit 2
   }
-  sort -u "$prepared/listing" | sed "s/^/$suite$(printf '\t')/" >>"$prepared/expected"
+  sort -u "$prepared/listing" | sed "s/^/$suite$(printf '\t')/" >>"$out/expected"
 }
 
 # Checks the coverage of round $1: its suites' `wiring-set: ran` lines
@@ -268,7 +285,7 @@ coverage() {
   for suite in $suites; do
     grep -h '^wiring-set: ran ' "$out/$suite-$1.log" 2>/dev/null || true
   done >"$out/coverage-$1.ran"
-  cut -f2 "$prepared/expected" >"$out/coverage-$1.expected"
+  cut -f2 "$out/expected" >"$out/coverage-$1.expected"
   sh "$root/tools/wiring-ledger.sh" check "$out/coverage-$1.ran" "$out/coverage-$1.expected" \
     >"$out/coverage-$1.log" 2>&1
 }
@@ -334,7 +351,7 @@ bounded() {
 echo "stress: $rounds rounds of $suites, $hogs hogs on $cores cores, a limit of $limit s a run, logs in $out"
 echo "stress: prepare: staging the chosen suites' builds and their expected items in $prepared"
 prepare
-echo "stress: prepare: $(grep -c . "$prepared/expected" || true) items of the wiring set expected each round"
+echo "stress: prepare: $(grep -c . "$out/expected" || true) items of the wiring set expected each round"
 i=0
 while [ "$i" -lt "$hogs" ]; do
   yes >/dev/null &
