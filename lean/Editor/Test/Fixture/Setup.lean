@@ -35,6 +35,11 @@ accident. A stepped run that differs from its expected file never has its
 expected file edited: the fake is fixed, or the seed added here, or the
 fixture moved into the real-thread set with the reason.
 
+Lines are compared as the shell's `diff` sees them (`textLines`): the first
+difference from an expected file (`firstDifference?`), the lines each side
+alone has (`bothWays`), and a runner entry's CLI output against its stepped
+run and its expected file (`compared`).
+
 Pure: model-test pins it (`ModelTest/Editor/Test/Fixture/Setup.lean`).
 -/
 
@@ -326,5 +331,21 @@ def bothWays (left right : Array String) : Array String :=
       if left[index]? != some right[index]! then
         said := said.push s!"> {index + 1}: {right[index]!}"
     return said
+
+/-- What is wrong with a runner entry's CLI output `cli`, against its
+stepped run `stepped` and its expected file `expected`: the lines each side
+alone has, both ways, and the first difference of the CLI's output from the
+expected file, which holds even when the two runs agree. Empty when the
+three agree. -/
+def compared (cli stepped expected : Array String) : Array String :=
+  let both := bothWays cli stepped
+  let differs :=
+    if both.isEmpty then #[]
+    else
+      #["the CLI over a real loop thread (<) and the stepped run (>) printed otherwise: " ++
+          "; ".intercalate both.toList]
+  match firstDifference? expected cli with
+  | some difference => differs.push s!"the CLI's output is not its expected file: {difference}"
+  | none => differs
 
 end Editor.Test.Fixture

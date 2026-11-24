@@ -150,7 +150,8 @@ show:
   abort outside the real-thread set are refused; an entry not stepped is
   skipped with its site, and a stale entry fails the run, as a root with no
   fixture does; and `compare` fails a CLI output that differs from the
-  stepped one, saying the lines each side alone has;
+  stepped one, saying the lines each side alone has, and one that is the
+  stepped one but not the expected file, naming its first differing line;
 - `protocolContractChecks`: the runner's protocol contract
   (`Editor/Job/ProtocolContract.lean`) on a stepped host whose services
   record to the fake recorder: a nap the clock wakes and one the loop's end

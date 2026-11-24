@@ -172,25 +172,32 @@ def fixtureRunChecks (context : Context) : List Check :=
                 #["fixture-test: tests holds no headless fixture, so nothing ran stepped there"])
             s!"status={status} said={said}" },
     { name :=
-        "compare passes a runner entry whose CLI output is its stepped output and its expected file, and fails one whose CLI output differs, saying the lines each side alone has"
+        "compare passes a runner entry whose CLI output is its stepped output and its expected file, fails one whose CLI output differs, saying the lines each side alone has, and fails one whose CLI output is its stepped output but not its expected file, naming the first line that differs"
       run :=
         IO.FS.withTempDir fun repository => do
           writeFixtures repository
               [("tests/a/script", nothingScript), ("tests/a/expected", nothingExpected),
+                ("tests/b/script", nothingScript), ("tests/b/expected", "run nothing-at-all: ok\n"),
                 ("same", nothingExpected), ("other", "run nothing-at-all: ok\nmore\n")]
           let said ← IO.mkRef #[]
           let harness ←
-            fixtureHarness context repository said (entries := #[runnerEntry "tests/a/script"])
+            fixtureHarness context repository said (entries :=
+                #[runnerEntry "tests/a/script", runnerEntry "tests/b/script"])
           let tree := realTree repository.toString
           let same ← compare harness tree "tests/a/script" (repository / "same").toString
           let other ← compare harness tree "tests/a/script" (repository / "other").toString
+          let unexpected ← compare harness tree "tests/b/script" (repository / "same").toString
           let said ← said.get
           saw
-              (same == 0 && other == 1 &&
+              (same == 0 && other == 1 && unexpected == 1 &&
                 said.contains
                   "fixture-compare: tests/a/script: the CLI over a real loop thread and the stepped run printed the same, and it is expected" &&
                 said.contains
-                  "fixture-test: tests/a/script: the CLI over a real loop thread (<) and the stepped run (>) printed otherwise: < 1: run nothing-at-all: ok; < 2: more; > 1: run nothing-at-all: no such command")
-              s!"same={same} other={other} said={said}" }]
+                  "fixture-test: tests/a/script: the CLI over a real loop thread (<) and the stepped run (>) printed otherwise: < 1: run nothing-at-all: ok; < 2: more; > 1: run nothing-at-all: no such command" &&
+                said.contains
+                  "fixture-test: tests/b/script: the CLI's output is not its expected file: line 1 differs: expected \"run nothing-at-all: ok\", got \"run nothing-at-all: no such command\"" &&
+                !said.any
+                    (·.startsWith "fixture-test: tests/b/script: the CLI over a real loop thread"))
+              s!"same={same} other={other} unexpected={unexpected} said={said}" }]
 
 end ConfigTest

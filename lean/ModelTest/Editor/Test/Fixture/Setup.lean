@@ -102,6 +102,17 @@ def fixtureSetupChecks : List Check :=
             firstDifference? #["a", "b"] #["a"] == some "line 2 is missing: expected \"b\"" &&
             firstDifference? #["a"] #["a", "c"] == some "line 2 is extra: got \"c\"" &&
             bothWays #["a", "b"] #["a", "c", "d"] == #["< 2: b", "> 2: c", "> 3: d"] &&
-            bothWays #["a"] #["a"] == #[] }]
+            bothWays #["a"] #["a"] == #[] },
+    { name :=
+        "a runner entry's CLI output is compared both ways with its stepped run and with its expected file: nothing when the three agree, the lines each side alone has when the two runs differ, and the first difference from the expected file when the two runs agree on something else"
+      run :=
+        return compared #["a"] #["a"] #["a"] == #[] &&
+            compared #["a"] #["b"] #["a"] ==
+              #["the CLI over a real loop thread (<) and the stepped run (>) printed otherwise: < 1: a; > 1: b"] &&
+            compared #["b"] #["b"] #["a"] ==
+              #["the CLI's output is not its expected file: line 1 differs: expected \"a\", got \"b\""] &&
+            compared #["b"] #["a"] #["a"] ==
+              #["the CLI over a real loop thread (<) and the stepped run (>) printed otherwise: < 1: b; > 1: a",
+                "the CLI's output is not its expected file: line 1 differs: expected \"a\", got \"b\""] }]
 
 end ModelTest

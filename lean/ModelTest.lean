@@ -760,7 +760,8 @@ The job system is tested here with no Rust library:
   a fixture with no config refused), the path helpers; the setups' defaults,
   placeholders, substitution and scrubbing, the model a setup makes, the
   after-checks over it, the harness's refusals and the lines compared as
-  the shell's diff sees them; the real-thread set well formed and its
+  the shell's diff sees them, a runner entry's CLI output among them,
+  against its stepped run and its expected file; the real-thread set well formed and its
   check of the data biting, its four runner entries, and every entry not
   stepped a real effect; and the harness's command line;
 - `restVerdictChecks`: a stepped host's wait over its fakes, judged at their

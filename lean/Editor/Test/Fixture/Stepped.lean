@@ -345,21 +345,6 @@ def printCompared {scheme : InputScheme} (harness : Harness scheme) (tree : Tree
       failed := true
   return if failed then 1 else 0
 
-/-- What is wrong with the CLI's output `cli` of the runner entry
-`script`, against its stepped run `stepped` and its expected file
-`expected`: the lines each side alone has, both ways, and the first
-difference from the expected file. Empty when the three agree. -/
-def compared (cli stepped expected : Array String) : Array String :=
-  let both := bothWays cli stepped
-  let differs :=
-    if both.isEmpty then #[]
-    else
-      #["the CLI over a real loop thread (<) and the stepped run (>) printed otherwise: " ++
-          "; ".intercalate both.toList]
-  match firstDifference? expected cli with
-  | some difference => differs.push s!"the CLI's output is not its expected file: {difference}"
-  | none => differs
-
 /-- Runs the runner entry `script` stepped and compares it with the CLI's
 output read from `file` (`compared`): its line
 `fixture-compare: <script>: the CLI over a real loop thread and the stepped run printed the same, and it is expected`,
