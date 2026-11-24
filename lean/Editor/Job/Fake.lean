@@ -773,14 +773,21 @@ structure FakeFiles where
   hands a fake its stage made (`Stage.stepped`). None by default, so a
   check's own `publish` is all the model holds. -/
   learn : SnapshotId → BaseIO (Option String) := fun _ => pure none
+  /-- Told each snapshot a load made, with its text, as it is taken, and
+  each snapshot released, with none: what a host's table of what its jobs
+  hold is handed, so a finished job's command can adopt a load the fake
+  made, as it adopts the library's (`Stage.stepped`). Nothing by default. -/
+  holding : JobSnapshotId → Option String → BaseIO Unit := fun _ _ => pure ()
 
 namespace FakeFiles
 
 /-- A file service over `model`, through the table `completions`, with no
 request started, that learns a published snapshot through `learn`. -/
 def new (completions : Completions) (model : FileModel := {}) (answer : FakeAnswer := .atOnce)
-    (learn : SnapshotId → BaseIO (Option String) := fun _ => pure none) : BaseIO FakeFiles :=
-  return { completions, state := ← IO.mkRef { model }, answer, learn }
+    (learn : SnapshotId → BaseIO (Option String) := fun _ => pure none)
+    (holding : JobSnapshotId → Option String → BaseIO Unit := fun _ _ => pure ()) :
+    BaseIO FakeFiles :=
+  return { completions, state := ← IO.mkRef { model }, answer, learn, holding }
 
 /-- Reads, through `learn`, the text the editor has published now for each
 snapshot of `sources` that names one, and puts it in the model's published
@@ -890,13 +897,21 @@ was withdrawn or never started, is refused as failed and changes nothing. -/
 def take (files : FakeFiles) (id : UInt64) : (request : FileRequest) → BaseIO request.Reply
   | .load path limit => do
     files.parkTake
-    files.state.modifyGet fun state =>
-        if state.pending.any (·.1 == id) then
-          let (reply, model) := state.model.load path limit
-          (reply,
-            { state with
-              model, pending := state.pending.filter (·.1 != id) })
-        else (.error (.failed "the request is not pending"), state)
+    let (reply, text) ←
+      files.state.modifyGet fun state =>
+          if state.pending.any (·.1 == id) then
+            let (reply, model) := state.model.load path limit
+            let text :=
+              match reply with
+              | .ok loaded => (model.held[loaded.snapshot.number]?).join.map (·.contents)
+              | .error _ => none
+            ((reply, text),
+              { state with
+                model, pending := state.pending.filter (·.1 != id) })
+          else ((.error (.failed "the request is not pending"), none), state)
+    if let (.ok loaded, some text) := (reply, text) then
+      files.holding loaded.snapshot (some text)
+    return reply
   | .save source path expect => do
     files.parkTake
     files.learnSources #[source]
@@ -971,6 +986,7 @@ def release (files : FakeFiles) (snapshot : JobSnapshotId) : BaseIO Unit := do
         model := state.model.released snapshot
         released := state.released.push snapshot
         log := state.log.push (.release snapshot, thread) }
+  files.holding snapshot none
 
 /-- Flushes the files as the wait `id`: completed at once, unless completions
 are held, when it is parked behind them and `letGo` completes it after every

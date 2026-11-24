@@ -616,7 +616,7 @@ def Stage.stepped {β σ : Type} (stage : Stage β σ) (files : FileModel := {})
   let collaborators := stage.collaborators
   let services ←
     SteppedServices.new collaborators.services.completions stage.clock stage.watches
-        (Job.realSnapshots collaborators.published.reader) files processes
+        (Job.realSnapshots collaborators.published.reader) collaborators.held files processes
   let fakes : Stage.Fakes :=
     { services, memory := stage.memory, journal := ← IO.mkRef none,
       syntaxService := ← IO.mkRef none }
@@ -875,14 +875,36 @@ def settled (drive : Driven) (waitHung : String → IO Unit := IO.eprintln)
 
 namespace Session
 
+/-- On a stepped stage (`Stage.stepped`), the host's queue drained and, while
+a restore is in flight, the fakes stepped round by round: a restore holds
+the driver's requests until its jobs have run, and on a stepped stage they
+run only on a step, so a settle would wait for them in vain. Throws when a
+round moves nothing with the restore still in flight, a stall. Nothing on
+a stage with no fakes. -/
+private partial def stepRestoring (session : Session) : IO Unit := do
+  let some fakes := session.fakes | return
+  discard <| session.drive.handled hangGuard
+  unless (← session.drive.progress).restoring do
+    return
+  let mut moved := false
+  while ← fakes.stepWork do
+    moved := true
+  unless moved || (← fakes.memory.size) > 0 do
+    throw <|
+        IO.userError
+          "a stall: a restore is in flight and nothing of the stepped stage's fakes can run"
+  stepRestoring session
+
 /-- Sends `requests` to the host in order, and waits until it has handled
 them and no reload is running (`settled`): for the reload's end, with the
-session's `waitHung` and `waitBlocked`. Throws a hang if the wait reaches
-`hangGuard`, and says the loop ended, with what it ended with, if it ended
-first. -/
+session's `waitHung` and `waitBlocked`. On a stepped stage a restore in
+flight is stepped to its end first (`stepRestoring`). Throws a hang if the
+wait reaches `hangGuard`, and says the loop ended, with what it ended with,
+if it ended first. -/
 def ask (session : Session) (requests : List Headless.Request) : IO Unit := do
   for request in requests do
     session.drive.send request
+  session.stepRestoring
   unless ← settled session.drive session.waitHung session.waitBlocked do
     throw (IO.userError s!"a hang: the editor thread had not settled within {hangGuard.ms} ms")
 
@@ -905,8 +927,10 @@ def resize (session : Session) (width height : Nat) : IO Unit :=
 
 /-- Waits until the host has handled everything sent so far and no reload
 is running, with `hangGuard` and the session's `waitHung` and
-`waitBlocked`: whether it did. -/
-def settle (session : Session) : IO Bool :=
+`waitBlocked`: whether it did. On a stepped stage a restore in flight is
+stepped to its end first (`stepRestoring`). -/
+def settle (session : Session) : IO Bool := do
+  session.stepRestoring
   session.drive.settle hangGuard (waitHung := session.waitHung) (waitBlocked := session.waitBlocked)
 
 /-- `idle` is an inferred wait (`Editor/InferredWait.lean`). -/

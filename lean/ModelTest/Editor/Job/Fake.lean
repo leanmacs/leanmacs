@@ -291,9 +291,33 @@ def filesLearnCheck : Check :=
               s!"saved {savedOk} as {bytes}, the unknown snapshot refused {refused}, the diff {diffOk}"
       return true }
 
+/-- The fake file service tells its `holding` hook of each snapshot a load
+made, with its text, once the load is taken, and of each snapshot
+released, with none; a refused load tells it nothing. -/
+def filesHoldingCheck : Check :=
+  { name :=
+      "the fake file service tells its holding hook the text of each snapshot a load made, as the load is taken, and each snapshot released, with none"
+    run := do
+      let completions ← Completions.new
+      let told ← IO.mkRef (#[] : Array (Nat × Option String))
+      let files ←
+        FakeFiles.new completions
+            ((({} : FileModel).withDirectory "/r").withFile "/r/a" "aa".toUTF8) (holding :=
+            fun id text => told.modify (·.push (id.number, text)))
+      files.files.start 1 (.load "/r/a" 100)
+      let before ← told.get
+      discard <| files.files.take 1 (.load "/r/a" 100)
+      files.files.start 2 (.load "/r/missing" 100)
+      discard <| files.files.take 2 (.load "/r/missing" 100)
+      files.files.release ⟨0⟩
+      let after ← told.get
+      unless before.isEmpty && after == #[(0, some "aa"), (0, none)] do
+        throw <| IO.userError s!"told {before} before the take, then {after}"
+      return true }
+
 /-- The checks of the job services' fakes' own promises. -/
 def jobFakeChecks : List Check :=
   [handedAfterEmptyStepCheck, filesLogCheck, filesStartsArrivedCheck, processesLogCheck,
-    watchesLogCheck, clockAtReadCheck, filesLearnCheck]
+    watchesLogCheck, clockAtReadCheck, filesLearnCheck, filesHoldingCheck]
 
 end ModelTest

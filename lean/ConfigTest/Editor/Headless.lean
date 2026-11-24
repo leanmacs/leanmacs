@@ -3894,47 +3894,43 @@ def withRealRestoreHost (context : Context) (files : List (String × String))
     let (stage, fake) ← restoreStage context directory files
     onRealStage stage fun host stage => check host stage.output fake
 
-/-- The stage of a host over a config directory `directory` holding `files`,
-with the real elaborator, the package `files` and the package `restore`
-(or the one the check hands in its place), the library's file service
-(`Stage.overFiles`) and journal, and the state directory `state`, written
-here to hold that journal on disk. -/
-def restoreFilesStage (context : Context) (directory state : System.FilePath)
-    (files : List (String × String)) (restore : Package) :
-    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle) := do
+/-- The state directory of the stepped restore checks' hosts: a made-up
+path, which only the fake files' model holds. -/
+def stateDirectory : System.FilePath :=
+  "/state"
+
+/-- `model` with the directories a session under `state` is kept in:
+`state` itself, its session directory and its journals directory. -/
+def stateFiles (state : System.FilePath) (model : FileModel := {}) : FileModel :=
+  ((model.withDirectory state).withDirectory (Restore.sessionDirectory state)).withDirectory
+    (Restore.journalsDirectory state)
+
+/-- A stepped stage (`Stage.stepped`) for a host over a config directory
+holding `files`, with the packages `files` (its fake) and `restore`: its
+fake files hold `model`, the state directory `stateDirectory` and a
+journalled buffer of run 1 in it, whose base holds `hello`; its session
+journal is the recording fake (`Stage.recordingJournal`), handed back. -/
+def restoreFilesStage (context : Context) (directory : System.FilePath)
+    (files : List (String × String)) (restore : Package) (model : FileModel := {}) :
+    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle × Headless.RecordingJournal) := do
   writeConfig directory files
-  IO.FS.createDirAll (Restore.journalsDirectory state)
-  IO.FS.writeBinFile (Restore.basePath state 1 0 1) "hello".toUTF8
-  IO.FS.writeBinFile (Restore.logPath state 1 0 1) journalledLog
+  let state := stateDirectory
+  let model :=
+    ((stateFiles state model).withFile (Restore.basePath state 1 0 1) "hello".toUTF8).withFile
+      (Restore.logPath state 1 0 1) journalledLog
   let stage ←
-    Stage.overFiles context (Config.Directory.source directory)
+    Stage.new context context.elaborator (Config.Directory.source directory)
         { packages := #[FilesApiTest.fake, restore] }
-  return { stage with
-      collaborators :=
-        { stage.collaborators with
-          stateDirectory := some state
-          journal :=
-            Headless.Journal.real stage.collaborators.published.reader
-              stage.collaborators.services } }
+  (← stage.stepped model).recordingJournal state
 
 /-- Runs `check` against a stepped host over `restoreFilesStage`'s stage,
-with its output and the state directory. -/
+with the state directory. -/
 def withRestoreFiles (context : Context) (files : List (String × String))
-    (check : Driven → IO.Ref (Array String) → System.FilePath → IO Bool)
-    (restore : Package := Test.Restore.package) : IO Bool :=
-  IO.FS.withTempDir fun directory =>
-    context.withFiles fun state => do
-      let stage ← restoreFilesStage context directory state files restore
-      onStage stage fun drive stage => check drive stage.output state
-
-/-- `withRestoreFiles` with a real host (`onRealStage`). -/
-def withRealRestoreFiles (context : Context) (files : List (String × String))
-    (check : Headless.Host → IO.Ref (Array String) → System.FilePath → IO Bool)
-    (restore : Package := Test.Restore.package) : IO Bool :=
-  IO.FS.withTempDir fun directory =>
-    context.withFiles fun state => do
-      let stage ← restoreFilesStage context directory state files restore
-      onRealStage stage fun host stage => check host stage.output state
+    (check : Session → System.FilePath → IO Bool) (restore : Package := Test.Restore.package)
+    (model : FileModel := {}) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    let (stage, _) ← restoreFilesStage context directory files restore model
+    onStage stage fun drive stage => check (Session.ofStage drive directory stage) stateDirectory
 
 /-- A package that declares the store `counted` of a number, at `version`,
 whose migration doubles a version-1 number, keeps it across a restart, and
@@ -3975,50 +3971,57 @@ def setup : SetupM Unit := do
 def throwingConfig : List (String × String) :=
   [("init.lean", "def setup : SetupM Unit := throw \"no config today\"\n")]
 
-/-- Runs `check` against a host over a config directory holding `files`,
-with the real elaborator, the packages `files`, `restore` and `packages`,
-the library's file service and journal, and the state directory `state`,
-which outlives it; and stops the host, uncleanly: its session is left to
-the next. -/
-def withStateHost (context : Context) (state : System.FilePath) (files : List (String × String))
-    (packages : Array Package)
-    (check : Driven → Stage Config.Elaborate.Base Config.Elaborate.Handle → IO Bool) : IO Bool :=
+/-- Runs `check` against a stepped host (`Stage.stepped`) over a config
+directory holding `files`, with the packages `files` (its fake), `restore`
+and `packages`, whose fake files hold what `model` holds, the state
+directory `stateDirectory` among it, and whose session journal is the
+recording fake: once the host has ended, `model` holds what its fake files
+held then, so the next host over it starts where this one ended, as a
+restart does. -/
+def withStateHost (context : Context) (model : IO.Ref FileModel) (files : List (String × String))
+    (packages : Array Package) (check : Session → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeConfig directory files
     let stage ←
-      Stage.overFiles context (Config.Directory.source directory)
+      Stage.new context context.elaborator (Config.Directory.source directory)
           { packages := #[FilesApiTest.fake, Test.Restore.package] ++ packages }
-    let stage :=
-      { stage with
-        collaborators :=
-          { stage.collaborators with
-            stateDirectory := some state
-            journal :=
-              Headless.Journal.real stage.collaborators.published.reader
-                stage.collaborators.services } }
-    onStage stage fun host stage => check host stage
+    let stage ← stage.stepped (stateFiles stateDirectory (← model.get))
+    let (stage, _) ← stage.recordingJournal stateDirectory
+    let held ← onStage stage fun drive stage => check (Session.ofStage drive directory stage)
+    if let some fakes := stage.fakes then
+      model.set (← fakes.services.files.model)
+    return held
 
--- inferred-waits W56: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- Waits until the host has written the session index, as the script's
-`indexed` does (`Headless.awaitIndexed`, `Headless.Wait.Kind.indexed`):
-each round ends on an event or at idle, each write's delay is moved past on
-the stage's clock once it is in its sleep, until neither a write nor a save
-is running, with `hangGuard` against a hang only. A write the host started
-after the last one rendered, for a change its publish had not seen yet, is
-waited for too. `waitBlocked` is the wait's, called as it blocks. -/
-def indexWritten {β σ : Type} (host : Driven) (stage : Stage β σ)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
-  -- hang guard: `hangGuard`, on each round's event or idle.
-  return (← host.indexed hangGuard (some stage.clock) waitBlocked) == .settled
+/-- Steps the session until the host has written the session index: the
+session stepped to rest (`Session.step`), and while the host says the index
+is being written (`Progress.indexing`), the write's delay moved past on the
+stage's clock (its next deadline) and the session stepped again. Whether the
+index is written; `false` when it is still being written with nothing on
+the clock to move. -/
+partial def stepIndexed (session : Session) : IO Bool := do
+  session.step
+  unless (← session.drive.progress).indexing do
+    return true
+  let some deadline ← session.clock.nextDeadline | return false
+  session.clock.advance (deadline - (← session.clock.now))
+  stepIndexed session
 
-/-- The text of the highest run's index under `state`, if there is one. -/
-def lastIndex (state : System.FilePath) : IO (Option String) := do
-  let names :=
-    (← (Restore.sessionDirectory state).readDir).filterMap fun entry =>
-      Restore.runOfIndex? entry.fileName
-  let some run := names.foldl (fun found run => some ((found.getD run).max run)) none | return none
-  return some (← IO.FS.readFile (Restore.indexPath state run))
+/-- The text of the highest run's index under `state` in `model`, if it
+holds one. -/
+def lastIndex (model : FileModel) (state : System.FilePath) : Option String :=
+  let indexes :=
+    model.contents.filterMap fun (path, bytes) =>
+      if path.parent == some (Restore.sessionDirectory state) then
+        (Restore.runOfIndex? (path.fileName.getD "")).map (·, bytes)
+      else none
+  let best :=
+    indexes.foldl
+      (fun found (run, bytes) =>
+        match found with
+        | some (other, _) => if run > other then some (run, bytes) else found
+        | none => some (run, bytes))
+      none
+  best.map fun (_, bytes) => String.fromUTF8! bytes
 
 /-- The index of the first line of `lines` that `holds`, if one does. -/
 def firstLine? (lines : Array String) (holds : String → Bool) : Option Nat :=
@@ -4034,102 +4037,91 @@ def failingRestore : Package :=
 def echoes (text : String) (line : String) : Bool :=
   line.startsWith "scene " && (line.splitOn s!", echo {text.quote}, echo padding ").length == 2
 
-/-- A host over a config directory holding `files`, with the packages
-`files` and `restore`, the library's file service, a temporary state
-directory, a launch whose running executable passes the probe (the process
-service a fake over that reply), and a journal whose failure readout
-answers one more failure of one path at each read once `failing` is set, so
-it is said once and counted at every read: what `check` is handed, with
-the flag; and the host is stopped. -/
+/-- A stepped host (`Stage.stepped`) over a config directory holding `files`,
+with the packages `files` (its fake) and `restore`, the state directory
+`stateDirectory` in its fake files, a launch whose running executable
+passes the probe (the stepped process fake scripted with that reply), and
+the session journal's recording fake, whose failure readout answers one
+more failure of one path at each read once `failing` is set, so it is said
+once and counted at every read: what `check` is handed, with the flag; and
+the host is stopped. -/
 def withFailingJournal (context : Context) (files : List (String × String))
-    (check : Driven → IO.Ref (Array String) → IO.Ref Bool → IO Bool) : IO Bool :=
-  IO.FS.withTempDir fun directory =>
-    context.withFiles fun state => do
-      writeConfig directory files
-      let stage ←
-        Stage.overFiles context (Config.Directory.source directory)
-            { packages := #[FilesApiTest.fake, Test.Restore.package] }
-      let running : System.FilePath := "/A.app/Contents/MacOS/editor"
-      let processes ←
-        Job.FakeProcesses.new stage.collaborators.services.completions
-            {
-              scripts :=
-                #[{ command := Restore.probeCommand running
-                    reply :=
-                      .ok { exit := .code 0, stdout := "probe: ok\n".toUTF8, stderr := .empty } }] }
-      let failing ← IO.mkRef false
-      let real :=
-        Headless.Journal.real stage.collaborators.published.reader stage.collaborators.services
-      let journal : Headless.Journal :=
-        { real with
-          failures := do
-            let taken ← real.failures
-            if ← failing.get then
-              return taken.push ("/journal/full", "the disk is full")
-            return taken }
-      let stage :=
-        { stage with
-          collaborators :=
-            { stage.collaborators with
-              stateDirectory := some state, journal
-              launch := { running := some running, shipped := some running }
-              services := { stage.collaborators.services with processes := processes.processes } } }
-      onStage stage fun host stage => check host stage.output failing
+    (check : Session → IO.Ref Bool → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeConfig directory files
+    let running : System.FilePath := "/A.app/Contents/MacOS/editor"
+    let stage ←
+      Stage.new context context.elaborator (Config.Directory.source directory)
+          { packages := #[FilesApiTest.fake, Test.Restore.package] }
+    let stage ←
+      stage.stepped (stateFiles stateDirectory)
+          {
+            scripts :=
+              #[{ command := Restore.probeCommand running
+                  reply :=
+                    .ok { exit := .code 0, stdout := "probe: ok\n".toUTF8, stderr := .empty } }] }
+    let (stage, fake) ← stage.recordingJournal stateDirectory
+    let failing ← IO.mkRef false
+    let journal : Headless.Journal :=
+      { fake.journal with
+        failures := do
+          let taken ← fake.failures
+          if ← failing.get then
+            return taken.push ("/journal/full", "the disk is full")
+          return taken }
+    let stage :=
+      { stage with
+        collaborators :=
+          { stage.collaborators with
+            journal, launch := { running := some running, shipped := some running } } }
+    onStage stage fun drive stage => check (Session.ofStage drive directory stage) failing
 
--- inferred-waits W10: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `restoreOrderChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `restoreOrderChecks`, a declaration of its own. -/
 def handJournalOrderFailedCheck (context : Context) : Check :=
   { name :=
       "a hand-over after a journal order failed since the restart began is given up: restart-abandon says the failure, and the loop goes on with no plan"
     run :=
-      withFailingJournal context greetConfig fun host output failing => do
-        host.send (.restore none)
-        unless ← host.settle hangGuard do
+      withFailingJournal context greetConfig fun session failing => do
+        session.send (.restore none)
+        unless ← session.settle do
           return false
         failing.set true
-        host.send (.run Editor.restartName)
+        session.send (.run Editor.restartName)
         -- The debounced index write sleeps on the stage's clock, which
-        -- nothing moves, so the wait is for the save's command: the host
-        -- idle, at a join that publishes nothing.
-        discard <| host.idle hangGuard
-        let saved := (← output.get).any (·.endsWith s!"{Restore.restartSaveJob}: ok")
+        -- nothing moves, so the steps are for the save's own end line.
+        let saved ← session.stepUntil (·.any (·.endsWith s!"{Restore.restartSaveJob}: ok"))
         unless saved do
           return false
-        host.send .scene
-        unless ← host.settle hangGuard do
+        session.send .scene
+        unless ← session.settle do
           return false
-        let lines ← output.get
-        let progress ← host.progress
-        return progress.handOver.isNone && (← host.ended?).isNone &&
+        let lines ← session.output.get
+        let progress ← session.drive.progress
+        return progress.handOver.isNone && (← session.drive.ended?).isNone &&
             lines.any fun line =>
               echoes
                 "restart: a journal write failed (/journal/full); the session was not handed over"
                 line }
 
--- inferred-waits W10: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `restoreOrderChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `restoreOrderChecks`, a declaration of its own. -/
 def restoreWhoseJobFailsCheck (context : Context) : Check :=
   { name :=
       "a restore whose job fails releases the requests it held, in order: the file given is opened, the text said, and reload 1 installed, so setup has run; and await answers settled"
     run :=
-      withRestoreFiles context helloConfig (restore := failingRestore) fun host output state => do
-        let notes := state / "notes.txt"
-        IO.FS.writeFile notes "notes"
-        host.send (.restore none)
-        host.send (.open notes.toString)
-        host.send (.say "held words")
-        host.send .reload
-        let waited ← host.await hangGuard
-        let joined ← host.join hangGuard
-        host.send .scene
-        host.send .show
-        unless ← host.settle hangGuard do
+      let notes := stateDirectory / "notes.txt"
+      withRestoreFiles context helloConfig (restore := failingRestore) (model :=
+        ({} : FileModel).withFile notes "notes".toUTF8) fun session _ => do
+        session.send (.restore none)
+        session.send (.open notes.toString)
+        session.send (.say "held words")
+        session.send .reload
+        let waited ← session.settle
+        session.step
+        session.send .scene
+        session.send .show
+        unless ← session.settle do
           return false
-        let lines ← output.get
+        let lines ← session.output.get
         let failed :=
           firstLine? lines fun line =>
             line.startsWith "job " && (line.splitOn s!" {Restore.restoreJob}: failed").length == 2
@@ -4139,7 +4131,7 @@ def restoreWhoseJobFailsCheck (context : Context) : Check :=
         let said := lines.any (echoes "held words")
         let registered :=
           lines.any fun line => line.startsWith "commands:" && (line.splitOn " ").contains "greet"
-        return waited == .settled && joined == .settled && opened && said && registered &&
+        return waited && opened && said && registered &&
             match failed, installed with
             | some failed, some installed => failed < installed
             | _, _ => false }
@@ -4147,18 +4139,24 @@ def restoreWhoseJobFailsCheck (context : Context) : Check :=
 /-- The checks of the restore at start-up in the host (`Editor/Headless.lean`,
 "Restoring a session"), on the real elaborator: it runs before the start-up
 reload, which it holds, and `await` waits for it; a restore whose job fails
-releases what it held. The first and the last are over the library's file
-service and share `fileChecks`' table of waits, so these run after them. -/
+releases what it held. Each is on a stepped stage (`Stage.stepped`): the
+session's files are the stage's fake files, under the made-up state
+directory `stateDirectory`, and its journal the recording fake, so a
+restart's next host starts over the fake files the last one ended with
+(`withStateHost`), and the index is read from them (`lastIndex`). -/
 def restoreOrderChecks (context : Context) : List Check :=
   [{  name :=
         "a restore that names the index a restart handed over holds the start-up reload as an unnamed one does: its second half runs before reload 1 is installed"
       run :=
-        withRestoreFiles context greetConfig fun host output state => do
-          host.send (.restore (some (Restore.indexPath state 1)))
-          host.send .reload
-          unless ← host.settle hangGuard do
+        withRestoreFiles context greetConfig fun session state => do
+          session.send (.restore (some (Restore.indexPath state 1)))
+          session.send .reload
+          unless ← session.settle do
             return false
-          let lines ← output.get
+          let lines ← session.output.get
+          -- The journal orders the restore's edits handed are worked, so the
+          -- stage's fakes are quiescent at the bracket.
+          session.step
           let restored :=
             firstLine? lines fun line =>
               line.startsWith "job " && (line.splitOn s!" {Restore.filesJob}: ok").length == 2
@@ -4170,15 +4168,18 @@ def restoreOrderChecks (context : Context) : List Check :=
     { name :=
         "a host with a session and a config restores first: the restore's second half has run, and the buffer it restored is there, before reload 1 is installed"
       run :=
-        withRestoreFiles context greetConfig fun host output _ => do
-          host.send (.restore none)
-          host.send .reload
-          unless ← host.settle hangGuard do
+        withRestoreFiles context greetConfig fun session _ => do
+          session.send (.restore none)
+          session.send .reload
+          unless ← session.settle do
             return false
-          host.send .show
-          unless ← host.settle hangGuard do
+          session.send .show
+          unless ← session.settle do
             return false
-          let lines ← output.get
+          let lines ← session.output.get
+          -- The journal orders the restore's edits handed are worked, so the
+          -- stage's fakes are quiescent at the bracket.
+          session.step
           let restored :=
             firstLine? lines fun line =>
               line.startsWith "job " && (line.splitOn s!" {Restore.filesJob}: ok").length == 2
@@ -4213,119 +4214,90 @@ def restoreOrderChecks (context : Context) : List Check :=
               s!"waited={repr waited} early={early} late={late} said={said}" },
     restoreWhoseJobFailsCheck context,
     { name :=
-        "the index's write is waited for on events, never on a short guard: with the index's save held until the wait blocks on it, the wait waits the hold out and answers that the index is written"
-      run :=
-        -- Seen to bite: on the wait's old 300 ms guards the held save
-        -- outlasts the guard, the wait answers busy, and the check fails
-        -- every run, as the store checks below did under load.
-        context.withFiles fun state =>
-          IO.FS.withTempDir fun directory => do
-            writeConfig directory []
-            let gate ← IO.Promise.new
-            let held ← IO.mkRef 0
-            let stage ←
-              Stage.overFiles context (Config.Directory.source directory)
-                  { packages := #[FilesApiTest.fake, Test.Restore.package, countedPackage 1] }
-            let services := stage.collaborators.services
-            let files := services.files
-            -- The index's save, a session file's, is held until the gate
-            -- opens: the wait's block on running work alone opens it.
-            let holding :=
-              { files with
-                start := fun id request => do
-                  if let .save _ path _ := request then
-                    if (Restore.runOfIndex? (path.fileName.getD "")).isSome then
-                      held.modify (· + 1)
-                      discard <| IO.wait gate.result?
-                  files.start id request }
-            let stage :=
-              { stage with
-                collaborators :=
-                  { stage.collaborators with
-                    stateDirectory := some state
-                    journal := Headless.Journal.real stage.collaborators.published.reader services
-                    services := { services with files := holding } } }
-            try
-              onStage stage fun host stage => do
-                  host.send (.restore none)
-                  host.send (.run "bump-counted")
-                  unless ← settled host do
-                    return false
-                  let written ←
-                    indexWritten host stage (waitBlocked := fun what => do
-                        if what == "running work" then
-                          gate.resolve ())
-                  return written && (← held.get) ≥ 1
-            finally
-              gate.resolve () },
+        "the index's write ends on the check's steps: once the host has a change to keep, stepping does not write the index while its delay is to come; with the delay moved past on the clock, a step writes it into the fake files"
+      run := do
+        let model ← IO.mkRef ({} : FileModel)
+        withStateHost context model [] #[countedPackage 1] fun session => do
+            session.send (.restore none)
+            session.send (.run "bump-counted")
+            unless ← session.settle do
+              return false
+            session.step
+            let early := (← session.drive.progress).indexing
+            let written ← stepIndexed session
+            let some fakes := session.fakes | return false
+            let index := lastIndex (← fakes.services.files.model) stateDirectory
+            saw (early && written && index.isSome)
+                s!"indexing before the delay {early}, written {written}, the index {index}" },
     { name :=
         "a package's declared store kept across a restart, end to end: bumped twice and left uncleanly, the next host shows it before any reload, since packages register before the restore; a host handed the package at version 2 shows it migrated"
-      run :=
-        context.withFiles fun state => do
-          let first ←
-            withStateHost context state [] #[countedPackage 1] fun host stage => do
-                host.send (.restore none)
-                host.send (.run "bump-counted")
-                host.send (.run "bump-counted")
-                unless ← settled host do
-                  return false
-                indexWritten host stage
-          let shown (version : Nat) (line : String) :=
-            withStateHost context state [] #[countedPackage version] fun host stage => do
-              host.send (.restore none)
-              host.send .show
-              unless ← settled host do
+      run := do
+        let model ← IO.mkRef ({} : FileModel)
+        let first ←
+          withStateHost context model [] #[countedPackage 1] fun session => do
+              session.send (.restore none)
+              session.send (.run "bump-counted")
+              session.send (.run "bump-counted")
+              unless ← session.settle do
                 return false
-              return (← stage.output.get).contains line
-          let second ← shown 1 "store counted v1: 2"
-          let third ← shown 2 "store counted v2: 4"
-          return first && second && third },
+              stepIndexed session
+        let shown (version : Nat) (line : String) :=
+          withStateHost context model [] #[countedPackage version] fun session => do
+            session.send (.restore none)
+            session.send .show
+            unless ← session.settle do
+              return false
+            return (← session.output.get).contains line
+        let second ← shown 1 "store counted v1: 2"
+        let third ← shown 2 "store counted v2: 4"
+        return first && second && third },
     { name :=
         "a config's store kept across a restart: the start-up reload restores it; a config whose setup throws keeps it parked, and the index written after still lists it; a later good reload claims it"
-      run :=
-        context.withFiles fun state => do
-          let first ←
-            withStateHost context state keptConfig #[] fun host stage => do
-                host.send (.restore none)
-                host.send .reload
-                unless ← host.settle hangGuard do
-                  return false
-                host.send (.run "bump-kept")
-                host.send (.run "bump-kept")
-                unless ← host.settle hangGuard do
-                  return false
-                indexWritten host stage
-          let restored ←
-            withStateHost context state keptConfig #[] fun host stage => do
-                host.send (.restore none)
-                host.send .reload
-                unless ← host.settle hangGuard do
-                  return false
-                host.send .show
-                unless ← host.settle hangGuard do
-                  return false
-                return (← stage.output.get).contains "store kept v1: 2"
-          let thrown ←
-            withStateHost context state throwingConfig #[] fun host stage => do
-                host.send (.restore none)
-                host.send .reload
-                unless ← host.settle hangGuard do
-                  return false
-                unless ← indexWritten host stage do
-                  return false
-                let index ← lastIndex state
-                return index.any fun text => (text.splitOn "\"name\":\"kept\"").length == 2
-          let claimed ←
-            withStateHost context state keptConfig #[] fun host stage => do
-                host.send (.restore none)
-                host.send .reload
-                unless ← host.settle hangGuard do
-                  return false
-                host.send .show
-                unless ← host.settle hangGuard do
-                  return false
-                return (← stage.output.get).contains "store kept v1: 2"
-          return first && restored && thrown && claimed }]
+      run := do
+        let model ← IO.mkRef ({} : FileModel)
+        let first ←
+          withStateHost context model keptConfig #[] fun session => do
+              session.send (.restore none)
+              session.send .reload
+              unless ← session.settle do
+                return false
+              session.send (.run "bump-kept")
+              session.send (.run "bump-kept")
+              unless ← session.settle do
+                return false
+              stepIndexed session
+        let restored ←
+          withStateHost context model keptConfig #[] fun session => do
+              session.send (.restore none)
+              session.send .reload
+              unless ← session.settle do
+                return false
+              session.send .show
+              unless ← session.settle do
+                return false
+              return (← session.output.get).contains "store kept v1: 2"
+        let thrown ←
+          withStateHost context model throwingConfig #[] fun session => do
+              session.send (.restore none)
+              session.send .reload
+              unless ← session.settle do
+                return false
+              unless ← stepIndexed session do
+                return false
+              let some fakes := session.fakes | return false
+              let index := lastIndex (← fakes.services.files.model) stateDirectory
+              return index.any fun text => (text.splitOn "\"name\":\"kept\"").length == 2
+        let claimed ←
+          withStateHost context model keptConfig #[] fun session => do
+              session.send (.restore none)
+              session.send .reload
+              unless ← session.settle do
+                return false
+              session.send .show
+              unless ← session.settle do
+                return false
+              return (← session.output.get).contains "store kept v1: 2"
+        return first && restored && thrown && claimed }]
 
 /-- A journal (`Headless.Journal`) whose orders do nothing and whose
 failures are what the check put in `failed` since the host last took them,

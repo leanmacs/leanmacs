@@ -1,5 +1,7 @@
 import Editor.Ffi.Events
 import Editor.Ffi.Processes
+import Editor.Ffi.Document
+import Editor.Ffi.Snapshot
 import Editor.Ffi.Watches
 import Editor.Fuzzy.Real
 import Editor.InferredWait
@@ -93,13 +95,30 @@ structure SteppedServices where
 watches `watches`, the files of `files` and the runs of `processes`: a
 published snapshot is read through `snapshots`, by the job's snapshot
 reads and by the file fake when it takes a save, a diff or a search that
-names one (`Job.FakeFiles.learn`). -/
+names one (`Job.FakeFiles.learn`); a load the fake makes is held in `held`,
+the host's table of what its jobs hold, as a library snapshot of its text
+(`Job.FakeFiles.holding`). -/
 def SteppedServices.new (completions : Job.Completions) (clock : Job.FakeClock)
     (watches : Job.FakeFileWatches) (snapshots : SnapshotId → BaseIO (Option String))
-    (files : FileModel := {}) (processes : ProcessModel := {}) : IO SteppedServices := do
+    (held : Job.HeldSnapshots) (files : FileModel := {}) (processes : ProcessModel := {}) :
+    IO SteppedServices := do
   let scheduler ← Job.FakeScheduler.new
   let pump ← Job.FakePump.new completions
-  let fakeFiles ← Job.FakeFiles.new completions files (.onStep pump) snapshots
+  -- A load the fake made is held in the host's table as a library snapshot
+  -- of its text, so a finished job's command adopts it as it would the
+  -- library's own.
+  let holding (id : JobSnapshotId) : Option String → BaseIO Unit
+    | some text => do
+      match
+        ←
+          (do
+                (← Ffi.Document.new text).snapshot : IO Ffi.Snapshot).toBaseIO with
+      | .ok snapshot =>
+        held.put id snapshot
+      | .error _ =>
+        pure ()
+    | none => held.release id
+  let fakeFiles ← Job.FakeFiles.new completions files (.onStep pump) snapshots holding
   let fakeProcesses ← Job.FakeProcesses.new completions processes (answer := .onStep pump)
   return {
       scheduler, pump, files := fakeFiles, processes := fakeProcesses

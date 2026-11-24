@@ -783,7 +783,8 @@ The job system is tested here with no Rust library:
   arrival in the start that makes the count, or at once; the fake clock
   runs an action armed with `atRead` inside the read it names, on the
   reading thread; and the file service learns a published snapshot a save
-  or a diff names through its reader when it takes the request;
+  or a diff names through its reader when it takes the request, and tells
+  its holding hook of each load's text and each release;
 - `journalContractChecks`: the contract of the session journal's port
   (`Editor/Headless/Journal/Contract.lean`) on its recording fake
   (`RecordingJournal`), held by not stepping it, and the fake's own
