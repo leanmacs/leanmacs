@@ -1,4 +1,5 @@
 import Editor.File.Model
+import Editor.RealHost
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
@@ -16,7 +17,18 @@ the indent operator `=` and evil's indented new lines (`Evil.lean`,
 "Opening a line"), on the syntax fixtures, through a host of the Vim scheme
 that ships over the real syntax tree binding. The root module `EvilTest.Linked`
 runs them; its module doc says what each shows.
+
+A module of the wiring set, declared in place (`AGENTS.md`, "Deterministic
+concurrency in tests"; `docs/dev-practices/real-thread-checks.md`): its one
+check is a wiring check of the shipped Rust `indents` query over the
+library's syntax service, which the syntax model does not hold (W87).
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.EvilTest.Linked.Evil.Operators : Editor.WiringSet :=
+  .wiring
+    "the library's syntax service with the shipped Rust indents query, through the Vim scheme's keys"
+    "the syntax model holds JSON alone, so the shipped Rust query is reached only over the real binding (W87)"
 
 namespace EvilTest.Linked
 
@@ -80,7 +92,7 @@ with the config loaded: handed the fixture's text and the mangled one. The
 host runs a loop thread of its own, since the library's syntax service
 hands its parses back over the library's editor queue, which a stepped
 host never pulls. -/
-def withEvilIndentHost (context : HostContext) (syntaxFixtures : System.FilePath)
+private def withEvilIndentHost (context : HostContext) (syntaxFixtures : System.FilePath)
     (check : RealSession → String → String → IO Bool) : IO Bool := do
   let source ← IO.FS.readFile (syntaxFixtures / "rust" / "indent.rs")
   let mangled := mangledRust source indentKept

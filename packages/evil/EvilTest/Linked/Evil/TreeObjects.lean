@@ -1,4 +1,5 @@
 import Editor.File.Model
+import Editor.RealHost
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
@@ -17,7 +18,19 @@ of the Vim scheme that ships over the real syntax tree binding, and
 `treeObjectFixtureChecks`, the objects' spans over the real binding with no
 host, on the syntax fixtures. The root module `EvilTest.Linked` runs them; its
 module doc says what each shows.
+
+A module of the wiring set, declared in place (`AGENTS.md`, "Deterministic
+concurrency in tests"; `docs/dev-practices/real-thread-checks.md`): every
+check it holds is a wiring check of the shipped Rust `textObjects` query
+over the library's syntax service, which the syntax model does not hold
+(W88).
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.EvilTest.Linked.Evil.TreeObjects : Editor.WiringSet :=
+  .wiring
+    "the library's syntax service with the shipped Rust textObjects query, through the Vim scheme's keys"
+    "the syntax model does not hold the shipped Rust textObjects query, which is reached only over the real binding (W88)"
 
 namespace EvilTest.Linked
 
