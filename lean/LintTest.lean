@@ -1,3 +1,4 @@
+import LintTest.Lint.RealHost
 import LintTest.Lint.Wait
 
 /-!
@@ -20,13 +21,19 @@ and runs them.
   which; the name of a constant's mark; and how a mark's value is read: a
   kind applied to a list of module names written out, or to a constant
   whose value is one, and nothing else.
+- `lintRealHostChecks` (`LintTest/Lint/RealHost.lean`): the real-host
+  linter's rules (`Lint/RealHost.lean`): the names of a constant's mark
+  and of a module's declaration; how a mark's value (`loop`, `service`)
+  and a declaration's (a constructor applied to string literals none of
+  which is empty) are read; which types are a check's, which a wiring
+  module may export unmarked; and which modules are contract roots.
 -/
 
 namespace LintTest
 
 /-- Every check of the build's linters. -/
 def checks : List Check :=
-  lintWaitChecks
+  lintWaitChecks ++ lintRealHostChecks
 
 end LintTest
 

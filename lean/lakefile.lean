@@ -29,9 +29,12 @@ Vim scheme is the default package `evil`'s (`packages/evil/`), so an editor
 built from this package alone refuses to start. -/
 package «editor-core» where leanOptions := coreLeanOptions
 
-/-- The build's linters (`Lint.lean`, `Lint/Wait.lean`): the wait
-linters, which refuse a raw clock read and an inferred wait outside the
-modules it is allowed in (`docs/dev-practices/inferred-waits.md`). They
+/-- The build's linters (`Lint.lean`, `Lint/Wait.lean`,
+`Lint/RealHost.lean`): the wait linters, which refuse a raw clock read and
+an inferred wait outside the modules it is allowed in
+(`docs/dev-practices/inferred-waits.md`), and the real-host linter, which
+refuses a real host or service outside the wiring set
+(`docs/dev-practices/real-thread-checks.md`). They
 import `Lean`, which the config base and the model tests must not reach
 (`docs/design/overview.md`, "Config is elaborated behind a port, and two
 adapters link Lean's frontend"; `tools/core-imports-check.sh`, rule 4), so
@@ -48,7 +51,7 @@ lean_lib Lint where globs := #[.andSubmodules `Lint]
 library of this package but `Lint` and its tests loads as it elaborates
 each of its modules, and each package's lakefile names the same way
 (`plugins`): the plugin runs the library's `initialize` declarations,
-which register the wait linters and their options, and the modules it is
+which register the linters and their options, and the modules it is
 loaded for import nothing of it, so the linters reach no import closure.
 It is the shared library of `Lint`, named with this package's name, so a
 package set that requires this package by path loads the same one. That

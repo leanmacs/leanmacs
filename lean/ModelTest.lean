@@ -148,6 +148,11 @@ import ModelTest.Editor.Window
 import ModelTest.Editor.WindowCheck
 import ModelTest.Editor.Workspace
 import ModelTest.FilesApi
+import ModelTest.Lint.RealHost
+import ModelTest.Lint.RealHost.Contract
+import ModelTest.Lint.RealHost.Declaration
+import ModelTest.Lint.RealHost.Edge
+import ModelTest.Lint.RealHost.Launder
 import ModelTest.Lint.Wait
 
 /-!
@@ -671,6 +676,17 @@ The job system is tested here with no Rust library:
   first-after wait is `ContractTest`'s, the idle waits put together from a
   host's parts `ConfigTest`'s, and the linters' own checks
   `LintTest.lintWaitChecks`;
+- the real-host linter's fixtures (`ModelTest/Lint/RealHost.lean` and the
+  modules under `ModelTest/Lint/RealHost/`), which hold no check either:
+  over a stand-in marked in each module, a check outside the wiring set
+  that reaches a real host, directly or through a private wrapper, and a
+  constant whose mark it cannot read (`RealHost.lean`); a declaration with
+  an empty string, after which the module declares nothing, and one named
+  after another module (`Declaration.lean`); a public helper of a `.wiring`
+  module that hands a real host on unmarked, beside the list of checks it
+  may export (`Launder.lean`); a `.contract` module that reaches a loop
+  (`Contract.lean`); and a check of an `.edge` module, beside its `main`
+  (`Edge.lean`). The linter's own checks are `LintTest.lintRealHostChecks`;
 - `poolChecks`: warming Lean's task pool (`Editor/Job/Pool.lean`). They take
   the pool's size as Lean's runtime does (`Pool.expected`:
   `LEAN_NUM_THREADS` when it is set, else the machine's), and hold that many

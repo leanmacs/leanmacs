@@ -33,20 +33,32 @@ def isTestModule (module : Name) : Bool :=
 structure instance of it sets (`{ busy := … }`, `{ kind with busy := … }`)
 as its projection, with the syntax it was written at and the declaration it
 was written in, once for each place: a term elaborated twice (a `←` lifted
-out of an expression) is one reference. -/
+out of an expression) is one reference. The name a declaration is given is
+no reference (`declared`). -/
 def referenced (tree : InfoTree) : Array (Syntax × Name × Option Name) :=
   let found :=
     tree.foldInfo (init := #[]) fun context info found =>
       match info with
       | .ofTermInfo term =>
         match term.expr.consumeMData with
-        | .const name _ => found.push (term.stx, name, context.parentDecl?)
+        | .const name _ =>
+          if term.isBinder then found else found.push (term.stx, name, context.parentDecl?)
         | _ => found
       | .ofFieldInfo field => found.push (field.stx, field.projName, context.parentDecl?)
       | _ => found
   found.foldl (init := #[]) fun kept (stx, name, user) =>
     if kept.any fun (other, seen, _) => seen == name && other.getRange? == stx.getRange? then kept
     else kept.push (stx, name, user)
+
+/-- Every constant `tree` declares, with the syntax of the name it is given. -/
+def declared (tree : InfoTree) : Array (Syntax × Name) :=
+  tree.foldInfo (init := #[]) fun _ info found =>
+    match info with
+    | .ofTermInfo term =>
+      match term.expr.consumeMData with
+      | .const name _ => if term.isBinder then found.push (term.stx, name) else found
+      | _ => found
+    | _ => found
 
 /-- The module `name` was declared in, `here` for one of this module. -/
 def declaringModule (env : Environment) (here name : Name) : Name :=

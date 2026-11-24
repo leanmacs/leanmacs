@@ -21,6 +21,7 @@ import Editor.Job.PumpContract
 import Editor.Job.SchedulerContract
 import Editor.Jumps.Go
 import Editor.Main
+import Editor.RealHost
 import Editor.SearchRoot
 import Editor.SyntaxTree.DeliveryContract
 import Editor.Test.AtPoint
