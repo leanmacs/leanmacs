@@ -1131,7 +1131,10 @@ prepare stage stages, once, what the chosen suites build before their
 runs (`tools/wiring-runs.sh prepare`, the greeting entry's install;
 `tools/bundle-test.sh stage`), and writes `<out>/prepared/expected`, the
 items of the wiring set each chosen suite must run, from the same
-listings the gate's once-check reads (`tools/wiring-ledger.sh`). After each
+listings the gate's once-check reads (`tools/wiring-ledger.sh list`). A
+listing that fails ends the loop there, with status 2, before a hog or a
+round starts (the probe shows it), so a suite's items cannot go missing
+from both its expected items and its runs. After each
 round it checks the round's `wiring-set: ran` lines, from every suite's
 log, against those items (`tools/wiring-ledger.sh check`): a round where
 one is missing, doubled or not expected fails as the pseudo-suite
@@ -1175,7 +1178,11 @@ judged a run by its exit status alone it gave `probe: 1/1`. And a suite
 that runs nothing of the wiring set, against an expected item
 (`STRESS_PROBE_EXPECTED`), must give `coverage: 0/1`, with the item listed
 as not run, while the same suite saying the item once gives
-`coverage: 1/1`.
+`coverage: 1/1`. Last, a probe suite whose expected items cannot be read
+(`STRESS_PROBE_EXPECTED` names no file) must end the loop in its prepare
+stage with status 2, naming the listing, its suite never run; against a
+prepare stage that piped each listing into its keys, the loop ran the
+round and passed its coverage over no item.
 
 `.github/workflows/stress.yml` runs the same loop on both of the gate's
 legs, macOS and ubuntu, five shards each, and names no suite, so it runs

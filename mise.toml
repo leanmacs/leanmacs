@@ -979,12 +979,16 @@ run = [
   "out=$(sh ../tools/package-set.sh --only greeting-api --allow-empty-run run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean 2>&1) && printf '%s\\n' \"$out\" | grep -qxF 'package-set: ran 0 linked tests and 0 headless fixtures over 1 package' || { printf '%s\\n' \"$out\"; exit 1; }",
   # The wiring set's ledger checked, last: its check refuses a repeat, a
   # gap and an item no list names on its fixtures (tests/wiring-ledger),
-  # and then every item the code lists (tools/wiring-ledger.sh
+  # and its listings fail, naming the command, when one of them fails, and
+  # lose no key when none does, on stand-in listings
+  # (tools/wiring-ledger-probe.sh, under a second); and then every item the
+  # code lists (tools/wiring-ledger.sh
   # `expected`: config-test's, ffi-test's and each linked test's
   # `wiring-modules`, contract-test's root, the real-thread entries at
   # ffi-test and ffi-test's scenarios) must have run exactly once in this
   # run (AC2 of host-tests-on-fakes phase 7).
   "sh ../tools/wiring-ledger.sh check ../tests/wiring-ledger/once ../tests/wiring-ledger/expected >/dev/null && for f in twice:'ran twice: window-host at ffi-test' missing:'did not run: contract-test ContractTest' extra:'ran and not expected: ffi-test FfiTest.Elsewhere'; do status=0; out=$(sh ../tools/wiring-ledger.sh check ../tests/wiring-ledger/${f%%:*} ../tests/wiring-ledger/expected 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF \"wiring-ledger: ${f#*:}\"; } || { printf '%s\\n' \"$out\"; echo \"ffi-test: the wiring ledger's check did not refuse tests/wiring-ledger/${f%%:*}\"; exit 1; }; done",
+  "sh ../tools/wiring-ledger-probe.sh",
   "sh ../tools/wiring-ledger.sh expected >../target/gate/wiring-expected && sh ../tools/wiring-ledger.sh check ../target/gate/wiring-ledger ../target/gate/wiring-expected",
 ]
 
@@ -1416,10 +1420,11 @@ run = "tools/user-link-check.sh lean"
 # terminates the loop mid-round, on a stand-in suite, and proves that the
 # loop then leaves neither the suite's run nor its guard running; that a
 # run past the limit is killed with its group and fails as a hang; that a
-# run with a hang line fails though it exits 0; and that a round which
-# misses an item of the wiring set fails its coverage.
+# run with a hang line fails though it exits 0; that a round which
+# misses an item of the wiring set fails its coverage; and that a listing
+# that fails ends the loop before its first round.
 [tasks.stress]
-description = "Opt-in, never part of ci: run the wiring set over and over under a CPU load of twice the cores, check each round ran every item of it once, and print each suite's passes and coverage's (tools/stress.sh), after the probe that an interrupted loop leaves nothing running, that a run past its limit or with a hang line fails, and that a round missing an item fails its coverage (tools/stress-probe.sh). Run after `mise run ci`"
+description = "Opt-in, never part of ci: run the wiring set over and over under a CPU load of twice the cores, check each round ran every item of it once, and print each suite's passes and coverage's (tools/stress.sh), after the probe that an interrupted loop leaves nothing running, that a run past its limit or with a hang line fails, that a round missing an item fails its coverage, and that a failed listing ends the loop before its first round (tools/stress-probe.sh). Run after `mise run ci`"
 run = [
   "sh tools/stress-probe.sh",
   "sh tools/stress.sh",

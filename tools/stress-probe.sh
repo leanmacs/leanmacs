@@ -201,5 +201,22 @@ if [ "$status" -ne 0 ] || ! grep -qx 'coverage: 1/1' "$dir/output"; then
   sed 's/^/  /' "$dir/output" >&2
 fi
 
+# A listing that fails ends the loop in its prepare stage: a probe suite
+# whose expected items cannot be read (STRESS_PROBE_EXPECTED names no file)
+# must make the loop exit 2, naming the listing, before any round, so the
+# suite never runs. Run against a prepare stage that piped each listing
+# into its keys, the loop ran the round and passed its coverage over no
+# item at all.
+dir="$work/listing"
+mkdir "$dir"
+status=0
+STRESS_PROBE="echo ran >'$dir/ran'" STRESS_PROBE_EXPECTED=$dir/missing \
+  STRESS_HOGS=1 STRESS_OUT=$dir/out sh "$root/tools/stress.sh" 1 probe >"$dir/output" 2>&1 || status=$?
+if [ "$status" -ne 2 ] || [ -e "$dir/ran" ] ||
+  ! grep -qxF "stress: prepare: a listing of the wiring set failed: sed /^\$/d $dir/missing" "$dir/output"; then
+  fail "the loop did not end in its prepare stage, with status 2, when a listing failed (exit $status):"
+  sed 's/^/  /' "$dir/output" >&2
+fi
+
 [ -z "$failed" ] || exit 1
-echo "stress-probe: the loop sent INT or TERM ended its suite's run and its guard, each with its group; a run past its limit was killed with its group and failed as a hang; a run with a hang line failed though it exited 0; and a round that missed an item of the wiring set failed its coverage"
+echo "stress-probe: the loop sent INT or TERM ended its suite's run and its guard, each with its group; a run past its limit was killed with its group and failed as a hang; a run with a hang line failed though it exited 0; a round that missed an item of the wiring set failed its coverage; and a listing that failed ended the loop before its first round"

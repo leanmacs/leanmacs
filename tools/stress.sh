@@ -203,47 +203,62 @@ run_suite() {
 
 # The prepare stage (the header): what the chosen suites build before their
 # runs, staged once into $prepared, and the items of the wiring set each
-# must run, `<suite>\t<key>`, into $prepared/expected. It runs before the
-# hogs start, at the machine's own priority, and builds nothing the gate
-# did not.
+# must run, `<suite>\t<key>`, into $prepared/expected, each listing read
+# with tools/wiring-ledger.sh's `list`, as the gate's once-check reads it.
+# It runs before the hogs start, at the machine's own priority, and builds
+# nothing the gate did not. A listing that fails ends the loop with status
+# 2, naming it, before a hog or a round starts (tools/stress-probe.sh).
 prepare() {
   mkdir -p "$prepared"
   : >"$prepared/expected"
-  # `<suite>` before each key on stdin, a tab between.
-  keyed() { sed "s/^/$1$(printf '\t')/"; }
   if chosen ffi-wiring || chosen cli-wiring; then
     (cd "$root/lean" && sh ../tools/wiring-runs.sh prepare "$prepared/runs")
   fi
   if chosen bundle-wiring; then
     (cd "$root/lean" && sh ../tools/bundle-test.sh stage "$prepared/bundle")
   fi
-  (
-    cd "$root/lean"
-    if chosen config-wiring; then
-      .lake/build/bin/config-test wiring-modules | sed 's/^/config-test /' | keyed config-wiring
-    fi
-    if chosen ffi-wiring; then
-      { .lake/build/bin/ffi-test wiring-modules | sed 's/^/ffi-test /'
-        .lake/build/bin/ffi-test wiring-scenarios | sed 's/$/ at ffi-test/'; } | keyed ffi-wiring
-    fi
-    if chosen contract; then
-      echo 'contract-test ContractTest' | keyed contract
-    fi
-    if chosen linked-wiring; then
-      for set in ../tests/packages ../packages; do
-        sh ../tools/package-set.sh wiring-modules "$set" | tr '\t' ' '
-      done | sort -u | keyed linked-wiring
-    fi
-    if chosen cli-wiring; then
-      ../packages/.lake/build/bin/fixture-test real-thread --site ffi-test | cut -f1 | sed 's/$/ at ffi-test/' | keyed cli-wiring
-    fi
-    if chosen bundle-wiring; then
-      ../packages/.lake/build/bin/fixture-test real-thread --site bundle-test | cut -f1 | sed 's/$/ at bundle-test/' | keyed bundle-wiring
-    fi
-    if chosen probe && [ -n "${STRESS_PROBE_EXPECTED:-}" ]; then
-      grep . "$STRESS_PROBE_EXPECTED" | keyed probe
-    fi
-  ) >>"$prepared/expected"
+  if chosen config-wiring; then
+    expect config-wiring ledger_list config-test
+  fi
+  if chosen ffi-wiring; then
+    expect ffi-wiring ledger_list ffi-test
+    expect ffi-wiring ledger_list scenarios
+  fi
+  if chosen contract; then
+    expect contract ledger_list contract-test
+  fi
+  if chosen linked-wiring; then
+    expect linked-wiring ledger_list linked
+  fi
+  if chosen cli-wiring; then
+    expect cli-wiring ledger_list real-thread-ffi-test
+  fi
+  if chosen bundle-wiring; then
+    expect bundle-wiring ledger_list real-thread-bundle-test
+  fi
+  if chosen probe && [ -n "${STRESS_PROBE_EXPECTED:-}" ]; then
+    expect probe sed '/^$/d' "$STRESS_PROBE_EXPECTED"
+  fi
+}
+
+# tools/wiring-ledger.sh's listing $1, run in `lean/`.
+ledger_list() {
+  (cd "$root/lean" && sh ../tools/wiring-ledger.sh list "$1")
+}
+
+# Appends to $prepared/expected the keys the command after $1 prints, each
+# after the suite $1 and a tab, each once. The command writes a file of its
+# own and its status is checked before the file is read, so a listing that
+# fails is never lost in a pipeline whose status is its last command's: it
+# ends the loop with status 2.
+expect() {
+  suite=$1
+  shift
+  "$@" >"$prepared/listing" || {
+    echo "stress: prepare: a listing of the wiring set failed: $*" >&2
+    exit 2
+  }
+  sort -u "$prepared/listing" | sed "s/^/$suite$(printf '\t')/" >>"$prepared/expected"
 }
 
 # Checks the coverage of round $1: its suites' `wiring-set: ran` lines

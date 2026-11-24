@@ -181,7 +181,9 @@ of it once, both read from code, never from a list kept here:
   run does not run again what the fixture set's did (`--ledger`), and the
   last step checks that each item the code lists ran exactly once
   (`tools/wiring-ledger.sh expected` and `check`, with its fixtures under
-  `tests/wiring-ledger/`). Nothing in `ci` passes a wiring mode or calls
+  `tests/wiring-ledger/`). `expected` checks each listing's status before
+  it reads its lines, and exits 2, naming the command, when one fails
+  (`tools/wiring-ledger-probe.sh`, on stand-in listings). Nothing in `ci` passes a wiring mode or calls
   `stress.sh`.
 - **Each round of stress.** The loop's default suites are the wiring
   modes, contract-test, the CLI's runs and the bundle's; after each round
