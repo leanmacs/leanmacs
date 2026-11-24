@@ -95,6 +95,13 @@ done
 # directory, the repository and the core's identity.
 . "$repo/tools/user-sets-filters.sh"
 core=$(cat "$shipped.core")
+# The scrub takes a path only where it is a whole path, never inside a
+# longer name: with the repository at /work, as in the Linux container, the
+# default set's packages/workspace stays itself (host-tests-on-fakes phase
+# 7, F3, where the lakefile's check read `@REPO@/packages@REPO@space`).
+scrubbed=$(printf 'path = "/work/packages/workspace" /work /work/packages/working-set\n' | scrub /work @REPO@)
+[ "$scrubbed" = 'path = "@REPO@/packages/workspace" @REPO@ @REPO@/packages/working-set' ] ||
+  fail "the scrub took a path inside a longer name: $scrubbed"
 
 # The stand-in for the core's repository (tools/core-repo.sh), and a copy
 # of hello-init that names the core from it by git, as a published package
@@ -128,7 +135,7 @@ grep -q 'Package build failed: lake build exited with status 1' "$tmp/install-bu
   fail "A's build buffer does not end the broken-link build failed"
 grep -q 'leanmacs_no_such_symbol' "$tmp/install-buffer" ||
   fail "A's build buffer does not show the linker's error, naming leanmacs_no_such_symbol"
-sed "s|$repo|@REPO@|g; s|$tmp|@DIR@|g" "$config/lakefile.toml" | diff "$fixtures/expected-lakefile" - ||
+scrub "$repo" @REPO@ "$tmp" @DIR@ <"$config/lakefile.toml" | diff "$fixtures/expected-lakefile" - ||
   fail "A's lakefile differs from expected-lakefile"
 # The root's core won: no core was cloned, under .lake/packages or anywhere
 # else in the set's .lake.
