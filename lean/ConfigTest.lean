@@ -18,6 +18,7 @@ import ConfigTest.Editor.Loop
 import ConfigTest.Editor.Minibuffer
 import ConfigTest.Editor.PackageSet.Edit
 import ConfigTest.Editor.Setup
+import ConfigTest.Editor.Test.Fixture.Stepped
 import ConfigTest.Editor.Test.Linked.Bench
 import ConfigTest.Editor.Test.Linked.Host
 import ConfigTest.Editor.Theme.Check
@@ -139,6 +140,17 @@ show:
   the file fake's model, and `restarted` returns the hand-over's plan, or
   fails at once with none; `abort` calls the run's `onAbort`; and a command
   that quits stops the script;
+- `fixtureRunChecks`: the headless fixture harness's stepped runs
+  (`Editor/Test/Fixture/Stepped.lean`), on fixtures written into a
+  temporary directory the check owns: a fixture whose output is its
+  expected file passes, leaving the fakes quiescent and the library's
+  queue as it was; a wrong expected file fails naming its first differing
+  line, and the run goes on; a seeded file and its after-check pass, and a
+  check against another file fails; a placeholder with no setup and an
+  abort outside the real-thread set are refused; an entry not stepped is
+  skipped with its site, and a stale entry fails the run, as a root with no
+  fixture does; and `compare` fails a CLI output that differs from the
+  stepped one, saying the lines each side alone has;
 - `protocolContractChecks`: the runner's protocol contract
   (`Editor/Job/ProtocolContract.lean`) on a stepped host whose services
   record to the fake recorder: a nap the clock wakes and one the loop's end
@@ -432,6 +444,7 @@ def checks (context : Context) : List Check :=
     bracketChecks context ++
     steppedChecks context ++
     steppedRunChecks context ++
+    fixtureRunChecks context ++
     protocolContractChecks context ++
     threadChecks context ++
     jobChecks context ++
