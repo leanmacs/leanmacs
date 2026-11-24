@@ -1,5 +1,6 @@
 import ConfigTest.Check
 import ConfigTest.Support.Shipped
+import Editor.RealHost
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Syntax
@@ -14,7 +15,21 @@ levels (`TextId.reindentEdits`, `TextId.openingLevel`). The root module
 scheme's keys do with those levels is that scheme's package's: evil's `=`,
 `RET`, `o` and `O` are pinned by `evilIndentChecks`
 (`packages/evil/EvilTest/Linked/Evil/Operators.lean`).
+
+A module of the wiring set, declared in place (`AGENTS.md`, "Deterministic
+concurrency in tests"; `docs/dev-practices/real-thread-checks.md`): every
+check it holds is one. **The real adapter.** The library's syntax service
+with Rust's shipped `indents` query, through a host
+(`withRealSyntaxTestHost`). **Why.** The syntax model holds JSON alone, so
+the shipped Rust query is reached only over the real binding. Its one
+check asserts the wiring: the refusals are `ModelTest.Editor.Indent`'s,
+and the levels `ContractTest/Editor/SyntaxTree/Real.lean`'s.
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`): every check
+it holds is a wiring check of the library's syntax service. -/
+def wiringSet.ConfigTest.Editor.Indent : Editor.WiringSet :=
+  .wiring "the library's syntax service with the shipped Rust indents query (RealSyntaxTree)" "the syntax model holds JSON alone, so the shipped Rust query is reached only over the real binding"
 
 namespace ConfigTest
 
@@ -92,7 +107,7 @@ set_option linter.inferredWait false in
 /-- Runs `check` against a real host of the test scheme with the real syntax
 binding (`withRealSyntaxTestHost`) over `reindentText` of the mangled Rust indent fixture, with the config
 loaded: handed the fixture's text and the mangled one. -/
-def withIndentHost (context : Context) (check : RealSession → String → String → IO Bool) :
+private def withIndentHost (context : Context) (check : RealSession → String → String → IO Bool) :
     IO Bool := do
   let source ← IO.FS.readFile (context.syntaxFixtures / "rust" / "indent.rs")
   let mangled := mangledRust source indentKept

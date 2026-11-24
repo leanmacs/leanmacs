@@ -150,41 +150,6 @@ def dispatchChecks (context : Context) : List Check :=
                 after == ("".quote, #[viewLine "abcd!" 5]))
           dispatchCompiled },
     { name :=
-        "the interrupt key arrives while a command loops over requests: the command stops, the scene's echo says so, the flag is down once the loop has taken the key, and the next key runs its command"
-      run :=
-        -- Wiring only: the library raises its flag as the key arrives on its
-        -- queue, and the loop reads and lowers it. The rollback of the
-        -- command's edit is the model's (`ModelTest.dispatchInterruptChecks`,
-        -- `ModelTest/Editor/Loop.lean`, and `Command/Dispatch.lean`'s).
-        withRealHost context []
-          (fun session => do
-            session.type "C-c l"
-            -- The loop has taken the key that runs the command: it is in the
-            -- command, or about to be.
-            unless ← session.outputReaches (·.contains "key arrived: l - -") do
-              return false
-            session.host.press Watch.interruptKey
-            unless ← session.host.settle hangGuard do
-              return false
-            let interrupted ← session.scene
-            let lowered ← Ffi.interruptRaised
-            session.typed "C-c s"
-            let after ← session.scene
-            return interrupted.1 == "spin: interrupted".quote && !lowered &&
-                after == ("".quote, #[viewLine "!" 1]))
-          dispatchCompiled },
-    { name :=
-        "the interrupt key arrives while no command is running: the flag is down once the loop has taken it, and the next key's command runs to its end"
-      run :=
-        withRealHost context []
-          (fun session => do
-            session.host.press Watch.interruptKey
-            session.ask []
-            let lowered ← Ffi.interruptRaised
-            session.typed "C-c s"
-            return !lowered && (← session.scene) == ("".quote, #[viewLine "!" 1]))
-          dispatchCompiled },
-    { name :=
         "config registers a command under a compiled command's name: the key bound to the name runs config's command, and after a reload without the registration it runs the compiled one"
       run :=
         withHost context [("init.lean", stampText)]

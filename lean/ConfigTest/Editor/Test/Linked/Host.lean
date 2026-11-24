@@ -168,25 +168,6 @@ def steppedStageChecks (context : Context) : List Check :=
             pure (toString error)
         saw ((outcome.splitOn "the fake pump holds 1 due completions").length == 2)
             s!"the bracket said: {outcome}" },
-    { name :=
-        "a stepped stage refuses a stage over the library's services, and a real host refuses a stepped stage"
-      run := do
-        let real ← Stage.overFiles context (memorySource [])
-        let refusedReal ←
-          try
-            discard <| real.stepped
-            pure false
-          catch _ =>
-            pure true
-        let stage ← steppedStage context
-        let refusedHost ←
-          try
-            discard <| onRealStage stage fun _ _ => pure true
-            pure false
-          catch _ =>
-            pure true
-        saw (refusedReal && refusedHost)
-            s!"Stage.stepped refused overFiles {refusedReal}; onRealStage refused a stepped stage {refusedHost}" },
     { name := "a stepped stage refuses a stage that is stepped already, saying so"
       run := do
         let stage ← steppedStage context

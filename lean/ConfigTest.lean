@@ -10,11 +10,16 @@ import ConfigTest.Editor.Config.Lakefile.Toml
 import ConfigTest.Editor.Extension
 import ConfigTest.Editor.Face
 import ConfigTest.Editor.Headless
+import ConfigTest.Editor.Headless.Queue.Real
+import ConfigTest.Editor.Headless.Real.Bracket
+import ConfigTest.Editor.Headless.Real.Runner
+import ConfigTest.Editor.Headless.Real.Waits
 import ConfigTest.Editor.Headless.Stepped
 import ConfigTest.Editor.Indent
 import ConfigTest.Editor.Job.ProtocolContract
 import ConfigTest.Editor.Keymap
 import ConfigTest.Editor.Loop
+import ConfigTest.Editor.SyntaxTree.Real
 import ConfigTest.Editor.Minibuffer
 import ConfigTest.Editor.PackageSet.Edit
 import ConfigTest.Editor.Setup
@@ -22,6 +27,7 @@ import ConfigTest.Editor.Test.Fixture.Stepped
 import ConfigTest.Editor.Test.Linked.Bench
 import ConfigTest.Editor.Test.Linked.Host
 import ConfigTest.Editor.Theme.Check
+import ConfigTest.Editor.Window.Real
 import ConfigTest.Lint.Wait
 import ConfigTest.Lsp
 
@@ -185,17 +191,26 @@ show:
   idle with a background job running, or with no fake clock, answers
   working; and through the host, an `indexed` with a background job asleep
   on the clock fails at idle, naming its line, and is not a hang;
-- `idleChecks`: a host's idle signal (`Editor/Headless.lean`, "The idle
-  signal"): what holds a unit of a host's activity count, read through the
-  host and waited for on the count's own changes, with the editor thread
-  held at a line to look while an event is queued: a job asleep on the
-  fake clock holds none, a job's result holds one until it is handled, and
-  a pause's event holds one from the clock's move until it is handled; a
-  wait's later rounds publish nothing (a join forced to two rounds gives
-  the scene count of one); and a late event just before idle does not make
-  idle early: a join with a job's start of its sleep held, or a job's
-  result on its way, blocks on it (let go from its `waitBlocked`) rather
-  than answer working;
+- `realWaitChecks` (`ConfigTest/Editor/Headless/Real/Waits.lean`, of the
+  wiring set): the driver's waits across a real loop thread: a join does
+  not answer working while a job's start of its sleep is held, or its
+  result is on its way; an editor thread held inside an event still lets a
+  join answer; a wait that runs out on an unanswering editor thread says
+  so; and a stepped host publishes the scenes a real host does;
+- `realSyntaxChecks` (`ConfigTest/Editor/SyntaxTree/Real.lean`, of the
+  wiring set): a parse the library's syntax service delivers makes a real
+  host publish a scene;
+- `realRunnerChecks` (`ConfigTest/Editor/Headless/Real/Runner.lean`, of the
+  wiring set): the CLI's runner over a real loop: a stage's host handed to
+  `Headless.run` gets its reload's wake-up, and the run disposes once its
+  loop has ended, a slow one too;
+- `windowModeChecks` (`ConfigTest/Editor/Window/Real.lean`, of the wiring
+  set): the window mode's wait for its start-up config past its patience
+  says nothing on stderr;
+- `realQueueChecks` (`ConfigTest/Editor/Headless/Queue/Real.lean`, of the
+  wiring set): the library's editor queue: 100 events from a Rust thread
+  answered while a reload is held, and the interrupt flag stopping a
+  command a key, the driver or a finished job runs;
 - `shippedChecks`: what the executable's host starts its loop with, the
   state directory it is handed. What its registry holds is not this
   list's: the core's Lake package registers no package and has no entry
@@ -447,14 +462,18 @@ def checks (context : Context) : List Check :=
     protocolContractChecks context ++
     threadChecks context ++
     jobChecks context ++
-    idleChecks context ++
+    realSyntaxChecks context ++
+    realWaitChecks context ++
     indentChecks context ++
     watchReloadChecks context ++
     agreementChecks () ++
     shippedChecks () ++
     scriptChecks context ++
+    realRunnerChecks context ++
+    windowModeChecks context ++
     dispatchChecks context ++
     hostLoopChecks context ++
+    realQueueChecks context ++
     modeChecks context ++
     promptChecks context ++
     atPointChecks context ++
