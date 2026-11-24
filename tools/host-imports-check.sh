@@ -4,7 +4,7 @@
 # are handed their packages as a value, by the executable's root, and name
 # none of them.
 #
-#   tools/host-imports-check.sh [--set <set dir>]
+#   tools/host-imports-check.sh [--fixtures] [--set <set dir>]
 #   tools/host-imports-check.sh <root module> <list module>
 #
 # Run it in `lean/`.
@@ -14,7 +14,11 @@
 # set and its build"), the default set's (`../packages`) when none is
 # named. The root's imports are asked of Lake (`lake -d <set dir> query
 # :editorRootImports`, a facet the core defines; the root is a module no
-# library declares, so `+<module>:imports` does not find it). The list
+# library declares, so `+<module>:imports` does not find it). With
+# `--fixtures` first, it checks the set's other generated root, the
+# headless fixture harness's (`:editorFixturesRootImports`;
+# docs/dev-practices/headless-mode.md, "How the gate runs a fixture"), in
+# the same way. The list
 # modules are the root's imports named `….EditorPackage`, the entry modules
 # of the set's Lake packages, and its other imports are the host's.
 #
@@ -52,7 +56,7 @@
 set -eu
 
 usage() {
-  echo "usage: tools/host-imports-check.sh [--set <set dir>]" >&2
+  echo "usage: tools/host-imports-check.sh [--fixtures] [--set <set dir>]" >&2
   echo "       tools/host-imports-check.sh <root module> <list module>" >&2
   exit 2
 }
@@ -60,6 +64,13 @@ usage() {
 # The set form's directory, or nothing for the module form.
 set_dir=../packages
 root=
+# Which of the set's generated roots is checked: the editor's, or with
+# `--fixtures` first the fixture harness's. The gate checks both.
+which=editor
+if [ "${1:-}" = --fixtures ]; then
+  shift
+  which=fixtures
+fi
 case ${1:-} in
   '') [ "$#" -eq 0 ] || usage ;;
   --set)
@@ -93,9 +104,17 @@ asked() {
 }
 
 # The root's direct imports, and the list modules among them.
+# The facet that answers the root's imports: the editor's root's
+# (`editorRootImports`), or the fixture harness's
+# (`editorFixturesRootImports`).
+facet=:editorRootImports
+if [ "$which" = fixtures ]; then
+  facet=:editorFixturesRootImports
+fi
+
 if [ -n "$set_dir" ]; then
-  shown="the root of the set in $set_dir"
-  imported=$(asked :editorRootImports) || exit 2
+  shown="the root of the set in $set_dir ($facet)"
+  imported=$(asked "$facet") || exit 2
   lists=$(printf '%s\n' "$imported" | grep -E '(^|\.)EditorPackage$' || true)
   if [ -z "$lists" ]; then
     echo "host-imports-check: $shown imports no module named EditorPackage, so there is nothing to forbid" >&2

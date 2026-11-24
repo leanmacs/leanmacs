@@ -354,7 +354,7 @@ run = [
 # once: the Lake tasks run in one chain, `lean-test`, `lean`, then `lean-fmt`
 # and `ffi-test`.
 [tasks.lean]
-description = "Build the Lean core and the test executables with Lake, which runs Cargo for the Rust static library, check that every library and executable of the core and of each package loads the wait linters as a plugin (tools/lint-plugins-check.sh), then the editor from the default package set (packages/), the fixture set with its packages (tests/packages/) and the editor from the core alone (tests/empty-set/); every linter is on and a warning fails the build (lean/lakefile.lean)"
+description = "Build the Lean core and the test executables with Lake, which runs Cargo for the Rust static library, check that every library and executable of the core and of each package loads the wait linters as a plugin (tools/lint-plugins-check.sh), then the editor and the headless fixture harness from the default package set (packages/), the fixture set with its packages and its harness (tests/packages/) and the editor from the core alone (tests/empty-set/); every linter is on and a warning fails the build (lean/lakefile.lean)"
 depends = ["lean-test"]
 dir = "lean"
 # On macOS the executables must be compiled and linked by the system compiler:
@@ -384,12 +384,19 @@ run = [
   # package-set build, a facet the core's lakefile defines, writes the
   # set's root module, builds it and links
   # packages/.lake/build/bin/editor (docs/design/packages.md, "The package
-  # set and its build").
-  "lake -d ../packages build --wfail :editor",
-  # The fixture set (tests/packages/lakefile.toml): its editor, linked by
-  # the package-set build, each of its packages' default targets, with the
-  # package's own linters on, and each package's linked test, an executable
-  # linked as the editor is (tools/package-set.sh;
+  # set and its build"); and beside it the set's headless fixture harness,
+  # packages/.lake/build/bin/fixture-test, linked the same way from a root
+  # of its own (`editorFixtures`; docs/dev-practices/headless-mode.md, "How
+  # the gate runs a fixture"), which ffi-test runs.
+  "lake -d ../packages build --wfail :editor :editorFixtures",
+  # The harness links and reads its command line: with no arguments it
+  # must exit 2 with its usage. Its output is shown only when it does not.
+  "status=0; out=$(../packages/.lake/build/bin/fixture-test 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'usage: fixture-test'; } || { printf '%s\\n' \"$out\"; echo \"lean: the fixture harness exited $status with no arguments\"; exit 1; }",
+  # The fixture set (tests/packages/lakefile.toml): its editor and its
+  # fixture harness, linked by the package-set build, each of its
+  # packages' default targets, with the package's own linters on, and
+  # each package's linked test, an executable linked as the editor is
+  # (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps").
   "sh ../tools/package-set.sh build ../tests/packages",
   # The editor of the set that holds no package, tests/empty-set, which
@@ -518,6 +525,13 @@ run = [
   # `ExecuteCommand.Compiled` and the rest).
   "sh ../tools/host-imports-check.sh --set ../tests/packages",
   # The root of the user-side link's fixture set (tests/user-link/): the
+  # And the same of each set's other generated root, the headless fixture
+  # harness's (`--fixtures`, `:editorFixturesRootImports`;
+  # docs/dev-practices/headless-mode.md, "How the gate runs a fixture"): the
+  # modules it imports, other than the entry modules, reach no feature
+  # module.
+  "sh ../tools/host-imports-check.sh --fixtures",
+  "sh ../tools/host-imports-check.sh --fixtures --set ../tests/packages",
   # check that links an editor as a user's Mac would (`mise run
   # user-link-check`, opt-in) stages the root the package-set build
   # generates for that set, written by the facet `editorRoot`, which writes
@@ -691,6 +705,12 @@ run = [
   "status=0; out=$(sh ../tools/core-imports-check.sh Editor.Setup 2>&1) || status=$?; test \"$status\" -eq 3 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --base Editor.Core 2>&1) || status=$?; test \"$status\" -eq 4 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --plain Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 5 && printf '%s\\n' \"$out\" | grep -qxF \"$(printf 'Editor.Config.Elaborate\\tLean')\"; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # And it holds of the fixture harness's generated root too
+  # (`fixtures:../packages`, `:editorFixturesRootTransImports`), which
+  # elaborates config: told the base is `Editor.Main`, which the editor's
+  # root imports and the harness's does not, it must exit 4 and name that
+  # root among those that reach the elaborator without the base.
+  "status=0; out=$(sh ../tools/core-imports-check.sh --base Editor.Main 2>&1) || status=$?; { test \"$status\" -eq 4 && printf '%s\\n' \"$out\" | grep -qxF 'fixtures:../packages'; } || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --unlinked Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 6 && printf '%s\\n' \"$out\" | grep -qxF Editor.Ffi; } || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --elaborator Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 2 && test \"${out#core-imports-check: no root of the build}\" != \"$out\"; } || { printf '%s\\n' \"$out\"; exit 1; }",
   # A package imports only what a package may import of the core, on Lake's

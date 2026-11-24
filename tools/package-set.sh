@@ -33,8 +33,8 @@
 # - `test`: each package's Lake test driver, `lake -d <package> test
 #   --wfail`: the tests that need no Rust library. A package with no test
 #   driver fails the step, since Lake refuses to test it.
-# - `build`: once, the set's editor, `lake -d <set dir> build --wfail
-#   :editor`; then each package's default targets, `lake -d <package> build
+# - `build`: once, the set's editor and its fixture harness, `lake -d
+#   <set dir> build --wfail :editor :editorFixtures`; then each package's default targets, `lake -d <package> build
 #   --wfail`, which is its lint gate when its lakefile turns the linters on;
 #   and, for a package with a linked test, its executable
 #   (`lake -d <package> build --wfail +<Name>Test.Linked:editorLinked`, a
@@ -150,8 +150,8 @@ host=../tools/lean-fmt
 
 case $step in
   build)
-    echo "package-set: build the editor of the set in $set_dir"
-    lake -d "$set_dir" build --wfail :editor
+    echo "package-set: build the editor of the set in $set_dir, and its fixture harness"
+    lake -d "$set_dir" build --wfail :editor :editorFixtures
     ;;
   run)
     sysroot=$1

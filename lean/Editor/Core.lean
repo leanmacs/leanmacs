@@ -25,8 +25,7 @@ import Editor.SearchRoot
 import Editor.SyntaxTree.DeliveryContract
 import Editor.Test.AtPoint
 import Editor.Test.Excerpt
-import Editor.Test.Fixture.CommandLine
-import Editor.Test.Fixture.Stepped
+import Editor.Test.Fixture.Main
 import Editor.Test.Frame
 import Editor.Test.Hosted
 import Editor.Test.Linked.Bench

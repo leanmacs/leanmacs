@@ -1641,6 +1641,11 @@ each one the host reaches and exits 1.
   the core takes.
 - **The user-side link's set is asked for its root.** `ffi-test` also
   requires `lake -d ../tests/user-link query :editorRoot` to give a file,
+- **And the fixture harness's root.** A set's other generated root, the
+  headless fixture harness's (`fixture-test`; [headless-mode.md](headless-mode.md),
+  "How the gate runs a fixture"), is held the same way: with
+  `--fixtures` the check asks `:editorFixturesRootImports`, and the gate
+  runs it over the default set and the fixture set.
   and that root's imports to be the config base, the executable's entry,
   the default packages' entry modules and the fixture package's, in that
   order. The
@@ -1775,6 +1780,14 @@ order, and stops at the first that fails:
   of the core, the ex line's data, is moving (`core-imports-check.sh
   Editor.Core Editor.Ex.Line`), and requires exit 1, with `Editor.Ex.Line`
   found in the root's closure. No feature is left in the core to name: the
+- **So is the fixture harness's root**, the set's other generated root
+  (`fixtures:../packages`, `lake -d ../packages query
+  :editorFixturesRootTransImports`), which elaborates config too: every
+  `Editor.…` module it reaches, the harness's `Editor.Test.Fixture.…`
+  among them, must be in `Editor.Core`'s closure, and it must link the
+  config base. The gate shows the third rule biting on it: told the base
+  is `Editor.Main`, which the editor's root imports and the harness's does
+  not, the check exits 4 naming `fixtures:../packages`.
   shell, named here until it moved out of the core in features-as-packages
   phase 6, evil, named until it moved out in phase 7, and the ex line,
   named until it moved out in phase 8, are packages now. It is pointed at the root
@@ -2145,7 +2158,7 @@ package's tests are by convention are in
 | Step | What it runs for each package | In task |
 |---|---|---|
 | `test` | `lake -d <package> test --wfail`: the package's Lake test driver, the tests that need no Rust library | `lean-test`, with the `cargo` that fails first on the `PATH`, so a package's driver reaches no `rustlib` either |
-| `build` | Once, `lake -d <set dir> build --wfail :editor`, the set's editor. Then `lake -d <package> build --wfail`, its default targets under its own linter options, and `+<P>Test.Linked:editorLinked` when the package has that module | `lean` |
+| `build` | Once, `lake -d <set dir> build --wfail :editor :editorFixtures`, the set's editor and its fixture harness. Then `lake -d <package> build --wfail`, its default targets under its own linter options, and `+<P>Test.Linked:editorLinked` when the package has that module | `lean` |
 | `fmt` | `lean-fmt format --check --root <package>`, then `lean-fmt check --root <package>`, from the formatter's host | `lean-fmt` |
 | `format` | `lean-fmt format` and `lean-fmt check --fix`, which rewrite | `lean-format` |
 | `run <sysroot> <core olean dir>` | The package's linked test, in its directory, with those two arguments. Then each `<package>/tests/headless/<name>/` on the set's editor: `editor headless <sysroot> <core olean dir> <name>/config <name>/script` must print exactly `<name>/expected` | `ffi-test` |
@@ -2849,7 +2862,10 @@ lint`, never a script over source text:
   :editorLintPlugins`, a facet of `lean/lakefile.lean`) for every
   `lean_lib` and `lean_exe` of the core and of each package a set holds in
   its own directory, and the plugins Lake resolves for it, its package's
-  among them. Each must load the core's `Lint` as a plugin, or have it by
+  among them, and for the libraries of the set's generated roots, which no
+  lakefile declares (`EditorSet`, the editor's, and `EditorSetFixtures`,
+  the fixture harness's; `generatedLibs`), the plugins the build gives
+  them. Each must load the core's `Lint` as a plugin, or have it by
   import (a module of it is, or imports, one of `Lint`'s: `Lint`,
   `LintTests` and `lint-test`, where loading it too would register the
   linters twice); the check prints each that does neither and exits 1. It

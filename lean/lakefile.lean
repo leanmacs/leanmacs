@@ -877,6 +877,24 @@ what config sees of the core does not change with the set
 def setBase (entries : Array SetEntry) : Array Name :=
   #[`Editor] ++ (entries.filter (!·.core)).map (·.module)
 
+/-- The library a set's generated root module is a module of, named `name`
+in the set's package `pkg` (`setRoot`'s `EditorSet`, `fixturesRoot`'s
+`EditorSetFixtures`): no library of the set declares it, so it is a value
+made here, whose source directory is `<set>/.lake/build/root`. It takes
+this package's Lean options, so a warning in the root fails the build, and
+loads the build's linters as a plugin (`lintPlugin`), as every library
+does; the lint plugins check reads it (`generatedLibs`,
+`editorLintPlugins`). -/
+def generatedLib (pkg : Package) (name : Name) : LeanLib :=
+  ⟨pkg, name,
+    { srcDir := pkg.config.buildDir / "root", roots := #[], leanOptions := coreLeanOptions
+      plugins := lintPlugin }⟩
+
+/-- The generated roots' libraries of the set `pkg` (`generatedLib`): the
+editor's and the fixture harness's. -/
+def generatedLibs (pkg : Package) : Array LeanLib :=
+  #[generatedLib pkg `EditorSet, generatedLib pkg `EditorSetFixtures]
+
 /-- The root module of the set `pkg`, written from the entry modules of the
 set's packages (`setEntries`, `setBase`, `rootSource`), the set's Lake name
 and the text of the core's `lean-toolchain`, to
@@ -884,17 +902,14 @@ and the text of the core's `lean-toolchain`, to
 change, so a build with nothing to do writes nothing.
 
 No library of the set declares the module: it is a module of a library
-value made here, in the set's package, whose source directory is that
-directory, so its `.olean` and its object are in the set's build directory.
-That library takes this package's Lean options, so a warning in the root
-fails the build. Lake builds an executable's root the same way
-(`LeanExe.root`). -/
+value made here, in the set's package (`generatedLib`), whose source
+directory is that directory, so its `.olean` and its object are in the
+set's build directory. That library takes this package's Lean options, so
+a warning in the root fails the build, and loads the lint plugin. Lake
+builds an executable's root the same way (`LeanExe.root`). -/
 def setRoot (pkg : Package) : FetchM Module := do
   let entries ← setEntries pkg
-  let lib : LeanLib :=
-    ⟨pkg, `EditorSet,
-      { srcDir := pkg.config.buildDir / "root", roots := #[], leanOptions := coreLeanOptions }⟩
-  let root : Module := { lib, name := setRootName }
+  let root : Module := { lib := generatedLib pkg `EditorSet, name := setRootName }
   let ws ← getWorkspace
   let some core := ws.findPackageByKey? __name__
     | error "the core's package is not in the workspace"
@@ -1160,6 +1175,93 @@ generated root hands `Editor.Main.run`, and what `mise run module-bench`
 takes the closure of. It reads no source and builds nothing. -/
 package_facet editorBase pkg : Array String := do
   return Job.pure ((setBase (← setEntries pkg)).map (·.toString))
+
+/-- The text of a set's fixture harness's root module, for the entry
+modules `entries` in the order they register, the entry modules `schemes`
+that supply an input scheme and the config base `base`, as `rootSource`
+writes the editor's: it imports the core's base, `Editor`, for the link,
+then the harness's edge, then each entry module; and its `main` is one call
+of `Editor.Test.Fixture.Main.run` with the entry modules' `packages`
+appended in that order, their `scheme`s, and the base as an array of
+names. -/
+def fixturesRootSource (entries schemes base : Array Name) : String :=
+  let imports := entries.foldl (fun text name => text ++ s!"import {name}\n") ""
+  let lists :=
+    if entries.isEmpty then "#[]"
+    else " ++ ".intercalate (entries.map fun name => s!"{name}.packages").toList
+  let supplied := ", ".intercalate (schemes.map fun name => s!"{name}.scheme").toList
+  let names := ", ".intercalate (base.map fun name => s!"`{name}").toList
+  s!"import Editor
+import Editor.Test.Fixture.Main
+{imports}
+/-!
+# The fixture harness's root, generated
+
+Written by the package-set build (`fixturesRoot` in `lean/lakefile.lean`)
+from the Lake packages of a package set, as the editor's root is. Do not
+edit it: the build writes it again.
+-/
+
+/-- The set's headless fixture harness (`Editor/Test/Fixture/Main.lean`),
+with the packages of the set's Lake packages, the input schemes they
+supply and the modules config is elaborated on, as the set's editor has
+them. -/
+def main (args : List String) : IO UInt32 :=
+  Editor.Test.Fixture.Main.run ({lists}) #[{supplied}] #[{names}] args
+"
+
+/-- The name of the root module of a set's fixture harness. No library
+declares it. -/
+def fixturesRootName : Name :=
+  `EditorSetFixtures
+
+/-- The root module of the fixture harness of the set `pkg`
+(`fixturesRootSource`), written to
+`<set>/.lake/build/root/EditorSetFixtures.lean` beside the editor's root,
+only when its text would change, a module of the library
+`EditorSetFixtures` (`generatedLib`), as `setRoot` writes the editor's. -/
+def fixturesRoot (pkg : Package) : FetchM Module := do
+  let entries ← setEntries pkg
+  let root : Module := { lib := generatedLib pkg `EditorSetFixtures, name := fixturesRootName }
+  writeIfChanged root.leanFile
+      (fixturesRootSource (entries.map (·.module)) ((entries.filter (·.scheme)).map (·.module))
+        (setBase entries))
+  return root
+
+/-- The headless fixture harness of a package set:
+`lake -d <set dir> build :editorFixtures` gives
+`<set>/.lake/build/bin/fixture-test` (`docs/dev-practices/headless-mode.md`,
+"How the gate runs a fixture"). A fixture's output depends on the set's
+packages, input scheme and config base, which are compiled into the
+executable, so each set has its own: its root (`fixturesRoot`) hands them
+to `Editor.Test.Fixture.Main.run`, which runs the set's fixtures on the
+stepped host with the fakes. It is linked as the editor is
+(`linkAsEditor`: the glue, the set's Rust archive), and beside it the
+build records where the `.olean` files of the set's packages are
+(`writeModuleRecord`), so it finds the modules of its base as the editor
+does. The shipped editor links none of it. -/
+package_facet editorFixtures pkg : FilePath := do
+  let executable := pkg.binDir / "fixture-test"
+  writeModuleRecord pkg executable
+  linkAsEditor pkg (← fixturesRoot pkg) executable
+
+/-- The direct imports of a set's fixture harness's root, one module a line
+(`lake -d <set dir> query :editorFixturesRootImports`), as
+`editorRootImports` answers the editor's: the host imports check reads it
+(`tools/host-imports-check.sh`). It writes the root when its text would
+change and builds nothing. -/
+package_facet editorFixturesRootImports pkg : Array String := do
+  let root ← fixturesRoot pkg
+  (← root.imports.fetch).mapM fun modules => return modules.map (·.name.toString)
+
+/-- The transitive imports of a set's fixture harness's root, one module a
+line (`lake -d <set dir> query :editorFixturesRootTransImports`), as
+`editorRootTransImports` answers the editor's: the core imports check
+reads it (`tools/core-imports-check.sh`). It writes the root when its text
+would change and builds nothing. -/
+package_facet editorFixturesRootTransImports pkg : Array String := do
+  let root ← fixturesRoot pkg
+  (← root.transImports.fetch).mapM fun modules => return modules.map (·.name.toString)
 
 /-- The place under the bundle's `Contents/Resources/lean` of the Lake
 package whose directory, with its links resolved, is `dir`, for a set whose
@@ -1600,8 +1702,9 @@ def isLintModule (mod : Module) : Bool :=
 `lake -d <set dir> query :editorLintPlugins`; `docs/dev-practices/the-gate.md`,
 "The wait lints"): for this package, the core, and each package of
 the set (`setPackages`) that is a path dependency in the set's own
-directory, each `lean_lib` and `lean_exe`, one line, its fields separated
-by tabs: the package's name, the target's kind and name, and `loads` when
+directory, each `lean_lib` and `lean_exe`, and for the set itself the
+libraries of its generated roots (`generatedLibs`: the editor's and the
+fixture harness's), one line, its fields separated by tabs: the package's name, the target's kind and name, and `loads` when
 its modules load the build's linters as a plugin (`loadsLint`), `imports`
 when one of them is or imports a module of `Lint` (`isLintModule`), so it
 has the linters by import and loading them too would register them twice
@@ -1639,6 +1742,13 @@ package_facet editorLintPlugins pkg : Array String := do
             return (Job.collectArray reached).map fun reached =>
                 #[line (if reached.any id then "imports" else "none")]
       jobs := jobs.push job
+  -- The set's generated roots' libraries, which no lakefile declares
+  -- (`generatedLibs`): each loads the plugin, or its line says it does not.
+  let name := pkg.baseName.toString (escape := false)
+  for lib in generatedLibs pkg do
+    let verdict := if loadsLint lib then "loads" else "none"
+    jobs :=
+      jobs.push (Job.pure #[s!"{name}\tlean_lib\t{lib.name.toString (escape := false)}\t{verdict}"])
   return (Job.collectArray jobs).map (·.flatten)
 
 /-- The checks of the boundary with the Rust library (`FfiTest.lean`), linked

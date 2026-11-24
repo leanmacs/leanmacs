@@ -84,13 +84,17 @@
 # root of the build, one for each plain module and one for each unlinked
 # module.
 #
-# One root of the build is no module of a library: the root the package-set
-# build generates for the default package set, which `main` of the editor
-# is in (docs/design/packages.md, "The package set and its build"). Its
-# transitive imports are asked of the set (`lake -d <set dir> query
-# :editorRootTransImports`, a facet the core defines), and the rules hold of
-# it as of the others: it is the one root that links the elaborator into
-# the editor itself.
+# Two roots of the build are no module of a library: the roots the
+# package-set build generates for the default package set, the editor's,
+# which `main` of the editor is in (docs/design/packages.md, "The package
+# set and its build"), and the headless fixture harness's, which `main` of
+# `fixture-test` is in (docs/dev-practices/headless-mode.md, "How the gate
+# runs a fixture"). Their transitive imports are asked of the set (`lake -d
+# <set dir> query :editorRootTransImports` and
+# `:editorFixturesRootTransImports`, facets the core defines), and the rules
+# hold of them as of the others: the editor's is the one root that links the
+# elaborator into the editor itself, and the harness's elaborates config
+# too, so it must link the config base.
 set -eu
 
 # The config base: the module user config is elaborated on.
@@ -171,12 +175,14 @@ asked() {
 }
 
 # The module `$1` and its transitive imports, sorted, each once. Nothing for
-# a module Lake names no import of. `$1` may be `set_root`, the generated
-# root of the set in `built_set`, which is asked of the set.
+# a module Lake names no import of. `$1` may be `set_root` or
+# `fixtures_root`, a generated root of the set in `built_set`, which is
+# asked of the set.
 closure() {
-  if [ "$1" = "$set_root" ]; then
-    imports=$(lake -d "$built_set" query :editorRootTransImports) || {
-      echo "core-imports-check: lake -d $built_set query :editorRootTransImports failed" >&2
+  if [ "$1" = "$set_root" ] || [ "$1" = "$fixtures_root" ]; then
+    if [ "$1" = "$set_root" ]; then facet=:editorRootTransImports; else facet=:editorFixturesRootTransImports; fi
+    imports=$(lake -d "$built_set" query "$facet") || {
+      echo "core-imports-check: lake -d $built_set query $facet failed" >&2
       exit 2
     }
   else
@@ -189,9 +195,11 @@ closure() {
   printf '%s\n%s\n' "$1" "$imports" | sort -u
 }
 
-# What the generated root of the set in `built_set` is called here and in
-# what is printed. It holds a colon, so it is no module's name.
+# What the generated roots of the set in `built_set`, the editor's and the
+# fixture harness's, are called here and in what is printed. Each holds a
+# colon, so it is no module's name.
 set_root=set:$built_set
+fixtures_root=fixtures:$built_set
 
 # Whether the module `$1` is a moving name or under one.
 is_moving() {
@@ -212,7 +220,7 @@ core=$(closure "$root") || exit 2
 outside=
 elaborating=
 unbased=
-for target in $built "$set_root"; do
+for target in $built "$set_root" "$fixtures_root"; do
   reached=$(closure "$target") || exit 2
   missing=$(
     printf '%s\n' "$reached" | while IFS= read -r module; do
@@ -243,7 +251,7 @@ done
 
 # The third rule must be about some root, or it holds of nothing.
 if [ -z "$elaborating" ]; then
-  echo "core-imports-check: no root of the build ($built $set_root) reaches $elaborator, so no root is checked for the config base" >&2
+  echo "core-imports-check: no root of the build ($built $set_root $fixtures_root) reaches $elaborator, so no root is checked for the config base" >&2
   exit 2
 fi
 
