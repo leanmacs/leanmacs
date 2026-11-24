@@ -10,6 +10,8 @@ import Editor.Headless
 import Editor.Headless.Stepped
 import Editor.Job.Fake
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Keys
+import Editor.Test.Linked.Shipped
 
 /-!
 # Config tests: `Editor/Headless/Stepped.lean`
@@ -92,6 +94,33 @@ def steppedHostPublishesScenesCheck (context : Context) : Check :=
               discard <| host.join hangGuard
               return [settled, ← scenesOf keptReal]
       saw (stepped == real && stepped.length == 2) s!"stepped {stepped}, real {real}" }
+
+/-- A check of `steppedChecks`, a declaration of its own: the stepped
+counterpart of the real host's pause check, which a stepped host's own
+activity count shows, read on the check's thread. -/
+def steppedPauseHoldsUnitCheck (context : Context) : Check :=
+  { name :=
+      "a pause of completion at point armed on the fake clock, on a stepped host, holds no unit, and its event holds one from the clock's move until a step has handled it"
+    run :=
+      IO.FS.withTempDir fun directory => do
+        let (stage, collaborators) ←
+          shippedStaged TestScheme.scheme context directory [("init.lean", pausedAtPointText)] none
+              "/" none id (context.packages.push Test.editingPackage) (stepped := true)
+        Headless.withStepped collaborators stage.memory (guard := hangGuard) (grace :=
+            some hangGuard) fun stepped => do
+            let session := Session.ofStage (Driven.ofStepped stepped) directory stage
+            session.ask [.reload]
+            session.typed "a b"
+            let armed ← stepped.activitySeen
+            let waiting ← stage.clock.waiting
+            stage.clock.advance 240
+            -- The pause's event is queued on the stepped host's queue, and
+            -- no step has taken it yet.
+            let queued ← stepped.activitySeen
+            session.ask []
+            let after ← stepped.activitySeen
+            saw (armed.running == 0 && waiting == 1 && queued.running == 1 && after.running == 0)
+                s!"armed={repr armed} waiting={waiting} queued={repr queued} after={repr after}" }
 
 /-- The checks of a host stepped on the check's own thread. -/
 def steppedChecks (context : Context) : List Check :=
@@ -232,7 +261,7 @@ def steppedChecks (context : Context) : List Check :=
               | some shown, some installed => shown < installed
               | _, _ => false))
             s!"wait {repr wait}, blocks {blocks}, output {output}" },
-    steppedHostPublishesScenesCheck context,
+    steppedHostPublishesScenesCheck context, steppedPauseHoldsUnitCheck context,
     { name :=
         "a stepped wait that reaches its guard, a reload held for good, says the hang once and answers the hang, and the bracket's end lets the reload go through endWaits and waits for it"
       run := do
@@ -562,6 +591,42 @@ def steppedRunChecks (context : Context) : List Check :=
           runOnFakes stage #[⟨1, .request (.run Quit.name)⟩, ⟨2, .settle⟩, ⟨3, .request .scene⟩]
         let output ← stage.output.get
         saw (failure.isNone && said.isEmpty && !output.any (·.startsWith "scene "))
-            s!"failure={repr failure} said={said} output={output}" }]
+            s!"failure={repr failure} said={said} output={output}" },
+    { name :=
+        "an advance over the fakes on a host with no fake clock fails at once with its sentence, naming its line, with no hang said"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        let stage ← stage.stepped
+        let stage := { stage with collaborators := { stage.collaborators with clock := none } }
+        let ((failure, _), said) ← runOnFakes stage #[⟨1, .settle⟩, ⟨2, .advance 1⟩]
+        saw
+            (failure == some (.noClock 2) &&
+              (Headless.Failure.noClock 2).describe 200 ==
+                s!"the advance on line 2: {Headless.advanceNeedsClock}" &&
+              said.isEmpty)
+            s!"failure={repr failure} said={said}" },
+    { name :=
+        "a stepped run disposes of its collaborators once its loop has ended, on success and on failure: dispose is called once, after every line the script had the host print"
+      run := do
+        let disposing (script : Array Headless.Line) :
+          IO (Option Headless.Failure × Array String × Array Nat) := do
+          let stage ← Stage.new context context.elaborator (memorySource []) { jobs := #[countJob] }
+          let stage ← stage.stepped
+          let (failure, _) ←
+            Headless.runOnAndDispose
+                (Headless.Stepped.hosting stage.memory (stage.fakes.map (·.work)) hangGuard
+                  (grace := some hangGuard))
+                stage.collaborators script hangGuard (onAbort := Headless.Stepped.refuseAbort)
+          return (failure, ← stage.output.get, ← stage.disposed.get)
+        let (ran, ranOutput, ranDisposed) ←
+          disposing #[⟨1, .request (.spawn "count")⟩, ⟨2, .advance 10⟩, ⟨3, .join⟩]
+        let (failed, failedOutput, failedDisposed) ←
+          disposing #[⟨1, .request (.spawn "count")⟩, ⟨2, .join⟩]
+        saw
+            (ran.isNone && ranOutput.contains "job 1 count: ok" &&
+              ranDisposed == #[ranOutput.size] &&
+              failed == some (.working (some 2)) &&
+              failedDisposed == #[failedOutput.size])
+            s!"ran={repr ran} {ranOutput} disposed={ranDisposed}; failed={repr failed} {failedOutput} disposed={failedDisposed}" }]
 
 end ConfigTest

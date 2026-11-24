@@ -4108,9 +4108,29 @@ def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β 
   (·.1) <$>
     runFrom collaborators script waitGuard 0 answer guard grace hung abandoned waitHung waitBlocked
 
+/-- Runs `script` against a host of `hosting`'s, as `runOn` does, and then,
+the host's loop having ended, removes what the collaborators left outside
+the process (`Collaborators.dispose`): once, whether the run returned or
+threw. A dispose that throws is ignored, so it neither hides the run's
+failure nor replaces it. `runAndDispose` is this over a real host; a check
+runs it over a stepped one (`Stepped.hosting`). -/
+def runOnAndDispose {β σ : Type} {scheme : InputScheme} (hosting : Hosting β σ scheme)
+    (collaborators : Collaborators β σ scheme) (script : Array Line) (waitGuard : HangGuard)
+    (resume : Nat := 0) (answer : HangGuard := waitGuard)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) (onAbort : IO Unit := abortProcess) :
+    IO Ran := do
+  try
+    runOn hosting collaborators script waitGuard resume answer waitHung waitBlocked onAbort
+  finally
+    try
+      collaborators.dispose
+    catch _ =>
+      pure ()
+
 /-- Runs `script` against a host of its own, as `runFrom` does, and then, the
 host's loop having ended, removes what the collaborators left outside the
-process (`Collaborators.dispose`): once, whether the run returned or threw.
+process (`Collaborators.dispose`, `runOnAndDispose`): once, whether the run returned or threw.
 With `grace := none`, the default, the loop has always ended by then
 (`runFrom`), so nothing is disposed of under a live loop. Only when the
 headless mode gives up on a hung loop (`grace := some hangGrace`,
@@ -4124,15 +4144,9 @@ def runAndDispose {β σ : Type} {scheme : InputScheme} (collaborators : Collabo
     (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ())
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) :
-    IO (Option Failure × Option Restart.Plan) := do
-  try
-    runFrom collaborators script waitGuard resume answer guard grace hung abandoned waitHung
-        waitBlocked
-  finally
-    try
-      collaborators.dispose
-    catch _ =>
-      pure ()
+    IO (Option Failure × Option Restart.Plan) :=
+  runOnAndDispose (Hosting.real guard grace hung abandoned) collaborators script waitGuard resume
+    answer waitHung waitBlocked
 
 /-- The guard of each warming task's start, run out on purpose: it passes
 only when the pool is smaller than the machine, and warming then stops

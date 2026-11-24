@@ -1629,6 +1629,26 @@ def dispatchInterruptChecks : List Check :=
             text == "abcd" && cursors == #[⟨1, 3⟩] && echoes == #["", "spin: interrupted"] &&
               watch.arrived == 1
           | none => false },
+    { name :=
+        "a finished job's command, delivered, is guarded as a key's is: when the interrupt key arrives while it loops over requests it stops, the buffer's text and the selection are those before the delivery, the echo area says the job was interrupted, and the flag is still up"
+      run :=
+        let program : EditorM (String × Array SelectionRange × String) := do
+          let loop : Loop TestScheme.scheme := { state := ← holding "abcd" #[⟨1, 3⟩] }
+          let target ← focusedOf loop
+          let stepped ←
+            loop.deliver keys "job 1 spinner" do
+                Loop.insert target "spin"
+                for _ in [0:1000] do
+                  discard <| target.buffer.text.revision
+          return (← (← focusedOf stepped.loop).buffer.text.read, ← cursorsOf stepped.loop,
+              stepped.loop.state.echo)
+        pure <|
+          match program.runModel { editorModel with watch := { arrivesAfter := some 20 } } with
+          | (.ok (text, cursors, echo), model) =>
+            text == "abcd" && cursors == #[⟨1, 3⟩] && echo == "job 1 spinner: interrupted" &&
+              model.display.scenes.map (·.echo) == #["job 1 spinner: interrupted"] &&
+              model.watch.arrived == 1
+          | (.error _, _) => false },
     { name := "with no interrupt key arriving the same command runs to its end, and its edit stays"
       run :=
         pure <|
