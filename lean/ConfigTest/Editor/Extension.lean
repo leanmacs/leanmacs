@@ -33,21 +33,18 @@ def noGreeterConfig : String :=
 def extensionCompiled : Compiled :=
   { packages := #[ExtensionFixture.package] }
 
--- inferred-waits W4: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `extensionChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `extensionChecks`, a declaration of its own. -/
 def compiledPackageJobExtensionCheck (context : Context) : Check :=
   { name :=
       "a compiled package's job over an extension point is made, when it is started, from config's value, elaborated at runtime, after the package's"
     run :=
-      withHost context [("init.lean", greeterConfig)]
+      withSteppedHost context [("init.lean", greeterConfig)]
         (fun session => do
           session.ask [.reload]
           session.ask [.spawn "greeter-job"]
-          let joined ← session.join
+          let ended ← session.stepUntil (·.contains "job 1 greeter-job: ok")
           let named ← session.echo
-          return joined == .settled && named == "job sees compiled, from-config".quote)
+          return ended && named == "job sees compiled, from-config".quote)
         extensionCompiled }
 
 /-- The checks of extension points with the real elaborator: config

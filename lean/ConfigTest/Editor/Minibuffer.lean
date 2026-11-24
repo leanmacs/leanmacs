@@ -268,13 +268,6 @@ def focusedId (lines : Array String) : Option Nat := do
   let after ← (line.splitOn "focused ")[1]?
   (after.splitOn ",")[0]?.bind (·.toNat?)
 
-/-- The library's matcher, held: each request waits until `gate` is
-resolved, and is then answered by the library (`Fuzzy.real`). What a check
-gives a host's jobs to hold a match in flight. -/
-def heldMatcher (gate : IO.Promise Unit) : FuzzyHandler := fun request => do
-  discard <| IO.wait gate.result?
-  Fuzzy.real request
-
 /-- The ids of the match jobs the host printed `job <id> completion-match:
 <what>` of, in order. -/
 def matchJobs (lines : Array String) (what : String) : Array String :=
@@ -314,27 +307,25 @@ def echoSourceText : String :=
     (sources := [.named \"echo\"]))
 "
 
--- inferred-waits W13: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `promptChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `promptChecks`, a declaration of its own. -/
 def jobCompletesPromptOpenCheck (context : Context) : Check :=
   { name :=
       "a job completes while a prompt is open, on the fake clock: once the clock lets it go the host prints that its command ran, the window shows what that command inserted, and the scene still has the minibuffer's view, with the focus; the accept key afterwards runs the continuation's command"
     run :=
-      withHost context []
+      withSteppedHost context []
         (fun session => do
           session.ask [.run "rest-and-ask"]
-          unless (← session.join) == .working && (← session.clock.waiting) == 1 do
+          session.step
+          unless (← session.clock.waiting) == 1 do
             return false
           let before ← session.output.get
           session.clock.advance 10
-          let joined ← session.join
+          session.step
           let delivered := (← session.output.get).extract before.size
           let waiting ← session.sceneLines
           session.pressKeys acceptKeys
           let (echo, views) ← session.scene
-          return before == #["run rest-and-ask: ok", "job 1 nap: started"] && joined == .settled &&
+          return before == #["run rest-and-ask: ok", "job 1 nap: started"] &&
               delivered == #["job 1 nap: ok"] &&
               (waiting[0]?.map (focuses · 1)) == some true &&
               waiting.extract 1 ==
@@ -344,134 +335,111 @@ def jobCompletesPromptOpenCheck (context : Context) : Check :=
               views == #[viewLine "nappedAda" 9])
         promptCompiled }
 
--- inferred-waits W13: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `promptChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `promptChecks`, a declaration of its own. -/
 def criterion1RecorderPromptCheck (context : Context) : Check :=
   { name :=
       "criterion 1 over the recorder: a prompt asked with a source that answers later, from a compiled job that delivers two batches 10 ms apart on the fake clock, lists the first batch once it has arrived, in the library's order, and both once the job has ended; no step is refused"
     run :=
-      withHost context []
+      withSteppedHost context []
         (fun session => do
           session.ask [.run "ask-later"]
           -- The job has posted its first batch, whose event is queued, and
           -- is in its sleep.
-          unless (← session.join) == .working && (← session.clock.waiting) == 1 do
+          session.step
+          unless (← session.clock.waiting) == 1 do
             return false
           let first ← session.sceneLines
           session.clock.advance 10
-          unless (← session.join) == .settled do
-            return false
+          session.step
           let both ← session.sceneLines
           return listsAfter first "Pick: " (← realOrder "" #["wq", "edit"]) &&
               listsAfter both "Pick: " (← realOrder "" #["wq", "edit", "rewrite", "w"]) &&
               !(← session.output.get).any (·.startsWith "loop: refused"))
         laterCompiled }
 
--- inferred-waits W13: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `promptChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `promptChecks`, a declaration of its own. -/
 def sourceAnswersLaterJobCheck (context : Context) : Check :=
   { name :=
       "a source that answers later, from a job config registers with sourceJob, on the real elaborator: its prompt lists the job's answer for the initial text; after a key the job is asked again, after the source's pause, and the prompt lists its answer for the typed text"
     run :=
-      withHost context [("init.lean", echoSourceText)]
+      withSteppedHost context [("init.lean", echoSourceText)]
         (fun session => do
           session.ask [.reload]
           session.ask [.run "pick"]
-          unless (← session.join) == .settled do
-            return false
+          session.step
           let asked ← session.sceneLines
           session.commit "w"
           -- The job started again for the typed text sleeps its pause.
-          unless (← session.join) == .working && (← session.clock.waiting) == 1 do
+          session.step
+          unless (← session.clock.waiting) == 1 do
             return false
           session.clock.advance 20
-          unless (← session.join) == .settled do
-            return false
+          session.step
           let typed ← session.sceneLines
           return listsAfter asked "Pick: " ["!"] && listsAfter typed "Pick: " ["w!"] &&
               !(← session.output.get).any (·.startsWith "loop: refused"))
         minibufferCompiled }
 
--- inferred-waits W13: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `promptChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `promptChecks`, a declaration of its own. -/
 def criterion4HostPromptCheck (context : Context) : Check :=
   { name :=
-      "criterion 4 on the host: in a prompt over 100,000 candidates, with the matcher held, each of five keys committed one after another is handled and its scene shows the minibuffer with it, while the one match started at the ask is held; once the matcher answers, the listing is the library's first ten for the whole typed text, from a second match started for it"
-    run := do
-      let gate ← IO.Promise.new
-      withHost context []
-          (fun session => do
-            try
-              session.ask [.run "ask-many"]
-              let mut typed := ""
-              let mut handled := true
-              for key in ["f", "i", "l", "e", "7"] do
-                session.commit key
-                typed := typed ++ key
-                unless ← session.settle do
-                  handled := false
-                unless (← session.sceneLines).contains (minibufferLine typed typed.length) do
-                  handled := false
-              let held := matchJobs (← session.output.get) "started"
-              gate.resolve ()
-              unless (← session.join) == .settled do
-                return false
-              let listed ← session.sceneLines
-              let expected := (← realOrder typed (manyPaths 100000)).take listedRows
-              return handled && held.size == 1 &&
-                  (matchJobs (← session.output.get) "started").size == 2 &&
-                  listsAfter listed "Pick: " expected &&
-                  !(← session.output.get).any (·.startsWith "loop: refused")
-            finally
-              gate.resolve ())
-          (manyCompiled 100000) (heldMatcher gate) }
+      "criterion 4 on the host: in a prompt over 100,000 candidates, with the match job not stepped, each of five keys committed one after another is handled and its scene shows the minibuffer with it, while the one match started at the ask is held in the fake scheduler; once stepped, the listing is the library's first ten for the whole typed text, from a second match started for it"
+    run :=
+      withSteppedHost context []
+        (fun session => do
+          session.ask [.run "ask-many"]
+          let mut typed := ""
+          let mut handled := true
+          for key in ["f", "i", "l", "e", "7"] do
+            session.commit key
+            typed := typed ++ key
+            unless ← session.settle do
+              handled := false
+            unless (← session.sceneLines).contains (minibufferLine typed typed.length) do
+              handled := false
+          let held := matchJobs (← session.output.get) "started"
+          let some fakes := session.fakes | return false
+          let pieces ← fakes.services.scheduler.size
+          session.step
+          let listed ← session.sceneLines
+          let expected := (← realOrder typed (manyPaths 100000)).take listedRows
+          return handled && held.size == 1 && pieces == 1 &&
+              (matchJobs (← session.output.get) "started").size == 2 &&
+              listsAfter listed "Pick: " expected &&
+              !(← session.output.get).any (·.startsWith "loop: refused"))
+        (manyCompiled 100000) }
 
--- inferred-waits W13: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `promptChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `promptChecks`, a declaration of its own. -/
 def reloadInstallsMatchConfigCheck (context : Context) : Check :=
   { name :=
-      "a reload that installs while a match of config's style is held cancels that match before the reload is reported, and the scene after the install, with no key typed, starts a match with the new config's style; once the matcher answers, the listing is the new style's, and the first match never delivered"
-    run := do
-      let gate ← IO.Promise.new
-      withHost context [("init.lean", slowStyleText "slow")]
-          (fun session => do
-            try
-              session.ask [.reload]
-              session.ask [.run "ask-many"]
-              -- The scene after the command starts the match: read once the
-              -- ask has waited for it.
-              unless (matchJobs (← session.output.get) "started").size == 1 do
-                return false
-              session.write "init.lean" (slowStyleText "parts")
-              session.ask [.reload]
-              let reloaded ← session.output.get
-              gate.resolve ()
-              unless (← session.join) == .settled do
-                return false
-              let listed ← session.sceneLines
-              let output ← session.output.get
-              let started := matchJobs output "started"
-              let cancelledAt :=
-                reloaded.findIdx? fun line => matchJobs #[line] "cancelled" == started.extract 0 1
-              let reportedAt := reloaded.findIdx? (·.startsWith "reload 2: installed")
-              return started.size == 2 && matchJobs reloaded "started" == started &&
-                  (match cancelledAt, reportedAt with
-                  | some cancelled, some reported => cancelled < reported
-                  | _, _ => false) &&
-                  matchJobs output "ok" == started.extract 1 2 &&
-                  listsAfter listed "Pick: " ((manyPaths 2000).toList.take listedRows) &&
-                  !output.any (·.startsWith "loop: refused")
-            finally
-              gate.resolve ())
-          (manyCompiled 2000) (heldMatcher gate) }
+      "a reload that installs while a match of config's style is held, not stepped, cancels that match before the reload is reported, and the scene after the install, with no key typed, starts a match with the new config's style; once stepped, the listing is the new style's, and the first match never delivered"
+    run :=
+      withSteppedHost context [("init.lean", slowStyleText "slow")]
+        (fun session => do
+          session.ask [.reload]
+          session.ask [.run "ask-many"]
+          -- The scene after the command starts the match: read once the
+          -- ask has waited for it.
+          unless (matchJobs (← session.output.get) "started").size == 1 do
+            return false
+          session.write "init.lean" (slowStyleText "parts")
+          session.ask [.reload]
+          let reloaded ← session.output.get
+          session.step
+          let listed ← session.sceneLines
+          let output ← session.output.get
+          let started := matchJobs output "started"
+          let cancelledAt :=
+            reloaded.findIdx? fun line => matchJobs #[line] "cancelled" == started.extract 0 1
+          let reportedAt := reloaded.findIdx? (·.startsWith "reload 2: installed")
+          return started.size == 2 && matchJobs reloaded "started" == started &&
+              (match cancelledAt, reportedAt with
+              | some cancelled, some reported => cancelled < reported
+              | _, _ => false) &&
+              matchJobs output "ok" == started.extract 1 2 &&
+              listsAfter listed "Pick: " ((manyPaths 2000).toList.take listedRows) &&
+              !output.any (·.startsWith "loop: refused"))
+        (manyCompiled 2000) }
 
 /-- The checks of prompts through the headless host (`Editor/Headless.lean`),
 on the real queue, the real text binding and the real elaborator, with the
