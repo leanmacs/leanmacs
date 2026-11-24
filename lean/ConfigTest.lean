@@ -18,6 +18,7 @@ import ConfigTest.Editor.Loop
 import ConfigTest.Editor.Minibuffer
 import ConfigTest.Editor.PackageSet.Edit
 import ConfigTest.Editor.Setup
+import ConfigTest.Editor.Test.Linked.Bench
 import ConfigTest.Editor.Test.Linked.Host
 import ConfigTest.Editor.Theme.Check
 import ConfigTest.Lint.Wait
@@ -312,15 +313,24 @@ show:
   fails a check that left a completion unstepped; a stepped stage refuses
   the library's services and a real host refuses it, and refuses a stage
   stepped already; `stepUntil` says a stall at once; the loop's end
-  throws, naming the job, when a job it cancelled has not ended and nothing
-  of the fakes can run; and a session's ask throws a stall when a restore
-  is in flight and nothing of the fakes can run. And a stage's fake syntax service
-  (`Stage.fakeSyntaxService`, `Editor/Test/Linked/Host.lean`) on a stepped
-  host: it is the host's syntax handler, learns a text the host published
-  from the stage's table, refuses its captures as not parsed until the
-  check steps it, and its step posts one `parsed` event to the stage's
-  memory queue, which the loop takes and answers with one scene, every
-  request and post on the check's thread;
+  throws, naming the job, when a job it cancelled has not ended and
+  nothing of the fakes can run; and a session's ask throws a stall when a
+  restore is in flight and nothing of the fakes can run. And a stage's
+  fake syntax service (`Stage.fakeSyntaxService`,
+  `Editor/Test/Linked/Host.lean`) on a stepped host: it is the host's
+  syntax handler, learns a text the host published from the stage's table,
+  refuses its captures as not parsed until the check steps it, and its
+  step posts one `parsed` event to the stage's memory queue, which the
+  loop takes and answers with one scene, every request and post on the
+  check's thread;
+- `benchWaitChecks`: the waits a benchmark's host is waited on with, on
+  the lines it printed (`Printed`, `Editor/Test/Linked/Bench.lean`): a
+  job's end is the line after its posts' lines, or one that is not `ok`;
+  work has run through once its fence is printed and every job it
+  started, the latest of each name, has ended, and a job started after
+  the fence is not waited for; the latest job of a name is found from a
+  start; and an armed wait is resolved by the note of the line that makes
+  it hold, and at once when it holds already;
 - `reloadEchoChecks`: a rejected reload's first error is said in the echo
   area, while the old config runs; a reload that installs says nothing;
   and one rejected before the frame is made is said once it is;
@@ -433,6 +443,7 @@ def checks (context : Context) : List Check :=
     journalDrainChecks context ++
     journalOrderChecks context ++
     stageMakerChecks context ++
+    benchWaitChecks ++
     leaderChecks context ++
     hintChecks context ++
     keyHintChecks context ++
