@@ -286,18 +286,6 @@ runs out after 200 ms. -/
 def heldShort : HangGuard :=
   .held "the reload or the editor thread the check holds for good" 200
 
-/-- `clockReaches` is an inferred wait (`Editor/InferredWait.lean`). -/
-def clockReaches.inferredWait : InferredWait :=
-  .firstAfter []
-
-/-- Waits until the fake clock `clock` has reached `arrival`
-(`Job.FakeClock.arrivedAt`): on the step that makes it, on whichever thread
-takes it, never by a poll of the readout. Whether it came before
-`hangGuard`, which only a hang reaches. -/
-def clockReaches (clock : Job.FakeClock) (arrival : Job.FakeClockArrival) : IO Bool := do
-  let reached ← clock.arrivedAt arrival
-  return (← Job.awaitWithin hangGuard reached.result?).isSome
-
 /-- The fakes of a stepped stage (`Stage.stepped`), which the check steps on
 its own thread: the job services (`SteppedServices`: the fake scheduler, the
 fake pump, the file and process fakes), the memory queue the host drains,
@@ -747,42 +735,6 @@ def settle (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := wait
 def handled (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
   driven.waitWhile waitGuard .handled waitGuard none IO.eprintln fun _ => pure ()
 
-/-- `idle` is an inferred wait (`Editor/InferredWait.lean`). -/
-def idle.inferredWait : InferredWait :=
-  .idle []
-
-/-- A `join`'s wait that publishes nothing (`Headless.Wait.Kind.idle`):
-what replaces a poll for a state the host reaches by itself, such as a job
-in its sleep, so the scene count stays the poll's.
- -/
-def idle (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
-  driven.waitWhile waitGuard .idle waitGuard none IO.eprintln fun _ => pure ()
-
-/-- `quiet` is an inferred wait (`Editor/InferredWait.lean`). -/
-def quiet.inferredWait : InferredWait :=
-  .idle []
-
-/-- A wait until the host is idle (`Headless.Wait.Kind.quiet`), publishing
-nothing: `settled` at idle. What replaces a poll for a state work reaches
-by itself after the jobs table has let it go, such as a cancelled job's
-end. -/
-def quiet (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
-  driven.waitWhile waitGuard .quiet waitGuard none IO.eprintln fun _ => pure ()
-
-/-- `indexed` is an inferred wait (`Editor/InferredWait.lean`). -/
-def indexed.inferredWait : InferredWait :=
-  .idle []
-
-/-- An `indexed`'s wait on the driven host (`Headless.awaitIndexed`), over
-the fake clock `clock` the host's index write sleeps on: until the session
-index is written, its delay moved past at idle, with `waitGuard` against a
-hang only. `waitBlocked` is the wait's, called as it blocks. -/
-def indexed (driven : Driven) (waitGuard : HangGuard) (clock : Option Job.FakeClock)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
-  Headless.awaitIndexed
-    (fun kind => driven.waitWhile waitGuard kind waitGuard none IO.eprintln waitBlocked)
-    driven.progress clock
-
 end Driven
 
 /-- A real host is driven as `Driven.ofHost` drives it, so a helper written
@@ -940,24 +892,6 @@ stepped to its end first (`stepRestoring`). -/
 def settle (session : Session) : IO Bool := do
   session.stepRestoring
   session.drive.settle hangGuard (waitHung := session.waitHung) (waitBlocked := session.waitBlocked)
-
-/-- `idle` is an inferred wait (`Editor/InferredWait.lean`). -/
-def idle.inferredWait : InferredWait :=
-  .idle []
-
-/-- `join` with `hangGuard` that publishes nothing (`Driven.idle`): what a
-check waits on in place of a poll for a job in its sleep. -/
-def idle (session : Session) : IO Headless.Wait :=
-  session.drive.idle hangGuard
-
-/-- `quiet` is an inferred wait (`Editor/InferredWait.lean`). -/
-def quiet.inferredWait : InferredWait :=
-  .idle []
-
-/-- Waits until the host is idle, with `hangGuard`, publishing nothing
-(`Driven.quiet`): whether it came to idle. -/
-def quiet (session : Session) : IO Bool :=
-  return (← session.drive.quiet hangGuard) == .settled
 
 /-- Waits until the host has handled everything sent so far, with
 `hangGuard`, and publishes nothing (`Driven.handled`): whether it did. -/

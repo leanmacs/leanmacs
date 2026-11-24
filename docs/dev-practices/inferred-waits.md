@@ -15,7 +15,7 @@ wiring-set modules.
 - **b**: a "first X after Y" wait that another thread's X can satisfy: the
   first pull parked on a queue (`Ffi.awaitWaiting`), the count-th start a
   real port is handed (`startsArrive`), the first wait on the host's fake
-  clock (`clockReaches`).
+  clock (`clockReaches`, deleted by phase 4 once no check called it).
 - **c**: teardown that races real background work, such as removing a
   directory while a write, a remove, a child or a watch may be in flight.
 - **d**: a real background effect asserted on disk or in a service rather
@@ -35,7 +35,11 @@ In the own or a subject module, when that is a test module, a public
 declaration that references one must have a mark itself, written before
 it, so a kit cannot hand a restricted wait on to everyone: the kit's waits
 that are built on them (`Session.join`, `Session.ran`, `Rig.idle`,
-`childrenReapedTo` and the others) have one. The rule holds through a
+`childrenReapedTo` and the others) have one. Phase 4 deleted the kit's
+waits no check called any more, `Driven.idle`, `Driven.quiet`,
+`Driven.indexed`, `Session.idle`, `Session.quiet` and `clockReaches`, so a
+stand-in idle wait cannot even be named; `Session.join` and `Session.ran`
+stay for the files package's bench (W42), and `Driven.join` under them. The rule holds through a
 private declaration: one that references a restricted wait, directly or
 through another private or auxiliary declaration of its module, is that
 wait wherever it is referenced, so a public declaration that calls a
@@ -69,10 +73,10 @@ The marked constants:
 | `Headless.Wait.Kind.advance` | firstAfter | `Editor.Headless.Stepped`, `Editor.Headless.Wait`, `Editor.Test.Linked.Host` |
 | `Headless.Wait.Kind.mk`, `.busy`, `.still` | idle | `Editor.Headless.Stepped`, `Editor.Headless.Wait` |
 | `Headless.Host.activitySeen`, `Headless.Stepped.activitySeen` | count | none |
-| `Driven.join`, `Driven.idle`, `Driven.quiet`, `Driven.indexed`, `Session.join`, `Session.idle`, `Session.quiet`, `Session.ran` | idle | `Editor.Headless.Wait` |
+| `Driven.join`, `Session.join`, `Session.ran` | idle | none (`ConfigTest/Lint/Wait.lean` holds a fixture that refuses `Driven.join` in a check module) |
 | `Ffi.filesPending`, `diffsPending`, `grepPending`, `processesPending`, `watchesPending`, `timersPending` | count | the job port's real binding and contracts (`Editor.Job.Real`, `.Contract`, `.FlushContract`, `.HandleContract`), `Editor.Test.Linked.Services` |
 | `Test.Linked.pendingChildren`, `childrenReapedTo` | count | none |
-| `Ffi.awaitWaiting`, `Test.Linked.startsArrive`, `Test.Linked.clockReaches` | firstAfter | none |
+| `Ffi.awaitWaiting`, `Test.Linked.startsArrive` | firstAfter | none |
 | `Ffi.syntaxSettle` | realEffect | `Editor.SyntaxTree.Real`, `Editor.SyntaxTree.DeliveryContract`, `Editor.Test.Linked.Shipped`, `Editor.Test.Linked.Syntax` |
 | `Test.Linked.recordingSyntaxTree`, `shippedStagedReal`, `withRealSyntaxHost`, `SyntaxText.run`, `SyntaxText.over`, `ConfigTest.withRealSyntaxTestHost` | realEffect | none |
 

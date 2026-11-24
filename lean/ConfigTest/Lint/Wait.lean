@@ -1,11 +1,14 @@
 import ConfigTest.Check
+import Editor.Ffi.Syntax
 import Editor.Headless
+import Editor.Test.Linked.Host
 
 /-!
 # Config tests: `Lint/Wait.lean`
 
 The wait linter's fixtures that need the host, which only the config tests
-link, with the elaborator it imports: an idle wait (kind a of
+link, with the elaborator it imports: the linked kit's join and the real
+syntax service's settle refused in a check module; and an idle wait (kind a of
 `docs/dev-practices/inferred-waits.md`) put together from the host's
 `waitWhile` and a kind of wait, written outside the modules it is allowed
 in, each wrapped in `#guard_msgs`, which expects `linter.inferredWait`'s
@@ -77,3 +80,28 @@ def ConfigTest.LintFixture.madeKind : Editor.Headless.Wait.Kind :=
 nothing. -/
 def ConfigTest.LintFixture.settles (host : Editor.Headless.Host) : IO Editor.Headless.Wait :=
   host.waitWhile ConfigTest.LintFixture.guard .settle
+
+/-! The linked kit's waits are refused in a check module too: a check that
+infers "done" from the host's idle through the kit's `Driven.join`, or that
+waits on the real syntax service's delivery (`Ffi.syntaxSettle`, a real
+effect whose fake is `FakeSyntaxService`), outside their allowed modules. -/
+
+/--
+error: `Editor.Test.Linked.Driven.join`, in `ConfigTest.LintFixture.kitJoin`, is an inferred wait (idle): it infers done from something shared, not from a signal for this work. It is allowed only in Editor.Test.Linked.Host and the test modules that mirror them; wait on the work's own handle, promise or flush, or, for a site a later phase removes, `set_option linter.inferredWait false in` with its row of docs/dev-practices/inferred-waits.md
+
+Note: This linter can be disabled with `set_option linter.inferredWait false`
+-/
+#guard_msgs in
+/-- A bad declaration: a check that joins through the kit's driven host. -/
+def ConfigTest.LintFixture.kitJoin (drive : Editor.Test.Linked.Driven) : IO Editor.Headless.Wait :=
+  drive.join ConfigTest.LintFixture.guard
+
+/--
+error: `Editor.Ffi.syntaxSettle`, in `ConfigTest.LintFixture.syntaxSettled`, is an inferred wait (realEffect): it infers done from something shared, not from a signal for this work. It is allowed only in Editor.Ffi.Syntax, Editor.SyntaxTree.Real, Editor.SyntaxTree.DeliveryContract, Editor.Test.Linked.Shipped, Editor.Test.Linked.Syntax and the test modules that mirror them; wait on the work's own handle, promise or flush, or, for a site a later phase removes, `set_option linter.inferredWait false in` with its row of docs/dev-practices/inferred-waits.md
+
+Note: This linter can be disabled with `set_option linter.inferredWait false`
+-/
+#guard_msgs in
+/-- A bad declaration: a check that settles the real syntax service. -/
+def ConfigTest.LintFixture.syntaxSettled (snapshot : Editor.Ffi.Snapshot) : IO Bool :=
+  Editor.Ffi.syntaxSettle snapshot ConfigTest.LintFixture.guard
