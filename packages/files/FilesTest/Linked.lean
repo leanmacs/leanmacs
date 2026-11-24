@@ -19,7 +19,7 @@ builds this root's executable with the Rust library linked, and runs it in
 the package's directory with the Lean toolchain's directory and the core's
 `.olean` directory. It prints `files linked test: N checks passed`, and
 exits 0 when all hold, 1 after naming on stderr the ones that do not, and 2
-for a command line that is neither the two directories nor the benchmark's. The exit is explicit,
+for a command line it does not take. The exit is explicit,
 after the library's services are shut down and its queues quit: a task may
 still be blocked in the library.
 
@@ -53,6 +53,16 @@ does: the elaborator imports the base's modules from their `.olean` files
 at runtime, and each must already be linked into the executable. The
 config the hosts load names no declaration of this package.
 
+Its checks are a check set (`FilesTest.Linked.checks`, `Editor.CheckGroup`,
+`docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
+the wiring set's lists in groups of their module, which the build's
+`linter.wiringSet` holds true and complete. A run prints, after its count,
+`wiring-set: ran files <module> <n> checks` for each module of the wiring
+set it ran, which the gate's once-check reads (`tools/wiring-ledger.sh`).
+With `--wiring` after the two directories it runs those groups alone, the
+stress loop's `linked-wiring` suite (`tools/package-set.sh run --wiring`),
+and `wiring-modules` prints their modules, one a line, building no host.
+
 With the opt-in argument `bench-auto-reload` it runs the auto-reload row of
 `config-bench` instead (`FilesTest.Linked.Bench.autoReloadRow`,
 `FilesTest/Linked/Files/Bench.lean`; `mise run config-bench`), which the
@@ -74,31 +84,59 @@ def setPackages : Array Editor.Package :=
   Files.EditorPackage.packages ++ Editor.Test.Shipped.packages ++
     #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package]
 
-/-- Every check of the linked test, in the order they run, over `context`. -/
-def FilesTest.Linked.checks (context : Editor.Test.Linked.HostContext) : List FilesTest.Check :=
-  FilesTest.Linked.filePromptChecks context ++ FilesTest.Linked.fileChecks context ++
-    FilesTest.Linked.fileServiceChecks context ++
-    FilesTest.Linked.languageChecks context ++
-    FilesTest.Linked.realLanguageChecks context ++
-    FilesTest.Linked.reloadChecks context ++
-    FilesTest.Linked.autoReloadChecks context
+/-- Every check of the linked test, in the order they run: its check set
+(`Editor.CheckGroup`), the lists of `FilesTest/Linked/Files/Real.lean`, of
+the wiring set, in that module's groups between the others'. -/
+def FilesTest.Linked.checks :
+    List (Editor.CheckGroup Editor.Test.Linked.HostContext FilesTest.Check) :=
+  [.plain fun context =>
+      FilesTest.Linked.filePromptChecks context ++ FilesTest.Linked.fileChecks context,
+    .wired "FilesTest.Linked.Files.Real" wiringSet.FilesTest.Linked.Files.Real fun context =>
+      FilesTest.Linked.fileServiceChecks context,
+    .plain fun context => FilesTest.Linked.languageChecks context,
+    .wired "FilesTest.Linked.Files.Real" wiringSet.FilesTest.Linked.Files.Real fun context =>
+      FilesTest.Linked.realLanguageChecks context,
+    .plain fun context => FilesTest.Linked.reloadChecks context,
+    .wired "FilesTest.Linked.Files.Real" wiringSet.FilesTest.Linked.Files.Real fun context =>
+      FilesTest.Linked.autoReloadChecks context]
+
+/-- Runs the checks `select` takes from the check set, over the harness's
+context, and says which failed, or how many passed, as `what`; then a line
+for each module of the wiring set the run ran
+(`Editor.CheckGroup.ranLines`). -/
+private def FilesTest.Linked.runSelected (sysroot oleans : String)
+    (select : Editor.Test.Linked.HostContext → List FilesTest.Check)
+    (wiring : List (String × (Editor.Test.Linked.HostContext → List FilesTest.Check)))
+    (what : String) : IO UInt32 := do
+  let failed ←
+    Editor.Test.Linked.HostContext.run sysroot oleans setPackages fun context => do
+        let checks := select context
+        let failed ← FilesTest.failures checks
+        for name in failed do
+          IO.eprintln s!"FAILED: {name}"
+        if failed.isEmpty then
+          IO.println s!"files linked test: {checks.length} {what} passed"
+        for line in Editor.CheckGroup.ranLines "files" wiring context do
+          IO.println line
+        return failed
+  (← IO.getStdout).flush
+  Editor.Test.Linked.shutdown
+  IO.Process.exit (if failed.isEmpty then 0 else 1)
 
 /-- Runs the checks (the module docs). -/
 def main (arguments : List String) : IO UInt32 := do
+  let wiring := Editor.CheckGroup.wiring FilesTest.Linked.checks
   match arguments with
   | [sysroot, oleans] =>
-    let failed ←
-      Editor.Test.Linked.HostContext.run sysroot oleans setPackages fun context => do
-          let checks := FilesTest.Linked.checks context
-          let failed ← FilesTest.failures checks
-          for name in failed do
-            IO.eprintln s!"FAILED: {name}"
-          if failed.isEmpty then
-            IO.println s!"files linked test: {checks.length} checks passed"
-          return failed
-    (← IO.getStdout).flush
-    Editor.Test.Linked.shutdown
-    IO.Process.exit (if failed.isEmpty then 0 else 1)
+    FilesTest.Linked.runSelected sysroot oleans (Editor.CheckGroup.all FilesTest.Linked.checks)
+        wiring "checks"
+  | [sysroot, oleans, "--wiring"] =>
+    FilesTest.Linked.runSelected sysroot oleans (fun context => wiring.flatMap (·.2 context)) wiring
+        "wiring-set checks"
+  | ["wiring-modules"] =>
+    for module in Editor.CheckGroup.modules FilesTest.Linked.checks do
+      IO.println module
+    return 0
   | ["bench-auto-reload", sysroot, oleans, samples] =>
     match samples.toNat? with
     | some samples =>
@@ -116,5 +154,5 @@ def main (arguments : List String) : IO UInt32 := do
       return 2
   | _ =>
     IO.eprintln
-        "usage: FilesTest-Linked <sysroot> <core olean dir>, or FilesTest-Linked bench-auto-reload <sysroot> <core olean dir> <samples>"
+        "usage: FilesTest-Linked <sysroot> <core olean dir> [--wiring], FilesTest-Linked wiring-modules, or FilesTest-Linked bench-auto-reload <sysroot> <core olean dir> <samples>"
     return 2
