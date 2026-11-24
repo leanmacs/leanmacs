@@ -60,6 +60,28 @@ def checkGroupChecks : List Check :=
             CheckGroup.Mode.ofArguments? ["--wired"] == none &&
             CheckGroup.Mode.ofArguments? ["wiring"] == none },
     { name :=
+        "a root that takes more after its mode reads the mode first, `--wiring` or none, and hands the rest to its own reader, and anything its reader refuses is no mode"
+      run :=
+        let rest? : List String → Option (Option String)
+          | [] => some none
+          | ["--timings", file] => some (some file)
+          | _ => none
+        return CheckGroup.Mode.read? rest? [] == some (.all, none) &&
+            CheckGroup.Mode.read? rest? ["--timings", "t"] == some (.all, some "t") &&
+            CheckGroup.Mode.read? rest? ["--wiring"] == some (.wiring, none) &&
+            CheckGroup.Mode.read? rest? ["--wiring", "--timings", "t"] == some (.wiring, some "t") &&
+            CheckGroup.Mode.read? rest? ["--timings", "t", "--wiring"] == none &&
+            CheckGroup.Mode.read? rest? ["--wiring", "--wiring"] == none &&
+            CheckGroup.Mode.read? rest? ["wiring"] == none },
+    { name :=
+        "a root that names its runs by subcommands names its mode by them: none a normal run, `wiring` alone the wiring set's, and anything else no mode"
+      run :=
+        return CheckGroup.Mode.ofSubcommand? [] == some .all &&
+            CheckGroup.Mode.ofSubcommand? ["wiring"] == some .wiring &&
+            CheckGroup.Mode.ofSubcommand? ["--wiring"] == none &&
+            CheckGroup.Mode.ofSubcommand? ["wiring", "x"] == none &&
+            CheckGroup.Mode.ofSubcommand? ["wiring-modules"] == none },
+    { name :=
         "a mode selects a normal run's checks or the wiring run's, each wiring module's checks in turn, and its count line calls them checks or wiring-set checks"
       run :=
         return CheckGroup.select .all sampleGroups 7 == CheckGroup.all sampleGroups 7 &&

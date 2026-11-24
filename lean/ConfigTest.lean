@@ -516,7 +516,10 @@ end ConfigTest
 
 /-- `config-test <sysroot> <olean dir> <syntax fixtures> <default config>`
 runs the checks: exits 0 when all hold, and 1 after naming the ones that do
-not. With `--timings <file>` after them, it writes to `<file>`, as
+not. With `--wiring` after them it runs the wiring set's checks alone, the
+mode read and selected by as every root does (`Editor.CheckGroup.Mode.read?`
+with `ConfigTest.timings?`, then `Editor.CheckGroup.select`). With
+`--timings <file>` after them, or after `--wiring`, it writes to `<file>`, as
 each ends, the wall time in milliseconds of the base's import and of each
 check, a tab and its name (`ConfigTest.run`): what the stress loop keeps of
 each round, to size the hang guards from. The third argument is the directory of the syntax fixtures
@@ -606,15 +609,14 @@ def main (args : List String) : IO UInt32 := do
       IO.println module
     return 0
   | sysroot :: oleanDir :: syntaxFixtures :: defaultConfig :: rest =>
-    match ConfigTest.options rest with
-    | some options =>
+    match Editor.CheckGroup.Mode.read? ConfigTest.timings? rest with
+    | some (mode, timings) =>
       let wiring := Editor.CheckGroup.wiring ConfigTest.checks
-      let selected :=
-        Editor.CheckGroup.select (if options.wiring then .wiring else .all) ConfigTest.checks
+      let selected := Editor.CheckGroup.select mode ConfigTest.checks
       IO.Process.exit
           (←
             ConfigTest.run selected sysroot oleanDir syntaxFixtures defaultConfig
-                ConfigTest.shippedPackages options.timings wiring)
+                ConfigTest.shippedPackages timings wiring)
     | none =>
       ConfigTest.usage
   | _ =>

@@ -137,9 +137,14 @@ of it once, both read from code, never from a list kept here:
   test with such a module take a wiring mode that runs those groups alone
   (`config-test … --wiring`, `ffi-test wiring`, `<P>Test-Linked … --wiring`,
   through `tools/package-set.sh --wiring run`) and answer
-  `wiring-modules`. A linked root and config-test read the mode and select
-  its checks with `CheckGroup.Mode.ofArguments?` and `CheckGroup.select`,
-  so the roots cannot drift apart; each run of them prints
+  `wiring-modules`. Every root reads its mode with a shared reader of
+  `CheckGroup.Mode` and selects its checks by it with `CheckGroup.select`,
+  so the roots cannot drift apart: a linked root with
+  `CheckGroup.Mode.ofArguments?`, config-test with `CheckGroup.Mode.read?`
+  and its own reader of the `--timings <file>` after the mode, and
+  ffi-test, whose runs are subcommands, with
+  `CheckGroup.Mode.ofSubcommand?`, which maps `wiring` to the wiring mode.
+  Each run of them prints
   `wiring-set: ran <root> <module> <n> checks` for each module it ran
   (`CheckGroup.ranLines`), and contract-test, of the set whole,
   `wiring-set: ran contract-test ContractTest`.
@@ -151,8 +156,13 @@ of it once, both read from code, never from a list kept here:
   module of the set declares no IO list producer (`IO (List String)` and
   the like) unless it is marked; and, for a root that links the library,
   (c) its `main` reaches a wiring module only through a check set or a
-  table of scenarios (`List Editor.Scenario`) and (d) runs a wiring branch
-  (`CheckGroup.wiring`). model-test's `.wiring` modules are the linters'
+  table of scenarios (`List Editor.Scenario`) and (d) selects its checks
+  by the shared wiring mode: it reaches a check set, `CheckGroup.select`
+  and one of the shared readers above. Naming the wiring groups
+  (`CheckGroup.wiring`, which the count lines of `CheckGroup.ranLines`
+  take) is not a wiring mode, nor is reading `--wiring` itself and
+  selecting by the mode it maps it to; greeting's fixtures show both
+  refused, and a `main` that reads the mode but never selects by it. model-test's `.wiring` modules are the linters'
   fixtures and link no library, so (c) and (d) do not hold it. Its
   fixtures are `ModelTest/Lint/Wiring.lean`, the modules under
   `ModelTest/Lint/Wiring/` and greeting's

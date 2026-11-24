@@ -150,7 +150,8 @@ def themePictures (dir font : String) (write : Bool) : IO UInt8 :=
 end FfiTest
 
 /-- With no arguments, runs the checks: exits 0 when all hold, and 1 after
-naming the ones that do not.
+naming the ones that do not. `wiring` runs the wiring set's checks alone
+(`Editor.CheckGroup.Mode.ofSubcommand?`), and exits with their status.
 
 With the arguments `exit <code>`, exits with that status and does nothing
 else. The `ffi-test` task uses this to see that the entry point passes the
@@ -170,52 +171,60 @@ than its stack. Nothing catches the C++ exception the interpreter throws, so
 the process dies of SIGABRT, and the `ffi-overflow` task requires exactly
 that. Any exit status of its own means the scenario went wrong. -/
 def main (args : List String) : IO UInt32 := do
-  match args with
-  | [] =>
-    if (← FfiTest.runSelected "ffi-test" (Editor.CheckGroup.all FfiTest.checks ())) == 0 then
+  -- The checks, all or the wiring set's (`ffi-test wiring`): the mode its
+  -- subcommands name, read and selected by as every root does
+  -- (`Editor.CheckGroup.Mode`).
+  match Editor.CheckGroup.Mode.ofSubcommand? args with
+  | some mode =>
+    let name := if mode == .wiring then "ffi-test wiring" else "ffi-test"
+    let status ← FfiTest.runSelected name (Editor.CheckGroup.select mode FfiTest.checks ())
+    if status == 0 && mode == .all then
       return 0
     else
       -- A failed check may have left a task parked in the library, and
-      -- returning from `main` would wait for it for ever.
-      IO.Process.exit 1
-  | ["wiring"] =>
-    let wiring := (Editor.CheckGroup.wiring FfiTest.checks).flatMap (·.2 ())
-    IO.Process.exit (← FfiTest.runSelected "ffi-test wiring" wiring)
-  | ["wiring-modules"] =>
-    for module in Editor.CheckGroup.modules FfiTest.checks do
-      IO.println module
-    return 0
-  | ["wiring-scenarios"] =>
-    for scenario in FfiTest.windowScenarios do
-      IO.println scenario.command
-    return 0
-  | ["shutdown"] =>
-    IO.Process.exit (← FfiTest.run "ffi-test shutdown" (FfiTest.shutdownChecks ()))
-  | ["display", fixture] =>
-    IO.Process.exit (← FfiTest.displayScenario fixture)
-  | ["theme-pictures", dir, font] =>
-    IO.Process.exit (← FfiTest.themePictures dir font false)
-  | ["theme-pictures", dir, font, "--write"] =>
-    IO.Process.exit (← FfiTest.themePictures dir font true)
-  | ["excerpt-picture", dir, font] =>
-    IO.Process.exit (← FfiTest.excerptPictureScenario dir font false)
-  | ["excerpt-picture", dir, font, "--write"] =>
-    IO.Process.exit (← FfiTest.excerptPictureScenario dir font true)
-  | ["exit-while-blocked"] =>
-    IO.Process.exit (if ← FfiTest.blockForGood then 0 else 1)
-  | ["overflow", sysroot, oleanDir] =>
-    IO.Process.exit (← FfiTest.overflow sysroot oleanDir)
-  | ["exit", code] =>
-    match code.toNat? with
-    | some status =>
-      return status.toUInt32
-    | none =>
-      FfiTest.usage
-  | command :: arguments =>
-    match FfiTest.windowScenarios.find? (·.command == command) with
-    | some scenario =>
-      let status ← scenario.run arguments
-      Editor.Ffi.quit
-      IO.Process.exit status
-    | none =>
+      -- returning from `main` would wait for it for ever. The wiring run
+      -- exits so whatever its status.
+      IO.Process.exit (if mode == .all then 1 else status)
+  | none =>
+    match args with
+    | ["wiring-modules"] =>
+      for module in Editor.CheckGroup.modules FfiTest.checks do
+        IO.println module
+      return 0
+    | ["wiring-scenarios"] =>
+      for scenario in FfiTest.windowScenarios do
+        IO.println scenario.command
+      return 0
+    | ["shutdown"] =>
+      IO.Process.exit (← FfiTest.run "ffi-test shutdown" (FfiTest.shutdownChecks ()))
+    | ["display", fixture] =>
+      IO.Process.exit (← FfiTest.displayScenario fixture)
+    | ["theme-pictures", dir, font] =>
+      IO.Process.exit (← FfiTest.themePictures dir font false)
+    | ["theme-pictures", dir, font, "--write"] =>
+      IO.Process.exit (← FfiTest.themePictures dir font true)
+    | ["excerpt-picture", dir, font] =>
+      IO.Process.exit (← FfiTest.excerptPictureScenario dir font false)
+    | ["excerpt-picture", dir, font, "--write"] =>
+      IO.Process.exit (← FfiTest.excerptPictureScenario dir font true)
+    | ["exit-while-blocked"] =>
+      IO.Process.exit (if ← FfiTest.blockForGood then 0 else 1)
+    | ["overflow", sysroot, oleanDir] =>
+      IO.Process.exit (← FfiTest.overflow sysroot oleanDir)
+    | ["exit", code] =>
+      match code.toNat? with
+      | some status =>
+        return status.toUInt32
+      | none =>
+        FfiTest.usage
+    | command :: arguments =>
+      match FfiTest.windowScenarios.find? (·.command == command) with
+      | some scenario =>
+        let status ← scenario.run arguments
+        Editor.Ffi.quit
+        IO.Process.exit status
+      | none =>
+        FfiTest.usage
+    -- Read as the normal run above.
+    | [] =>
       FfiTest.usage

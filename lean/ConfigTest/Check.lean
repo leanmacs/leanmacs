@@ -117,23 +117,13 @@ def timedFailures (checks : List Check) (clock : IO Nat := pure 0)
     timed (timingLine ((← clock) - started) check.name)
   return failed
 
-/-- What follows the four directories on the checks' command line. -/
-structure Options where
-  /-- The file of `--timings`, if it is given. -/
-  timings : Option System.FilePath := none
-  /-- Whether `--wiring` is given: the run takes the wiring set's groups of
-  the check set alone (`Editor.CheckGroup.wiring`). -/
-  wiring : Bool := false
-  deriving BEq, Repr
-
-/-- What follows the four directories on the checks' command line: at most
-one `--wiring`, then at most one `--timings <file>`; `none` for anything
-else. -/
-def options : List String → Option Options
-  | [] => some {}
-  | ["--timings", file] => some { timings := some file }
-  | ["--wiring"] => some { wiring := true }
-  | ["--wiring", "--timings", file] => some { timings := some file, wiring := true }
+/-- What follows the mode on the checks' command line, after the four
+directories, which the shared reader reads first
+(`Editor.CheckGroup.Mode.read? timings?`, in `main`): at most one
+`--timings <file>`, its file; `none` for anything else. -/
+def timings? : List String → Option (Option System.FilePath)
+  | [] => some none
+  | ["--timings", file] => some (some file)
   | _ => none
 
 /-- The checks of `failures`, `saw` and `timedFailures`: what a failing
@@ -244,18 +234,20 @@ def checkChecks (_ : Unit) : List Check :=
     { name :=
         "the checks' command line takes --wiring, then --timings, after its directories, each once, and nothing else"
       run :=
+        -- As `main` reads it: the mode by the shared reader, then the rest by
+        -- `timings?`.
+        let read := Editor.CheckGroup.Mode.read? timings?
+        let file : Option System.FilePath := some "t"
         saw
-          (options [] == some {} &&
-            options ["--timings", "t"] == some { timings := some ("t" : System.FilePath) } &&
-            options ["--wiring"] == some { wiring := true } &&
-            options ["--wiring", "--timings", "t"] ==
-              some { timings := some ("t" : System.FilePath), wiring := true } &&
-            options ["--timings", "t", "--wiring"] == none &&
-            options ["--wiring", "--wiring"] == none &&
-            options ["--timings", "t", "--timings", "u"] == none &&
-            options ["--timings"] == none &&
-            options ["--real-threads", "r"] == none &&
-            options ["--other", "x"] == none)
+          (read [] == some (.all, none) && read ["--timings", "t"] == some (.all, file) &&
+            read ["--wiring"] == some (.wiring, none) &&
+            read ["--wiring", "--timings", "t"] == some (.wiring, file) &&
+            read ["--timings", "t", "--wiring"] == none &&
+            read ["--wiring", "--wiring"] == none &&
+            read ["--timings", "t", "--timings", "u"] == none &&
+            read ["--timings"] == none &&
+            read ["--real-threads", "r"] == none &&
+            read ["--other", "x"] == none)
           "an option was not read as said" }]
 
 /-- The directories a directory argument of the executable names: one, or

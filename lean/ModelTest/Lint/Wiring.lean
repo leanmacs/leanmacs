@@ -17,7 +17,7 @@ wrapped in `#guard_msgs`, which expects the lint's error, so a build of
 this module shows that the linter refuses it.
 
 The `main` here is not refused, though it runs `Wired`'s checks outside a
-check set and has no wiring branch: rules (c) and (d) hold only a root
+check set and selects by no wiring mode: rules (c) and (d) hold only a root
 that links the library, and model-test links none, so its `.wiring`
 declarations are fixtures alone. Their refusals are the fixture package
 `greeting`'s (`GreetingTest/Linked/Lint/Wiring.lean`), under a root that

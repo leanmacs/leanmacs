@@ -130,8 +130,13 @@ def ranLines {κ α : Type} (root : String) (modules : List (String × (κ → L
 
 /-- Which checks of a root's check set a run runs: every one, a normal run
 (`all`), or the wiring set's modules' alone (`wiring`), the root's
-`--wiring` mode, which the stress loop runs. Every root reads its mode and
-selects its checks here, so that none can drift from the others. -/
+`--wiring` mode, which the stress loop runs. Every root reads its mode
+here, from `--wiring` (`Mode.ofArguments?`, or `Mode.read?` for a root
+that takes more after it, as config-test's `--timings`) or, for ffi-test,
+whose runs are subcommands, from `wiring` (`Mode.ofSubcommand?`), and
+selects its checks by it here (`select`), so that none can drift from the
+others. The build's `linter.wiringSet` (`lean/Lint/Wiring.lean`, rule d)
+refuses a root's `main` that does not. -/
 inductive Mode where
   /-- A normal run: every group's checks (`CheckGroup.all`). -/
   | all
@@ -139,12 +144,33 @@ inductive Mode where
   | wiring
   deriving BEq, Repr
 
-/-- The mode the arguments after a root's directories name: none, a normal
-run; `--wiring` alone, the wiring set's; `none` for anything else, which
-the root answers with its usage. -/
-def Mode.ofArguments? : List String → Option Mode
+/-- The mode the arguments after a root's directories name, first, and
+what `rest?`, the root's own reader, reads of the arguments after it: a
+leading `--wiring`, the wiring set's, or none, a normal run. `none` when
+`rest?` refuses what follows the mode, which the root answers with its
+usage. -/
+def Mode.read? {β : Type} (rest? : List String → Option β) : List String → Option (Mode × β)
+  | "--wiring" :: rest => (rest? rest).map fun read => (.wiring, read)
+  | arguments => (rest? arguments).map fun read => (.all, read)
+
+/-- The mode the arguments after a root's directories name, for a root that
+takes nothing else (`read?` with a reader of nothing): none, a normal run;
+`--wiring` alone, the wiring set's; `none` for anything else, which the
+root answers with its usage. -/
+def Mode.ofArguments? (arguments : List String) : Option Mode :=
+  (Mode.read?
+        (fun
+          | [] => some ()
+          | _ => none)
+        arguments).map
+    (·.1)
+
+/-- The mode a root whose runs are subcommands names, ffi-test: none, a
+normal run; `wiring` alone, the wiring set's; `none` for anything else,
+which the root reads as another subcommand. -/
+def Mode.ofSubcommand? : List String → Option Mode
   | [] => some .all
-  | ["--wiring"] => some .wiring
+  | ["wiring"] => some .wiring
   | _ => none
 
 /-- What a run's count line calls the checks `mode` runs. -/

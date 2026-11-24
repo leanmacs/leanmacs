@@ -803,8 +803,10 @@ The job system is tested here with no Rust library:
   first group comes, with all its groups' checks, and drops the plain
   groups and an edge's; a listing names those modules; a run's lines
   name the root, each module and its count; and a root's mode
-  (`CheckGroup.Mode`), read from the arguments after its directories,
-  selects a normal run's checks or the wiring run's (`CheckGroup.select`);
+  (`CheckGroup.Mode`), read from the arguments after its directories
+  (`--wiring`, alone or with the root's own reader of what follows it) or
+  from ffi-test's subcommands (`wiring`), selects a normal run's checks or
+  the wiring run's (`CheckGroup.select`);
 - `restVerdictChecks`: a stepped host's wait over its fakes, judged at their
   rest (`Rest.judge`, `Editor/Headless/Wait.lean`), which reads no
   activity count: settled once the wait is no longer busy; a block on the

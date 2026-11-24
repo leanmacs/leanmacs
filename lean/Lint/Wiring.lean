@@ -37,9 +37,20 @@ In a test module (`isTestModule`), it refuses, naming the constant:
   declaration of its module that no other module can name. A type, a
   constructor, a projection or an instance of such a module is data it may
   name.
-- **(d) A `--wiring` branch.** A `main` of a root that links the library,
-  whose imports reach a module of the wiring set under its first name
-  component, references a check set and `Editor.CheckGroup.wiring`.
+- **(d) A wiring mode, selected by.** A `main` of a root that links the
+  library, whose imports reach a module of the wiring set under its first
+  name component, selects its checks by a mode from the shared selection
+  (`Editor.CheckGroup.Mode`, `Editor/RealHost.lean`): it references, directly
+  or through a declaration of its module that no other module can name, a
+  check set, `Editor.CheckGroup.select`, and a shared reader of the mode:
+  `Editor.CheckGroup.Mode.ofArguments?` or `Editor.CheckGroup.Mode.read?`,
+  which read `--wiring`, or `Editor.CheckGroup.Mode.ofSubcommand?`, which
+  reads ffi-test's subcommand `wiring`. A reference to the wiring groups
+  alone (`Editor.CheckGroup.wiring`, which the count lines of
+  `Editor.CheckGroup.ranLines` take) is no wiring mode, and the mode
+  `Editor.CheckGroup.Mode.wiring` named is no reading of it: a root that
+  reads `--wiring` itself, and runs the wiring groups or selects by the
+  mode it maps it to, is refused.
 
 (c) and (d) hold only a root that links the library: model-test and the
 linters' fixtures in it link none, and their `.wiring` declarations are
@@ -64,7 +75,7 @@ open Lean Elab Command
 register_option linter.wiringSet : Bool :=
   { defValue := false
     descr :=
-      "refuse a root's check set (Editor.CheckGroup) whose wired groups miss, misplace or repeat a check of the wiring set, an IO list producer in a module of the wiring set, and a main that reaches the wiring set outside its check set or runs no wiring branch" }
+      "refuse a root's check set (Editor.CheckGroup) whose wired groups miss, misplace or repeat a check of the wiring set, an IO list producer in a module of the wiring set, and a main that reaches the wiring set outside its check set or does not select its checks by the shared wiring mode" }
 
 namespace Lint
 
@@ -82,9 +93,14 @@ def wiredName : Name :=
 def plainName : Name :=
   `Editor.CheckGroup.plain
 
-/-- What a root's `--wiring` branch runs: a check set's wiring groups. -/
-def wiringSelection : Name :=
-  `Editor.CheckGroup.wiring
+/-- What a root selects its check set's checks by its mode with (rule d). -/
+def selectName : Name :=
+  `Editor.CheckGroup.select
+
+/-- The shared readers of a root's mode (rule d). -/
+def modeReaders : Array Name :=
+  #[`Editor.CheckGroup.Mode.ofArguments?, `Editor.CheckGroup.Mode.read?,
+    `Editor.CheckGroup.Mode.ofSubcommand?]
 
 /-- The type of a scenario of a table (`Editor.Scenario`). -/
 def scenarioType : Name :=
@@ -368,6 +384,12 @@ def runsSomething (env : Environment) (name : Name) : Bool :=
   (env.find? name).any fun info =>
     info.isDefinition && !env.isProjectionFn name && !Meta.isInstanceCore env name
 
+/-- Whether `reached`, what a `main` references, selects a check set's
+checks by the shared wiring mode (rule d): a check set (`isSet`),
+`selectName`, and a reader of `modeReaders`. -/
+def selectsByMode (isSet : Name → Bool) (reached : Array Name) : Bool :=
+  reached.any isSet && reached.contains selectName && modeReaders.any reached.contains
+
 /-- The refusals of the `main` named `name`, in the module `here`, by rules
 (c) and (d): none for a module that does not link the library. -/
 def mainRefusals (env : Environment) (here name : Name) : Array String :=
@@ -388,12 +410,11 @@ def mainRefusals (env : Environment) (here name : Name) : Array String :=
             s!"`{name}` reaches `{used}` of `{module}`, a module of the wiring set, outside a check set: run its checks from the root's check set (`Editor.CheckGroup`), or a scenario from a table of them (`List Editor.Scenario`)"
     let wiring := importedWiring env here
     if !wiring.isEmpty then
-      let hasSet :=
-        reached.any fun used => (env.find? used).any fun info => (checkSetOf? info.type).isSome
-      unless hasSet && reached.contains wiringSelection do
+      let isSet (used : Name) := (env.find? used).any fun info => (checkSetOf? info.type).isSome
+      unless selectsByMode isSet reached do
         refused :=
           refused.push
-            s!"`{name}` links the library and its imports reach `{wiring[0]!}`, a module of the wiring set, but it runs no check set's wiring groups: give it a `--wiring` branch over a check set (`Editor.CheckGroup.wiring checks`)"
+            s!"`{name}` links the library and its imports reach `{wiring[0]!}`, a module of the wiring set, but it does not select its check set's checks by the shared wiring mode: read the mode with a shared reader (`Editor.CheckGroup.Mode.ofArguments?`, `Editor.CheckGroup.Mode.read?` or `Editor.CheckGroup.Mode.ofSubcommand?`) and run what `Editor.CheckGroup.select` selects by it from a check set"
     return refused
 
 /-- The refusal of the declaration `name` of a module of the wiring set
@@ -406,8 +427,8 @@ def producerRefusal? (env : Environment) (here name : Name) (type : Expr) : Opti
 
 /-- `linter.wiringSet`: refuses a check set that misses, misplaces or repeats
 a check of the wiring set, an IO list producer of a module of the wiring
-set, and a `main` that reaches the wiring set outside a check set or runs
-no wiring branch. -/
+set, and a `main` that reaches the wiring set outside a check set or does
+not select its checks by the shared wiring mode. -/
 def wiringSetLinter : Linter where
   name := `Lint.wiringSetLinter
   run :=

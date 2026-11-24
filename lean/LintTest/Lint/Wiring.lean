@@ -111,9 +111,26 @@ def lintWiringChecks : List Check :=
             !Lint.isUnder none `FilesTest.Linked && Lint.firstComponent `ConfigTest.Editor == some `ConfigTest &&
             Lint.moduleNamed "ConfigTest.Editor.Job.Real" == `ConfigTest.Editor.Job.Real },
     { name :=
-        "the bindings' module, a root that imports it or one under it links the library, is Editor.Ffi, and a check set's wiring selection is Editor.CheckGroup.wiring"
+        "the bindings' module, a root that imports it or one under it links the library, is Editor.Ffi"
       run :=
-        return Lint.bindingsModule == `Editor.Ffi && Lint.bindingsModule.isPrefixOf `Editor.Ffi.Timers &&
-            Lint.wiringSelection == `Editor.CheckGroup.wiring }]
+        return Lint.bindingsModule == `Editor.Ffi && Lint.bindingsModule.isPrefixOf `Editor.Ffi.Timers },
+    { name :=
+        "a main selects by the shared wiring mode when it reaches a check set, Editor.CheckGroup.select and a shared reader of the mode, and neither the wiring groups alone nor the wiring mode named is one"
+      run :=
+        let set := `Root.checks
+        let isSet := (· == set)
+        return Lint.selectName == `Editor.CheckGroup.select &&
+            Lint.modeReaders ==
+              #[`Editor.CheckGroup.Mode.ofArguments?, `Editor.CheckGroup.Mode.read?,
+                `Editor.CheckGroup.Mode.ofSubcommand?] &&
+            Lint.selectsByMode isSet #[set, Lint.selectName, `Editor.CheckGroup.Mode.ofArguments?] &&
+            Lint.selectsByMode isSet #[`Editor.CheckGroup.Mode.read?, Lint.selectName, set] &&
+            Lint.selectsByMode isSet #[set, Lint.selectName, `Editor.CheckGroup.Mode.ofSubcommand?] &&
+            !Lint.selectsByMode isSet #[set, Lint.selectName, `Editor.CheckGroup.Mode.wiring] &&
+            !Lint.selectsByMode isSet
+                #[set, `Editor.CheckGroup.wiring, `Editor.CheckGroup.ranLines, `Editor.CheckGroup.all] &&
+            !Lint.selectsByMode isSet #[set, `Editor.CheckGroup.Mode.ofArguments?] &&
+            !Lint.selectsByMode isSet #[set, Lint.selectName] &&
+            !Lint.selectsByMode isSet #[Lint.selectName, `Editor.CheckGroup.Mode.ofArguments?] }]
 
 end LintTest
