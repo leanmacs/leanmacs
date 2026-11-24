@@ -1,0 +1,10 @@
+Fixtures of tools/wiring-runs.sh's check, which ffi-test runs against them
+(docs/dev-practices/real-thread-checks.md, "How stress runs the set"). Each
+is a list of the entries and scenarios of the wiring set at ffi-test, a key
+a line, standing in for the code's lists:
+
+- same: the keys the cases cover; the check passes;
+- missing: the same with window-host-undrawn left out, so a case runs what
+  no list names; the check exits 1 and names it;
+- extra: the same with an entry no case runs; the check exits 1 and names
+  it.

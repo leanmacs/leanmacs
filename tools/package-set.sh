@@ -16,7 +16,9 @@
 #   tools/package-set.sh fmt <set dir>
 #   tools/package-set.sh format <set dir>
 #   tools/package-set.sh run <set dir> <sysroot> <core olean dir>
+#   tools/package-set.sh wiring-modules <set dir>
 #   tools/package-set.sh [--only <package>]... [--allow-empty-run] <step> ...
+#   tools/package-set.sh [--wiring] [--ledger <file>] run ...
 #
 # Run it in `lean/`. The set's directory holds the set's lakefile. The
 # packages a step runs over are the ones Lake names for the set
@@ -62,6 +64,28 @@
 #   a last line with the counts, `package-set: ran <n> linked test(s) and
 #   <m> headless fixture(s) over <k> package(s)`, so a caller can require
 #   that what it is there to run did run.
+#   With `--wiring`, `run` runs each linked test with `--wiring` after its
+#   two directories, which runs the groups of its check set's modules of
+#   the wiring set alone (`Editor.CheckGroup.wiring`), and no headless
+#   fixture: the stress loop's `linked-wiring` suite. A linked test whose
+#   check set has no module of the wiring set (its `wiring-modules` answer
+#   is empty) is skipped, with the line `package-set: linked test <module>
+#   of <package> holds no module of the wiring set`.
+#   With `--ledger <file>`, `run` looks for each linked test's executable in
+#   the file before it runs it: one that is there is not run again, with the
+#   line `package-set: linked test <module> of <package> already ran in this
+#   gate`, and one that is not is run and its path appended. The gate's two
+#   runs, over the fixture set and then the default set, share one ledger,
+#   since both sets name the same executable for each default package's
+#   linked test, so each runs once (`mise run ffi-test`). Its last line then
+#   says `ran <n> linked test(s) (<m> already ran) and …`. Headless fixtures
+#   are never skipped: each set's run on its own editor.
+# - `wiring-modules`: for each package with a linked test, the modules of
+#   the wiring set its check set holds, as its executable answers
+#   `wiring-modules`, a line each, `<package>\t<module>`: what the gate's
+#   once-check and the stress loop's coverage expect each run to name
+#   (`tools/wiring-ledger.sh`). A linked test that answers with usage (exit
+#   2) fails the step.
 #
 # It exits 0 when the step passed for every package, and with the failing
 # command's status at the first that did not. It exits 2 for a command line
@@ -78,15 +102,19 @@
 set -eu
 
 usage() {
-  echo "usage: tools/package-set.sh test|build|fmt|format <set dir>" >&2
+  echo "usage: tools/package-set.sh test|build|fmt|format|wiring-modules <set dir>" >&2
   echo "       tools/package-set.sh run <set dir> <sysroot> <core olean dir>" >&2
-  echo "       each after any of: --only <package> (repeatable), --allow-empty-run (with --only)" >&2
+  echo "       each after any of: --only <package> (repeatable), --allow-empty-run (with --only)," >&2
+  echo "       and run after any of: --wiring, --ledger <file>" >&2
   exit 2
 }
 
-# The names `--only` gives, one a line, and whether `run` may run nothing.
+# The names `--only` gives, one a line, whether `run` may run nothing,
+# whether it runs the wiring set alone, and its ledger.
 only=
 allow_empty_run=
+wiring=
+ledger=
 while [ "$#" -gt 0 ]; do
   case $1 in
     --only)
@@ -98,6 +126,15 @@ while [ "$#" -gt 0 ]; do
     --allow-empty-run)
       allow_empty_run=1
       shift
+      ;;
+    --wiring)
+      wiring=1
+      shift
+      ;;
+    --ledger)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || usage
+      ledger=$2
+      shift 2
       ;;
     *) break ;;
   esac
@@ -111,10 +148,16 @@ step=$1
 set_dir=$2
 shift 2
 case $step in
-  test | build | fmt | format) [ "$#" -eq 0 ] || usage ;;
+  test | build | fmt | format | wiring-modules) [ "$#" -eq 0 ] || usage ;;
   run) [ "$#" -eq 2 ] || usage ;;
   *) usage ;;
 esac
+if { [ -n "$wiring" ] || [ -n "$ledger" ]; } && [ "$step" != run ]; then
+  usage
+fi
+if [ -n "$ledger" ] && [ ! -e "$ledger" ]; then
+  : >"$ledger"
+fi
 if [ ! -d "$set_dir" ]; then
   echo "package-set: no directory $set_dir" >&2
   exit 2
@@ -173,13 +216,31 @@ esac
 count=0
 linked_count=0
 fixture_count=0
+already_count=0
+
+# The modules of the wiring set the linked test $1 holds, a line each, as
+# it answers `wiring-modules`: the step fails on any other answer.
+modules_of() {
+  "$1" wiring-modules || {
+    echo "package-set: $1 did not answer wiring-modules" >&2
+    exit 2
+  }
+}
 
 # The list is read on a descriptor of its own, so that no command of a step
 # can take it for its input.
 while IFS=$tab read -r name dir linked linked_exe <&3; do
-  echo "package-set: $step $name ($dir)"
+  [ "$step" = wiring-modules ] || echo "package-set: $step $name ($dir)"
   count=$((count + 1))
   case $step in
+    wiring-modules)
+      if [ "$linked" != - ]; then
+        modules=$(modules_of "$linked_exe")
+        if [ -n "$modules" ]; then
+          printf '%s\n' "$modules" | sed "s/^/$name$tab/"
+        fi
+      fi
+      ;;
     test)
       lake -d "$dir" test --wfail
       ;;
@@ -199,10 +260,29 @@ while IFS=$tab read -r name dir linked linked_exe <&3; do
       ;;
     run)
       if [ "$linked" != - ]; then
-        echo "package-set: linked test $linked of $name"
-        (cd "$dir" && "$linked_exe" "$sysroot" "$oleans")
-        linked_count=$((linked_count + 1))
+        modules=
+        if [ -n "$wiring" ]; then
+          modules=$(modules_of "$linked_exe")
+        fi
+        if [ -n "$ledger" ] && grep -qxF -- "$linked_exe" "$ledger"; then
+          echo "package-set: linked test $linked of $name already ran in this gate"
+          already_count=$((already_count + 1))
+        elif [ -n "$wiring" ] && [ -z "$modules" ]; then
+          echo "package-set: linked test $linked of $name holds no module of the wiring set"
+        else
+          [ -z "$ledger" ] || printf '%s\n' "$linked_exe" >>"$ledger"
+          if [ -n "$wiring" ]; then
+            echo "package-set: linked test $linked of $name, its wiring set"
+            (cd "$dir" && "$linked_exe" "$sysroot" "$oleans" --wiring)
+          else
+            echo "package-set: linked test $linked of $name"
+            (cd "$dir" && "$linked_exe" "$sysroot" "$oleans")
+          fi
+          linked_count=$((linked_count + 1))
+        fi
       fi
+      # With --wiring, no headless fixture: those run stepped on the fakes.
+      [ -z "$wiring" ] || continue
       fixtures=0
       for fixture in "$dir"/tests/headless/*; do
         # With no entry under `tests/headless/` the pattern stays as written.
@@ -241,12 +321,15 @@ $packages
 LIST
 
 if [ "$step" = run ]; then
-  if [ "$linked_count" -eq 0 ] && [ "$fixture_count" -eq 0 ] && [ -z "$allow_empty_run" ]; then
+  if [ "$linked_count" -eq 0 ] && [ "$already_count" -eq 0 ] && [ "$fixture_count" -eq 0 ] &&
+    [ -z "$allow_empty_run" ]; then
     echo "package-set: the packages of the set in $set_dir hold no linked test and no headless fixture, so there is nothing to run" >&2
     exit 2
   fi
   plural() {
     if [ "$1" -eq 1 ]; then printf '%s %s' "$1" "$2"; else printf '%s %ss' "$1" "$2"; fi
   }
-  echo "package-set: ran $(plural "$linked_count" "linked test") and $(plural "$fixture_count" "headless fixture") over $(plural "$count" package)"
+  already=
+  [ -z "$ledger" ] || already=" ($already_count already ran)"
+  echo "package-set: ran $(plural "$linked_count" "linked test")$already and $(plural "$fixture_count" "headless fixture") over $(plural "$count" package)"
 fi

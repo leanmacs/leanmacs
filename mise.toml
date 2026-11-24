@@ -493,13 +493,21 @@ description = "Build the app's launcher and its test helper, release (crates/edi
 run = "cargo build --quiet --locked --release -p editor-launch-std --bins"
 
 [tasks.ffi-test]
-description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh), that a package imports only the core's API (tools/package-imports-check.sh) that the core imports no package and no package imports an implementation package (tools/layer-imports-check.sh) and that the module map of docs/design/packages.md agrees with the tree and with Lake (tools/module-map-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, the headless fixtures under tests/headless on the set's fixture harness, stepped on the fakes, with the runner's four compared both ways through the CLI (tools/fixture-compare.sh) and the real-thread set's others through the CLI, its restart through the launcher (tests/headless/restart), and the linked test and headless fixtures of each package of the fixture set and of the default set (tools/package-set.sh)"
+description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh), that a package imports only the core's API (tools/package-imports-check.sh) that the core imports no package and no package imports an implementation package (tools/layer-imports-check.sh) and that the module map of docs/design/packages.md agrees with the tree and with Lake (tools/module-map-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, the headless fixtures under tests/headless on the set's fixture harness, stepped on the fakes, with the real-thread set's CLI runs and the window scenarios, one case each (tools/wiring-runs.sh: the runner's four compared both ways through the CLI, tools/fixture-compare.sh, the others through the CLI, the restart through the launcher), and the linked test and headless fixtures of each package of the fixture set and of the default set, each linked test once (tools/package-set.sh --ledger); and last, that every item of the wiring set the code lists ran exactly once (tools/wiring-ledger.sh)"
 depends = ["lean", "launcher"]
 dir = "lean"
 # Measured at 130 to 210 s on 2026-11-20 (Apple M5 Max), with
 # `bundle-test`'s builds from a staged bundle running beside it.
 timeout = "300s"
 run = [
+  # The wiring set's ledger, under target/ (gitignored build output, which
+  # linux-ci keeps on its own volume): each step below that runs an
+  # executable or a case of the wiring set appends the `wiring-set: ran`
+  # lines it printed (tools/wiring-ledger.sh `note`), and the last step
+  # checks that each item the code lists ran exactly once (AGENTS.md has no
+  # such list: docs/dev-practices/real-thread-checks.md, "How stress runs
+  # the set"). Reset first, so the ledger is this run's.
+  "rm -rf ../target/gate && mkdir -p ../target/gate",
   # The host's modules import no feature module, on Lake's module graph
   # (tools/host-imports-check.sh; docs/dev-practices/the-gate.md, "The host
   # imports check"), checked on the root the package-set build generates for
@@ -577,19 +585,6 @@ run = [
   # `mise run lean` sets.
   "cmp ../packages/.lake/build/bin/editor.core ../tests/packages/.lake/build/bin/editor.core && grep -qxE '[0-9a-f]{16}' ../packages/.lake/build/bin/editor.core",
   "test \"$(uname)\" != Darwin || grep -qxF LEAN_CC=/usr/bin/cc ../packages/.lake/build/bin/editor.build",
-  # A set's editor installed into a directory of its own (the facet
-  # `editorInstall`): the fixture set's, into a fresh temporary directory,
-  # runs the fixture package `greeting`'s headless fixture with no `.olean`
-  # directory given, so every module it loads is found through the
-  # install's relative record (`lib/lean`) under the install's own
-  # directory; on macOS the copy's ad-hoc signature verifies; and a second
-  # install into the same directory is refused, saying it exists. The set's
-  # editor is up to date after `lean`, so this builds nothing; it writes
-  # only the temporary directory and the records beside the set's editor,
-  # which hold the same text, and it runs Cargo's own up-to-date check
-  # under target/, as `:editorRust` above does. LEAN_CC is set as `lean`
-  # sets it, so the link's environment record is unchanged.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/packages/greeting/tests/headless/hello && EDITOR_INSTALL_DIR=\"$dir/v\" LEAN_CC=/usr/bin/cc lake -d ../tests/packages build --wfail -q :editorInstall && test \"$(cat \"$dir/v/editor.oleans\")\" = lib/lean && out=$(\"$dir/v/editor\" headless \"$(lean --print-prefix)\" '' $f/config $f/script) && printf '%s\\n' \"$out\" | diff $f/expected - && { test \"$(uname)\" != Darwin || codesign --verify --strict \"$dir/v/editor\"; } && status=0 && { out=$(EDITOR_INSTALL_DIR=\"$dir/v\" LEAN_CC=/usr/bin/cc lake -d ../tests/packages build -q :editorInstall 2>&1) || status=$?; } && test \"$status\" -ne 0 && printf '%s\\n' \"$out\" | grep -qF \"$dir/v already exists\" || { printf '%s\\n' \"$out\"; echo 'ffi-test: the install of the fixture set did not run its fixture, or took a directory that exists'; exit 1; }",
   # A user's package set (docs/design/packages.md, "User package sets",
   # "Who can build it"): a set outside the repository with no Rust crate
   # runs no Cargo, and a package's C source, the preferred way to bring
@@ -824,7 +819,7 @@ run = [
   # One of these checks measures the stack the entry point gives Lean's
   # threads, and LEAN_STACK_SIZE_KB overrides that size, so a variable in the
   # developer's shell must not reach it.
-  "env -u LEAN_STACK_SIZE_KB .lake/build/bin/ffi-test",
+  "env -u LEAN_STACK_SIZE_KB sh ../tools/wiring-ledger.sh note ../target/gate/wiring-ledger .lake/build/bin/ffi-test",
   # Arguments reach Lean's `main`, and its result is the exit status.
   "status=0; .lake/build/bin/ffi-test exit 7 || status=$?; test \"$status\" -eq 7",
   # Quit is for good and process-wide, so shutdown has processes of its own.
@@ -849,7 +844,7 @@ run = [
   # on those packages' own fixtures (packages/compile/tests/compile,
   # packages/workspace/tests/workspaces and tests/completion); the shell's
   # run on a rig over fakes, with no fixture.
-  ".lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion",
+  "sh ../tools/wiring-ledger.sh note ../target/gate/wiring-ledger .lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment; its third argument is the directory of the syntax
@@ -860,7 +855,7 @@ run = [
   # build`'s `linter.realHost` confines them to the wiring set's modules
   # (docs/dev-practices/real-thread-checks.md); every other host check runs
   # on a host stepped on its own thread.
-  ".lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default",
+  "sh ../tools/wiring-ledger.sh note ../target/gate/wiring-ledger .lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default",
   # The demonstration. With no arguments the editor is the window mode on
   # an empty buffer, which opens a window, so the gate never runs that.
   "../packages/.lake/build/bin/editor demo",
@@ -874,39 +869,17 @@ run = [
   # on a stale entry. Its output must hold a `stepped, as expected` line for
   # each of the 29 it runs and its count line, 19 left to the CLI.
   "out=$(../packages/.lake/build/bin/fixture-test \"$(lean --print-prefix)\" .lake/build/lib/lean --repo .. run ../tests/headless) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; { test \"$(printf '%s\\n' \"$out\" | grep -c ': stepped, as expected$')\" -eq 29 && printf '%s\\n' \"$out\" | grep -qxF 'fixture-test: ran 29 fixtures stepped under tests/headless, 19 left to the CLI'; } || { echo 'ffi-test: the fixture harness did not run the 29 fixtures of tests/headless stepped'; exit 1; }",
-  # The fixtures whose subject is the script runner over a real loop thread
-  # (docs/dev-practices/real-thread-checks.md, "The CLI's runs in the
-  # gate"), the real-thread
-  # set's runner entries, run both ways and compared
-  # (tools/fixture-compare.sh): each through the CLI, `editor headless`,
-  # over a real loop thread, which must exit 0, and stepped by the harness,
-  # which requires the two outputs to be the same, saying the lines each
-  # alone has when they are not, and to be the fixture's expected file. The
-  # list is the harness's, from the module. Its four lines and its count
-  # line are required.
-  "out=$(sh ../tools/fixture-compare.sh ../packages/.lake/build/bin/editor ../packages/.lake/build/bin/fixture-test \"$(lean --print-prefix)\" .lake/build/lib/lean \"$(cd .. && pwd -P)\") || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for script in tests/headless/script tests/headless/keys-script tests/headless/scene-script tests/headless/ex/script; do printf '%s\\n' \"$out\" | grep -qxF \"fixture-compare: $script: the CLI over a real loop thread and the stepped run printed the same, and it is expected\" || { echo \"ffi-test: fixture-compare did not compare $script both ways\"; exit 1; }; done; printf '%s\\n' \"$out\" | grep -qxF 'fixture-compare: compared 4 fixtures both ways' || { echo 'ffi-test: fixture-compare did not compare four fixtures'; exit 1; }",
-  # Keys dispatched to commands, on a config of its own (tests/headless/
-  # dispatch): a key sequence config binds runs its command, the interrupt
-  # key stops one that loops over requests and rolls back its edit, the next
-  # key's command runs to its end, and a key's command starts a job with an
-  # argument, whose result the job's command says in the echo area
-  # (`dispatch/expected`). A command that is not stopped loops for longer
-  # than the time limit.
-  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/dispatch/expected -",
-  # A module of a package the config's lakefile names
-  # (tests/headless/needs-rebuild): the root imports `Greeting`, and the
-  # directory's `lakefile.toml` requires the fixture package `greeting`. On
-  # the default set's editor, which does not link that package, the reload
-  # is rejected and the diagnostic names the package and says the package
-  # set needs a rebuild (`needs-rebuild/expected`); on the fixture set's
-  # editor, which links it, the config loads and the package's command runs
-  # (`needs-rebuild/installed-expected`). The headless mode is run with no
-  # `--generate`, so it reads the fixture's lakefile and writes nothing: the
-  # third line fails if the fixture's config directory holds anything but
-  # its two tracked files.
-  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/needs-rebuild/config ../tests/headless/needs-rebuild/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/needs-rebuild/expected -",
-  "out=$(../tests/packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/needs-rebuild/config ../tests/headless/needs-rebuild/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/needs-rebuild/installed-expected -",
-  "test \"$(ls -A ../tests/headless/needs-rebuild/config | tr '\\n' ' ')\" = 'init.lean lakefile.toml '",
+  # The CLI's runs over a real loop thread and the window scenarios, the
+  # wiring set's (tools/wiring-runs.sh, which holds the lines that were
+  # here, one case each, with their comments): first its cases held to the
+  # code's lists both ways (`fixture-test real-thread --site ffi-test` and
+  # `ffi-test wiring-scenarios`), and the check seen to bite on its
+  # fixtures (tests/wiring-runs); then what a case builds staged once, and
+  # every case run once, each saying `wiring-set: ran <key> at ffi-test`
+  # into the ledger.
+  "sh ../tools/wiring-runs.sh check",
+  "sh ../tools/wiring-runs.sh check ../tests/wiring-runs/same >/dev/null && for f in missing:'a case runs window-host-undrawn, which is no entry or scenario of the wiring set' extra:'tests/headless/elsewhere/script is of the wiring set, and no case runs it'; do status=0; out=$(sh ../tools/wiring-runs.sh check ../tests/wiring-runs/${f%%:*} 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF \"wiring-runs: ${f#*:}\"; } || { printf '%s\\n' \"$out\"; echo \"ffi-test: wiring-runs' check did not refuse tests/wiring-runs/${f%%:*}\"; exit 1; }; done",
+  "dir=$(mktemp -d) && trap 'chmod -R u+w \"$dir\" 2>/dev/null; rm -rf \"$dir\"' EXIT && sh ../tools/wiring-runs.sh prepare \"$dir\" && sh ../tools/wiring-ledger.sh note ../target/gate/wiring-ledger sh ../tools/wiring-runs.sh run \"$dir\"",
   # The old form (tests/config-migrate): a config directory of files in byte
   # order with no header is refused, with a diagnostic that names the files
   # and `mise run config-migrate`; a copy that tools/config-migrate.sh
@@ -916,174 +889,6 @@ run = [
   # what that script refuses, a file already headed among it, it leaves as
   # it was (tools/config-migrate-check.sh).
   "sh ../tools/config-migrate-check.sh ../packages/.lake/build/bin/editor \"$(lean --print-prefix)\" .lake/build/lib/lean",
-  # The config directory as a Lake package (tests/headless/generate, whose
-  # config directory holds `init.lean` alone): on a temporary copy, the
-  # default set's `editor headless --generate` creates `lean-toolchain`,
-  # equal to `lean/lean-toolchain`, and a `lakefile.toml` that requires the
-  # set by its directory, and the config loads; a second run rewrites
-  # neither; and a run without `--generate` on another copy writes neither.
-  # Then Lean's language server, started in the directory the first run
-  # generated, with the root and the config file of
-  # tests/config-package/lsp put in it: the root imports `Lean`, `Compile`
-  # and `Config.Keys` and holds one type error, and the server must report
-  # that error, at 8:19, and no other, so no import failed
-  # (`config-test lsp`, lean/ConfigTest/Lsp.lean). It takes about three
-  # seconds, needs no network, and writes in the temporary directory alone
-  # (tools/config-package-check.sh). The two lines it prints are required.
-  "out=$(sh ../tools/config-package-check.sh ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'config-package: generated lakefile.toml and lean-toolchain, the config loaded, and a second run wrote nothing' 'config-test lsp: init.lean: no import error, and the type error is at 8:19'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"config-package-check did not print: $line\" >&2; exit 1; }; done",
-  # The default config `mise run install` ships (config/default), on the
-  # editor of the default set (tests/headless/default-config): the binding
-  # search lists its `SPC f f  open-file`, and `SPC :` and `SPC ?`, run
-  # from the search as their keys would run, open the command prompt and
-  # the binding search; its file, buffer, workspace, search and working-set
-  # keys are listed, and each run from the search opens its prompt or says
-  # why it cannot (`default-config/expected`). The config is copied into a
-  # temporary directory, which a trap removes, so nothing is written into
-  # the checkout, and the editor runs in an empty directory beside it, so
-  # the prompts that start at the working directory, or search it, are the
-  # same everywhere once the directory's path, taken physically, is written
-  # `@DIR@`. The workspace finder's keys run the default source, whose
-  # filter is `fzf`, which the gate does not install: for this one run the
-  # fixture that stands in for it (tests/completion/filter) is first on the
-  # editor's `PATH` under that name, in the temporary directory, so the
-  # run is the same where fzf is installed and where it is not.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && root=$(pwd) && prefix=$(lean --print-prefix) && cp -R ../config/default \"$dir/config\" && mkdir \"$dir/cwd\" \"$dir/bin\" && cp ../tests/completion/filter \"$dir/bin/fzf\" && out=$(cd \"$dir/cwd\" && PATH=\"$dir/bin:$PATH\" \"$root/../packages/.lake/build/bin/editor\" headless \"$prefix\" \"$root/.lake/build/lib/lean\" \"$dir/config\" \"$root/../tests/headless/default-config/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/default-config/expected -",
-  # An editor of a set with no input-scheme package refuses to start
-  # (tests/headless/no-input-scheme), run on the editor built from the set
-  # tests/empty-set, which is the default set with its packages dropped:
-  # the Vim scheme is the default package evil's (packages/evil/), so no
-  # package of that set supplies a scheme (`Editor.Main.run`,
-  # docs/design/packages.md, "Input schemes"). The headless mode must exit
-  # 1 having printed exactly `no-input-scheme/expected`, the one line
-  # `editor: no input scheme is installed: no package of this editor's
-  # package set supplies one`, before it reads the script or loads the
-  # config; and so must `--probe`, which a restart runs before it hands
-  # the session over, so that a restart into such a set is given up. Any
-  # other status or text fails. It touches no file. The two fixtures that
-  # ran on this editor while the core supplied the scheme, core-themes and
-  # core-ex-names, are retired: where what they showed of an editor
-  # without the default packages is held is in docs/design/packages.md,
-  # "Dropping evil or themes leaves…".
-  "status=0; out=$(../tests/empty-set/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/no-input-scheme/config ../tests/headless/no-input-scheme/script 2>&1) || status=$?; test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/headless/no-input-scheme/expected -",
-  "status=0; out=$(../tests/empty-set/.lake/build/bin/editor --probe 2>&1) || status=$?; test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/headless/no-input-scheme/expected -",
-  # Session restore, as a process, with `--state` naming a directory of
-  # the step's (tests/headless/restore; docs/dev-practices/the-gate.md, the
-  # session restore entries). Each run's output has the temporary
-  # directory's path written `@DIR@`, a stamp's time `@TIME@`, and its job
-  # lines and command list dropped: what a job came to is printed when its
-  # wake-up arrives, which the other events do not wait for. An abort: the
-  # script types into a file, waits until the journal is written and ends
-  # with the status 134 and no shutdown; a second run with the same state
-  # directory restores the text, modified (`restore-expected`).
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/headless/restore && cp $f/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" $f/abort-script > \"$dir/abort\" && status=0 && { ../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/abort\" > /dev/null || status=$?; } && test \"$status\" -eq 134 && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config $f/restore-script) && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/restore-expected -",
-  # The same abort, the file rewritten by another program between the runs:
-  # the buffer comes back marked changed on disk, `:w` is refused as
-  # changed, and the file is left as the other program wrote it.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/headless/restore && cp $f/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" $f/abort-script > \"$dir/abort\" && status=0 && { ../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/abort\" > /dev/null || status=$?; } && test \"$status\" -eq 134 && printf 'rewritten\\n' > \"$dir/note.txt\" && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config $f/changed-script) && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g; s/modified at [0-9]* s and [0-9]* ns/modified at @TIME@/\" | grep -v '^job \\|^commands:' | diff $f/changed-expected - && printf 'rewritten\\n' | cmp \"$dir/note.txt\" -",
-  # A clean quit: edit, `:w`, `:q`. Afterwards the journals' directory is
-  # empty and this run's index says it ended, and the next run restores
-  # nothing (`quit-restore-expected`).
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/headless/restore && cp $f/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" $f/quit-script > \"$dir/quit\" && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/quit\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/quit-expected - && test -z \"$(ls -A \"$dir/state/session/journals\")\" && grep -q '\"ended\":true' \"$dir/state/session/session-1.json\" && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config $f/restore-script) && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/quit-restore-expected -",
-  # Another version's session: an index of format 99 with keys this editor
-  # does not know, and a journal with a record of a kind it does not know
-  # (tests/headless/restore/newer). The known part is restored, the report
-  # says the rest and the editor starts; afterwards both files are as they
-  # were, byte for byte.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/headless/restore && cp -R $f/newer \"$dir/state\" && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config $f/newer-script) && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/newer-expected - && cmp \"$dir/state/session/session-5.json\" $f/newer/session/session-5.json && cmp \"$dir/state/session/journals/5-1-1.log\" $f/newer/session/journals/5-1-1.log && cmp \"$dir/state/session/journals/5-1-1.base\" $f/newer/session/journals/5-1-1.base",
-  # Phase 2 of session restore: windows, layouts, tabs and the jump list
-  # (tests/headless/restore/layout-*). The save run, against `layout-config`,
-  # makes two tabs of manual splits at a left edge with a docked window, a
-  # float and a named, zoomed tab, records jumps, types, waits for the index
-  # (`indexed`) and the journal, and aborts (`layout-expected`); the restore
-  # run puts them back as they were, held before config installs and kept
-  # after, `C-w n` shows the hidden tab, `C-o` the recorded jump, and `u`
-  # says the history starts at the restore (`layout-restore-expected`). The
-  # index it writes is of format 2.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/headless/restore && cp $f/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" $f/layout-script > \"$dir/layout\" && status=0 && { out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean $f/layout-config \"$dir/layout\") || status=$?; } && test \"$status\" -eq 134 && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/layout-expected - && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean $f/layout-config $f/layout-restore-script) && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/layout-restore-expected - && grep -q '\"format\":2' \"$dir/state/session/session-2.json\"",
-  # Phase 2 of session restore: stores, workspaces and jobs
-  # (tests/headless/restore/stores-*). A `.project` marker beside the file
-  # makes its directory a workspace without git. The save run, against
-  # `stores-config`, bumps a store kept across a restart and one that is
-  # not, runs `:!true` into the project's history, starts the job `hold`,
-  # which a person waits on, and aborts with it running (`stores-expected`);
-  # the restore run shows the workspace table with the history, then, once
-  # config installs, `kept` back and `unkept` at its initial value, and the
-  # summary and `*restore*` naming the stopped job
-  # (`stores-restore-expected`).
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/headless/restore && mkdir \"$dir/work\" && cp $f/note.txt \"$dir/work/note.txt\" && touch \"$dir/work/.project\" && sed \"s|@FILE@|$dir/work/note.txt|\" $f/stores-script > \"$dir/stores\" && status=0 && { out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean $f/stores-config \"$dir/stores\") || status=$?; } && test \"$status\" -eq 134 && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/stores-expected - && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean $f/stores-config $f/stores-restore-script) && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/stores-restore-expected -",
-  # Restart (tests/headless/restart; docs/dev-practices/the-gate.md, the
-  # restart entries; lean/Editor/Restore/Restart.lean). Each runs in a
-  # temporary directory with `--state` there; the output has that
-  # directory written `@DIR@` and the editor's path `@EDITOR@`, and its job
-  # lines and command list dropped. One script serves both processes: the
-  # first runs it to `restarted`, the second, started with `--resume 1`,
-  # from the line after. Through the launcher (`target/release/leanmacs`,
-  # built by the `launcher` task, with `--default` the editor): `:restart`
-  # probes the running editor, writes the session and the hand-over record
-  # and execs the launcher, which starts the editor again with the session
-  # handed over; what both print must be exactly `restart-expected` (the
-  # buffer with its unsaved text, the split and the hidden tab, and the
-  # summary that the window was closed and reopened), and then no record is
-  # left, the first run's index is gone, the second's there, and only its
-  # journals.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && f=../tests/headless/restart && editor=$(cd ../packages/.lake/build/bin && pwd -P)/editor && cp $f/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" $f/script > \"$dir/script\" && out=$(../target/release/leanmacs --data \"$dir/data\" --default ../packages/.lake/build/bin/editor -- headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g; s|$editor|@EDITOR@|g\" | grep -v '^job \\|^commands:' | diff $f/restart-expected - && test ! -e \"$dir/state/session/handover\" && test ! -e \"$dir/state/session/session-1.json\" && test -e \"$dir/state/session/session-2.json\" && test -z \"$(ls \"$dir/state/session/journals\" | grep -v '^2-')\"",
-  # The same with no launcher (decision 8): the editor run directly execs
-  # itself, with no watcher and no fallback, and says so
-  # (`restart-direct-expected`); the same files are left.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && f=../tests/headless/restart && editor=$(cd ../packages/.lake/build/bin && pwd -P)/editor && cp $f/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" $f/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g; s|$editor|@EDITOR@|g\" | grep -v '^job \\|^commands:' | diff $f/restart-direct-expected - && test ! -e \"$dir/state/session/handover\" && test ! -e \"$dir/state/session/session-1.json\" && test -e \"$dir/state/session/session-2.json\" && test -z \"$(ls \"$dir/state/session/journals\" | grep -v '^2-')\"",
-  # A probe that fails: `:restart` into a program that exits 3 whatever it
-  # is given is refused, said, and the script goes on in the same process
-  # with the session as it was (`probe-expected`); no record is written.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && f=../tests/headless/restart && editor=$(cd ../packages/.lake/build/bin && pwd -P)/editor && cp $f/note.txt \"$dir/note.txt\" && printf '#!/bin/sh\\nexit 3\\n' > \"$dir/noprobe\" && chmod +x \"$dir/noprobe\" && sed \"s|@FILE@|$dir/note.txt|; s|@NOPROBE@|$dir/noprobe|\" $f/probe-script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g; s|$editor|@EDITOR@|g\" | grep -v '^job \\|^commands:' | diff $f/probe-expected - && test ! -e \"$dir/state/session/handover\"",
-  # The fallback: `:restart` into a program that passes the probe and
-  # otherwise exits 3 before restoring anything. The launcher's watcher sees
-  # it end with the record still there, marks it failed, and the launcher it
-  # execs starts the previous executable, the editor, which restores the
-  # session and names it (`fallback-expected`); the watcher says so on
-  # standard error, and no record is left. The first process's status is the
-  # failed program's, so it is not asked for.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && f=../tests/headless/restart && editor=$(cd ../packages/.lake/build/bin && pwd -P)/editor && cp $f/note.txt \"$dir/note.txt\" && ending='exit 3' && printf '#!/bin/sh\\n[ \"$1\" = --probe ] && { echo \"probe: ok\"; exit 0; }\\n%s\\n' \"$ending\" > \"$dir/bad\" && chmod +x \"$dir/bad\" && sed \"s|@FILE@|$dir/note.txt|; s|@BAD@|$dir/bad|\" $f/fallback-script > \"$dir/script\" && status=0 && { out=$(../target/release/leanmacs --data \"$dir/data\" --default ../packages/.lake/build/bin/editor -- headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\" 2>\"$dir/err\") || status=$?; } && test \"$status\" -eq 3 && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g; s|$editor|@EDITOR@|g\" | grep -v '^job \\|^commands:' | diff $f/fallback-expected - && grep -qxF \"leanmacs: $dir/bad ended before it restored the session; starting $editor\" \"$dir/err\" && test ! -e \"$dir/state/session/handover\"",
-  # The same with a program that sends itself SIGKILL (`killed-expected`).
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && f=../tests/headless/restart && editor=$(cd ../packages/.lake/build/bin && pwd -P)/editor && cp $f/note.txt \"$dir/note.txt\" && ending='kill -KILL $$' && printf '#!/bin/sh\\n[ \"$1\" = --probe ] && { echo \"probe: ok\"; exit 0; }\\n%s\\n' \"$ending\" > \"$dir/bad\" && chmod +x \"$dir/bad\" && sed \"s|@FILE@|$dir/note.txt|; s|@BAD@|$dir/bad|\" $f/fallback-script > \"$dir/script\" && status=0 && { out=$(../target/release/leanmacs --data \"$dir/data\" --default ../packages/.lake/build/bin/editor -- headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\" 2>\"$dir/err\") || status=$?; } && test \"$status\" -eq 137 && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g; s|$editor|@EDITOR@|g\" | grep -v '^job \\|^commands:' | diff $f/killed-expected - && grep -qxF \"leanmacs: $dir/bad ended before it restored the session; starting $editor\" \"$dir/err\" && test ! -e \"$dir/state/session/handover\"",
-  # `open-file`'s prompt over real files, as a process, with no config
-  # (tests/headless/open-file): the file source lists the directory typed so
-  # far through the library's file service, directories first with
-  # `directory` beside them and `.hidden` left out until a `.` is typed, from
-  # the one read; `no` lists `notes/` with its match; `<Tab>` goes into it
-  # and lists `todo.md`; `C-n` and `<Enter>` open it; and a directory that
-  # is not there says why in the echo area and lists nothing. This entry is
-  # one shell, as the session's is: it makes a temporary directory and
-  # removes it by a trap, copies `open-file/tree` there, and writes the
-  # script there from the template `open-file/script` with the directory's
-  # absolute path in place of `@DIR@`. The editor must exit with status 0,
-  # and its output, with that path written `@DIR@`, must be exactly
-  # `open-file/expected`. Every job is waited for with `join`, so its lines
-  # are fixed. No file is written. The prompt's view prints the cursor's
-  # byte offset over the absolute path typed, which the scrub cannot
-  # rewrite, so the directory is made from a template under `/tmp`, not
-  # under `$TMPDIR`: its path is always 23 bytes, on every machine.
-  "dir=$(mktemp -d /tmp/open-file.XXXXXXXX) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/open-file/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/open-file/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/open-file/expected -",
-  # Milestone 1 over the whole program, with no config
-  # (tests/headless/milestone): the headless mode with `--render`, whose
-  # display is the real binding over the library's layout in cells of 8 by
-  # 16, bound to the library's headless render session, which draws every
-  # frame on the CPU renderer. The script opens a source file of 60 lines
-  # with `:e`, runs an evil session on it (`2dw`, `.`, `u`, `j`, `cw` with a
-  # committed text, `<Escape>`, `$ p`, `u`, `C-r`), scrolls with `C-f`,
-  # saves with `:w`, and checks twice with `agree` that the last rows query
-  # about the view gave the rows of the frame drawn of it; then `idle 1000`
-  # waits for the render loop to be at rest and counts what it draws and is
-  # handed over one second, which must be nothing. That second is the one
-  # real-time wait of the gate's checks of the render loop
-  # (docs/design/text-and-display.md). This entry is one shell, as the five
-  # above are: it makes a temporary directory and removes it by a trap,
-  # copies `milestone/source.txt` there, and writes the script there from
-  # the template `milestone/script` with the copy's absolute path in place
-  # of `@FILE@`. The editor must exit with status 0, its output, with the
-  # temporary directory's path written `@DIR@`, must be exactly
-  # `milestone/expected`, and the copy must hold the bytes of
-  # `milestone/source-expected`.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/milestone/source.txt \"$dir/source.txt\" && sed \"s|@FILE@|$dir/source.txt|\" ../tests/headless/milestone/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless --render \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/milestone/expected - && cmp \"$dir/source.txt\" ../tests/headless/milestone/source-expected",
   # The display fixture: the scene `editor-layout`'s own test lays out
   # (crates/editor-layout/tests/frame_fixture.rs), published from Lean
   # through the display's real binding, must give the frame checked in at
@@ -1113,67 +918,6 @@ run = [
   # reads only checked-in files and writes nothing. `mise run
   # excerpt-reference` makes the image again.
   ".lake/build/bin/ffi-test excerpt-picture ../tests/render/excerpts ../tests/fonts/NotoSansMono-Regular.subset.ttf",
-  # The window mode's wiring, `editor <file>` (lean/Editor/Window/Real.lean),
-  # on the library's scripted platform, as a process of its own, so that its
-  # render session is the only one the process starts: a cells display bound
-  # to the presenter, the host opening a copy of `ex/note.txt`, the scripted
-  # sample window opening, sending its fixed input and asking to close. The
-  # scenario must exit 0, which it does only once the window has run and
-  # closed and the render session's counters show a frame drawn, and the
-  # copy must be unchanged. It opens no window and touches no clipboard of
-  # the desktop's.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/ex/note.txt \"$dir/note.txt\" && .lake/build/bin/ffi-test window-host \"$dir/note.txt\" && cmp \"$dir/note.txt\" ../tests/headless/ex/note.txt",
-  # The same wiring with no file, as Finder starts the app: the host posts
-  # no open, and the window runs on the editor's one empty buffer. It must
-  # exit 0 as the scenario with a file does. It touches no file.
-  ".lake/build/bin/ffi-test window-host",
-  # The same wiring with no file and config loaded at start, on the fixture
-  # tests/window/title-bar/config, whose `setup` keeps the standard title
-  # bar: the host waits for the start-up reload, with no bound so that the
-  # result does not race the clock (this task's time limit ends a run that
-  # hangs), and the scripted window must be opened with the standard title
-  # bar. The toolchain's directory and the `.olean` directory are passed in,
-  # as for config-test. It touches no file.
-  ".lake/build/bin/ffi-test window-host-config \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/title-bar/config",
-  # The same wiring ending in a restart (lean/FfiTest/Editor/Window/Real.lean,
-  # `windowHostRestartScenario`): config loaded at start from the same
-  # fixture, a state directory and a launcher in a temporary directory, and
-  # `restart` run once the restore has finished, into a probe script that
-  # prints `probe: ok`. The host is handed a recording exec that fails: the
-  # host must call it once, with `<launcher> --handover <record>`, only once
-  # the shutdown has run and the window has closed, then say the failed exec
-  # and end with status 1, the record on disk the plan's. Nothing is exec'd.
-  # It writes only in its temporary directory.
-  ".lake/build/bin/ffi-test window-host-restart \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/title-bar/config",
-  # The same wiring handed a config base that is not `Editor` alone, as the
-  # editor's `main` hands the window mode its package set's (`Editor`, then
-  # the entry module of each package of the set; lean/Editor/Main.lean,
-  # "The base"): here `Editor` and `ConfigFixture`, a module linked into
-  # ffi-test that `Editor` does not import. The fixture
-  # tests/window/base/config names a declaration of that module and keeps
-  # the standard title bar, so the scripted window is opened with it only
-  # if the window mode handed the elaborator the base it was handed: on
-  # `Editor` alone the start-up reload is rejected with an unknown
-  # identifier. The headless mode's handing on of the set's base is the
-  # package fixtures' (`package-names` of shipped-themes, `config` of
-  # compile); this is the window mode's.
-  ".lake/build/bin/ffi-test window-host-base \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/base/config",
-  # The same wiring handed a generator, as the editor's `main` hands it one,
-  # on a temporary copy of tests/window/title-bar/config, which holds a root
-  # and neither generated file: the start-up reload must create the
-  # directory's `lean-toolchain` and `lakefile.toml` and load the config, so
-  # the window mode hands the session the generator it was handed. It
-  # writes in the temporary directory alone, which a trap removes.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/window/title-bar/config \"$dir/config\" && .lake/build/bin/ffi-test window-host-generate \"$(lean --print-prefix)\" .lake/build/lib/lean \"$dir/config\"",
-  # The same wiring as the editor starts it when run directly, with
-  # `--sysroot` and no `--oleans`: the command line is read for the default
-  # set's editor, so the `.olean` directory is the one that executable
-  # finds by default, which the package-set build records beside it
-  # (packages/.lake/build/bin/editor.oleans; lean/Editor/ModuleLookup.lean).
-  # The same config must load, so that directory holds the modules config
-  # is elaborated on. Then the same for the fixture set's editor.
-  ".lake/build/bin/ffi-test window-host-direct ../packages/.lake/build/bin/editor \"$(lean --print-prefix)\" ../tests/window/title-bar/config",
-  ".lake/build/bin/ffi-test window-host-direct ../tests/packages/.lake/build/bin/editor \"$(lean --print-prefix)\" ../tests/window/title-bar/config",
   # And the record of the fixture set's editor names the `.olean` directory
   # of each of the set's Lake packages that holds a library, one a line,
   # the core's first and each package after the ones it requires:
@@ -1186,14 +930,6 @@ run = [
   # package that requires it), and last the writing guide's example package
   # `word-count`'s, which the set requires after the default set.
   "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../tests/packages/greeting-api:GreetingApi ../tests/packages/greeting:Greeting/EditorPackage ../tests/packages/greeting-loud:GreetingLoud/EditorPackage ../tests/packages/echo:Echo/EditorPackage ../packages/shell-api:ShellApi ../packages/ex-api:ExApi ../packages/buffers-api:BuffersApi ../packages/ex:Ex/EditorPackage ../packages/frame-commands-api:FrameCommandsApi ../packages/frame-commands:FrameCommands/EditorPackage ../packages/evil-api:EvilApi ../packages/menu:Menu/EditorPackage ../packages/window-commands-api:WindowCommandsApi ../packages/window-commands:WindowCommands/EditorPackage ../packages/tab-commands-api:TabCommandsApi ../packages/tab-commands:TabCommands/EditorPackage ../packages/restore:Restore/EditorPackage ../packages/package-set:PackageSet/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/at-point-api:AtPointApi ../packages/evil:Evil/EditorPackage ../packages/themes-api:ThemesApi ../packages/themes:Themes/EditorPackage ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/compile-api:CompileApi ../packages/project-api:ProjectApi ../packages/vc-api:VcApi ../packages/workspace:Workspace/EditorPackage ../packages/project-search-api:ProjectSearchApi ../packages/project-search:ProjectSearch/EditorPackage ../packages/working-set-api:WorkingSetApi ../packages/working-set:WorkingSet/EditorPackage ../packages/shell:Shell/EditorPackage ../packages/version-control:VersionControl/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage ../docs/packages/word-count:WordCount/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the fixture set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans",
-  # The same wiring on the library's scripted platform whose renderer cannot
-  # be made, as a machine with no usable GPU gives: the window runs with
-  # nothing drawing in it. The scenario must exit 0, which it does only when
-  # the window mode ended with status 1 and no render session was started;
-  # stderr must hold the window mode's line saying why nothing drew, with
-  # the platform's reason whole (`SCRIPTED_NO_RENDERER` in
-  # crates/editor-ffi/src/window.rs); and the copy must be unchanged.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/ex/note.txt \"$dir/note.txt\" && err=$(.lake/build/bin/ffi-test window-host-undrawn \"$dir/note.txt\" 2>&1 >/dev/null) && printf '%s\\n' \"$err\" | grep -qxF \"editor: nothing could draw in the window: the scripted platform's window has no renderer: pas de GPU\" && cmp \"$dir/note.txt\" ../tests/headless/ex/note.txt",
   # The editor's failure statuses. A command line it does not understand is
   # status 2, with the usage on stderr: an option it does not know, and two
   # files, `demo x` among them. (A word that is no mode is a file to open,
@@ -1211,54 +947,19 @@ run = [
   # line on stderr that starts `editor: ` and says why. No file of that name
   # is checked in.
   "status=0; err=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/no-such-script 2>&1 >/dev/null) || status=$?; printf '%s\\n' \"$err\"; test \"$status\" -eq 1 && test \"${err#editor: }\" != \"$err\"",
-  # The packages of the fixture set (tools/package-set.sh;
-  # docs/dev-practices/the-gate.md, "The package steps"): each package's
-  # linked test, its checks against the Rust library, and its
-  # headless fixtures (`<package>/tests/headless/<name>/`), run on the
-  # editor the package-set build linked from the fixture set
-  # (tests/packages/.lake/build/bin/editor), must print exactly their
-  # `expected`. The fixture package's command runs there, so its package
-  # was built by that build and is in the generated root.
-  #
-  # The step's exit status says nothing failed, not that anything ran, so
-  # its output is kept and must hold the line of each thing it is here to
-  # run: the fixture package's linked test, its fixture `hello`, the
-  # fixture `reply` of the package that requires it, the linked test of the
-  # fixture package `echo` with the line it prints (the contract of its port
-  # against its crate's service, each request completed through the
-  # completion queue and the editor's pump; tests/packages/echo/), the
-  # linked test of
-  # the shipped themes' package, which the set reaches through the default
-  # set, its four fixtures `load-theme`, `package-names`, `shipped-themes`
-  # and `themes`, the linked test of the compile mode's package with the
-  # line it prints, its three fixtures `config`, `ex-names` and
-  # `shipped-formats`, the three fixtures of the writing guide's example
-  # package `word-count` (docs/packages/word-count/): `count`, its command
-  # compiled in, `as-config`, the same code as a config file, and
-  # `from-config`, a config that imports the package's module; and the count
-  # of all. A fixture or a linked test that is renamed, moved
-  # or no longer found fails this line. The linked tests' own lines are
-  # required too: the fixture package's check against the Rust library, as
-  # `ffi-test` is the core's, and its check of a config session on the real
-  # elaborator, as `config-test` is the core's; the shipped themes'
-  # pictures against their reference images
-  # (packages/shipped-themes/tests/render/README.md); and the compile
-  # mode's seven checks: a compile and the shipped modes over the real
-  # process service, on the package's fixtures
-  # (packages/compile/tests/compile/README), and a compile in a headless
-  # host (packages/compile/CompileTest/Linked.lean). The compile mode's
-  # fixtures were written against the editor with the compile mode still in
-  # the core, and moved into the package unchanged: `ex-names`, each of its
-  # six ex names reaching its command, and `config`, a config written on
-  # the package's declarations, which elaborates because the set's config
-  # base holds the package's entry module. `shipped-formats` was written
-  # after the move: the shipped modes' formats (rustc's for cargo-mode,
-  # Lean's for lake-mode, and cargo-mode's reading a mise task's output)
-  # read canned output of each tool into locations, and mise-mode's reader
-  # turns a canned task list into commands, with no process and no path of
-  # the machine; what it prints was compared with what an editor built at
-  # the commit before the move prints for it.
-  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test ExTest.Linked of ex' 'ex linked test: 8 checks passed' 'package-set: linked test EvilTest.Linked of evil' 'evil linked test: 12 checks passed' 'package-set: linked test ThemesTest.Linked of themes' 'themes linked test: 3 checks passed' 'package-set: linked test FilesTest.Linked of files' 'files linked test: 23 checks passed' 'package-set: linked test WorkspaceTest.Linked of workspace' 'workspace linked test: 19 checks passed' 'package-set: linked test ProjectSearchTest.Linked of project-search' 'project-search linked test: 1 checks passed' 'package-set: linked test WorkingSetTest.Linked of working-set' 'working-set linked test: 1 checks passed' 'package-set: linked test ShellTest.Linked of shell' 'shell linked test: 2 checks passed' 'package-set: linked test VersionControlTest.Linked of version-control' \"version-control linked test: 12 checks passed, the contract's 66 properties in 8 lanes\" 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test EchoTest.Linked of echo' \"echo linked test: the contract's 7 properties hold on the Rust-backed binding, each request completed through the completion queue\" 'package-set: linked test CompletionTest.Linked of completion' 'completion linked test: 6 checks passed' 'package-set: headless fixture completion-choices of completion' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 8 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture candidates of minibuffer' 'package-set: headless fixture prompt of minibuffer' 'package-set: headless fixture command-prompt of execute-command' 'package-set: headless fixture binding-search of binding-search' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture at-point of at-point' 'package-set: headless fixture at-point-tuned of at-point' 'package-set: headless fixture as-config of word-count' 'package-set: headless fixture count of word-count' 'package-set: headless fixture from-config of word-count' 'package-set: ran 14 linked tests and 20 headless fixtures over 48 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
+  # The linked tests and headless fixtures of the fixture set, then of the
+  # default set (tools/package-set.sh), with one ledger of linked tests
+  # between them (`--ledger`): the fixture set requires the default set,
+  # and both name the same executable for each default package's linked
+  # test, so the first run runs every linked test and the second runs
+  # none again, each saying it already ran in this gate, while each set's
+  # headless fixtures run on its own editor. Each linked test's
+  # `wiring-set: ran` lines go into the ledger.
+  "l=$(mktemp) && trap 'rm -f \"$l\"' EXIT && out=$(sh ../tools/package-set.sh --ledger \"$l\" run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; { printf '%s\\n' \"$out\" | grep '^wiring-set: ran ' >>../target/gate/wiring-ledger || true; }; for line in 'package-set: linked test ExTest.Linked of ex' 'ex linked test: 8 checks passed' 'package-set: linked test EvilTest.Linked of evil' 'evil linked test: 12 checks passed' 'package-set: linked test ThemesTest.Linked of themes' 'themes linked test: 3 checks passed' 'package-set: linked test FilesTest.Linked of files' 'files linked test: 23 checks passed' 'package-set: linked test WorkspaceTest.Linked of workspace' 'workspace linked test: 19 checks passed' 'package-set: linked test ProjectSearchTest.Linked of project-search' 'project-search linked test: 1 checks passed' 'package-set: linked test WorkingSetTest.Linked of working-set' 'working-set linked test: 1 checks passed' 'package-set: linked test ShellTest.Linked of shell' 'shell linked test: 2 checks passed' 'package-set: linked test VersionControlTest.Linked of version-control' \"version-control linked test: 12 checks passed, the contract's 66 properties in 8 lanes\" 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test EchoTest.Linked of echo' \"echo linked test: the contract's 7 properties hold on the Rust-backed binding, each request completed through the completion queue\" 'package-set: linked test CompletionTest.Linked of completion' 'completion linked test: 6 checks passed' 'package-set: headless fixture completion-choices of completion' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 8 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture candidates of minibuffer' 'package-set: headless fixture prompt of minibuffer' 'package-set: headless fixture command-prompt of execute-command' 'package-set: headless fixture binding-search of binding-search' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture at-point of at-point' 'package-set: headless fixture at-point-tuned of at-point' 'package-set: headless fixture as-config of word-count' 'package-set: headless fixture count of word-count' 'package-set: headless fixture from-config of word-count' 'package-set: ran 14 linked tests (0 already ran) and 20 headless fixtures over 48 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done; out=$(sh ../tools/package-set.sh --ledger \"$l\" run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; { printf '%s\\n' \"$out\" | grep '^wiring-set: ran ' >>../target/gate/wiring-ledger || true; }; for line in 'package-set: linked test ExTest.Linked of ex already ran in this gate' 'package-set: linked test EvilTest.Linked of evil already ran in this gate' 'package-set: linked test ThemesTest.Linked of themes already ran in this gate' 'package-set: linked test FilesTest.Linked of files already ran in this gate' 'package-set: linked test WorkspaceTest.Linked of workspace already ran in this gate' 'package-set: linked test ProjectSearchTest.Linked of project-search already ran in this gate' 'package-set: linked test WorkingSetTest.Linked of working-set already ran in this gate' 'package-set: linked test ShellTest.Linked of shell already ran in this gate' 'package-set: linked test VersionControlTest.Linked of version-control already ran in this gate' 'package-set: linked test CompletionTest.Linked of completion already ran in this gate' 'package-set: headless fixture completion-choices of completion' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes already ran in this gate' 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile already ran in this gate' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture candidates of minibuffer' 'package-set: headless fixture prompt of minibuffer' 'package-set: headless fixture command-prompt of execute-command' 'package-set: headless fixture binding-search of binding-search' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture at-point of at-point' 'package-set: headless fixture at-point-tuned of at-point' 'package-set: ran 0 linked tests (12 already ran) and 15 headless fixtures over 43 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps over the default set did not print: $line\"; exit 1; }; done",
+  # The ledger of `package-set.sh run`: a second run of greeting's linked
+  # test with the same ledger says it already ran and does not start it, as
+  # the absence of its `greeting linked test:` lines shows.
+  "l=$(mktemp) && trap 'rm -f \"$l\"' EXIT && sh ../tools/package-set.sh --only greeting --ledger \"$l\" run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean >/dev/null && out=$(sh ../tools/package-set.sh --only greeting --ledger \"$l\" run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) && printf '%s\\n' \"$out\" | grep -qxF 'package-set: linked test GreetingTest.Linked of greeting already ran in this gate' && ! printf '%s\\n' \"$out\" | grep -q '^greeting linked test:' || { printf '%s\\n' \"$out\"; echo 'ffi-test: a second run with the same ledger ran the greeting linked test again'; exit 1; }",
   # With `--only`, `run` runs over the named packages alone, and still
   # refuses to run nothing: the interface package `greeting-api` has no
   # linked test and no headless fixture, so `--only greeting-api` is exit
@@ -1268,25 +969,15 @@ run = [
   # when it is not that.
   "status=0; out=$(sh ../tools/package-set.sh --only greeting-api run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'nothing to run'; } || { printf '%s\\n' \"$out\"; exit 1; }",
   "out=$(sh ../tools/package-set.sh --only greeting-api --allow-empty-run run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean 2>&1) && printf '%s\\n' \"$out\" | grep -qxF 'package-set: ran 0 linked tests and 0 headless fixtures over 1 package' || { printf '%s\\n' \"$out\"; exit 1; }",
-  # The same step over the default set (packages/): the linked test and
-  # the fixtures of the default packages, on the editor built from the
-  # default set, the one that is shipped. So the compile mode's linked test
-  # and three fixtures, and the shipped themes' four
-  # fixtures, hold of that editor too, `load-theme` among them: with no
-  # theme of config's, its theme prompt offers `default`, `solarized-dark`,
-  # `solarized-light` and `fairy-floss`, in that order; and `package-names`,
-  # whose config names a declaration of the package
-  # (`ShippedThemes.themes`): it elaborates because the editor's config
-  # base is its set's, and the package's `.olean` directory, which these
-  # lines do not give, is found through the record the build wrote beside
-  # the editor. The lines of what it is here to run are required, as
-  # above.
-  "out=$(sh ../tools/package-set.sh run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test ExTest.Linked of ex' 'ex linked test: 8 checks passed' 'package-set: linked test EvilTest.Linked of evil' 'evil linked test: 12 checks passed' 'package-set: linked test ThemesTest.Linked of themes' 'themes linked test: 3 checks passed' 'package-set: linked test FilesTest.Linked of files' 'files linked test: 23 checks passed' 'package-set: linked test WorkspaceTest.Linked of workspace' 'workspace linked test: 19 checks passed' 'package-set: linked test ProjectSearchTest.Linked of project-search' 'project-search linked test: 1 checks passed' 'package-set: linked test WorkingSetTest.Linked of working-set' 'working-set linked test: 1 checks passed' 'package-set: linked test ShellTest.Linked of shell' 'shell linked test: 2 checks passed' 'package-set: linked test VersionControlTest.Linked of version-control' \"version-control linked test: 12 checks passed, the contract's 66 properties in 8 lanes\" 'package-set: linked test CompletionTest.Linked of completion' 'completion linked test: 6 checks passed' 'package-set: headless fixture completion-choices of completion' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 8 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture candidates of minibuffer' 'package-set: headless fixture prompt of minibuffer' 'package-set: headless fixture command-prompt of execute-command' 'package-set: headless fixture binding-search of binding-search' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture at-point of at-point' 'package-set: headless fixture at-point-tuned of at-point' 'package-set: ran 12 linked tests and 15 headless fixtures over 43 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps over the default set did not print: $line\"; exit 1; }; done",
-  # And the editor of the default set, which does not hold the fixture
-  # package, has no such command: on the same config and script its
-  # headless mode must print `run greeting-hello: no such command`. So the
-  # command above came from the set, not from the core.
-  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/packages/greeting/tests/headless/hello/config ../tests/packages/greeting/tests/headless/hello/script) && printf '%s\\n' \"$out\" | grep -qxF 'run greeting-hello: no such command'",
+  # The wiring set's ledger checked, last: its check refuses a repeat, a
+  # gap and an item no list names on its fixtures (tests/wiring-ledger),
+  # and then every item the code lists (tools/wiring-ledger.sh
+  # `expected`: config-test's, ffi-test's and each linked test's
+  # `wiring-modules`, contract-test's root, the real-thread entries at
+  # ffi-test and ffi-test's scenarios) must have run exactly once in this
+  # run (AC2 of host-tests-on-fakes phase 7).
+  "sh ../tools/wiring-ledger.sh check ../tests/wiring-ledger/once ../tests/wiring-ledger/expected >/dev/null && for f in twice:'ran twice: window-host at ffi-test' missing:'did not run: contract-test ContractTest' extra:'ran and not expected: ffi-test FfiTest.Elsewhere'; do status=0; out=$(sh ../tools/wiring-ledger.sh check ../tests/wiring-ledger/${f%%:*} ../tests/wiring-ledger/expected 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF \"wiring-ledger: ${f#*:}\"; } || { printf '%s\\n' \"$out\"; echo \"ffi-test: the wiring ledger's check did not refuse tests/wiring-ledger/${f%%:*}\"; exit 1; }; done",
+  "sh ../tools/wiring-ledger.sh expected >../target/gate/wiring-expected && sh ../tools/wiring-ledger.sh check ../target/gate/wiring-ledger ../target/gate/wiring-expected",
 ]
 
 # The app bundle's layout, staged and run (tools/bundle-test.sh, whose

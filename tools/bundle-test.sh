@@ -64,23 +64,66 @@
 # process a step started is still running (tools/leftovers.sh); on its way
 # out, whatever the outcome, it kills any that is, before it removes its
 # temporary directory.
+#
+# The headless runs of step 3 are the real-thread set's entries at
+# bundle-test (`fixture-test real-thread --site bundle-test`): after each it
+# prints `wiring-set: ran <script> at bundle-test`, and it fails unless those
+# lines name each entry of that listing exactly once
+# (docs/dev-practices/real-thread-checks.md, "How stress runs the set").
+# The stress loop runs steps 1, 3 and 4 apart, a stage once and the runs
+# each round (`tools/stress.sh`, its `bundle-wiring` suite):
+#
+#   sh ../tools/bundle-test.sh stage <dir>      # step 1 into <dir>
+#   sh ../tools/bundle-test.sh headless <dir>   # steps 3 and 4 over it
 set -eu
+
+mode=${1:-all}
+case $mode in
+  all) [ "$#" -le 1 ] || mode=usage ;;
+  stage | headless) [ "$#" -eq 2 ] || mode=usage ;;
+  *) mode=usage ;;
+esac
+if [ "$mode" = usage ]; then
+  echo "usage: tools/bundle-test.sh [stage <dir> | headless <dir>]" >&2
+  exit 2
+fi
 
 lean_dir=$(pwd -P)
 repo=$(cd .. && pwd -P)
-cargo build --quiet --locked --release --manifest-path ../Cargo.toml -p editor-launch-std --bin leanmacs
+if [ "$mode" != headless ]; then
+  cargo build --quiet --locked --release --manifest-path ../Cargo.toml -p editor-launch-std --bin leanmacs
+fi
 sysroot=$(lean --print-prefix)
 shipped_editor=$repo/packages/.lake/build/bin/editor
 
-dir=$(mktemp -d)
+# The stage's directory: a temporary one for a whole run, the one given to
+# `stage` and `headless`; and the directory of the runs' copies, the same
+# for a whole run and a fresh one for each `headless` run.
+if [ "$mode" = all ]; then
+  dir=$(mktemp -d)
+else
+  mkdir -p "$2"
+  dir=$2
+fi
 dir=$(cd "$dir" && pwd -P)
+if [ "$mode" = headless ]; then
+  work=$(mktemp -d)
+  work=$(cd "$work" && pwd -P)
+else
+  work=$dir
+fi
 # `no_leftovers` and `reap` (tools/leftovers.sh): every process the steps
-# start names $dir, and none may outlive this script.
+# start names $dir or $work, and none may outlive this script.
 . "$repo/tools/leftovers.sh"
 cleanup() {
   reap "$dir"
-  chmod -R u+w "$dir" 2>/dev/null || true
-  rm -rf "$dir"
+  reap "$work"
+  if [ "$mode" = all ]; then
+    chmod -R u+w "$dir" 2>/dev/null || true
+    rm -rf "$dir"
+  elif [ "$mode" = headless ]; then
+    rm -rf "$work"
+  fi
 }
 trap cleanup EXIT
 # A signal ends the script through the EXIT trap, so an interrupted run
@@ -95,54 +138,85 @@ fail() {
 # Passes, once nothing a step started is still running.
 passed() {
   no_leftovers "$dir" || fail "an editor, a launcher or a watcher it started is still running"
+  no_leftovers "$work" || fail "an editor, a launcher or a watcher it started is still running"
   echo 'bundle-test: ok'
 }
 
-# 1. The stage.
-started=$(date +%s)
-lake -d ../packages query :editorShipped >"$dir/shipped"
-"$repo/tools/stage-bundle.sh" --launcher "$repo/target/release/leanmacs" "$dir/Leanmacs.app" \
-  "$shipped_editor" "$sysroot" "$dir/shipped"
 app=$dir/Leanmacs.app
 launcher=$app/Contents/MacOS/leanmacs
 lean=$app/Contents/Resources/lean
-echo "bundle-test: staged the bundle ($(($(date +%s) - started)) s)"
+
+# 1. The stage.
+if [ "$mode" != headless ]; then
+  started=$(date +%s)
+  lake -d ../packages query :editorShipped >"$dir/shipped"
+  "$repo/tools/stage-bundle.sh" --launcher "$repo/target/release/leanmacs" "$dir/Leanmacs.app" \
+    "$shipped_editor" "$sysroot" "$dir/shipped"
+  echo "bundle-test: staged the bundle ($(($(date +%s) - started)) s)"
+fi
+if [ "$mode" = stage ]; then
+  exit 0
+fi
+[ -x "$launcher" ] || fail "no staged bundle in $dir: run \`tools/bundle-test.sh stage $dir\` first"
 
 # 2. The pieces (tools/bundle-sets.sh).
-mkdir "$dir/pieces"
-sh "$repo/tools/bundle-sets.sh" pieces "$app" "$dir/pieces" "$repo"
+if [ "$mode" = all ]; then
+  mkdir "$dir/pieces"
+  sh "$repo/tools/bundle-sets.sh" pieces "$app" "$dir/pieces" "$repo"
+fi
 
 # 3. The headless runs, through the launcher, with an empty environment,
-# from a working directory outside the bundle.
-mkdir "$dir/elsewhere"
+# from a working directory outside the bundle: the real-thread set's
+# entries at bundle-test, each said as it ran (`wiring-set: ran`), and the
+# lines held to the listing of the set.
+mkdir "$work/elsewhere"
+ran=
 headless() {
   name=$1
   fixture=$2
   config=$3
-  cp -R "$fixture/$config" "$dir/$name-config"
-  cp "$fixture/script" "$dir/$name-script"
-  out=$(cd "$dir/elsewhere" && env -i "$launcher" headless "$dir/$name-config" "$dir/$name-script") ||
+  cp -R "$fixture/$config" "$work/$name-config"
+  cp "$fixture/script" "$work/$name-script"
+  out=$(cd "$work/elsewhere" && env -i "$launcher" headless "$work/$name-config" "$work/$name-script") ||
     fail "the bundle's headless run of $name exited non-zero"
   printf '%s\n' "$out" | diff "$fixture/expected" - || fail "the bundle's headless run of $name differs from its expected"
+  line="wiring-set: ran ${fixture#"$repo"/}/script at bundle-test"
+  echo "$line"
+  ran="$ran$line
+"
 }
 headless bundle "$repo/tests/headless/bundle" config
 headless themes "$repo/packages/shipped-themes/tests/headless/shipped-themes" config
 headless names "$repo/packages/shipped-themes/tests/headless/package-names" config
 headless compile "$repo/packages/compile/tests/headless/config" config
 echo 'bundle-test: the bundle ran its headless fixtures from its own modules, with an empty environment'
+listed=$("$repo/packages/.lake/build/bin/fixture-test" real-thread --site bundle-test) ||
+  fail "fixture-test real-thread --site bundle-test failed"
+expected=$(printf '%s\n' "$listed" | cut -f1 | sed 's/^/wiring-set: ran /; s/$/ at bundle-test/' | sort)
+said=$(printf '%s' "$ran" | sort)
+[ "$said" = "$expected" ] && [ -z "$(printf '%s\n' "$said" | uniq -d)" ] ||
+  fail "the headless runs are not the real-thread set's entries at bundle-test, each once: ran
+$said
+and the set lists
+$expected"
+echo "bundle-test: the headless runs are the real-thread set's $(printf '%s\n' "$expected" | grep -c .) entries at bundle-test, each once"
 
 # 4. The generated lakefile.
 generate=$repo/tests/headless/generate
-cp -R "$generate/config" "$dir/generate-config"
-cp "$generate/script" "$dir/generate-script"
-out=$(cd "$dir/elsewhere" && env -i "$launcher" headless --generate "$dir/generate-config" "$dir/generate-script") ||
+cp -R "$generate/config" "$work/generate-config"
+cp "$generate/script" "$work/generate-script"
+out=$(cd "$work/elsewhere" && env -i "$launcher" headless --generate "$work/generate-config" "$work/generate-script") ||
   fail "the bundle's headless --generate exited non-zero"
 printf '%s\n' "$out" | diff "$generate/expected" - || fail "the bundle's headless --generate differs from its expected"
-sed "s|@SET@|$lean/set|; s|@CORE@|$lean/lean|" "$generate/expected-lakefile-bundle" | diff - "$dir/generate-config/lakefile.toml" ||
+sed "s|@SET@|$lean/set|; s|@CORE@|$lean/lean|" "$generate/expected-lakefile-bundle" | diff - "$work/generate-config/lakefile.toml" ||
   fail "the bundle generated another lakefile.toml than expected-lakefile-bundle"
-cmp -s "$dir/generate-config/lean-toolchain" "$lean_dir/lean-toolchain" ||
+cmp -s "$work/generate-config/lean-toolchain" "$lean_dir/lean-toolchain" ||
   fail "the bundle generated another lean-toolchain than lean/lean-toolchain"
 echo "bundle-test: the bundle generated lean-toolchain and a lakefile naming its own set, and the config loaded"
+if [ "$mode" = headless ]; then
+  passed
+  exit 0
+fi
 
 # 5. The version and the identity.
 fixtures=$repo/tests/headless/bundle
