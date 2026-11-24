@@ -155,7 +155,16 @@ or given a longer timeout. Threads, queues and the clock are described in
 - Test logic that runs across threads through a port, with a fake that
   runs the work on the test's own thread, or that the test steps. Do this for
   the editor loop, jobs and timers (the fake clock), and for the file, process
-  and watch services. Use real threads only in an adapter's contract check.
+  and watch services. Use real threads only in an adapter's contract check
+  or in a check of the wiring set (below).
+- Run a real editor loop thread or a real background service only in a
+  check of a module of the wiring set: one that declares
+  `def wiringSet.<module> : WiringSet`, naming the real adapter its checks
+  cover and why a fake or the stepped host cannot stand in.
+  `docs/dev-practices/real-thread-checks.md` says where such a module goes.
+  `lake build`'s linter refuses a call of a marked real host or service
+  (`<name>.realHost`) anywhere else, and a public helper that hands one on
+  unmarked.
 - Wait for an event, never for time. Wait on what signals that the work is
   done: a task or promise to `IO.wait` on, a channel, a joined thread, or a
   barrier that a service's queue reaches only after all the work queued before
