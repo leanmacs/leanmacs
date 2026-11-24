@@ -183,8 +183,10 @@ of it once, both read from code, never from a list kept here:
   (`tools/wiring-ledger.sh expected` and `check`, with its fixtures under
   `tests/wiring-ledger/`). `expected` checks each listing's status before
   it reads its lines, and exits 2, naming the command, when one fails
-  (`tools/wiring-ledger-probe.sh`, on stand-in listings). Nothing in `ci` passes a wiring mode or calls
-  `stress.sh`.
+  (`tools/wiring-ledger-probe.sh`, on stand-in listings). Nothing in
+  `ci` runs a real root's wiring mode or calls `stress.sh`; the gate holds
+  `tools/package-set.sh run --wiring` on stand-ins instead
+  (`tools/package-set-probe.sh`).
 - **Each round of stress.** The loop's default suites are the wiring
   modes, contract-test, the CLI's runs and the bundle's; after each round
   it checks the round's lines against the same listings, and a round that

@@ -977,6 +977,14 @@ run = [
   # when it is not that.
   "status=0; out=$(sh ../tools/package-set.sh --only greeting-api run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'nothing to run'; } || { printf '%s\\n' \"$out\"; exit 1; }",
   "out=$(sh ../tools/package-set.sh --only greeting-api --allow-empty-run run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean 2>&1) && printf '%s\\n' \"$out\" | grep -qxF 'package-set: ran 0 linked tests and 0 headless fixtures over 1 package' || { printf '%s\\n' \"$out\"; exit 1; }",
+  # `run --wiring`, the stress loop's `linked-wiring`, on stand-ins, so the
+  # gate holds the branch though it runs no real root's wiring mode
+  # (tools/package-set-probe.sh, under a second): a linked test that
+  # holds a module of the wiring set is handed `--wiring` and its lines
+  # passed through, one that holds none is skipped, saying so, no headless
+  # fixture runs, and a linked test that does not answer `wiring-modules`
+  # fails the step.
+  "sh ../tools/package-set-probe.sh",
   # The wiring set's ledger checked, last: its check refuses a repeat, a
   # gap and an item no list names on its fixtures (tests/wiring-ledger),
   # and its listings fail, naming the command, when one of them fails, and
