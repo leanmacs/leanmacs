@@ -29,7 +29,7 @@ def ModelTest.RealHostFixture.realLoop : IO Unit :=
 /-! A check outside the wiring set that reaches a real host is refused. -/
 
 /--
-error: `ModelTest.RealHostFixture.realLoop`, in `ModelTest.RealHostFixture.loopCheck`, runs a real editor loop thread (loop): a check runs one only in a module of the wiring set: declare `def ModelTest.Lint.RealHost.wiringSet : WiringSet := .wiring "…" "…"` in a module that wires the adapter, or run the check on the stepped host and the fakes (AGENTS.md, "Deterministic concurrency in tests")
+error: `ModelTest.RealHostFixture.realLoop`, in `ModelTest.RealHostFixture.loopCheck`, runs a real editor loop thread (loop): a check runs one only in a module of the wiring set: declare `def wiringSet.ModelTest.Lint.RealHost : Editor.WiringSet := .wiring "…" "…"` in a module that wires the adapter, or run the check on the stepped host and the fakes (AGENTS.md, "Deterministic concurrency in tests")
 
 Note: This linter can be disabled with `set_option linter.realHost false`
 -/
@@ -49,7 +49,7 @@ private def ModelTest.RealHostFixture.hidden : IO Unit :=
   ModelTest.RealHostFixture.realLoop
 
 /--
-error: `ModelTest.RealHostFixture.realLoop`, in `ModelTest.RealHostFixture.hiddenCheck`, runs a real editor loop thread (loop), through `ModelTest.RealHostFixture.hidden`: a check runs one only in a module of the wiring set: declare `def ModelTest.Lint.RealHost.wiringSet : WiringSet := .wiring "…" "…"` in a module that wires the adapter, or run the check on the stepped host and the fakes (AGENTS.md, "Deterministic concurrency in tests")
+error: `ModelTest.RealHostFixture.realLoop`, in `ModelTest.RealHostFixture.hiddenCheck`, runs a real editor loop thread (loop), through `ModelTest.RealHostFixture.hidden`: a check runs one only in a module of the wiring set: declare `def wiringSet.ModelTest.Lint.RealHost : Editor.WiringSet := .wiring "…" "…"` in a module that wires the adapter, or run the check on the stepped host and the fakes (AGENTS.md, "Deterministic concurrency in tests")
 
 Note: This linter can be disabled with `set_option linter.realHost false`
 -/

@@ -9,7 +9,7 @@ background service only in a module of the wiring set (`AGENTS.md`,
 `docs/dev-practices/real-thread-checks.md`). What starts one is a constant
 with a mark (`Editor/RealHost.lean`: a declaration `<constant>.realHost` of
 the type `Editor.RealHost`, `.loop` or `.service`), and a module of the
-wiring set declares itself one (`def <module>.wiringSet : Editor.WiringSet`,
+wiring set declares itself one (`def wiringSet.<module> : Editor.WiringSet`,
 `.wiring`, `.contract` or `.edge`). Like the wait linters
 (`Lint/Wait.lean`), it reads the info trees of the command it lints and
 looks at the constant each term resolved to, never at source text, and logs
@@ -38,7 +38,7 @@ that no other module can name and that hands one on (`referencedMark?`,
    mark, be `main`, or be a check (`isCheckType`): a check or a list of them
    can only be run, so it hands no real host on.
 6. A `wiringSet` declaration is linted as it is elaborated: it is this
-   module's (`<module>.wiringSet`), and its value is a constructor of
+   module's (`wiringSet.<module>`), and its value is a constructor of
    `Editor.WiringSet` applied to string literals none of which is empty
    (`decodeWiringSet`). A mark this linter cannot read is refused at each
    reference to the constant it marks.
@@ -109,9 +109,11 @@ def hostMarkOf (name : Name) : Name :=
   name.str "realHost"
 
 /-- The name of the declaration of the module `module`:
-`<module>.wiringSet`. -/
+`wiringSet.<module>`: under a root namespace of its own, `wiringSet`, so the
+namespace of no module's own name is made (`ConfigTest.Editor` would
+shadow `Editor` in `namespace ConfigTest`). -/
 def wiringSetOf (module : Name) : Name :=
-  module.str "wiringSet"
+  `wiringSet ++ module
 
 /-- What a mark's value says, when it is one of `hostType`'s constructors,
 and nothing otherwise. -/
@@ -196,7 +198,7 @@ def markedHost? (env : Environment) (name : Name) : Option (Except String Host) 
       throw
           s!"`{hostMarkOf name}` is a mark the real-host linter cannot read: write its value as `.loop` or `.service`"
 
-/-- What the module being elaborated declares itself (`<here>.wiringSet`,
+/-- What the module being elaborated declares itself (`wiringSet.<here>`,
 declared in it, of `wiringSetType`, its value as `decodeWiringSet` reads
 it), and nothing when it declares nothing this linter can read. -/
 def declaredHere? (env : Environment) (here : Name) : Option Declared := do
@@ -208,17 +210,18 @@ def declaredHere? (env : Environment) (here : Name) : Option Declared := do
 
 /-- The fix a refused reference's message names. -/
 def wiringFix (here : Name) : String :=
-  s!"declare `def {here}.wiringSet : WiringSet := .wiring \"…\" \"…\"` in a module that wires the adapter, or run the check on the stepped host and the fakes (AGENTS.md, \"Deterministic concurrency in tests\")"
+  s!"declare `def {wiringSetOf here} : Editor.WiringSet := .wiring \"…\" \"…\"` in a module that wires the adapter, or run the check on the stepped host and the fakes (AGENTS.md, \"Deterministic concurrency in tests\")"
 
 /-- Lints the declaration `name`, when it is named as a module's declaration
 and is of `wiringSetType` (rule 6): the reason it is refused, or nothing. -/
 def declarationRefusal? (env : Environment) (here name : Name) : Option String := do
-  let .str _ "wiringSet" := name | none
+  unless name.components.head? == some `wiringSet do
+    none
   let info ← env.find? name
   unless info.type.isConstOf wiringSetType do
     none
   if name != wiringSetOf here then
-    return s!"`{privateToUserName name}` names a module's wiring set and is not this module's: a module declares itself as `def {wiringSetOf here} : WiringSet`"
+    return s!"`{privateToUserName name}` names a module's wiring set and is not this module's: a module declares itself as `def {wiringSetOf here} : Editor.WiringSet`"
   match info.value? (allowOpaque := true) >>= decodeWiringSet with
   | some _ =>
     none

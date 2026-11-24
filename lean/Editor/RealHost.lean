@@ -15,11 +15,11 @@ def withHost.realHost : RealHost :=
 ```
 
 A module of the wiring set says so with a declaration named after the
-module with `wiringSet` added, of the type `WiringSet`: the real adapter its
+module under `wiringSet`, of the type `WiringSet`: the real adapter its
 checks cover and why a fake or the stepped host cannot stand in.
 
 ```
-def ConfigTest.Editor.Job.Real.wiringSet : WiringSet :=
+def wiringSet.ConfigTest.Editor.Job.Real : Editor.WiringSet :=
   .wiring "the library's diff and grep services" "AC4's end-to-end check of each"
 ```
 

@@ -11,7 +11,7 @@ in a namespace, beside the test root's own.
 -/
 
 /-- This module's declaration: a fixture's. -/
-def ModelTest.Lint.RealHost.Edge.wiringSet : Editor.WiringSet :=
+def wiringSet.ModelTest.Lint.RealHost.Edge : Editor.WiringSet :=
   .edge "a fixture's main starts a stand-in service"
 
 /-- The mark of `realService`, before it. -/

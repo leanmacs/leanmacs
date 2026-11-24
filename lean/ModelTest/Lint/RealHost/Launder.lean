@@ -11,7 +11,7 @@ unmarked, directly or through a private one, is refused.
 -/
 
 /-- This module's declaration: a fixture's. -/
-def ModelTest.Lint.RealHost.Launder.wiringSet : Editor.WiringSet :=
+def wiringSet.ModelTest.Lint.RealHost.Launder : Editor.WiringSet :=
   .wiring "a stand-in for a real host, marked here" "a fixture of the launder rule"
 
 /-- The mark of `realLoop`, before it. -/

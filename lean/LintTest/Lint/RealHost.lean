@@ -32,10 +32,10 @@ def arrow (domain codomain : Expr) : Expr :=
 
 /-- The checks of the real-host linter's rules (`Lint/RealHost.lean`). -/
 def lintRealHostChecks : List Check :=
-  [{  name := "the mark of a constant is the constant's name with realHost added, and a module's declaration its name with wiringSet added"
+  [{  name := "the mark of a constant is the constant's name with realHost added, and a module's declaration its name under wiringSet"
       run :=
         return Lint.hostMarkOf `Editor.Headless.withHost == `Editor.Headless.withHost.realHost &&
-            Lint.wiringSetOf `ConfigTest.Editor.Job.Real == `ConfigTest.Editor.Job.Real.wiringSet },
+            Lint.wiringSetOf `ConfigTest.Editor.Job.Real == `wiringSet.ConfigTest.Editor.Job.Real },
     { name := "a mark's value is loop or service, a constructor of Editor.RealHost, and nothing else"
       run :=
         return Lint.decodeHost (.const (.str Lint.hostType "loop") []) == some .loop &&

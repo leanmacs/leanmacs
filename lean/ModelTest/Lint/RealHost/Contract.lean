@@ -9,7 +9,7 @@ adapter's contract may reach a real service and runs no editor loop.
 -/
 
 /-- This module's declaration: a fixture's. -/
-def ModelTest.Lint.RealHost.Contract.wiringSet : Editor.WiringSet :=
+def wiringSet.ModelTest.Lint.RealHost.Contract : Editor.WiringSet :=
   .contract "a stand-in port's contract"
 
 /-- The mark of `realService`, before it. -/

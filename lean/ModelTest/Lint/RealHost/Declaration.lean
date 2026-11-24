@@ -5,7 +5,7 @@ import ModelTest.Check
 # Model tests: `Lint/RealHost.lean`, a declaration it cannot read
 
 The real-host linter's fixtures of a module's declaration
-(`<module>.wiringSet`, `Editor/RealHost.lean`): one with an empty string is
+(`wiringSet.<module>`, `Editor/RealHost.lean`): one with an empty string is
 refused where it is declared, and the module is then one that declares
 nothing, so a check of it that reaches a real host is refused as any test
 module's is; and one named after another module is refused. The launder
@@ -14,23 +14,23 @@ rule of a module whose declaration the linter reads is
 -/
 
 /--
-error: `ModelTest.Lint.RealHost.Declaration.wiringSet` is a wiring set the real-host linter cannot read: write it as a constructor of `Editor.WiringSet` applied to string literals none of which is empty, as `.wiring "the library's diff service" "why a fake cannot stand in"`
+error: `wiringSet.ModelTest.Lint.RealHost.Declaration` is a wiring set the real-host linter cannot read: write it as a constructor of `Editor.WiringSet` applied to string literals none of which is empty, as `.wiring "the library's diff service" "why a fake cannot stand in"`
 
 Note: This linter can be disabled with `set_option linter.realHost false`
 -/
 #guard_msgs in
 /-- A bad declaration: its adapter and its reason are empty. -/
-def ModelTest.Lint.RealHost.Declaration.wiringSet : Editor.WiringSet :=
+def wiringSet.ModelTest.Lint.RealHost.Declaration : Editor.WiringSet :=
   .wiring "" ""
 
 /--
-error: `ModelTest.Lint.RealHost.Elsewhere.wiringSet` names a module's wiring set and is not this module's: a module declares itself as `def ModelTest.Lint.RealHost.Declaration.wiringSet : WiringSet`
+error: `wiringSet.ModelTest.Lint.RealHost.Elsewhere` names a module's wiring set and is not this module's: a module declares itself as `def wiringSet.ModelTest.Lint.RealHost.Declaration : Editor.WiringSet`
 
 Note: This linter can be disabled with `set_option linter.realHost false`
 -/
 #guard_msgs in
 /-- A bad declaration: it names a module that is not this one. -/
-def ModelTest.Lint.RealHost.Elsewhere.wiringSet : Editor.WiringSet :=
+def wiringSet.ModelTest.Lint.RealHost.Elsewhere : Editor.WiringSet :=
   .wiring "a stand-in for a real host" "a fixture of the declaration's name"
 
 /-- The mark of `realLoop`, before it. -/
@@ -42,7 +42,7 @@ def ModelTest.RealHostDeclarationFixture.realLoop : IO Unit :=
   pure ()
 
 /--
-error: `ModelTest.RealHostDeclarationFixture.realLoop`, in `ModelTest.RealHostDeclarationFixture.loopCheck`, runs a real editor loop thread (loop): a check runs one only in a module of the wiring set: declare `def ModelTest.Lint.RealHost.Declaration.wiringSet : WiringSet := .wiring "…" "…"` in a module that wires the adapter, or run the check on the stepped host and the fakes (AGENTS.md, "Deterministic concurrency in tests")
+error: `ModelTest.RealHostDeclarationFixture.realLoop`, in `ModelTest.RealHostDeclarationFixture.loopCheck`, runs a real editor loop thread (loop): a check runs one only in a module of the wiring set: declare `def wiringSet.ModelTest.Lint.RealHost.Declaration : Editor.WiringSet := .wiring "…" "…"` in a module that wires the adapter, or run the check on the stepped host and the fakes (AGENTS.md, "Deterministic concurrency in tests")
 
 Note: This linter can be disabled with `set_option linter.realHost false`
 -/
