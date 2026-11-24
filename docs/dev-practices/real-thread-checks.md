@@ -39,9 +39,10 @@ A check that says `Real` in its helper, or calls `Headless.withHost`,
 `Headless.run` or `Headless.runAndDispose` itself, runs a loop thread; the
 plain names are the stepped helpers. The helpers are the linked test kit's
 (`withRealHost`, `withRealHostOver`, `onRealStage`, `stagedReal`,
-`hostingReal`, `lean/Editor/Test/Linked/Host.lean`; `withRealShippedHost`,
-`lean/Editor/Test/Linked/Shipped.lean`), the config tests' own
-(`withRealTestHost`, `lean/ConfigTest/Support/Shipped.lean`;
+`hostingReal`, `lean/Editor/Test/Linked/Host.lean`; `withRealShippedHost`
+and `withRealSyntaxHost`, `lean/Editor/Test/Linked/Shipped.lean`), the
+config tests' own (`withRealTestHost` and `withRealSyntaxTestHost`,
+`lean/ConfigTest/Support/Shipped.lean`;
 `withRealRestoreHost`, `withRealJournalHost`,
 `withRealEnvironments`, `withRealRecordedSyntaxTree`, `hostedReal`,
 `lean/ConfigTest/Editor/Headless.lean`), and a package's linked test's
