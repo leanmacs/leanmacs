@@ -21,10 +21,9 @@ import Editor.Scene
 import Editor.State
 import Editor.SyntaxTree
 import Editor.TabBar
-import Editor.Test.Shell
-import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Services
+import Editor.Test.Shell
 import Editor.Text
 import Editor.Value
 import Editor.Watch
