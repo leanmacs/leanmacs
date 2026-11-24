@@ -25,6 +25,10 @@ import Editor.SearchRoot
 import Editor.SyntaxTree.DeliveryContract
 import Editor.Test.AtPoint
 import Editor.Test.Excerpt
+import Editor.Test.Fixture.CommandLine
+import Editor.Test.Fixture.Discover
+import Editor.Test.Fixture.RealThread
+import Editor.Test.Fixture.Setup
 import Editor.Test.Frame
 import Editor.Test.Hosted
 import Editor.Test.Linked.Bench

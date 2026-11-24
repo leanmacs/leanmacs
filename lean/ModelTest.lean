@@ -130,6 +130,10 @@ import ModelTest.Editor.SyntaxTree.DeliveryContract
 import ModelTest.Editor.SyntaxTree.Fake
 import ModelTest.Editor.SyntaxTree.Model
 import ModelTest.Editor.TabBar
+import ModelTest.Editor.Test.Fixture.CommandLine
+import ModelTest.Editor.Test.Fixture.Discover
+import ModelTest.Editor.Test.Fixture.RealThread
+import ModelTest.Editor.Test.Fixture.Setup
 import ModelTest.Editor.Test.Jobs
 import ModelTest.Editor.Text
 import ModelTest.Editor.Text.Contract
@@ -747,6 +751,18 @@ The job system is tested here with no Rust library:
   with none; another round when the count is 0 but moved or a wait is due;
   and otherwise a block on the count's next change, or the hang at the
   guard. A host that keeps no count is never idle. Each is a pure verdict;
+- `fixtureDiscoverChecks`, `fixtureSetupChecks`, `realThreadSetChecks` and
+  `fixtureCommandLineChecks`: the headless fixture harness's pure parts
+  (`Editor/Test/Fixture/`, `docs/dev-practices/headless-mode.md`, "How the
+  gate runs a fixture"): discovery over a tree written by hand (a script
+  and an `<x>-script` at a root and one directory down, its expected file
+  and its config chosen in order, a directory holding no script skipped,
+  a fixture with no config refused), the path helpers; the setups' defaults,
+  placeholders, substitution and scrubbing, the model a setup makes, the
+  after-checks over it, the harness's refusals and the lines compared as
+  the shell's diff sees them; the real-thread set well formed and its
+  check of the data biting, its four runner entries, and every entry not
+  stepped a real effect; and the harness's command line;
 - `restVerdictChecks`: a stepped host's wait over its fakes, judged at their
   rest (`Rest.judge`, `Editor/Headless/Wait.lean`), which reads no
   activity count: settled once the wait is no longer busy; a block on the
@@ -1346,6 +1362,10 @@ def checks : List Check :=
     queueMemoryChecks ++
     waitRoundChecks ++
     restVerdictChecks ++
+    fixtureDiscoverChecks ++
+    fixtureSetupChecks ++
+    realThreadSetChecks ++
+    fixtureCommandLineChecks ++
     tableChecks ++
     ownerChecks ++
     fileRunnerChecks ++
