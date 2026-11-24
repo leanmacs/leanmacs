@@ -1,4 +1,5 @@
 import Editor.Job
+import Editor.RealHost
 import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Trees
 import Editor.Workspace
@@ -14,7 +15,15 @@ and file services. They were the contract test's (`ContractTest.<name>`)
 while the workspaces were modules of the core. The linked test's root,
 `WorkspaceTest/Linked.lean`, runs them; its module doc says what each
 shows.
+
+It runs a port's contract against its real adapter, outside the rule of the
+wiring set (`docs/dev-practices/real-thread-checks.md`): it declares
+`.contract` because its root hands it the real services (W46, W48).
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.WorkspaceTest.Linked.Workspace.Contract : Editor.WiringSet :=
+  .contract "Workspace.FinderContract and MarkerContract against real git and find"
 
 namespace WorkspaceTest.Linked
 

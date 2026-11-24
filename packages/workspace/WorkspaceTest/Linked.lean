@@ -1,4 +1,5 @@
 import Editor
+import Editor.RealHost
 import Editor.Test.Linked.Services
 import WorkspaceTest.Check
 import WorkspaceTest.Linked.Workspace.Bench
@@ -53,6 +54,11 @@ link alone, as every root that links the elaborator does: the elaborator
 imports the base's modules from their `.olean` files at runtime, and each
 must already be linked into the executable.
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.WorkspaceTest.Linked : Editor.WiringSet :=
+  .edge
+    "its main starts the library's services and pump, hands them to the contract modules, and runs the workspace bench"
 
 /-- The fixtures' directory of the workspace finder's checks, under the
 package's directory, which the linked test runs in. -/
