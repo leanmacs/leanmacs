@@ -3,6 +3,7 @@ import Editor
 import Editor.Config.Elaborate
 import Editor.Config.Session
 import Editor.Job.Runner
+import Editor.RealHost
 import Editor.Test.Linked.Host
 import ExtensionFixture
 
@@ -116,11 +117,23 @@ def timedFailures (checks : List Check) (clock : IO Nat := pure 0)
     timed (timingLine ((← clock) - started) check.name)
   return failed
 
-/-- What follows the four directories on the checks' command line: the file
-of `--timings`, at most once; `none` for anything else. -/
-def options : List String → Option (Option System.FilePath)
-  | [] => some none
-  | ["--timings", file] => some (some file)
+/-- What follows the four directories on the checks' command line. -/
+structure Options where
+  /-- The file of `--timings`, if it is given. -/
+  timings : Option System.FilePath := none
+  /-- Whether `--wiring` is given: the run takes the wiring set's groups of
+  the check set alone (`Editor.CheckGroup.wiring`). -/
+  wiring : Bool := false
+  deriving BEq, Repr
+
+/-- What follows the four directories on the checks' command line: at most
+one `--wiring`, then at most one `--timings <file>`; `none` for anything
+else. -/
+def options : List String → Option Options
+  | [] => some {}
+  | ["--timings", file] => some { timings := some file }
+  | ["--wiring"] => some { wiring := true }
+  | ["--wiring", "--timings", file] => some { timings := some file, wiring := true }
   | _ => none
 
 /-- The checks of `failures`, `saw` and `timedFailures`: what a failing
@@ -229,11 +242,16 @@ def checkChecks (_ : Unit) : List Check :=
         saw (failed == ["b"] && lines == #["15\ta", "75\tb"] && seen == #[0, 1])
             s!"failed={failed} lines={lines} seen={seen}" },
     { name :=
-        "the checks' command line takes --timings after its directories, once, and nothing else"
+        "the checks' command line takes --wiring, then --timings, after its directories, each once, and nothing else"
       run :=
         saw
-          (options [] == some none &&
-            options ["--timings", "t"] == some (some ("t" : System.FilePath)) &&
+          (options [] == some {} &&
+            options ["--timings", "t"] == some { timings := some ("t" : System.FilePath) } &&
+            options ["--wiring"] == some { wiring := true } &&
+            options ["--wiring", "--timings", "t"] ==
+              some { timings := some ("t" : System.FilePath), wiring := true } &&
+            options ["--timings", "t", "--wiring"] == none &&
+            options ["--wiring", "--wiring"] == none &&
             options ["--timings", "t", "--timings", "u"] == none &&
             options ["--timings"] == none &&
             options ["--real-threads", "r"] == none &&
@@ -261,10 +279,15 @@ holding the package's `.olean` files, or several joined with `:`
 (`oleanDirs`). With `timings`, it writes there, as each ends, the wall time of the base's
 import and of each check (`timingLine`), a line each, flushed as written, so
 a run that is killed keeps the lines of what had ended: what a guard is
-sized from (`Editor.Test.Linked.hangGuard`). -/
+sized from (`Editor.Test.Linked.hangGuard`). After the checks it prints,
+for each module of the wiring set `wiring` names, the line
+`wiring-set: ran config-test <module> <n> checks`
+(`Editor.CheckGroup.ranLines`), which the gate's once-check and the stress
+loop's coverage read (`tools/wiring-ledger.sh`). -/
 def run (checks : Context → List Check) (sysroot oleanDir : String)
     (syntaxFixtures defaultConfig : System.FilePath) (packages : Array Package)
-    (timings : Option System.FilePath := none) : IO UInt8 := do
+    (timings : Option System.FilePath := none)
+    (wiring : List (String × (Context → List Check)) := []) : IO UInt8 := do
   let timed ←
     match timings with
     | some file =>
@@ -300,6 +323,8 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
       let failed ← timedFailures checks clock timed
       for name in failed do
         IO.eprintln s!"FAILED: {name}"
+      for line in CheckGroup.ranLines "config-test" wiring context do
+        IO.println line
       unless failed.isEmpty do
         return 1
       IO.println s!"config-test: {checks.length} checks passed"
@@ -348,7 +373,7 @@ def runChecks (context : Context) : List Check :=
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: config-test <sysroot> <olean dir> <syntax fixtures> <default config> [--timings <file>] | config-test lsp <sysroot> <config dir> <line> <column> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-reload-directory <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-soak-modules <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples>"
+      "usage: config-test <sysroot> <olean dir> <syntax fixtures> <default config> [--wiring] [--timings <file>] | config-test wiring-modules | config-test lsp <sysroot> <config dir> <line> <column> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-reload-directory <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-soak-modules <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples>"
   return 2
 
 end ConfigTest

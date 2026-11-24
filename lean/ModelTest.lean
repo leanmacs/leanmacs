@@ -106,6 +106,7 @@ import ModelTest.Editor.Process.Environment
 import ModelTest.Editor.Process.Model
 import ModelTest.Editor.Program
 import ModelTest.Editor.Quit
+import ModelTest.Editor.RealHost
 import ModelTest.Editor.Restart.Handover
 import ModelTest.Editor.Restart.Launch
 import ModelTest.Editor.Restore
@@ -156,6 +157,7 @@ import ModelTest.Lint.RealHost.Launder
 import ModelTest.Lint.Wait.Unwired.Real
 import ModelTest.Lint.Wait.Unwired.Real.Deeper
 import ModelTest.Lint.Wait.Wired.Real
+import ModelTest.Lint.Wiring
 
 /-!
 # The model tests
@@ -692,6 +694,16 @@ The job system is tested here with no Rust library:
   may export (`Launder.lean`); a `.contract` module that reaches a loop
   (`Contract.lean`); and a check of an `.edge` module, beside its `main`
   (`Edge.lean`). The linter's own checks are `LintTest.lintRealHostChecks`;
+- the wiring-set linter's fixtures (`ModelTest/Lint/Wiring.lean` and the
+  modules under `ModelTest/Lint/Wiring/`), which hold no check run here:
+  check sets over a `.wiring`, a `.contract`, an `.edge` and a plain
+  module, one that passes with two groups of one module, and one refused
+  for a list of the wiring set in a plain group, a group mistagged, a group
+  holding another module's list, a list left out and a list run twice; an
+  IO list producer of a `.wiring` module refused, beside a generic one and
+  a helper module's that are not (`Wired.lean`); and a `main` not refused,
+  since model-test links no library. The linter's own checks are
+  `LintTest.lintWiringChecks`;
 - `poolChecks`: warming Lean's task pool (`Editor/Job/Pool.lean`). They take
   the pool's size as Lean's runtime does (`Pool.expected`:
   `LEAN_NUM_THREADS` when it is set, else the machine's), and hold that many
@@ -785,6 +797,12 @@ The job system is tested here with no Rust library:
   against its stepped run and its expected file; the real-thread set well formed and its
   check of the data biting, its four runner entries, and every entry not
   stepped a real effect; and the harness's command line;
+- `checkGroupChecks` (`ModelTest/Editor/RealHost.lean`): a root's check set
+  as data (`Editor.CheckGroup`): a normal run runs every group in order; a
+  wiring run takes each module of the wiring set once, in the order its
+  first group comes, with all its groups' checks, and drops the plain
+  groups and an edge's; a listing names those modules; and a run's lines
+  name the root, each module and its count;
 - `restVerdictChecks`: a stepped host's wait over its fakes, judged at their
   rest (`Rest.judge`, `Editor/Headless/Wait.lean`), which reads no
   activity count: settled once the wait is no longer busy; a block on the
@@ -1387,6 +1405,7 @@ def checks : List Check :=
     fixtureDiscoverChecks ++
     fixtureSetupChecks ++
     realThreadSetChecks ++
+    checkGroupChecks ++
     fixtureCommandLineChecks ++
     tableChecks ++
     ownerChecks ++

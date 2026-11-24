@@ -458,56 +458,59 @@ namespace ConfigTest
 
 open Editor
 
-/-- Every check, in the order they run. -/
-def checks (context : Context) : List Check :=
-  checkChecks () ++ runChecks context ++ lakefileChecks () ++ lakefileEntryChecks () ++
-    packageSetEditChecks () ++
-    directoryChecks () ++
-    moduleFilesChecks () ++
-    hostChecks context ++
-    bracketChecks context ++
-    steppedChecks context ++
-    steppedRunChecks context ++
-    fixtureRunChecks context ++
-    protocolContractChecks context ++
-    threadChecks context ++
-    jobChecks context ++
-    jobServiceChecks context ++
-    realSyntaxChecks context ++
-    realWaitChecks context ++
-    indentChecks context ++
-    watchReloadChecks context ++
-    agreementChecks () ++
-    shippedChecks () ++
-    scriptChecks context ++
-    realRunnerChecks context ++
-    windowModeChecks context ++
-    dispatchChecks context ++
-    hostLoopChecks context ++
-    realQueueChecks context ++
-    modeChecks context ++
-    promptChecks context ++
-    atPointChecks context ++
-    reloadEchoChecks context ++
-    faceChecks context ++
-    cursorResolutionChecks () ++
-    environmentHostChecks context ++
-    restoreOrderChecks context ++
-    journalFailureChecks context ++
-    journalOrderChecks context ++
-    stageMakerChecks context ++
-    benchWaitChecks ++
-    leaderChecks context ++
-    hintChecks context ++
-    keyHintChecks context ++
-    defaultConfigChecks context ++
-    extensionChecks context ++
-    -- Last, the checks whose config imports `Lean`: the base the checks
-    -- share then holds it, and every environment made from that base
-    -- after them costs a few times more.
-    moduleHostChecks context ++
-    elaboratorChecks context ++
-    elaboratorContractChecks context
+/-- Every check, in the order they run: the check set (`Editor.CheckGroup`),
+each list of a module of the wiring set in a group of its module, the
+others in plain groups between them. -/
+def checks : List (CheckGroup Context Check) :=
+  [.plain fun context =>
+      checkChecks () ++ runChecks context ++ lakefileChecks () ++ lakefileEntryChecks () ++
+        packageSetEditChecks () ++
+        directoryChecks () ++
+        moduleFilesChecks () ++
+        hostChecks context,
+    .wired "ConfigTest.Editor.Headless.Real.Bracket"
+      wiringSet.ConfigTest.Editor.Headless.Real.Bracket bracketChecks,
+    .plain fun context =>
+      steppedChecks context ++ steppedRunChecks context ++ fixtureRunChecks context ++
+        protocolContractChecks context ++
+        threadChecks context ++
+        jobChecks context,
+    .wired "ConfigTest.Editor.Job.Real" wiringSet.ConfigTest.Editor.Job.Real jobServiceChecks,
+    .wired "ConfigTest.Editor.SyntaxTree.Real" wiringSet.ConfigTest.Editor.SyntaxTree.Real
+      realSyntaxChecks,
+    .wired "ConfigTest.Editor.Headless.Real.Waits" wiringSet.ConfigTest.Editor.Headless.Real.Waits
+      realWaitChecks,
+    .wired "ConfigTest.Editor.Indent" wiringSet.ConfigTest.Editor.Indent indentChecks,
+    .plain fun context =>
+      watchReloadChecks context ++ agreementChecks () ++ shippedChecks () ++ scriptChecks context,
+    .wired "ConfigTest.Editor.Headless.Real.Runner" wiringSet.ConfigTest.Editor.Headless.Real.Runner
+      realRunnerChecks,
+    .wired "ConfigTest.Editor.Window.Real" wiringSet.ConfigTest.Editor.Window.Real windowModeChecks,
+    .plain fun context => dispatchChecks context ++ hostLoopChecks context,
+    .wired "ConfigTest.Editor.Headless.Queue.Real" wiringSet.ConfigTest.Editor.Headless.Queue.Real
+      realQueueChecks,
+    .plain fun context =>
+      modeChecks context ++ promptChecks context ++ atPointChecks context ++
+        reloadEchoChecks context ++
+        faceChecks context ++
+        cursorResolutionChecks () ++
+        environmentHostChecks context ++
+        restoreOrderChecks context ++
+        journalFailureChecks context ++
+        journalOrderChecks context ++
+        stageMakerChecks context ++
+        benchWaitChecks ++
+        leaderChecks context ++
+        hintChecks context ++
+        keyHintChecks context ++
+        defaultConfigChecks context ++
+        extensionChecks context ++
+        -- Last, the checks whose config imports `Lean`: the base the checks
+        -- share then holds it, and every environment made from that base
+        -- after them costs a few times more.
+        moduleHostChecks context ++
+        elaboratorChecks context ++
+        elaboratorContractChecks context]
 
 end ConfigTest
 
@@ -598,13 +601,21 @@ def main (args : List String) : IO UInt32 := do
       IO.Process.exit status
     | none =>
       ConfigTest.usage
+  | ["wiring-modules"] =>
+    for module in Editor.CheckGroup.modules ConfigTest.checks do
+      IO.println module
+    return 0
   | sysroot :: oleanDir :: syntaxFixtures :: defaultConfig :: rest =>
     match ConfigTest.options rest with
-    | some timings =>
+    | some options =>
+      let wiring := Editor.CheckGroup.wiring ConfigTest.checks
+      let selected :=
+        if options.wiring then fun context => wiring.flatMap (·.2 context)
+        else Editor.CheckGroup.all ConfigTest.checks
       IO.Process.exit
           (←
-            ConfigTest.run ConfigTest.checks sysroot oleanDir syntaxFixtures defaultConfig
-                ConfigTest.shippedPackages timings)
+            ConfigTest.run selected sysroot oleanDir syntaxFixtures defaultConfig
+                ConfigTest.shippedPackages options.timings wiring)
     | none =>
       ConfigTest.usage
   | _ =>

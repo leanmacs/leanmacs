@@ -14,8 +14,10 @@ declared in, and the search for the mark a declaration of the module being
 elaborated hands on, over any mark (`handedOn?`), so no laundering holds
 through a private wrapper for either linter. It also holds how a module
 declares itself of the wiring set (`wiringSet.<module>`, `declaredHere?`),
-which the real-host linter confines real hosts to and the wait linter
-counts beside a mirror as that mirror, so the two read one declaration.
+which the real-host linter confines real hosts to, the wait linter counts
+beside a mirror as that mirror and the wiring-set linter holds a root's
+check set to, so they read one declaration; and which declaration is an
+executable's `main`, which the real-host and wiring-set linters both rule.
 -/
 
 open Lean Elab
@@ -31,6 +33,14 @@ def isTestModule (module : Name) : Bool :=
   | first :: rest =>
     first.toString.endsWith "Test" || (first == `Editor && rest.head? == some `Test)
   | [] => false
+
+/-- Whether `name` is an executable's `main`: its last name component is
+`main`, at the top level as a root's is, or in a namespace, as a fixture's
+must be, beside the test root's own `main`. -/
+def isMainName (name : Name) : Bool :=
+  match name with
+  | .str _ "main" => true
+  | _ => false
 
 /-- Every constant a term of `tree` resolved to, and every field a
 structure instance of it sets (`{ busy := … }`, `{ kind with busy := … }`)

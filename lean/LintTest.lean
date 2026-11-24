@@ -1,5 +1,6 @@
 import LintTest.Lint.RealHost
 import LintTest.Lint.Wait
+import LintTest.Lint.Wiring
 
 /-!
 # Lint tests
@@ -29,13 +30,20 @@ and runs them.
   and a declaration's (a constructor applied to string literals none of
   which is empty) are read; which types are a check's, which a wiring
   module may export unmarked; and which modules are contract roots.
+- `lintWiringChecks` (`LintTest/Lint/Wiring.lean`): the wiring-set
+  linter's rules (`Lint/Wiring.lean`): which types are a check set, a table
+  of scenarios, a check of a root's check type and an IO list producer; a
+  check set's value read into its groups in order; a reference counted at
+  each place it is written; which modules are under a root's first name
+  component; and the names of the bindings' module and of the wiring
+  selection.
 -/
 
 namespace LintTest
 
 /-- Every check of the build's linters. -/
 def checks : List Check :=
-  lintWaitChecks ++ lintRealHostChecks
+  lintWaitChecks ++ lintRealHostChecks ++ lintWiringChecks
 
 end LintTest
 

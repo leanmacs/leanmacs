@@ -61,4 +61,84 @@ inductive WiringSet where
   /-- An executable's root: only its `main` wires real adapters, for `why`. -/
   | edge (why : String)
 
+/-- A group of a test root's checks, over the root's context `κ` and its
+check type `α`: what the root's check set (`checks : List (CheckGroup κ α)`)
+is made of, and how the stress loop and the gate select the wiring set from
+code (`docs/dev-practices/real-thread-checks.md`, "How stress runs the
+set"). The lists of a module of the wiring set sit in `wired` groups,
+tagged with that module's name and its declaration; every other list sits
+in a `plain` group. The build's `linter.wiringSet` (`lean/Lint/Wiring.lean`)
+holds the tags true and complete. Plain data, so this module still imports
+nothing. -/
+inductive CheckGroup (κ α : Type) where
+  /-- Checks of modules outside the wiring set. -/
+  | plain (checks : κ → List α)
+  /-- Checks of the module `module`, which declares `set`
+  (`wiringSet.<module>`). A module may have several groups, where its
+  lists sit between other modules' in the order the checks run: they are
+  one module of the wiring set (`CheckGroup.wiring`). -/
+  | wired (module : String) (set : WiringSet) (checks : κ → List α)
+
+namespace CheckGroup
+
+/-- Whether `set`, a module's declaration, puts its checks in the wiring
+set: `.wiring` and `.contract` do, `.edge` does not. -/
+def runsWiring : WiringSet → Bool
+  | .wiring .. | .contract _ => true
+  | .edge _ => false
+
+/-- Every check of `groups` over `context`, in order: what a normal run
+runs. -/
+def all {κ α : Type} (groups : List (CheckGroup κ α)) (context : κ) : List α :=
+  groups.flatMap fun
+    | .plain checks => checks context
+    | .wired _ _ checks => checks context
+
+/-- Adds `checks` to `module`'s entry of `merged`, after what it holds, or
+appends an entry for it. -/
+def mergeInto {κ α : Type} (merged : List (String × (κ → List α))) (module : String)
+    (checks : κ → List α) : List (String × (κ → List α)) :=
+  if merged.any (·.1 == module) then
+    merged.map fun (name, earlier) =>
+      if name == module then (name, fun context => earlier context ++ checks context)
+      else (name, earlier)
+  else merged ++ [(module, checks)]
+
+/-- The wiring set's modules of `groups`, each once, in the order its first
+group comes, with its checks: the `wired` groups whose set is `.wiring` or
+`.contract`. A module's groups are one entry, its checks in their order, so
+a run prints one line for each module of the wiring set it ran. -/
+def wiring {κ α : Type} (groups : List (CheckGroup κ α)) : List (String × (κ → List α)) :=
+  groups.foldl (init := []) fun merged group =>
+    match group with
+    | .wired module set checks => if runsWiring set then mergeInto merged module checks else merged
+    | .plain _ => merged
+
+/-- The names of the wiring set's modules of `groups`, in `wiring`'s order.
+It needs no context, so a listing builds no host. -/
+def modules {κ α : Type} (groups : List (CheckGroup κ α)) : List String :=
+  (wiring groups).map (·.1)
+
+/-- The line a run prints for each module of the wiring set it ran, as
+`wiring` gives them, over `context`: `wiring-set: ran <root> <module> <n>
+checks`, which the gate's once-check and the stress loop's coverage check
+read (`tools/wiring-ledger.sh`). -/
+def ranLines {κ α : Type} (root : String) (modules : List (String × (κ → List α))) (context : κ) :
+    List String :=
+  modules.map fun (module, checks) =>
+    s!"wiring-set: ran {root} {module} {(checks context).length} checks"
+
+end CheckGroup
+
+/-- A run of a real host that a test executable makes as a subcommand of
+its own, as `ffi-test window-host` is: the table of them, `List Scenario`,
+in its module of the wiring set, is how its `main` reaches them, and what
+it lists (`ffi-test wiring-scenarios`). -/
+structure Scenario where
+  /-- The subcommand. -/
+  command : String
+  /-- Runs it on the arguments after the subcommand: its exit status, 2 for
+  arguments it does not take. -/
+  run : List String → IO UInt8
+
 end Editor

@@ -501,6 +501,10 @@ def main (arguments : List String) : IO UInt32 := do
       if pumpEnded then [] else ["quit ends the completion pump"]
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
+  -- Contract-test is of the wiring set whole, as a contract root: the line
+  -- the gate's once-check and the stress loop's coverage read
+  -- (`tools/wiring-ledger.sh`), said whether its checks held or not.
+  IO.println "wiring-set: ran contract-test ContractTest"
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println

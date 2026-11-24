@@ -95,37 +95,47 @@ def wiringSet.FfiTest : Editor.WiringSet :=
 
 namespace FfiTest
 
-/-- Every check, in the order they run. -/
-def checks (_ : Unit) : List Check :=
-  entryChecks () ++ handleChecks () ++ dataChecks () ++ queueChecks () ++ timerChecks () ++
-    fileChecks () ++
-    diffChecks () ++
-    processChecks () ++
-    watchChecks () ++
-    grepChecks () ++
-    documentChecks () ++
-    snapshotChecks () ++
-    transactionChecks () ++
-    markerChecks () ++
-    inverseChecks () ++
-    windowChecks () ++
-    windowRealChecks () ++
-    displayChecks () ++
-    sceneChecks () ++
-    decodeChecks () ++
-    eventDecodeChecks () ++
-    eventEncodeChecks () ++
-    eventChecks () ++
-    interruptChecks () ++
-    ffiLaunchChecks () ++
-    fuzzyChecks () ++
-    syntaxChecks () ++
-    searchChecks () ++
-    pairChecks () ++
-    pictureChecks () ++
-    themePicturesChecks () ++
-    paddingChecks () ++
-    renderChecks ()
+/-- Every check, in the order they run: the check set
+(`Editor.CheckGroup`), `windowRealChecks`, of the wiring set
+(`FfiTest/Editor/Window/Real.lean`), in a group of its module. -/
+def checks : List (Editor.CheckGroup Unit Check) :=
+  [.plain fun _ =>
+      entryChecks () ++ handleChecks () ++ dataChecks () ++ queueChecks () ++ timerChecks () ++
+        fileChecks () ++
+        diffChecks () ++
+        processChecks () ++
+        watchChecks () ++
+        grepChecks () ++
+        documentChecks () ++
+        snapshotChecks () ++
+        transactionChecks () ++
+        markerChecks () ++
+        inverseChecks () ++
+        windowChecks (),
+    .wired "FfiTest.Editor.Window.Real" wiringSet.FfiTest.Editor.Window.Real windowRealChecks,
+    .plain fun _ =>
+      displayChecks () ++ sceneChecks () ++ decodeChecks () ++ eventDecodeChecks () ++
+        eventEncodeChecks () ++
+        eventChecks () ++
+        interruptChecks () ++
+        ffiLaunchChecks () ++
+        fuzzyChecks () ++
+        syntaxChecks () ++
+        searchChecks () ++
+        pairChecks () ++
+        pictureChecks () ++
+        themePicturesChecks () ++
+        paddingChecks () ++
+        renderChecks ()]
+
+/-- Runs `selected` as `run` does under the name `scenario`, then prints a
+line for each module of the wiring set it ran (`Editor.CheckGroup.ranLines`);
+its exit status. -/
+def runSelected (scenario : String) (selected : List Check) : IO UInt8 := do
+  let status ← run scenario selected
+  for line in Editor.CheckGroup.ranLines "ffi-test" (Editor.CheckGroup.wiring checks) () do
+    IO.println line
+  return status
 
 /-- The `theme-pictures` scenario: the theme picture check
 (`Themes.Picture.themePicturesScenario`) over the reference images in
@@ -162,12 +172,23 @@ that. Any exit status of its own means the scenario went wrong. -/
 def main (args : List String) : IO UInt32 := do
   match args with
   | [] =>
-    if (← FfiTest.run "ffi-test" (FfiTest.checks ())) == 0 then
+    if (← FfiTest.runSelected "ffi-test" (Editor.CheckGroup.all FfiTest.checks ())) == 0 then
       return 0
     else
       -- A failed check may have left a task parked in the library, and
       -- returning from `main` would wait for it for ever.
       IO.Process.exit 1
+  | ["wiring"] =>
+    let wiring := (Editor.CheckGroup.wiring FfiTest.checks).flatMap (·.2 ())
+    IO.Process.exit (← FfiTest.runSelected "ffi-test wiring" wiring)
+  | ["wiring-modules"] =>
+    for module in Editor.CheckGroup.modules FfiTest.checks do
+      IO.println module
+    return 0
+  | ["wiring-scenarios"] =>
+    for scenario in FfiTest.windowScenarios do
+      IO.println scenario.command
+    return 0
   | ["shutdown"] =>
     IO.Process.exit (← FfiTest.run "ffi-test shutdown" (FfiTest.shutdownChecks ()))
   | ["display", fixture] =>
@@ -180,38 +201,6 @@ def main (args : List String) : IO UInt32 := do
     IO.Process.exit (← FfiTest.excerptPictureScenario dir font false)
   | ["excerpt-picture", dir, font, "--write"] =>
     IO.Process.exit (← FfiTest.excerptPictureScenario dir font true)
-  | ["window-host", file] =>
-    let status ← FfiTest.windowHostScenario (some file)
-    Editor.Ffi.quit
-    IO.Process.exit status
-  | ["window-host"] =>
-    let status ← FfiTest.windowHostScenario none
-    Editor.Ffi.quit
-    IO.Process.exit status
-  | ["window-host-config", sysroot, oleanDir, configDir] =>
-    let status ← FfiTest.windowHostConfigScenario sysroot oleanDir configDir
-    Editor.Ffi.quit
-    IO.Process.exit status
-  | ["window-host-restart", sysroot, oleanDir, configDir] =>
-    let status ← FfiTest.windowHostRestartScenario sysroot oleanDir configDir
-    Editor.Ffi.quit
-    IO.Process.exit status
-  | ["window-host-base", sysroot, oleanDir, configDir] =>
-    let status ← FfiTest.windowHostBaseScenario sysroot oleanDir configDir
-    Editor.Ffi.quit
-    IO.Process.exit status
-  | ["window-host-generate", sysroot, oleanDir, configDir] =>
-    let status ← FfiTest.windowHostGenerateScenario sysroot oleanDir configDir
-    Editor.Ffi.quit
-    IO.Process.exit status
-  | ["window-host-direct", editorPath, sysroot, configDir] =>
-    let status ← FfiTest.windowHostDirectScenario editorPath sysroot configDir
-    Editor.Ffi.quit
-    IO.Process.exit status
-  | ["window-host-undrawn", file] =>
-    let status ← FfiTest.windowHostUndrawnScenario file
-    Editor.Ffi.quit
-    IO.Process.exit status
   | ["exit-while-blocked"] =>
     IO.Process.exit (if ← FfiTest.blockForGood then 0 else 1)
   | ["overflow", sysroot, oleanDir] =>
@@ -222,5 +211,11 @@ def main (args : List String) : IO UInt32 := do
       return status.toUInt32
     | none =>
       FfiTest.usage
-  | _ =>
-    FfiTest.usage
+  | command :: arguments =>
+    match FfiTest.windowScenarios.find? (·.command == command) with
+    | some scenario =>
+      let status ← scenario.run arguments
+      Editor.Ffi.quit
+      IO.Process.exit status
+    | none =>
+      FfiTest.usage

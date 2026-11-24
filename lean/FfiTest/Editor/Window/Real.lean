@@ -604,4 +604,51 @@ def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 :
   finally
     IO.FS.removeDirAll dir
 
+/-- Says how `command`, a scenario of `windowScenarios`, is run, and gives
+the exit status 2. -/
+private def scenarioUsage (command arguments : String) : IO UInt8 := do
+  IO.eprintln s!"usage: ffi-test {command} {arguments}"
+  return 2
+
+/-- The mark of `windowScenarios`: running one of them runs a real editor
+loop thread (`Editor/RealHost.lean`). -/
+def windowScenarios.realHost : Editor.RealHost :=
+  .loop
+
+/-- The window scenarios, each a subcommand of `ffi-test` that parses its
+own arguments (`Editor.Scenario`): how the root's `main` reaches them, as
+the build's `linter.wiringSet` requires, and what `ffi-test
+wiring-scenarios` lists for the gate's once-check and the stress loop
+(`tools/wiring-runs.sh`). -/
+def windowScenarios : List Editor.Scenario :=
+  [{  command := "window-host"
+      run := fun
+        | [file] => windowHostScenario (some file)
+        | [] => windowHostScenario none
+        | _ => scenarioUsage "window-host" "[<file>]" },
+    { command := "window-host-config"
+      run := fun
+        | [sysroot, oleanDir, configDir] => windowHostConfigScenario sysroot oleanDir configDir
+        | _ => scenarioUsage "window-host-config" "<sysroot> <olean dir> <config dir>" },
+    { command := "window-host-restart"
+      run := fun
+        | [sysroot, oleanDir, configDir] => windowHostRestartScenario sysroot oleanDir configDir
+        | _ => scenarioUsage "window-host-restart" "<sysroot> <olean dir> <config dir>" },
+    { command := "window-host-base"
+      run := fun
+        | [sysroot, oleanDir, configDir] => windowHostBaseScenario sysroot oleanDir configDir
+        | _ => scenarioUsage "window-host-base" "<sysroot> <olean dir> <config dir>" },
+    { command := "window-host-generate"
+      run := fun
+        | [sysroot, oleanDir, configDir] => windowHostGenerateScenario sysroot oleanDir configDir
+        | _ => scenarioUsage "window-host-generate" "<sysroot> <olean dir> <config dir>" },
+    { command := "window-host-direct"
+      run := fun
+        | [editorPath, sysroot, configDir] => windowHostDirectScenario editorPath sysroot configDir
+        | _ => scenarioUsage "window-host-direct" "<editor> <sysroot> <config dir>" },
+    { command := "window-host-undrawn"
+      run := fun
+        | [file] => windowHostUndrawnScenario file
+        | _ => scenarioUsage "window-host-undrawn" "<file>" }]
+
 end FfiTest

@@ -121,14 +121,6 @@ partial def isCheckType (type : Expr) : Bool :=
     | _ => false
   | _ => false
 
-/-- Whether `name` is an executable's `main`: its last name component is
-`main`, at the top level as a root's is, or in a namespace, as a fixture's
-must be, beside the test root's own `main`. -/
-def isMainName (name : Name) : Bool :=
-  match name with
-  | .str _ "main" => true
-  | _ => false
-
 /-- Whether `module` is a contract root's: contract-test's, whose checks run
 the ports' contracts against their real adapters, outside the rule. -/
 def isContractRoot (module : Name) : Bool :=
