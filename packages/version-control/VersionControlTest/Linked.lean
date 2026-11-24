@@ -1,3 +1,4 @@
+import Editor.RealHost
 import Editor.Test.Linked.Services
 import VersionControlTest.Check
 import VersionControlTest.Linked.VersionControl.Git
@@ -42,6 +43,10 @@ itself does of each request is this contract's, so they went.
 The real services are started here (`Editor.Test.Linked.Services.start`),
 with the process's one completion pump.
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.VersionControlTest.Linked : Editor.WiringSet :=
+  .edge "its main starts the library's services and pump and hands them to the contract modules"
 
 /-- Runs the checks (the module docs). -/
 def main (arguments : List String) : IO UInt32 := do

@@ -1,5 +1,6 @@
 import Editor.Job
 import Editor.Program
+import Editor.RealHost
 import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Trees
 import VcApi
@@ -22,7 +23,15 @@ as `vc-api`'s backend (D7 (c): `vc-api` keeps the model's run,
 `VcApiTest.versionControlContractFailures`, in `vc-api`). The linked test's root,
 `VersionControlTest/Linked.lean`, runs them; its module doc says what each
 shows.
+
+It runs a port's contract against its real adapter, outside the rule of the
+wiring set (`docs/dev-practices/real-thread-checks.md`): it declares
+`.contract` because its root hands it the real services (W44).
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.VersionControlTest.Linked.VersionControl.Git : Editor.WiringSet :=
+  .contract "VersionControlContract against real git"
 
 namespace VersionControlTest.Linked
 
