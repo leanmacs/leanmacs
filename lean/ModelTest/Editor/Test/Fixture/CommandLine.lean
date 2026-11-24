@@ -33,6 +33,15 @@ def fixtureCommandLineChecks : List Check :=
           | .ok _ => false
         return (match read [] with | .error "" => true | _ => false) && says (head ++ ["run"]) && says (head ++ ["bogus"]) && says head &&
             says ["/sys", "/a", "run", "x"] && says (head ++ ["compare", "s"]) &&
-            (usage.splitOn "compared").length == 2 }]
+            (usage.splitOn "compared").length == 2 },
+    { name :=
+        "real-thread, with no toolchain, directories or repository, lists the real-thread set, all of it or the entries whose site begins with --site's prefix, and nothing else is the listing"
+      run :=
+        return readListing ["real-thread"] == some none &&
+            readListing ["real-thread", "--site", "ffi-test"] == some (some "ffi-test") &&
+            readListing ["real-thread", "--site"] == none &&
+            readListing ["real-thread", "ffi-test"] == none &&
+            readListing ["/sys", "/a", "--repo", "..", "real-thread"] == none &&
+            readListing [] == none && (usage.splitOn "real-thread [--site <prefix>]").length == 2 }]
 
 end ModelTest

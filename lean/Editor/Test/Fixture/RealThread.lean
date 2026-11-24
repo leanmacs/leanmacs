@@ -197,6 +197,13 @@ def problems (set : Array Entry := entries) : Array String :=
           found := found.push s!"{entry.script} is a real effect that does not say what"
     return found
 
+/-- The entries of `set` whose site begins with `prefix_`, or all of them
+with none, each as `<script>\t<site>`, in the set's order: what
+`fixture-test real-thread [--site <prefix>]` prints. -/
+def listed (prefix_ : Option String) (set : Array Entry := entries) : Array String :=
+  (set.filter fun entry => prefix_.all (entry.site.startsWith ·)).map fun entry =>
+    s!"{entry.script}\t{entry.site}"
+
 /-- The runner entries, which ffi-test runs both ways and compares. -/
 def compared : Array Entry :=
   entries.filter (·.subject == .runner)

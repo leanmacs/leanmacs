@@ -50,6 +50,20 @@ def realThreadSetChecks : List Check :=
             entry.stepped ||
               match entry.subject with
               | .realEffect _ => true
-              | .runner => false }]
+              | .runner => false },
+    { name :=
+        "the real-thread listing is each entry's script and site, a tab between, in the set's order, and with a site prefix only the entries whose site begins with it"
+      run := do
+        let good : Entry :=
+          { script := "t/a", covers := "it", site := "ffi-test: a line", subject := .runner,
+            stepped := true }
+        let set := #[good, { good with script := "t/b", site := "bundle-test (x)" },
+            { good with script := "t/c", site := "ffi-test (y), bundle-test (z)" }]
+        return listed none set == #["t/a\tffi-test: a line", "t/b\tbundle-test (x)", "t/c\tffi-test (y), bundle-test (z)"] &&
+            listed (some "ffi-test") set == #["t/a\tffi-test: a line", "t/c\tffi-test (y), bundle-test (z)"] &&
+            listed (some "bundle-test") set == #["t/b\tbundle-test (x)"] &&
+            (listed (some "ffi-test")).size + (listed (some "bundle-test")).size +
+                (listed (some "app-check")).size ==
+              entries.size }]
 
 end ModelTest
