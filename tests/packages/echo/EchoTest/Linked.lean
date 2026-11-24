@@ -1,3 +1,5 @@
+import Echo.Contract
+import EchoTest.Check
 import EchoTest.Linked.Echo.Real
 import Editor.RealHost
 import Editor.Test.Linked.Services
@@ -16,33 +18,70 @@ not need.
 
 It starts the linked test kit's services and pump, runs the contract of the
 echo port against the Rust-backed binding over them
-(`EchoTest.Linked.echoRealChecks`), and says so.
+(`EchoTest.Linked.echoRealChecks`, one check over one subject), and says
+so, counting the contract's properties.
+
+Its checks are a check set (`EchoTest.Linked.checks`, `Editor.CheckGroup`,
+`docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
+the lists of its modules of the wiring set in groups of their module, which
+the build's `linter.wiringSet` holds true and complete. A run prints, after
+its count, `wiring-set: ran echo <module> <n> checks` for each module of
+the wiring set it ran, which the gate's once-check reads
+(`tools/wiring-ledger.sh`). With `--wiring` after the two directories it
+runs those groups alone, the stress loop's `linked-wiring` suite
+(`tools/package-set.sh run --wiring`), and `wiring-modules` prints their
+modules, one a line, building nothing.
 -/
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
 def wiringSet.EchoTest.Linked : Editor.WiringSet :=
   .edge "its main starts the library's services and pump and hands them to the echo contract"
 
-/-- Runs the checks and exits 0 when all hold, 1 when one does not, and 2
-for a command line that is not the two directories. The exit is explicit,
-after the queues are quit, as the core's linked tests' is: a task may still
-be blocked in the library. -/
+/-- Every check of the linked test, over the completions of the services
+`main` starts: its check set (`Editor.CheckGroup`), the contract's one
+check in the group of `EchoTest/Linked/Echo/Real.lean`, of the wiring set. -/
+def EchoTest.Linked.checks : List (Editor.CheckGroup Editor.Job.Completions EchoTest.Check) :=
+  [.wired "EchoTest.Linked.Echo.Real" wiringSet.EchoTest.Linked.Echo.Real fun completions =>
+      EchoTest.Linked.echoRealChecks completions]
+
+/-- Runs the checks `select` takes from the check set over the services and
+pump, started here, and says which failed, or that the contract's
+properties held; then a line for each module of the wiring set the run ran
+(`Editor.CheckGroup.ranLines`), and that the pump ended once the queues
+were quit. The exit is explicit, after the queues are quit, as the core's
+linked tests' is: a task may still be blocked in the library. -/
+private def EchoTest.Linked.runSelected (select : Editor.Job.Completions → List EchoTest.Check)
+    (wiring : List (String × (Editor.Job.Completions → List EchoTest.Check))) : IO UInt32 := do
+  let services ← Editor.Test.Linked.Services.start
+  let failed ← EchoTest.failures (select services.completions)
+  for name in failed do
+    IO.eprintln s!"FAILED: {name}"
+  if failed.isEmpty then
+    IO.println
+        s!"echo linked test: the contract's {Echo.Contract.properties.length} properties hold on the Rust-backed binding, each request completed through the completion queue"
+  for line in Editor.CheckGroup.ranLines "echo" wiring services.completions do
+    IO.println line
+  (← IO.getStdout).flush
+  let stopped ← services.stop
+  unless stopped do
+    IO.eprintln "FAILED: the completion pump did not end once the queues were quit"
+  IO.Process.exit (if failed.isEmpty && stopped then 0 else 1)
+
+/-- Runs the checks, all or with `--wiring` the wiring set's alone, and
+exits 0 when all hold, 1 when one does not; `wiring-modules` prints the
+wiring set's modules; and 2 for a command line it does not take. -/
 def main (arguments : List String) : IO UInt32 := do
+  let wiring := Editor.CheckGroup.wiring EchoTest.Linked.checks
   match arguments with
   | [_, _] =>
-    let services ← Editor.Test.Linked.Services.start
-    let checks ← EchoTest.Linked.echoRealChecks services.completions
-    let failed := checks.filter fun check => !check.2
-    for check in failed do
-      IO.eprintln s!"FAILED: {check.1}"
-    if failed.isEmpty then
-      IO.println
-          s!"echo linked test: the contract's {checks.length} properties hold on the Rust-backed binding, each request completed through the completion queue"
-    (← IO.getStdout).flush
-    let stopped ← services.stop
-    unless stopped do
-      IO.eprintln "FAILED: the completion pump did not end once the queues were quit"
-    IO.Process.exit (if failed.isEmpty && stopped then 0 else 1)
+    EchoTest.Linked.runSelected (Editor.CheckGroup.all EchoTest.Linked.checks) wiring
+  | [_, _, "--wiring"] =>
+    EchoTest.Linked.runSelected (fun completions => wiring.flatMap (·.2 completions)) wiring
+  | ["wiring-modules"] =>
+    for module in Editor.CheckGroup.modules EchoTest.Linked.checks do
+      IO.println module
+    return 0
   | _ =>
-    IO.eprintln "usage: EchoTest-Linked <sysroot> <core olean dir>"
+    IO.eprintln
+        "usage: EchoTest-Linked <sysroot> <core olean dir> [--wiring], or EchoTest-Linked wiring-modules"
     return 2

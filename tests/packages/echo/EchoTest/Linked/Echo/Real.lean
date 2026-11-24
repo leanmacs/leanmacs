@@ -2,6 +2,7 @@ import Echo.Contract
 import Echo.Real
 import Editor.RealHost
 import Editor.Test.Linked.Jobs
+import EchoTest.Check
 import Editor.Test.Linked.Services
 
 /-!
@@ -45,11 +46,15 @@ def realSubject (completions : Job.Completions) : IO Echo.Contract.Subject := do
         let ended ← Job.awaitWithin Test.Linked.patience wait.result?
         return ended == some (some .completed) }
 
-/-- The checks of the binding, each with what must hold as a sentence: every
-property of the contract, over `completions`. -/
-def echoRealChecks (completions : Job.Completions) : IO (List (String × Bool)) := do
-  let failing ← Echo.Contract.failing (← realSubject completions)
-  return Echo.Contract.properties.map fun property =>
-      (s!"the Rust-backed binding: {property.name}", !failing.contains property.name)
+/-- The check of the binding: every property of the contract, over
+`completions`, run on one subject in one pass through the completion queue
+(`Echo.Contract.failing`), failing through `saw` with the names of the
+properties that do not hold. -/
+def echoRealChecks (completions : Job.Completions) : List Check :=
+  [{  name :=
+        s!"the Rust-backed binding holds the echo contract's {Echo.Contract.properties.length} properties"
+      run := do
+        let failing ← Echo.Contract.failing (← realSubject completions)
+        saw failing.isEmpty s!"{failing.map (s!"the Rust-backed binding: {·}")}" }]
 
 end EchoTest.Linked
