@@ -1,7 +1,9 @@
-# A template of a script, used as `save-quit-script` is: `@FILE@` stands for
-# the absolute path of a copy of `note.txt` in a temporary directory. The
-# run must exit with status 0, leave the copy holding the bytes of
-# `note-expected`, and print no `commands:` line.
+# A template of a script, run stepped as `save-quit-script` is, with the
+# same setup: `@FILE@` stands for `/fixture/note.txt`, a copy of `note.txt`
+# in the file fake's model. The run must leave the copy holding the bytes
+# of `note-expected`, and print no `commands:` line. The quit waits for the
+# save, so the script has a `join` after the `wq` line, which ends when the
+# save's result has ended the loop.
 
 # `e` opens the file, and `join` waits for the load's result.
 run ex

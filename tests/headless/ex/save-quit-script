@@ -1,9 +1,11 @@
-# A template of a script: `mise run ffi-test` copies `note.txt` into a
-# temporary directory, writes this file there with `@FILE@` replaced by the
-# copy's absolute path, and has the editor's headless mode run it against
-# the config in `../config/`, of which it loads nothing. The run must exit
-# with status 0, leave the copy holding the bytes of `note-expected`, and
-# print no `commands:` line.
+# A template of a script: the fixture harness runs it stepped
+# (`fixture-test`; docs/dev-practices/headless-mode.md, "How the gate runs a
+# fixture"), with its setup (`Editor.Test.Fixture.Setup`): `note.txt` is
+# copied into the file fake's model at `/fixture/note.txt`, which `@FILE@`
+# stands for, and the run is against the config in `../config/`, of which
+# it loads nothing. It has no expected file: the run must leave the model's
+# copy holding the bytes of `note-expected` (`e`, an edit, `w` and `q`), and
+# print no `commands:` line, which the `show` line after the quit would.
 
 # `e` opens the file. The open is a job: `join` waits for its result, which
 # makes the buffer and shows it. Without the wait the text below would be

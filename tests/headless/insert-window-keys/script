@@ -1,4 +1,5 @@
-# The script `mise run ffi-test` has the editor's headless mode run against
+# The script the fixture harness runs stepped (`fixture-test`;
+# docs/dev-practices/headless-mode.md, "How the gate runs a fixture") against
 # the config in `config/`, which binds every key of the Vim scheme's `C-w`
 # table with `bindKey`, so the window commands are reached in insert state
 # without leaving it. What it prints must be exactly `expected`. It touches

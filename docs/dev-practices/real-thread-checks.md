@@ -53,11 +53,22 @@ the files package's).
 |---|---|---|
 | A1 | The host's bracket and the loop's lifetime: `Headless.withHost`, `withHostEnding`, guard, grace, `abandoned`, `endWaits`, `loopStarted` | The subject is the thread and its join |
 | A2 | The driver's waits over the loop thread: `Host.waitWhile` markers and rounds, the idle signal read across the thread, an editor thread held inside an event | The subject is the cross-thread wait |
-| A3 | The headless mode's script runner: `Headless.run`, `runAndDispose`, `runFrom`, the CLI's driver, also used by the headless fixtures and the package linked tests | The runner is defined over `Host` |
+| A3 | The headless mode's script runner over the real host's `Driven` (`Driven.ofHost`, under `Hosting.real`): `Headless.run`, `runAndDispose`, `runFrom`, the CLI's driver: config-test's A3 checks, the package linked tests', and the CLI runs of the fixtures that `Editor.Test.Fixture.RealThread` declares | The subject is the runner over a real loop thread |
 | A4 | The library's editor queue: a Rust poster (`Ffi.feedScript`), the interrupt key's mark, and the flag raised as a key arrives while a command runs | Needs the library queue and a command running concurrently |
 | A5 | The library's syntax service, whose parses come back over the library's editor queue (`Event.parsed`) and are waited for with `Ffi.syntaxSettle` | A stepped host never pulls the library queue, and a stray `parsed` would reach the next real host |
 | A6 | The window mode's wiring (`Editor.Window.host` and its start-up wait) | It is the window mode's edge |
 | A7 | The library's watch service on real files (`Session.shownOn`, the scene asked at each job line); no check of `config-test` since the features that watch files moved into packages, whose linked tests cover it (below) | Background deliveries on the library's clock |
+
+**The headless fixtures run stepped by default** (`fixture-test`;
+[headless-mode.md](headless-mode.md), "How the gate runs a fixture"): the
+script runner is written on `Headless.Driven`, the port both hosts
+implement, and the harness runs it over the stepped host with the fakes.
+The fixtures that keep running the CLI over a real loop thread are declared
+once, each with what it covers and the gate step that runs it, in
+`Editor.Test.Fixture.RealThread` (`lean/Editor/Test/Fixture/RealThread.lean`),
+and this page keeps no list of them: those whose subject is the runner
+itself are run both ways and compared (`tools/fixture-compare.sh`), and
+the others' subject is a real effect, which the entry names.
 
 ## config-test: 52 checks
 
@@ -103,7 +114,7 @@ a stepped host publishes the scenes a real host does: a settle one, and a join's
 
 ### A3: 25 checks
 
-The headless mode's script runner (`Headless.run`, `runAndDispose`, `runFrom`): the CLI's driver, defined over `Host`, which the headless fixtures share.
+The headless mode's script runner over a real loop thread (`Headless.run`, `runAndDispose`, `runFrom`, which are `Headless.runOn` over `Hosting.real`): the CLI's driver, written on `Headless.Driven`, which the harness also runs stepped over the fixtures.
 
 Lists: `jobChecks`, `scriptChecks`.
 

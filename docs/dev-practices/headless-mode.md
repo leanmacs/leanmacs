@@ -1855,39 +1855,44 @@ view 0 0,0 640x464: "alpha alpine beta\nalpha", scroll 0, selections 23..23, pad
 status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "2:6" +4, mode-line.secondary "Bot" +4
 ```
 
-Two more runs of the gate are on a real file, and so on a script that
-cannot be checked in whole: the file port takes absolute paths only. Each
-is one entry of the `ffi-test` task, a shell of its own that makes a
-temporary directory with `mktemp -d`, removes it by a trap when the shell
-ends, copies `tests/headless/ex/note.txt` into it, and writes the script
-there from a checked-in template in which `@FILE@` stands for the copy's
-path. The run must exit with status 0, the copy must then hold the bytes
-of `tests/headless/ex/note-expected`, and no line of the output may start
-with `commands:`, which the `show` line at the end of each script would
-print if the editor had not quit before it.
+Two more fixtures are on a file, and so on a script that cannot be checked
+in whole: the file port takes absolute paths only. Each is a template in
+which `@FILE@` stands for the file's path, and the fixture harness runs it
+stepped with its setup ("How the gate runs a fixture", below;
+`Editor.Test.Fixture.Setup`): `tests/headless/ex/note.txt` copied into the
+file fake's model at `/fixture/note.txt`, which `@FILE@` stands for. There
+is no expected file: the model's copy must then hold the bytes of
+`tests/headless/ex/note-expected`, and no line of the output may start with
+`commands:`, which the `show` line at the end of each script would print
+if the editor had not quit before it.
 
 - `tests/headless/ex/save-quit-script`: `e` and the path, `join`, `i`, a
   committed text, `<Escape>`, `w`, `join`, `q`, and then `show`.
 - `tests/headless/ex/wq-script`: the same with `wq` in place of `w`, the
   `join` and `q`, and a `join` after it, and then `show`.
 
-**An evil session on a file** is a third process check of the same form
-(`tests/headless/session/`): the entry copies `verse.txt` into its
-temporary directory and writes the template `script` there. The script
+**An evil session on a file** is a third fixture of the same form
+(`tests/headless/session/`): its setup copies `verse.txt` into the file
+fake's model at `/fixture/verse.txt`, which the template `script`'s
+`@FILE@` stands for. The script
 loads no config. It opens the file with the `:` key and `e`, and then
 runs, by keys, `2dw`, `.`, `u`, `j`, `cw`, the typed text `new`,
 `<Escape>`, `w`, `.`, `v`, `e`, `y`, `$`, `p`, `u`, `C-r`, and `:w`,
-with a `scene` line after each step. The run must exit with status 0. Its
-output, with the temporary directory's path written `@DIR@`, must be
-exactly `tests/headless/session/expected`: each scene's text, its
+with a `scene` line after each step. Its output, with `/fixture` written
+`@DIR@`, must be exactly `tests/headless/session/expected`: each scene's text, its
 selection (`26..32` while the visual selection is open, one offset twice
 otherwise), the state's badge in the status line (`NORMAL`, `INSERT`,
 `VISUAL`), the cursor's line:col and position, and the echo, which is empty until the save says
-`wrote @DIR@/verse.txt`. And the copy must hold the bytes of
+`wrote @DIR@/verse.txt`. And the model's copy must hold the bytes of
 `tests/headless/session/verse-expected`.
 
-**`open-file`'s prompt over real files** is a process check of the same
-form (`tests/headless/open-file/`): the entry copies the tree `tree/`
+**`open-file`'s prompt over real files** is a process check, one of the
+fixtures the real-thread set leaves to the CLI
+(`Editor.Test.Fixture.RealThread`): its last file, `notes/todo.md`, opens
+in a mode attached to a grammar of the library's syntax service, which
+the syntax tree's model does not hold (it knows `json` alone), so a
+stepped run would say the attach refused where the CLI says nothing
+(`tests/headless/open-file/`): the entry copies the tree `tree/`
 (`alpha.txt`, `beta.txt`, `.hidden` and `notes/todo.md`) into its
 temporary directory and writes the template `script` there with that
 directory's path in place of `@DIR@`. It makes that directory with
@@ -2245,17 +2250,88 @@ once in the core, and the driver, a stepped host and the config tests all
 wait through them ([`docs/design/concurrency.md`](../design/concurrency.md),
 "One verdict, one set of kinds").
 
-| Wait | Ends on (the event) | Hang guard | At the guard |
-|---|---|---|---|
-| `settle` | The reload's end, after everything asked was handled | 30 s, or the line's milliseconds | Its hang line, then the run fails as `reloading` |
-| `join` | No job running, or idle with one running, which fails as `working` (not a hang) | 30 s, or the line's seconds | Its hang line, then the run fails as `busy` |
-| `advance` | A wait due within the move, or idle with none due, which stalls (not a hang) | 30 s | Its hang line, then the run fails as `busy` |
-| The editor thread's answer, inside each wait | The loop answering the wait's marker | The wait's guard, or a `settle <ms>`'s or `join <s>`'s own | Its hang line, then the run fails as `unanswered` |
-| `journalled` | The file service's flush | 30 s | The run fails as `unanswered` |
-| `indexed [<seconds>]` | The index written, or idle with a write in its sleep, which moves the clock past it and waits again, or idle with a background job still running, which fails as `working` (not a hang) | 30 s, or the seconds given | Its hang line, then the run fails as `unanswered` |
-| `restarted [<seconds>]` | The loop's task ending | 30 s, or the seconds given | The run fails as `notRestarted` |
-| The loop's end | Its task, which ends once a reload it started has ended | 30 s, then `Headless.hangGrace` (5 s) | Its hang line, then the run fails as `hung`, exit 1 |
-| `idle` | Everything sent handled, then the render loop's rest (`Render.awaitRest`, on the step that records it) | 30 s | `idle: the render loop did not come to rest within M ms` |
+| Wait | Ends on (the event) | Hang guard | At the guard | On the stepped host |
+|---|---|---|---|---|
+| `settle` | The reload's end, after everything asked was handled | 30 s, or the line's milliseconds | Its hang line, then the run fails as `reloading` | The rest of the fakes; a reload in flight blocks on its wake-up, under the same guard |
+| `join` | No job running, or idle with one running, which fails as `working` (not a hang) | 30 s, or the line's seconds | Its hang line, then the run fails as `busy` | The rest; a job still running at rest, asleep on the clock, answers `working` at once |
+| `advance` | A wait due within the move, or idle with none due, which stalls (not a hang) | 30 s | Its hang line, then the run fails as `busy` | `dueWithin` first; else the rest, then `dueWithin`; a stall at once when nothing is due |
+| The editor thread's answer, inside each wait | The loop answering the wait's marker | The wait's guard, or a `settle <ms>`'s or `join <s>`'s own | Its hang line, then the run fails as `unanswered` | None: the stepped host's turn is the driver's own, so every event sent is handled in the wait's drain |
+| `journalled` | The file service's flush | 30 s | The run fails as `unanswered` | The rest, then the journal fake's drain, resolved by its own step during the rest |
+| `indexed [<seconds>]` | The index written, or idle with a write in its sleep, which moves the clock past it and waits again, or idle with a background job still running, which fails as `working` (not a hang) | 30 s, or the seconds given | Its hang line, then the run fails as `unanswered` | The same loop over the rest: at rest with the write asleep, the clock is moved past it and the next rest writes the index into the file fake's model |
+| `restarted [<seconds>]` | The loop's task ending | 30 s, or the seconds given | The run fails as `notRestarted` | The rest: a turn that ended the loop with a hand-over (`Progress.handOver`), or `notRestarted` at once with none; refused for a fixture outside the real-thread set |
+| The loop's end | Its task, which ends once a reload it started has ended | 30 s, then `Headless.hangGrace` (5 s) | Its hang line, then the run fails as `hung`, exit 1 | The bracket's end: each job cancelled stepped to its end on the fakes |
+| `idle` | Everything sent handled, then the render loop's rest (`Render.awaitRest`, on the step that records it) | 30 s | `idle: the render loop did not come to rest within M ms` | Everything sent handled to rest; with no render loop it says so |
+
+### How the gate runs a fixture
+
+**Every headless fixture runs stepped by default**, on the stepped host with
+the fakes, with nothing declared. A fixture is a file named `script` or
+`<x>-script` in a discovery root or a directory directly under it, its
+expected output `expected` or `<x>-expected` beside it, and its config
+directory the first there is of `<x>-config` and `config` beside it and the
+root's `config` (`lean/Editor/Test/Fixture/Discover.lean`). The gate's
+three groups are `tests/headless/` (`mise run ffi-test`), and each
+package's `tests/headless/`, `tests/packages/*`'s and the writing guide's
+`docs/packages/word-count` among them (`tools/package-set.sh run`).
+
+The harness is a package set's own executable, `fixture-test`, linked as
+the editor is from a root the package-set build writes beside the
+editor's (`lake -d <set dir> build :editorFixtures`;
+`lean/Editor/Test/Fixture/Main.lean`), since a fixture's output depends
+on the set's packages, input scheme and config base. The shipped
+`editor headless` is unchanged by it. `fixture-test <sysroot> <olean
+dirs> --repo <repository> run <root>...` runs the script runner
+(`Headless.runOn`, the same one the CLI runs) over a host stepped on its
+own thread (`Headless.Stepped.runFrom`), whose waits are answered at the
+rest of the fakes (`lean/Editor/Headless/Stepped.lean`, "A wait over the
+fakes"; "On the stepped host" in the table above), with the CLI's
+collaborators but for the fakes: the fake scheduler and pump, the file
+fake over the setup's model, the process fake, a fake clock and watches,
+the recording journal and the syntax service's fake. Its working
+directory is `/work/lean`, a directory of the file fake's model with one
+empty file, as the gate's `lean/` is never empty. Each fixture gets fresh
+fakes; only the elaborator's base is shared. Its output must be its
+expected file line for line, the fakes quiescent and the library's queue
+as it was; a fixture that differs fails, naming its first differing line
+with both texts. It prints `fixture-test: <script>: stepped, as expected`
+for each and `fixture-test: ran <n> fixtures stepped under <root>, <m>
+left to the CLI` for each root, and fails a root that holds no fixture.
+
+**A fixture keeps the CLI only through an entry in
+`Editor.Test.Fixture.RealThread`** (`lean/Editor/Test/Fixture/RealThread.lean`),
+the real-thread set, which says what each covers and the gate step that
+runs it through the CLI:
+
+- a **`runner`** entry's subject is the script runner over a real loop
+  thread itself (row A3 of [real-thread-checks.md](real-thread-checks.md)):
+  it runs both ways, the CLI over a real loop thread and the harness
+  stepped, and `tools/fixture-compare.sh` requires the two outputs to be
+  the same and to be the expected file (`fixture-test … compared` lists
+  them, `fixture-test … compare <script> <cli output>` compares);
+- a **`realEffect`** entry's subject is a real effect, which it names: a
+  process exec'd, a directory written, a real state directory read by the
+  next process, records beside an installed executable, a grammar of the
+  library's syntax service. Its CLI run covers it; it is also stepped when
+  its stepped output is its expected file too.
+
+An entry not stepped is skipped, with its line `fixture-test: <script>:
+left to the CLI (<site>): <covers>`; an entry under a root that names no
+discovered fixture fails the run, as stale. A script that aborts or waits
+for a restart is refused stepped unless it has an entry.
+
+**Seeds go in a setup** (`Editor.Test.Fixture.Setup`, keyed by the
+script's path): the model directory `@DIR@` stands for and what `@FILE@`
+stands for, the checked-in files and trees copied into the file fake's
+model, what is scrubbed of the output (the directory, written back as
+`@DIR@`; the `job ` lines, where the gate dropped them), after-checks (a
+model file equal to a checked-in one, no line starting with a prefix) and
+scripted process answers. A script holding a placeholder no setup says
+what it stands for is refused, and so is a fixture with no expected file
+and no after-check. **`expected` is never edited to fit a stepped run**:
+it is the CLI's. A stepped run that differs is a fake that answers unlike
+its adapter, fixed with a failing property of that port's contract first;
+else a missing seed, added to the setup; else a real effect, moved into
+the real-thread set with what it is.
 
 ## A package's fixtures
 
@@ -2291,7 +2367,8 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   `packages/compile/tests/headless/config` do, and can bind and run a
   package's commands by name.
 - **The standing fixtures under `tests/headless/` are the core's**, run on
-  the default set's editor, and none of them changed when the editor came
+  the default set's harness, or its editor for those the real-thread set
+  leaves to the CLI, and none of them changed when the editor came
   to be built from a package set. Five lines of three of them changed
   when the compile mode moved into a default package, for the order it
   registers in, three lines of two when the command prompt and the
@@ -2321,9 +2398,9 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   file's range, not the results'), and `working-set-open` shows that row
   of the file as the set's one excerpt, nothing drifted, which `RET`
   visits. A search's deliveries are what the library has found when its
-  job reads it, so how many there are differs from run to run: the gate
-  leaves the job lines out, and a scene line carries no count of the
-  scenes published.
+  job reads it, so how many there are differed from run to run through the
+  CLI: its setup leaves the job lines out, as the gate's CLI run did, and a
+  scene line carries no count of the scenes published.
 - **The fixtures of the four features that moved in the
   features-as-packages roadmap's phase 3 are their packages'**:
   `packages/mode-line/tests/headless/mode-line`, the core's until then;

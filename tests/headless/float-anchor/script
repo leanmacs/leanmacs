@@ -1,4 +1,5 @@
-# The script `mise run ffi-test` has the editor's headless mode run against
+# The script the fixture harness runs stepped (`fixture-test`;
+# docs/dev-practices/headless-mode.md, "How the gate runs a fixture") against
 # the config in `config/`, which keeps the default layout, binds `C-c f` to a
 # command that puts eighty lines at the cursor, and `C-c h` to one that
 # opens a buffer in a transient float anchored at the cursor, without the

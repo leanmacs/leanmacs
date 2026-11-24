@@ -1,13 +1,16 @@
-# A template of a script: `mise run ffi-test` copies `tree/` into a
-# temporary directory, writes this file there with `@DIR@` replaced by that
-# directory's absolute path, and has the editor's headless mode run it
+# A template of a script: the fixture harness runs it stepped
+# (`fixture-test`; docs/dev-practices/headless-mode.md, "How the gate runs a
+# fixture"), with its setup (`Editor.Test.Fixture.Setup`): `tree/` is copied
+# into the file fake's model under `/tmp/working-set.stepped0`, which
+# `@DIR@` stands for, a path of the model with the byte length of the
+# `mktemp` template the gate made it with (`/tmp/working-set.XXXXXXXX`),
+# since a scene prints byte offsets over it; and git, if asked, answers as
+# outside a repository, as the real git does under `/tmp`. The run is
 # against the config in `../config/`, of which it loads nothing: there is
-# no `reload`, so every command its keys run is one the editor ships. The
-# run must exit with status 0 and print exactly `expected` once the
-# temporary directory's path is written `@DIR@`. It writes no file: the
-# headless mode has no state directory here, so the working set is kept in
-# memory alone. The directory has a fixed-length path under `/tmp`, as
-# `open-file`'s has.
+# no `reload`, so every command its keys run is one the editor ships. It
+# must print exactly `expected` once the directory is written `@DIR@`. It
+# writes no file: the headless mode has no state directory here, so the
+# working set is kept in memory alone.
 #
 # It is a working set's range held again when its file is reopened: the
 # tree is a workspace by its marker `.project`, so the file opened in it

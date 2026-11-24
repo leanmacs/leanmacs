@@ -1,4 +1,5 @@
-# The script `mise run ffi-test` has the editor's headless mode run against
+# The script the fixture harness runs stepped (`fixture-test`;
+# docs/dev-practices/headless-mode.md, "How the gate runs a fixture") against
 # the config in `config/`, which binds no key under `C-w`, so insert state's
 # `C-w` is Vim's word delete. What it prints must be exactly `expected`. It
 # touches no file.

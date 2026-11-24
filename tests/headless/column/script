@@ -1,10 +1,11 @@
-# A template of a script: `mise run ffi-test` copies `lines.txt` into a
-# temporary directory, writes this file there with `@FILE@` replaced by the
-# copy's absolute path, and has the editor's headless mode run it against
-# the config in `../config/`, of which it loads nothing: there is no
-# `reload`, so every command its keys run is one the editor ships. The run
-# must exit with status 0 and print exactly `expected` once the temporary
-# directory's path is written `@DIR@`.
+# A template of a script: the fixture harness runs it stepped
+# (`fixture-test`; docs/dev-practices/headless-mode.md, "How the gate runs a
+# fixture"), with its setup (`Editor.Test.Fixture.Setup`): `lines.txt` is
+# copied into the file fake's model at `/fixture/lines.txt`, which `@FILE@`
+# stands for, and the run is against the config in `../config/`, of which
+# it loads nothing: there is no `reload`, so every command its keys run is
+# one the editor ships. The run must print exactly `expected` once
+# `/fixture` is written `@DIR@`, and leave the model's copy as it was.
 #
 # It is `j` and `k` aiming for a display column, on the real library with
 # the recorder as the display. `lines.txt` is three lines, each ended by a

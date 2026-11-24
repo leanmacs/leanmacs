@@ -1,4 +1,5 @@
-# The script `mise run ffi-test` has the editor's headless mode run against
+# The script the fixture harness runs stepped (`fixture-test`;
+# docs/dev-practices/headless-mode.md, "How the gate runs a fixture") against
 # the config in `config/`, which chooses the monocle layout and binds
 # `C-c s` to split the window and `C-c o` to focus the next one. What it
 # prints must be exactly `expected`. It touches no file.

@@ -1,4 +1,5 @@
-# The script `mise run ffi-test` has the editor's headless mode run against
+# The script the fixture harness runs stepped (`fixture-test`;
+# docs/dev-practices/headless-mode.md, "How the gate runs a fixture") against
 # the config in `config/`, which keeps the default layout and binds
 # `tab-rename` to `C-c r` and `tab-move-right` to `C-c m`; every other tab
 # command is reached by the Vim scheme's own keys under `C-w`. It shows two

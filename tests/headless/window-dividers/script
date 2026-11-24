@@ -1,4 +1,5 @@
-# The script `mise run ffi-test` has the editor's headless mode run against
+# The script the fixture harness runs stepped (`fixture-test`;
+# docs/dev-practices/headless-mode.md, "How the gate runs a fixture") against
 # the config in `config/`, which chooses the manual split layout and binds no
 # key: the window commands are reached by the Vim scheme's own `C-w` keys.
 # It shows the dividers taken out between tiled windows, 2 pixels wide in

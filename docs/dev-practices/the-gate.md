@@ -904,9 +904,25 @@ shipped modes are checked in, which the checks copy into a temporary
 directory, so no real tool runs): "The package steps", below. Then `config-test`, handed
 `tests/syntax` too, whose Rust indent fixture its indent checks mangle and
 re-indent through a headless host, and
-then the editor: once as `editor demo`, the demonstration, ten times in its headless
-mode on the fixtures under `tests/headless`, and twice more on a real file
-in a temporary directory (below): with `script`, whose job `count` sleeps
+then the editor, once as `editor demo`, the demonstration; then **the
+headless fixtures under `tests/headless`, stepped**: the default set's
+fixture harness (`packages/.lake/build/bin/fixture-test … run
+../tests/headless`; [headless-mode.md](headless-mode.md), "How the gate
+runs a fixture") discovers each fixture and runs it on the stepped host
+with the fakes against its expected file, or its setup's after-checks,
+but those the real-thread set (`Editor.Test.Fixture.RealThread`) leaves
+to the CLI, whose lines follow here. Its output must hold a `stepped, as
+expected` line for each of the 29 it runs and the line `fixture-test: ran
+29 fixtures stepped under tests/headless, 19 left to the CLI`; it fails on
+a fixture that differs, naming the first line with both texts, on a stale
+entry and on a root that holds none. The fixtures whose subject is the
+script runner over a real loop thread, the set's four runner entries
+(`script`, `keys-script`, `scene-script`, `ex/script`), are then run both
+ways and compared (`tools/fixture-compare.sh`): through the CLI, which
+must exit 0, and stepped, the two outputs required to be the same, with
+the lines each side alone has said when they are not, and to be the
+expected file; its four lines and `fixture-compare: compared 4 fixtures
+both ways` are required. What the fixtures show, by fixture: with `script`, whose job `count` sleeps
 on the headless mode's fake clock, which the script advances (`advance 1`)
 before its `join`, and whose output must be exactly `expected`; with `keys-script`, which sends keys with their
 identity through the library's window input and whose output must be exactly
@@ -957,8 +973,11 @@ and `w`, lists `w` before `wq` for `w` typed, which only the rule that a
 candidate that is the text is first orders, chooses with `C-n` and
 inserts with `<Tab>`.
 
-`open-file/script` is a process check on real files, of the session
-check's form (below): its entry copies `open-file/tree` into a temporary
+`open-file/script` is a process check on real files, of the restore
+checks' form (below), left to the CLI by its entry in the real-thread set:
+its last file, `notes/todo.md`, opens in a mode attached to a grammar of
+the library's syntax service, which the syntax tree's model does not hold
+(it knows `json` alone). Its entry copies `open-file/tree` into a temporary
 directory, writes the script there with `@DIR@` replaced, and the output,
 with that directory written `@DIR@`, must be exactly
 `open-file/expected`. The file prompt lists the tree's directory,
@@ -970,23 +989,19 @@ made from the template `/tmp/open-file.XXXXXXXX`, not under `$TMPDIR`,
 so its path has the same length on every machine: the prompt's cursor
 offset is counted over that path, and the scrub cannot rewrite it.
 
-Two more entries of the task run the executable on a real file, and read
-what a fixture's output cannot show: the process's exit status and the
-file's bytes. They are the phase's first two acceptance criteria on the
-executable.
+Two more fixtures run on a file, and read what an output cannot show: the
+file's bytes. They were the executable's first two acceptance criteria,
+and they run stepped now, with their setup (`Editor.Test.Fixture.Setup`).
 
-- **Each entry is one shell.** It makes a temporary directory with
-  `mktemp -d` and at once sets a trap that removes it when the shell ends,
-  whether the check passed or failed. It copies the fixture
-  `tests/headless/ex/note.txt` there, and writes the script there with
-  `sed` from a checked-in template, `ex/save-quit-script` or
-  `ex/wq-script`, in which `@FILE@` stands for the copy's absolute path:
-  the file port refuses a path that is not absolute, and a checked-in
-  script cannot name one. The headless mode runs a script written at run
-  time as it runs a checked-in one.
-- **What must hold**: the editor exits with status 0; the copy holds the
-  bytes of `ex/note-expected`; and no line of the output starts with
-  `commands:`, which the `show` line after the quit would print.
+- **Each is a template.** `@FILE@` stands for the file's absolute path,
+  since the file port refuses a path that is not absolute: the setup
+  copies `tests/headless/ex/note.txt` into the file fake's model at
+  `/fixture/note.txt`, which `@FILE@` stands for in `ex/save-quit-script`
+  and `ex/wq-script`.
+- **What must hold**: the model's copy holds the bytes of
+  `ex/note-expected`; and no line of the output starts with `commands:`,
+  which the `show` line after the quit would print. They have no expected
+  file: their setup's after-checks are what holds them.
 - **The first** runs `e` on the file, waits for the load, enters insert
   state, commits text, returns to normal state, runs `w`, waits for the
   save, and runs `q`. **The second** runs `wq` in place of `w`, the wait
@@ -1002,11 +1017,10 @@ executable.
   six, and each check as it is passed forty runs of forty
   ([headless-mode.md](headless-mode.md), "A script waits where a command
   starts a job").
-- **They are shell in this task and not Lean** because Lean spawns no
+- **They were shell in this task and not Lean** because Lean spawns no
   child process: child processes belong to the Rust process service, since
   Lean never kills or reaps one (`docs/design/overview.md`, "Rules of the
-  boundary"). So `config-test` spawns nothing, and the editor is a child
-  of the task's shell, which the task's time limit ends if it hangs.
+  boundary"). Stepped, they spawn nothing: the file is the file fake's.
 - **They are hermetic.** The scripts have no `reload`, so nothing of the
   config directory is loaded. The only file the editor opens or writes is
   the copy: a save writes a temporary file beside its target and renames
@@ -1133,18 +1147,17 @@ check runs a command of config's that writes the clipboard and one that
 reads it through the host, which keeps a clipboard of its own, and a
 finished job's command reads it too.
 
-`ffi-test` also runs **an evil session on a real file**, as a process
-(`tests/headless/session/`). The entry is one shell: it makes a temporary
-directory with `mktemp -d` and removes it by a trap, copies `verse.txt`
-there, and writes the script there from the template `script`, with the
-copy's absolute path in place of `@FILE@`. The script has no `reload`. It
+`ffi-test` also runs **an evil session on a file**, stepped
+(`tests/headless/session/`): its setup copies `verse.txt` into the file
+fake's model at `/fixture/verse.txt`, which the template `script`'s
+`@FILE@` stands for. The script has no `reload`. It
 opens the file with `:e`, and then, by keys, runs a count and an operator
 (`2dw`), a dot repeat, an undo, a change with typed text and its dot
 repeat, a visual yank, a put, an undo and a redo, and `:w`, with a `scene`
-after each step. The editor must exit with status 0; its output, with the
-temporary directory's path written `@DIR@`, must be exactly `expected`,
-which shows the text, the cursor, the selection, the state and the echo
-of every scene; and the copy must hold the bytes of `verse-expected`.
+after each step. Its output, with `/fixture` written `@DIR@`, must be
+exactly `expected`, which shows the text, the cursor, the selection, the
+state and the echo of every scene; and the model's copy must hold the
+bytes of `verse-expected`.
 
 `ffi-test` runs **session restore** as processes (`tests/headless/restore/`),
 six entries of the session check's form, each with `--state` naming a
@@ -1240,11 +1253,11 @@ fallback with a candidate that exits and one that kills itself, and, on
 macOS, CoreFoundation's main bundle in a fake bundle the launcher starts an
 editor from, inside it and outside it (`crates/editor-launch-std/tests/`).
 
-`ffi-test` runs **a view that follows its cursor**, as a process, the same
-way (`tests/headless/view/`). The entry copies `lines.txt`, 120 lines
-`000` to `119`, each ended by a line feed, so that line n starts at byte
-4n, into a temporary directory, and writes the script there from the
-template `script`. The script has no `reload`. It sizes the frame with
+`ffi-test` runs **a view that follows its cursor**, stepped, the same way
+(`tests/headless/view/`). Its setup copies `lines.txt`, 120 lines `000` to
+`119`, each ended by a line feed, so that line n starts at byte 4n, into
+the file fake's model at `/fixture/lines.txt`, which the template
+`script`'s `@FILE@` stands for. The script has no `reload`. It sizes the frame with
 `resize 640 480`, which in the recorder's cells of 8 by 16 is 80 columns
 and 30 rows, opens the file with `:e`, and prints a `scene` after each
 step:
@@ -1260,17 +1273,16 @@ step:
 | `z b` | Byte 360: line 119 is the last of 30 rows | Byte 476 |
 | `resize 640 160`, which leaves 10 rows | Byte 440: line 119 is the last of 10 rows | Byte 476 |
 
-The editor must exit with status 0, its output, with the temporary
-directory's path written `@DIR@`, must be exactly `expected`, and the copy
-must still hold the bytes of `lines.txt`. The display is the recorder: the
-display model's rule over the library's snapshots. The numbers in
+Its output, with `/fixture` written `@DIR@`, must be exactly `expected`,
+and the model's copy must still hold the bytes of `lines.txt`. The display
+is the recorder: the display model's rule over the library's snapshots. The numbers in
 `expected` were worked out by hand before the editor was run, and the run
 agreed with each.
 
-`ffi-test` runs **`j` and `k` aiming for a display column**, as a process,
-the same way (`tests/headless/column/`). The entry copies `lines.txt` into
-a temporary directory and writes the script there from the template
-`script`. The file is three lines, each ended by a line feed: `a`, a tab
+`ffi-test` runs **`j` and `k` aiming for a display column**, stepped, the
+same way (`tests/headless/column/`): its setup copies `lines.txt` into the
+file fake's model at `/fixture/lines.txt`, which the template `script`'s
+`@FILE@` stands for. The file is three lines, each ended by a line feed: `a`, a tab
 and `b`; the ten digits, which start at byte 4; and `世`, three bytes and
 two columns wide, and `b`. The script has no `reload` and no `resize`, so
 the frame is 0 by 0 and no view is laid out: the column is asked of the
@@ -1283,9 +1295,9 @@ prints a `scene` after each step:
 | `k` | Byte 2: `b` again |
 | `G l k`, from `b` after the wide character | Byte 6: the digit `2` |
 
-The editor must exit with status 0, its output, with the temporary
-directory's path written `@DIR@`, must be exactly `expected`, and the copy
-must still hold the bytes of `lines.txt`. The display is the recorder.
+Its output, with `/fixture` written `@DIR@`, must be exactly `expected`,
+and the model's copy must still hold the bytes of `lines.txt`. The display
+is the recorder.
 
 `ffi-test` runs **milestone 1 over the whole program**, as a process, the
 same way (`tests/headless/milestone/`), with `editor headless --render`:
@@ -1629,6 +1641,11 @@ each one the host reaches and exits 1.
   `lake -d <set dir> query :editorRootImports`, a facet the core's
   lakefile defines, and makes its other queries in the set's workspace,
   which holds the modules of every package of the set.
+- **And the fixture harness's root.** A set's other generated root, the
+  headless fixture harness's (`fixture-test`; [headless-mode.md](headless-mode.md),
+  "How the gate runs a fixture"), is held the same way: with
+  `--fixtures` the check asks `:editorFixturesRootImports`, and the gate
+  runs it over the default set and the fixture set.
 
 - **It asks Lake and reads no source text** (`lake query
   +<module>:imports` and `+<module>:transImports`, one module a line), so
@@ -1641,11 +1658,6 @@ each one the host reaches and exits 1.
   the core takes.
 - **The user-side link's set is asked for its root.** `ffi-test` also
   requires `lake -d ../tests/user-link query :editorRoot` to give a file,
-- **And the fixture harness's root.** A set's other generated root, the
-  headless fixture harness's (`fixture-test`; [headless-mode.md](headless-mode.md),
-  "How the gate runs a fixture"), is held the same way: with
-  `--fixtures` the check asks `:editorFixturesRootImports`, and the gate
-  runs it over the default set and the fixture set.
   and that root's imports to be the config base, the executable's entry,
   the default packages' entry modules and the fixture package's, in that
   order. The
@@ -1768,6 +1780,14 @@ order, and stops at the first that fails:
   (`lake -d ../packages query :editorRootTransImports`). It is the one
   root that links the elaborator into the editor that is run, so the
   third rule is about it first.
+- **So is the fixture harness's root**, the set's other generated root
+  (`fixtures:../packages`, `lake -d ../packages query
+  :editorFixturesRootTransImports`), which elaborates config too: every
+  `Editor.…` module it reaches, the harness's `Editor.Test.Fixture.…`
+  among them, must be in `Editor.Core`'s closure, and it must link the
+  config base. The gate shows the third rule biting on it: told the base
+  is `Editor.Main`, which the editor's root imports and the harness's does
+  not, the check exits 4 naming `fixtures:../packages`.
 - **It asks Lake and reads no source text** (`lake query
   +<module>:transImports`, one module a line), as the host imports check
   does, so it follows a module that is renamed or moved, and an import
@@ -1780,14 +1800,6 @@ order, and stops at the first that fails:
   of the core, the ex line's data, is moving (`core-imports-check.sh
   Editor.Core Editor.Ex.Line`), and requires exit 1, with `Editor.Ex.Line`
   found in the root's closure. No feature is left in the core to name: the
-- **So is the fixture harness's root**, the set's other generated root
-  (`fixtures:../packages`, `lake -d ../packages query
-  :editorFixturesRootTransImports`), which elaborates config too: every
-  `Editor.…` module it reaches, the harness's `Editor.Test.Fixture.…`
-  among them, must be in `Editor.Core`'s closure, and it must link the
-  config base. The gate shows the third rule biting on it: told the base
-  is `Editor.Main`, which the editor's root imports and the harness's does
-  not, the check exits 4 naming `fixtures:../packages`.
   shell, named here until it moved out of the core in features-as-packages
   phase 6, evil, named until it moved out in phase 7, and the ex line,
   named until it moved out in phase 8, are packages now. It is pointed at the root

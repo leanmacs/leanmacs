@@ -1,4 +1,5 @@
-# The script `mise run ffi-test` has the default set's editor run against
+# The script the default set's the fixture harness runs stepped (`fixture-test`;
+# docs/dev-practices/headless-mode.md, "How the gate runs a fixture") against
 # the config in `config/`, whose root imports a module that is not linked
 # into the editor. What it prints must be exactly `expected`. It touches no
 # file.
