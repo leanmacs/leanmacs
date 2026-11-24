@@ -8,7 +8,7 @@ import Evil.Vim.Default
 (`withShippedHost`, the linked kit's, `Editor/Test/Linked/Shipped.lean`), of
 the Vim scheme that ships (`Vim.Default.scheme`), stepped on the check's own
 thread; `withRealVimHost` is the same host on a loop thread of its own
-(`withRealShippedHost`). It holds no checks of its own.
+(`withRealSyntaxHost`). It holds no checks of its own.
 
 It was a module of the core's linked kit, `Editor.Test.Linked.Vim`, the one
 that named a module of evil, until the features-as-packages roadmap's phase

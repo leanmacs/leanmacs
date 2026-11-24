@@ -49,9 +49,11 @@ def setup : SetupM Unit := do
 /-- The checks of the syntax tree's text objects through a host of the Vim
 scheme that ships (`withRealVimHost`), with the real elaborator, the real text
 binding and the library's syntax service: what keys select and delete in a
-Rust buffer. Which node an object is, is `Evil/TreeObjects.lean`'s,
-pinned by `EvilTest.treeObjectRuleChecks` and `EvilTest.evilObjectChecks`
-and, over the library, by `ContractTest`. -/
+Rust buffer, `v a f` alone: the wiring of the shipped Rust `textObjects`
+query, which the syntax model does not hold, over the real binding. Which
+node an object is, `v i f`'s among them, is `Evil/TreeObjects.lean`'s,
+pinned by `EvilTest.treeObjectRuleChecks`, `EvilTest.evilObjectChecks` and
+`treeObjectsEditedCheck` here, and, over the library, by `ContractTest`. -/
 def treeObjectChecks (context : HostContext) : List Check :=
   [{  name :=
         "in a Rust buffer v a f selects the enclosing function, from its fn through its closing brace, through the host's loop and the library's syntax tree; and <Escape> d a f then deletes it, its lines whole"
@@ -74,20 +76,7 @@ def treeObjectChecks (context : HostContext) : List Check :=
           let without := "struct S;\n\nimpl S {\n}\n"
           return (before.splitOn s!"selections {letAt}..{letAt},").length == 2 &&
               (selected.splitOn s!"selections {fnAt}..{closing},").length == 2 &&
-              (deleted.splitOn s!"{without.quote}, scroll").length == 2 },
-    { name :=
-        "in a Rust buffer v i f from a method's fn line, in the function and outside its body, selects inside the body's braces, its lines whole, through the host's loop and the library's syntax tree"
-      run :=
-        withRealVimHost context [("init.lean", rustObjectsConfig)] fun session => do
-          session.ask [.reload]
-          session.ask [.run "rust-buffer"]
-          session.typed "k v i f"
-          let selected := lastViewLine (← session.sceneLines)
-          let some letAt := offsetOf rustObjectsText "        let x" | return false
-          let some closing := offsetOf rustObjectsText "\n    }\n}" | return false
-          unless (selected.splitOn s!"selections {letAt}..{closing},").length == 2 do
-            throw (IO.userError selected)
-          return true }]
+              (deleted.splitOn s!"{without.quote}, scroll").length == 2 }]
 
 /-- A row of the tree's text objects over the Rust fixture: where the
 cursor is, as the text it is at the start of (its first occurrence), the
