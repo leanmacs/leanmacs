@@ -169,6 +169,35 @@ def hasEnded (stepped : Stepped) : BaseIO Bool :=
 
 end Stepped
 
+/-- A `restarted`'s wait over the stepped loop: drains the queue until a
+turn has ended the loop, and says how it ended; at `guard`, with the loop
+not ended, the hang said through `hang`, and `none`. Each block is on the
+queue's next push, armed before the drain. -/
+def Stepped.awaitEnd (stepped : Stepped) (guard : HangGuard) (hang : IO Unit) :
+    IO (Option (Except IO.Error Unit)) := do
+  let deadline ← guard.deadline
+  repeat
+    if let some ended← stepped.ending.get then
+      return some ended
+    let arrived ← stepped.memory.arrived
+    stepped.drain
+    if let some ended← stepped.ending.get then
+      return some ended
+    unless ← awaitAnyWithin (← deadline.rest) [arrived] do
+      hang
+      return none
+  return none
+
+/-- A stepped host, driven (`Driven`, the runner's port): its requests and
+the window's events onto its memory queue (`Stepped.send`,
+`Stepped.input`), its waits (`Stepped.waitWhile`), and its loop's end
+(`Stepped.awaitEnd`). -/
+def Driven.ofStepped (stepped : Stepped) : Driven :=
+  .over stepped.send stepped.input
+    (fun guard kind answer line waitHung waitBlocked =>
+      stepped.waitWhile guard kind answer line waitHung waitBlocked)
+    stepped.progress stepped.ended? stepped.clock stepped.awaitEnd
+
 /-- Runs `body` against a host over `collaborators` stepped on the caller's
 thread, and returns only once its loop has ended, whether `body` returned or
 threw (the module docs). The collaborators' queue is replaced with

@@ -3110,6 +3110,123 @@ def stop (host : Host) (guard : HangGuard) : IO Bool := do
 
 end Host
 
+/-- A host as the script runner drives it, whichever kind it is: a real one,
+whose loop runs on a thread of its own (`Driven.ofHost`), or one stepped on
+its driver's thread (`Driven.ofStepped`, `Editor/Headless/Stepped.lean`).
+The runner's port (`runOn`): each field is a closure over the host, so the
+runner, and a check written on it, runs on either.
+
+It grows by data: a new thing the runner asks of its host is a field, made
+by `over` and by each host's maker. Only `over` makes one, so the private
+wait is never handed a kind of wait from outside this module: a driver
+waits through the named waits below (`await`, `join`, `handled`), and those
+that infer "done" from the host's idle are marked (`linter.inferredWait`).
+A check fakes it by hand with `over`. -/
+structure Driven where private mk ::
+  /-- Asks the host to do a request, after everything asked before. -/
+  send : Request → IO Unit
+  /-- Sends an event as the window would report it. -/
+  input : Event → IO Unit
+  /-- The host's `waitWhile` (`Host.waitWhile`, `Stepped.waitWhile`): its
+  guard, the kind of wait (`Wait.Kind`), the answer's guard, the script's
+  line, where a hang is said, and what is called before a block. What each
+  kind waits for is the core's, never this record's. -/
+  private waitWhile :
+    HangGuard →
+      Wait.Kind → HangGuard → Option Nat → (String → IO Unit) → (String → IO Unit) → IO Wait
+  /-- How far the host's loop has got, as it published after its last
+  event, and the plan of the restart it ended for, once it has ended for one
+  (`Progress.handOver`). -/
+  progress : IO Progress
+  /-- How the host's loop ended, once it has: `ok` for a loop that stopped
+  by itself or was stopped, or the error it threw. -/
+  ended? : IO (Option (Except IO.Error Unit))
+  /-- The fake clock the host's jobs wait on, if they wait on one. -/
+  clock : Option Job.FakeClock
+  /-- What a `restarted` waits on: the loop's end, within the guard, and
+  how it ended; `none` when it has not ended, after saying the hang through
+  the action handed in, when a guard ran out (a real host's), or at once
+  when nothing left can end it (a stepped host's over its fakes). -/
+  awaitEnd : HangGuard → IO Unit → IO (Option (Except IO.Error Unit))
+
+namespace Driven
+
+/-- A driven host made of its closures: what a host's maker, and a check's
+hand-written fake, build one with. -/
+def over (send : Request → IO Unit) (input : Event → IO Unit)
+    (waitWhile :
+      HangGuard →
+        Wait.Kind → HangGuard → Option Nat → (String → IO Unit) → (String → IO Unit) → IO Wait)
+    (progress : IO Progress) (ended? : IO (Option (Except IO.Error Unit)))
+    (clock : Option Job.FakeClock)
+    (awaitEnd : HangGuard → IO Unit → IO (Option (Except IO.Error Unit))) : Driven :=
+  ⟨send, input, waitWhile, progress, ended?, clock, awaitEnd⟩
+
+/-- A real host, driven: its requests and the library's window input
+(`Event.post`) onto the editor queue, its waits (`Host.waitWhile`), and its
+loop's task for its end. -/
+def ofHost (host : Host) : Driven :=
+  over host.send
+    (fun event => do
+      unless ← Event.post event do
+        throw (IO.userError "the editor queue refused an event: it has been quit"))
+    (fun guard kind answer line waitHung waitBlocked =>
+      host.waitWhile guard kind answer line waitHung waitBlocked)
+    host.progress.get
+    (do
+      if ← IO.hasFinished host.thread then
+        return some host.thread.get
+      return none)
+    host.clock fun guard hang => do
+    let ended ← Job.awaitWithin guard host.thread
+    if ended.isNone then
+      hang
+    return ended
+
+/-- Sends a press of `key`, with no text, as the window would report it. -/
+def press (driven : Driven) (key : Key) : IO Unit :=
+  driven.input (.key key true "")
+
+/-- Sends `text` as an input method's composition would end with it. -/
+def commit (driven : Driven) (text : String) : IO Unit :=
+  driven.input (.commit text)
+
+/-- Sends a resize of the frame to `width` by `height` physical pixels, at a
+scale of 1 and out of fullscreen. -/
+def resize (driven : Driven) (width height : Nat) : IO Unit :=
+  driven.input (.resize { width, height, scale := 1.0 })
+
+/-- A `settle`'s wait on the driven host (`Wait.Kind.settle`). -/
+def await (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
+    (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
+  driven.waitWhile waitGuard .settle answer line waitHung waitBlocked
+
+/-- `join` is an inferred wait (`Editor/InferredWait.lean`). -/
+def join.inferredWait : InferredWait :=
+  .idle [`Editor.Headless.Stepped, `Editor.Test.Linked.Host]
+
+/-- A `join`'s wait on the driven host (`Wait.Kind.join`). -/
+def join (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
+    (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
+  driven.waitWhile waitGuard .join answer line waitHung waitBlocked
+
+/-- Whether a `settle`'s wait on the driven host settled (`await`). -/
+def settle (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
+    (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+  return (← driven.await waitGuard answer line waitHung waitBlocked) == .settled
+
+/-- A wait only until the host has handled everything sent so far
+(`Wait.Kind.handled`), publishing nothing. -/
+def handled (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
+    (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait :=
+  driven.waitWhile waitGuard .handled answer line waitHung waitBlocked
+
+end Driven
+
 /-- The guard of the journal's drain, a flush of the file service; only a
 stuck file system reaches it, and the end then quits the queues without it.
 How long a host's end waits for the drain before it quits the queues: a
@@ -3673,43 +3790,88 @@ brings up the crash reporter. -/
 def abortStatus : UInt8 :=
   134
 
-/-- The driver's part of a run (`runFrom`): runs `script` against `host`, from
-after its `resume`-th `restarted`, and says why it could not run to its end,
-or the plan of the restart a `restarted` found. It never stops the loop:
-the bracket it runs in does. -/
+/-- What a script's run comes to (`runOn`): why it could not run to its end,
+if it could not, and the plan of the restart a `restarted` found, if one
+did. -/
+abbrev Ran : Type :=
+  Option Failure × Option Restart.Plan
+
+/-- Where a run's host comes from: a bracket over the collaborators that
+makes a host, hands its driver (`Driven`) to the body, and returns once the
+host's loop has ended, with what the body returned and how the loop ended;
+or the failure the run is when the bracket gave up on a loop that did not
+end. A real host's (`Hosting.real`) or a stepped one's
+(`Stepped.hosting`, `Editor/Headless/Stepped.lean`): the runner is written
+on neither. -/
+structure Hosting (β σ : Type) (scheme : InputScheme) where
+  /-- The bracket. -/
+  hosted :
+    Collaborators β σ scheme → (Driven → IO Ran) → IO (Except Failure (Ran × Except IO.Error Unit))
+
+/-- A real host's bracket (`hostedWithin`, driven by `Driven.ofHost`): a
+loop not ended within `guard` after the run stopped it is said through
+`hung` as a hang, once, and waited for, with no deadline when `grace` is
+`none`, and otherwise within `grace` more, after which its task is handed
+to `abandoned` and the run fails as `Failure.hung`. -/
+def Hosting.real {β σ : Type} {scheme : InputScheme} (guard : HangGuard) (grace : Option HangGuard)
+    (hung : String → IO Unit) (abandoned : Task (Except IO.Error Unit) → IO Unit) :
+    Hosting β σ scheme
+    where
+  hosted collaborators body := do
+    match
+      ←
+        hostedWithin collaborators (fun host => body (Driven.ofHost host)) guard grace hung
+            abandoned with
+    | some ran =>
+      return .ok ran
+    | none =>
+      return .error (.hung guard.ms ((grace.map (·.ms)).getD 0))
+
+/-- What `abort` does in the headless mode: ends the process at once, with
+the status `abortStatus` and no shutdown, its output flushed. -/
+def abortProcess : IO Unit := do
+  (← IO.getStdout).flush
+  IO.Process.exit abortStatus
+
+/-- The driver's part of a run (`runOn`): runs `script` against the host
+`driven` drives, from after its `resume`-th `restarted`, and says why it
+could not run to its end, or the plan of the restart a `restarted` found.
+It reaches the host only through `driven`, so it runs on either host. Its
+`abort` calls `onAbort`; a script whose `onAbort` returns stops there. It
+never stops the loop: the bracket it runs in does. -/
 private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (host : Host) (script : Array Line) (waitGuard : HangGuard) (resume : Nat) (answer : HangGuard)
-    (waitHung : String → IO Unit) (waitBlocked : String → IO Unit) :
-    IO (Option Failure × Option Restart.Plan) := do
+    (driven : Driven) (script : Array Line) (waitGuard : HangGuard) (resume : Nat)
+    (answer : HangGuard) (waitHung : String → IO Unit) (waitBlocked : String → IO Unit)
+    (onAbort : IO Unit) : IO Ran := do
   -- The waits of the script, each said with its line when it hangs.
   let await (line : Nat) (guard : HangGuard := waitGuard) (answer : HangGuard := answer) :
-    IO Wait := host.await guard answer (some line) waitHung waitBlocked
+    IO Wait := driven.await guard answer (some line) waitHung waitBlocked
   let join (line : Nat) (guard : HangGuard := waitGuard) (answer : HangGuard := answer) : IO Wait :=
-    host.join guard answer (some line) waitHung waitBlocked
+    driven.join guard answer (some line) waitHung waitBlocked
   -- With a state directory, the session is restored first: the index a
   -- restart handed over, when there is one.
   if collaborators.stateDirectory.isSome then
-    host.send (.restore collaborators.launch.restore)
+    driven.send (.restore collaborators.launch.restore)
   let script := resumed script resume
   -- The serial of the last journal entry a `journal` line counted.
   let mut journaled : UInt64 := 0
   for line in script do
     -- A command quit the editor: the lines after it are not run.
-    if ← IO.hasFinished host.thread then
+    if (← driven.ended?).isSome then
       break
     let wait ←
       match line.directive with
       | .request request =>
-        host.send request
+        driven.send request
         continue
       | .key key =>
-        host.press key
+        driven.press key
         continue
       | .commit text =>
-        host.commit text
+        driven.commit text
         continue
       | .resize width height =>
-        host.resize width height
+        driven.resize width height
         continue
       | .settle =>
         await line.number
@@ -3739,11 +3901,12 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
         -- render loop at rest (`idleStart`); then the editor thread answers
         -- once more with nothing sent, and what the loop drew and was handed
         -- from that rest to the next is counted (`idled`).
-        let wait ← host.waitWhile waitGuard .handled answer (some line.number) waitHung waitBlocked
+        let wait ←
+          driven.waitWhile waitGuard .handled answer (some line.number) waitHung waitBlocked
         if wait == .settled then
           let start ← idleStart collaborators.render waitGuard
           let again ←
-            host.waitWhile waitGuard .handled answer (some line.number) waitHung waitBlocked
+            driven.waitWhile waitGuard .handled answer (some line.number) waitHung waitBlocked
           if again == .settled then
             collaborators.emit (← idled collaborators.render waitGuard start)
           pure again
@@ -3779,8 +3942,8 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
           let index ←
             awaitIndexed
                 (fun kind =>
-                  host.waitWhile guard kind answerGuard (some line.number) waitHung waitBlocked)
-                host.progress.get collaborators.clock
+                  driven.waitWhile guard kind answerGuard (some line.number) waitHung waitBlocked)
+                driven.progress driven.clock
           if index == .working then
             return (some (Failure.ownedBy own (.working (some line.number))), none)
           let written := index == .settled
@@ -3795,26 +3958,27 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
             return (some (Failure.ownedBy own (.unanswered (some line.number))), none)
         pure wait
       | .abort =>
-        (← IO.getStdout).flush
-        IO.Process.exit abortStatus
+        -- The headless mode's ends the process (`abortProcess`); one that
+        -- returns stops the script here.
+        onAbort
+        return (none, none)
       | .restarted seconds =>
         -- The loop ends by itself once it has handed the session over: its
         -- task is waited for, guarded by the line's own seconds if it gives
         -- them, and a failure then says how long it waited.
         let own := seconds.map (· * 1000)
         let guard := (own.map (HangGuard.on "the restart" ·)).getD waitGuard
-        let ended := (← Job.awaitWithin guard host.thread).isSome
-        unless ended do
-          waitHung (waitHangLine "restarted" (some line.number) guard)
-        let plan := (← host.progress.get).handOver
+        let ended ←
+          driven.awaitEnd guard (waitHung (waitHangLine "restarted" (some line.number) guard))
+        let plan := (← driven.progress).handOver
         match ended, plan with
-        | true, some plan =>
-          IO.ofExcept host.thread.get
+        | some ended, some plan =>
+          IO.ofExcept ended
           return (none, some plan)
         | _, _ =>
           return (some (Failure.ownedBy own (.notRestarted line.number)), none)
       | .advance milliseconds =>
-        let some clock := collaborators.clock | return (some (.noClock line.number), none)
+        let some clock := driven.clock | return (some (.noClock line.number), none)
         -- Only once a wait is due within the move: so a job that is about
         -- to sleep is in its sleep before the clock moves past it. A wait
         -- already due moves it at once, with no marker; otherwise the wait
@@ -3824,8 +3988,8 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
           clock.advance milliseconds
           continue
         let wait ←
-          host.waitWhile waitGuard (.advance clock milliseconds) answer (some line.number) waitHung
-              waitBlocked
+          driven.waitWhile waitGuard (.advance clock milliseconds) answer (some line.number)
+              waitHung waitBlocked
         match wait with
         | .settled =>
           clock.advance milliseconds
@@ -3840,8 +4004,31 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
       return (some failure, none)
   -- The end of the script: wait for a reload that is still running. The
   -- bracket the script runs in then stops the loop and waits for it to end.
-  let last ← host.await waitGuard answer none waitHung waitBlocked
+  let last ← driven.await waitGuard answer none waitHung waitBlocked
   return (last.failureIn none waitGuard.ms answer.ms, none)
+
+/-- Runs `script` against a host of `hosting`'s (`Hosting`), as its driver,
+through the host's port alone (`Driven`), and returns once the host's loop
+has ended: what `runFrom` says of a run, over either host. A loop that
+ended with an error has it thrown. `abort` calls `onAbort`, which in the
+headless mode ends the process (`abortProcess`); a harness hands one that
+throws, since it cannot end its process. -/
+def runOn {β σ : Type} {scheme : InputScheme} (hosting : Hosting β σ scheme)
+    (collaborators : Collaborators β σ scheme) (script : Array Line) (waitGuard : HangGuard)
+    (resume : Nat := 0) (answer : HangGuard := waitGuard)
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) (onAbort : IO Unit := abortProcess) :
+    IO Ran := do
+  let hosted ←
+    hosting.hosted collaborators fun driven =>
+        runScript collaborators driven script waitGuard resume answer waitHung waitBlocked onAbort
+  match hosted with
+  | .ok (result, ended) =>
+    -- The loop's error is thrown, as `Host.halt` throws it.
+    IO.ofExcept ended
+    return result
+  | .error failure =>
+    return (some failure, none)
 
 /-- Runs `script` against a host of its own, in its bracket (`withHost`), as
 its driver: sends each request in order and waits at each `settle` and each
@@ -3904,20 +4091,9 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
     (grace : Option HangGuard := none) (hung : String → IO Unit := IO.eprintln)
     (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ())
     (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) :
-    IO (Option Failure × Option Restart.Plan) := do
-  let ran ←
-    hostedWithin collaborators
-        (fun host =>
-          runScript collaborators host script waitGuard resume answer waitHung waitBlocked)
-        guard grace hung abandoned
-  match ran with
-  | some (result, ended) =>
-    -- The loop's error is thrown, as `Host.halt` throws it.
-    IO.ofExcept ended
-    return result
-  | none =>
-    return (some (.hung guard.ms ((grace.map (·.ms)).getD 0)), none)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Ran :=
+  runOn (Hosting.real guard grace hung abandoned) collaborators script waitGuard resume answer
+    waitHung waitBlocked
 
 /-- Runs `script` against a host of its own, as `runFrom` does from its
 start, with the same patiences, guard and grace, and says only why it could

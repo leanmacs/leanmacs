@@ -89,8 +89,10 @@ be made outside the hosts' modules, since a kind's constructor and the two
 fields that decide what it infers, `busy` and `still`, are marked too (the
 linter sees a structure instance's fields as references to their
 projections). A `settle` or a `handled` through `waitWhile` infers nothing
-from the idle, and is refused nothing. `Driven`'s `waitWhile` is private: a
-check drives a host through its named waits, the marked ones among them.
+from the idle, and is refused nothing. `Driven`'s `waitWhile` is private
+to `Editor.Headless` (`Headless.Driven`, the script runner's port, which the
+kit's `Driven` names): a check drives a host through its named waits, the
+marked ones among them.
 
 `realEffect`, the fourth kind the attribute takes, marks a real service's
 readout whose fake exists. Phase 3 marked each as its fake landed:

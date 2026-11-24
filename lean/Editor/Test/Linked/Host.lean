@@ -634,73 +634,34 @@ def Stage.stepped {β σ : Type} (stage : Stage β σ) (files : FileModel := {})
 /-- A host as a check drives it, whichever kind it is: a real one, whose loop
 runs on a thread of its own (`Headless.Host`, `Driven.ofHost`), or one
 stepped on the check's own thread (`Headless.Stepped`, `Driven.ofStepped`).
-Each field is a closure over the host, so a check written on it runs on
-either. Nothing but checks drives two kinds of host, so it is test support,
-not the core's. -/
-structure Driven where
-  /-- Asks the host to do a request, after everything asked before. -/
-  send : Headless.Request → IO Unit
-  /-- Sends an event as the window would report it. -/
-  input : Event → IO Unit
-  /-- The host's `waitWhile` (`Headless.Host.waitWhile`,
-  `Headless.Stepped.waitWhile`): its guard, the kind of wait
-  (`Headless.Wait.Kind`), the answer's guard, the script's line, where a
-  hang is said, and what is called before a block. What each kind waits
-  for is the core's, never this record's. Private: a check waits through
-  the named waits below, so one that infers "done" from the host's idle
-  is one of the marked ones (`linter.inferredWait`). -/
-  private waitWhile :
-    HangGuard →
-      Headless.Wait.Kind →
-      HangGuard → Option Nat → (String → IO Unit) → (String → IO Unit) → IO Headless.Wait
-  /-- How far the host's loop has got, as it published after its last
-  event. -/
-  progress : IO Headless.Progress
-  /-- How the host's loop ended, once it has: `ok` for a loop that stopped
-  by itself or was stopped, or the error it threw. -/
-  ended? : IO (Option (Except IO.Error Unit))
-  /-- The fake clock the host's jobs wait on, if they wait on one. -/
-  clock : Option Job.FakeClock
+It is the script runner's port (`Headless.Driven`), so a check written on
+it runs on either host, and a check's waits are the core's named ones; the
+wrappers below keep the kit's names for them. -/
+abbrev Driven :=
+  Headless.Driven
 
 namespace Driven
 
 /-- A real host, driven. -/
-def ofHost (host : Headless.Host) : Driven where
-  send := host.send
-  input event := do
-    unless ← Event.post event do
-      throw (IO.userError "the editor queue refused an event: it has been quit")
-  waitWhile guard kind answer line waitHung waitBlocked :=
-    host.waitWhile guard kind answer line waitHung waitBlocked
-  progress := host.progress.get
-  ended? := do
-    if ← IO.hasFinished host.thread then
-      return some host.thread.get
-    return none
-  clock := host.clock
+def ofHost (host : Headless.Host) : Driven :=
+  Headless.Driven.ofHost host
 
 /-- A stepped host, driven. -/
-def ofStepped (stepped : Headless.Stepped) : Driven where
-  send := stepped.send
-  input := stepped.input
-  waitWhile guard kind answer line waitHung waitBlocked :=
-    stepped.waitWhile guard kind answer line waitHung waitBlocked
-  progress := stepped.progress
-  ended? := stepped.ended?
-  clock := stepped.clock
+def ofStepped (stepped : Headless.Stepped) : Driven :=
+  Headless.Driven.ofStepped stepped
 
 /-- Sends a press of `key`, with no text, as the window would report it. -/
 def press (driven : Driven) (key : Key) : IO Unit :=
-  driven.input (.key key true "")
+  Headless.Driven.press driven key
 
 /-- Sends `text` as an input method's composition would end with it. -/
 def commit (driven : Driven) (text : String) : IO Unit :=
-  driven.input (.commit text)
+  Headless.Driven.commit driven text
 
 /-- Sends a resize of the frame to `width` by `height` physical pixels, at a
 scale of 1 and out of fullscreen. -/
 def resize (driven : Driven) (width height : Nat) : IO Unit :=
-  driven.input (.resize { width, height, scale := 1.0 })
+  Headless.Driven.resize driven width height
 
 /-- `Headless.Host.await` on the driven host: a `settle`'s wait
 (`Headless.Wait.Kind.settle`).
@@ -708,7 +669,7 @@ def resize (driven : Driven) (width height : Nat) : IO Unit :=
 def await (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
-  driven.waitWhile waitGuard .settle answer line waitHung waitBlocked
+  Headless.Driven.await driven waitGuard answer line waitHung waitBlocked
 
 /-- `join` is an inferred wait (`Editor/InferredWait.lean`). -/
 def join.inferredWait : InferredWait :=
@@ -720,20 +681,20 @@ def join.inferredWait : InferredWait :=
 def join (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Headless.Wait :=
-  driven.waitWhile waitGuard .join answer line waitHung waitBlocked
+  Headless.Driven.join driven waitGuard answer line waitHung waitBlocked
 
 /-- `Headless.Host.settle` on the driven host.
  -/
 def settle (driven : Driven) (waitGuard : HangGuard) (answer : HangGuard := waitGuard)
     (line : Option Nat := none) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
-  return (← driven.await waitGuard answer line waitHung waitBlocked) == .settled
+  Headless.Driven.settle driven waitGuard answer line waitHung waitBlocked
 
 /-- A wait only until the host has handled everything sent so far
 (`Headless.Wait.Kind.handled`), publishing nothing.
  -/
 def handled (driven : Driven) (waitGuard : HangGuard) : IO Headless.Wait :=
-  driven.waitWhile waitGuard .handled waitGuard none IO.eprintln fun _ => pure ()
+  Headless.Driven.handled driven waitGuard
 
 end Driven
 

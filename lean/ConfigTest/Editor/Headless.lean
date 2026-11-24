@@ -2162,6 +2162,47 @@ The command line itself is covered by one run of the real executable on the
 fixture under `tests/headless`, in the `ffi-test` task. -/
 def scriptChecks (context : Context) : List Check :=
   [{  name :=
+        "the script runner reaches its host only through the Driven port: over a hand-written hosting, every request, input and wait reaches the port in order, and abort calls the run's onAbort and ends the script there, never the process"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        let calls ← IO.mkRef (#[] : Array String)
+        let note (call : String) : IO Unit := calls.modify (·.push call)
+        let driven :=
+          Headless.Driven.over (fun request => note s!"send {repr request}")
+            (fun event =>
+              note
+                (match event with
+                | .key .. => "input key"
+                | .commit text => s!"input commit {text}"
+                | .resize .. => "input resize"
+                | _ => "input other"))
+            (fun _ kind _ line _ _ => do
+              note s!"wait {kind.what} {line}"
+              return .settled)
+            (pure {}) (pure none) none fun _ _ => pure none
+        let hosting : Headless.Hosting _ _ TestScheme.scheme :=
+          {
+            hosted := fun _ body => do
+              note "bracket"
+              let ran ← body driven
+              note "bracket ends"
+              return .ok (ran, .ok ()) }
+        let script ←
+          IO.ofExcept
+              ((Headless.script
+                    "reload\nkey a KeyA -\ncommit é\nresize 10 20\nsettle\njoin\nabort\nshow\n").mapError
+                IO.userError)
+        let (failure, plan) ←
+          Headless.runOn hosting stage.collaborators script hangGuard (onAbort := note "abort")
+        let seen ← calls.get
+        saw
+            (failure.isNone && plan.isNone &&
+              seen ==
+                #["bracket", "send Editor.Headless.Request.reload", "input key", "input commit é",
+                  "input resize", "wait settle (some 5)", "wait join (some 6)", "abort",
+                  "bracket ends"])
+            s!"failure={repr failure} calls={seen}" },
+    { name :=
         "a host made by a stage and handed straight to Headless.run still gets its reload's wake-up: reload, settle and show end with no failure, the reload installed and its command shown"
       run := do
         let stage ←

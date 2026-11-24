@@ -1333,15 +1333,16 @@ tests", below), which differ only in how a round reaches the loop and what
 a block waits on. What each kind of wait waits for is one value too,
 `Wait.Kind`: `settle`, `join`, `idle`, `quiet`, `indexed`, `advance clock
 ms` and `handled`, each carrying what is busy, the idle outcome, the hang
-outcome, its name and whether its marker publishes. `Host`, `Stepped`, the
-script runner and the config tests' `Driven` forward a kind to
-`waitWhile`, so a change to what a settle means, or to the idle rule,
-reaches every wait at once. The kinds that infer "done" from the idle, the
+outcome, its name and whether its marker publishes. `Host` and `Stepped`
+forward a kind to `waitWhile`, and the script runner and the config tests
+reach it through `Driven` (`lean/Editor/Headless.lean`, the runner's port
+both hosts implement), so a change to what a settle means, or to the idle
+rule, reaches every wait at once. The kinds that infer "done" from the idle, the
 job counts or the fake clock (`join`, `idle`, `quiet`, `indexed`,
 `advance`) are marked inferred waits, and so are a kind's constructor
 and its `busy` and `still`, so no check builds such a wait from the parts
 outside the modules whose subject it is; `Driven` keeps its `waitWhile`
-private and hands out only its named waits. The verdict
+private to `Editor.Headless` and hands out only its named waits. The verdict
 is pinned by `ModelTest.waitRoundChecks`, on the model alone.
 
 **Wait guards.** The bound of a driver's wait is a wait guard (`waitGuard`
