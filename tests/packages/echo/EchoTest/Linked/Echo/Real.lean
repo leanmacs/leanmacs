@@ -1,8 +1,8 @@
 import Echo.Contract
 import Echo.Real
+import EchoTest.Check
 import Editor.RealHost
 import Editor.Test.Linked.Jobs
-import EchoTest.Check
 import Editor.Test.Linked.Services
 
 /-!
