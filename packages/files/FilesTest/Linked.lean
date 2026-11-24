@@ -22,19 +22,21 @@ after the library's services are shut down and its queues quit: a task may
 still be blocked in the library.
 
 Its checks are the files' through the headless host over the real
-elaborator, the library's file service and its watch service, in
-`FilesTest/Linked/Files.lean`, which mirrors the module it tests; they
-were the config test's (`ConfigTest.<name>`) while the file commands were
-modules of the core:
+elaborator, in `FilesTest/Linked/Files.lean`, which mirrors the module it
+tests; they were the config test's (`ConfigTest.<name>`) while the file
+commands were modules of the core. Most run on a stepped stage
+(`Stage.stepped`), whose file fake the check steps on its own thread; the
+save of a modified buffer is the file service's one end-to-end check, and
+the auto-reload the watch service's:
 
 - `languageChecks`: a file of a shipped language opens in the mode `code`
   with its grammar attached and highlighted over the real syntax binding;
 - `fileChecks`: opening, saving and reopening files through the host, with
-  line endings kept and a file changed on disk left alone;
-- `reloadChecks`: reloading a buffer from disk;
-- `filePromptChecks`: the open prompt's candidates over the real file
-  service, with the files' source and the path style;
-- `autoReloadChecks`: following a file over the watch service.
+  line endings kept and a file changed behind the editor left alone;
+- `reloadChecks`: reloading a buffer from its file;
+- `filePromptChecks`: the open prompt's candidates over the file fake, with
+  the files' source and the path style;
+- `autoReloadChecks`: following a file over the library's watch service.
 
 They are handed the context of a harness of hosts over the real elaborator
 (`Editor.Test.Linked.HostContext.run`), on the config base `Editor`, found

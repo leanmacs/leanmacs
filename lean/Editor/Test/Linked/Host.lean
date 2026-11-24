@@ -818,6 +818,10 @@ structure Session where
   /-- The stage's fakes, on a stepped stage (`Stage.stepped`), which the
   session's steps step (`Session.step`); none otherwise. -/
   fakes : Option Stage.Fakes := none
+  /-- The memory queue a stepped host drains, on a host stepped on the
+  check's thread (`Session.ofStage`); none for a real host, whose loop
+  thread takes its own queue. -/
+  queue : Option (Headless.Queue.Memory Ffi.Event) := none
 
 /-- A session over a real host, whose loop runs on a thread of its own: the
 session, and the host itself, for a check of what only a loop thread shows
@@ -838,13 +842,13 @@ def Session.ofStage {β σ : Type} (drive : Driven) (directory : System.FilePath
     (waitBlocked : String → IO Unit := fun _ => pure ()) : Session :=
   { drive, directory, output := stage.output, threads := stage.threads
     outputWaits := stage.outputWaits, clock := stage.clock, watches := stage.watches
-    log := stage.log, waitHung, waitBlocked, fakes := stage.fakes }
+    log := stage.log, waitHung, waitBlocked, fakes := stage.fakes, queue := some stage.memory }
 
 /-- The session of the real host `host` over `stage`. -/
 def RealSession.ofStage {β σ : Type} (host : Headless.Host) (directory : System.FilePath)
     (stage : Stage β σ) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : RealSession :=
-  { Session.ofStage host directory stage waitHung waitBlocked with host }
+  { Session.ofStage host directory stage waitHung waitBlocked with host, queue := none }
 
 /-- What a check says of a driven host's loop when it ended before what was
 sent to it settled (`Headless.Wait.ended`): that it ended, and what it ended
@@ -1347,10 +1351,27 @@ that makes it hold (`Stage.outputWaits`), never by a poll. The wait is armed
 before the output is read, so a line emitted in between is not missed.
 Whether it came before `hangGuard`, which only a hang reaches. On a stepped
 stage (`Stage.stepped`) it steps the session until it holds
-(`Session.stepUntil`) in place of blocking: `false` at a stall. -/
+(`Session.stepUntil`) in place of blocking: `false` at a stall. On a host
+stepped on the check's thread over real services it drains the host's
+queue at each post to it until it holds. -/
 def Session.outputReaches (session : Session) (done : Array String → Bool) : IO Bool := do
   if session.fakes.isSome then
     return ← session.stepUntil done
+  -- A host stepped on the check's thread over real services takes its
+  -- queue only in a wait: each round arms the queue's next push, drains,
+  -- and blocks on that push, an event, until the output holds.
+  if let some queue := session.queue then
+    repeat
+      let arrived ← queue.arrived
+      unless ← session.handled do
+        return false
+      if done (← session.output.get) then
+        return true
+      -- hang guard: the next post to the host's queue; only a hang reaches
+      -- the bound.
+      if (← Job.awaitWithin hangGuard arrived).isNone then
+        return false
+    return false
   let reached ← IO.Promise.new
   session.outputWaits.modify (·.push (done, reached))
   if done (← session.output.get) then

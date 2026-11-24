@@ -52,7 +52,7 @@ def autoReloadRow (context : HostContext) (samples : Nat) : Check :=
             context.withFiles (targets := [.files, .fileWatches]) fun files => do
               let path := files / "note.txt"
               IO.FS.writeBinFile path old.toUTF8
-              withRealFileHost context [("open-note", path)] fun session => do
+              withRealFileHost context (files / "config") [("open-note", path)] fun session => do
                   unless ← session.ran "open-note" do
                     return false
                   session.ask [.run Files.autoReloadName]
