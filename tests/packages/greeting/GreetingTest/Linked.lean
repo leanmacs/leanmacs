@@ -1,7 +1,8 @@
 import Editor
 import Editor.Command.Append
-import Editor.Headless
 import Editor.InputScheme.Test
+import Editor.Test.Linked.Host
+import Editor.Test.Linked.Shipped
 import Editor.Text.Real
 import Greeting.EditorPackage
 
@@ -23,10 +24,14 @@ them"), and holds a check of each kind:
 - **Against the Rust library**, as `ffi-test` and `contract-test` are the
   core's: a command over the text port's real binding (`libraryCheck`).
 - **Of a config session on the real elaborator**, as `config-test` is the
-  core's: the headless host, handed the packages a set that holds this
-  package hands its editor, loads a config directory that binds a key to
-  the package's command, and the key runs it (`configCheck`). The two
-  directories it is handed are what that session elaborates on.
+  core's: a host of the linked test kit stepped on the check's thread
+  (`Editor.Test.Linked.withShippedHost`), handed the packages a set that
+  holds this package hands its editor, loads a config directory that binds
+  a key to the package's command, and the key runs it (`configCheck`). The
+  two directories it is handed are what that session elaborates on. It
+  needs no real loop thread: the real editor over this package is the CLI's
+  run of the fixture `tests/headless/hello`, which the fixture set's
+  real-thread entries run (`Editor.Test.Fixture.RealThread`).
 
 It imports the config base, `Editor`, for the link alone, as every root
 that links the elaborator does: the elaborator imports the base's modules
@@ -67,42 +72,43 @@ where the gate runs this executable. -/
 def configDirectory : String :=
   "tests/linked/config"
 
-/-- The script `configCheck` runs: it loads the config, sends the keys the
-config binds to the package's command, and asks for the scene. -/
-def configScript : String :=
-  "reload\nsettle\nkey c KeyC control\nkey g KeyG -\nscene\n"
+/-- The key the config binds to the package's command, `C-c g`, as the
+window would report its presses. -/
+def configKeys : List Editor.Key :=
+  [{ logical := .character "c", physical := .code "KeyC", modifiers := { control := true } },
+    { logical := .character "g", physical := .code "KeyG" }]
 
-/-- Starts the headless host over `setPackages` with the real elaborator,
-the toolchain in `sysroot` and the core's `.olean` files in `oleans`, runs
-`configScript` on the config in `configDirectory`, and says whether the
-script ran to its end and a line of what the host printed holds the
-package's greeting: config's key ran the package's command, so the session
-elaborated config that names it and the host had registered it. -/
-def configCheck (sysroot oleans : String) : IO Bool := do
-  let printed ← IO.mkRef (#[] : Array String)
-  let directives ← IO.ofExcept ((Editor.Headless.script configScript).mapError IO.userError)
-  let shipped ←
-    Editor.Headless.shipped Editor.TestScheme.scheme setPackages #[`Editor] sysroot [oleans]
-        configDirectory (fun line => printed.modify (·.push line)) .headless (fakeClock := true)
-  let failure ←
-    Editor.Headless.run
-        { shipped with
-          workingDirectory := ← IO.currentDir
-          display := fun snapshots =>
-            Editor.Headless.Host.Display.recorder Editor.Headless.cells snapshots }
-        -- hang guard: each wait of the script ends on its event;
-        -- `settlePatience` only turns a hang into the run's failure.
-        directives Editor.Headless.settlePatience
-  let lines ← printed.get
-  let greeted := lines.any fun line => (line.splitOn Greeting.helloText).length > 1
-  if failure.isNone && greeted then
-    IO.println
-        "greeting linked test: config bound a key to greeting-hello and the config session ran it"
-    return true
-  else
-    IO.eprintln
-        s!"FAILED: the config session did not run greeting-hello for config's key; it printed {lines}"
-    return false
+/-- Runs a host of the linked test kit, stepped on the check's thread over
+the fakes (`Editor.Test.Linked.withShippedHost`), over `setPackages` with
+the real elaborator, the toolchain in `sysroot` and the core's `.olean`
+files in `oleans`, on the config in `configDirectory`: it loads the config,
+presses the keys the config binds to the package's command and asks for the
+scene, and says whether the host settled and a line of what it printed
+holds the package's greeting: config's key ran the package's command, so
+the session elaborated config that names it and the host had registered
+it. -/
+def configCheck (sysroot oleans : String) : IO Bool :=
+  Editor.Test.Linked.HostContext.run sysroot oleans setPackages fun context => do
+    let files ← Editor.Test.Linked.configFiles configDirectory
+    let printed ← IO.mkRef (#[] : Array String)
+    let held ←
+      Editor.Test.Linked.withShippedHost Editor.TestScheme.scheme context files fun session => do
+          session.ask [.reload]
+          for key in configKeys do
+            session.press key
+          session.ask [.scene]
+          let lines ← session.output.get
+          printed.set lines
+          return lines.any fun line => (line.splitOn Greeting.helloText).length > 1
+    let lines ← printed.get
+    if held then
+      IO.println
+          "greeting linked test: config bound a key to greeting-hello and the config session ran it"
+      return true
+    else
+      IO.eprintln
+          s!"FAILED: the config session did not run greeting-hello for config's key; it printed {lines}"
+      return false
 
 /-- Runs both checks and exits 0 when both hold, 1 when one does not, and 2
 for a command line that is not the two directories. The exit is explicit,
