@@ -20,12 +20,10 @@ import Editor.Config.Stores
 import Editor.Display
 import Editor.DisplayRules
 import Editor.Event
-import Editor.Event.Queue
 import Editor.Ex.Line
 import Editor.Face
 import Editor.Ffi.Counter
 import Editor.Ffi.Events
-import Editor.Ffi.Interrupt
 import Editor.File
 import Editor.FileWatch
 import Editor.Fuzzy.Real
@@ -60,7 +58,6 @@ import Editor.Test.Restore
 import Editor.Text
 import Editor.Text.Model
 import Editor.Text.Real
-import Editor.Watch
 import Editor.Window
 import Editor.Window.Real
 import Editor.Workspace

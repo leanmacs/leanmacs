@@ -29,7 +29,8 @@ and the levels `ContractTest/Editor/SyntaxTree/Real.lean`'s.
 /-- This module is of the wiring set (`Editor/RealHost.lean`): every check
 it holds is a wiring check of the library's syntax service. -/
 def wiringSet.ConfigTest.Editor.Indent : Editor.WiringSet :=
-  .wiring "the library's syntax service with the shipped Rust indents query (RealSyntaxTree)" "the syntax model holds JSON alone, so the shipped Rust query is reached only over the real binding"
+  .wiring "the library's syntax service with the shipped Rust indents query (RealSyntaxTree)"
+    "the syntax model holds JSON alone, so the shipped Rust query is reached only over the real binding"
 
 namespace ConfigTest
 
@@ -107,7 +108,7 @@ set_option linter.inferredWait false in
 /-- Runs `check` against a real host of the test scheme with the real syntax
 binding (`withRealSyntaxTestHost`) over `reindentText` of the mangled Rust indent fixture, with the config
 loaded: handed the fixture's text and the mangled one. -/
-private def withIndentHost (context : Context) (check : RealSession → String → String → IO Bool) :
+def withIndentHost (context : Context) (check : RealSession → String → String → IO Bool) :
     IO Bool := do
   let source ← IO.FS.readFile (context.syntaxFixtures / "rust" / "indent.rs")
   let mangled := mangledRust source indentKept
