@@ -11,7 +11,7 @@ The model tests of the contract of the interface library `vc-api`
 version-control contract run against the model of a repository, `vc-api`'s
 fake. The git implementation's status read of each property's repository on
 the job model is version control's (`VersionControlTest.versionControlGitChecks`),
-and the contract over real git `VersionControlTest.Linked.versionControlFailures`. The
+and the contract over real git `VersionControlTest.Linked.versionControlContractChecks`. The
 test driver's root, `VcApiTest/Model.lean`, runs them; its module doc says
 what each shows.
 -/

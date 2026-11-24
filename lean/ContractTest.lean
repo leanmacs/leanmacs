@@ -283,9 +283,9 @@ The workspace finder, its contract and the mode marker search's over the
 real process and file services, and the listers a workspace's files are
 listed with over real git and find, are not checked here either: the
 workspaces are a package outside the core (`packages/workspace/`), and its
-linked test runs them (`WorkspaceTest.Linked.workspaceFailures`,
-`modeMarkerFailures` and `workspaceListerChecks`, which were this
-executable's under the same names, `workspaceChecks`' worlds now properties
+linked test runs them (`WorkspaceTest.Linked.workspaceFinderContractChecks`,
+`modeMarkerContractChecks` and `workspaceListerChecks`, which were this
+executable's, `workspaceChecks`' worlds now properties
 of the finder's contract), with the fixtures under that package's
 `tests/`. Nor are the working sets over the file service, the
 fuzzy matcher and real git, through a restart: they are the `working-set`
@@ -303,7 +303,7 @@ contract against the git implementation, in lanes of their own, the git
 implementation's own checks, and the status, worktree, review, log and blame
 buffers are the `version-control` package's (`packages/version-control/`),
 whose linked test runs the git implementation's
-(`VersionControlTest.Linked.inLanesChecks`, `versionControlFailures` and
+(`VersionControlTest.Linked.inLanesChecks`, `versionControlContractChecks` and
 `versionControlChecks`, which were this executable's), and whose model
 checks run the buffers'. The contract's run against the model is the core's
 (`VcApiTest.versionControlContractFailures`, in the interface package `vc-api`).

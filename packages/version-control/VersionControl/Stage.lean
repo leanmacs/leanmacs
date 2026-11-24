@@ -97,7 +97,7 @@ and that is said.
 Pinned by `VersionControlTest.stageHunkChecks` on the loop's driver over the
 editor's models, the job model and the model of a repository; what git does
 of each request is the version-control contract's over real git
-(`VersionControlTest.Linked.versionControlFailures`).
+(`VersionControlTest.Linked.versionControlContractChecks`).
 -/
 
 namespace Editor.VersionControl

@@ -76,7 +76,7 @@ Pinned by `VersionControlTest.blameViewChecks` on values,
 `VersionControlTest.blameBufferChecks` on the loop's driver over the editor's models
 and the model of a repository; what git does of each request is the
 version-control contract's over real git
-(`VersionControlTest.Linked.versionControlFailures`).
+(`VersionControlTest.Linked.versionControlContractChecks`).
 -/
 
 namespace Editor.VersionControl

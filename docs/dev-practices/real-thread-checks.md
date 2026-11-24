@@ -119,6 +119,71 @@ is a real effect, the journal's write, abort, restart and recovery among
 them (`restore/abort-script` then `restore-script`). The user-sets and
 bundle-sets restarts (W68, W69) run the real editor in their gate steps too.
 
+## How stress runs the set
+
+The stress loop (`tools/stress.sh`; [on-demand-checks.md](on-demand-checks.md),
+"The stress loop, on demand") runs exactly this set, and the gate runs each
+of it once, both read from code, never from a list kept here:
+
+- **A root's check set.** Each test root's checks are a check set,
+  `List (Editor.CheckGroup κ α)` (`lean/Editor/RealHost.lean`), Lean-free
+  data: the lists of each module of the wiring set sit in
+  `.wired "<module>" wiringSet.<module>` groups, every other list in a
+  `.plain` group. A module may have several groups where its lists sit
+  between other modules' (FilesTest's `Files/Real.lean`): a normal run
+  (`CheckGroup.all`) keeps the order the checks always ran in, and
+  `CheckGroup.wiring` merges a module's groups into one entry, so a run
+  says one line for each module. config-test, ffi-test and every linked
+  test with such a module take a wiring mode that runs those groups alone
+  (`config-test … --wiring`, `ffi-test wiring`, `<P>Test-Linked … --wiring`,
+  through `tools/package-set.sh --wiring run`) and answer
+  `wiring-modules`; each run of them prints
+  `wiring-set: ran <root> <module> <n> checks` for each module it ran
+  (`CheckGroup.ranLines`), and contract-test, of the set whole,
+  `wiring-set: ran contract-test ContractTest`.
+- **`linter.wiringSet`** (`lean/Lint/Wiring.lean`, in the build's plugin,
+  imported by no module) holds the check sets true and complete: (t) a
+  group's tag is its module's declaration, and a wiring module's list sits
+  only in a group of its own module; (a) every check of a wiring module the
+  root imports is reached from its wired groups; (u) no check twice; (b) a
+  module of the set declares no IO list producer (`IO (List String)` and
+  the like) unless it is marked; and, for a root that links the library,
+  (c) its `main` reaches a wiring module only through a check set or a
+  table of scenarios (`List Editor.Scenario`) and (d) runs a wiring branch
+  (`CheckGroup.wiring`). model-test's `.wiring` modules are the linters'
+  fixtures and link no library, so (c) and (d) do not hold it. Its
+  fixtures are `ModelTest/Lint/Wiring.lean`, the modules under
+  `ModelTest/Lint/Wiring/` and greeting's
+  `GreetingTest/Linked/Lint/Wiring.lean`; its rules' functions are
+  `LintTest.lintWiringChecks`.
+- **The scenarios.** FfiTest's window scenarios are a table,
+  `FfiTest.windowScenarios : List Editor.Scenario`, in their `.wiring`
+  module: `main` dispatches each subcommand through it, and
+  `ffi-test wiring-scenarios` lists it.
+- **The CLI's runs.** `tools/wiring-runs.sh` holds a case for each
+  real-thread entry whose site is ffi-test and for each scenario, moved from
+  the gate's lines as they were; `wiring-runs.sh check` holds its cases to
+  `fixture-test real-thread --site ffi-test` and `ffi-test
+  wiring-scenarios` both ways. `prepare` stages what a case builds (the
+  greeting entry's install), `run` runs the cases and says
+  `wiring-set: ran <key> at ffi-test` for each. `tools/bundle-test.sh`
+  says the same of its entries at bundle-test and checks them against
+  `fixture-test real-thread --site bundle-test`; its `stage` and `headless`
+  modes split the stage from the runs.
+- **Once in the gate.** `mise run ffi-test` resets a ledger under
+  `target/gate/`, each step that runs one of the above appends its
+  `wiring-set: ran` lines (`tools/wiring-ledger.sh note`), the two
+  `package-set.sh run`s share a ledger of linked tests so the default set's
+  run does not run again what the fixture set's did (`--ledger`), and the
+  last step checks that each item the code lists ran exactly once
+  (`tools/wiring-ledger.sh expected` and `check`, with its fixtures under
+  `tests/wiring-ledger/`). Nothing in `ci` passes a wiring mode or calls
+  `stress.sh`.
+- **Each round of stress.** The loop's default suites are the wiring
+  modes, contract-test, the CLI's runs and the bundle's; after each round
+  it checks the round's lines against the same listings, and a round that
+  misses or repeats an item fails as `coverage`.
+
 ## config-test's wall time
 
 Measured with the method of the phase's plan: an idle machine (an 18-core

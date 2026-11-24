@@ -50,7 +50,7 @@ Otherwise it starts `vc-show-read`, keyed `vc-show <root> <revision>:<path>`
 
 Pinned by `VersionControlTest.revisionBufferChecks` on the models; what git
 does of each request is the version-control contract's over real git
-(`VersionControlTest.Linked.versionControlFailures`).
+(`VersionControlTest.Linked.versionControlContractChecks`).
 -/
 
 namespace Editor.VersionControl

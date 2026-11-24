@@ -695,7 +695,7 @@ Pinned by `VersionControlTest.gutterChecks` on the models (`Repository.commit` a
 the driver's touch of the parked watch for a commit made outside the
 editor). The check of it through a host over real git and the library's
 watch service went in host-tests-on-fakes phase 4: it pinned that
-criterion again, and what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`).
+criterion again, and what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlContractChecks`).
 
 ## Staging a hunk: `vc-stage-hunk` and `vc-unstage-hunk`
 
@@ -754,7 +754,7 @@ names run them, and no key binds them: binding one is config's.
   is said, and the whole-file commands stage them.
 
 Pinned by `VersionControlTest.hunkChecks` (the pure core and the exact patch text)
-and `VersionControlTest.stageHunkChecks` on the models; what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`), its
+and `VersionControlTest.stageHunkChecks` on the models; what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlContractChecks`), its
 refusal of a hunk whose lines are not in the index among it.
 
 ## The message buffer: `vc-commit`
@@ -795,7 +795,7 @@ is.
 
 Pinned by `VersionControlTest.commitBufferChecks` on the models (the bytes
 `git commit --file=-` is fed are the buffer's text, and a refused commit's
-output shown); what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`), a hook's lines on both streams with `HEAD` as it
+output shown); what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlContractChecks`), a hook's lines on both streams with `HEAD` as it
 was among it. A commit run by the checks has git's user from the hostile
 config, never guessed from the host's name.
 
@@ -834,7 +834,7 @@ helper `vc-worktrees-visit` does ([projects.md](projects.md), "The project's
 workspaces and `find-file-in-project`").
 
 Pinned by `VersionControlTest.worktreeViewChecks` and `VersionControlTest.worktreeBufferChecks`
-on the models; what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`).
+on the models; what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlContractChecks`).
 
 ## The review buffer: `vc-review`
 
@@ -937,7 +937,7 @@ the log or the blame), so each is the same `vc-review-read` →
 Pinned by `VersionControlTest.reviewHunkChecks`, `reviewOrderChecks` and
 `reviewRecordChecks` (the pure core), and `VersionControlTest.reviewBufferChecks` on the
 models, the read run over the interface's model (`Model.readHandler`);
-what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`), the range-diff among it.
+what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlContractChecks`), the range-diff among it.
 
 ## The log buffer: `vc-log`
 
@@ -962,7 +962,7 @@ buffer `*vc-log: <label> <revision>*` in the mode `vc-log`, magit's log.
   into the same buffer.
 
 Pinned by `VersionControlTest.logViewChecks` and `VersionControlTest.logBufferChecks` on the
-models; what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`).
+models; what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlContractChecks`).
 
 ## Blame: `vc-blame`
 
@@ -988,7 +988,7 @@ commit that last changed it and that commit's author, in a read-only buffer
 
 Pinned by `VersionControlTest.blameViewChecks` and `VersionControlTest.blameBufferChecks` on
 the models, where the changed line's row names its commit's author `b` and
-the others `a`; what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`), whose blame property fails if the command line
+the others `a`; what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlContractChecks`), whose blame property fails if the command line
 stops clearing the hostile config's `blame.ignoreRevsFile`.
 
 ## Open questions
