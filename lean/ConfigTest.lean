@@ -138,8 +138,12 @@ show:
   after it gave its unit back for its sleep, where the body returns, is in
   a wait the loop's end withdraws (`parkHolds`), and the same check with
   the park put in the order before the runner-park fix (`preFixOrder`)
-  finds it in none, held at its `ask` with its unit back. They wait only on
-  the recorder's events, and hold the nap on a promise;
+  finds it in none, held at its `ask` with its unit back; and a job whose
+  load or streaming start its service completed inside the start, held at
+  its wake before it recorded the wait and cancelled by its key there,
+  drops the request at its service by its serve, its trace a run of the
+  protocol (`cancelAfterWakeChecks`). They wait only on the recorder's
+  events, and hold the nap on a promise;
 - `threadChecks`: the editor answers events while a file elaborates, reloads
   are serialised, and a replaced config is not retained;
 - `jobChecks`: jobs from config through the host: a handler receives a job's

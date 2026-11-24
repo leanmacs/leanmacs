@@ -228,108 +228,217 @@ def parkCheck (subject : ProtocolContract.ParkSubject) (holds : Bool := true) : 
           else observed.unitBack && observed.asked.isSome && !ProtocolContract.parkHolds observed)
           s!"{repr observed}" }
 
+/-- The file the cancel-after-wake check's load asks for, in its fake file
+service's model. -/
+def protocolFile : System.FilePath :=
+  "/protocol/a.txt"
+
+/-- The streaming command the cancel-after-wake check's start asks for, which
+its fake process service is scripted for: it writes nothing and exits. -/
+def protocolCommand : Process.Command :=
+  { program := "/bin/protocol", directory := "/protocol" }
+
+/-- What compiled code hands the host of the cancel-after-wake checks: the
+jobs `protocol-load`, which loads `protocolFile`, and `protocol-start`,
+which starts `protocolCommand` as a streaming child
+(`ProtocolContract.loader`, `starter`); the commands `load-keyed` and
+`start-keyed`, which start each under the key `protocol`; and `halt`,
+which cancels the job of that key. -/
+def protocolCompiled : Compiled :=
+  { commands :=
+      #[{ name := "load-keyed"
+          action := .plain (discard <| startJob "protocol-load" [] (some "protocol")) },
+        { name := "start-keyed"
+          action := .plain (discard <| startJob "protocol-start" [] (some "protocol")) },
+        { name := "halt", action := .plain (cancelJob "protocol") }]
+    jobs :=
+      #[{ name := "protocol-load", work := fun _ => ProtocolContract.loader protocolFile },
+        { name := "protocol-start", work := fun _ => ProtocolContract.starter protocolCommand }] }
+
+/-- Whether `trace`, a stepped host's, is the run of one job cancelled after
+its service woke it and before it recorded the wait: start, ask of a
+service wait, the wake, the cancel, the serve that drops the request, the
+resume, the job's done, then the loop's end. -/
+def cancelledAfterWake (trace : Array Job.Protocol.Transition) : Bool :=
+  match trace.toList with
+  |
+  [.start job, .ask asker wait .service, .wake woken .completed, .cancel cancelled, .serve served,
+      .resume resumed, .done done, .loopEnd] =>
+    asker == job && woken == wait && cancelled == job && served == job && resumed == job &&
+      done == job
+  | _ => false
+
+/-- The cancel-after-wake check on a stepped host (task
+`stepped-host-cancel-after-wake-drop-check`): a job whose service completes
+its wait inside its start (the stage's file and process fakes, answering at
+once), started by `command` under the key `protocol`, is held by the
+recorder at its wake (`hold`), on its job thread on Lean's pool, before it
+records the wait; the keyed cancel (`halt`) goes through the host's table
+of jobs there; let go, the job's serve drops the request at its service.
+The stage stays on the pool, as `protocolContractChecks` do: a held job
+thread is the shape the property needs. What `kept` reads of the fakes
+must hold, and the trace must be that run and a run of the protocol. -/
+def steppedCancelAfterWake (context : Context) (name command : String)
+    (hold : Job.Protocol.Transition → Bool)
+    (kept : Job.FakeFiles → Job.FakeProcesses → IO (Bool × String)) : Check :=
+  { name
+    run := do
+      let stage ← Stage.new context context.elaborator (memorySource []) protocolCompiled
+      let completions := stage.collaborators.services.completions
+      let files ←
+        Job.FakeFiles.new completions
+            ((({} : FileModel).withDirectory "/protocol").withFile protocolFile "a\n".toUTF8)
+      let processes ←
+        Job.FakeProcesses.new completions { streams := #[{ command := protocolCommand }] }
+      let recorder ← Job.FakeRecorder.new
+      let staged := recording stage.collaborators recorder
+      let staged :=
+        { staged with
+          services :=
+            { staged.services with
+              files := files.files, processes := processes.processes } }
+      let (woken, letGo) ← recorder.holdAt hold
+      try
+        Headless.withStepped staged stage.memory (guard := hangGuard) (grace := some hangGuard)
+            fun stepped => do
+            stepped.send (.run command)
+            stepped.drain
+            discard <| ProtocolContract.awaitStep "the wait's wake inside its start" woken
+            stepped.send (.run "halt")
+            stepped.drain
+            letGo
+      finally
+        letGo
+      let trace ← recorder.trace
+      let state ← ProtocolContract.replayed trace
+      let (held, said) ← kept files processes
+      saw (cancelledAfterWake trace && state.count == 0 && held)
+          s!"trace={repr trace} {said} output={← stage.output.get}" }
+
+/-- The two cases of the cancel-after-wake check: a file load and a
+streaming start, each held at its wake. -/
+def cancelAfterWakeChecks (context : Context) (hold : Job.Protocol.Transition → Bool) :
+    List Check :=
+  [steppedCancelAfterWake context
+      "a stepped host's job whose load its file service completed before the job recorded it, cancelled by its key there, drops the load at the file service by its serve: nothing is pending there, the load is withdrawn, and the trace is a run of the protocol"
+      "load-keyed" hold fun files _ => do
+      let state ← files.state.get
+      return (state.withdrawn.size == 1 && state.pending.isEmpty,
+          s!"withdrawn={state.withdrawn} pending={state.pending.size}"),
+    steppedCancelAfterWake context
+      "a stepped host's job whose streaming start its process service completed before the job recorded it, cancelled by its key there, drops the start at the process service by its serve: the start is withdrawn, no child is left, nothing waits and nothing was taken, and the trace is a run of the protocol"
+      "start-keyed" hold fun _ processes => do
+      let withdrawn ← processes.withdrawn
+      let model ← processes.model
+      let waiting ← processes.waiting
+      let taken ← processes.taken
+      return (withdrawn.size == 1 && model.children.isEmpty && waiting == 0 && taken.isEmpty,
+          s!"withdrawn={withdrawn} children={model.children.size} waiting={waiting} taken={taken}")]
+
 /-- The checks of the runner's protocol contract on a stepped host. -/
 def protocolContractChecks (context : Context) : List Check :=
-  [{  name :=
-        "a stepped host's jobs record a trace that is a run of the protocol: a nap woken by the clock, one the loop's end cancels, and the loop's end once the jobs it cancelled are done"
-      run := do
-        let stage ← Stage.new context context.elaborator (memorySource []) nappingCompiled
-        let recorder ← Job.FakeRecorder.new
-        Headless.withStepped (recording stage.collaborators recorder) stage.memory (guard :=
-            hangGuard) (grace := some hangGuard) fun stepped => do
-            stepped.send (.spawn "nap")
-            stepped.drain
-            let first ←
-              ProtocolContract.awaitStep "the first nap's park"
-                  (← recorder.reached (· matches .park _))
-            let number := (first.job?).getD 0
-            stage.clock.advance 10
+  [{    name :=
+          "a stepped host's jobs record a trace that is a run of the protocol: a nap woken by the clock, one the loop's end cancels, and the loop's end once the jobs it cancelled are done"
+        run := do
+          let stage ← Stage.new context context.elaborator (memorySource []) nappingCompiled
+          let recorder ← Job.FakeRecorder.new
+          Headless.withStepped (recording stage.collaborators recorder) stage.memory (guard :=
+              hangGuard) (grace := some hangGuard) fun stepped => do
+              stepped.send (.spawn "nap")
+              stepped.drain
+              let first ←
+                ProtocolContract.awaitStep "the first nap's park"
+                    (← recorder.reached (· matches .park _))
+              let number := (first.job?).getD 0
+              stage.clock.advance 10
+              discard <|
+                  ProtocolContract.awaitStep "the first nap's done"
+                    (← recorder.reached (· == .done number))
+              stepped.send (.spawn "nap")
+              stepped.drain
+              discard <|
+                  ProtocolContract.awaitStep "the second nap's park"
+                    (← recorder.reached (parksOther number))
+          let trace ← recorder.trace
+          let state ← ProtocolContract.replayed trace
+          saw (trace.back? == some .loopEnd && state.jobs.length == 2 && state.count == 0)
+              s!"trace={repr trace}" },
+      { name :=
+          "a stepped host's loop's end waits for the jobs cancelled before it, by a keyed cancel and by an owner's removal, and records its end only once they are done: the trace is a run of the protocol"
+        run := do
+          let stage ←
+            Stage.new context context.elaborator (memorySource [("init", dozingText)]) keyedNapping
+          let recorder ← Job.FakeRecorder.new
+          let staged := recording stage.collaborators recorder
+          -- Each cancelled job is held at its resume, its wait withdrawn, until
+          -- the loop's end hands over what it waits for; a `finally` lets them
+          -- go too. A held call, never a sleep.
+          let releases ← IO.mkRef (#[] : Array (BaseIO Unit))
+          let letGo : BaseIO Unit := do
+            for release in ← releases.get do
+              release
+          let handed ← IO.mkRef (none : Option Nat)
+          let (keyed, dozing) ←
+            try
+              Headless.withStepped
+                  { staged with
+                    endCancelled := fun cancelled => do
+                      handed.set (some cancelled.size)
+                      -- A loop's end that hands over none of them records its
+                      -- end with them still held.
+                      unless cancelled.isEmpty do
+                        letGo
+                      staged.endCancelled cancelled }
+                  stage.memory (guard := hangGuard) (grace := some hangGuard) fun stepped => do
+                  stepped.send .reload
+                  drainUntil stage stepped "the first reload's report"
+                      (·.any (·.startsWith "reload 1: installed"))
+                  -- The keyed nap, parked, then cancelled by its key.
+                  stepped.send (.run "rest-keyed")
+                  stepped.drain
+                  let keyed :=
+                    ((←
+                            ProtocolContract.awaitStep "the keyed nap's park"
+                                (← recorder.reached (· matches .park _))).job?).getD
+                      0
+                  let (keyedHeld, release) ← recorder.holdAt (· == .resume keyed)
+                  releases.modify (·.push release)
+                  stepped.send (.run "halt")
+                  stepped.drain
+                  discard <| ProtocolContract.awaitStep "the keyed nap's resume" keyedHeld
+                  -- Config's doze, parked, then cancelled by the reload that
+                  -- installs, which removes config's jobs.
+                  stepped.send (.spawn "doze")
+                  stepped.drain
+                  let dozing :=
+                    ((←
+                            ProtocolContract.awaitStep "the doze's park"
+                                (← recorder.reached (parksOther keyed))).job?).getD
+                      0
+                  let (dozeHeld, release) ← recorder.holdAt (· == .resume dozing)
+                  releases.modify (·.push release)
+                  stepped.send .reload
+                  drainUntil stage stepped "the second reload's report"
+                      (·.any (·.startsWith "reload 2: installed"))
+                  discard <| ProtocolContract.awaitStep "the doze's resume" dozeHeld
+                  return (keyed, dozing)
+            finally
+              letGo
+          for job in [keyed, dozing] do
             discard <|
-                ProtocolContract.awaitStep "the first nap's done"
-                  (← recorder.reached (· == .done number))
-            stepped.send (.spawn "nap")
-            stepped.drain
-            discard <|
-                ProtocolContract.awaitStep "the second nap's park"
-                  (← recorder.reached (parksOther number))
-        let trace ← recorder.trace
-        let state ← ProtocolContract.replayed trace
-        saw (trace.back? == some .loopEnd && state.jobs.length == 2 && state.count == 0)
-            s!"trace={repr trace}" },
-    { name :=
-        "a stepped host's loop's end waits for the jobs cancelled before it, by a keyed cancel and by an owner's removal, and records its end only once they are done: the trace is a run of the protocol"
-      run := do
-        let stage ←
-          Stage.new context context.elaborator (memorySource [("init", dozingText)]) keyedNapping
-        let recorder ← Job.FakeRecorder.new
-        let staged := recording stage.collaborators recorder
-        -- Each cancelled job is held at its resume, its wait withdrawn, until
-        -- the loop's end hands over what it waits for; a `finally` lets them
-        -- go too. A held call, never a sleep.
-        let releases ← IO.mkRef (#[] : Array (BaseIO Unit))
-        let letGo : BaseIO Unit := do
-          for release in ← releases.get do
-            release
-        let handed ← IO.mkRef (none : Option Nat)
-        let (keyed, dozing) ←
-          try
-            Headless.withStepped
-                { staged with
-                  endCancelled := fun cancelled => do
-                    handed.set (some cancelled.size)
-                    -- A loop's end that hands over none of them records its
-                    -- end with them still held.
-                    unless cancelled.isEmpty do
-                      letGo
-                    staged.endCancelled cancelled }
-                stage.memory (guard := hangGuard) (grace := some hangGuard) fun stepped => do
-                stepped.send .reload
-                drainUntil stage stepped "the first reload's report"
-                    (·.any (·.startsWith "reload 1: installed"))
-                -- The keyed nap, parked, then cancelled by its key.
-                stepped.send (.run "rest-keyed")
-                stepped.drain
-                let keyed :=
-                  ((←
-                          ProtocolContract.awaitStep "the keyed nap's park"
-                              (← recorder.reached (· matches .park _))).job?).getD
-                    0
-                let (keyedHeld, release) ← recorder.holdAt (· == .resume keyed)
-                releases.modify (·.push release)
-                stepped.send (.run "halt")
-                stepped.drain
-                discard <| ProtocolContract.awaitStep "the keyed nap's resume" keyedHeld
-                -- Config's doze, parked, then cancelled by the reload that
-                -- installs, which removes config's jobs.
-                stepped.send (.spawn "doze")
-                stepped.drain
-                let dozing :=
-                  ((←
-                          ProtocolContract.awaitStep "the doze's park"
-                              (← recorder.reached (parksOther keyed))).job?).getD
-                    0
-                let (dozeHeld, release) ← recorder.holdAt (· == .resume dozing)
-                releases.modify (·.push release)
-                stepped.send .reload
-                drainUntil stage stepped "the second reload's report"
-                    (·.any (·.startsWith "reload 2: installed"))
-                discard <| ProtocolContract.awaitStep "the doze's resume" dozeHeld
-                return (keyed, dozing)
-          finally
-            letGo
-        for job in [keyed, dozing] do
-          discard <|
-              ProtocolContract.awaitStep s!"job {job}'s done" (← recorder.reached (· == .done job))
-        let trace ← recorder.trace
-        let state ← ProtocolContract.replayed trace
-        let handed ← handed.get
-        saw
-            (trace.back? == some .loopEnd && handed == some 2 && trace.contains (.cancel keyed) &&
-              trace.contains (.cancel dozing) &&
-              state.jobs.length == 2 &&
-              state.count == 0)
-            s!"handed={handed} trace={repr trace}" },
-    parkCheck (steppedPark context runnerOrder),
-    parkCheck (steppedPark context preFixOrder) (holds := false)]
+                ProtocolContract.awaitStep s!"job {job}'s done"
+                  (← recorder.reached (· == .done job))
+          let trace ← recorder.trace
+          let state ← ProtocolContract.replayed trace
+          let handed ← handed.get
+          saw
+              (trace.back? == some .loopEnd && handed == some 2 && trace.contains (.cancel keyed) &&
+                trace.contains (.cancel dozing) &&
+                state.jobs.length == 2 &&
+                state.count == 0)
+              s!"handed={handed} trace={repr trace}" },
+      parkCheck (steppedPark context runnerOrder),
+      parkCheck (steppedPark context preFixOrder) (holds := false)] ++
+    cancelAfterWakeChecks context (· matches .wake _ .completed)
 
 end ConfigTest
