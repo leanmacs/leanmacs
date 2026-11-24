@@ -124,6 +124,11 @@ def main (arguments : List String) : IO UInt32 := do
     Editor.Ffi.watchesShutdown
     Editor.Ffi.quit
     IO.Process.exit (if library && config then 0 else 1)
+  -- No module of the wiring set: it lists none (`tools/package-set.sh
+  -- wiring-modules`), and the stress loop's `linked-wiring` skips it.
+  | ["wiring-modules"] =>
+    return 0
   | _ =>
-    IO.eprintln "usage: GreetingTest-Linked <sysroot> <core olean dir>"
+    IO.eprintln
+        "usage: GreetingTest-Linked <sysroot> <core olean dir>, or GreetingTest-Linked wiring-modules"
     return 2

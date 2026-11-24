@@ -28,6 +28,10 @@ not; 2 for a command line that is not the two directories, with `--write`
 after them or not. The exit is explicit, as the core's picture scenario's
 is: a task of the library may still be running. -/
 def main (arguments : List String) : IO UInt32 := do
+  -- No module of the wiring set: it lists none (`tools/package-set.sh
+  -- wiring-modules`), and the stress loop's `linked-wiring` skips it.
+  if arguments == ["wiring-modules"] then
+    return 0
   let write ←
     match arguments with
     | [_, _] =>
@@ -35,7 +39,8 @@ def main (arguments : List String) : IO UInt32 := do
     | [_, _, "--write"] =>
       pure true
     | _ =>
-      IO.eprintln "usage: ShippedThemesTest-Linked <sysroot> <core olean dir> [--write]"
+      IO.eprintln
+          "usage: ShippedThemesTest-Linked <sysroot> <core olean dir> [--write], or ShippedThemesTest-Linked wiring-modules"
       return 2
   let status ← ShippedThemesTest.Linked.themePictures write
   (← IO.getStdout).flush

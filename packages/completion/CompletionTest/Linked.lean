@@ -40,6 +40,11 @@ def main (arguments : List String) : IO UInt32 := do
           s!"completion linked test: {CompletionTest.linkedStyles.length * Editor.Completion.StyleContract.properties.length} checks passed"
     (← IO.getStdout).flush
     return if failed.isEmpty then 0 else 1
+  -- No module of the wiring set: it lists none (`tools/package-set.sh
+  -- wiring-modules`), and the stress loop's `linked-wiring` skips it.
+  | ["wiring-modules"] =>
+    return 0
   | _ =>
-    IO.eprintln "usage: CompletionTest-Linked <sysroot> <core olean dir>"
+    IO.eprintln
+        "usage: CompletionTest-Linked <sysroot> <core olean dir>, or CompletionTest-Linked wiring-modules"
     return 2

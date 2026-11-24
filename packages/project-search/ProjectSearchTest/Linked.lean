@@ -48,6 +48,11 @@ def main (arguments : List String) : IO UInt32 := do
     (← IO.getStdout).flush
     Editor.Test.Linked.shutdown
     IO.Process.exit (if failed.isEmpty then 0 else 1)
+  -- No module of the wiring set: it lists none (`tools/package-set.sh
+  -- wiring-modules`), and the stress loop's `linked-wiring` skips it.
+  | ["wiring-modules"] =>
+    return 0
   | _ =>
-    IO.eprintln "usage: ProjectSearchTest-Linked <sysroot> <core olean dir>"
+    IO.eprintln
+        "usage: ProjectSearchTest-Linked <sysroot> <core olean dir>, or ProjectSearchTest-Linked wiring-modules"
     return 2
