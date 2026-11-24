@@ -27,9 +27,12 @@ it.
   or a real service's readout whose fake exists (`realEffect`). It is
   allowed in the constant's own module, in the subject modules its mark
   names, and in a test module that mirrors either (`<Root>.<module>`);
-  anywhere else it is refused. A module of the wiring set beside a mirror
-  (`<Root>.<module>.Real`, `<Root>.<module>.Real.<Subject>`) mirrors it
-  too (`mirrors`). In the own or a subject module, when that is
+  anywhere else it is refused. A module beside a mirror,
+  `<Root>.<module>.Real` or `<Root>.<module>.Real.<Subject>`, counts as
+  that mirror only when it declares itself of the wiring set with
+  `.wiring` (`wiringSet.<its module>`, read by `declaredHere?`,
+  `Lint/Marks.lean`, as the real-host linter reads it; `wiresBeside`): its
+  name alone makes it none. In the own or a subject module, when that is
   a test module, a public declaration that references one must have a mark
   itself, written before it, so a kit cannot hand a restricted wait to
   everyone (no laundering). A declaration of the module that no other
@@ -66,7 +69,8 @@ are marked where they are declared, in one place each.
 
 Its checks are `LintTest.lintWaitChecks` (`LintTest/Lint/Wait.lean`), run
 by `lint-test`, and the `#guard_msgs` fixtures of
-`ModelTest/Lint/Wait.lean`, `ContractTest/Lint/Wait.lean`,
+`ModelTest/Lint/Wait.lean` and the modules under `ModelTest/Lint/Wait/`,
+`ContractTest/Lint/Wait.lean`,
 `ConfigTest/Lint/Wait.lean`, `FfiTest/Lint/Wait.lean` and the fixture
 package `greeting`'s `GreetingTest/Lint/Wait.lean`, which a build of those
 modules runs. That every library and executable of the core and of the
@@ -155,23 +159,32 @@ def rawClockReads : List Name :=
 
 /-- Whether `module` is the test module that mirrors `target`: `target`
 under a test root, `<Root>.<target>`, as `ModelTest.Editor.Job.Activity`
-mirrors `Editor.Job.Activity`; or a module of the wiring set beside that
-mirror, `<Root>.<target>.Real` or `<Root>.<target>.Real.<Subject>`, which
-holds the mirror's checks over a real adapter that has no module of its
-own (`docs/dev-practices/real-thread-checks.md`), as
-`ConfigTest.Editor.Headless.Real.Waits` holds `Editor.Headless`'s waits
-across a real loop thread. -/
+mirrors `Editor.Job.Activity`. -/
 def mirrors (module target : Name) : Bool :=
   match module.components with
-  | root :: rest =>
-    let target := target.components
-    root.toString.endsWith "Test" &&
-      (rest == target ||
-        (rest.take target.length == target &&
-          match rest.drop target.length with
-          | [real] | [real, _] => real == `Real
-          | _ => false))
+  | root :: rest => root.toString.endsWith "Test" && rest == target.components
   | [] => false
+
+/-- Whether `module`, which declares itself `declared` (`declaredHere?`,
+`Lint/Marks.lean`), is a module of the wiring set beside the mirror of
+`target`, and so counts as that mirror: it declares `.wiring`, and is
+`<Root>.<target>.Real` or `<Root>.<target>.Real.<Subject>`, which holds
+the mirror's checks over a real adapter that has no module of its own
+(`docs/dev-practices/real-thread-checks.md`), as
+`ConfigTest.Editor.Headless.Real.Waits` holds `Editor.Headless`'s waits
+across a real loop thread. A module of that name that declares nothing, or
+`.contract` or `.edge`, is no mirror: the declaration the real-host linter
+reads says what is of the wiring set, and the name alone does not. -/
+def wiresBeside (declared : Option Declared) (module target : Name) : Bool :=
+  declared.any Declared.isWiring &&
+    match module.components with
+    | root :: rest =>
+      let target := target.components
+      root.toString.endsWith "Test" && rest.take target.length == target &&
+        match rest.drop target.length with
+        | [real] | [real, _] => real == `Real
+        | _ => false
+    | [] => false
 
 /-- `linter.rawClock`: refuses a raw clock read outside `clockModule`. -/
 def rawClockLinter : Linter where
@@ -192,11 +205,13 @@ initialize
   addLinter rawClockLinter
 
 /-- Whether a reference to a constant declared in `owner`, with the
-mark `wait`, is allowed in the module `here`: `owner` itself, a
-subject module, or a test module that mirrors one of them. -/
-def allowedIn (wait : InferredWait) (owner here : Name) : Bool :=
+mark `wait`, is allowed in the module `here`, which declares itself
+`declared` (`declaredHere?`): `owner` itself, a subject module, a test
+module that mirrors one of them, or a module of the wiring set beside such
+a mirror (`wiresBeside`). -/
+def allowedIn (wait : InferredWait) (declared : Option Declared) (owner here : Name) : Bool :=
   let homes := #[owner] ++ wait.subjects
-  homes.contains here || homes.any (mirrors here)
+  homes.contains here || homes.any (mirrors here) || homes.any (wiresBeside declared here)
 
 /-- Whether a public declaration `user` of the module `here` that
 references a constant declared in `owner`, with the mark `wait`, hands it
@@ -218,6 +233,7 @@ def inferredWaitLinter : Linter where
         return
       let env ← getEnv
       let here := env.mainModule
+      let declared := declaredHere? env here
       for tree in ← getInfoTrees do
         for (stx, referencedName, user) in referenced tree do
           if user == some referencedName then
@@ -234,7 +250,7 @@ def inferredWaitLinter : Linter where
             continue
           let owner := declaringModule env here name
           let homes := #[owner] ++ wait.subjects
-          if !allowedIn wait owner here then
+          if !allowedIn wait declared owner here then
             Linter.logLint linter.inferredWait stx
                 m!"`{name}`{(user.map fun user => s!", in `{privateToUserName user}`,").getD ""} is an inferred wait ({wait.kind}){via}: it infers done from something shared, not from a signal for this work. It is allowed only in {", ".intercalate (homes.toList.map toString)} and the test modules that mirror them; wait on the work's own handle, promise or flush, or, for a site a later phase removes, `set_option linter.inferredWait false in` with its row of docs/dev-practices/inferred-waits.md"
           else if let some user := user then

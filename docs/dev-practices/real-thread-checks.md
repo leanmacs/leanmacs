@@ -68,7 +68,11 @@ and `ModelTest/Lint/RealHost/`.
    wiring checks go beside the mirror of the module they test, in
    `<mirror>/Real.lean`, or `<mirror>/Real/<Subject>.lean` when the subjects
    are several. The mirror itself keeps the stepped checks. The wait
-   linter counts these modules as the mirror (`Lint.mirrors`).
+   linter counts such a module as the mirror only when it declares
+   `.wiring` (`Lint.wiresBeside`, over the declaration `declaredHere?`
+   reads, `lean/Lint/Marks.lean`, as this linter does): a module of that
+   name that declares nothing, a `.contract` or an `.edge` is no mirror, so
+   its name alone grants no inferred wait.
 
 ## The wiring set, by module and reason
 

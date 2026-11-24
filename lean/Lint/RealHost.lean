@@ -40,7 +40,8 @@ that no other module can name and that hands one on (`referencedMark?`,
 6. A `wiringSet` declaration is linted as it is elaborated: it is this
    module's (`wiringSet.<module>`), and its value is a constructor of
    `Editor.WiringSet` applied to string literals none of which is empty
-   (`decodeWiringSet`). A mark this linter cannot read is refused at each
+   (`decodeWiringSet`, `Lint/Marks.lean`, which the wait linter reads a
+   module's declaration through too). A mark this linter cannot read is refused at each
    reference to the constant it marks.
 
 The option defaults to `false`, and our builds turn it on with `linter.all`,
@@ -83,37 +84,15 @@ def Host.runs : Host → String
   | .loop => "a real editor loop thread (loop)"
   | .service => "a real background service (service)"
 
-/-- Why a module may reach marked entry points, as its declaration says
-(`Editor.WiringSet`). -/
-inductive Declared where
-  /-- Its checks wire the real adapter `adapter`, for `why`. -/
-  | wiring (adapter why : String)
-  /-- It runs `port`'s contract against its real adapter. -/
-  | contract (port : String)
-  /-- An executable's root, whose `main` wires real adapters, for `why`. -/
-  | edge (why : String)
-  deriving Inhabited, Repr, BEq
-
 /-- The type of a mark (`Editor/RealHost.lean`). This library imports no
 module of the editor, so it names the type, and the fixtures that a mark
 makes a lint fire are what hold the two to one name. -/
 def hostType : Name :=
   `Editor.RealHost
 
-/-- The type of a module's declaration (`Editor/RealHost.lean`). -/
-def wiringSetType : Name :=
-  `Editor.WiringSet
-
 /-- The name of the mark of the constant `name`: `<name>.realHost`. -/
 def hostMarkOf (name : Name) : Name :=
   name.str "realHost"
-
-/-- The name of the declaration of the module `module`:
-`wiringSet.<module>`: under a root namespace of its own, `wiringSet`, so the
-namespace of no module's own name is made (`ConfigTest.Editor` would
-shadow `Editor` in `namespace ConfigTest`). -/
-def wiringSetOf (module : Name) : Name :=
-  `wiringSet ++ module
 
 /-- What a mark's value says, when it is one of `hostType`'s constructors,
 and nothing otherwise. -/
@@ -123,32 +102,6 @@ def decodeHost (value : Expr) : Option Host :=
     if type != hostType then none
     else if kind == "loop" then some .loop else if kind == "service" then some .service else none
   | _ => none
-
-/-- The string `value` is written as, when it is a literal that is not
-empty. -/
-def nonEmptyString? (value : Expr) : Option String :=
-  match value.consumeMData with
-  | .lit (.strVal text) => if text.isEmpty then none else some text
-  | _ => none
-
-/-- What a declaration's value says, when it is one of `wiringSetType`'s
-constructors applied to string literals none of which is empty, and nothing
-otherwise. -/
-def decodeWiringSet (value : Expr) : Option Declared := do
-  let value := value.consumeMData
-  let .const (.str type kind) _ := value.getAppFn.consumeMData | none
-  unless type == wiringSetType do
-    none
-  let texts ← value.getAppArgs.toList.mapM nonEmptyString?
-  match kind, texts with
-  | "wiring", [adapter, why] =>
-    some (.wiring adapter why)
-  | "contract", [port] =>
-    some (.contract port)
-  | "edge", [why] =>
-    some (.edge why)
-  | _, _ =>
-    none
 
 /-- Whether `type`, the type of a public declaration, is a check's: after
 its binders and any `IO`, `BaseIO` or `List` around the result, a constant
@@ -197,16 +150,6 @@ def markedHost? (env : Environment) (name : Name) : Option (Except String Host) 
     | none =>
       throw
           s!"`{hostMarkOf name}` is a mark the real-host linter cannot read: write its value as `.loop` or `.service`"
-
-/-- What the module being elaborated declares itself (`wiringSet.<here>`,
-declared in it, of `wiringSetType`, its value as `decodeWiringSet` reads
-it), and nothing when it declares nothing this linter can read. -/
-def declaredHere? (env : Environment) (here : Name) : Option Declared := do
-  let name := wiringSetOf here
-  let info ← env.find? name
-  unless (env.getModuleIdxFor? name).isNone && info.type.isConstOf wiringSetType do
-    none
-  decodeWiringSet (← info.value? (allowOpaque := true))
 
 /-- The fix a refused reference's message names. -/
 def wiringFix (here : Name) : String :=

@@ -12,7 +12,10 @@ read through: the references a command's info trees hold, the rule on a
 module's name that says it is a test module, the module a constant was
 declared in, and the search for the mark a declaration of the module being
 elaborated hands on, over any mark (`handedOn?`), so no laundering holds
-through a private wrapper for either linter.
+through a private wrapper for either linter. It also holds how a module
+declares itself of the wiring set (`wiringSet.<module>`, `declaredHere?`),
+which the real-host linter confines real hosts to and the wait linter
+counts beside a mirror as that mirror, so the two read one declaration.
 -/
 
 open Lean Elab
@@ -114,5 +117,69 @@ def referencedMark? {α : Type} (read : Name → Option α) (env : Environment) 
     if isLocalHelper env name then
       (handedOn? read env name).map fun (marked, mark) => (marked, mark, some name)
     else none
+
+/-- Why a module may reach marked entry points, as its declaration says
+(`Editor.WiringSet`). -/
+inductive Declared where
+  /-- Its checks wire the real adapter `adapter`, for `why`. -/
+  | wiring (adapter why : String)
+  /-- It runs `port`'s contract against its real adapter. -/
+  | contract (port : String)
+  /-- An executable's root, whose `main` wires real adapters, for `why`. -/
+  | edge (why : String)
+  deriving Inhabited, Repr, BEq
+
+/-- The type of a module's declaration (`Editor/RealHost.lean`). -/
+def wiringSetType : Name :=
+  `Editor.WiringSet
+
+/-- The name of the declaration of the module `module`:
+`wiringSet.<module>`: under a root namespace of its own, `wiringSet`, so the
+namespace of no module's own name is made (`ConfigTest.Editor` would
+shadow `Editor` in `namespace ConfigTest`). -/
+def wiringSetOf (module : Name) : Name :=
+  `wiringSet ++ module
+
+/-- The string `value` is written as, when it is a literal that is not
+empty. -/
+def nonEmptyString? (value : Expr) : Option String :=
+  match value.consumeMData with
+  | .lit (.strVal text) => if text.isEmpty then none else some text
+  | _ => none
+
+/-- What a declaration's value says, when it is one of `wiringSetType`'s
+constructors applied to string literals none of which is empty, and nothing
+otherwise. -/
+def decodeWiringSet (value : Expr) : Option Declared := do
+  let value := value.consumeMData
+  let .const (.str type kind) _ := value.getAppFn.consumeMData | none
+  unless type == wiringSetType do
+    none
+  let texts ← value.getAppArgs.toList.mapM nonEmptyString?
+  match kind, texts with
+  | "wiring", [adapter, why] =>
+    some (.wiring adapter why)
+  | "contract", [port] =>
+    some (.contract port)
+  | "edge", [why] =>
+    some (.edge why)
+  | _, _ =>
+    none
+
+/-- What the module being elaborated declares itself (`wiringSet.<here>`,
+declared in it, of `wiringSetType`, its value as `decodeWiringSet` reads
+it), and nothing when it declares nothing the linters can read: what both
+linters read a module's membership of the wiring set from. -/
+def declaredHere? (env : Environment) (here : Name) : Option Declared := do
+  let name := wiringSetOf here
+  let info ← env.find? name
+  unless (env.getModuleIdxFor? name).isNone && info.type.isConstOf wiringSetType do
+    none
+  decodeWiringSet (← info.value? (allowOpaque := true))
+
+/-- Whether `declared`, what a module declares itself, is `.wiring`. -/
+def Declared.isWiring : Declared → Bool
+  | .wiring .. => true
+  | _ => false
 
 end Lint

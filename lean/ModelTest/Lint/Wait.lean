@@ -84,6 +84,22 @@ here. -/
 def ModelTest.LintFixture.tagged : BaseIO Nat :=
   ModelTest.LintFixture.sharedCount
 
+/-! A module of the wiring set beside a mirror counts as that mirror only
+when it declares `.wiring`: the modules under `ModelTest/Lint/Wait/`
+reference `besideCount`, whose subjects are two stand-in modules, from
+`<Root>.<subject>.Real` and `<Root>.<subject>.Real.<Subject>`, with and
+without a declaration. -/
+
+/-- The mark of `besideCount`: its subjects are stand-ins, the targets of
+the fixture modules under `ModelTest/Lint/Wait/`. -/
+def ModelTest.LintFixture.besideCount.inferredWait : Editor.InferredWait :=
+  .count [`Lint.Wait.Wired, `Lint.Wait.Unwired]
+
+/-- A stand-in for an inferred wait whose subjects are the fixtures'
+stand-in modules. -/
+def ModelTest.LintFixture.besideCount : BaseIO Nat :=
+  pure 0
+
 /-! No laundering holds through a private declaration: one that references
 an inferred wait, directly or through another of this module, is a
 reference to that wait wherever it is referenced, so a public declaration

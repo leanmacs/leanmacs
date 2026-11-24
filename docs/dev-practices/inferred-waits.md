@@ -31,6 +31,14 @@ to the subject modules (`.idle [`Editor.Headless.Wait]`;
 (`lean/Lint/Wait.lean`) refuses a reference to one anywhere but its own
 module, the subject modules its mark names and the test modules that
 mirror them (`ModelTest.Editor.Job.Activity` mirrors `Editor.Job.Activity`).
+A module beside a mirror, `<Root>.<module>.Real` or
+`<Root>.<module>.Real.<Subject>`, counts as that mirror only when it
+declares itself of the wiring set with `.wiring`
+([real-thread-checks.md](real-thread-checks.md), "Where a module of the
+wiring set goes"): the linter reads the declaration `wiringSet.<module>`
+as the real-host linter does (`declaredHere?`, `lean/Lint/Marks.lean`), so
+a module of that name that declares nothing, a `.contract` or an `.edge`
+is refused, and the two linters hold one wiring set.
 In the own or a subject module, when that is a test module, a public
 declaration that references one must have a mark itself, written before
 it, so a kit cannot hand a restricted wait on to everyone: the kit's waits
@@ -277,7 +285,8 @@ each of its rules is now a type, a Lean linter or a clippy lint:
 | The files it scanned | the Lean linters are loaded, as a plugin, into every module of the core's libraries and of every package under `packages/` and `tests/packages/` (the library `Lint`, `lean/lakefile.lean`), and clippy runs over every target of every crate, under a config that holds the bans |
 
 What each holds is pinned by a fixture that must fail: the `#guard_msgs`
-fixtures of `ModelTest/Lint/Wait.lean`, `ContractTest/Lint/Wait.lean` and
+fixtures of `ModelTest/Lint/Wait.lean` and the modules under
+`ModelTest/Lint/Wait/`, `ContractTest/Lint/Wait.lean` and
 `ConfigTest/Lint/Wait.lean` (and the rules they apply by
 `LintTest.lintWaitChecks`, `lake exe lint-test`), the `fail_if_success` examples of
 `ModelTest/Editor/Bound.lean`, `editor-wait`'s `compile_fail` doctests, and

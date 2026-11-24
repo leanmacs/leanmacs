@@ -5,9 +5,11 @@ import LintTest.Check
 # Lint tests: `Lint/Wait.lean`
 
 The checks of the wait linters' rules, `lintWaitChecks`: the rules on
-module names the linters apply, and how a mark's value is read. What the
+module names the linters apply, with which module of the wiring set beside
+a mirror counts as it, and how a mark's value is read. What the
 linters refuse in a module is shown by their fixtures, which a build of
-the test roots runs (`ModelTest/Lint/Wait.lean`,
+the test roots runs (`ModelTest/Lint/Wait.lean` and the modules under
+`ModelTest/Lint/Wait/`,
 `ConfigTest/Lint/Wait.lean`, `ContractTest/Lint/Wait.lean`). The root
 module `LintTest` runs the checks; its module doc says what each shows.
 -/
@@ -29,8 +31,9 @@ def namesLiteral (names : List Name) : Expr :=
     mkApp3 (.const ``List.cons [.zero]) type (toExpr name) list
 
 /-- The checks of the wait linters' rules (`Lint/Wait.lean`): what a test
-module is, which test module mirrors which, and what a mark's value
-says. -/
+module is, which test module mirrors which, which module that declares
+`.wiring` beside a mirror counts as it, where an inferred wait is allowed,
+and what a mark's value says. -/
 def lintWaitChecks : List Check :=
   [{  name :=
         "a test module is one whose first name component ends in Test, or the core's test kits under Editor.Test"
@@ -49,15 +52,49 @@ def lintWaitChecks : List Check :=
             !Lint.mirrors `ModelTest.Editor.Job.Activity `Editor.Job.Runner &&
             !Lint.mirrors `Editor.Job.Activity `Editor.Job.Activity &&
             !Lint.mirrors `ModelTest `Editor.Job.Activity },
-    { name :=
-        "a module of the wiring set beside a mirror, its Real module or a subject under it, mirrors the module too, and no deeper module or other name does"
+    { name := "a module's name alone makes it no mirror of the module beside whose mirror it sits"
       run :=
-        return Lint.mirrors `ConfigTest.Editor.Headless.Real `Editor.Headless &&
-            Lint.mirrors `ConfigTest.Editor.Headless.Real.Waits `Editor.Headless &&
-            !Lint.mirrors `ConfigTest.Editor.Headless.Real.Waits.More `Editor.Headless &&
-            !Lint.mirrors `ConfigTest.Editor.Headless.Stepped `Editor.Headless &&
-            !Lint.mirrors `ConfigTest.Editor.Headless.Fake.Waits `Editor.Headless &&
-            !Lint.mirrors `ConfigTest.Editor.Real `Editor.Headless },
+        return !Lint.mirrors `ConfigTest.Editor.Headless.Real `Editor.Headless &&
+            !Lint.mirrors `ConfigTest.Editor.Headless.Real.Waits `Editor.Headless &&
+            !Lint.mirrors `ConfigTest.Editor.Job.Real `Editor.Job &&
+            Lint.mirrors `ConfigTest.Editor.Job.Real `Editor.Job.Real },
+    { name :=
+        "a module that declares .wiring beside a mirror, its Real module or a subject under it, counts as the mirror, and no deeper module or other name does"
+      run :=
+        let wired := some (Lint.Declared.wiring "the loop thread" "no stepped thread")
+        return Lint.wiresBeside wired `ConfigTest.Editor.Headless.Real `Editor.Headless &&
+            Lint.wiresBeside wired `ConfigTest.Editor.Headless.Real.Waits `Editor.Headless &&
+            !Lint.wiresBeside wired `ConfigTest.Editor.Headless.Real.Waits.More `Editor.Headless &&
+            !Lint.wiresBeside wired `ConfigTest.Editor.Headless.Stepped `Editor.Headless &&
+            !Lint.wiresBeside wired `ConfigTest.Editor.Headless.Fake.Waits `Editor.Headless &&
+            !Lint.wiresBeside wired `ConfigTest.Editor.Real `Editor.Headless &&
+            !Lint.wiresBeside wired `ConfigTest.Editor.Headless.Real.Waits `Editor.Job &&
+            !Lint.wiresBeside wired `Editor.Headless.Real `Editor.Headless },
+    { name := "a module beside a mirror that declares nothing, a contract or an edge counts as no mirror"
+      run :=
+        return !Lint.wiresBeside none `ConfigTest.Editor.Headless.Real `Editor.Headless &&
+            !Lint.wiresBeside none `ModelTest.Editor.Headless.Real.Foo `Editor.Headless &&
+            !Lint.wiresBeside (some (.contract "Echo.Contract")) `ConfigTest.Editor.Headless.Real
+              `Editor.Headless &&
+            !Lint.wiresBeside (some (.edge "main starts the host")) `ConfigTest.Editor.Headless.Real.Waits
+              `Editor.Headless },
+    { name :=
+        "an inferred wait is allowed in its own module, a subject module, their mirrors, and a module that declares .wiring beside a mirror, and nowhere else"
+      run :=
+        let wait : Lint.InferredWait := { kind := `idle, subjects := #[`Editor.Headless] }
+        let wired := some (Lint.Declared.wiring "the loop thread" "no stepped thread")
+        let owner := `Editor.Headless.Wait
+        return Lint.allowedIn wait none owner `Editor.Headless.Wait &&
+            Lint.allowedIn wait none owner `Editor.Headless &&
+            Lint.allowedIn wait none owner `ConfigTest.Editor.Headless &&
+            Lint.allowedIn wait none owner `ConfigTest.Editor.Headless.Wait &&
+            Lint.allowedIn wait wired owner `ConfigTest.Editor.Headless.Real.Waits &&
+            Lint.allowedIn wait wired owner `ConfigTest.Editor.Headless.Wait.Real &&
+            !Lint.allowedIn wait none owner `ConfigTest.Editor.Headless.Real.Waits &&
+            !Lint.allowedIn wait none owner `ModelTest.Editor.Headless.Real.Foo &&
+            !Lint.allowedIn wait wired owner `ConfigTest.Editor.Job.Real &&
+            !Lint.allowedIn wait wired owner `ConfigTest.Editor.Headless.Real.Waits.More &&
+            !Lint.allowedIn wait none owner `ConfigTest.Editor.Job },
     { name := "the mark of a constant is the constant's name with inferredWait added"
       run :=
         return Lint.markOf `Editor.Job.Activity.seen == `Editor.Job.Activity.seen.inferredWait },

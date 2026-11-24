@@ -18,7 +18,9 @@ and runs them.
 
 - `lintWaitChecks` (`LintTest/Lint/Wait.lean`): the wait linters' rules
   (`Lint/Wait.lean`): what a test module is and which test module mirrors
-  which; the name of a constant's mark; and how a mark's value is read: a
+  which; that a module beside a mirror counts as it only when it declares
+  `.wiring`, its name alone making it none; where an inferred wait is
+  allowed; the name of a constant's mark; and how a mark's value is read: a
   kind applied to a list of module names written out, or to a constant
   whose value is one, and nothing else.
 - `lintRealHostChecks` (`LintTest/Lint/RealHost.lean`): the real-host

@@ -2863,7 +2863,9 @@ lint`, never a script over source text:
 - **It bites**: `ModelTest/Lint/Wait.lean` holds `#guard_msgs` fixtures,
   built by `mise run lean-test` and `mise run lean` and never run, that
   expect the error for a raw sleep, a raw clock read, a count read outside
-  its modules, a laundering wrapper, one through a private wrapper, a new
+  its modules, a laundering wrapper, one through a private wrapper, a count
+  read in a module named beside a mirror that declares no wiring set (the
+  modules under `ModelTest/Lint/Wait/`, beside a `.wiring` one that may), a new
   count read in a check list
   beside a check under an allow and a mark of the wrong type or worked
   out, and a `fail_if_success` that `Job.awaitWithin` takes no number;

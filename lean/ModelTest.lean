@@ -153,7 +153,9 @@ import ModelTest.Lint.RealHost.Contract
 import ModelTest.Lint.RealHost.Declaration
 import ModelTest.Lint.RealHost.Edge
 import ModelTest.Lint.RealHost.Launder
-import ModelTest.Lint.Wait
+import ModelTest.Lint.Wait.Unwired.Real
+import ModelTest.Lint.Wait.Unwired.Real.Deeper
+import ModelTest.Lint.Wait.Wired.Real
 
 /-!
 # The model tests
@@ -666,11 +668,14 @@ The job system is tested here with no Rust library:
   same event. The module's `fail_if_success` examples show that a number,
   an anonymous constructor and a structure instance are not a bound. They
   run last;
-- the wait linters' fixtures (`ModelTest/Lint/Wait.lean`), which hold no
-  check: bad declarations the linters refuse (a raw sleep, a raw clock
-  read, a count wait outside its modules, a laundering wrapper, a new count
-  wait in a check list beside a check under an allow, a constant whose mark
-  they cannot read), built and never run, and a `fail_if_success` that
+- the wait linters' fixtures (`ModelTest/Lint/Wait.lean` and the modules
+  under `ModelTest/Lint/Wait/`), which hold no check: bad declarations the
+  linters refuse (a raw sleep, a raw clock read, a count wait outside its
+  modules, one in a module named beside a mirror that declares no wiring
+  set, `Unwired/Real.lean` and `Unwired/Real/Deeper.lean`, beside the
+  `.wiring` module that may, `Wired/Real.lean`, a laundering wrapper, a
+  new count wait in a check list beside a check under an allow, a constant
+  whose mark they cannot read), built and never run, and a `fail_if_success` that
   shows that `Job.awaitWithin` takes no number. The build loads the
   linters as a plugin, so this module imports none of them; the
   first-after wait is `ContractTest`'s, the idle waits put together from a
