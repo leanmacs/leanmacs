@@ -3,7 +3,6 @@ import Editor.Test.Linked.Services
 import WorkspaceTest.Check
 import WorkspaceTest.Linked.Workspace.Bench
 import WorkspaceTest.Linked.Workspace.Contract
-import WorkspaceTest.Linked.Workspace.Finder
 import WorkspaceTest.Linked.Workspace.Lister
 
 /-!
@@ -20,7 +19,9 @@ blocked in the library.
 
 Its checks run over the library's real process and file services
 (`Editor.Test.Linked.Services`), each in a temporary directory of its own,
-with the fixtures under the package's `tests/`: `tests/workspaces/git`
+removed only once those services have worked what was handed to them
+(`Editor.Test.Linked.withFlushedBase`), with the fixtures under the
+package's `tests/`: `tests/workspaces/git`
 standing in for git, and `tests/completion/filter`, a copy of the core's
 fixture of the same name, standing in for fzf. Each test module mirrors the
 module it tests; they were the contract test's (`ContractTest.<name>`)
@@ -28,13 +29,12 @@ while the workspaces were modules of the core:
 
 - `workspaceFailures` (`WorkspaceTest/Linked/Workspace/Contract.lean`): the
   workspace finder's contract (`Workspace.FinderContract`) over the process
-  and file services, each world written out, and every child reaped;
+  and file services, each world written out: the main checkout and a
+  worktree as one project, with and without an origin, and a marker-only
+  directory among them;
 - `modeMarkerFailures` (the same module): the mode marker search's contract
   (`Workspace.MarkerContract`) over the file service (each property of the
   two contracts is one of the `N` checks the line counts);
-- `workspaceChecks` (`WorkspaceTest/Linked/Workspace/Finder.lean`): a main
-  checkout and a worktree-shaped directory are two workspaces of one
-  project, as the models say;
 - `workspaceListerChecks` (`WorkspaceTest/Linked/Workspace/Lister.lean`):
   git's lister lists a repository's tracked and untracked files and none
   that `.gitignore`, `info/exclude` or the global excludes file ignore, and
@@ -42,7 +42,7 @@ while the workspaces were modules of the core:
   checkout's; the fallback lists a directory's files without `./` and none
   under a `.git` directory, and, past a directory of mode 000, which makes
   `find` exit 1, still the files it could read. Git is isolated from the
-  user's config, and every child is reaped.
+  user's config.
 
 With the opt-in argument `bench-workspace-files` it runs the workspace
 finder's benchmark instead (`WorkspaceTest.Linked.WorkspaceBench`,
@@ -72,9 +72,7 @@ def main (arguments : List String) : IO UInt32 := do
     let completion ← IO.FS.realPath completionFixtures
     let running ← Editor.Test.Linked.Services.start
     let services := running.jobs
-    let checks :=
-      WorkspaceTest.Linked.workspaceChecks services workspaces ++
-        WorkspaceTest.Linked.workspaceListerChecks services completion
+    let checks := WorkspaceTest.Linked.workspaceListerChecks services completion
     let failed :=
       (← WorkspaceTest.Linked.workspaceFailures services workspaces) ++
         (← WorkspaceTest.Linked.modeMarkerFailures services) ++

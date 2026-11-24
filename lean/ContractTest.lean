@@ -283,10 +283,11 @@ The workspace finder, its contract and the mode marker search's over the
 real process and file services, and the listers a workspace's files are
 listed with over real git and find, are not checked here either: the
 workspaces are a package outside the core (`packages/workspace/`), and its
-linked test runs them (`WorkspaceTest.Linked.workspaceChecks`,
-`workspaceFailures`, `modeMarkerFailures` and `workspaceListerChecks`, which
-were this executable's under the same names), with the fixtures under that
-package's `tests/`. Nor are the working sets over the file service, the
+linked test runs them (`WorkspaceTest.Linked.workspaceFailures`,
+`modeMarkerFailures` and `workspaceListerChecks`, which were this
+executable's under the same names, `workspaceChecks`' worlds now properties
+of the finder's contract), with the fixtures under that package's
+`tests/`. Nor are the working sets over the file service, the
 fuzzy matcher and real git, through a restart: they are the `working-set`
 package's (`packages/working-set/`), whose linked test runs them
 (`WorkingSetTest.Linked.workingSetChecks`, which was this executable's).

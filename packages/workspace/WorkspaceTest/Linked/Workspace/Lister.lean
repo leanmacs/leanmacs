@@ -27,15 +27,13 @@ open Editor
 open Editor.Test.Linked
 open VcApiTest.Linked
 
--- inferred-waits W48: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- Whether the records `lister` lists at `root`, filtered by the fixture
 filter under `fixtures` with the empty text, which keeps them all, as
 `FindFile.found` answers them over `services`, are `expected` as a set
-(both sorted), and every child it ran was reaped. -/
+(both sorted). That each child is reaped is the process service's own
+contract, not pinned here. -/
 def listsAt (services : Job.Services) (fixtures : System.FilePath) (lister : Workspace.Lister)
     (root : System.FilePath) (expected : Array String) : IO Bool := do
-  let before ← Editor.Test.Linked.pendingChildren
   let separator : Completion.Filtering.Separator := if lister.nul then .nul else .newline
   let filter : Process.Command :=
     { program := (fixtures / "filter").toString
@@ -54,8 +52,7 @@ def listsAt (services : Job.Services) (fixtures : System.FilePath) (lister : Wor
           return records.qsort (· < ·) == expected.qsort (· < ·)
         | .error _ =>
           return false
-  let reaped ← Editor.Test.Linked.childrenReapedTo services before
-  return outcome == .finished true && reaped
+  return outcome == .finished true
 
 /-- The global git config of the checks, at `home/config`: its excludes file
 is `home/ignore`, which ignores `*.log`. -/
@@ -114,7 +111,7 @@ def workspaceListerChecks (services : Job.Services) (fixtures : System.FilePath)
     { name :=
         "the fallback, find . -type f -not -path */.git/* -print0 over the real process service, lists a directory's files without ./ and none under a .git directory"
       run :=
-        withBase fun base => do
+        withFlushedBase services fun base => do
           writeMaking (base / "a") "a\n"
           writeMaking (base / "d" / "e") "e\n"
           writeMaking (base / "x" / ".git" / "config") "c\n"
@@ -122,7 +119,7 @@ def workspaceListerChecks (services : Job.Services) (fixtures : System.FilePath)
     { name :=
         "the fallback over the real process service lists the files find can read when it meets a directory of mode 000 and exits 1; run as root, which reads that directory, its file is listed too"
       run :=
-        withBase fun base => do
+        withFlushedBase services fun base => do
           writeMaking (base / "a") "a\n"
           writeMaking (base / "d" / "e") "e\n"
           writeMaking (base / "locked" / "hidden") "h\n"

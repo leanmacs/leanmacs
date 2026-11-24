@@ -48,19 +48,18 @@ nothing is, which the process service refuses as `notFound`. -/
 def gitOf (world : Workspace.World) (fixtures base : System.FilePath) : String :=
   if world.git then (fixtures / "git").toString else (base / "no-git").toString
 
--- inferred-waits W46: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- The names of the workspace finder's contract properties
 (`WorkspaceTest/Finder/Contract.lean`) that do not hold of `Workspace.find`
 over the library's process and file services, each world written out in a
-temporary directory of its own, with git standing in as the fixture under
-`fixtures` (`tests/workspaces`); and that every child it ran is reaped. -/
+temporary directory of its own, removed only once the process and file
+services have worked what was handed to them (`withFlushedBase`), with git
+standing in as the fixture under `fixtures` (`tests/workspaces`). That each
+child is reaped is the process service's own contract, not pinned here. -/
 def workspaceFailures (services : Job.Services) (fixtures : System.FilePath) : IO (List String) :=
   do
-  let before ← Editor.Test.Linked.pendingChildren
   let failed ←
     (Workspace.FinderContract.properties "/").filterMapM fun named =>
-        withBase fun base => do
+        withFlushedBase services fun base => do
           let some property :=
             (Workspace.FinderContract.properties base).find? (·.name == named.name)
             | return some named.name
@@ -68,18 +67,17 @@ def workspaceFailures (services : Job.Services) (fixtures : System.FilePath) : I
           let outcome ← runOnTimers services (property.holds (gitOf property.world fixtures base))
           return if outcome == .finished true then none
             else some s!"{property.name} ({repr outcome})"
-  let reaped ← Editor.Test.Linked.childrenReapedTo services before
-  return failed.map (s!"the workspace finder over the process and file services: {·}") ++
-      if reaped then [] else ["every child the workspace finder ran is reaped"]
+  return failed.map (s!"the workspace finder over the process and file services: {·}")
 
 /-- The names of the mode marker search's contract properties
 (`WorkspaceTest/Finder/Contract.lean`, `Workspace.MarkerContract`) that do not
 hold of `Workspace.presentMarkers` over the library's file service, each
-world written out in a temporary directory of its own. -/
+world written out in a temporary directory of its own, removed once the
+services have worked what was handed to them (`withFlushedBase`). -/
 def modeMarkerFailures (services : Job.Services) : IO (List String) := do
   let failed ←
     (Workspace.MarkerContract.properties "/").filterMapM fun named =>
-        withBase fun base => do
+        withFlushedBase services fun base => do
           let some property :=
             (Workspace.MarkerContract.properties base).find? (·.name == named.name)
             | return some named.name
