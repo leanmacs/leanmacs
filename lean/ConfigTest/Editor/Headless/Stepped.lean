@@ -56,7 +56,7 @@ def scenesOf (kept : IO.Ref (Option Headless.Host.Display)) : IO Nat := do
   | none =>
     return 0
 
--- inferred-waits W11: removed by host-tests-on-fakes phase 4
+-- inferred-waits W11: stays (A2: the join's later rounds publishing no scene, stepped against real, are the subject)
 set_option linter.inferredWait false in
 /-- A check of `steppedChecks`, a declaration of its own so that the allow
 above it covers it alone. -/

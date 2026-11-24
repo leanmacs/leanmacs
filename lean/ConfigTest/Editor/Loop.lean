@@ -96,10 +96,7 @@ def interruptPulled : IO (Option Ffi.Event) := do
       return some event
   return none
 
--- inferred-waits W12: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `dispatchChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `dispatchChecks`, a declaration of its own. -/
 def commandTakesLongerThresholdCheck (context : Context) : Check :=
   { name :=
       "a command that takes longer than the threshold on the fake clock produces one log entry with its name and how long it took, on the log and not on the output; a press with the clock not moved adds none"
@@ -110,44 +107,19 @@ def commandTakesLongerThresholdCheck (context : Context) : Check :=
           -- step, and to arm the key hint delay after it. Then the host
           -- reads the clock once at the command's step, for the time the
           -- publish records what was viewed by (`Loop.Keys.now`), and the
-          -- loop reads it just before the command and just after it. Each
-          -- of those readings is held, so the clock is moved between the
-          -- last two and at no other time.
+          -- loop reads it just before the command and just after it. The
+          -- clock is moved inside the third of those readings, on the
+          -- thread that makes it, before it returns
+          -- (`FakeClock.atRead`): between the last two, and at no other
+          -- time.
           session.typed "C-c"
-          let holds ← IO.mkRef (#[] : Array (IO.Promise Unit))
-          let hold : IO (IO.Promise Unit) := do
-            let held ← session.clock.holdReads
-            holds.modify (·.push held)
-            return held
-          let step ← hold
+          session.clock.atRead 3 (session.clock.advance 60)
           session.type "s"
-          -- A stepped host reads the clock on the thread that steps it, and
-          -- the holds park that thread: this one drain steps on a
-          -- dedicated task, joined below, while the check lets each read go.
-          let asked ← IO.asTask (prio := .dedicated) (session.ask [])
-          try
-            unless ← clockReaches session.clock (.held 1) do
-              return false
-            let first ← hold
-            step.resolve ()
-            unless ← clockReaches session.clock (.held 2) do
-              return false
-            let second ← hold
-            first.resolve ()
-            unless ← clockReaches session.clock (.held 3) do
-              return false
-            session.clock.advance 60
-            second.resolve ()
-            IO.ofExcept (← IO.wait asked)
-            let once ← session.log.get
-            session.typed "C-c s"
-            return once == #["slow command: stamp took 60 ms"] && (← session.log.get) == once &&
-                !(← session.output.get).any (·.startsWith "slow command")
-          finally
-            -- Every read let go, so a drain a failed step left parked ends.
-            for held in ← holds.get do
-              held.resolve ()
-            discard <| IO.wait asked)
+          session.ask []
+          let once ← session.log.get
+          session.typed "C-c s"
+          return once == #["slow command: stamp took 60 ms"] && (← session.log.get) == once &&
+              !(← session.output.get).any (·.startsWith "slow command"))
         { dispatchCompiled with slowAfter := 50 } }
 
 /-- The checks of key dispatch through the headless host, on the real queue,
