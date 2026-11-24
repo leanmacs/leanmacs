@@ -12,8 +12,9 @@ import FilesApiTest.Fake
 # Linked tests: `Ex.lean`
 
 The tests of `Ex.lean`: `exChecks`, through the headless host, and
-`exScriptChecks`, scripts of ex lines run by `Headless.run`, which open and
-write a file with `files-api`'s fake's commands. The root module
+`exScriptChecks`, ex lines typed as a script types them, which open and
+write a file with `files-api`'s fake's commands, on a stepped stage over the
+file fake. The root module
 `ExTest.Linked` runs them; its module doc says what each shows. They were
 the config test's (`ConfigTest.exChecks`, `ConfigTest.exScriptChecks`,
 `lean/ConfigTest/Editor/Ex.lean`) while the ex line was two modules of the
@@ -177,79 +178,79 @@ def exChecks (context : HostContext) : List Check :=
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           exCompiled }]
 
-/-- The directives of one ex line of a script: the ex command run by its
-name, which asks, `line` committed into the minibuffer, and the accept
-key. -/
-def exLineDirectives (line : String) : List Headless.Directive :=
-  [.request (.run Ex.name), .commit line] ++ acceptKeys.map .key
+/-- The made-up path of the file the ex script checks open, which only the
+file fake's model holds. -/
+def notePath : System.FilePath :=
+  "/files/note.txt"
 
-/-- A script of `directives`, one a line, numbered from 1. -/
-def scriptOf (directives : List Headless.Directive) : Array Headless.Line :=
-  (directives.zipIdx.map fun (directive, index) => ⟨index + 1, directive⟩).toArray
-
-/-- Runs `directives` as a script (`Headless.run`) against a host of its own
-over the library's file service (`Stage.overFiles`), with an empty config
-directory, that is handed what the executable is handed for the ex line,
-the ex line's commands and the `ex` package's ex names, `files-api`'s fake
-(`FilesApiTest.fake`: its commands, its jobs and its `FilesApi.Files` value,
-which `wq` saves through), and the kit's minibuffer's commands and its mode
-(`lean/Editor/Test/Minibuffer.lean`) where the executable has the shipped ones. What `run`
-answered, and every line the host printed. -/
-def ranScript (context : HostContext) (directives : List Headless.Directive) :
-    IO (Option Headless.Failure × Array String) :=
+/-- Runs `check` against a host stepped on the check's thread over a stepped
+stage (`Stage.stepped`), with an empty config directory, handed what the
+executable is handed for the ex line, the ex line's commands and the `ex`
+package's ex names, `files-api`'s fake (`FilesApiTest.fake`: its commands,
+its jobs and its `FilesApi.Files` value, which `wq` saves through), and the
+kit's minibuffer's commands and its mode (`lean/Editor/Test/Minibuffer.lean`)
+where the executable has the shipped ones; its file fake holds `notePath`
+with `noteText`. `check` is handed the session and a read of the bytes the
+file fake holds at `notePath`. -/
+def withExFileHost (context : HostContext) (check : Session → IO (Option ByteArray) → IO Bool) :
+    IO Bool :=
   IO.FS.withTempDir fun directory => do
     let stage ←
-      Stage.overFiles context (Config.Directory.source directory)
+      Stage.new context context.elaborator (Config.Directory.source directory)
           { packages := #[FilesApiTest.fake]
             commands :=
               Ex.package.registered.commands ++ Test.Minibuffer.package.registered.commands
             modes := Test.Minibuffer.package.registered.modes
             ex := Ex.package.registered.ex }
-    let failure ←
-      Headless.run stage.collaborators (scriptOf directives) hangGuard (grace := some hangGuard)
-    return (failure, ← stage.output.get)
+    let files :=
+      ((({} : FileModel).withDirectory "/").withDirectory "/files").withFile notePath
+        noteText.toUTF8
+    let stage ← stage.stepped files
+    let some fakes := stage.fakes | return false
+    let bytes : IO (Option ByteArray) := do
+      return ((← fakes.services.files.model).file? notePath).map (·.bytes)
+    onStage stage fun drive stage => check (Session.ofStage drive directory stage) bytes
 
--- inferred-waits W35: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- A check of `exScriptChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
+/-- A check of `exScriptChecks`, a declaration of its own. -/
 def stepSaidStopHostCheck (context : HostContext) : Check :=
   { name :=
       "once a step said stop the host runs no further invocation: a command that asks for quit and then for the open command, with a path, to be run after it ends the loop at quit, and the open command never runs: the host prints the run alone and starts no job; with a command that says other in place of quit, the load job is started"
-    run :=
-      context.withFiles fun files => do
-        let path := files / "note.txt"
-        IO.FS.writeBinFile path noteText.toUTF8
-        let handing (first : String) : Config.Registration :=
-          { name := s!"hand-{first}"
-            action :=
-              .plain do
-                Editor.invoke { command := first }
-                Editor.invoke
-                    { command := FilesApi.openFileName, arguments := [.str path.toString] } }
-        let compiled : Compiled :=
-          { exCompiled with
-            commands := exCompiled.commands ++ #[handing Ex.quitName, handing "other"]
-            jobs := FilesApiTest.fake.registered.jobs }
-        let started := s!"job 1 {Test.Opener.loadJob}: started"
-        let ran (name : String) : IO (Option (Headless.Wait × Array String)) := do
-          let stage ← Stage.new context context.elaborator (memorySource []) compiled
-          leavingLibraryQueue <|
-              Headless.withStepped stage.collaborators stage.memory (guard := hangGuard) (grace :=
-                some hangGuard) fun stepped => do
-                stepped.send (.run name)
-                let joined ← stepped.join hangGuard
-                let output ← stage.output.get
-                return some (joined, output)
-        let left ← ran s!"hand-{Ex.quitName}"
-        let went ← ran "hand-other"
-        return left == some (.ended, #[s!"run hand-{Ex.quitName}: ok"]) &&
-            (went.map fun (joined, output) =>
-                joined == .settled && output.contains "run hand-other: ok" &&
-                  output.contains started) ==
-              some true }
+    run := do
+      let path := notePath
+      let handing (first : String) : Config.Registration :=
+        { name := s!"hand-{first}"
+          action :=
+            .plain do
+              Editor.invoke { command := first }
+              Editor.invoke
+                  { command := FilesApi.openFileName, arguments := [.str path.toString] } }
+      let compiled : Compiled :=
+        { exCompiled with
+          commands := exCompiled.commands ++ #[handing Ex.quitName, handing "other"]
+          jobs := FilesApiTest.fake.registered.jobs }
+      let started := s!"job 1 {Test.Opener.loadJob}: started"
+      let ran (name : String) : IO (Option (Headless.Wait × Array String)) := do
+        -- A stepped stage: the load job is held in the fake scheduler,
+        -- and its started line is the editor thread's, printed as the
+        -- run is handled, so the drain alone shows it; the loop's end
+        -- steps the job it cancels.
+        let stage ← (← Stage.new context context.elaborator (memorySource []) compiled).stepped
+        leavingLibraryQueue <|
+            Headless.withStepped stage.collaborators stage.memory (guard := hangGuard) (grace :=
+              some hangGuard) fun stepped => do
+              stepped.send (.run name)
+              let handled ← (Driven.ofStepped stepped).handled hangGuard
+              let output ← stage.output.get
+              return some (handled, output)
+      let left ← ran s!"hand-{Ex.quitName}"
+      let went ← ran "hand-other"
+      return left == some (.ended, #[s!"run hand-{Ex.quitName}: ok"]) &&
+          (went.map fun (handled, output) =>
+              handled == .settled && output.contains "run hand-other: ok" &&
+                output.contains started) ==
+            some true }
 
--- inferred-waits W35: removed by host-tests-on-fakes phase 4
+-- inferred-waits W35: stays (A2: a settle's and a join's answer on a host whose loop has ended are the subject)
 set_option linter.inferredWait false in
 /-- A check of `exScriptChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
@@ -268,62 +269,72 @@ def waitHostWhoseLoopCheck (context : HostContext) : Check :=
               (← host.halt hangGuard) &&
               (← stage.output.get) == #[s!"run {Ex.quitName}: ok"] }
 
-/-- The checks of a script that a command ends (`lean/Editor/Headless.lean`,
-"The driver, and the command line"), with `Headless.run` on scripts built
-here, over the real elaborator, the real queue, the real text binding and
-the library's file service, on a file each check writes in a temporary
-directory of its own: the phase's first two acceptance criteria through the
-host. They share the file checks' table of waits and completion pump, so
-they run after them.
-
-Each script that opens a file has a `join` after the `e` line: the open is
-a job, and without the wait the text would be committed into the scratch
-buffer. The `wq` script has a `join` after the `wq` line too: the quit it
-asks for waits for the save, so without the wait the `show` line would be
-handled while the save runs, and the end of the script would stop the loop,
-which cancels the save. -/
+/-- The checks of ex lines that a command ends the loop with
+(`lean/Editor/Headless.lean`, "The driver, and the command line"), typed as
+a script of them types them (`Session.exLine`), on a stepped stage over the
+file fake (`withExFileHost`), with the real elaborator and the real text
+binding: the phase's first two acceptance criteria through the host. Each
+open and save is stepped until its own job's end line; the file's bytes are
+read from the fake's model. -/
 def exScriptChecks (context : HostContext) : List Check :=
   let listed (output : Array String) : Bool := output.any (·.startsWith "commands:")
+  let path := notePath
+  let endedWell (ended : Option (Except IO.Error Unit)) : Bool :=
+    match ended with
+    | some (.ok ()) => true
+    | _ => false
   [{  name :=
-        "criterion 1 through the host: a script that runs e on a file, joins, commits text, runs w, joins, runs q, and then has a show line: the script has no failure, the file holds the committed text before what it held, and the show line was not run"
+        "criterion 1 through the host: e on a file, then once it is open text committed, w, and once the save has ended q, and then a show: the loop ends at q with no error, the file holds the committed text before what it held, and the show is not run"
       run :=
-        context.withFiles fun files => do
-          let path := files / "note.txt"
-          IO.FS.writeBinFile path noteText.toUTF8
-          let (failure, output) ←
-            ranScript context
-                (exLineDirectives s!"e {path}" ++ [.join, .commit "x"] ++ exLineDirectives "w" ++
-                  [.join] ++
-                  exLineDirectives "q" ++
-                  [.request .show])
-          return failure == none && (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
-              endedOk output Test.Opener.saveJob &&
-              !listed output },
+        withExFileHost context fun session bytes => do
+          discard <| session.exLine s!"e {path}"
+          unless ← session.stepUntil (endedOk · Test.Opener.loadJob) do
+            return false
+          session.commit "x"
+          discard <| session.exLine "w"
+          unless ← session.stepUntil (endedOk · Test.Opener.saveJob) do
+            return false
+          session.send (.run Ex.name)
+          session.commit "q"
+          -- The quit ends the loop: the keys are pressed with no settle.
+          for key in acceptKeys do
+            session.press key
+          discard <| session.handled
+          session.send .show
+          discard <| session.handled
+          let ended ← session.drive.ended?
+          return endedWell ended && (← bytes) == some ("x" ++ noteText).toUTF8 &&
+              !listed (← session.output.get) },
     { name :=
-        "criterion 2 through the host: the same script with wq in place of w, the join and q, and a join after it: the script has no failure, the file holds the buffer's text, and the show line was not run"
+        "criterion 2 through the host: the same with wq in place of w and q: the quit waits for the save, so once the save has ended the loop has ended with no error, the file holds the buffer's text, and the show is not run"
       run :=
-        context.withFiles fun files => do
-          let path := files / "note.txt"
-          IO.FS.writeBinFile path noteText.toUTF8
-          let (failure, output) ←
-            ranScript context
-                (exLineDirectives s!"e {path}" ++ [.join, .commit "x"] ++ exLineDirectives "wq" ++
-                  [.join, .request .show])
-          return failure == none && (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
-              endedOk output Test.Opener.saveJob &&
-              !listed output },
+        withExFileHost context fun session bytes => do
+          discard <| session.exLine s!"e {path}"
+          unless ← session.stepUntil (endedOk · Test.Opener.loadJob) do
+            return false
+          session.commit "x"
+          session.send (.run Ex.name)
+          session.commit "wq"
+          for key in acceptKeys do
+            session.press key
+          unless ← session.stepUntil (endedOk · Test.Opener.saveJob) do
+            return false
+          discard <| session.handled
+          session.send .show
+          discard <| session.handled
+          let ended ← session.drive.ended?
+          return endedWell ended && (← bytes) == some ("x" ++ noteText).toUTF8 &&
+              !listed (← session.output.get) },
     { name :=
-        "a script whose q is refused, for a file's buffer that was edited, runs its later lines: the show line prints the commands, the script has no failure, and the file is as it was"
+        "a q refused for a file's buffer that was edited leaves the loop running: the show then prints the commands, and the file is as it was"
       run :=
-        context.withFiles fun files => do
-          let path := files / "note.txt"
-          IO.FS.writeBinFile path noteText.toUTF8
-          let (failure, output) ←
-            ranScript context
-                (exLineDirectives s!"e {path}" ++ [.join, .commit "x"] ++ exLineDirectives "q" ++
-                  [.request .show])
-          return failure == none && listed output &&
-              (← IO.FS.readBinFile path) == noteText.toUTF8 },
+        withExFileHost context fun session bytes => do
+          discard <| session.exLine s!"e {path}"
+          unless ← session.stepUntil (endedOk · Test.Opener.loadJob) do
+            return false
+          session.commit "x"
+          discard <| session.exLine "q"
+          session.ask [.show]
+          return listed (← session.output.get) && (← session.drive.ended?).isNone &&
+              (← bytes) == some noteText.toUTF8 },
     stepSaidStopHostCheck context, waitHostWhoseLoopCheck context]
-
-end ExTest.Linked

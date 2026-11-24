@@ -888,7 +888,8 @@ round moves nothing with the restore still in flight, a stall. Nothing on
 a stage with no fakes. -/
 private partial def stepRestoring (session : Session) : IO Unit := do
   let some fakes := session.fakes | return
-  discard <| session.drive.handled hangGuard
+  if (← session.drive.handled hangGuard) == .ended then
+    return
   unless (← session.drive.progress).restoring do
     return
   let mut moved := false
@@ -974,15 +975,23 @@ def join (session : Session) : IO Headless.Wait :=
 /-- One round of a stepped session (`step`): the host's queue drained
 (`handled`, which publishes nothing), then every piece of the fakes' work
 that can run (`Stage.Fakes.stepWork`). Whether anything moved: the queue
-held an event, or a piece ran. Throws on a session with no fakes. -/
+held an event, or a piece ran; nothing moves once the loop has ended.
+Throws on a session with no fakes. -/
 def round (session : Session) : IO Bool := do
   let some fakes := session.fakes
     | throw (IO.userError "a session's step needs a stepped stage (Stage.stepped), and this one has no fakes")
   let queued ← fakes.memory.size
-  unless ← session.handled do
-    throw
-        (IO.userError
-          s!"a hang: the editor thread had not handled its queue within {hangGuard.ms} ms")
+  match ← session.drive.handled hangGuard with
+  | .settled =>
+    pure ()
+  | .ended =>
+    -- A loop that has ended takes nothing more: what is left is the
+    -- loop's end's to step.
+    return false
+  | _ =>
+    throw <|
+        IO.userError
+          s!"a hang: the editor thread had not handled its queue within {hangGuard.ms} ms"
   let mut moved := decide (queued > 0)
   while ← fakes.stepWork do
     moved := true
