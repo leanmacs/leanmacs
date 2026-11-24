@@ -35,7 +35,6 @@ namespace WorkingSetTest.Linked
 
 open Editor
 open Editor.Test.Linked
-open VcApiTest.Linked
 
 /-- The commit `HEAD` is at as the checks' version-control backend answers
 it: `vc-api`'s fake (`VcApiTest.backend`) over a model repository whose
@@ -149,56 +148,71 @@ def headersIn (loop : Loop TestScheme.scheme) (name : String) : Array String :=
 def invoking (command : String) (arguments : List Argument := []) : Invocation :=
   { command, arguments }
 
-/-- The checks of the working sets over the real bindings, in a repository
-and a state directory of their own, both temporary. -/
-def workingSetChecks (services : Job.Services) : List Check :=
+/-- The checks of the working sets on a stepped rig (`ProjectRig.stepped`):
+the repository and the state directory are made-up paths its file fake
+holds, the version-control backend is `vc-api`'s fake, and a second host
+starts over the file fake's model the first ended with, with `a.txt`
+rewritten in it as another program would. -/
+def workingSetChecks : List Check :=
   [{  name :=
-        "criteria 1 and 2 over the real bindings and real git: a.txt's rows and a row of a search's results (the kit's stand-in, an excerpt buffer of b.txt) are added and open as the files' rows; the store on disk carries HEAD's id as the version-control backend, vc-api's fake, answers it; a second host over the same state directory, a.txt rewritten outside the editor, opens demo as r1 changed, r2 moved and r3 drifted"
+        "criteria 1 and 2 on a stepped rig: a.txt's rows and a row of a search's results (the kit's stand-in, an excerpt buffer of b.txt) are added and open as the files' rows; the store in the file fake carries HEAD's id as the version-control backend, vc-api's fake, answers it; a second host over the same state directory, a.txt rewritten outside the editor, opens demo as r1 changed, r2 moved and r3 drifted"
       run := do
-        withRepository services fun home repository => do
-            let state := (home.parent.getD home) / "state"
-            let files := #[("a.txt", workingSetText), ("b.txt", "one\nthe needle here\n")]
-            writeGitRepository home repository { committed := files, worktree := files }
-            let services := onIsolatedGit services home
-            let rig ← ProjectRig.over services
-            let a := repository / "a.txt"
-            let some (added, texts) ←
-              runHost rig repository state
-                  [openFile a, invoking "goto-row" [.nat 1],
-                    invoking WorkingSet.addName [.str "demo"],
-                    invoking "select-rows" [.nat 2, .nat 4],
-                    invoking WorkingSet.addName [.str "demo"], invoking "goto-row" [.nat 5],
-                    invoking WorkingSet.addName [.str "demo"], openFile (repository / "b.txt"),
-                    invoking Test.excerptFilesName [.str "b.txt"], invoking "goto-row" [.nat 1],
-                    invoking WorkingSet.addName [.str "pins"],
-                    invoking WorkingSet.openName [.str "pins"]] | return false
-            let some pins := bufferStarting added "*working-set: pins in " | return false
-            let pinned ← bufferText rig texts added pins
-            let head := fakeHead
-            let stored ← IO.FS.readBinFile (WorkingSet.storeFile state repository.toString)
-            let some document := (WorkingSet.Document.read stored).toOption | return false
-            let demo := ((document.sets.find? (·.name == "demo")).map (·.ranges)).getD #[]
-            let pinsStored := ((document.sets.find? (·.name == "pins")).map (·.ranges)).getD #[]
-            IO.FS.writeFile a workingSetEdited
-            let fresh ← ProjectRig.over services
-            let some (reopened, freshTexts) ←
-              runHost fresh repository state
-                  [openFile (repository / "b.txt"),
-                    invoking WorkingSet.openName [.str "demo"]] | return false
-            let some demoBuffer := bufferStarting reopened "*working-set: demo in " | return false
-            let shown ← bufferText fresh freshTexts reopened demoBuffer
-            return pinned == some "the needle here\n" && headersIn added pins == #["b.txt:2"] &&
-                demo.map (·.commit) == #[head, head, head] &&
-                demo.map (·.start.line) == #[2, 3, 6] &&
-                pinsStored.map (·.path) == #["b.txt"] &&
-                headersIn reopened demoBuffer ==
-                  #["a.txt:2 · changed", "a.txt:6",
-                    s!"a.txt:6 · drifted since {String.ofList (head.toList.take 8)}"] &&
-                shown ==
-                  some
-                    ("let configuration = load_setting5(path);\n" ++ "\n" ++
-                      "block start alpha\nblock middle beta\nblock end gamma\n" ++
-                      "\n" ++
-                      "a line that will be deleted entirely\n") }]
+        let repository : System.FilePath := "/r"
+        let state : System.FilePath := "/state"
+        let store := WorkingSet.storeFile state repository.toString
+        let directories :=
+          (store.parent.map fun parent =>
+                (List.range 8).foldl
+                  (fun (found : Array System.FilePath) _ =>
+                    match found.back? >>= (·.parent) with
+                    | some up =>
+                      if up.toString == "/" || found.contains up then found else found.push up
+                    | none => found)
+                  #[parent]).getD
+            #[]
+        let model :=
+          (((directories.foldl (fun (model : FileModel) path => model.withDirectory path)
+                    ((({} : FileModel).withDirectory "/").withDirectory repository)).withFile
+                (repository / "a.txt") workingSetText.toUTF8).withFile
+            (repository / "b.txt") "one\nthe needle here\n".toUTF8)
+        let (rig, stepped) ← ProjectRig.stepped model
+        let a := repository / "a.txt"
+        let some (added, texts) ←
+          runHost rig repository state
+              [openFile a, invoking "goto-row" [.nat 1], invoking WorkingSet.addName [.str "demo"],
+                invoking "select-rows" [.nat 2, .nat 4], invoking WorkingSet.addName [.str "demo"],
+                invoking "goto-row" [.nat 5], invoking WorkingSet.addName [.str "demo"],
+                openFile (repository / "b.txt"), invoking Test.excerptFilesName [.str "b.txt"],
+                invoking "goto-row" [.nat 1], invoking WorkingSet.addName [.str "pins"],
+                invoking WorkingSet.openName [.str "pins"]] | return false
+        let some pins := bufferStarting added "*working-set: pins in " | return false
+        let pinned ← bufferText rig texts added pins
+        let head := fakeHead
+        let after ← stepped.files.model
+        let some stored :=
+          (after.file? store).map (·.bytes) | throw (IO.userError "no store written")
+        let some document := (WorkingSet.Document.read stored).toOption | return false
+        let demo := ((document.sets.find? (·.name == "demo")).map (·.ranges)).getD #[]
+        let pinsStored := ((document.sets.find? (·.name == "pins")).map (·.ranges)).getD #[]
+        let (fresh, _) ← ProjectRig.stepped (after.withFile a workingSetEdited.toUTF8)
+        let some (reopened, freshTexts) ←
+          runHost fresh repository state
+              [openFile (repository / "b.txt"),
+                invoking WorkingSet.openName [.str "demo"]] | return false
+        let some demoBuffer := bufferStarting reopened "*working-set: demo in " | return false
+        let shown ← bufferText fresh freshTexts reopened demoBuffer
+        return pinned == some "the needle here\n" && headersIn added pins == #["b.txt:2"] &&
+            demo.map (·.commit) == #[head, head, head] &&
+            demo.map (·.start.line) == #[2, 3, 6] &&
+            pinsStored.map (·.path) == #["b.txt"] &&
+            headersIn reopened demoBuffer ==
+              #["a.txt:2 · changed", "a.txt:6",
+                s!"a.txt:6 · drifted since {String.ofList (head.toList.take 8)}"] &&
+            shown ==
+              some
+                ("let configuration = load_setting5(path);\n" ++ "\n" ++
+                  "block start alpha\nblock middle beta\nblock end gamma\n" ++
+                  "\n" ++
+                  "a line that will be deleted entirely\n") }]
 
 end WorkingSetTest.Linked

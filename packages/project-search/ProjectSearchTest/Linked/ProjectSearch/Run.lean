@@ -73,34 +73,40 @@ def searchKeys : Loop.Keys TestScheme.scheme :=
       { jobs := fun name => searchJobs.any (·.name == name)
         extensions := (Editor.Test.hostedRegistry #[FilesApiTest.fake]).extensionsAt } }
 
-/-- The checks of project search over the real bindings
-(`ProjectSearch/Run.lean`), in a fresh temporary directory, removed
-once the file service has worked what was handed to it (`Linked.withFiles`): a
-`.gitignore`d `ignored.txt`, `a.txt` open with `needle` inserted unsaved, and
-`b.txt` holding a match on disk. -/
-def projectSearchChecks (services : Job.Services) : List Check :=
+/-- The checks of project search on a stepped rig (`ProjectRig.stepped`),
+whose file fake holds a made-up directory `/d` with `ignored.txt` named in
+its `.ignore`, the grep model's stand-in for the ignore files the library
+reads (`Editor/Grep/Model.lean`), `a.txt`, opened with `needle` inserted unsaved, and `b.txt`
+holding a match in the file: the search's grep is the fake's model, over
+the unsaved buffer's published snapshot and the files, and what is written
+is read from the fake's model. -/
+def projectSearchChecks : List Check :=
   [{  name :=
-        "criteria 2 and 3 over the real bindings: the results hold a.txt's unsaved match and b.txt's on-disk match, not ignored.txt's; a change typed over b.txt's match in the results changes b.txt's buffer, and the file on disk is unchanged"
+        "criteria 2 and 3 on a stepped rig: the results hold a.txt's unsaved match and b.txt's match in its file, not ignored.txt's; a change typed over b.txt's match in the results changes b.txt's buffer, and the file is unchanged"
       run := do
-        Editor.Test.Linked.withFiles services fun directory => do
-            IO.FS.writeFile (directory / ".gitignore") "ignored.txt\n"
-            IO.FS.writeFile (directory / "ignored.txt") "needle\n"
-            IO.FS.writeFile (directory / "a.txt") "a\n"
-            IO.FS.writeFile (directory / "b.txt") "x needle\n"
-            let rig ← ProjectRig.over services
-            let some (searched, texts) ←
-              runSettled rig directory
-                  [openFile (directory / "a.txt"), { command := "insert-needle" },
-                    { command := ProjectSearch.name, arguments := [.str "needle"] }]
-                  (keys := searchKeys) (jobs := searchJobs) | return false
-            let results := ProjectSearch.bufferName "needle" directory.toString
-            let found ← bufferText rig texts searched results
-            let some (edited, texts) ←
-              runSettledFrom rig searched texts [{ command := "edit-b" }] (keys := searchKeys)
-                  (jobs := searchJobs) | return false
-            let b ← bufferText rig texts edited "b.txt"
-            let onDisk ← IO.FS.readFile (directory / "b.txt")
-            return found == some "needle a\n\nx needle\n" && b == some "x pin\n" &&
-                onDisk == "x needle\n" }]
+        let directory : System.FilePath := "/d"
+        let files :=
+          [(".ignore", "ignored.txt\n"), ("ignored.txt", "needle\n"), ("a.txt", "a\n"),
+                ("b.txt", "x needle\n")].foldl
+            (fun (model : FileModel) (name, text) => model.withFile (directory / name) text.toUTF8)
+            ((({} : FileModel).withDirectory "/").withDirectory directory)
+        let (rig, stepped) ← ProjectRig.stepped files
+        let some (searched, texts) ←
+          runSettled rig directory
+              [openFile (directory / "a.txt"), { command := "insert-needle" },
+                { command := ProjectSearch.name, arguments := [.str "needle"] }]
+              (keys := searchKeys) (jobs := searchJobs) | return false
+        let results := ProjectSearch.bufferName "needle" directory.toString
+        let found ← bufferText rig texts searched results
+        let some (edited, texts) ←
+          runSettledFrom rig searched texts [{ command := "edit-b" }] (keys := searchKeys) (jobs :=
+              searchJobs) | return false
+        let b ← bufferText rig texts edited "b.txt"
+        let inFile := ((← stepped.files.model).file? (directory / "b.txt")).map (·.bytes)
+        unless
+          found == some "needle a\n\nx needle\n" && b == some "x pin\n" &&
+            inFile == some "x needle\n".toUTF8 do
+          throw (IO.userError s!"found {found}, b {b}")
+        return true }]
 
 end ProjectSearchTest.Linked
