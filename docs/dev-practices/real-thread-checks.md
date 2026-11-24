@@ -166,7 +166,11 @@ of it once, both read from code, never from a list kept here:
   `fixture-test real-thread --site ffi-test` and `ffi-test
   wiring-scenarios` both ways. `prepare` stages what a case builds (the
   greeting entry's install), `run` runs the cases and says
-  `wiring-set: ran <key> at ffi-test` for each. `tools/bundle-test.sh`
+  `wiring-set: ran <key> at ffi-test` for each. A case fails when any of
+  its steps fails, not only its last: `run` runs it with errexit as a
+  command of its own, never as a condition, where sh would ignore
+  errexit, and ffi-test shows it on the fixture cases
+  `tests/wiring-runs/cases` (`run --cases`). `tools/bundle-test.sh`
   says the same of its entries at bundle-test and checks them against
   `fixture-test real-thread --site bundle-test`; its `stage` and `headless`
   modes split the stage from the runs.

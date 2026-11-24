@@ -1,0 +1,72 @@
+# Fixture cases of tools/wiring-runs.sh's run, in place of its own
+# (`run --cases`), which ffi-test runs: a case fails when any of its
+# steps fails, not only its last. Each step is a subshell with errexit, as
+# a real case's are; none touches anything.
+#
+# - passes: two steps that succeed; it is not named as failed;
+# - first_step: its first step fails, its last succeeds;
+# - middle_command: its one step's first command fails, its last succeeds;
+# - bare_command: a command outside any subshell fails, the step after it
+#   succeeds;
+# - last_step: its last step fails.
+#
+# Each says its key after it, failed or not.
+
+table() {
+  cat <<'TABLE'
+fixtures	passes	fixture/passes
+fixtures	first_step	fixture/first-step
+fixtures	middle_command	fixture/middle-command
+fixtures	bare_command	fixture/bare-command
+fixtures	last_step	fixture/last-step
+TABLE
+}
+
+case_passes() {
+  (
+    set -e
+    true
+  )
+  (
+    set -e
+    true
+  )
+}
+
+case_first_step() {
+  (
+    set -e
+    false
+  )
+  (
+    set -e
+    true
+  )
+}
+
+case_middle_command() {
+  (
+    set -e
+    false
+    true
+  )
+}
+
+case_bare_command() {
+  false
+  (
+    set -e
+    true
+  )
+}
+
+case_last_step() {
+  (
+    set -e
+    true
+  )
+  (
+    set -e
+    false
+  )
+}

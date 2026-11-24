@@ -7,7 +7,7 @@
 #   tools/wiring-runs.sh list
 #   tools/wiring-runs.sh check [<list>]
 #   tools/wiring-runs.sh prepare <dir>
-#   tools/wiring-runs.sh run <dir> [fixtures|scenarios]
+#   tools/wiring-runs.sh run [--cases <file>] <dir> [fixtures|scenarios]
 #
 # Run it in `lean/`, after the gate's builds; it builds nothing but what
 # `prepare` stages. Each case runs a real-thread entry whose site is
@@ -33,11 +33,15 @@
 #   ffi-test` for each key it covers, which the gate's once-check and the
 #   stress loop's coverage read (`tools/wiring-ledger.sh`). It runs every
 #   case though one fails, names each that failed, and exits 1 when one
-#   did.
+#   did. A case fails when any of its steps fails, not only its last: it
+#   runs with errexit, as a command of its own, never as a condition.
+#   With `--cases <file>` it runs the table and cases that the shell file
+#   defines in place of these: its fixture, tests/wiring-runs/cases,
+#   which ffi-test runs, holds a case for each step that can fail.
 set -eu
 
 usage() {
-  echo "usage: tools/wiring-runs.sh list | check [<list>] | prepare <dir> | run <dir> [fixtures|scenarios]" >&2
+  echo "usage: tools/wiring-runs.sh list | check [<list>] | prepare <dir> | run [--cases <file>] <dir> [fixtures|scenarios]" >&2
   exit 2
 }
 
@@ -618,6 +622,15 @@ case $command in
     echo "wiring-runs: prepared $prepared"
     ;;
   run)
+    if [ "${1:-}" = --cases ]; then
+      [ "$#" -ge 2 ] || usage
+      cases=$2
+      # `.` looks a name with no slash up on PATH.
+      case $cases in */*) ;; *) cases=./$cases ;; esac
+      # shellcheck disable=SC1090
+      . "$cases"
+      shift 2
+    fi
     [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage
     prepared=$(cd "$1" && pwd -P)
     group=${2:-}
@@ -626,7 +639,19 @@ case $command in
     while IFS=$tab read -r case_group name keys <&3; do
       [ -z "$group" ] || [ "$group" = "$case_group" ] || continue
       echo "wiring-runs: $name"
-      if "case_$name"; then :; else
+      # The case runs as a command of its own, in a subshell with errexit,
+      # and its status is read after it: never as the condition of an `if`
+      # or an operand of `||` or `&&`, where sh ignores errexit in all the
+      # case runs, its steps' own `set -e` too, so that only its last
+      # step's status would count (tests/wiring-runs/cases).
+      set +e
+      (
+        set -e
+        "case_$name"
+      )
+      status=$?
+      set -e
+      if [ "$status" -ne 0 ]; then
         echo "wiring-runs: FAILED: $name" >&2
         failures="$failures $name"
       fi

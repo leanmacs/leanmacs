@@ -878,11 +878,15 @@ run = [
   # here, one case each, with their comments): first its cases held to the
   # code's lists both ways (`fixture-test real-thread --site ffi-test` and
   # `ffi-test wiring-scenarios`), and the check seen to bite on its
-  # fixtures (tests/wiring-runs); then what a case builds staged once, and
+  # fixtures (tests/wiring-runs); its run seen to fail a case on any step
+  # that fails, not only its last, on the fixture cases in place of its own
+  # (tests/wiring-runs/cases: it must exit 1 naming each case but
+  # `passes`, each key said); then what a case builds staged once, and
   # every case run once, each saying `wiring-set: ran <key> at ffi-test`
   # into the ledger.
   "sh ../tools/wiring-runs.sh check",
   "sh ../tools/wiring-runs.sh check ../tests/wiring-runs/same >/dev/null && for f in missing:'a case runs window-host-undrawn, which is no entry or scenario of the wiring set' extra:'tests/headless/elsewhere/script is of the wiring set, and no case runs it'; do status=0; out=$(sh ../tools/wiring-runs.sh check ../tests/wiring-runs/${f%%:*} 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF \"wiring-runs: ${f#*:}\"; } || { printf '%s\\n' \"$out\"; echo \"ffi-test: wiring-runs' check did not refuse tests/wiring-runs/${f%%:*}\"; exit 1; }; done",
+  "status=0; out=$(sh ../tools/wiring-runs.sh run --cases ../tests/wiring-runs/cases . 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF 'wiring-runs: failed: first_step middle_command bare_command last_step' && test \"$(printf '%s\\n' \"$out\" | grep -c '^wiring-set: ran fixture/')\" -eq 5; } || { printf '%s\\n' \"$out\"; echo \"ffi-test: wiring-runs' run did not fail each case of tests/wiring-runs/cases that has a failing step\"; exit 1; }",
   "dir=$(mktemp -d) && trap 'chmod -R u+w \"$dir\" 2>/dev/null; rm -rf \"$dir\"' EXIT && sh ../tools/wiring-runs.sh prepare \"$dir\" && sh ../tools/wiring-ledger.sh note ../target/gate/wiring-ledger sh ../tools/wiring-runs.sh run \"$dir\"",
   # The old form (tests/config-migrate): a config directory of files in byte
   # order with no header is refused, with a diagnostic that names the files
