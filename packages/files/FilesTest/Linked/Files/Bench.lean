@@ -2,7 +2,7 @@ import Editor.Test.Linked.Host
 import Editor.Test.Linked.Lines
 import Files
 import FilesTest.Check
-import FilesTest.Linked.Files
+import FilesTest.Linked.Files.Real
 
 /-!
 # Linked tests: the auto-reload benchmark
@@ -16,7 +16,7 @@ files feature's (`Files.lean`, auto-reload). It was the config test's
 (`ConfigTest.Bench.autoReloadRow`, `config-test bench-auto-reload`) while
 the file commands were modules of the core, and is written on the linked
 test kit (`Editor.Test.Linked`) and the file checks' real host
-(`withRealFileHost`, `FilesTest/Linked/Files.lean`).
+(`withRealFileHost`, `FilesTest/Linked/Files/Real.lean`).
 -/
 
 -- A bench measures real time: its clock reads, and the sleeps of its

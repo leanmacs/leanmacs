@@ -14,7 +14,6 @@ import Editor.Language
 import Editor.Mode
 import Editor.Package
 import Editor.Program
-import Editor.Scene
 import Editor.Setup
 import Editor.Test.Editing
 import Editor.Test.Linked.Host
@@ -32,11 +31,10 @@ import FilesTest.Check
 /-!
 # Linked tests: `Files.lean`
 
-The tests of `Files.lean`: `languageChecks`, `fileChecks`, `reloadChecks`,
-`filePromptChecks` and `autoReloadChecks`, through the headless host on real
-files, the last with the library's watch service: what the files feature's
-follow job does through the loop, which starts it under the core's name
-(the core's `lean/Editor/FileJobs.lean`). They were the config test's
+The tests of `Files.lean`: `languageChecks`, `fileChecks`, `reloadChecks`
+and `filePromptChecks`, through the headless host, stepped over the fakes.
+The checks over the library's services, its watch service among them, are
+of the wiring set (`FilesTest/Linked/Files/Real.lean`). They were the config test's
 (`ConfigTest.<name>`, `lean/ConfigTest/Editor/Files.lean`) while the file
 commands were modules of the core, and moved here with their sentences as
 they were. The linked test's root, `FilesTest/Linked.lean`, runs them; its
@@ -83,14 +81,6 @@ def fileCompiled (opens : List (String × System.FilePath)) (extra : Array Confi
     jobs := Files.package.registered.jobs
     modes := Test.Minibuffer.package.registered.modes }
 
-/-- The stage of the file checks' hosts over the library's file service
-(`Stage.overFiles`), with the config directory `directory`, handed
-`fileCompiled opens extra`. -/
-def fileStage (context : HostContext) (directory : System.FilePath)
-    (opens : List (String × System.FilePath)) (extra : Array Config.Registration) :
-    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle) :=
-  Stage.overFiles context (Config.Directory.source directory) (fileCompiled opens extra)
-
 /-- The directory of the stepped file checks' files: a made-up path, which
 only the fake files' model holds. -/
 def filesDirectory : System.FilePath :=
@@ -116,26 +106,6 @@ def withFileHost (context : HostContext) (opens : List (String × System.FilePat
           (fileCompiled opens extra)
     let stage ← stage.stepped files
     onStage stage fun drive stage => check (Session.ofStage drive directory stage)
-
-/-- Runs `check` against a host stepped on the check's thread over the file
-checks' stage on the library's file service (`fileStage`), with an empty
-config directory of its own: for the file service's one end-to-end check
-here. -/
-def withFileServiceHost (context : HostContext) (opens : List (String × System.FilePath))
-    (check : Session → IO Bool) (extra : Array Config.Registration := #[]) : IO Bool :=
-  IO.FS.withTempDir fun directory => do
-    let stage ← fileStage context directory opens extra
-    onStage stage fun drive stage => check (Session.ofStage drive directory stage)
-
-/-- `withFileServiceHost` with a real host (`onRealStage`), whose config
-directory is `directory`, made here: the caller's, inside the bracket that
-flushes the services before it removes it. -/
-def withRealFileHost (context : HostContext) (directory : System.FilePath)
-    (opens : List (String × System.FilePath)) (check : RealSession → IO Bool)
-    (extra : Array Config.Registration := #[]) : IO Bool := do
-  IO.FS.createDirAll directory
-  let stage ← fileStage context directory opens extra
-  onRealStage stage fun host stage => check (RealSession.ofStage host directory stage)
 
 /-- The file fake of a session's stepped stage. Throws on a session with no
 fakes. -/
@@ -209,44 +179,6 @@ def setup : SetupM Unit := do
 " ++
     more
 
-/-- Lines of a `setup` that define a language `rust` over the shipped one,
-whose highlights query is its own, `(identifier) @variable`. -/
-def rustOverride : String :=
-  "  defineLanguage
-    { Language.rust with
-      syntaxTree := { Language.rust.syntaxTree with highlights := some \"(identifier) @variable\" } }
-"
-
--- inferred-waits W91: stays (A5: the grammars and shipped queries of rust, markdown, toml and lean, which the syntax model does not hold, over the real binding)
-set_option linter.inferredWait false in
-/-- Runs `check` against a host over the library's file service
-(`Stage.overFiles`), with a config directory of its own holding
-`languageReportText` with `more` lines of its `setup`, that is handed the file commands and
-their jobs, the kit's minibuffer's commands and its mode
-(`Editor/Test/Minibuffer.lean`), the `code` mode and the
-languages that ship (`Language.modes`, `Language.shipped`), as the
-executable is, and, for each name and path of `opens`, a command of that
-name that opens that path (`opening`). Its syntax tree is the real binding
-with every request recorded in the array `check` is handed
-(`recordingSyntaxTree`). The config is loaded before `check` runs. Stops the
-host: `false` if the check did not hold or the host did not stop. -/
-def languageStage (context : HostContext) (directory : System.FilePath) (more : String)
-    (opens : List (String × System.FilePath)) :
-    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle × IO.Ref (Array String)) := do
-  writeConfig directory [("init.lean", languageReportText more)]
-  let asked ← IO.mkRef #[]
-  let stage ←
-    Stage.overFiles context (Config.Directory.source directory)
-        { commands :=
-            Files.package.registered.commands ++ Test.Minibuffer.package.registered.commands ++
-              (opens.map fun (name, path) => opening name path).toArray
-          jobs := Files.package.registered.jobs
-          modes := Test.Minibuffer.package.registered.modes ++ Language.modes
-          languages := Language.shipped }
-  return ({ stage with
-        collaborators := { stage.collaborators with syntaxTree := recordingSyntaxTree asked } },
-      asked)
-
 /-- Runs `check` against a host stepped on the check's thread over a stepped
 stage (`Stage.stepped`) whose file fake holds `files`, handed what
 `languageStage` hands its host, whose syntax tree is the stage's fake of the
@@ -280,20 +212,6 @@ def withLanguageHost (context : HostContext) (more : String)
         session.ask [.reload]
         check session asked
 
-/-- A real host (`onRealStage`) over `languageStage`'s stage: for a buffer that
-attaches to the library's syntax service, whose parses come back over the
-library's editor queue, with a grammar and shipped queries only the
-library holds (row W91 of `docs/dev-practices/inferred-waits.md`). -/
-def withRealLanguageHost (context : HostContext) (more : String)
-    (opens : List (String × System.FilePath))
-    (check : RealSession → IO.Ref (Array String) → IO Bool) : IO Bool :=
-  IO.FS.withTempDir fun directory => do
-    let (stage, asked) ← languageStage context directory more opens
-    onRealStage stage fun host stage => do
-        let session := RealSession.ofStage host directory stage
-        session.ask [.reload]
-        check session asked
-
 /-- What the host's `language-report` says of the focused buffer once the
 command `name` has opened its file: its language and its major mode,
 quoted as the scene line has the echo area, or none when the open's jobs
@@ -319,15 +237,6 @@ def reportedAfter (session : Session) (name : String) : IO (Option String) := do
 def noHighlightsRefusal (session : Session) : IO Bool := do
   return (← session.sceneLines).all fun line => (line.splitOn "highlights:").length == 1
 
-/-- The requests the entry of a buffer's mode makes of the syntax tree
-port before its injections, for a language parsed with `grammar` and
-highlighted with the grammar's shipped query, its captures mapped by
-`captures` over the shipped default, as `recordedRequest` writes them. -/
-def shippedHighlightRequests (grammar : String) (captures : List (String × Option FaceName) := []) :
-    IO (Array String) :=
-  return #["refreshAfter 500", s!"attach {grammar}", s!"shippedQuery {grammar} highlights",
-      s!"compile {grammar}", "captureNames", ← shippedFaces grammar captures, "release"]
-
 /-- The checks of a file's language through the headless host
 (`packages/files/Files.lean`, "Open"; `Editor/Language.lean`): the file commands
 and the languages that ship as compiled code registers them, with the real
@@ -340,22 +249,6 @@ real files (`withRealLanguageHost`, row W91 of
 waits (`Stage.overFiles`). -/
 def languageChecks (context : HostContext) : List Check :=
   [{  name :=
-        "opening a .rs file gives its buffer the language rust and the major mode code, and its text is attached with rust and highlighted over the library's syntax service, with no refusal said"
-      run :=
-        -- Wiring only: the shipped Rust grammar and highlights query, which
-        -- the syntax model does not hold, are reached and answer. The order
-        -- of the requests a buffer's mode makes is the stepped json check's
-        -- (`languageChecks` in `FilesTest/Linked/Files.lean`).
-        context.withFiles fun files => do
-          let path := files / "main.rs"
-          IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
-          withRealLanguageHost context "" [("open-rs", path)] fun session asked => do
-              let report ← reportedAfter session "open-rs"
-              let requests ← asked.get
-              return report == some "rust code".quote && requests.contains "attach rust" &&
-                  requests.any (·.startsWith "highlight ") &&
-                  (← noHighlightsRefusal session) },
-    { name :=
         "opening a .json file gives its buffer the language json and the major mode code, and highlights its text with json's shipped query"
       run :=
         -- On the syntax fake, whose model holds json and its highlights:
@@ -376,47 +269,6 @@ def languageChecks (context : HostContext) : List Check :=
                     "release"] &&
                 (← noHighlightsRefusal session))
               s!"report {report}, requests {requests}" },
-    { name :=
-        "opening a .toml file and a file named Cargo.lock gives each buffer the language toml and the major mode code, and highlights its text with TOML's shipped query, keys and table headers in the type face, strings in the string face, brackets in the punctuation face and booleans in the constant face, with no refusal said"
-      run :=
-        context.withFiles fun files => do
-          let toml := files / "mise.toml"
-          let lock := files / "Cargo.lock"
-          IO.FS.writeFile toml "[tools]\nrust = \"1.91\"\nenabled = true\n"
-          IO.FS.writeFile lock "version = 4\n\n[[package]]\nname = \"cc\"\n"
-          let expected ← shippedHighlightRequests "toml" Language.toml.syntaxTree.captures
-          let faces := ((expected[5]?.getD "").replace "highlight " "").splitOn ", "
-          let drawn :=
-            ["syntax.type", "syntax.string", "syntax.punctuation", "syntax.operator",
-                  "syntax.constant"].all
-              faces.contains
-          let opened (name : String) (path : System.FilePath) : IO Bool :=
-            withRealLanguageHost context "" [(name, path)] fun session asked => do
-              let report ← reportedAfter session name
-              return report == some "toml code".quote && (← asked.get).extract 0 7 == expected &&
-                  (← noHighlightsRefusal session)
-          return drawn && (← opened "open-toml" toml) && (← opened "open-lock" lock) },
-    { name :=
-        "opening a .lean file and a file named lakefile.lean gives each buffer the language lean and the major mode code, and asks the syntax tree port to highlight its text with Lean's shipped query and the lean entry's captures, the faces asked for including the keyword, string, comment, constant and module faces, with no refusal said"
-      run :=
-        context.withFiles fun files => do
-          let main := files / "Main.lean"
-          let lakefile := files / "lakefile.lean"
-          IO.FS.writeFile main
-              "/-- Says hello. -/\ndef main : IO Unit := IO.println \"hi\" -- greet\n"
-          IO.FS.writeFile lakefile "import Lake\nopen Lake DSL\n\npackage demo\n"
-          let expected ← shippedHighlightRequests "lean" Language.lean.syntaxTree.captures
-          let faces := ((expected[5]?.getD "").replace "highlight " "").splitOn ", "
-          let drawn :=
-            ["syntax.keyword", "syntax.string", "syntax.comment", "syntax.constant",
-                  "syntax.module"].all
-              faces.contains
-          let opened (name : String) (path : System.FilePath) : IO Bool :=
-            withRealLanguageHost context "" [(name, path)] fun session asked => do
-              let report ← reportedAfter session name
-              return report == some "lean code".quote && (← asked.get).extract 0 7 == expected &&
-                  (← noHighlightsRefusal session)
-          return drawn && (← opened "open-lean" main) && (← opened "open-lake" lakefile) },
     { name :=
         "opening a file whose name matches no language gives its buffer no language and no major mode, and asks the syntax tree port nothing"
       run :=
@@ -472,45 +324,6 @@ def openCommandFileTemporaryCheck (context : HostContext) : Check :=
                 s!"job 1 {Files.loadJob}: ok"] &&
             echo == "".quote &&
             lines == #[viewLine noteText 0, noteStatus path] }
-
-/-- A check of `fileChecks`, a declaration of its own. It stays over the
-library's file service (row W37 of `docs/dev-practices/inferred-waits.md`):
-the file service's write, end to end, with the bytes read back from disk.
-Its waits are its own jobs' end lines: the load's, each check job the first
-edit started, numbered from its started line, and the save's; the disk is
-read after the save's. -/
-def saveCommandModifiedBufferCheck (context : HostContext) : Check :=
-  { name :=
-      "the save command on a modified buffer, over the library's file service: once the save job has ended ok, the file's bytes on disk are the buffer's text"
-    run :=
-      -- Wiring only: the file service's write is reached and answers. The
-      -- status line's modified field and the echo of the write are the
-      -- model's (`FilesTest.fileCommandChecks`, "the save command on a
-      -- modified buffer", `FilesTest/Files.lean`).
-      context.withFiles fun files => do
-        let path := files / "note.txt"
-        IO.FS.writeBinFile path noteText.toUTF8
-        withFileServiceHost context [("open-note", path)] fun session => do
-            session.ask [.run "open-note"]
-            unless ← session.outputReaches (endedOk · Files.loadJob) do
-              return false
-            let before := (← session.output.get).size
-            session.commit "x"
-            -- The commit was the buffer's first edit, which starts a check
-            -- of its file: each job started since ends before the save.
-            let checked (lines : Array String) : Bool :=
-              let since := lines.extract before lines.size
-              since.any (·.endsWith ": started") && startedJobsEnded since
-            unless ← session.outputReaches checked do
-              return false
-            let asked := (← session.output.get).size
-            session.ask [.run Files.saveName]
-            unless
-              ←
-                session.outputReaches fun lines =>
-                    endedOk (lines.extract asked lines.size) Files.saveJob do
-              return false
-            return (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 }
 
 /-- A check of `fileChecks`, a declaration of its own. -/
 def openingPathOpenStartsCheck (context : HostContext) : Check :=
@@ -647,9 +460,9 @@ modified buffer stays over the library's file service, its one end-to-end
 check (`withFileServiceHost`). -/
 def fileChecks (context : HostContext) : List Check :=
   [jobLoadsFileThroughCheck context, openCommandFileTemporaryCheck context,
-    saveCommandModifiedBufferCheck context, openingPathOpenStartsCheck context,
-    openSaveEditWritesCheck context, saveBufferWhoseFileCheck context,
-    openCommandPathFileCheck context, openCommandPathAsksCheck context]
+    openingPathOpenStartsCheck context, openSaveEditWritesCheck context,
+    saveBufferWhoseFileCheck context, openCommandPathFileCheck context,
+    openCommandPathAsksCheck context]
 
 /-- A compiled command called `name`, written for the reload checks, that
 puts the cursor of the window it is called with at the byte `offset`, in the
@@ -979,64 +792,5 @@ def rewriteFromOutside (path : System.FilePath) (text : String) : IO Bool := do
             #["-c", "printf '%s' \"$2\" > \"$1.tmp\" && mv \"$1.tmp\" \"$1\"", "sh", path.toString,
               text] }
   return child.exitCode == 0
-
-/-- A check of `autoReloadChecks`, a declaration of its own. It stays on a
-real host over the library's file and watch services (row W41 of
-`docs/dev-practices/inferred-waits.md`): the watch service, end to end. Its
-waits are its own jobs' lines, and its config directory is inside the
-bracket that flushes the files and the watches before it is removed. -/
-def criteria910RealCheck (context : HostContext) : Check :=
-  { name :=
-      "on real files, with auto-reload on, another process's rewrite of an unmodified buffer's file reaches the buffer over the library's watch service and is shown"
-    run :=
-      context.withFiles (targets := [.files, .fileWatches]) fun files => do
-        let path := files / "note.txt"
-        -- Wiring only: a change on disk reaches the buffer. Criteria 9 and
-        -- 10 (an edited buffer left and marked) are the model's, over the
-        -- watch model (`FilesTest.autoReloadChecks`, `FilesTest/Files.lean`), and
-        -- the watch adapter's behaviour is ContractTest's
-        -- (`ContractTest/Editor/Watch/Contract.lean`).
-        let (old, new) := ("one\ntwo\n", "one\ntwo\nthree\n")
-        IO.FS.writeBinFile path old.toUTF8
-        withRealFileHost context (files / "config") [("open-note", path)] fun session => do
-            session.ask [.run "open-note"]
-            unless ← session.outputReaches (endedOk · Files.loadJob) do
-              return false
-            -- With no argument the command toggles: off, so on.
-            session.ask [.run Files.autoReloadName]
-            -- The command starts the follow job, which says so as it starts:
-            -- read once the ask has waited for the command.
-            let armed :=
-              (← session.output.get).any fun line =>
-                line.startsWith "job " && line.endsWith s!" {FileJobs.followJob}: started"
-            unless armed do
-              return false
-            unless ← rewriteFromOutside path new do
-              return false
-            -- The watch's delivery wakes the follow job, whose command starts
-            -- the reload: the scene is asked again at each of their lines,
-            -- never after a time. How soon is `config-bench`'s to measure.
-            let jobLine (line : String) : Bool := line.startsWith "job "
-            let (shown, saw) ← session.shownOn jobLine (·.contains (viewLine new 0))
-            unless shown do
-              throw (IO.userError s!"the rewrite was not shown: {saw}")
-            return true }
-
-/-- The checks of auto-reload through the headless host on real files, with
-the library's watch service (`Editor/Loop.lean`, "Auto-reload"): criteria 9
-and 10, that the rewrite is shown and the edited buffer marked, each seen on
-the scene asked at each job line the follow job and the reload it starts
-print (`Session.shownOn`), with `hangGuard` against a hang only. How soon
-they are shown, the criteria's "within a second", is real time and is
-measured, not pass or fail here: `config-bench`'s auto-reload row
-(`FilesTest.Linked.Bench.autoReloadRow`, `FilesTest/Linked/Files/Bench.lean`)
-prints the rewrite-to-shown latency over real watches with its budget
-beside it.
-Measured on 2026-11-16 on macOS (FSEvents), over six runs: the rewrite was
-shown 66 to 83 ms after the other process exited, a median of about 80 ms,
-and the edited buffer marked in 78 to 84 ms; the 50 ms coalescing window is
-most of it. -/
-def autoReloadChecks (context : HostContext) : List Check :=
-  [criteria910RealCheck context]
 
 end FilesTest.Linked

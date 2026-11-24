@@ -1,4 +1,5 @@
 import Editor
+import Editor.RealHost
 import Editor.Test.AtPoint
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Services
@@ -8,6 +9,7 @@ import Files.EditorPackage
 import FilesTest.Check
 import FilesTest.Linked.Files
 import FilesTest.Linked.Files.Bench
+import FilesTest.Linked.Files.Real
 
 /-!
 # The linked test of the package `files`
@@ -37,6 +39,10 @@ the auto-reload the watch service's:
 - `filePromptChecks`: the open prompt's candidates over the file fake, with
   the files' source and the path style;
 - `autoReloadChecks`: following a file over the library's watch service.
+- `realLanguageChecks`, `fileServiceChecks` and `autoReloadChecks` are of
+  the wiring set (`FilesTest/Linked/Files/Real.lean`): the library's syntax
+  service with the grammars the model does not hold, the file service's
+  write and the watch service, end to end.
 
 They are handed the context of a harness of hosts over the real elaborator
 (`Editor.Test.Linked.HostContext.run`), on the config base `Editor`, found
@@ -53,6 +59,10 @@ With the opt-in argument `bench-auto-reload` it runs the auto-reload row of
 gate builds and never runs, over the same context.
 -/
 
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.FilesTest.Linked : Editor.WiringSet :=
+  .edge "its main runs the auto-reload bench and the wiring set's checks"
+
 /-- The packages a set that holds this Lake package hands its editor, as
 the config tests' hosts were handed them: its own (the core's Lake
 package, which it requires, hands a set none), then the core's test kit's stand-ins for the
@@ -67,7 +77,9 @@ def setPackages : Array Editor.Package :=
 /-- Every check of the linked test, in the order they run, over `context`. -/
 def FilesTest.Linked.checks (context : Editor.Test.Linked.HostContext) : List FilesTest.Check :=
   FilesTest.Linked.filePromptChecks context ++ FilesTest.Linked.fileChecks context ++
+    FilesTest.Linked.fileServiceChecks context ++
     FilesTest.Linked.languageChecks context ++
+    FilesTest.Linked.realLanguageChecks context ++
     FilesTest.Linked.reloadChecks context ++
     FilesTest.Linked.autoReloadChecks context
 
