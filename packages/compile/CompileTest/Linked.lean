@@ -1,8 +1,10 @@
 import Compile.EditorPackage
 import CompileTest.Check
 import CompileTest.Linked.Compile
+import CompileTest.Linked.Compile.Real
 import CompileTest.Linked.Compile.Shipped
 import Editor
+import Editor.RealHost
 import Editor.Test.AtPoint
 import Editor.Test.Ex
 import Editor.Test.Linked.Host
@@ -37,7 +39,7 @@ under `CompileTest/Linked/`, each of which mirrors the module it tests:
   scheduler, then once the load has ended (task
   `compile-linked-next-error-settle-race`). It was the script
   `tests/linked/run/script` until host-tests-on-fakes phase 4;
-- `compileRunChecks` (same module): over the real process service, the
+- `compileRunChecks` (`CompileTest/Linked/Compile/Real.lean`, of the wiring set): over the real process service, the
   fixture `tests/compile/three-lines` shows each of its lines in the
   compilation buffer before it ends, and its exit status in the last line;
 - `projectRunChecks` (`CompileTest/Linked/Compile/Shipped.lean`): the
@@ -66,6 +68,10 @@ from their `.olean` files at runtime, and each must already be linked into
 the executable. The hosts load no config, so the elaborator is told to
 import `Editor` alone, found in the core's `.olean` directory.
 -/
+
+/-- This module is of the wiring set (`Editor/RealHost.lean`). -/
+def wiringSet.CompileTest.Linked : Editor.WiringSet :=
+  .edge "its main starts the library's services and pump and hands them to the wiring set's checks"
 
 /-- The packages the hosts of `compileHostChecks` are handed, in place of a
 set's (`HostContext.packages`):
