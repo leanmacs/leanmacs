@@ -779,8 +779,11 @@ The job system is tested here with no Rust library:
   a completion handed off its thread just after a step that found nothing
   due; the fake file, process and watch services each log, in order and
   with the check's thread, every order that changed what they hold and no
-  cancel of an id they do not hold; and the file service resolves a starts
-  arrival in the start that makes the count, or at once;
+  cancel of an id they do not hold; the file service resolves a starts
+  arrival in the start that makes the count, or at once; the fake clock
+  runs an action armed with `atRead` inside the read it names, on the
+  reading thread; and the file service learns a published snapshot a save
+  or a diff names through its reader when it takes the request;
 - `journalContractChecks`: the contract of the session journal's port
   (`Editor/Headless/Journal/Contract.lean`) on its recording fake
   (`RecordingJournal`), held by not stepping it, and the fake's own

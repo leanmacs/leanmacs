@@ -3,6 +3,7 @@ import Editor.Ffi.Processes
 import Editor.Ffi.Watches
 import Editor.Fuzzy.Real
 import Editor.InferredWait
+import Editor.Job.Fake
 import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.Test.Linked.Jobs
@@ -20,7 +21,11 @@ service has started and not yet reaped (`pendingChildren`), which a check
 of a feature that runs processes compares before and after, once the
 service has been flushed (`childrenReapedTo`); and the bracket a check's
 temporary directory lives in (`withFiles`), which removes it only once the
-services have worked what was handed to them under it.
+services have worked what was handed to them under it. And the job
+services of a stepped check (`SteppedServices`): the fake scheduler, the
+fake completion pump, and the file, diff, grep and process fakes answering
+through it, over one table of waits, which the check steps on its own
+thread.
 
 **One table and one pump a process.** The library has one completion queue,
 and a pump ends the wait each completion names in the one table it is given
@@ -60,6 +65,62 @@ structure Services where
   /-- The completion pump, when these services started it (`Services.start`);
   none over a table another's pump runs over (`Services.over`). -/
   pump : Option (Task (Except IO.Error Unit))
+
+/-- The job services of a stepped check, every one a fake that the check
+steps on its own thread (`step`): the fake scheduler (`Job.FakeScheduler`),
+which runs a job's code only when stepped; the fake completion pump
+(`Job.FakePump`); the file service's fake (`Job.FakeFiles`) as the files,
+the diffs and the searches, and the process service's (`Job.FakeProcesses`),
+both answering through the pump (`FakeAnswer.onStep`); the clock and the
+watches handed in, whose waits end on the check's own `advance` and
+`change`; the library's matcher (`Fuzzy.real`) and the snapshot reads
+handed in. Nothing here starts a thread: so "nothing can run" is a
+property of the check's own objects, read on its own thread, never of a
+count another thread moves. -/
+structure SteppedServices where
+  /-- The fake scheduler the jobs' code runs on. -/
+  scheduler : Job.FakeScheduler
+  /-- The fake pump the file and process fakes answer through. -/
+  pump : Job.FakePump
+  /-- The files, the diffs and the searches. -/
+  files : Job.FakeFiles
+  /-- The processes. -/
+  processes : Job.FakeProcesses
+  /-- The services a runner is given, over the fakes. -/
+  jobs : Job.Services
+
+/-- The stepped services over `completions`, with the clock `clock`, the
+watches `watches`, the files of `files` and the runs of `processes`: a
+published snapshot is read through `snapshots`, by the job's snapshot
+reads and by the file fake when it takes a save, a diff or a search that
+names one (`Job.FakeFiles.learn`). -/
+def SteppedServices.new (completions : Job.Completions) (clock : Job.FakeClock)
+    (watches : Job.FakeFileWatches) (snapshots : SnapshotId → BaseIO (Option String))
+    (files : FileModel := {}) (processes : ProcessModel := {}) : IO SteppedServices := do
+  let scheduler ← Job.FakeScheduler.new
+  let pump ← Job.FakePump.new completions
+  let fakeFiles ← Job.FakeFiles.new completions files (.onStep pump) snapshots
+  let fakeProcesses ← Job.FakeProcesses.new completions processes (answer := .onStep pump)
+  return {
+      scheduler, pump, files := fakeFiles, processes := fakeProcesses
+      jobs :=
+        { completions, timers := clock.timers, files := fakeFiles.files
+          processes := fakeProcesses.processes, fileWatches := watches.fileWatches
+          diffs := fakeFiles.diffs, greps := fakeFiles.greps, fuzzy := Fuzzy.real, snapshots
+          scheduler := scheduler.scheduler } }
+
+/-- Runs one piece of work of the stepped services, on the caller's thread:
+the oldest piece of a job's code that can run, else the oldest due
+completion; `false` when neither can. -/
+def SteppedServices.step (services : SteppedServices) : IO Bool := do
+  if ← services.scheduler.step then
+    return true
+  services.pump.step
+
+/-- Whether the stepped services hold nothing: no job's code is left to
+run, and no completion is due. -/
+def SteppedServices.quiescent (services : SteppedServices) : IO Bool := do
+  return (← services.scheduler.quiescent) && (← services.pump.quiescent)
 
 /-- The real services over `completions`, a table of waits whose pump is
 already running or is started by the caller: the library's timer service,

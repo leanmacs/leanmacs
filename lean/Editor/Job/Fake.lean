@@ -112,6 +112,9 @@ structure FakeClock.State where
   /-- What tests wait for the clock to reach (`arrivedAt`), each with the
   promise resolved when it does. -/
   arrivals : Array (FakeClockArrival × IO.Promise Unit) := #[]
+  /-- The actions armed to run inside a read (`atRead`), each with the
+  count of reads it runs in. -/
+  atReads : Array (Nat × BaseIO Unit) := #[]
 
 /-- A clock a test moves by hand. -/
 structure FakeClock where
@@ -188,17 +191,33 @@ def holdStarts (clock : FakeClock) : BaseIO (IO.Promise Unit) := do
 def held (clock : FakeClock) : BaseIO Nat :=
   return (← clock.state.get).held
 
-/-- Reads the clock, and records the thread that did. -/
+/-- Reads the clock, and records the thread that did. An action armed for
+this read (`atRead`) runs first, on this thread, so the read sees what it
+did. -/
 def read (clock : FakeClock) : BaseIO Nat := do
   clock.park (·.readHold)
   let thread ← IO.getTID
-  clock.state.modifyGet fun state =>
-      (state.now,
-        { state with
-          reads := state.reads + 1,
-          readThreads :=
-            if state.readThreads.contains thread then state.readThreads
-            else state.readThreads.push thread })
+  let due ←
+    clock.state.modifyGet fun state =>
+        let reads := state.reads + 1
+        let (due, rest) := state.atReads.partition (·.1 == reads)
+        (due,
+          { state with
+            reads, atReads := rest
+            readThreads :=
+              if state.readThreads.contains thread then state.readThreads
+              else state.readThreads.push thread })
+  for (_, action) in due do
+    action
+  return (← clock.state.get).now
+
+/-- Arms `action` to run inside the `count`-th read from now (1 for the
+next), on the reading thread, before that read returns: so a check moves
+the clock between two reads the code under test makes on its own thread,
+with no thread of its own and no held read. -/
+def atRead (clock : FakeClock) (count : Nat) (action : BaseIO Unit) : BaseIO Unit :=
+  clock.state.modify fun state =>
+    { state with atReads := state.atReads.push (state.reads + count, action) }
 
 /-- Starts the wait `id`, due at `deadline`: it waits until the clock is
 advanced that far, or is completed at once if the clock is already there. -/
@@ -748,14 +767,38 @@ structure FakeFiles where
   /-- How it answers: at once, or on the check's step through a fake pump
   (`FakeAnswer.onStep`). -/
   answer : FakeAnswer := .atOnce
+  /-- The text the editor has published for a snapshot id now, read when a
+  request that names it is taken (`learnSources`), as the library's
+  service reads the published table then: what a host's published table
+  hands a fake its stage made (`Stage.stepped`). None by default, so a
+  check's own `publish` is all the model holds. -/
+  learn : SnapshotId → BaseIO (Option String) := fun _ => pure none
 
 namespace FakeFiles
 
 /-- A file service over `model`, through the table `completions`, with no
-request started. -/
-def new (completions : Completions) (model : FileModel := {}) (answer : FakeAnswer := .atOnce) :
-    BaseIO FakeFiles :=
-  return { completions, state := ← IO.mkRef { model }, answer }
+request started, that learns a published snapshot through `learn`. -/
+def new (completions : Completions) (model : FileModel := {}) (answer : FakeAnswer := .atOnce)
+    (learn : SnapshotId → BaseIO (Option String) := fun _ => pure none) : BaseIO FakeFiles :=
+  return { completions, state := ← IO.mkRef { model }, answer, learn }
+
+/-- Reads, through `learn`, the text the editor has published now for each
+snapshot of `sources` that names one, and puts it in the model's published
+snapshots, in place of what it held there; a snapshot `learn` does not know
+is left as the model holds it. A request that is taken calls it first, so
+it answers from the text as published when it is taken. -/
+def learnSources (files : FakeFiles) (sources : Array File.Source) : BaseIO Unit := do
+  for source in sources do
+    if let .snapshot id := source then
+      if let some text← files.learn id then
+        files.state.modify fun state =>
+            let held := state.model.snapshots
+            let grown :=
+              if held.size > id.index then held
+              else held ++ Array.replicate (id.index + 1 - held.size) none
+            { state with
+              model :=
+                { state.model with snapshots := grown.set! id.index (some { contents := text }) } }
 
 /-- Holds every completion from now on: a request started from now is not
 completed until `letGo`. So a test can act while a job is in a file wait. -/
@@ -856,6 +899,7 @@ def take (files : FakeFiles) (id : UInt64) : (request : FileRequest) → BaseIO 
         else (.error (.failed "the request is not pending"), state)
   | .save source path expect => do
     files.parkTake
+    files.learnSources #[source]
     files.state.modifyGet fun state =>
         if state.pending.any (·.1 == id) then
           let (reply, model) := state.model.save source path expect
@@ -965,11 +1009,14 @@ def startDiff (files : FakeFiles) (id : UInt64) (request : DiffRequest) : BaseIO
 /-- The model's answer to the diff `request`, started as the wait `id`, over
 the snapshots the model holds when it is taken. A request that is not
 pending is refused as failed. -/
-def takeDiff (files : FakeFiles) (id : UInt64) (request : DiffRequest) : BaseIO request.Reply :=
+def takeDiff (files : FakeFiles) (id : UInt64) (request : DiffRequest) : BaseIO request.Reply := do
+  match request with
+  | .lines old new _ | .hunks old new _ =>
+    files.learnSources #[old, new]
   files.state.modifyGet fun state =>
-    if state.diffsPending.contains id then
-      (state.model.diff request, { state with diffsPending := state.diffsPending.erase id })
-    else (request.refused (.failed "the request is not pending"), state)
+      if state.diffsPending.contains id then
+        (state.model.diff request, { state with diffsPending := state.diffsPending.erase id })
+      else (request.refused (.failed "the request is not pending"), state)
 
 /-- Withdraws the diff wait `id`, if its request is pending. -/
 def cancelDiff (files : FakeFiles) (id : UInt64) : BaseIO Unit := do
@@ -1016,14 +1063,15 @@ over the files and snapshots the model holds when it is taken: a start names
 its search by its wait's id, as the library's service does. A request that
 is not pending is refused as failed. -/
 def takeGrep (files : FakeFiles) (id : UInt64) : (request : GrepRequest) → BaseIO request.Reply
-  | .start root pattern overlays limits bound =>
+  | .start root pattern overlays limits bound => do
+    files.learnSources (overlays.map (·.2))
     files.state.modifyGet fun state =>
-      if state.grepsPending.contains id then
-        let state := { state with grepsPending := state.grepsPending.erase id }
-        match state.greps.start state.model id.toNat root pattern overlays limits bound with
-        | .ok greps => (.ok ⟨id.toNat⟩, { state with greps })
-        | .error error => (.error error, state)
-      else (.error (.failed "the request is not pending"), state)
+        if state.grepsPending.contains id then
+          let state := { state with grepsPending := state.grepsPending.erase id }
+          match state.greps.start state.model id.toNat root pattern overlays limits bound with
+          | .ok greps => (.ok ⟨id.toNat⟩, { state with greps })
+          | .error error => (.error error, state)
+        else (.error (.failed "the request is not pending"), state)
   | .next search =>
     files.state.modifyGet fun state =>
       if state.grepsPending.contains id then

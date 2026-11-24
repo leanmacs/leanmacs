@@ -101,13 +101,17 @@ the real binding over the library's syntax service, which after an attach,
 and before a question of a text's captures, waits, with a bound, for the
 text's tree to be delivered. With `realFiles`, the jobs reach real files
 through the library's file service, as a file check's do
-(`Stage.overFiles`); with a model, they reach its files and no real one. A
-check that holds the editor thread at a line hands `emitting`, which the
-host's output goes through. -/
+(`Stage.overFiles`); with a model, they reach its files and no real one.
+With `stepped`, the stage is stepped (`Stage.stepped`, over the model's
+files if there is one): its jobs and services are fakes the check steps,
+and its loop's end steps the jobs it cancels. A check that holds the
+editor thread at a line hands `emitting`, which the host's output goes
+through. -/
 def shippedStaged (scheme : InputScheme) (context : HostContext) (directory : System.FilePath)
     (files : List (String × String)) (fileModel : Option FileModel) (realFiles : Bool)
     (workingDirectory : System.FilePath) (home : Option System.FilePath)
-    (emitting : (String → IO Unit) → String → IO Unit) (packages : Array Package) :
+    (emitting : (String → IO Unit) → String → IO Unit) (packages : Array Package)
+    (stepped : Bool := false) :
     IO
       (Stage Config.Elaborate.Base Config.Elaborate.Handle ×
         Headless.Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme) :=
@@ -119,14 +123,19 @@ def shippedStaged (scheme : InputScheme) (context : HostContext) (directory : Sy
       Stage.overFiles context source
     else
       Stage.new context context.elaborator source
+  let stage ←
+    if stepped then
+      stage.stepped (fileModel.getD {})
+    else
+      pure stage
   let staged := stage.collaborators
   let services ←
-    match fileModel with
-    | some model =>
+    match fileModel, stepped with
+    | some model, false =>
       do
         let faked ← Job.FakeFiles.new staged.services.completions model
         pure { staged.services with files := faked.files }
-    | none =>
+    | _, _ =>
       pure staged.services
   let shipped :=
     Headless.shippedOver scheme (#[listingsPackage] ++ packages) #[`Editor] "" [] ""
@@ -151,23 +160,29 @@ def shippedStaged (scheme : InputScheme) (context : HostContext) (directory : Sy
       wakeups := staged.wakeups, jobs := staged.jobs, environment := staged.environment
       posts := staged.posts, pauseEvents := staged.pauseEvents, log := staged.log, syntaxTree
       clock := staged.clock, loopStarted := staged.loopStarted, workingDirectory, home }
+  -- A stepped stage's loop's end steps the jobs it cancels.
+  let collaborators :=
+    if stage.fakes.isSome then { collaborators with endCancelled := staged.endCancelled }
+    else collaborators
   return (stage, collaborators)
 
 /-- Runs `check` against a host of the input scheme `scheme`
 (`shippedStaged`), of `packages`: by default the packages the harness's set
 hands its editor (`HostContext.packages`); stepped on the check's own thread
-(`stepping`, over the stage's memory queue). `false` if the check did not
-hold or the host did not settle after it. The directory is removed. -/
+(`stepping`, over the stage's memory queue), and with `stepped` over a
+stepped stage (`Stage.stepped`). `false` if the check did not hold or the
+host did not settle after it. The directory is removed. -/
 def withShippedHost (scheme : InputScheme) (context : HostContext) (files : List (String × String))
     (check : Session → IO Bool) (fileModel : Option FileModel := none) (realFiles : Bool := false)
     (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
     (packages : Array Package := context.packages)
-    (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
+    (emitting : (String → IO Unit) → String → IO Unit := id) (stepped : Bool := false) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     let (stage, collaborators) ←
       shippedStaged scheme context directory files fileModel realFiles workingDirectory home
-          emitting packages
-    stepping collaborators stage.memory fun drive => check (Session.ofStage drive directory stage)
+          emitting packages stepped
+    stepping collaborators stage.memory (fun drive => check (Session.ofStage drive directory stage))
+        (fakes := stage.fakes)
 
 /-- `withShippedHost` with a real host, in its bracket (`Headless.withHost`),
 which returns once its loop has ended. -/
@@ -181,6 +196,7 @@ def withRealShippedHost (scheme : InputScheme) (context : HostContext)
     let (stage, collaborators) ←
       shippedStaged scheme context directory files fileModel realFiles workingDirectory home
           emitting packages
+    refuseFakes stage "withRealShippedHost"
     Headless.withHost collaborators (guard := hangGuard) (grace := some hangGuard) fun host => do
         let held ← check (RealSession.ofStage host directory stage)
         let wait ← host.await hangGuard

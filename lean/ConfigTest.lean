@@ -301,7 +301,13 @@ show:
   (`Stage.recordingJournal`): the base's save, the header's and a record's
   appends and the removes, in order, each handed on the check's thread,
   and the drain ended only by the check's step;
-- `stageMakerChecks`: a stage's fake syntax service
+- `stageMakerChecks`: a stepped stage (`Stage.stepped`): its job runs only
+  on the session's step, every piece, completion and request on the
+  check's thread; a step leaves a job asleep on the fake clock held; the
+  loop's end steps a cancelled job never stepped to its end; the bracket
+  fails a check that left a completion unstepped; a stepped stage refuses
+  the library's services and a real host refuses it; and `stepUntil` says
+  a stall at once. And a stage's fake syntax service
   (`Stage.fakeSyntaxService`, `Editor/Test/Linked/Host.lean`) on a stepped
   host: it is the host's syntax handler, learns a text the host published
   from the stage's table, refuses its captures as not parsed until the

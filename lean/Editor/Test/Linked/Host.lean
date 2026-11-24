@@ -296,6 +296,57 @@ def clockReaches (clock : Job.FakeClock) (arrival : Job.FakeClockArrival) : IO B
   let reached ← clock.arrivedAt arrival
   return (← Job.awaitWithin hangGuard reached.result?).isSome
 
+/-- The fakes of a stepped stage (`Stage.stepped`), which the check steps on
+its own thread: the job services (`SteppedServices`: the fake scheduler, the
+fake pump, the file and process fakes), the memory queue the host drains,
+and the session journal's and the syntax service's fakes once the stage's
+makers have added them (`Stage.recordingJournal`, `Stage.fakeSyntaxService`),
+which are refs so the loop's end, made with the stage, steps them too. -/
+structure Stage.Fakes where
+  /-- The job services, all fakes. -/
+  services : SteppedServices
+  /-- The memory queue the stepped host drains. -/
+  memory : Headless.Queue.Memory Ffi.Event
+  /-- The session journal's recording fake, once `Stage.recordingJournal`
+  has added it. -/
+  journal : IO.Ref (Option Headless.RecordingJournal)
+  /-- The syntax service's fake, once `Stage.fakeSyntaxService` has added
+  it. -/
+  syntaxService : IO.Ref (Option FakeSyntaxService)
+
+/-- Runs one piece of the fakes' work on the caller's thread, in a fixed
+order: a piece of a job's code, else a due completion, else a delivery of
+the syntax fake, else an order of the journal fake; `false` when none can
+run. It drains no queue: what a piece posts is the host's to take. -/
+def Stage.Fakes.stepWork (fakes : Stage.Fakes) : IO Bool := do
+  if ← fakes.services.step then
+    return true
+  if let some service← fakes.syntaxService.get then
+    if ← service.step then
+      return true
+  if let some journal← fakes.journal.get then
+    if ← journal.step then
+      return true
+  return false
+
+/-- What of the fakes still holds work, by name: empty when they are
+quiescent, every one stepped to its end. -/
+def Stage.Fakes.unquiet (fakes : Stage.Fakes) : IO (Array String) := do
+  let mut held := #[]
+  unless ← fakes.services.scheduler.quiescent do
+    held :=
+      held.push
+        s!"the fake scheduler holds {← fakes.services.scheduler.size} pieces of a job's code"
+  unless ← fakes.services.pump.quiescent do
+    held := held.push s!"the fake pump holds {← fakes.services.pump.size} due completions"
+  if let some service← fakes.syntaxService.get then
+    unless ← service.quiescent do
+      held := held.push "the syntax fake holds an undelivered parse"
+  if let some journal← fakes.journal.get then
+    unless ← journal.quiescent do
+      held := held.push s!"the journal fake holds {← journal.unworked} unworked orders"
+  return held
+
 /-- What a check hands a host of its own: the collaborators, and what the
 check keeps of them. The host's output goes to a buffer, with the thread
 that emitted each line; its jobs wait on a fake clock the check moves; and it
@@ -335,6 +386,12 @@ structure Stage (β σ : Type) where
   to; a real host leaves it unused, its collaborators' queue being the
   library's. -/
   memory : Headless.Queue.Memory Ffi.Event
+  /-- The fakes the check steps, on a stepped stage (`Stage.stepped`); none
+  on a stage whose jobs run on Lean's pool. -/
+  fakes : Option Stage.Fakes := none
+  /-- Whether the stage's services are the library's real ones
+  (`Stage.overFiles`), which a stepped stage refuses. -/
+  realServices : Bool := false
 
 /-- What a check hands a host to register before any config: packages, and
 registrations written as arrays, its commands, its jobs, its key
@@ -495,7 +552,8 @@ def Stage.new {β σ : Type} (context : HostContext) (elaborator : Config.Elabor
 /-- `stage` with its host's session journal the recording fake
 (`Headless.RecordingJournal`, `Editor/Headless/Journal/Fake.lean`) and its
 state directory `state`, and the fake, which the check steps on its own
-thread. The fake reads a save's text from the stage's published table when
+thread; on a stepped stage (`Stage.stepped`) it is recorded with the
+stage's fakes, so the session's steps step it too. The fake reads a save's text from the stage's published table when
 the host hands the order, as the real journal finds the library's snapshot
 then. Nothing is written to `state`: the fake works its orders on a model
 of files. -/
@@ -507,6 +565,8 @@ def Stage.recordingJournal {β σ : Type} (stage : Stage β σ) (state : System.
   let collaborators :=
     { stage.collaborators with
       journal := fake.journal, stateDirectory := some state }
+  if let some fakes := stage.fakes then
+    fakes.journal.set (some fake)
   return ({ stage with collaborators }, fake)
 
 /-- `stage` with its host's syntax tree handler the fake of the syntax
@@ -518,7 +578,8 @@ snapshot is a text of its own, as the model's contract runs have it, until
 phase 4 meets an edit. Each step posts the library's report that a parse
 was delivered (`Event.parsed`, from the library's source) to the stage's
 memory queue, so on a stepped host the delivery reaches the loop as it
-would from the library. -/
+would from the library. On a stepped stage (`Stage.stepped`) the fake is
+recorded with the stage's fakes, so the session's steps step it too. -/
 def Stage.fakeSyntaxService {β σ : Type} (stage : Stage β σ) : IO (Stage β σ × FakeSyntaxService) :=
   do
   let parsed : Ffi.Event :=
@@ -527,7 +588,58 @@ def Stage.fakeSyntaxService {β σ : Type} (stage : Stage β σ) : IO (Stage β 
     FakeSyntaxService.new (post := discard <| stage.memory.push parsed) (learn :=
         Job.realSnapshots stage.collaborators.published.reader)
   let collaborators := { stage.collaborators with syntaxTree := fun _ => pure fake.handle }
+  if let some fakes := stage.fakes then
+    fakes.syntaxService.set (some fake)
   return ({ stage with collaborators }, fake)
+
+/-- `stage` with every background collaborator of its host's jobs a fake the
+check steps on its own thread (`Stage.Fakes`): the fake scheduler, so a
+job's code runs only on a step; the file service's fake over `files`, as
+the files, the diffs and the searches, and the process service's over
+`processes`, both answering through the fake pump; the stage's fake clock
+and watches, as before. A published snapshot a save, a diff or a search
+names is read from the stage's published table when the request is taken.
+
+Its loop's end steps the fakes on the end's thread, the check's, until
+each job it cancelled has ended, and throws, naming it, when nothing can
+run first. A stage over the library's services (`Stage.overFiles`) is
+refused, as is a stage stepped already: a real service's answer comes on
+another thread, so "nothing can run" would be racy again. -/
+def Stage.stepped {β σ : Type} (stage : Stage β σ) (files : FileModel := {})
+    (processes : ProcessModel := {}) : IO (Stage β σ) := do
+  if stage.realServices then
+    throw <|
+        IO.userError
+          "a stepped stage refuses a stage over the library's services (Stage.overFiles): its fakes cannot be stepped beside a real service"
+  if stage.fakes.isSome then
+    throw (IO.userError "the stage is stepped already")
+  let collaborators := stage.collaborators
+  let services ←
+    SteppedServices.new collaborators.services.completions stage.clock stage.watches
+        (Job.realSnapshots collaborators.published.reader) files processes
+  let fakes : Stage.Fakes :=
+    { services, memory := stage.memory, journal := ← IO.mkRef none,
+      syntaxService := ← IO.mkRef none }
+  let endCancelled (cancelled : Array (Task Unit)) : IO Unit := do
+    for index in [0:cancelled.size] do
+      let some job := cancelled[index]? | continue
+      repeat
+        if ← IO.hasFinished job then
+          break
+        unless ← fakes.stepWork do
+          throw <|
+              IO.userError
+                s!"the loop's end cancelled {cancelled.size} jobs, and the job {index + 1} of them had not ended when nothing of the stage's fakes could run"
+  return { stage with
+      fakes := some fakes
+      collaborators :=
+        { collaborators with
+          services :=
+            { collaborators.services with
+              files := services.jobs.files, processes := services.jobs.processes
+              diffs := services.jobs.diffs, greps := services.jobs.greps
+              scheduler := services.jobs.scheduler }
+          endCancelled } }
 
 /-- A host as a check drives it, whichever kind it is: a real one, whose loop
 runs on a thread of its own (`Headless.Host`, `Driven.ofHost`), or one
@@ -703,6 +815,9 @@ structure Session where
   (`Driven.waitWhile`): nothing unless the check lets a held step go on
   it. -/
   waitBlocked : String → IO Unit := fun _ => pure ()
+  /-- The stage's fakes, on a stepped stage (`Stage.stepped`), which the
+  session's steps step (`Session.step`); none otherwise. -/
+  fakes : Option Stage.Fakes := none
 
 /-- A session over a real host, whose loop runs on a thread of its own: the
 session, and the host itself, for a check of what only a loop thread shows
@@ -723,7 +838,7 @@ def Session.ofStage {β σ : Type} (drive : Driven) (directory : System.FilePath
     (waitBlocked : String → IO Unit := fun _ => pure ()) : Session :=
   { drive, directory, output := stage.output, threads := stage.threads
     outputWaits := stage.outputWaits, clock := stage.clock, watches := stage.watches
-    log := stage.log, waitHung, waitBlocked }
+    log := stage.log, waitHung, waitBlocked, fakes := stage.fakes }
 
 /-- The session of the real host `host` over `stage`. -/
 def RealSession.ofStage {β σ : Type} (host : Headless.Host) (directory : System.FilePath)
@@ -827,6 +942,44 @@ running, with `hangGuard` and the session's `waitHung` and `waitBlocked`:
 def join (session : Session) : IO Headless.Wait :=
   session.drive.join hangGuard (waitHung := session.waitHung) (waitBlocked := session.waitBlocked)
 
+/-- One round of a stepped session (`step`): the host's queue drained
+(`handled`, which publishes nothing), then every piece of the fakes' work
+that can run (`Stage.Fakes.stepWork`). Whether anything moved: the queue
+held an event, or a piece ran. Throws on a session with no fakes. -/
+def round (session : Session) : IO Bool := do
+  let some fakes := session.fakes
+    | throw (IO.userError "a session's step needs a stepped stage (Stage.stepped), and this one has no fakes")
+  let queued ← fakes.memory.size
+  unless ← session.handled do
+    throw
+        (IO.userError
+          s!"a hang: the editor thread had not handled its queue within {hangGuard.ms} ms")
+  let mut moved := decide (queued > 0)
+  while ← fakes.stepWork do
+    moved := true
+  return moved
+
+/-- Steps the session to rest, on the check's own thread: in rounds, the
+host's queue drained and every piece of the fakes' work that can run run
+(the scheduler's, the pump's, the syntax fake's and the journal fake's, in
+that order), until a round moves nothing. It waits for nothing: what it
+steps is the check's own, and it does not move the clock, which the check
+moves itself. Throws on a session with no fakes. -/
+partial def step (session : Session) : IO Unit := do
+  if ← session.round then
+    session.step
+
+/-- Steps the session round by round (`step`) until its output holds of
+`done`: `true` once it does, `false` when a round moved nothing first, a
+stall said at once, never a hang. -/
+partial def stepUntil (session : Session) (done : Array String → Bool) : IO Bool := do
+  if done (← session.output.get) then
+    return true
+  if ← session.round then
+    session.stepUntil done
+  else
+    return done (← session.output.get)
+
 /-- Replaces the text of the config file at `path` below the config
 directory, or adds it, with its header (`headed`). -/
 def write (session : Session) (path text : String) : IO Unit :=
@@ -875,18 +1028,31 @@ which returns only once the host's loop has ended, whether the check
 returned or threw. `false` if the check did not hold or the host did not
 settle after it, `hangGuard` its guard against a hang (`waitHung`,
 `waitBlocked`). It also fails the check if the library's editor queue grew
-across it (`leavingLibraryQueue`). -/
+across it (`leavingLibraryQueue`), and, over a stepped stage's `fakes`,
+throws if any of them still holds work once the loop has ended
+(`Stage.Fakes.unquiet`). -/
 def stepping {β σ : Type} {scheme : InputScheme} (collaborators : Headless.Collaborators β σ scheme)
     (memory : Headless.Queue.Memory Ffi.Event) (check : Driven → IO Bool)
     (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
-  leavingLibraryQueue <|
-    Headless.withStepped collaborators memory (guard := hangGuard) (grace := some hangGuard)
-      fun stepped => do
-      let drive := Driven.ofStepped stepped
-      let held ← check drive
-      let wait ← drive.await hangGuard (waitHung := waitHung) (waitBlocked := waitBlocked)
-      return held && (wait == .settled || wait == .ended)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) (fakes : Option Stage.Fakes := none) :
+    IO Bool := do
+  let held ←
+    leavingLibraryQueue <|
+        Headless.withStepped collaborators memory (guard := hangGuard) (grace := some hangGuard)
+          fun stepped => do
+          let drive := Driven.ofStepped stepped
+          let held ← check drive
+          let wait ← drive.await hangGuard (waitHung := waitHung) (waitBlocked := waitBlocked)
+          return held && (wait == .settled || wait == .ended)
+  -- Quiescent once stepped to its end: the loop's end has stepped what its
+  -- cancels let go, and anything a check left unstepped is still held.
+  if let some fakes := fakes then
+    let unquiet ← fakes.unquiet
+    unless unquiet.isEmpty do
+      throw <|
+          IO.userError
+            s!"the check left its stage's fakes holding work once the host's loop had ended: {"; ".intercalate unquiet.toList}"
+  return held
 
 /-- Runs `check` against a real host over `collaborators`, inside the host's
 bracket (`Headless.withHost`), which returns only once the host's loop has
@@ -920,22 +1086,40 @@ def onStage {β σ : Type} (stage : Stage β σ) (check : Driven → Stage β σ
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
   stepping stage.collaborators stage.memory (fun drive => check drive stage) waitHung waitBlocked
+    stage.fakes
 
-/-- Runs `check` against a real host started on `stage` (`hostingReal`). -/
+/-- Throws if `stage` is stepped (`Stage.stepped`): a real host's loop thread
+cannot step its fakes, so `what` refuses it. -/
+def refuseFakes {β σ : Type} (stage : Stage β σ) (what : String) : IO Unit := do
+  if stage.fakes.isSome then
+    throw <|
+        IO.userError
+          s!"{what} refuses a stepped stage (Stage.stepped): a real host's loop thread cannot step its fakes"
+
+/-- Runs `check` against a real host started on `stage` (`hostingReal`). It
+refuses a stepped stage (`refuseFakes`). -/
 def onRealStage {β σ : Type} (stage : Stage β σ) (check : Headless.Host → Stage β σ → IO Bool)
     (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool := do
+  refuseFakes stage "onRealStage"
   hostingReal stage.collaborators (fun host => check host stage) waitHung waitBlocked
 
 /-- Runs `check` against a stepped host started on a stage of its own over
-`elaborator` and `source`, with what `compiled` hands it. `false` if the
-check did not hold or the host did not settle. -/
+`elaborator` and `source`, with what `compiled` hands it; with `stepped`,
+the stage's jobs and services are the fakes the check steps
+(`Stage.stepped`). `false` if the check did not hold or the host did not
+settle. -/
 def staged {β σ : Type} (context : HostContext) (elaborator : Config.Elaborator β σ)
     (source : Config.Source) (check : Driven → Stage β σ → IO Bool) (compiled : Compiled := {})
     (fuzzy : FuzzyHandler := Fuzzy.real) (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool := do
-  onStage (← Stage.new context elaborator source compiled (fuzzy := fuzzy)) check waitHung
-      waitBlocked
+    (waitBlocked : String → IO Unit := fun _ => pure ()) (stepped : Bool := false) : IO Bool := do
+  let stage ← Stage.new context elaborator source compiled (fuzzy := fuzzy)
+  let stage ←
+    if stepped then
+      stage.stepped
+    else
+      pure stage
+  onStage stage check waitHung waitBlocked
 
 /-- `staged` with a real host (`onRealStage`). -/
 def stagedReal {β σ : Type} (context : HostContext) (elaborator : Config.Elaborator β σ)
@@ -957,12 +1141,12 @@ def withHostOver (context : HostContext) (files : List (String × String))
     (through : Config.Source → Config.Source) (check : Session → IO Bool)
     (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
     (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
+    (waitBlocked : String → IO Unit := fun _ => pure ()) (stepped : Bool := false) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeConfig directory files
     staged context (around context.elaborator) (through (Config.Directory.source directory))
         (fun drive stage => check (Session.ofStage drive directory stage waitHung waitBlocked))
-        compiled fuzzy waitHung waitBlocked
+        compiled fuzzy waitHung waitBlocked stepped
 
 /-- `withHostOver` with a real host (`stagedReal`). -/
 def withRealHostOver (context : HostContext) (files : List (String × String))
@@ -986,8 +1170,17 @@ ask `fuzzy` for the matcher, the library's unless a check holds it. -/
 def withHost (context : HostContext) (files : List (String × String)) (check : Session → IO Bool)
     (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
     (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) (stepped : Bool := false) : IO Bool :=
+  withHostOver context files id id check compiled fuzzy waitHung waitBlocked stepped
+
+/-- `withHost` over a stepped stage (`Stage.stepped`): the host's jobs and
+services are the fakes the check steps on its own thread (`Session.step`,
+`Session.stepUntil`). -/
+def withSteppedHost (context : HostContext) (files : List (String × String))
+    (check : Session → IO Bool) (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
+    (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
-  withHostOver context files id id check compiled fuzzy waitHung waitBlocked
+  withHost context files check compiled fuzzy waitHung waitBlocked (stepped := true)
 
 /-- `withHost` with a real host (`withRealHostOver`). -/
 def withRealHost (context : HostContext) (files : List (String × String))
@@ -1039,6 +1232,7 @@ def Stage.overFiles (context : HostContext) (source : Config.Source) (compiled :
   let greps ← Job.RealGreps.new
   let watches ← Job.RealWatches.new
   return { stage with
+      realServices := true
       collaborators :=
         { collaborators with
           services :=
@@ -1094,6 +1288,28 @@ def Session.ran (session : Session) (name : String) : IO Bool := do
   session.ask [.run name]
   return (← session.join) == .settled
 
+/-- Whether every job `lines` says started (`job N name: started`) has an end
+line after it (`job N name: ` and anything but `started`). -/
+def startedJobsEnded (lines : Array String) : Bool :=
+  (List.range lines.size).all fun index =>
+    let line := lines[index]!
+    if line.startsWith "job " && line.endsWith ": started" then
+      let label := String.ofList (line.toList.take (line.length - ": started".length)) ++ ": "
+      ((lines.extract (index + 1) lines.size).any fun later =>
+        later.startsWith label && !later.endsWith ": started")
+    else true
+
+/-- Runs the command called `name` through the host, on a stepped stage
+(`Stage.stepped`), and steps it to rest (`Session.step`): whether every job
+it started has ended, each `job N x: started` line printed since the ask
+followed by its end line. The run's own jobs' ends, never an idle. -/
+def Session.ranStepped (session : Session) (name : String) : IO Bool := do
+  let before := (← session.output.get).size
+  session.ask [.run name]
+  session.step
+  let lines ← session.output.get
+  return startedJobsEnded (lines.extract before lines.size)
+
 /-- Asks the host for the scene, and returns the echo area's text, quoted as
 the scene line has it, and every line it printed after the scene's: each
 view's line, followed by its status line. -/
@@ -1105,8 +1321,12 @@ def Session.viewsAndStatus (session : Session) : IO (String × Array String) := 
 /-- Waits until the host's output holds of `done`: on the emit of the line
 that makes it hold (`Stage.outputWaits`), never by a poll. The wait is armed
 before the output is read, so a line emitted in between is not missed.
-Whether it came before `hangGuard`, which only a hang reaches. -/
+Whether it came before `hangGuard`, which only a hang reaches. On a stepped
+stage (`Stage.stepped`) it steps the session until it holds
+(`Session.stepUntil`) in place of blocking: `false` at a stall. -/
 def Session.outputReaches (session : Session) (done : Array String → Bool) : IO Bool := do
+  if session.fakes.isSome then
+    return ← session.stepUntil done
   let reached ← IO.Promise.new
   session.outputWaits.modify (·.push (done, reached))
   if done (← session.output.get) then

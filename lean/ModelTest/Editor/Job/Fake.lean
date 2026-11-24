@@ -223,9 +223,77 @@ def watchesLogCheck : Check :=
             s!"withdraw {watch}"]
           thread }
 
+/-- The fake clock runs an action armed with `atRead` inside the read it
+names, counted from the arming, on the reading thread, before that read
+returns, so the read sees what the action did; the reads before it see
+the clock as it was, and the action runs once. -/
+def clockAtReadCheck : Check :=
+  { name :=
+      "the fake clock runs an action armed with atRead inside the n-th read from the arming, on the reading thread, before that read returns, and once"
+    run := do
+      let clock ← FakeClock.new (← Completions.new)
+      discard <| clock.read
+      let ran ← IO.mkRef (#[] : Array UInt64)
+      clock.atRead 2 do
+          ran.modify (·.push (← IO.getTID))
+          clock.advance 60
+      let first ← clock.read
+      let second ← clock.read
+      let third ← clock.read
+      let threads ← ran.get
+      unless first == 0 && second == 60 && third == 60 && threads == #[← IO.getTID] do
+        throw <|
+            IO.userError
+              s!"the reads after the arming read {first}, {second} and {third}; the action ran on {threads}"
+      return true }
+
+/-- The fake file service reads a published snapshot a request names
+through its `learn` reader when it takes the request: a save of a snapshot
+the model was never handed writes the reader's text, a diff of two is the
+model's diff of the texts the reader gives, and a snapshot the reader does
+not know is refused as the model refuses it. -/
+def filesLearnCheck : Check :=
+  { name :=
+      "the fake file service learns a published snapshot a save or a diff names through its reader when it takes the request, and refuses one the reader does not know"
+    run := do
+      let completions ← Completions.new
+      let published : SnapshotId → BaseIO (Option String) := fun id =>
+        pure <|
+          match id.index with
+          | 2 => some "one\n"
+          | 5 => some "one\ntwo\n"
+          | _ => none
+      let files ←
+        FakeFiles.new completions (({} : FileModel).withDirectory "/r") (learn := published)
+      files.files.start 1 (.save (.snapshot ⟨2⟩) "/r/a" .absent)
+      let saved ← files.files.take 1 (.save (.snapshot ⟨2⟩) "/r/a" .absent)
+      files.files.start 2 (.save (.snapshot ⟨3⟩) "/r/b" .absent)
+      let unknown ← files.files.take 2 (.save (.snapshot ⟨3⟩) "/r/b" .absent)
+      files.diffs.start 3 (.lines (.snapshot ⟨2⟩) (.snapshot ⟨5⟩) 10)
+      let diffed ← files.diffs.take 3 (.lines (.snapshot ⟨2⟩) (.snapshot ⟨5⟩) 10)
+      let model ← files.model
+      let bytes := (model.file? "/r/a").map (String.fromUTF8! ·.bytes)
+      let savedOk :=
+        match saved with
+        | .ok _ => true
+        | .error _ => false
+      let refused :=
+        match unknown with
+        | .error .noSuchSnapshot => true
+        | _ => false
+      let diffOk :=
+        match diffed with
+        | .ok script => script == DiffModel.script "one\n" "one\ntwo\n" 10
+        | .error _ => false
+      unless savedOk && bytes == some "one\n" && refused && diffOk && (model.file? "/r/b").isNone do
+        throw <|
+            IO.userError
+              s!"saved {savedOk} as {bytes}, the unknown snapshot refused {refused}, the diff {diffOk}"
+      return true }
+
 /-- The checks of the job services' fakes' own promises. -/
 def jobFakeChecks : List Check :=
   [handedAfterEmptyStepCheck, filesLogCheck, filesStartsArrivedCheck, processesLogCheck,
-    watchesLogCheck]
+    watchesLogCheck, clockAtReadCheck, filesLearnCheck]
 
 end ModelTest
