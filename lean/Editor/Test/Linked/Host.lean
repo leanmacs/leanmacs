@@ -848,7 +848,8 @@ def Session.ofStage {β σ : Type} (drive : Driven) (directory : System.FilePath
 def RealSession.ofStage {β σ : Type} (host : Headless.Host) (directory : System.FilePath)
     (stage : Stage β σ) (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : RealSession :=
-  { Session.ofStage host directory stage waitHung waitBlocked with host, queue := none }
+  { Session.ofStage host directory stage waitHung waitBlocked with
+    host, queue := none }
 
 /-- What a check says of a driven host's loop when it ended before what was
 sent to it settled (`Headless.Wait.ended`): that it ended, and what it ended
