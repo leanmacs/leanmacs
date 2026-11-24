@@ -1,3 +1,4 @@
+import Editor.RealHost
 import Editor.SyntaxTree
 import Editor.Text.Real
 
@@ -60,6 +61,10 @@ structure RealSyntaxTree where
   queries : IO.Ref (Array (Option Ffi.SyntaxQuery))
 
 namespace RealSyntaxTree
+
+/-- The mark of `new`: it runs a real background service (`Editor/RealHost.lean`). -/
+def new.realHost : RealHost :=
+  .service
 
 /-- A binding over `snapshots`, with no query compiled. -/
 def new (snapshots : SnapshotReader) : BaseIO RealSyntaxTree :=

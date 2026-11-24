@@ -4,6 +4,7 @@ import Editor.InputScheme.Test
 import Editor.Job.Pool
 import Editor.ModuleLookup
 import Editor.Package
+import Editor.RealHost
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Services
 
@@ -97,6 +98,10 @@ def Row.keyWithinBound (row idle : Row) : Bool :=
 threads it holds. -/
 def warmPool : IO Nat := do
   return (← Job.Pool.warm Job.Pool.size Headless.warmPatience).size
+
+/-- The mark of `withBenchHost`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def withBenchHost.realHost : RealHost :=
+  .loop
 
 /-- Runs `body` against a headless host of the test scheme for a benchmark,
 in its bracket (`Headless.withHost`), so this returns only once the host's

@@ -8,6 +8,7 @@ import Editor.InferredWait
 import Editor.Job.Fake
 import Editor.Job.Real
 import Editor.Job.Runner
+import Editor.RealHost
 import Editor.Test.Linked.Jobs
 
 /-!
@@ -141,6 +142,10 @@ run, and no completion is due. -/
 def SteppedServices.quiescent (services : SteppedServices) : IO Bool := do
   return (← services.scheduler.quiescent) && (← services.pump.quiescent)
 
+/-- The mark of `Services.over`: it runs a real background service (`Editor/RealHost.lean`). -/
+def Services.over.realHost : RealHost :=
+  .service
+
 /-- The real services over `completions`, a table of waits whose pump is
 already running or is started by the caller: the library's timer service,
 its file service over a table of snapshots of its own, its process service,
@@ -160,6 +165,10 @@ def Services.over (completions : Job.Completions) : IO Services := do
       greps := Job.realGreps completions published.reader held (← Job.RealGreps.new)
       fuzzy := Fuzzy.real }
   return { completions, published, held, jobs, pump := none }
+
+/-- The mark of `Services.start`: it runs a real background service (`Editor/RealHost.lean`). -/
+def Services.start.realHost : RealHost :=
+  .service
 
 /-- The real services over a table of waits of their own (`Services.over`),
 with the completion pump started over it on a dedicated task, for the rest

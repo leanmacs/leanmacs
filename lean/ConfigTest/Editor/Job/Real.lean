@@ -73,7 +73,7 @@ def grepJob (directory : System.FilePath) : Config.JobRegistration :=
 /-- Runs `check` against a host stepped on the check's thread over a stage
 on the library's file, diff and grep services (`Stage.overFiles`), handed
 `compiled`, inside the directory `directory`. -/
-def withServiceHost (context : Context) (compiled : Compiled) (check : Session → IO Bool) :
+private def withServiceHost (context : Context) (compiled : Compiled) (check : Session → IO Bool) :
     IO Bool := do
   let stage ← Stage.overFiles context (memorySource []) compiled
   onStage stage fun drive stage => check (Session.ofStage drive "/" stage)

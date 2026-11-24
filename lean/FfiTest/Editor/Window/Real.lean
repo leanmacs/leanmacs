@@ -154,6 +154,10 @@ def shippedPackages : Array Editor.Package :=
     Editor.Test.Shipped.packages ++
     #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package, Editor.Test.editingPackage]
 
+/-- The mark of `windowHostScenario`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def windowHostScenario.realHost : Editor.RealHost :=
+  .loop
+
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
 scripted platform, on the absolute path `file`, or with no file, on the
 editor's one empty buffer, when it is `none`: a cells display bound to the
@@ -272,6 +276,10 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
   IO.println "ffi-test window-host: the window ran and closed, and frames were drawn in it"
   return 0
 
+/-- The mark of `windowHostConfigScenario`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def windowHostConfigScenario.realHost : Editor.RealHost :=
+  .loop
+
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
 scripted platform, with no file and config loaded at start from
 `configDir` with the toolchain `sysroot` and the `.olean` files in
@@ -305,6 +313,10 @@ def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 :=
   IO.println
       "ffi-test window-host-config: the window opened with the title bar the start-up config chose"
   return 0
+
+/-- The mark of `windowHostBaseScenario`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def windowHostBaseScenario.realHost : Editor.RealHost :=
+  .loop
 
 /-- The window mode's wiring (`Editor.Window.host`) handed a config base
 that is not `Editor` alone, as the editor's `main` hands it its package
@@ -342,6 +354,10 @@ def windowHostBaseScenario (sysroot oleanDir configDir : String) : IO UInt8 := d
   IO.println
       "ffi-test window-host-base: config that names a module of the base outside Editor loaded: the window mode elaborated it on the base it was handed"
   return 0
+
+/-- The mark of `windowHostGenerateScenario`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def windowHostGenerateScenario.realHost : Editor.RealHost :=
+  .loop
 
 /-- The window mode's wiring (`Editor.Window.host`) handed a generator, as
 the editor's `main` hands it one: config is loaded at start from
@@ -394,6 +410,10 @@ def windowHostGenerateScenario (sysroot oleanDir configDir : String) : IO UInt8 
       "ffi-test window-host-generate: the window mode created the config directory's lakefile and toolchain file, and loaded the config"
   return 0
 
+/-- The mark of `windowHostDirectScenario`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def windowHostDirectScenario.realHost : Editor.RealHost :=
+  .loop
+
 /-- The window mode as the editor at `editorPath` starts it when run
 directly with `--sysroot <sysroot> --config <configDir>` and no `--oleans`:
 the command line is read by `Window.parse`, given that executable's path,
@@ -436,6 +456,10 @@ def windowHostDirectScenario (editorPath sysroot configDir : String) : IO UInt8 
       "ffi-test window-host-direct: config loaded from the module directory the editor finds by default"
   return 0
 
+/-- The mark of `windowHostUndrawnScenario`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def windowHostUndrawnScenario.realHost : Editor.RealHost :=
+  .loop
+
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
 scripted platform whose renderer cannot be made, on the absolute path
 `file`, as `windowHostScenario` sets it up but with no report. The sample
@@ -460,6 +484,10 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
   IO.println
       "ffi-test window-host-undrawn: the window ran with nothing drawing in it, and the window mode said so"
   return 0
+
+/-- The mark of `windowHostRestartScenario`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def windowHostRestartScenario.realHost : Editor.RealHost :=
+  .loop
 
 /-- The window mode's wiring (`Editor.Window.host`) on the scripted
 platform, ending in a restart: with a state directory and a launcher in a

@@ -1,5 +1,6 @@
 import Editor.Clipboard.Real
 import Editor.Headless
+import Editor.RealHost
 import Editor.Restart.Real
 import Editor.Window
 
@@ -239,6 +240,10 @@ def closeOnceEnded (platform : Ffi.Platform) (loop : Task (Except IO.Error Unit)
   Ffi.windowClose platform
   return ended matches .ok _
 
+/-- The mark of `host`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def host.realHost : RealHost :=
+  .loop
+
 /-- Runs the editor in a window of `platform`, on `options.file` when one
 was given, drawn from `display` and with `clipboard` as its clipboard, and
 returns once the window has closed: the host is started to run the input
@@ -411,6 +416,10 @@ def environmentAt (appPath : String) : IO Environment := do
       xdgDataHome := ← IO.getEnv "XDG_DATA_HOME"
       home := ← IO.getEnv "HOME", appPath
       recordedOleans := ← ModuleLookup.recorded appPath readFile }
+
+/-- The mark of `main`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def main.realHost : RealHost :=
+  .loop
 
 /-- `editor [<file>]`, with the input scheme its host runs, the packages its host registers, the base
 config is elaborated on, what the build says of the editor for the files

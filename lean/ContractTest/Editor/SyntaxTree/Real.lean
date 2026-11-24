@@ -20,6 +20,7 @@ import Editor.Language
 import Editor.Menu
 import Editor.Mode
 import Editor.Program
+import Editor.RealHost
 import Editor.Scene
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Contract
@@ -60,6 +61,10 @@ def drainedParsed : IO Nat := do
     discard (Ffi.takeQueued .editor)
     pulled := pulled + 1
   return pulled
+
+/-- The mark of `onRealSyntaxTree`: it runs a real background service (`Editor/RealHost.lean`). -/
+def onRealSyntaxTree.realHost : Editor.RealHost :=
+  .service
 
 /-- Runs `check` against the real syntax tree binding over documents of
 `texts`, handed the documents, which it may edit, the table of snapshots the

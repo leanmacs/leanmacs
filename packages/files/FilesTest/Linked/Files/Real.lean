@@ -59,6 +59,10 @@ private def withFileServiceHost (context : HostContext) (opens : List (String ×
     let stage ← fileStage context directory opens extra
     onStage stage fun drive stage => check (Session.ofStage drive directory stage)
 
+/-- The mark of `withRealFileHost`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def withRealFileHost.realHost : Editor.RealHost :=
+  .loop
+
 /-- `withFileServiceHost` with a real host (`onRealStage`), whose config
 directory is `directory`, made here: the caller's, inside the bracket that
 flushes the services before it removes it. -/
@@ -68,6 +72,10 @@ def withRealFileHost (context : HostContext) (directory : System.FilePath)
   IO.FS.createDirAll directory
   let stage ← fileStage context directory opens extra
   onRealStage stage fun host stage => check (RealSession.ofStage host directory stage)
+
+/-- The mark of `languageStage`: it runs a real background service (`Editor/RealHost.lean`). -/
+def languageStage.realHost : Editor.RealHost :=
+  .service
 
 -- inferred-waits W91: stays (A5: the grammars and shipped queries of rust, markdown, toml and lean, which the syntax model does not hold, over the real binding)
 set_option linter.inferredWait false in
@@ -98,6 +106,10 @@ def languageStage (context : HostContext) (directory : System.FilePath) (more : 
   return ({ stage with
         collaborators := { stage.collaborators with syntaxTree := recordingSyntaxTree asked } },
       asked)
+
+/-- The mark of `withRealLanguageHost`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def withRealLanguageHost.realHost : Editor.RealHost :=
+  .loop
 
 /-- A real host (`onRealStage`) over `languageStage`'s stage: for a buffer that
 attaches to the library's syntax service, whose parses come back over the

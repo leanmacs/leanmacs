@@ -3,6 +3,7 @@ import Editor.Config.LakePackage
 import Editor.Executable
 import Editor.Headless
 import Editor.Package
+import Editor.RealHost
 import Editor.Version
 import Editor.Window.Real
 import Editor.WindowCheck.Real
@@ -169,6 +170,10 @@ def demo : IO UInt32 := do
       IO.println s!"A command run against the Rust library was refused: {repr refusal}"
       pure false
   return if sum == 5 && !leanOnMain && serviceOnMain && appended then 0 else 1
+
+/-- The mark of `run`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def run.realHost : RealHost :=
+  .loop
 
 /-- Runs the mode the command line `args` selects (`Executable.mode`),
 with `packages` as the packages the hosts register, `schemes` as the input

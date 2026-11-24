@@ -103,6 +103,10 @@ def setup : SetupM Unit := do
     "\n".intercalate commands ++
     "\n"
 
+/-- The mark of `withIndentHost`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def withIndentHost.realHost : Editor.RealHost :=
+  .loop
+
 -- inferred-waits W89: stays (A5: the indent checks' subject is the library's shipped indents query over the real syntax service)
 set_option linter.inferredWait false in
 /-- Runs `check` against a real host of the test scheme with the real syntax

@@ -173,6 +173,10 @@ def offsetOfNeedle (text needle : String) (atEnd : Bool := false) : Option Nat :
   | before :: _ :: _ => some (before.utf8ByteSize + if atEnd then needle.utf8ByteSize - 1 else 0)
   | _ => none
 
+/-- The mark of `objectRowsWrong`: it runs a real background service (`Editor/RealHost.lean`). -/
+def objectRowsWrong.realHost : Editor.RealHost :=
+  .service
+
 -- inferred-waits W88: stays (no host: the real binding's delivery of the check's own text, over the shipped Rust textObjects query, which the syntax model does not hold)
 set_option linter.inferredWait false in
 /-- What is wrong with each of `rows` over the text of `held`, a text of

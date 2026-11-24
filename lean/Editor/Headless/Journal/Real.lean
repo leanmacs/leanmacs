@@ -1,6 +1,7 @@
 import Editor.Ffi.Files
 import Editor.Headless.Journal
 import Editor.Job.Runner
+import Editor.RealHost
 import Editor.Text.Real
 
 /-!
@@ -21,6 +22,10 @@ in process and its drain waited on.
 -/
 
 namespace Editor.Headless
+
+/-- The mark of `Journal.real`: it runs a real background service (`Editor/RealHost.lean`). -/
+def Journal.real.realHost : RealHost :=
+  .service
 
 /-- The journal over the library's file service: each order an unobserved
 request (`Ffi.filesAppendUnobserved`, `Ffi.filesRemoveUnobserved`,

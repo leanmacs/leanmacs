@@ -31,6 +31,7 @@ import Editor.ModeLine
 import Editor.Package
 import Editor.Process
 import Editor.Program
+import Editor.RealHost
 import Editor.Scene
 import Editor.State
 import Editor.SyntaxTree
@@ -162,6 +163,10 @@ structure ProjectRig where
   with the clock they wait on: each job is run to its end on the check's
   thread (`Job.FakePump.runToEnd`); none for a rig over the real services. -/
   fakes : Option (SteppedServices × Job.FakeClock) := none
+
+/-- The mark of `ProjectRig.over`: it runs a real background service (`Editor/RealHost.lean`). -/
+def ProjectRig.over.realHost : RealHost :=
+  .service
 
 /-- A rig over `services`, with a file service and a diff service of its own,
 each reading the snapshots its texts publish. -/

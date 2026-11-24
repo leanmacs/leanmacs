@@ -1,6 +1,7 @@
 import Editor.Command.Real
 import Editor.Job.Pump
 import Editor.Job.Runner
+import Editor.RealHost
 import Editor.Text.Real
 
 /-!
@@ -181,6 +182,10 @@ def flushThrough (completions : Completions) (flush : UInt64 → IO Bool) (id : 
   let started ← (flush id).catchExceptions fun _ => pure false
   unless started do
     completions.finish id .cancelled
+
+/-- The mark of `realTimers`: it runs a real background service (`Editor/RealHost.lean`). -/
+def realTimers.realHost : RealHost :=
+  .service
 
 /-- The clock port answered by the library's timer service. `completions` is
 the table its waits are registered in. -/
@@ -383,6 +388,10 @@ def taken (held : HeldSnapshots) (id : UInt64) : (request : FileRequest) → Bas
   | .append .. => takenMade held id
   | .remove _ => takenMade held id
 
+/-- The mark of `realFiles`: it runs a real background service (`Editor/RealHost.lean`). -/
+def realFiles.realHost : RealHost :=
+  .service
+
 /-- The file port answered by the library's file service. `completions` is
 the table its waits are registered in, `published` the read half of the text
 store's table of snapshots, and `held` where what its loads make is kept. -/
@@ -478,6 +487,10 @@ def stepOf : Ffi.ScriptStep → Diff.Step
 def hunkOf (hunk : Ffi.HunkWords) : Diff.Hunk :=
   { oldStart := hunk.oldStart.toNat, oldStop := hunk.oldStop.toNat
     newStart := hunk.newStart.toNat, newStop := hunk.newStop.toNat }
+
+/-- The mark of `realDiffs`: it runs a real background service (`Editor/RealHost.lean`). -/
+def realDiffs.realHost : RealHost :=
+  .service
 
 /-- The diff port answered by the library's diff service. A source is found as
 a save's is: in `held` for one the job loaded, and through the read half of
@@ -747,6 +760,10 @@ def arm (completions : Completions) (timers : Timers) (timed : TimedRuns) (id : 
             completions.finish id .completed
   timers.start alarm ((← timers.now) + time)
 
+/-- The mark of `realProcesses`: it runs a real background service (`Editor/RealHost.lean`). -/
+def realProcesses.realHost : RealHost :=
+  .service
+
 /-- The process port answered by the library's process service. `completions`
 is the table its waits are registered in, `refused` where it keeps the
 refusals of the requests that never reached the library, `timers` the clock
@@ -925,6 +942,10 @@ def takenWatch (state : RealWatches) (id : UInt64) :
   | .ok none =>
     return .error watchNoReply
 
+/-- The mark of `realFileWatches`: it runs a real background service (`Editor/RealHost.lean`). -/
+def realFileWatches.realHost : RealHost :=
+  .service
+
 /-- The file-watch port answered by the library's watch service.
 `completions` is the table its waits are registered in, and `state` what it
 keeps of its own. A watch is named by its start's wait, and each `next` of
@@ -1014,6 +1035,10 @@ def foundOf (file : Ffi.GrepFile) : Grep.Found :=
     found :=
       file.found.map fun (row, start, stop) =>
         { row := row.toNat, start := start.toNat, stop := stop.toNat } }
+
+/-- The mark of `realGreps`: it runs a real background service (`Editor/RealHost.lean`). -/
+def realGreps.realHost : RealHost :=
+  .service
 
 /-- The grep port answered by the library's grep service. An overlay's
 source is found as a diff's is: in `held` for one the job loaded, and
@@ -1155,6 +1180,10 @@ def librarySource : CompletionSource where
     if event.kind == .completion then
       return .completion event.code
     return .other
+
+/-- The mark of `pump`: it runs a real background service (`Editor/RealHost.lean`). -/
+def pump.realHost : RealHost :=
+  .service
 
 /-- The completion pump: pulls the completion queue and ends the wait each
 completion names, until the queues are quit (`pumpFrom` over

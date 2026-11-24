@@ -8,6 +8,7 @@ import Editor.Headless
 import Editor.Highlight
 import Editor.InferredWait
 import Editor.Job.Fake
+import Editor.RealHost
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
 import Editor.Test.Linked.Host
@@ -63,6 +64,10 @@ fake is `FakeSyntaxService`. A check over the real binding says why with an
 allow. -/
 def recordingSyntaxTree.inferredWait : InferredWait :=
   .realEffect []
+
+/-- The mark of `recordingSyntaxTree`: it runs a real background service (`Editor/RealHost.lean`). -/
+def recordingSyntaxTree.realHost : RealHost :=
+  .service
 
 /-- The real syntax tree binding over the library's syntax service, with
 every request recorded (`recordedRequest`) in `asked`, which after an
@@ -180,6 +185,10 @@ hands on `Ffi.syntaxSettle`, the real syntax service's readout. -/
 def shippedStagedReal.inferredWait : InferredWait :=
   .realEffect []
 
+/-- The mark of `shippedStagedReal`: it runs a real background service (`Editor/RealHost.lean`). -/
+def shippedStagedReal.realHost : RealHost :=
+  .service
+
 /-- `shippedStagedWith` with the real syntax tree binding over the
 library's syntax service, which after an attach, and before a question of a
 text's captures, waits, with a bound, for the text's tree to be delivered:
@@ -247,6 +256,10 @@ private def realShipped {scheme : InputScheme}
 its host's syntax tree is the real binding (`shippedStagedReal`). -/
 def withRealSyntaxHost.inferredWait : InferredWait :=
   .realEffect []
+
+/-- The mark of `withRealSyntaxHost`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def withRealSyntaxHost.realHost : RealHost :=
+  .loop
 
 /-- `withShippedHost` with a real host, in its bracket (`Headless.withHost`),
 which returns once its loop has ended, and the real syntax tree binding

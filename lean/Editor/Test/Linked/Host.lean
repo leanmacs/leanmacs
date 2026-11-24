@@ -27,6 +27,7 @@ import Editor.ModuleLookup
 import Editor.Package
 import Editor.Process
 import Editor.Program
+import Editor.RealHost
 import Editor.Scene
 import Editor.Setup
 import Editor.State
@@ -120,6 +121,10 @@ def HostContext.run {α : Type} (sysroot oleanDir : String) (packages : Array Pa
     discard <| elaborator.base none #[]
     run { elaborator, ids := ← IO.mkRef 100, waits := ← IO.mkRef none, sysroot, oleanDirs
           packages, realLoops := ← IO.mkRef 0 }
+
+/-- The mark of `HostContext.fileWaits`: it runs a real background service (`Editor/RealHost.lean`). -/
+def HostContext.fileWaits.realHost : RealHost :=
+  .service
 
 /-- The table of waits every host over the library's file service is staged
 over, with the process's one completion pump running over it. It is made,
@@ -894,6 +899,10 @@ def stepping {β σ : Type} {scheme : InputScheme} (collaborators : Headless.Col
             s!"the check left its stage's fakes holding work once the host's loop had ended: {"; ".intercalate unquiet.toList}"
   return held
 
+/-- The mark of `hostingReal`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def hostingReal.realHost : RealHost :=
+  .loop
+
 /-- Runs `check` against a real host over `collaborators`, inside the host's
 bracket (`Headless.withHost`), which returns only once the host's loop has
 ended, whether the check returned or threw. `false` if the check did not
@@ -936,6 +945,10 @@ def refuseFakes {β σ : Type} (stage : Stage β σ) (what : String) : IO Unit :
         IO.userError
           s!"{what} refuses a stepped stage (Stage.stepped): a real host's loop thread cannot step its fakes"
 
+/-- The mark of `onRealStage`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def onRealStage.realHost : RealHost :=
+  .loop
+
 /-- Runs `check` against a real host started on `stage` (`hostingReal`). It
 refuses a stepped stage (`refuseFakes`). -/
 def onRealStage {β σ : Type} (stage : Stage β σ) (check : Headless.Host → Stage β σ → IO Bool)
@@ -954,6 +967,10 @@ def staged {β σ : Type} (context : HostContext) (elaborator : Config.Elaborato
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool := do
   let stage ← (← Stage.new context elaborator source compiled (fuzzy := fuzzy)).stepped
   onStage stage check waitHung waitBlocked
+
+/-- The mark of `stagedReal`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def stagedReal.realHost : RealHost :=
+  .loop
 
 /-- `staged` with a real host (`onRealStage`). -/
 def stagedReal {β σ : Type} (context : HostContext) (elaborator : Config.Elaborator β σ)
@@ -982,6 +999,10 @@ def withHostOver (context : HostContext) (files : List (String × String))
         (fun drive stage => check (Session.ofStage drive directory stage waitHung waitBlocked))
         compiled fuzzy waitHung waitBlocked
 
+/-- The mark of `withRealHostOver`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def withRealHostOver.realHost : RealHost :=
+  .loop
+
 /-- `withHostOver` with a real host (`stagedReal`). -/
 def withRealHostOver (context : HostContext) (files : List (String × String))
     (around :
@@ -1007,12 +1028,20 @@ def withHost (context : HostContext) (files : List (String × String)) (check : 
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
   withHostOver context files id id check compiled fuzzy waitHung waitBlocked
 
+/-- The mark of `withRealHost`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def withRealHost.realHost : RealHost :=
+  .loop
+
 /-- `withHost` with a real host (`withRealHostOver`). -/
 def withRealHost (context : HostContext) (files : List (String × String))
     (check : RealSession → IO Bool) (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
     (waitHung : String → IO Unit := IO.eprintln)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
   withRealHostOver context files id id check compiled fuzzy waitHung waitBlocked
+
+/-- The mark of `HostContext.withFiles`: it runs a real background service (`Editor/RealHost.lean`). -/
+def HostContext.withFiles.realHost : RealHost :=
+  .service
 
 /-- Runs `body` in a fresh temporary directory, removed only once the
 library's services among `targets` have worked what was handed to them under
@@ -1041,6 +1070,10 @@ def Session.sceneLines (session : Session) : IO (Array String) := do
 that start with `hint `. -/
 def Session.hints (session : Session) : IO (Array String) := do
   return (← session.sceneLines).filter (·.startsWith "hint ")
+
+/-- The mark of `Stage.overFiles`: it runs a real background service (`Editor/RealHost.lean`). -/
+def Stage.overFiles.realHost : RealHost :=
+  .service
 
 /-- A stage for a host whose jobs reach real files: one over the real
 elaborator and `source`, with what `compiled` hands it, whose services have

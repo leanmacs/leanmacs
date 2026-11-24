@@ -2,6 +2,7 @@ import Editor.InputScheme
 import Editor.InputScheme.Test
 import Editor.Key.Notation
 import Editor.Package
+import Editor.RealHost
 import Editor.Test.AtPoint
 import Editor.Test.Editing
 import Editor.Test.Linked.Shipped
@@ -78,6 +79,10 @@ def withTestHost (context : Test.Linked.HostContext) (files : List (String × St
 its host's syntax tree is the real binding (`withRealSyntaxHost`). -/
 def withRealSyntaxTestHost.inferredWait : InferredWait :=
   .realEffect []
+
+/-- The mark of `withRealSyntaxTestHost`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def withRealSyntaxTestHost.realHost : Editor.RealHost :=
+  .loop
 
 -- inferred-waits W89: stays (A5: the library's syntax service, whose deliveries come over its own queue, is the subject of this host's checks)
 set_option linter.inferredWait false in

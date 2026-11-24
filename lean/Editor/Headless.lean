@@ -20,6 +20,7 @@ import Editor.Job.Pool
 import Editor.Job.Real
 import Editor.Loop
 import Editor.PackageSet.Build
+import Editor.RealHost
 import Editor.Restart.Real
 import Editor.SyntaxTree.Real
 import Editor.Text.Real
@@ -3297,6 +3298,10 @@ private def hostedWithin {α β σ : Type} {scheme : InputScheme}
       throw error
   return (← endLoop host guard grace hung abandoned).map (result, ·)
 
+/-- The mark of `withHostEnding`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def withHostEnding.realHost : RealHost :=
+  .loop
+
 /-- Runs `body` against a host started on `collaborators`, and returns only
 once the host's loop has ended, whether `body` returned or threw: a loop
 still running is asked to stop (`Signal.stop`), and its task is waited for
@@ -3324,6 +3329,10 @@ def withHostEnding {α β σ : Type} {scheme : InputScheme} (collaborators : Col
     throw <|
         IO.userError
           s!"a hang: the editor loop had not ended {(grace.map (·.ms)).getD 0} ms after the hang was said ({guard.ms} ms after it was asked to stop); giving up"
+
+/-- The mark of `withHost`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def withHost.realHost : RealHost :=
+  .loop
 
 /-- Runs `body` against a host started on `collaborators`, and returns only
 once the host's loop has ended, whether `body` returned or threw, as
@@ -3808,6 +3817,10 @@ structure Hosting (β σ : Type) (scheme : InputScheme) where
   hosted :
     Collaborators β σ scheme → (Driven → IO Ran) → IO (Except Failure (Ran × Except IO.Error Unit))
 
+/-- The mark of `Hosting.real`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def Hosting.real.realHost : RealHost :=
+  .loop
+
 /-- A real host's bracket (`hostedWithin`, driven by `Driven.ofHost`): a
 loop not ended within `guard` after the run stopped it is said through
 `hung` as a hang, once, and waited for, with no deadline when `grace` is
@@ -4030,6 +4043,10 @@ def runOn {β σ : Type} {scheme : InputScheme} (hosting : Hosting β σ scheme)
   | .error failure =>
     return (some failure, none)
 
+/-- The mark of `runFrom`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def runFrom.realHost : RealHost :=
+  .loop
+
 /-- Runs `script` against a host of its own, in its bracket (`withHost`), as
 its driver: sends each request in order and waits at each `settle` and each
 `join`, and returns once the loop has ended. `none` when the script ran to
@@ -4095,6 +4112,10 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
   runOn (Hosting.real guard grace hung abandoned) collaborators script waitGuard resume answer
     waitHung waitBlocked
 
+/-- The mark of `run`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def run.realHost : RealHost :=
+  .loop
+
 /-- Runs `script` against a host of its own, as `runFrom` does from its
 start, with the same patiences, guard and grace, and says only why it could
 not run to its end. -/
@@ -4127,6 +4148,10 @@ def runOnAndDispose {β σ : Type} {scheme : InputScheme} (hosting : Hosting β 
       collaborators.dispose
     catch _ =>
       pure ()
+
+/-- The mark of `runAndDispose`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def runAndDispose.realHost : RealHost :=
+  .loop
 
 /-- Runs `script` against a host of its own, as `runFrom` does, and then, the
 host's loop having ended, removes what the collaborators left outside the
@@ -4238,6 +4263,10 @@ def reportedEnvironments (state : IO.Ref Process.Environments) (source : UInt64)
     (queue : Queue := Queue.library) : Job.Environments :=
   Job.sharedEnvironments state fun text => discard <| queue.post { source, code := 0, text }
 
+/-- The mark of `shipped`: it runs a real background service (`Editor/RealHost.lean`). -/
+def shipped.realHost : RealHost :=
+  .service
+
 /-- The collaborators the executable's hosts are made of, the headless
 mode's and the window mode's, which run the input scheme `scheme`, with
 `packages` as the packages the host
@@ -4347,6 +4376,10 @@ def runningAt (origin : Config.LakePackage.Origin) (appPath : String) (configDir
       pure configDir
   PackageSet.at appPath config (directory.map (origin.setName, ·)) coreDirectory sysroot data
       readFile fun path => System.FilePath.pathExists path
+
+/-- The mark of `main`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def main.realHost : RealHost :=
+  .loop
 
 /-- The headless mode of the executable, handed the input scheme its host
 runs, the packages its host

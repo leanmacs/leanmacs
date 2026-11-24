@@ -5,6 +5,7 @@ import Editor.Ffi.Snapshot
 import Editor.Ffi.Syntax
 import Editor.Highlight
 import Editor.InferredWait
+import Editor.RealHost
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
 import Editor.Text
@@ -33,6 +34,10 @@ namespace Editor.Test.Linked
 
 open Editor
 
+/-- The mark of `shippedCaptureNames`: it runs a real background service (`Editor/RealHost.lean`). -/
+def shippedCaptureNames.realHost : RealHost :=
+  .service
+
 /-- The capture names of the query of `kind` the library ships for
 `grammar`; none when it ships none or the query does not compile. -/
 def shippedCaptureNames (grammar : String) (kind : QueryKind) : IO (Option (Array String)) := do
@@ -59,6 +64,10 @@ hands on `Ffi.syntaxSettle`, the real syntax service's readout, so a check
 that runs a program over the real binding says why with an allow. -/
 def SyntaxText.run.inferredWait : InferredWait :=
   .realEffect []
+
+/-- The mark of `SyntaxText.run`: it runs a real background service (`Editor/RealHost.lean`). -/
+def SyntaxText.run.realHost : RealHost :=
+  .service
 
 /-- Runs `program` over the texts of `held`, with a display recorder over
 its table and the real syntax tree binding, which waits, with a bound, for
@@ -92,6 +101,10 @@ def SyntaxText.run {α : Type} (held : SyntaxText) (program : TextId → EditorM
 runs `SyntaxText.run`, over the real syntax service. -/
 def SyntaxText.over.inferredWait : InferredWait :=
   .realEffect []
+
+/-- The mark of `SyntaxText.over`: it runs a real background service (`Editor/RealHost.lean`). -/
+def SyntaxText.over.realHost : RealHost :=
+  .service
 
 /-- A text of `source`, parsed with the grammar `grammar` and drawn by the
 shipped default (`Highlight.enter`), over the real bindings; none when the

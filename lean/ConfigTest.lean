@@ -29,6 +29,7 @@ import ConfigTest.Editor.Test.Linked.Bench
 import ConfigTest.Editor.Test.Linked.Host
 import ConfigTest.Editor.Theme.Check
 import ConfigTest.Editor.Window.Real
+import ConfigTest.Lint.RealHost
 import ConfigTest.Lint.Wait
 import ConfigTest.Lsp
 import Editor.RealHost

@@ -32,6 +32,7 @@ import Editor.Loop
 import Editor.Mode
 import Editor.Package
 import Editor.Program
+import Editor.RealHost
 import Editor.Scene
 import Editor.Setup
 import Editor.State
@@ -131,6 +132,10 @@ structure Rig where
   others : IO.Ref (Array String)
 
 namespace Rig
+
+/-- The mark of `«with»`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def «with».realHost : Editor.RealHost :=
+  .loop
 
 /-- Runs `body` against a host over `elaborator` and a source in memory, or,
 with `directory`, over that config directory, which each reload then writes
@@ -266,6 +271,10 @@ def over (base : Config.Elaborate.Base)
     Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle :=
   { elaborator with base := fun earlier modules => elaborator.base (earlier <|> some base) modules }
 
+/-- The mark of `start`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def start.realHost : Editor.RealHost :=
+  .loop
+
 /-- `bench-start`: makes the base of `modules`, then loads the twenty-line
 config through a host, and prints how long each took. -/
 def start (sysroot oleanDir : String) (modules : List String) : IO UInt8 := do
@@ -278,6 +287,10 @@ def start (sysroot oleanDir : String) (modules : List String) : IO UInt8 := do
       IO.println
           s!"bench-start {modules}: import {milliseconds imported} ms, first load {milliseconds first} ms"
       return 0
+
+/-- The mark of `reload`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def reload.realHost : Editor.RealHost :=
+  .loop
 
 /-- `bench-reload`: twenty reloads of each of the three configs of one
 file, each reload with the text changed, and of the config of two files
@@ -303,6 +316,10 @@ def reload (sysroot oleanDir : String) : IO UInt8 := do
   files.remove
   return 0
 
+/-- The mark of `reloadDirectory`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def reloadDirectory.realHost : Editor.RealHost :=
+  .loop
+
 /-- `bench-reload-directory`: twenty reloads each of the one-line root, of
 the fifty-definition config and of the config of two files, read from a
 config directory, a
@@ -326,6 +343,10 @@ def reloadDirectory (sysroot oleanDir : String) : IO UInt8 :=
     files.remove
     return 0
 
+/-- The mark of `modules`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def modules.realHost : Editor.RealHost :=
+  .loop
+
 /-- `bench-modules`: makes the base of `modules` and prints the name of
 every module the import read, one a line and unescaped, so that
 `tools/stage-bundle.sh --closure` can map each to its files. -/
@@ -338,8 +359,8 @@ def modules (sysroot oleanDir : String) (modules : List String) : IO UInt8 := do
 
 /-- `count` reloads of `config`, each with the text changed, after a first
 load that is not counted, and `name` with the mean time of one on stdout. -/
-def soaked (name : String) (config : Nat → Files) (sysroot oleanDir : String) (count : Nat) :
-    IO UInt8 := do
+private def soaked (name : String) (config : Nat → Files) (sysroot oleanDir : String)
+    (count : Nat) : IO UInt8 := do
   let (real, files) ← measured sysroot oleanDir
   Rig.with real none fun rig => do
       discard <| rig.reload (config 0)
@@ -350,11 +371,19 @@ def soaked (name : String) (config : Nat → Files) (sysroot oleanDir : String) 
   files.remove
   return 0
 
+/-- The mark of `soak`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def soak.realHost : Editor.RealHost :=
+  .loop
+
 /-- `bench-soak`: `count` reloads of a config that is its root alone, fifty
 definitions in a root that imports `Lean` and uses it (`fiftyWithLean`),
 each with the text changed, and prints the mean time of one. -/
 def soak (sysroot oleanDir : String) (count : Nat) : IO UInt8 :=
   soaked "bench-soak" fiftyWithLean sysroot oleanDir count
+
+/-- The mark of `soakModules`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def soakModules.realHost : Editor.RealHost :=
+  .loop
 
 /-- `bench-soak-modules`: `count` reloads of a config of two files, a root
 that imports `Lean` and a config file that changes each round
@@ -415,6 +444,10 @@ def readings (count : Nat) : Work := fun _ => do
   for _ in [0:count] do
     discard now
   return pure ()
+
+/-- The mark of `jobs`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def jobs.realHost : Editor.RealHost :=
+  .loop
 
 /-- `bench-jobs`: the latency of the editor loop, over `samples` samples a
 row, while nothing runs, while 64 jobs each sleep a millisecond in a loop,
@@ -660,6 +693,10 @@ the auto-popup row of the prompt benchmark completes from. -/
 def makeWordBuffers : EditorM Unit := do
   for index in [0:20] do
     discard <| createBuffer s!"words-{index}" (wordText (index * 5000))
+
+/-- The mark of `prompt`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def prompt.realHost : Editor.RealHost :=
+  .loop
 
 /-- `bench-prompt`: what a key costs in a prompt with no candidates, over
 1,000, 10,000 and 100,000 candidates listed inline (the limit lifted), and
@@ -965,8 +1002,9 @@ history, is not timed. The state is phase 2's: two tabs of five windows,
 four on the file, one of them with 100 jump entries, and an unscoped
 store of 10,000 lines (`journalStore`), whose codec the reconciler is
 handed, so what it keeps of the frame and the stores is there to cost. -/
-def journalTimes (services : Job.Services) (published : Snapshots) (directory : System.FilePath)
-    (size : Nat) (position : String) (inserts : Nat) : IO (Array Nat) := do
+private def journalTimes (services : Job.Services) (published : Snapshots)
+    (directory : System.FilePath) (size : Nat) (position : String) (inserts : Nat) :
+    IO (Array Nat) := do
   let journal := Headless.Journal.real published.reader services
   IO.FS.createDirAll (Restore.journalsDirectory directory)
   let path := directory / s!"{size}-{position}.txt"
@@ -1050,6 +1088,10 @@ def journalTimes (services : Job.Services) (published : Snapshots) (directory : 
   -- drain, a flush of the file service, bounded only as a hang guard.
   discard <| Job.awaitWithin (.on "the journal's drain" 30000) (← journal.drained)
   return times
+
+/-- The mark of `journal`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def journal.realHost : Editor.RealHost :=
+  .loop
 
 /-- `bench-journal`: the session journal's cost on the editor thread, for
 10,000 one-character inserts into a buffer of 4 KiB, 1 MiB and 10 MiB at its

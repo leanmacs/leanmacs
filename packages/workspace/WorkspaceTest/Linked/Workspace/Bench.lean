@@ -1,4 +1,5 @@
 import Editor.Completion.Filtering
+import Editor.RealHost
 import Editor.Test.Linked.Bench
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Listings
@@ -72,6 +73,10 @@ def timedRun (command : String) (arguments : Array String) (directory : System.F
   unless output.exitCode == 0 do
     throw (IO.userError s!"{command} exited with status {output.exitCode}: {output.stderr}")
   return (ended - started, output.stdout)
+
+/-- The mark of `workspaceFiles`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def workspaceFiles.realHost : Editor.RealHost :=
+  .loop
 
 /-- `bench-workspace-files`: what a key costs in `find-file-in-workspace`'s
 prompt over the repository at `repository`, a key in a prompt with no

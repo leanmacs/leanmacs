@@ -1,3 +1,4 @@
+import Editor.RealHost
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Lines
 import Files
@@ -28,6 +29,10 @@ namespace FilesTest.Linked.Bench
 
 open Editor
 open Editor.Test.Linked
+
+/-- The mark of `autoReloadRow`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def autoReloadRow.realHost : Editor.RealHost :=
+  .loop
 
 /-- The auto-reload row of `config-bench` (`FilesTest-Linked
 bench-auto-reload`): the latency, in milliseconds, from another process's

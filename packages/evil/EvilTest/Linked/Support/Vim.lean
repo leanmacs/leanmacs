@@ -1,3 +1,4 @@
+import Editor.RealHost
 import Editor.Test.Linked.Shipped
 import Evil.Vim.Default
 
@@ -30,6 +31,10 @@ def withVimHost (context : HostContext) (files : List (String × String)) (check
     (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
   withShippedHost Vim.Default.scheme context files check fileModel workingDirectory home packages
     emitting
+
+/-- The mark of `withRealVimHost`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def withRealVimHost.realHost : Editor.RealHost :=
+  .loop
 
 -- inferred-waits W87: stays (A5: evil's real-host checks are the Vim scheme over the library's shipped Rust textObjects and indents queries, which the syntax model does not hold)
 set_option linter.inferredWait false in

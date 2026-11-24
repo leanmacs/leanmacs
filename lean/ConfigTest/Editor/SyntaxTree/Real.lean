@@ -21,12 +21,18 @@ leaves the state as it was ... and publishes one scene"). Its helpers,
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
 def wiringSet.ConfigTest.Editor.SyntaxTree.Real : Editor.WiringSet :=
-  .wiring "the library's syntax service (RealSyntaxTree), whose parses come back over the library's queue" "a stepped host never pulls the library's queue, and a stray parsed would reach the next real host"
+  .wiring
+    "the library's syntax service (RealSyntaxTree), whose parses come back over the library's queue"
+    "a stepped host never pulls the library's queue, and a stray parsed would reach the next real host"
 
 namespace ConfigTest
 
 open Editor
 open Editor.Test.Linked
+
+/-- The mark of `recordedStage`: it runs a real background service (`Editor/RealHost.lean`). -/
+def recordedStage.realHost : Editor.RealHost :=
+  .service
 
 -- inferred-waits W89: stays (A5: the stage of parseHighlightedTextLibraryCheck, whose subject is the library's deliveries over its own queue)
 set_option linter.inferredWait false in
@@ -70,6 +76,10 @@ def recordedStage (context : Context) (directory : System.FilePath) :
           { stage.collaborators with
             syntaxTree, display } },
       asked, published, settleShown)
+
+/-- The mark of `withRealRecordedSyntaxTree`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def withRealRecordedSyntaxTree.realHost : Editor.RealHost :=
+  .loop
 
 /-- A real host (`onRealStage`) over `recordedStage`'s stage, the real
 syntax binding's, whose services record to a fake recorder

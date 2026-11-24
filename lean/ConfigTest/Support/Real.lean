@@ -1,4 +1,5 @@
 import ConfigTest.Editor.Headless
+import Editor.RealHost
 
 /-!
 # Config tests: support for the real-host wiring checks
@@ -15,6 +16,10 @@ namespace ConfigTest
 
 open Editor
 open Editor.Test.Linked
+
+/-- The mark of `withdrawingHeld`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
+def withdrawingHeld.realHost : Editor.RealHost :=
+  .loop
 
 /-- Runs `check` with `stage`'s collaborators, for one host's run of
 `jobScript` that reaches its end: the loop's withdrawal of the job's wait, as
