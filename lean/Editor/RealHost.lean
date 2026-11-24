@@ -128,6 +128,37 @@ def ranLines {κ α : Type} (root : String) (modules : List (String × (κ → L
   modules.map fun (module, checks) =>
     s!"wiring-set: ran {root} {module} {(checks context).length} checks"
 
+/-- Which checks of a root's check set a run runs: every one, a normal run
+(`all`), or the wiring set's modules' alone (`wiring`), the root's
+`--wiring` mode, which the stress loop runs. Every root reads its mode and
+selects its checks here, so that none can drift from the others. -/
+inductive Mode where
+  /-- A normal run: every group's checks (`CheckGroup.all`). -/
+  | all
+  /-- The wiring set's modules' checks alone (`CheckGroup.wiring`). -/
+  | wiring
+  deriving BEq, Repr
+
+/-- The mode the arguments after a root's directories name: none, a normal
+run; `--wiring` alone, the wiring set's; `none` for anything else, which
+the root answers with its usage. -/
+def Mode.ofArguments? : List String → Option Mode
+  | [] => some .all
+  | ["--wiring"] => some .wiring
+  | _ => none
+
+/-- What a run's count line calls the checks `mode` runs. -/
+def Mode.what : Mode → String
+  | .all => "checks"
+  | .wiring => "wiring-set checks"
+
+/-- The checks of `groups` that `mode` runs over `context`: a normal run's
+(`all`), or each module's of `wiring` in turn, in its order. -/
+def select {κ α : Type} (mode : Mode) (groups : List (CheckGroup κ α)) (context : κ) : List α :=
+  match mode with
+  | .all => all groups context
+  | .wiring => (wiring groups).flatMap (·.2 context)
+
 end CheckGroup
 
 /-- A run of a real host that a test executable makes as a subcommand of

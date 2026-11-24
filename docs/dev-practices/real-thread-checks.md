@@ -137,7 +137,9 @@ of it once, both read from code, never from a list kept here:
   test with such a module take a wiring mode that runs those groups alone
   (`config-test … --wiring`, `ffi-test wiring`, `<P>Test-Linked … --wiring`,
   through `tools/package-set.sh --wiring run`) and answer
-  `wiring-modules`; each run of them prints
+  `wiring-modules`. A linked root and config-test read the mode and select
+  its checks with `CheckGroup.Mode.ofArguments?` and `CheckGroup.select`,
+  so the roots cannot drift apart; each run of them prints
   `wiring-set: ran <root> <module> <n> checks` for each module it ran
   (`CheckGroup.ranLines`), and contract-test, of the set whole,
   `wiring-set: ran contract-test ContractTest`.

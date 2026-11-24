@@ -99,40 +99,38 @@ def WorkspaceTest.Linked.checks :
       fun (services, _, completion) =>
       WorkspaceTest.Linked.workspaceListerChecks services completion]
 
-/-- Runs the checks `select` takes from the check set over the real
-services, started here, and says which failed, or how many passed, as
-`what`; then a line for each module of the wiring set the run ran
-(`Editor.CheckGroup.ranLines`). -/
-private def WorkspaceTest.Linked.runSelected
-    (select : WorkspaceTest.Linked.Context → List WorkspaceTest.Check)
-    (wiring : List (String × (WorkspaceTest.Linked.Context → List WorkspaceTest.Check)))
-    (what : String) : IO UInt32 := do
+/-- Runs the checks `mode` selects from the check set
+(`Editor.CheckGroup.select`) over the real services, started here, and says
+which failed, or how many passed; then a line for each module of the wiring
+set the run ran (`Editor.CheckGroup.ranLines`). -/
+private def WorkspaceTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : IO UInt32 := do
   let workspaces ← IO.FS.realPath workspaceFixtures
   let completion ← IO.FS.realPath completionFixtures
   let running ← Editor.Test.Linked.Services.start
   let context := (running.jobs, workspaces, completion)
-  let checks := select context
+  let checks := Editor.CheckGroup.select mode WorkspaceTest.Linked.checks context
   let failed ← WorkspaceTest.failures checks
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   if failed.isEmpty then
-    IO.println s!"workspace linked test: {checks.length} {what} passed"
-  for line in Editor.CheckGroup.ranLines "workspace" wiring context do
+    IO.println s!"workspace linked test: {checks.length} {mode.what} passed"
+  for line in
+    Editor.CheckGroup.ranLines "workspace" (Editor.CheckGroup.wiring WorkspaceTest.Linked.checks)
+        context do
     IO.println line
   (← IO.getStdout).flush
   Editor.Test.Linked.shutdown
   IO.Process.exit (if failed.isEmpty then 0 else 1)
 
+/-- Says the command lines it takes, and exits 2. -/
+private def WorkspaceTest.Linked.usage : IO UInt32 := do
+  IO.eprintln
+      "usage: WorkspaceTest-Linked <sysroot> <core olean dir> [--wiring], WorkspaceTest-Linked wiring-modules, or WorkspaceTest-Linked bench-workspace-files <sysroot> <core olean dir> <repository> <samples>"
+  return 2
+
 /-- Runs the checks (the module docs). -/
 def main (arguments : List String) : IO UInt32 := do
-  let wiring := Editor.CheckGroup.wiring WorkspaceTest.Linked.checks
   match arguments with
-  | [_, _] =>
-    WorkspaceTest.Linked.runSelected (Editor.CheckGroup.all WorkspaceTest.Linked.checks) wiring
-        "checks"
-  | [_, _, "--wiring"] =>
-    WorkspaceTest.Linked.runSelected (fun context => wiring.flatMap (·.2 context)) wiring
-        "wiring-set checks"
   | ["wiring-modules"] =>
     for module in Editor.CheckGroup.modules WorkspaceTest.Linked.checks do
       IO.println module
@@ -151,7 +149,8 @@ def main (arguments : List String) : IO UInt32 := do
       IO.eprintln
           "usage: WorkspaceTest-Linked bench-workspace-files <sysroot> <core olean dir> <repository> <samples>"
       return 2
-  | _ =>
-    IO.eprintln
-        "usage: WorkspaceTest-Linked <sysroot> <core olean dir> [--wiring], WorkspaceTest-Linked wiring-modules, or WorkspaceTest-Linked bench-workspace-files <sysroot> <core olean dir> <repository> <samples>"
-    return 2
+  | _ :: _ :: rest =>
+    match Editor.CheckGroup.Mode.ofArguments? rest with
+    | some mode => WorkspaceTest.Linked.runSelected mode
+    | none => WorkspaceTest.Linked.usage
+  | _ => WorkspaceTest.Linked.usage

@@ -100,39 +100,38 @@ def FilesTest.Linked.checks :
     .wired "FilesTest.Linked.Files.Real" wiringSet.FilesTest.Linked.Files.Real fun context =>
       FilesTest.Linked.autoReloadChecks context]
 
-/-- Runs the checks `select` takes from the check set, over the harness's
-context, and says which failed, or how many passed, as `what`; then a line
-for each module of the wiring set the run ran
-(`Editor.CheckGroup.ranLines`). -/
+/-- Runs the checks `mode` selects from the check set
+(`Editor.CheckGroup.select`), over the harness's context, and says which
+failed, or how many passed; then a line for each module of the wiring set
+the run ran (`Editor.CheckGroup.ranLines`). -/
 private def FilesTest.Linked.runSelected (sysroot oleans : String)
-    (select : Editor.Test.Linked.HostContext → List FilesTest.Check)
-    (wiring : List (String × (Editor.Test.Linked.HostContext → List FilesTest.Check)))
-    (what : String) : IO UInt32 := do
+    (mode : Editor.CheckGroup.Mode) : IO UInt32 := do
   let failed ←
     Editor.Test.Linked.HostContext.run sysroot oleans setPackages fun context => do
-        let checks := select context
+        let checks := Editor.CheckGroup.select mode FilesTest.Linked.checks context
         let failed ← FilesTest.failures checks
         for name in failed do
           IO.eprintln s!"FAILED: {name}"
         if failed.isEmpty then
-          IO.println s!"files linked test: {checks.length} {what} passed"
-        for line in Editor.CheckGroup.ranLines "files" wiring context do
+          IO.println s!"files linked test: {checks.length} {mode.what} passed"
+        for line in
+          Editor.CheckGroup.ranLines "files" (Editor.CheckGroup.wiring FilesTest.Linked.checks)
+              context do
           IO.println line
         return failed
   (← IO.getStdout).flush
   Editor.Test.Linked.shutdown
   IO.Process.exit (if failed.isEmpty then 0 else 1)
 
+/-- Says the command lines it takes, and exits 2. -/
+private def FilesTest.Linked.usage : IO UInt32 := do
+  IO.eprintln
+      "usage: FilesTest-Linked <sysroot> <core olean dir> [--wiring], FilesTest-Linked wiring-modules, or FilesTest-Linked bench-auto-reload <sysroot> <core olean dir> <samples>"
+  return 2
+
 /-- Runs the checks (the module docs). -/
 def main (arguments : List String) : IO UInt32 := do
-  let wiring := Editor.CheckGroup.wiring FilesTest.Linked.checks
   match arguments with
-  | [sysroot, oleans] =>
-    FilesTest.Linked.runSelected sysroot oleans (Editor.CheckGroup.all FilesTest.Linked.checks)
-        wiring "checks"
-  | [sysroot, oleans, "--wiring"] =>
-    FilesTest.Linked.runSelected sysroot oleans (fun context => wiring.flatMap (·.2 context)) wiring
-        "wiring-set checks"
   | ["wiring-modules"] =>
     for module in Editor.CheckGroup.modules FilesTest.Linked.checks do
       IO.println module
@@ -152,7 +151,8 @@ def main (arguments : List String) : IO UInt32 := do
     | none =>
       IO.eprintln "usage: FilesTest-Linked bench-auto-reload <sysroot> <core olean dir> <samples>"
       return 2
-  | _ =>
-    IO.eprintln
-        "usage: FilesTest-Linked <sysroot> <core olean dir> [--wiring], FilesTest-Linked wiring-modules, or FilesTest-Linked bench-auto-reload <sysroot> <core olean dir> <samples>"
-    return 2
+  | sysroot :: oleans :: rest =>
+    match Editor.CheckGroup.Mode.ofArguments? rest with
+    | some mode => FilesTest.Linked.runSelected sysroot oleans mode
+    | none => FilesTest.Linked.usage
+  | _ => FilesTest.Linked.usage

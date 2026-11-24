@@ -6,8 +6,9 @@ import ModelTest.Check
 
 The model tests of a root's check set as data, `checkGroupChecks`: what a
 normal run, a `--wiring` run and a listing of the wiring set's modules each
-select from the groups. The root module `ModelTest` runs them; its module
-doc says what they show.
+select from the groups, and how a root reads its mode from its
+arguments. The root module `ModelTest` runs them; its module doc says what
+they show.
 -/
 
 namespace ModelTest
@@ -49,6 +50,21 @@ def checkGroupChecks : List Check :=
         "a run's lines name the root, each module of the wiring set once and the number of its checks"
       run :=
         return CheckGroup.ranLines "config-test" (CheckGroup.wiring sampleGroups) 1 ==
-            ["wiring-set: ran config-test W 3 checks", "wiring-set: ran config-test C 1 checks"] }]
+            ["wiring-set: ran config-test W 3 checks", "wiring-set: ran config-test C 1 checks"] },
+    { name :=
+        "a root's arguments after its directories name its mode: none a normal run, `--wiring` alone the wiring set's, and anything else no mode"
+      run :=
+        return CheckGroup.Mode.ofArguments? [] == some .all &&
+            CheckGroup.Mode.ofArguments? ["--wiring"] == some .wiring &&
+            CheckGroup.Mode.ofArguments? ["--wiring", "--wiring"] == none &&
+            CheckGroup.Mode.ofArguments? ["--wired"] == none &&
+            CheckGroup.Mode.ofArguments? ["wiring"] == none },
+    { name :=
+        "a mode selects a normal run's checks or the wiring run's, each wiring module's checks in turn, and its count line calls them checks or wiring-set checks"
+      run :=
+        return CheckGroup.select .all sampleGroups 7 == CheckGroup.all sampleGroups 7 &&
+            CheckGroup.select .wiring sampleGroups 3 == ["w1-3", "w2-3", "w3-3", "c3"] &&
+            CheckGroup.Mode.all.what == "checks" &&
+            CheckGroup.Mode.wiring.what == "wiring-set checks" }]
 
 end ModelTest

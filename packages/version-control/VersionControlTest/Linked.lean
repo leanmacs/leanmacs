@@ -73,44 +73,44 @@ def VersionControlTest.Linked.checks :
       VersionControlTest.Linked.versionControlChecks jobs ++
         VersionControlTest.Linked.versionControlContractChecks jobs]
 
-/-- Runs the checks `select` takes from the check set over the real
-services, started here, and says which failed, or how many passed, as
-`what`, with the contract's properties and lanes; then a line for each
+/-- Runs the checks `mode` selects from the check set
+(`Editor.CheckGroup.select`) over the real services, started here, and says
+which failed, or how many passed, with the contract's properties and lanes; then a line for each
 module of the wiring set the run ran (`Editor.CheckGroup.ranLines`). -/
-private def VersionControlTest.Linked.runSelected
-    (select : Editor.Job.Services → List VersionControlTest.Check)
-    (wiring : List (String × (Editor.Job.Services → List VersionControlTest.Check)))
-    (what : String) : IO UInt32 := do
+private def VersionControlTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) :
+    IO UInt32 := do
   let services ← Editor.Test.Linked.Services.start
   let jobs := services.jobs
-  let checks := select jobs
+  let checks := Editor.CheckGroup.select mode VersionControlTest.Linked.checks jobs
   let failed ← VersionControlTest.failures checks
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   if failed.isEmpty then
     IO.println
-        s!"version-control linked test: {checks.length} {what} passed, the contract's {Editor.VersionControlContract.properties.length} properties in {VersionControlTest.Linked.versionControlLanes} lanes"
-  for line in Editor.CheckGroup.ranLines "version-control" wiring jobs do
+        s!"version-control linked test: {checks.length} {mode.what} passed, the contract's {Editor.VersionControlContract.properties.length} properties in {VersionControlTest.Linked.versionControlLanes} lanes"
+  for line in
+    Editor.CheckGroup.ranLines "version-control"
+        (Editor.CheckGroup.wiring VersionControlTest.Linked.checks) jobs do
     IO.println line
   (← IO.getStdout).flush
   Editor.Test.Linked.shutdown
   IO.Process.exit (if failed.isEmpty then 0 else 1)
 
+/-- Says the command lines it takes, and exits 2. -/
+private def VersionControlTest.Linked.usage : IO UInt32 := do
+  IO.eprintln
+      "usage: VersionControlTest-Linked <sysroot> <core olean dir> [--wiring], or VersionControlTest-Linked wiring-modules"
+  return 2
+
 /-- Runs the checks (the module docs). -/
 def main (arguments : List String) : IO UInt32 := do
-  let wiring := Editor.CheckGroup.wiring VersionControlTest.Linked.checks
   match arguments with
-  | [_, _] =>
-    VersionControlTest.Linked.runSelected (Editor.CheckGroup.all VersionControlTest.Linked.checks)
-        wiring "checks"
-  | [_, _, "--wiring"] =>
-    VersionControlTest.Linked.runSelected (fun jobs => wiring.flatMap (·.2 jobs)) wiring
-        "wiring-set checks"
   | ["wiring-modules"] =>
     for module in Editor.CheckGroup.modules VersionControlTest.Linked.checks do
       IO.println module
     return 0
-  | _ =>
-    IO.eprintln
-        "usage: VersionControlTest-Linked <sysroot> <core olean dir> [--wiring], or VersionControlTest-Linked wiring-modules"
-    return 2
+  | _ :: _ :: rest =>
+    match Editor.CheckGroup.Mode.ofArguments? rest with
+    | some mode => VersionControlTest.Linked.runSelected mode
+    | none => VersionControlTest.Linked.usage
+  | _ => VersionControlTest.Linked.usage

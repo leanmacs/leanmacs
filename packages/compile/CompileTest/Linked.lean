@@ -128,8 +128,8 @@ def CompileTest.Linked.checks :
       fun (_, jobs, fixtures) => CompileTest.compileRunChecks jobs fixtures,
     .plain fun (_, _, fixtures) => CompileTest.projectRunChecks fixtures]
 
-/-- Runs the checks `select` takes from the check set and says which
-failed, or how many passed, as `what`, then a line for each module of the
+/-- Runs the checks `mode` selects from the check set
+(`Editor.CheckGroup.select`) and says which failed, or how many passed, then a line for each module of the
 wiring set the run ran (`Editor.CheckGroup.ranLines`). The context of the
 hosts is made with `HostContext.run`, as the other linked roots make
 theirs, and the real services the other checks run over are started here
@@ -137,45 +137,45 @@ theirs, and the real services the other checks run over are started here
 more. The exit is explicit, after the library's services are shut down and
 its queues quit: a task may still be blocked in the library. -/
 private def CompileTest.Linked.runSelected (sysroot oleans : String)
-    (select : CompileTest.Linked.Context → List CompileTest.Check)
-    (wiring : List (String × (CompileTest.Linked.Context → List CompileTest.Check)))
-    (what : String) : IO UInt32 := do
+    (mode : Editor.CheckGroup.Mode) : IO UInt32 := do
   let fixtures ← IO.FS.realPath fixturesDirectory
   let failed ←
     Editor.Test.Linked.HostContext.run sysroot oleans setPackages fun context => do
         let services ← Editor.Test.Linked.Services.start
-        let checks := select (context, services.jobs, fixtures)
+        let checks :=
+          Editor.CheckGroup.select mode CompileTest.Linked.checks (context, services.jobs, fixtures)
         let failed ← CompileTest.failures checks
         for name in failed do
           IO.eprintln s!"FAILED: {name}"
         if failed.isEmpty then
-          IO.println s!"compile linked test: {checks.length} {what} passed"
+          IO.println s!"compile linked test: {checks.length} {mode.what} passed"
         for line in
-          Editor.CheckGroup.ranLines "compile" wiring (context, services.jobs, fixtures) do
+          Editor.CheckGroup.ranLines "compile" (Editor.CheckGroup.wiring CompileTest.Linked.checks)
+              (context, services.jobs, fixtures) do
           IO.println line
         return failed
   (← IO.getStdout).flush
   Editor.Test.Linked.shutdown
   IO.Process.exit (if failed.isEmpty then 0 else 1)
 
+/-- Says the command lines it takes, and exits 2. -/
+private def CompileTest.Linked.usage : IO UInt32 := do
+  IO.eprintln
+      "usage: CompileTest-Linked <sysroot> <core olean dir> [--wiring], or CompileTest-Linked wiring-modules"
+  return 2
+
 /-- Runs the checks, all or with `--wiring` the wiring set's alone, and
 exits 0 when they hold, 1 after naming on stderr the ones that do not;
 `wiring-modules` prints the wiring set's modules; and 2 for a command line
 it does not take. -/
 def main (arguments : List String) : IO UInt32 := do
-  let wiring := Editor.CheckGroup.wiring CompileTest.Linked.checks
   match arguments with
-  | [sysroot, oleans] =>
-    CompileTest.Linked.runSelected sysroot oleans (Editor.CheckGroup.all CompileTest.Linked.checks)
-        wiring "checks"
-  | [sysroot, oleans, "--wiring"] =>
-    CompileTest.Linked.runSelected sysroot oleans (fun context => wiring.flatMap (·.2 context))
-        wiring "wiring-set checks"
   | ["wiring-modules"] =>
     for module in Editor.CheckGroup.modules CompileTest.Linked.checks do
       IO.println module
     return 0
-  | _ =>
-    IO.eprintln
-        "usage: CompileTest-Linked <sysroot> <core olean dir> [--wiring], or CompileTest-Linked wiring-modules"
-    return 2
+  | sysroot :: oleans :: rest =>
+    match Editor.CheckGroup.Mode.ofArguments? rest with
+    | some mode => CompileTest.Linked.runSelected sysroot oleans mode
+    | none => CompileTest.Linked.usage
+  | _ => CompileTest.Linked.usage

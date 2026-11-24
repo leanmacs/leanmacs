@@ -610,8 +610,7 @@ def main (args : List String) : IO UInt32 := do
     | some options =>
       let wiring := Editor.CheckGroup.wiring ConfigTest.checks
       let selected :=
-        if options.wiring then fun context => wiring.flatMap (·.2 context)
-        else Editor.CheckGroup.all ConfigTest.checks
+        Editor.CheckGroup.select (if options.wiring then .wiring else .all) ConfigTest.checks
       IO.Process.exit
           (←
             ConfigTest.run selected sysroot oleanDir syntaxFixtures defaultConfig

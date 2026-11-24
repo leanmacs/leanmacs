@@ -139,25 +139,26 @@ def EvilTest.Linked.checks : List (Editor.CheckGroup EvilTest.Linked.Context Evi
     .plain fun (context, _) =>
       EvilTest.Linked.evilChecks context ++ EvilTest.Linked.evilLeaderChecks context]
 
-/-- Runs the checks `select` takes from the check set, and says which
-failed, or how many passed, as `what`; then a line for each module of the
+/-- Runs the checks `mode` selects from the check set
+(`Editor.CheckGroup.select`), and says which failed, or how many passed;
+then a line for each module of the
 wiring set the run ran (`Editor.CheckGroup.ranLines`). -/
-private def EvilTest.Linked.runSelected (sysroot oleans : String)
-    (select : EvilTest.Linked.Context → List EvilTest.Check)
-    (wiring : List (String × (EvilTest.Linked.Context → List EvilTest.Check))) (what : String) :
+private def EvilTest.Linked.runSelected (sysroot oleans : String) (mode : Editor.CheckGroup.Mode) :
     IO UInt32 := do
   let fixtures ← IO.FS.realPath syntaxFixtures
   let failed ←
     Editor.Test.Linked.HostContext.run sysroot (":".intercalate (oleans :: oleanDirectories))
         setPackages
         (fun context => do
-          let checks := select (context, fixtures)
+          let checks := Editor.CheckGroup.select mode EvilTest.Linked.checks (context, fixtures)
           let failed ← EvilTest.failures checks
           for name in failed do
             IO.eprintln s!"FAILED: {name}"
           if failed.isEmpty then
-            IO.println s!"evil linked test: {checks.length} {what} passed"
-          for line in Editor.CheckGroup.ranLines "evil" wiring (context, fixtures) do
+            IO.println s!"evil linked test: {checks.length} {mode.what} passed"
+          for line in
+            Editor.CheckGroup.ranLines "evil" (Editor.CheckGroup.wiring EvilTest.Linked.checks)
+                (context, fixtures) do
             IO.println line
           return failed)
         (imports := #[`Editor, `Evil.EditorPackage])
@@ -165,21 +166,21 @@ private def EvilTest.Linked.runSelected (sysroot oleans : String)
   Editor.Test.Linked.shutdown
   IO.Process.exit (if failed.isEmpty then 0 else 1)
 
+/-- Says the command lines it takes, and exits 2. -/
+private def EvilTest.Linked.usage : IO UInt32 := do
+  IO.eprintln
+      "usage: EvilTest-Linked <sysroot> <core olean dir> [--wiring], or EvilTest-Linked wiring-modules"
+  return 2
+
 /-- Runs the checks (the module docs). -/
 def main (arguments : List String) : IO UInt32 := do
-  let wiring := Editor.CheckGroup.wiring EvilTest.Linked.checks
   match arguments with
-  | [sysroot, oleans] =>
-    EvilTest.Linked.runSelected sysroot oleans (Editor.CheckGroup.all EvilTest.Linked.checks) wiring
-        "checks"
-  | [sysroot, oleans, "--wiring"] =>
-    EvilTest.Linked.runSelected sysroot oleans (fun context => wiring.flatMap (·.2 context)) wiring
-        "wiring-set checks"
   | ["wiring-modules"] =>
     for module in Editor.CheckGroup.modules EvilTest.Linked.checks do
       IO.println module
     return 0
-  | _ =>
-    IO.eprintln
-        "usage: EvilTest-Linked <sysroot> <core olean dir> [--wiring], or EvilTest-Linked wiring-modules"
-    return 2
+  | sysroot :: oleans :: rest =>
+    match Editor.CheckGroup.Mode.ofArguments? rest with
+    | some mode => EvilTest.Linked.runSelected sysroot oleans mode
+    | none => EvilTest.Linked.usage
+  | _ => EvilTest.Linked.usage

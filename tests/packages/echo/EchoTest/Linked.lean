@@ -44,22 +44,25 @@ def EchoTest.Linked.checks : List (Editor.CheckGroup Editor.Job.Completions Echo
   [.wired "EchoTest.Linked.Echo.Real" wiringSet.EchoTest.Linked.Echo.Real fun completions =>
       EchoTest.Linked.echoRealChecks completions]
 
-/-- Runs the checks `select` takes from the check set over the services and
+/-- Runs the checks `mode` selects from the check set
+(`Editor.CheckGroup.select`) over the services and
 pump, started here, and says which failed, or that the contract's
 properties held; then a line for each module of the wiring set the run ran
 (`Editor.CheckGroup.ranLines`), and that the pump ended once the queues
 were quit. The exit is explicit, after the queues are quit, as the core's
 linked tests' is: a task may still be blocked in the library. -/
-private def EchoTest.Linked.runSelected (select : Editor.Job.Completions → List EchoTest.Check)
-    (wiring : List (String × (Editor.Job.Completions → List EchoTest.Check))) : IO UInt32 := do
+private def EchoTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : IO UInt32 := do
   let services ← Editor.Test.Linked.Services.start
-  let failed ← EchoTest.failures (select services.completions)
+  let failed ←
+    EchoTest.failures (Editor.CheckGroup.select mode EchoTest.Linked.checks services.completions)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   if failed.isEmpty then
     IO.println
         s!"echo linked test: the contract's {Echo.Contract.properties.length} properties hold on the Rust-backed binding, each request completed through the completion queue"
-  for line in Editor.CheckGroup.ranLines "echo" wiring services.completions do
+  for line in
+    Editor.CheckGroup.ranLines "echo" (Editor.CheckGroup.wiring EchoTest.Linked.checks)
+        services.completions do
     IO.println line
   (← IO.getStdout).flush
   let stopped ← services.stop
@@ -67,21 +70,23 @@ private def EchoTest.Linked.runSelected (select : Editor.Job.Completions → Lis
     IO.eprintln "FAILED: the completion pump did not end once the queues were quit"
   IO.Process.exit (if failed.isEmpty && stopped then 0 else 1)
 
+/-- Says the command lines it takes, and exits 2. -/
+private def EchoTest.Linked.usage : IO UInt32 := do
+  IO.eprintln
+      "usage: EchoTest-Linked <sysroot> <core olean dir> [--wiring], or EchoTest-Linked wiring-modules"
+  return 2
+
 /-- Runs the checks, all or with `--wiring` the wiring set's alone, and
 exits 0 when all hold, 1 when one does not; `wiring-modules` prints the
 wiring set's modules; and 2 for a command line it does not take. -/
 def main (arguments : List String) : IO UInt32 := do
-  let wiring := Editor.CheckGroup.wiring EchoTest.Linked.checks
   match arguments with
-  | [_, _] =>
-    EchoTest.Linked.runSelected (Editor.CheckGroup.all EchoTest.Linked.checks) wiring
-  | [_, _, "--wiring"] =>
-    EchoTest.Linked.runSelected (fun completions => wiring.flatMap (·.2 completions)) wiring
   | ["wiring-modules"] =>
     for module in Editor.CheckGroup.modules EchoTest.Linked.checks do
       IO.println module
     return 0
-  | _ =>
-    IO.eprintln
-        "usage: EchoTest-Linked <sysroot> <core olean dir> [--wiring], or EchoTest-Linked wiring-modules"
-    return 2
+  | _ :: _ :: rest =>
+    match Editor.CheckGroup.Mode.ofArguments? rest with
+    | some mode => EchoTest.Linked.runSelected mode
+    | none => EchoTest.Linked.usage
+  | _ => EchoTest.Linked.usage
