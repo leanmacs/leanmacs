@@ -67,6 +67,17 @@ that links the elaborator does: the elaborator imports the base's modules
 from their `.olean` files at runtime, and each must already be linked into
 the executable. The hosts load no config, so the elaborator is told to
 import `Editor` alone, found in the core's `.olean` directory.
+
+Its checks are a check set (`CompileTest.Linked.checks`, `Editor.CheckGroup`,
+`docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
+the lists of its modules of the wiring set in groups of their module, which
+the build's `linter.wiringSet` holds true and complete. A run prints, after
+its count, `wiring-set: ran compile <module> <n> checks` for each module of
+the wiring set it ran, which the gate's once-check reads
+(`tools/wiring-ledger.sh`). With `--wiring` after the two directories it
+runs those groups alone, the stress loop's `linked-wiring` suite
+(`tools/package-set.sh run --wiring`), and `wiring-modules` prints their
+modules, one a line, building nothing.
 -/
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
@@ -101,34 +112,70 @@ run, from the package's directory, where the gate runs this executable. -/
 def fixturesDirectory : System.FilePath :=
   "tests/compile"
 
-/-- Runs the checks through the host, then the checks over the real
-process service, and exits 0 when all hold, 1 after naming on stderr the
-ones that do not, and 2 for a command line that is not the two directories.
-The context of the hosts is made with `HostContext.run`, as the other linked
-roots make theirs, and the real services the other checks run over are
-started here (`Services.start`), since no host makes the process's table of
-waits any more. The exit is explicit, after the library's services are shut
-down and its queues quit: a task may still be blocked in the library. -/
+/-- What every check is handed: the harness's context, the job services
+started for the run (`Services.start`), and the directory of the fixtures. -/
+abbrev CompileTest.Linked.Context :=
+  Editor.Test.Linked.HostContext × Editor.Job.Services × System.FilePath
+
+/-- Every check of the linked test, in the order they run: its check set
+(`Editor.CheckGroup`), the checks through the host, then those over the
+real process service, of the wiring set
+(`CompileTest/Linked/Compile/Real.lean`), then the shipped project runs. -/
+def CompileTest.Linked.checks :
+    List (Editor.CheckGroup CompileTest.Linked.Context CompileTest.Check) :=
+  [.plain fun (context, _, _) => CompileTest.compileHostChecks context,
+    .wired "CompileTest.Linked.Compile.Real" wiringSet.CompileTest.Linked.Compile.Real
+      fun (_, jobs, fixtures) => CompileTest.compileRunChecks jobs fixtures,
+    .plain fun (_, _, fixtures) => CompileTest.projectRunChecks fixtures]
+
+/-- Runs the checks `select` takes from the check set and says which
+failed, or how many passed, as `what`, then a line for each module of the
+wiring set the run ran (`Editor.CheckGroup.ranLines`). The context of the
+hosts is made with `HostContext.run`, as the other linked roots make
+theirs, and the real services the other checks run over are started here
+(`Services.start`), since no host makes the process's table of waits any
+more. The exit is explicit, after the library's services are shut down and
+its queues quit: a task may still be blocked in the library. -/
+private def CompileTest.Linked.runSelected (sysroot oleans : String)
+    (select : CompileTest.Linked.Context → List CompileTest.Check)
+    (wiring : List (String × (CompileTest.Linked.Context → List CompileTest.Check)))
+    (what : String) : IO UInt32 := do
+  let fixtures ← IO.FS.realPath fixturesDirectory
+  let failed ←
+    Editor.Test.Linked.HostContext.run sysroot oleans setPackages fun context => do
+        let services ← Editor.Test.Linked.Services.start
+        let checks := select (context, services.jobs, fixtures)
+        let failed ← CompileTest.failures checks
+        for name in failed do
+          IO.eprintln s!"FAILED: {name}"
+        if failed.isEmpty then
+          IO.println s!"compile linked test: {checks.length} {what} passed"
+        for line in
+          Editor.CheckGroup.ranLines "compile" wiring (context, services.jobs, fixtures) do
+          IO.println line
+        return failed
+  (← IO.getStdout).flush
+  Editor.Test.Linked.shutdown
+  IO.Process.exit (if failed.isEmpty then 0 else 1)
+
+/-- Runs the checks, all or with `--wiring` the wiring set's alone, and
+exits 0 when they hold, 1 after naming on stderr the ones that do not;
+`wiring-modules` prints the wiring set's modules; and 2 for a command line
+it does not take. -/
 def main (arguments : List String) : IO UInt32 := do
+  let wiring := Editor.CheckGroup.wiring CompileTest.Linked.checks
   match arguments with
   | [sysroot, oleans] =>
-    let fixtures ← IO.FS.realPath fixturesDirectory
-    let failed ←
-      Editor.Test.Linked.HostContext.run sysroot oleans setPackages fun context => do
-          let services ← Editor.Test.Linked.Services.start
-          let checks :=
-            CompileTest.compileHostChecks context ++
-              CompileTest.compileRunChecks services.jobs fixtures ++
-              CompileTest.projectRunChecks fixtures
-          let failed ← CompileTest.failures checks
-          for name in failed do
-            IO.eprintln s!"FAILED: {name}"
-          if failed.isEmpty then
-            IO.println s!"compile linked test: {checks.length} checks passed"
-          return failed
-    (← IO.getStdout).flush
-    Editor.Test.Linked.shutdown
-    IO.Process.exit (if failed.isEmpty then 0 else 1)
+    CompileTest.Linked.runSelected sysroot oleans (Editor.CheckGroup.all CompileTest.Linked.checks)
+        wiring "checks"
+  | [sysroot, oleans, "--wiring"] =>
+    CompileTest.Linked.runSelected sysroot oleans (fun context => wiring.flatMap (·.2 context))
+        wiring "wiring-set checks"
+  | ["wiring-modules"] =>
+    for module in Editor.CheckGroup.modules CompileTest.Linked.checks do
+      IO.println module
+    return 0
   | _ =>
-    IO.eprintln "usage: CompileTest-Linked <sysroot> <core olean dir>"
+    IO.eprintln
+        "usage: CompileTest-Linked <sysroot> <core olean dir> [--wiring], or CompileTest-Linked wiring-modules"
     return 2
