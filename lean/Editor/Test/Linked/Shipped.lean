@@ -218,14 +218,16 @@ def shippedStagedReal (scheme : InputScheme) (context : HostContext) (directory 
 /-- Runs `check` against a host of the input scheme `scheme`
 (`shippedStaged`), of `packages`: by default the packages the harness's set
 hands its editor (`HostContext.packages`); stepped on the check's own thread
-(`stepping`, over the stage's memory queue), and with `stepped` over a
-stepped stage (`Stage.stepped`). `false` if the check did not hold or the
-host did not settle after it. The directory is removed. -/
+(`stepping`, over the stage's memory queue), over a stepped stage
+(`Stage.stepped`) unless it is told `realFiles` or `stepped := false`.
+`false` if the check did not hold or the host did not settle after it. The
+directory is removed. -/
 def withShippedHost (scheme : InputScheme) (context : HostContext) (files : List (String × String))
     (check : Session → IO Bool) (fileModel : Option FileModel := none) (realFiles : Bool := false)
     (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
     (packages : Array Package := context.packages)
-    (emitting : (String → IO Unit) → String → IO Unit := id) (stepped : Bool := false) : IO Bool :=
+    (emitting : (String → IO Unit) → String → IO Unit := id) (stepped : Bool := !realFiles) :
+    IO Bool :=
   IO.FS.withTempDir fun directory => do
     let (stage, collaborators) ←
       shippedStaged scheme context directory files fileModel realFiles workingDirectory home

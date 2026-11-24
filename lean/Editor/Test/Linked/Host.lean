@@ -52,8 +52,10 @@ directory, a stage and what compiled code hands it, a host as a check
 drives it, stepped or real (`Driven`), a session of a host and what it
 printed (`Session`, with `Session.scene` and `Session.shown`, and
 `RealSession` for a real host), a host started over a stage or over files,
-stepped on the check's thread (`onStage`, `staged`, `withHost`) or on a loop
-thread of its own (`onRealStage`, `stagedReal`, `withRealHost`), and the
+stepped on the check's thread (`onStage`, `staged`, `withHost`, each over a
+stepped stage by default, `Stage.stepped`, whose jobs and services are the
+fakes the check steps with `Session.step`) or on a loop thread of its own
+(`onRealStage`, `stagedReal`, `withRealHost`), and the
 guard of a check's waits for its host (`hangGuard`, `settled`; `patience`
 is the linked kit's, `Editor/Test/Linked/Jobs.lean`). It holds no checks of
 its own.
@@ -1144,13 +1146,13 @@ def onRealStage {β σ : Type} (stage : Stage β σ) (check : Headless.Host → 
 
 /-- Runs `check` against a stepped host started on a stage of its own over
 `elaborator` and `source`, with what `compiled` hands it; with `stepped`,
-the stage's jobs and services are the fakes the check steps
-(`Stage.stepped`). `false` if the check did not hold or the host did not
+the default, the stage's jobs and services are the fakes the check steps
+(`Stage.stepped`), and without it they run on Lean's pool. `false` if the check did not hold or the host did not
 settle. -/
 def staged {β σ : Type} (context : HostContext) (elaborator : Config.Elaborator β σ)
     (source : Config.Source) (check : Driven → Stage β σ → IO Bool) (compiled : Compiled := {})
     (fuzzy : FuzzyHandler := Fuzzy.real) (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) (stepped : Bool := false) : IO Bool := do
+    (waitBlocked : String → IO Unit := fun _ => pure ()) (stepped : Bool := true) : IO Bool := do
   let stage ← Stage.new context elaborator source compiled (fuzzy := fuzzy)
   let stage ←
     if stepped then
@@ -1179,7 +1181,7 @@ def withHostOver (context : HostContext) (files : List (String × String))
     (through : Config.Source → Config.Source) (check : Session → IO Bool)
     (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
     (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) (stepped : Bool := false) : IO Bool :=
+    (waitBlocked : String → IO Unit := fun _ => pure ()) (stepped : Bool := true) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeConfig directory files
     staged context (around context.elaborator) (through (Config.Directory.source directory))
@@ -1208,17 +1210,8 @@ ask `fuzzy` for the matcher, the library's unless a check holds it. -/
 def withHost (context : HostContext) (files : List (String × String)) (check : Session → IO Bool)
     (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
     (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) (stepped : Bool := false) : IO Bool :=
+    (waitBlocked : String → IO Unit := fun _ => pure ()) (stepped : Bool := true) : IO Bool :=
   withHostOver context files id id check compiled fuzzy waitHung waitBlocked stepped
-
-/-- `withHost` over a stepped stage (`Stage.stepped`): the host's jobs and
-services are the fakes the check steps on its own thread (`Session.step`,
-`Session.stepUntil`). -/
-def withSteppedHost (context : HostContext) (files : List (String × String))
-    (check : Session → IO Bool) (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real)
-    (waitHung : String → IO Unit := IO.eprintln)
-    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Bool :=
-  withHost context files check compiled fuzzy waitHung waitBlocked (stepped := true)
 
 /-- `withHost` with a real host (`withRealHostOver`). -/
 def withRealHost (context : HostContext) (files : List (String × String))

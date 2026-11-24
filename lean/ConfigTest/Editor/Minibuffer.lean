@@ -311,7 +311,7 @@ def jobCompletesPromptOpenCheck (context : Context) : Check :=
   { name :=
       "a job completes while a prompt is open, on the fake clock: once the clock lets it go the host prints that its command ran, the window shows what that command inserted, and the scene still has the minibuffer's view, with the focus; the accept key afterwards runs the continuation's command"
     run :=
-      withSteppedHost context []
+      withHost context []
         (fun session => do
           session.ask [.run "rest-and-ask"]
           session.step
@@ -339,7 +339,7 @@ def criterion1RecorderPromptCheck (context : Context) : Check :=
   { name :=
       "criterion 1 over the recorder: a prompt asked with a source that answers later, from a compiled job that delivers two batches 10 ms apart on the fake clock, lists the first batch once it has arrived, in the library's order, and both once the job has ended; no step is refused"
     run :=
-      withSteppedHost context []
+      withHost context []
         (fun session => do
           session.ask [.run "ask-later"]
           -- The job has posted its first batch, whose event is queued, and
@@ -361,7 +361,7 @@ def sourceAnswersLaterJobCheck (context : Context) : Check :=
   { name :=
       "a source that answers later, from a job config registers with sourceJob, on the real elaborator: its prompt lists the job's answer for the initial text; after a key the job is asked again, after the source's pause, and the prompt lists its answer for the typed text"
     run :=
-      withSteppedHost context [("init.lean", echoSourceText)]
+      withHost context [("init.lean", echoSourceText)]
         (fun session => do
           session.ask [.reload]
           session.ask [.run "pick"]
@@ -384,7 +384,7 @@ def criterion4HostPromptCheck (context : Context) : Check :=
   { name :=
       "criterion 4 on the host: in a prompt over 100,000 candidates, with the match job not stepped, each of five keys committed one after another is handled and its scene shows the minibuffer with it, while the one match started at the ask is held in the fake scheduler; once stepped, the listing is the library's first ten for the whole typed text, from a second match started for it"
     run :=
-      withSteppedHost context []
+      withHost context []
         (fun session => do
           session.ask [.run "ask-many"]
           let mut typed := ""
@@ -413,7 +413,7 @@ def reloadInstallsMatchConfigCheck (context : Context) : Check :=
   { name :=
       "a reload that installs while a match of config's style is held, not stepped, cancels that match before the reload is reported, and the scene after the install, with no key typed, starts a match with the new config's style; once stepped, the listing is the new style's, and the first match never delivered"
     run :=
-      withSteppedHost context [("init.lean", slowStyleText "slow")]
+      withHost context [("init.lean", slowStyleText "slow")]
         (fun session => do
           session.ask [.reload]
           session.ask [.run "ask-many"]

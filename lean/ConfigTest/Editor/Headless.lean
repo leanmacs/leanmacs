@@ -1460,7 +1460,7 @@ def handlerReceivesJobResultCheck (context : Context) : Check :=
       -- Seen to bite once by hand: a host that prints a job's line where
       -- the job ended, from the runner's `finished`, prints it from a pool
       -- thread, and the thread ids differ.
-      withSteppedHost context jobsConfig fun session => do
+      withHost context jobsConfig fun session => do
         session.ask [.reload]
         session.ask [.run "greet", .spawn "count"]
         session.step
@@ -1492,7 +1492,7 @@ def reloadCancelsOldConfigCheck (context : Context) : Check :=
   { name :=
       "a reload cancels the old config's jobs when it installs: the job is cancelled before the reload is reported, its wait is withdrawn, and its handler never runs"
     run :=
-      withSteppedHost context jobsConfig fun session => do
+      withHost context jobsConfig fun session => do
         session.ask [.reload]
         session.ask [.spawn "count"]
         session.step
@@ -1518,7 +1518,7 @@ def rejectedReloadCancelsNothingCheck (context : Context) : Check :=
   { name :=
       "a rejected reload cancels nothing: the old config's job runs on, and its handler runs when it finishes"
     run :=
-      withSteppedHost context jobsConfig fun session => do
+      withHost context jobsConfig fun session => do
         session.ask [.reload]
         session.ask [.spawn "count"]
         session.step
@@ -1540,7 +1540,7 @@ def jobThrowsReportedFailedCheck (context : Context) : Check :=
   { name :=
       "a job that throws is reported as failed with its message, a handler whose command the library refuses as refused, and a name that is not registered as no such job"
     run :=
-      withSteppedHost context jobsConfig fun session => do
+      withHost context jobsConfig fun session => do
         session.ask [.reload]
         session.ask [.spawn "boom", .spawn "bad", .spawn "nope"]
         session.step
@@ -2125,7 +2125,7 @@ def scenePublishedAgainReloadCheck (context : Context) : Check :=
   { name :=
       "the scene is published again after a reload installs and after a job's command runs, once a frame exists"
     run :=
-      withSteppedHost context jobsConfig fun session => do
+      withHost context jobsConfig fun session => do
         session.ask [.reload]
         session.commit "kept"
         session.ask [.published, .scene]
@@ -3268,7 +3268,7 @@ def hostKeepsClipboardOwnCheck (context : Context) : Check :=
   { name :=
       "the host keeps a clipboard of its own: before a write a command of config's reads no text, after one command wrote a text the next reads it, and so does a finished job's command"
     run :=
-      withSteppedHost context [("init.lean", clipboardText)] fun session => do
+      withHost context [("init.lean", clipboardText)] fun session => do
         session.ask [.reload]
         session.ask [.run "paste"]
         let (empty, _) ← session.scene
@@ -3292,7 +3292,7 @@ def keyCommandStartsJobCheck (context : Context) : Check :=
   { name :=
       "a key's command starts a job with an argument: the host says it started, keys sent while the job sleeps are handled before its result, and once the clock lets it go its command runs after them, with the value the job computed in the text and in the scene's echo"
     run :=
-      withSteppedHost context [("init.lean", startingText)]
+      withHost context [("init.lean", startingText)]
         (fun session => do
           session.ask [.reload]
           session.typed "C-c a"
@@ -3370,7 +3370,7 @@ def hostHandedCompiledJobsCheck (context : Context) : Check :=
   { name :=
       "a host is handed compiled jobs: a compiled command starts one before any config is loaded, a reload that installs does not cancel it, and once the clock lets it go its command runs"
     run :=
-      withSteppedHost context [("init.lean", emptyText)]
+      withHost context [("init.lean", emptyText)]
         (fun session => do
           session.ask [.run "rest"]
           session.step
@@ -3701,7 +3701,7 @@ def reloadInstallsWatchesNewCheck (context : Context) : Check :=
   { name :=
       "after a reload installs, only the watches the new config made deliver: the old config's job is cancelled before the reload is reported, its watch ends, and the new config's job is told of the change and says the new version"
     run :=
-      withSteppedHost context followConfig fun session => do
+      withHost context followConfig fun session => do
         session.ask [.reload]
         session.ask [.spawn "follow"]
         session.step
@@ -3740,7 +3740,7 @@ def rejectedReloadLeavesOldCheck (context : Context) : Check :=
   { name :=
       "a rejected reload leaves the old config's watch watching: its job is told of the change and says the old version"
     run :=
-      withSteppedHost context followConfig fun session => do
+      withHost context followConfig fun session => do
         session.ask [.reload]
         session.ask [.spawn "follow"]
         session.step

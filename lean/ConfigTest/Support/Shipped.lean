@@ -69,7 +69,8 @@ def withTestHost (context : Test.Linked.HostContext) (files : List (String × St
     (check : Test.Linked.Session → IO Bool) (fileModel : Option FileModel := none)
     (realFiles : Bool := false) (workingDirectory : System.FilePath := "/")
     (home : Option System.FilePath := none) (packages : Array Package := context.packages)
-    (emitting : (String → IO Unit) → String → IO Unit := id) (stepped : Bool := false) : IO Bool :=
+    (emitting : (String → IO Unit) → String → IO Unit := id) (stepped : Bool := !realFiles) :
+    IO Bool :=
   Test.Linked.withShippedHost TestScheme.scheme context files check fileModel realFiles
     workingDirectory home (packages.push Test.editingPackage) emitting stepped
 

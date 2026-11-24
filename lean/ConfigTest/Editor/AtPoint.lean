@@ -122,7 +122,7 @@ the check's steps. -/
 def withAtPointHost (context : Context) (files : List (String × String))
     (check : Session → IO Bool) : IO Bool :=
   withShippedHost TestScheme.scheme context files check (packages :=
-    withKitAtPoint shippedPackages ++ #[atPointTyping]) (stepped := true)
+    withKitAtPoint shippedPackages ++ #[atPointTyping])
 
 /-- A check of `atPointChecks`, a declaration of its own. -/
 def keyPointNextTypingCheck (context : Context) : Check :=

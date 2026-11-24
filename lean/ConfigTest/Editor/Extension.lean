@@ -38,7 +38,7 @@ def compiledPackageJobExtensionCheck (context : Context) : Check :=
   { name :=
       "a compiled package's job over an extension point is made, when it is started, from config's value, elaborated at runtime, after the package's"
     run :=
-      withSteppedHost context [("init.lean", greeterConfig)]
+      withHost context [("init.lean", greeterConfig)]
         (fun session => do
           session.ask [.reload]
           session.ask [.spawn "greeter-job"]

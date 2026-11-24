@@ -18,8 +18,11 @@ queue's pushes, never on a driver's wait. The bracket's end cancels what is
 left and waits for every job cancelled and not yet done, those cancelled
 before it by a keyed cancel or an owner's removal included
 (`Collaborators.endCancelled`, which `Stage.new` sets), then records the
-loop's end. The root module `ConfigTest` runs them; its module doc says
-what they show.
+loop's end. The stages are `Stage.new` alone, never a stepped stage
+(`Stage.stepped`): the subject is the runner's protocol on real job
+threads, on Lean's pool, held at the recorder's events, so their jobs stay
+off the fake scheduler. The root module `ConfigTest` runs them; its module
+doc says what they show.
 
 The park check (`steppedPark`) is one function over the park's order
 (`ParkOrder`), run twice: in the runner's own order (`runnerOrder`), where
