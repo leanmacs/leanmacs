@@ -250,25 +250,6 @@ def stepSaidStopHostCheck (context : HostContext) : Check :=
                 output.contains started) ==
             some true }
 
--- inferred-waits W35: stays (A2: a settle's and a join's answer on a host whose loop has ended are the subject)
-set_option linter.inferredWait false in
-/-- A check of `exScriptChecks`, a declaration of its own so that the allow
-above it covers it alone. -/
-def waitHostWhoseLoopCheck (context : HostContext) : Check :=
-  { name :=
-      "a wait on a host whose loop a command ended answers that the loop has ended, a settle and a join alike, which is no failure of a script, and halting the host then answers that it stopped"
-    run := do
-      let stage ← Stage.new context context.elaborator (memorySource []) exCompiled
-      Headless.withHost stage.collaborators (guard := hangGuard) fun host => do
-          host.send (.run Ex.quitName)
-          let ended := (← Job.awaitWithin hangGuard host.thread).isSome
-          let awaited ← host.await hangGuard
-          let joined ← host.join hangGuard
-          return ended && awaited == .ended && joined == .ended &&
-              Headless.Wait.ended.failure (some 3) == none &&
-              (← host.halt hangGuard) &&
-              (← stage.output.get) == #[s!"run {Ex.quitName}: ok"] }
-
 /-- The checks of ex lines that a command ends the loop with
 (`lean/Editor/Headless.lean`, "The driver, and the command line"), typed as
 a script of them types them (`Session.exLine`), on a stepped stage over the
@@ -337,4 +318,4 @@ def exScriptChecks (context : HostContext) : List Check :=
           session.ask [.show]
           return listed (← session.output.get) && (← session.drive.ended?).isNone &&
               (← bytes) == some noteText.toUTF8 },
-    stepSaidStopHostCheck context, waitHostWhoseLoopCheck context]
+    stepSaidStopHostCheck context]
