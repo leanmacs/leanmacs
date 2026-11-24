@@ -29,8 +29,6 @@ namespace FilesTest.Linked.Bench
 open Editor
 open Editor.Test.Linked
 
--- inferred-waits W42: stays (an opt-in bench over real time, never part of `ci`)
-set_option linter.inferredWait false in
 /-- The auto-reload row of `config-bench` (`FilesTest-Linked
 bench-auto-reload`): the latency, in milliseconds, from another process's
 rewrite of an open, unmodified buffer's file (the rewriting process's exit,
@@ -40,7 +38,8 @@ with its budget beside it, auto-reload's criterion 9, a second. It asserts
 nothing: the criterion is real time, so it is measured here, never pass or
 fail in a test (`FilesTest.Linked.autoReloadChecks`). The scene is asked
 again at each job line (`Session.shownOn`), so a sample ends on the event
-that shows it. -/
+that shows it. Before the rewrite it waits, as the check does, on the
+load's own end line and on the follow job's start line. -/
 def autoReloadRow (context : HostContext) (samples : Nat) : Check :=
   { name := "the auto-reload row: the rewrite-to-shown latency over real watches"
     run := do
@@ -53,9 +52,18 @@ def autoReloadRow (context : HostContext) (samples : Nat) : Check :=
               let path := files / "note.txt"
               IO.FS.writeBinFile path old.toUTF8
               withRealFileHost context (files / "config") [("open-note", path)] fun session => do
-                  unless ← session.ran "open-note" do
+                  -- The load's own end line, then the follow job's start,
+                  -- which the toggle's ask has waited for: the waits of
+                  -- `criteria910RealCheck`, never the host's idle.
+                  session.ask [.run "open-note"]
+                  unless ← session.outputReaches (endedOk · Files.loadJob) do
                     return false
                   session.ask [.run Files.autoReloadName]
+                  let armed :=
+                    (← session.output.get).any fun line =>
+                      line.startsWith "job " && line.endsWith s!" {FileJobs.followJob}: started"
+                  unless armed do
+                    return false
                   unless ← rewriteFromOutside path new do
                     return false
                   let rewritten ← IO.monoNanosNow

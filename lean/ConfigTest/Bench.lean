@@ -82,10 +82,11 @@ for a reload to its report, on Lean's monotonic clock. -/
 
 namespace Bench
 
-/-- The guard of a measurement's reload, settle or join; only a hang
-reaches it, and the measurement then fails as a hang. For one reload. -/
+/-- The guard of a measurement's reload, settle or wait on its own lines;
+only a hang reaches it, and the measurement then fails as a hang. For one
+reload. -/
 def patience : HangGuard :=
-  .on "a measurement's reload, settle or join" 120000
+  .on "a measurement's reload, settle or wait on its own lines" 120000
 
 /-- The guard of the pool's warming again after a row, run out on purpose:
 a warming task a full pool does not start. -/
@@ -568,8 +569,12 @@ reads it. So a sample is the key's step, its scene published, and one
 empty step after it, which the row with no candidates measures alone. In
 the worker row the listing's latency is timed too, from sending the key to
 the editor thread printing that the match job's command ran; then the row
-joins, so the next key finds no match in flight. After the sixth key the
-prompt is cancelled and asked again, untimed.
+joins: it waits for the key's own jobs to end, on their lines after the
+sample's `noop` (`Printed.ranSince`, `Editor/Test/Linked/Bench.lean`), so
+the next key finds no match in flight. After the sixth key the prompt is
+cancelled, on the cancel's own line, and asked again, untimed. Every wait of
+a row is on what the benched work prints (`Printed`), never on the host's
+idle.
 
 The file row is `open-file`'s prompt over a fake file service holding one
 directory of 10,000 files, its host's working directory: the prompt lists
@@ -656,8 +661,6 @@ def makeWordBuffers : EditorM Unit := do
   for index in [0:20] do
     discard <| createBuffer s!"words-{index}" (wordText (index * 5000))
 
--- inferred-waits W1: stays (an opt-in bench over real time, never part of `ci`)
-set_option linter.inferredWait false in
 /-- `bench-prompt`: what a key costs in a prompt with no candidates, over
 1,000, 10,000 and 100,000 candidates listed inline (the limit lifted), and
 over 100,000 matched off the editor thread, keys joined and back to back;
@@ -677,6 +680,9 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   -- when it prints that a match job's listing was delivered.
   let ranSlot ← IO.mkRef (none : Option (IO.Promise Nat))
   let listedSlot ← IO.mkRef (none : Option (IO.Promise Nat))
+  -- What each host printed, which its waits end on (`Printed`), after the
+  -- clock's reads above.
+  let printed ← Printed.new
   let emit (line : String) : IO Unit := do
     if line == "run noop: ok" then
       if let some sample← ranSlot.modifyGet fun slot => (slot, none) then
@@ -686,6 +692,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
         sample.resolve (← IO.monoNanosNow)
     else if line.startsWith "loop: refused" then
       refused.modify (· + 1)
+    printed.note line
   let keys := ["s", "r", "c", "/", "f", "1"]
   -- One row: a host of its own asks the prompt over `count` candidates,
   -- with `inline` as its inline limit; then the samples. Returns each key's
@@ -708,8 +715,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
                       #[askingMany count, { name := "noop", action := .plain (pure ()) }] }]
             inlineMatches := inline } fun host => do
           let ask : IO Unit := do
-            host.send (.run "ask-many")
-            unless (← host.join patience) == .settled do
+            unless ← printed.ran host patience (host.send (.run "ask-many")) do
               throw (IO.userError "the prompt did not open")
           ask
           let mut keyTimes := #[]
@@ -717,12 +723,14 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
           for sample in [0:samples] do
             let index := sample % keys.length
             if index == 0 && sample > 0 then
-              host.send (.run Test.Minibuffer.cancelName)
+              unless ← printed.run host patience Test.Minibuffer.cancelName do
+                throw (IO.userError "the prompt was not cancelled")
               ask
             let ran ← IO.Promise.new
             let listed ← IO.Promise.new
             ranSlot.set (some ran)
             listedSlot.set (if listing then some listed else none)
+            let start ← printed.size
             let asked ← IO.monoNanosNow
             host.commit (keys[index]?.getD "x")
             host.send (.run "noop")
@@ -733,7 +741,9 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
                 IO.wait listed.result? | throw (IO.userError "a listing was lost")
               listingTimes := listingTimes.push (delivered - asked)
             if joined then
-              unless (← host.join patience) == .settled do
+              -- The key's own match, if it started one, has ended: its
+              -- jobs' ends after the sample's `noop`, the fence.
+              unless ← printed.ranSince patience start start do
                 throw (IO.userError "a listing was not delivered")
             else
               -- real time under test: the typing cadence the row measures at,
@@ -793,8 +803,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             jobs := requests + 2, environment := requests + 3, posts := requests + 4
             pauseEvents := requests + 5, clock := some clock, log := fun _ => pure () }
           fun host => do
-          host.send (.run "make-buffers")
-          unless (← host.join patience) == .settled do
+          unless ← printed.ran host patience (host.send (.run "make-buffers")) do
             throw (IO.userError "the buffers were not made")
           let timed (key : String) : IO Nat := do
             let ran ← IO.Promise.new
@@ -806,9 +815,10 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
             return handled - asked
           let untimed (text : String) : IO Unit := do
-            for pressed in keysOf text do
-              host.press pressed
-            unless (← host.join patience) == .settled do
+            let pressed : IO Unit := do
+              for key in keysOf text do
+                host.press key
+            unless ← printed.ran host patience pressed do
               throw (IO.userError "the keys were not handled")
           let mut times := #[]
           for _ in [0:(samples + 5) / 6] do
@@ -817,13 +827,20 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             if atPoint then
               unless ← clock.dueWithin 240 do
                 throw (IO.userError "no pause was armed")
+              let paused ← printed.size
               clock.advance 240
-              unless (← host.join patience) == .settled do
+              -- The pause fires on the clock's move, with no fence after it:
+              -- the source's own job, its one batch and its end, then a fence
+              -- for what its delivery started.
+              unless ← printed.reaches patience (jobRan · paused "bench-words" 1) do
+                throw (IO.userError "the candidates were not delivered")
+              unless ← printed.fenced host patience paused do
                 throw (IO.userError "the candidates were not delivered")
             for key in ["r", "d", "1", "_"] do
               times := times.push (← timed key)
             if atPoint then
-              host.send (.run Test.AtPoint.quitName)
+              unless ← printed.run host patience Test.AtPoint.quitName do
+                throw (IO.userError "the session was not quit")
             untimed "C-z C-z C-z C-z C-z C-z"
           return times
     finally
@@ -853,8 +870,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
                 Compiled.package { commands := #[{ name := "noop", action := .plain (pure ()) }] }]
             workingDirectory := "/big" } fun host => do
           let ask : IO Unit := do
-            host.send (.run FileJobs.openFileCommand)
-            unless (← host.join patience) == .settled do
+            unless ← printed.ran host patience (host.send (.run FileJobs.openFileCommand)) do
               throw (IO.userError "the file prompt did not list its directory")
           ask
           let fileKeys := ["f", "1", "2", "3", "4", "5"]
@@ -862,17 +878,19 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
           for sample in [0:samples] do
             let index := sample % fileKeys.length
             if index == 0 && sample > 0 then
-              host.send (.run Test.Minibuffer.cancelName)
+              unless ← printed.run host patience Test.Minibuffer.cancelName do
+                throw (IO.userError "the file prompt was not cancelled")
               ask
             let ran ← IO.Promise.new
             ranSlot.set (some ran)
             listedSlot.set none
+            let start ← printed.size
             let asked ← IO.monoNanosNow
             host.commit (fileKeys[index]?.getD "x")
             host.send (.run "noop")
             let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
             keyTimes := keyTimes.push (handled - asked)
-            unless (← host.join patience) == .settled do
+            unless ← printed.ranSince patience start start do
               throw (IO.userError "a listing was not delivered")
           return keyTimes
     finally

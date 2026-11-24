@@ -898,16 +898,6 @@ def settle (session : Session) : IO Bool := do
 def handled (session : Session) : IO Bool :=
   return (← session.drive.handled hangGuard) == .settled
 
-/-- `join` is an inferred wait (`Editor/InferredWait.lean`). -/
-def join.inferredWait : InferredWait :=
-  .idle []
-
-/-- Waits until the host has handled everything sent so far and no job is
-running, with `hangGuard` and the session's `waitHung` and `waitBlocked`:
-`settled`, `working` at idle with a job still running, or a hang. -/
-def join (session : Session) : IO Headless.Wait :=
-  session.drive.join hangGuard (waitHung := session.waitHung) (waitBlocked := session.waitBlocked)
-
 /-- One round of a stepped session (`step`): the host's queue drained
 (`handled`, which publishes nothing), then every piece of the fakes' work
 that can run (`Stage.Fakes.stepWork`). Whether anything moved: the queue
@@ -1242,16 +1232,6 @@ end Session
 line has it. -/
 def Session.echo (session : Session) : IO String :=
   return (← session.scene).1
-
-/-- `Session.ran` is an inferred wait (`Editor/InferredWait.lean`). -/
-def Session.ran.inferredWait : InferredWait :=
-  .idle []
-
-/-- Runs the command called `name` through the host and waits for the jobs
-it started: whether the wait settled. -/
-def Session.ran (session : Session) (name : String) : IO Bool := do
-  session.ask [.run name]
-  return (← session.join) == .settled
 
 /-- Whether every job `lines` says started (`job N name: started`) has an end
 line after it (`job N name: ` and anything but `started`). -/

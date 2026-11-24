@@ -52,10 +52,10 @@ filter. -/
 def finderCadence : Nat :=
   120
 
-/-- The guard of a measurement's settle or join, or its host's end; only a
-hang reaches it, and the measurement then fails as a hang. -/
+/-- The guard of a measurement's wait on its own lines, or its host's end;
+only a hang reaches it, and the measurement then fails as a hang. -/
 def patience : HangGuard :=
-  .on "a measurement's settle or join, or its host's end" 120000
+  .on "a measurement's wait on its own lines, or its host's end" 120000
 
 /-- The median of `times`, which need not be sorted. -/
 def median (times : Array Nat) : Nat :=
@@ -73,8 +73,6 @@ def timedRun (command : String) (arguments : Array String) (directory : System.F
     throw (IO.userError s!"{command} exited with status {output.exitCode}: {output.stderr}")
   return (ended - started, output.stdout)
 
--- inferred-waits W45: stays (an opt-in bench over real time, never part of `ci`)
-set_option linter.inferredWait false in
 /-- `bench-workspace-files`: what a key costs in `find-file-in-workspace`'s
 prompt over the repository at `repository`, a key in a prompt with no
 candidates as the floor, the keys `m`, `1`, `2`, `f`, `3` and `4` each
@@ -96,6 +94,11 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
   -- The status line of the finder's prompt, as `scene` prints it: it names
   -- the workspace, so the report says git found it.
   let labelLine ← IO.mkRef (none : Option String)
+  -- What the host printed, which its waits end on (`Printed`), after the
+  -- clock's reads below. The source's job posts its one batch before it
+  -- ends (`Workspace.FindFile.answer`).
+  let printed ← Printed.new
+  let posts (name : String) : Nat := if name == source then 1 else 0
   let emit (line : String) : IO Unit := do
     if line.startsWith "status " && (line.splitOn "Find file in ").length > 1 then
       labelLine.modify (·.orElse fun _ => some line)
@@ -109,6 +112,7 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
       failures.modify (·.push line)
     else if line.startsWith "loop: refused" then
       refused.modify (· + 1)
+    printed.note line
   withBenchHost sysroot oleanDir services
       #[listingsPackage, Test.Shipped.modeLine, FilesApiTest.fake, Test.Minibuffer.package,
         Workspace.package,
@@ -120,39 +124,65 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
                   action :=
                     .plain (discard <| Editor.prompt "Plain: " { command := "noop" } "") }] }]
       repository emit patience fun host => do
-      let joined (what : String) : IO Unit := do
-        unless (← host.join patience) == .settled do
-          throw (IO.userError s!"{what} did not settle")
+      -- Each wait is on the lines of the work it waits for: the jobs
+      -- started from `start` on, the latest of each name, ended
+      -- (`Printed.ranSince`), the fence the first `run noop` from
+      -- `fenceFrom` on.
+      let failed : IO Unit := do
         unless (← failures.get).isEmpty do
           throw (IO.userError s!"the source failed: {(← failures.get)[0]!}")
-      -- The file opens, and the finder runs git for its directory.
-      host.send (.open (repository / "src" / "m0" / "f0.rs").toString)
-      joined "the open"
+      let ranSince (what : String) (start fenceFrom : Nat) : IO Unit := do
+        unless ← printed.ranSince patience start fenceFrom posts do
+          throw (IO.userError s!"{what} did not settle")
+        failed
+      -- Sends the fence after the work from `start`, and waits for it.
+      let fenced (what : String) (start : Nat) : IO Unit := do
+        unless ← printed.fenced host patience start posts do
+          throw (IO.userError s!"{what} did not settle")
+        failed
+      -- Sends what `send` sends, and waits for its jobs.
+      let ran (what : String) (send : IO Unit) : IO Unit := do
+        unless ← printed.ran host patience send posts do
+          throw (IO.userError s!"{what} did not settle")
+        failed
+      -- Runs `name`, and waits for its own line: a cancel, whose jobs end
+      -- with no line, so the next wait starts after it.
+      let cancelled (what : String) : IO Unit := do
+        unless ← printed.run host patience Test.Minibuffer.cancelName do
+          throw (IO.userError s!"{what} did not run")
+      -- The file opens, and the finder runs git for its directory: the
+      -- load's job, then the find job its delivery starts
+      -- (`Workspace.findJob`), waited for by name.
+      let opened ← printed.size
+      ran "the open" (host.send (.open (repository / "src" / "m0" / "f0.rs").toString))
+      unless ← printed.reaches patience (jobRan · opened Workspace.findJob) do
+        throw (IO.userError "the open's workspace was not found")
       let keys := ["m", "1", "2", "f", "3", "4"]
       -- One row: `ask` opens the prompt, joined and untimed; each key is
       -- committed and followed by `noop`, and timed to the editor thread's
       -- line for `noop`, and, when `listing`, to the post of the batch for
       -- its text. After the sixth key the prompt is cancelled and asked again,
-      -- untimed. `joined` joins after each key; otherwise the next key comes
-      -- `finderCadence` ms later.
+      -- untimed. With `joinEach` each key's own jobs are waited for after it;
+      -- otherwise the next key comes `finderCadence` ms later, and the keys'
+      -- jobs are waited for before the cancel.
       let row (ask : String) (listing joinEach : Bool) : IO (Array Nat × Array Nat) := do
-        let opens : IO Unit := do
-          host.send (.run ask)
-          joined s!"{ask}'s prompt"
-        opens
+        let opens : IO Nat := do
+          ran s!"{ask}'s prompt" (host.send (.run ask))
+          printed.size
+        let mut since ← opens
         let mut keyTimes := #[]
         let mut listingTimes := #[]
         for sample in [0:samples] do
           let index := sample % keys.length
           if index == 0 && sample > 0 then
-            joined "the keys"
-            host.send (.run Test.Minibuffer.cancelName)
-            joined "the cancel"
-            opens
+            fenced "the keys" since
+            cancelled "the cancel"
+            since ← opens
           let ran ← IO.Promise.new
           let listed ← IO.Promise.new
           ranSlot.set (some ran)
           listedSlot.set (if listing then some listed else none)
+          let start ← printed.size
           let asked ← IO.monoNanosNow
           host.commit (keys[index]?.getD "x")
           host.send (.run "noop")
@@ -162,21 +192,19 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
             let some delivered ← IO.wait listed.result? | throw (IO.userError "a listing was lost")
             listingTimes := listingTimes.push (delivered - asked)
           if joinEach then
-            joined "a key's listing"
+            -- The key's own jobs, after the sample's `noop`, the fence.
+            ranSince "a key's listing" start start
+            since ← printed.size
           else
             -- real time under test: the finder row's typing cadence.
             IO.sleep finderCadence.toUInt32
-        joined "the row"
-        host.send (.run Test.Minibuffer.cancelName)
-        joined "the cancel"
+        fenced "the row" since
+        cancelled "the cancel"
         return (keyTimes, listingTimes)
       -- The finder's first listing, untimed, and its prompt's status line.
-      host.send (.run Workspace.FindFile.name)
-      joined "the first listing"
-      host.send .scene
-      joined "the scene"
-      host.send (.run Test.Minibuffer.cancelName)
-      joined "the cancel"
+      ran "the first listing" (host.send (.run Workspace.FindFile.name))
+      ran "the scene" (host.send .scene)
+      cancelled "the cancel"
       let idle := Row.of "no candidates" (← row "ask-plain" false true).1
       let (finderKeys, finderListings) ← row Workspace.FindFile.name true true
       let finder := Row.of "workspace finder, each key joined" finderKeys
