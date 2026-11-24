@@ -90,8 +90,9 @@ scheme's keys for those roles. No new role.
 
 Pinned by `VersionControlTest.worktreeViewChecks` on the model's values,
 `VersionControlTest.worktreeBufferChecks` on the loop's driver over the editor's
-models, the job model and the model of a repository, and
-`VersionControlTest.Linked.statusBufferChecks` over real git.
+models, the job model and the model of a repository; what git does of each
+request is the version-control contract's over real git
+(`VersionControlTest.Linked.versionControlFailures`).
 -/
 
 namespace Editor.VersionControl

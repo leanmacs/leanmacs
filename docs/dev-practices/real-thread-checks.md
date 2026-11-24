@@ -203,7 +203,6 @@ inventory, and each says `Real` in its helper or calls the runner itself.
 | `packages/evil/EvilTest/Linked/Evil/TreeObjects.lean` | `treeObjectChecks`, both | A5: `withRealVimHost` |
 | `packages/files/FilesTest/Linked/Files.lean` | `languageChecks` over the grammars the syntax model does not hold: rust, markdown, toml and lean | A5: `withRealLanguageHost` |
 | `packages/files/FilesTest/Linked/Files.lean` | `autoReloadChecks`, and the auto-reload row of `config-bench` (`FilesTest/Linked/Files/Bench.lean`) | A7: `withRealFileHost` |
-| `packages/version-control/VersionControlTest/Linked/VersionControl/Gutter.lean` | `gutterChecks`: criterion 6 over real git | A7: `onRealStage` |
 
 Every other host check of a package's linked test runs on a stepped host,
 through the kit's plain helpers, and fails if it grew the library's editor

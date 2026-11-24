@@ -49,9 +49,10 @@ whose path it is also handed, and a repository directory, both its own
 (`withRepository`), with `repository` written out in the directory. A
 commit needs the config's user: git run without one would guess an address
 from the host's name, and fails where that has no domain. -/
-def withConfiguredRepository {α : Type} (repository : VersionControl.Model.Repository)
+def withConfiguredRepository {α : Type} (jobs : Job.Services)
+    (repository : VersionControl.Model.Repository)
     (check : System.FilePath → System.FilePath → System.FilePath → IO α) : IO α :=
-  withRepository fun home directory => do
+  withRepository jobs fun home directory => do
     writeGitRepository home directory repository
     let config := home / "gitconfig"
     IO.FS.writeFile config pinnedAwayConfig

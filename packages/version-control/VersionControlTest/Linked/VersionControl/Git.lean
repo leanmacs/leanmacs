@@ -1,7 +1,6 @@
 import Editor.Job
 import Editor.Program
 import Editor.Test.Linked.Jobs
-import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
 import VcApi
 import VcApiTest.Contract
@@ -40,7 +39,7 @@ def versionControlChecks (services : Job.Services) : List Check :=
   [{  name :=
         "criterion 4: in a temporary repository whose linked worktree on feature committed a.txt modified, c.txt added and d.txt deleted, while main committed m.txt after they forked, changes asked from the linked worktree (HEAD against main) and from the main one (feature against main) each answer those three files with their old and new content, and fileAt of the base reads a.txt's old content"
       run :=
-        withRepository fun home directory => do
+        withRepository services fun home directory => do
           writeGitRepository home directory
               (VersionControlContract.clean #[("a.txt", "1\n"), ("b.txt", "b\n"), ("d.txt", "d\n")])
           let linked := directory.parent.getD directory / "feature"
@@ -75,7 +74,7 @@ def versionControlChecks (services : Job.Services) : List Check :=
     { name :=
         "in a linked worktree, watched names the main repository's git directory to watch, and HEAD and the index of the worktree's own git directory under it"
       run :=
-        withRepository fun home directory => do
+        withRepository services fun home directory => do
           writeGitRepository home directory (VersionControlContract.clean #[("a.txt", "a\n")])
           let linked := directory.parent.getD directory / "linked"
           discard <| gitIn home directory #["worktree", "add", "-q", "--detach", linked.toString]
@@ -97,7 +96,7 @@ def versionControlChecks (services : Job.Services) : List Check :=
     { name :=
         "files moved in the working tree and added with intent to add, which git reads as renames in the working tree, read as each origin's unstaged deletion, joined with its staged change, and each new path's unstaged addition"
       run :=
-        withRepository fun home directory => do
+        withRepository services fun home directory => do
           writeGitRepository home directory
               { committed := #[("a.txt", "a\n"), ("b.txt", "b\n")]
                 index := #[("a.txt", .file "a\n"), ("b.txt", .file "staged\n")]
@@ -115,7 +114,7 @@ def versionControlChecks (services : Job.Services) : List Check :=
     { name :=
         "a commit's message is the message given, a line that starts with # kept, under a user config whose commit.cleanup is strip"
       run :=
-        withConfiguredRepository
+        withConfiguredRepository services
           { committed := #[("a.txt", "one\n")], index := #[("a.txt", .file "two\n")]
             worktree := #[("a.txt", "two\n")] } fun home config directory => do
           let message := "Subject\n\n# kept\nbody\n"
@@ -197,24 +196,23 @@ def inLanesChecks : List Check :=
     { name := "inLanes fails only the item that threw in a single lane"
       run := return (← runInLanes 1 6 0) == ranInLanes 6 0 }]
 
--- inferred-waits W44: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
 /-- The names of the version-control contract's properties
 (`VersionControl/Contract.lean`) that do not hold of the git
 implementation over the library's process service, each property's
 repository written out with real git in a temporary directory and home of
 its own (`writeGitRepository`), every child's git kept from the system's
-config and given `pinnedAwayConfig` as the user's (`onIsolatedGit`); and
-that every child it ran, in every lane, is reaped once all have ended. The
-properties run `versionControlLanes` at a time (`inLanes`), and their
+config and given `pinnedAwayConfig` as the user's (`onIsolatedGit`). Each
+property's directory is removed only once the process and file services
+have worked what was handed to them (`withRepository`, a flushed bracket);
+that each child is reaped is the process service's own contract
+(`ContractTest.processFailures`), not pinned here. The properties run `versionControlLanes` at a time (`inLanes`), and their
 failures are reported in the contract's order. Property 1 is the phase's
 adapter test of git against the model. -/
 def versionControlFailures (services : Job.Services) : IO (List String) := do
-  let before ← Ffi.processesPending
   let outcomes ←
     inLanes versionControlLanes VersionControlContract.properties (failed := fun property error =>
         some s!"{property.name} ({error})") fun property =>
-        withRepository fun home directory => do
+        withRepository services fun home directory => do
           try
             writeGitRepository home directory property.repository
             let config := home / "gitconfig"
@@ -227,8 +225,6 @@ def versionControlFailures (services : Job.Services) : IO (List String) := do
           catch error =>
             return some s!"{property.name} (writing its repository: {error})"
   let failed := outcomes.filterMap id
-  let reaped ← Editor.Test.Linked.childrenReapedTo services before
-  return failed.map (s!"the version-control interface over git: {·}") ++
-      if reaped then [] else ["every child the git implementation ran is reaped"]
+  return failed.map (s!"the version-control interface over git: {·}")
 
 end VersionControlTest.Linked

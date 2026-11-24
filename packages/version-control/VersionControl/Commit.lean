@@ -73,8 +73,9 @@ Accept and abort are actions of this mode alone, so they are its locals,
 not roles (`Editor/Role.lean`, "The rule for adding a role").
 
 Pinned by `VersionControlTest.commitBufferChecks` on the loop's driver over the
-editor's models, the job model and the model of a repository, and
-`VersionControlTest.Linked.statusBufferChecks` over real git.
+editor's models, the job model and the model of a repository; what git does
+of each request is the version-control contract's over real git
+(`VersionControlTest.Linked.versionControlFailures`).
 -/
 
 namespace Editor.VersionControl

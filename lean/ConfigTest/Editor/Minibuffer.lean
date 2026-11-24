@@ -12,7 +12,6 @@ import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Display
 import Editor.Event
-import Editor.Fuzzy
 import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.Invocation

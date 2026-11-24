@@ -76,7 +76,8 @@ revision and the id of each commit it shows, in row order.
 
 Pinned by `VersionControlTest.logViewChecks` on values, `VersionControlTest.logBufferChecks`
 on the loop's driver over the editor's models and the model of a
-repository, and `VersionControlTest.Linked.historyBufferChecks` over real git.
+repository; what git does of each request is the version-control contract's
+over real git (`VersionControlTest.Linked.versionControlFailures`).
 -/
 
 namespace Editor.VersionControl

@@ -228,8 +228,8 @@ buffer and a config reload, not a restart: writing it to disk is task
 
 Pinned by `VersionControlTest.reviewBufferChecks` on the loop's driver over the
 editor's models, the job model, the file model and the version-control
-interface's model, and `VersionControlTest.Linked.reviewBufferChecks` and
-`VersionControlTest.Linked.historyBufferChecks` (`vc-review-since`) over real git.
+interface's model; what git does of each request is the version-control
+contract's over real git (`VersionControlTest.Linked.versionControlFailures`).
 -/
 
 namespace Editor.VersionControl

@@ -48,8 +48,9 @@ Otherwise it starts `vc-show-read`, keyed `vc-show <root> <revision>:<path>`
   (`languageOf`) is recorded and its `code` mode set, as a file's open does,
   so the old text is drawn as the file is.
 
-Pinned by `VersionControlTest.revisionBufferChecks` on the models and
-`VersionControlTest.Linked.statusBufferChecks` over real git.
+Pinned by `VersionControlTest.revisionBufferChecks` on the models; what git
+does of each request is the version-control contract's over real git
+(`VersionControlTest.Linked.versionControlFailures`).
 -/
 
 namespace Editor.VersionControl

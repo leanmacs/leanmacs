@@ -693,8 +693,9 @@ editor with git integration does.
 
 Pinned by `VersionControlTest.gutterChecks` on the models (`Repository.commit` and
 the driver's touch of the parked watch for a commit made outside the
-editor) and `VersionControlTest.Linked.gutterChecks` over real git, the library's watch
-service and its diff engine.
+editor). The check of it through a host over real git and the library's
+watch service went in host-tests-on-fakes phase 4: it pinned that
+criterion again, and what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`).
 
 ## Staging a hunk: `vc-stage-hunk` and `vc-unstage-hunk`
 
@@ -752,13 +753,9 @@ names run them, and no key binds them: binding one is config's.
 - **Untracked, conflicted and deleted files** have no hunk to stage: each
   is said, and the whole-file commands stage them.
 
-Pinned by `VersionControlTest.hunkChecks` (the pure core and the exact patch text),
-`VersionControlTest.stageHunkChecks` on the models, and
-`VersionControlTest.Linked.statusBufferChecks` over real git and the library's diff
-engine: on a line of the second of two hunks, in a buffer with unsaved
-changes, the buffer is saved and that hunk alone is staged; and pressed
-twice on one line before the first has staged, the first stages the hunk
-and git refuses the second, which is said.
+Pinned by `VersionControlTest.hunkChecks` (the pure core and the exact patch text)
+and `VersionControlTest.stageHunkChecks` on the models; what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`), its
+refusal of a hunk whose lines are not in the index among it.
 
 ## The message buffer: `vc-commit`
 
@@ -797,11 +794,10 @@ is.
   runs.
 
 Pinned by `VersionControlTest.commitBufferChecks` on the models (the bytes
-`git commit --file=-` is fed are the buffer's text) and
-`VersionControlTest.Linked.statusBufferChecks` over real git: the commit's message is
-the buffer's text, and a pre-commit hook's lines on both streams are shown
-with `HEAD` as it was. A commit run by the checks has git's user from the
-hostile config, never guessed from the host's name.
+`git commit --file=-` is fed are the buffer's text, and a refused commit's
+output shown); what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`), a hook's lines on both streams with `HEAD` as it
+was among it. A commit run by the checks has git's user from the hostile
+config, never guessed from the host's name.
 
 ## The worktree list: `vc-worktrees`
 
@@ -838,9 +834,7 @@ helper `vc-worktrees-visit` does ([projects.md](projects.md), "The project's
 workspaces and `find-file-in-project`").
 
 Pinned by `VersionControlTest.worktreeViewChecks` and `VersionControlTest.worktreeBufferChecks`
-on the models, and `VersionControlTest.Linked.statusBufferChecks` over real git: the
-list of a repository with a worktree on `feature` holding a changed file,
-and visiting its row opens `*vc-status: repo@feature*` naming that file.
+on the models; what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`).
 
 ## The review buffer: `vc-review`
 
@@ -941,15 +935,9 @@ the log or the blame), so each is the same `vc-review-read` →
   base is the answer.
 
 Pinned by `VersionControlTest.reviewHunkChecks`, `reviewOrderChecks` and
-`reviewRecordChecks` (the pure core), `VersionControlTest.reviewBufferChecks` on the
-models, the read run over the interface's model (`Model.readHandler`), and
-`VersionControlTest.Linked.reviewBufferChecks` over real git: from a linked worktree,
-`vc-review` with no text reviews against `main`, and reverting one hunk
-makes that file's buffer hold the base's lines for it and leaves the
-other. `VersionControlTest.Linked.historyBufferChecks` runs `vc-review-since` over real
-git: after `vc-review` against `base` and a new commit it shows that
-commit's hunk alone, and after the commit is amended it opens the
-range-diff, which pairs the amended commit `!`.
+`reviewRecordChecks` (the pure core), and `VersionControlTest.reviewBufferChecks` on the
+models, the read run over the interface's model (`Model.readHandler`);
+what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`), the range-diff among it.
 
 ## The log buffer: `vc-log`
 
@@ -974,9 +962,7 @@ buffer `*vc-log: <label> <revision>*` in the mode `vc-log`, magit's log.
   into the same buffer.
 
 Pinned by `VersionControlTest.logViewChecks` and `VersionControlTest.logBufferChecks` on the
-models, and `VersionControlTest.Linked.historyBufferChecks` over real git: `vc-log
-feature` lists feature's two commits newest first, and visiting the older
-one's row opens its change with its one header.
+models; what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`).
 
 ## Blame: `vc-blame`
 
@@ -1002,10 +988,8 @@ commit that last changed it and that commit's author, in a read-only buffer
 
 Pinned by `VersionControlTest.blameViewChecks` and `VersionControlTest.blameBufferChecks` on
 the models, where the changed line's row names its commit's author `b` and
-the others `a`, and `VersionControlTest.Linked.historyBufferChecks` over real git, under
-the hostile config whose `blame.ignoreRevsFile` names every commit but
-`HEAD`'s: the changed line's row alone names `HEAD`'s commit and its author
-`b`.
+the others `a`; what git does of each request is the version-control contract's over real git (`VersionControlTest.Linked.versionControlFailures`), whose blame property fails if the command line
+stops clearing the hostile config's `blame.ignoreRevsFile`.
 
 ## Open questions
 

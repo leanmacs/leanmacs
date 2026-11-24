@@ -69,9 +69,9 @@ which have none in the buffer, an empty mark at the start of the line after
 them, `-` in `diff.removed`. The glyphs read on a grid of cells, as the
 headless mode draws one.
 
-Pinned by `VersionControlTest.gutterChecks` on the models and `VersionControlTest.Linked.gutterChecks`
-over real git, the library's watch service and its diff engine; the
-reconciler alone by `ModelTest.gutterTrackChecks`.
+Pinned by `VersionControlTest.gutterChecks` on the models, criterion 6's
+commit outside the editor among them; the reconciler alone by
+`ModelTest.gutterTrackChecks`.
 -/
 
 namespace Editor.VersionControl

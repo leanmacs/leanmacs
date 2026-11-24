@@ -301,10 +301,10 @@ Nor is version control over real git: the version-control interface's
 contract against the git implementation, in lanes of their own, the git
 implementation's own checks, and the status, worktree, review, log and blame
 buffers are the `version-control` package's (`packages/version-control/`),
-whose linked test runs them (`VersionControlTest.Linked.inLanesChecks`,
-`versionControlFailures`, `versionControlChecks`, `statusBufferChecks`,
-`reviewBufferChecks` and `historyBufferChecks`, which were this
-executable's). The contract's run against the model is the core's
+whose linked test runs the git implementation's
+(`VersionControlTest.Linked.inLanesChecks`, `versionControlFailures` and
+`versionControlChecks`, which were this executable's), and whose model
+checks run the buffers'. The contract's run against the model is the core's
 (`VcApiTest.versionControlContractFailures`, in the interface package `vc-api`).
 
 `filteringChecks` runs a source a command filters

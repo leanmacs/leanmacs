@@ -95,9 +95,9 @@ the second patch's context no longer matches the index, git refuses it,
 and that is said.
 
 Pinned by `VersionControlTest.stageHunkChecks` on the loop's driver over the
-editor's models, the job model and the model of a repository, and
-`VersionControlTest.Linked.statusBufferChecks` over real git and the library's diff
-engine.
+editor's models, the job model and the model of a repository; what git does
+of each request is the version-control contract's over real git
+(`VersionControlTest.Linked.versionControlFailures`).
 -/
 
 namespace Editor.VersionControl

@@ -263,9 +263,11 @@ def writeGitRepository (home directory : System.FilePath)
     writeHook directory printed
 
 /-- `check` handed a home and a repository directory of its own, under a
-temporary directory removed afterwards (`withBase`). -/
-def withRepository {α : Type} (check : System.FilePath → System.FilePath → IO α) : IO α :=
-  withBase fun base => do
+temporary directory removed only once the process and file services
+through `jobs` have worked what was handed to them (`withFlushedBase`). -/
+def withRepository {α : Type} (jobs : Job.Services)
+    (check : System.FilePath → System.FilePath → IO α) : IO α :=
+  withFlushedBase jobs fun base => do
     IO.FS.createDirAll (base / "home")
     IO.FS.createDirAll (base / "repo")
     check (base / "home") (base / "repo")

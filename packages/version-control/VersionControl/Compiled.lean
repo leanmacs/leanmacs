@@ -117,8 +117,7 @@ This module is apart from `VersionControl/Status.lean` because it is
 what a host is handed, not what config calls.
 
 Pinned by `VersionControlTest.versionControlPackageChecks` and
-`VersionControlTest.statusBufferChecks`, on the models, and
-`VersionControlTest.Linked.statusBufferChecks`, over real git.
+`VersionControlTest.statusBufferChecks`, on the models.
 -/
 
 namespace Editor.VersionControl

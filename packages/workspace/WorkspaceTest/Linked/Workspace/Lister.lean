@@ -74,7 +74,7 @@ def workspaceListerChecks (services : Job.Services) (fixtures : System.FilePath)
   [{  name :=
         "git's lister, run at a repository's root over the real process service, lists its tracked files and its untracked files that no ignore rule names: none that .gitignore, info/exclude or the global excludes file ignore"
       run :=
-        withRepository fun home directory => do
+        withRepository services fun home directory => do
           let global ← withGlobalExcludes home
           discard <| gitIn home directory #["init", "-q", "-b", "main"]
           writeMaking (directory / "a.txt") "a\n"
@@ -93,7 +93,7 @@ def workspaceListerChecks (services : Job.Services) (fixtures : System.FilePath)
     { name :=
         "git's lister lists a linked worktree's files at its own root and not at the main checkout's: a file committed only on the worktree's branch is listed there alone"
       run :=
-        withRepository fun home directory => do
+        withRepository services fun home directory => do
           discard <| gitIn home directory #["init", "-q", "-b", "main"]
           writeMaking (directory / "a.txt") "a\n"
           discard <| gitIn home directory #["add", "a.txt"]

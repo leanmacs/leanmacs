@@ -155,7 +155,7 @@ def workingSetChecks (services : Job.Services) : List Check :=
   [{  name :=
         "criteria 1 and 2 over the real bindings and real git: a.txt's rows and a row of a search's results (the kit's stand-in, an excerpt buffer of b.txt) are added and open as the files' rows; the store on disk carries HEAD's id as the version-control backend, vc-api's fake, answers it; a second host over the same state directory, a.txt rewritten outside the editor, opens demo as r1 changed, r2 moved and r3 drifted"
       run := do
-        withRepository fun home repository => do
+        withRepository services fun home repository => do
             let state := (home.parent.getD home) / "state"
             let files := #[("a.txt", workingSetText), ("b.txt", "one\nthe needle here\n")]
             writeGitRepository home repository { committed := files, worktree := files }

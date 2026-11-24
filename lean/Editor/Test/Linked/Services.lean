@@ -1,6 +1,6 @@
+import Editor.Ffi.Document
 import Editor.Ffi.Events
 import Editor.Ffi.Processes
-import Editor.Ffi.Document
 import Editor.Ffi.Snapshot
 import Editor.Ffi.Watches
 import Editor.Fuzzy.Real
