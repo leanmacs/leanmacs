@@ -47,9 +47,52 @@ posted after the drain found the queue empty, with the count unchanged, is
 the one a lost wake-up would miss, and it ends the block. At its guard the
 wait says the hang once through `waitHung` and answers the hang outcome. A
 loop that a turn stopped, or that threw, is answered `ended`.
+
+## A wait over the fakes
+
+A driver whose collaborators are the fakes it steps (the job services'
+fakes, the journal's and the syntax service's) hands the bracket their
+work (`Stepped.Work`, `withStepped`'s `work`), and its waits are then
+judged at the rest of the fakes, never by the activity count:
+
+- each time round, the queue's next push is armed and the first round
+  posts the kind's marker, as above;
+- the loop is brought to rest (`toRest`): rounds of the queue drained
+  through the turn and then every piece of the fakes' work run, until a
+  round moves nothing;
+- the rest is judged by `Rest.judge` (`Editor/Headless/Wait.lean`): an
+  answer, or, while a reload is in flight, a block on the queue's next
+  push, the reload's own wake-up (its elaboration is the one thing left on
+  another thread), with the hang at the guard.
+
+Over the fakes every job's code, completion, delivery and journal order
+runs on a step on the caller's thread, and the fake clock moves only on an
+`advance`, so a `join` whose job sleeps on the clock answers `working` at
+once, and an `advance` with nothing due stalls at once. A `restarted`'s
+wait (`awaitEnd`) is the loop brought to rest: ended, or `none` at once. A
+turn that ends the loop for a restart publishes the plan in `progress`
+(`Progress.handOver`), as the real loop does.
+
+## The runner over it
+
+`Stepped.hosting` is the script runner's bracket over a stepped host
+(`Hosting`, `runOn`), and `Stepped.run` and `Stepped.runFrom` are the
+runner over it: a script's directives answered by the stepped host's turn
+and, over the fakes, by their steps. A stepped run's `abort` throws
+(`Stepped.refuseAbort`) unless its caller hands another: a harness cannot
+end its process.
 -/
 
 namespace Editor.Headless
+
+/-- The fakes a stepped host's collaborators run their work on, as its
+waits step them (the module docs, "A wait over the fakes"): one piece of
+their work on the caller's thread, `false` when none can run. A driver
+whose collaborators are the fakes hands it to the bracket (`withStepped`);
+one whose jobs run on Lean's pool hands none. -/
+structure Stepped.Work where
+  /-- Runs one piece of the fakes' work: `false` when none can run. -/
+  step : IO Bool
 
 /-- A host stepped on its caller's thread, as its driver holds it. Only its
 bracket makes one (`withStepped`): its constructor is private. -/
@@ -70,6 +113,9 @@ structure Stepped where private mk ::
   activity : Job.Activity
   /-- The fake clock the host's jobs wait on, if they wait on one. -/
   clock : Option Job.FakeClock
+  /-- The fakes' work its waits step, when its collaborators are the fakes;
+  none when its jobs run on Lean's pool. -/
+  work : Option Stepped.Work
 
 namespace Stepped
 
@@ -112,7 +158,59 @@ def input (stepped : Stepped) (event : Event) : IO Unit := do
     | throw (IO.userError "no window reports that event")
   stepped.enqueue delivered
 
-/-- `Host.waitWhile` over the stepped loop (the module docs): a round drains
+/-- Brings the loop to the rest of its fakes: in rounds, the queue drained
+through the turn, then every piece of `work` that can run run, until a
+round moves nothing (no event taken, no piece run), or the loop has
+ended. -/
+partial def toRest (stepped : Stepped) (work : Stepped.Work) : IO Unit := do
+  let queued ← stepped.memory.size
+  stepped.drain
+  if (← stepped.ending.get).isSome then
+    return
+  let mut moved := decide (queued > 0)
+  while ← work.step do
+    moved := true
+  if moved then
+    stepped.toRest work
+
+/-- A wait over the fakes (the module docs, "A wait over the fakes"): each
+time round, the queue's next push is armed, the first round posts the
+kind's marker, and the loop is brought to the rest of its fakes
+(`toRest`); the rest is judged (`Rest.judge`), which reads no activity
+count: an answer, the hang at the guard, said once, or a block on the
+queue's next push while a reload is in flight, its wake-up. -/
+private def restingWait (stepped : Stepped) (work : Stepped.Work) (waitGuard : HangGuard)
+    (kind : Wait.Kind) (line : Option Nat) (waitHung : String → IO Unit)
+    (waitBlocked : String → IO Unit) : IO Wait := do
+  let deadline ← waitGuard.deadline
+  let mut first := kind.marker
+  repeat
+    -- Armed before the rest: the reload's wake-up, pushed after the last
+    -- drain found the queue empty, ends the block below.
+    let arrived ← stepped.memory.arrived
+    if first then
+      stepped.post .marker
+    first := false
+    stepped.toRest work
+    if (← stepped.ending.get).isSome then
+      return .ended
+    let progress ← stepped.progress
+    let rest : Rest :=
+      { busy := ← kind.busy progress, offThread := progress.reloading
+        remaining := (← deadline.rest).ms, still := kind.still, hung := kind.hung }
+    match rest.judge with
+    | .answer wait =>
+      return wait
+    | .hang wait =>
+      waitHung (waitHangLine kind.what line waitGuard)
+      return wait
+    | .blockOnReload =>
+      waitBlocked "running work"
+      discard <| awaitAnyWithin (← deadline.rest) [arrived]
+  return .ended
+
+/-- `Host.waitWhile` over the stepped loop (the module docs): over the
+fakes, a wait judged at their rest (`restingWait`); otherwise a round drains
 the queue, and is judged as the real host's is (`Wait.Kind.judge`). -/
 def waitWhile (stepped : Stepped) (waitGuard : HangGuard) (kind : Wait.Kind)
     (_answer : HangGuard := waitGuard) (line : Option Nat := none)
@@ -120,6 +218,8 @@ def waitWhile (stepped : Stepped) (waitGuard : HangGuard) (kind : Wait.Kind)
     (waitBlocked : String → IO Unit := fun _ => pure ()) : IO Wait := do
   if (← stepped.ending.get).isSome then
     return .ended
+  if let some work := stepped.work then
+    return ← stepped.restingWait work waitGuard kind line waitHung waitBlocked
   let deadline ← waitGuard.deadline
   let mut first := kind.marker
   repeat
@@ -170,11 +270,20 @@ def hasEnded (stepped : Stepped) : BaseIO Bool :=
 end Stepped
 
 /-- A `restarted`'s wait over the stepped loop: drains the queue until a
-turn has ended the loop, and says how it ended; at `guard`, with the loop
-not ended, the hang said through `hang`, and `none`. Each block is on the
-queue's next push, armed before the drain. -/
+turn has ended the loop, and says how it ended. Over the fakes, the loop is
+brought to their rest (`toRest`), and at rest with no end it is `none` at
+once, with no hang said: nothing left can end it. Otherwise, at `guard`,
+with the loop not ended, the hang said through `hang`, and `none`; each
+block is on the queue's next push, armed before the drain. -/
 def Stepped.awaitEnd (stepped : Stepped) (guard : HangGuard) (hang : IO Unit) :
     IO (Option (Except IO.Error Unit)) := do
+  -- Over the fakes, the loop brought to their rest: a turn that ended it
+  -- did so on the way, and at rest with no end nothing left can end it.
+  if let some work := stepped.work then
+    if let some ended← stepped.ending.get then
+      return some ended
+    stepped.toRest work
+    return ← stepped.ending.get
   let deadline ← guard.deadline
   repeat
     if let some ended← stepped.ending.get then
@@ -212,7 +321,8 @@ one thrown; when it returned and a turn threw, that error is. -/
 def withStepped {α β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
     (memory : Queue.Memory Ffi.Event) (body : Stepped → IO α) (guard : HangGuard := settlePatience)
     (hung : String → IO Unit := IO.eprintln) (grace : Option HangGuard := none)
-    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) : IO α := do
+    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ())
+    (work : Option Stepped.Work := none) : IO α := do
   let collaborators ← ({ collaborators with queue := memory.queue Posted.toFfi }).prepared
   let ending ← IO.mkRef none
   let progress ← IO.mkRef ({} : Progress)
@@ -231,6 +341,10 @@ def withStepped {α β σ : Type} {scheme : InputScheme} (collaborators : Collab
         let running ← running.turn collaborators event
         state.set (some running)
         if running.stopped then
+          -- A loop that ended for a restart tells its driver the plan, as
+          -- the real loop does (`loop`).
+          if let some plan := running.handOver then
+            progress.modify fun progress => { progress with handOver := some plan }
           ending.set (some (.ok ()))
         else
           progress.set running.progress
@@ -238,7 +352,7 @@ def withStepped {α β σ : Type} {scheme : InputScheme} (collaborators : Collab
         ending.set (some (.error error))
   let stepped : Stepped :=
     { requests := collaborators.requests, memory, drain, progress := progress.get, ending
-      activity := collaborators.services.activity, clock := collaborators.clock }
+      activity := collaborators.services.activity, clock := collaborators.clock, work }
   -- The end: the queue closed first, so the reload's late wake-up is
   -- refused and gives its unit back; then the loop's end, its wait for the
   -- reload guarded; and the loop's state dropped, so nothing of it is kept.
@@ -272,5 +386,57 @@ def withStepped {α β σ : Type} {scheme : InputScheme} (collaborators : Collab
   if let some (.error error)← ending.get then
     throw error
   return result
+
+/-- A stepped host's bracket for the script runner (`Hosting`, `runOn`): a
+host over the collaborators stepped on the caller's thread over `memory`
+(`withStepped`), driven by `Driven.ofStepped`, whose waits step `work`, the
+fakes', when it is given. `guard`, `hung`, `grace` and `abandoned` bound the
+end's wait for a reload still running, as `withStepped`'s do: past `grace`
+it throws the hang. A loop's error is thrown by the bracket itself. -/
+def Stepped.hosting {β σ : Type} {scheme : InputScheme} (memory : Queue.Memory Ffi.Event)
+    (work : Option Stepped.Work) (guard : HangGuard := settlePatience)
+    (grace : Option HangGuard := none) (hung : String → IO Unit := IO.eprintln)
+    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ()) : Hosting β σ scheme
+    where
+  hosted collaborators body := do
+    let ran ←
+      withStepped collaborators memory (fun stepped => body (Driven.ofStepped stepped)) guard hung
+          grace abandoned work
+    return .ok (ran, .ok ())
+
+/-- What a stepped run's `abort` does by default: it throws, since a
+stepped run cannot end its driver's process. -/
+def Stepped.refuseAbort : IO Unit :=
+  throw (IO.userError "abort: a stepped run cannot end the process it runs in")
+
+/-- `runFrom` over a host stepped on the caller's thread (`Stepped.hosting`,
+over `memory` and the fakes' `work`), with the same patiences, guards and
+hooks; `abort` calls `onAbort`, which throws unless the caller hands
+another. -/
+def Stepped.runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
+    (memory : Queue.Memory Ffi.Event) (work : Option Stepped.Work) (script : Array Line)
+    (waitGuard : HangGuard) (resume : Nat := 0) (answer : HangGuard := waitGuard)
+    (guard : HangGuard := answer) (grace : Option HangGuard := none)
+    (hung : String → IO Unit := IO.eprintln)
+    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ())
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ())
+    (onAbort : IO Unit := Stepped.refuseAbort) : IO Ran :=
+  runOn (Stepped.hosting memory work guard grace hung abandoned) collaborators script waitGuard
+    resume answer waitHung waitBlocked onAbort
+
+/-- `run` over a host stepped on the caller's thread: `Stepped.runFrom`
+from the script's start, saying only why it could not run to its end. -/
+def Stepped.run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
+    (memory : Queue.Memory Ffi.Event) (work : Option Stepped.Work) (script : Array Line)
+    (waitGuard : HangGuard) (answer : HangGuard := waitGuard) (guard : HangGuard := answer)
+    (grace : Option HangGuard := none) (hung : String → IO Unit := IO.eprintln)
+    (abandoned : Task (Except IO.Error Unit) → IO Unit := fun _ => pure ())
+    (waitHung : String → IO Unit := IO.eprintln)
+    (waitBlocked : String → IO Unit := fun _ => pure ())
+    (onAbort : IO Unit := Stepped.refuseAbort) : IO (Option Failure) :=
+  (·.1) <$>
+    Stepped.runFrom collaborators memory work script waitGuard 0 answer guard grace hung abandoned
+      waitHung waitBlocked onAbort
 
 end Editor.Headless

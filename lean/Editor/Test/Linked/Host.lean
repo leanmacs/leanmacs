@@ -35,6 +35,7 @@ import Editor.SyntaxTree.Fake
 import Editor.SyntaxTree.Real
 import Editor.Test.Linked.Listings
 import Editor.Test.Linked.Services
+import Editor.Test.Linked.Stepping
 import Editor.Test.Shipped
 import Editor.Text
 import Editor.Text.Real
@@ -100,21 +101,6 @@ structure HostContext where
   (`Headless.Collaborators.loopStarted`), so a harness that keeps an
   inventory (`ConfigTest.inventory`) names the checks that ran one. -/
   realLoops : IO.Ref Nat
-
-/-- `real` with one base shared by every caller, kept in `latest`: whatever
-base a caller hands in, `base` grows the one in `latest` to hold the
-modules asked for, keeps it and returns it. A module of the toolchain is
-then read once in the process, whichever check first imports it: a second
-read of a module file about doubles its memory. A base holds at least what
-was asked for, which is all the port says of it. -/
-def sharing (latest : IO.Ref (Option Config.Elaborate.Base))
-    (real : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle) :
-    Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle :=
-  { real with
-    base := fun _ modules => do
-      let base ← real.base (← latest.get) modules
-      latest.set (some base)
-      return base }
 
 /-- Runs `run` with the context of a harness of hosts over the real
 elaborator, as a package's linked test makes it: the elaborator over the
@@ -291,51 +277,11 @@ its own thread: the job services (`SteppedServices`: the fake scheduler, the
 fake pump, the file and process fakes), the memory queue the host drains,
 and the session journal's and the syntax service's fakes once the stage's
 makers have added them (`Stage.recordingJournal`, `Stage.fakeSyntaxService`),
-which are refs so the loop's end, made with the stage, steps them too. -/
-structure Stage.Fakes where
-  /-- The job services, all fakes. -/
-  services : SteppedServices
-  /-- The memory queue the stepped host drains. -/
-  memory : Headless.Queue.Memory Ffi.Event
-  /-- The session journal's recording fake, once `Stage.recordingJournal`
-  has added it. -/
-  journal : IO.Ref (Option Headless.RecordingJournal)
-  /-- The syntax service's fake, once `Stage.fakeSyntaxService` has added
-  it. -/
-  syntaxService : IO.Ref (Option FakeSyntaxService)
-
-/-- Runs one piece of the fakes' work on the caller's thread, in a fixed
-order: a piece of a job's code, else a due completion, else a delivery of
-the syntax fake, else an order of the journal fake; `false` when none can
-run. It drains no queue: what a piece posts is the host's to take. -/
-def Stage.Fakes.stepWork (fakes : Stage.Fakes) : IO Bool := do
-  if ← fakes.services.step then
-    return true
-  if let some service← fakes.syntaxService.get then
-    if ← service.step then
-      return true
-  if let some journal← fakes.journal.get then
-    if ← journal.step then
-      return true
-  return false
-
-/-- What of the fakes still holds work, by name: empty when they are
-quiescent, every one stepped to its end. -/
-def Stage.Fakes.unquiet (fakes : Stage.Fakes) : IO (Array String) := do
-  let mut held := #[]
-  unless ← fakes.services.scheduler.quiescent do
-    held :=
-      held.push
-        s!"the fake scheduler holds {← fakes.services.scheduler.size} pieces of a job's code"
-  unless ← fakes.services.pump.quiescent do
-    held := held.push s!"the fake pump holds {← fakes.services.pump.size} due completions"
-  if let some service← fakes.syntaxService.get then
-    unless ← service.quiescent do
-      held := held.push "the syntax fake holds an undelivered parse"
-  if let some journal← fakes.journal.get then
-    unless ← journal.quiescent do
-      held := held.push s!"the journal fake holds {← journal.unworked} unworked orders"
-  return held
+which are refs so the loop's end, made with the stage, steps them too: the
+kit's stepped fakes (`SteppedFakes`, `Editor/Test/Linked/Stepping.lean`),
+with their `stepWork` and `unquiet`. -/
+abbrev Stage.Fakes :=
+  SteppedFakes
 
 /-- What a check hands a host of its own: the collaborators, and what the
 check keeps of them. The host's output goes to a buffer, with the thread
@@ -610,16 +556,7 @@ def Stage.stepped {β σ : Type} (stage : Stage β σ) (files : FileModel := {})
   let fakes : Stage.Fakes :=
     { services, memory := stage.memory, journal := ← IO.mkRef none,
       syntaxService := ← IO.mkRef none }
-  let endCancelled (cancelled : Array (Task Unit)) : IO Unit := do
-    for index in [0:cancelled.size] do
-      let some job := cancelled[index]? | continue
-      repeat
-        if ← IO.hasFinished job then
-          break
-        unless ← fakes.stepWork do
-          throw <|
-              IO.userError
-                s!"the loop's end cancelled {cancelled.size} jobs, and the job {index + 1} of them had not ended when nothing of the stage's fakes could run"
+  let endCancelled := fakes.endCancelled
   return { stage with
       fakes := some fakes
       collaborators :=
@@ -924,28 +861,6 @@ def lines (session : Session) : IO (Array String) :=
   return (← session.output.get).map comparable
 
 end Session
-
-/-- The number of events the library's editor queue holds, before and after
-`body`: a stepped host's check must leave none there, where the next real
-host would take them. Throws, naming them, when the queue grew, and takes
-every event the queue held off it, so no later host takes them. -/
-def leavingLibraryQueue {α : Type} (body : IO α) : IO α := do
-  let before ← Ffi.queued .editor
-  let result ← body
-  let after ← Ffi.queued .editor
-  if after > before then
-    -- Taken off the queue, so the failure says what they were and no later
-    -- host takes them; `takeQueued` never parks.
-    let mut held := #[]
-    for _ in [0:after.toNat] do
-      let some event ← Ffi.takeQueued .editor | break
-      held :=
-        held.push
-          s!"{repr event.source.kind} {event.source.id} {repr event.kind} {event.code} {event.text.quote}"
-    throw <|
-        IO.userError
-          s!"a stepped host's check posted to the library's editor queue: it held {before} events and then {after}: {held}"
-  return result
 
 /-- Runs `check` against a host stepped on the check's own thread over
 `collaborators` and the memory queue `memory` (`Headless.withStepped`),

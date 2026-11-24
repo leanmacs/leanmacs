@@ -128,6 +128,17 @@ show:
   hang once and, with a grace, gives up as a hang, handing the reload to
   `abandoned`, or with none waits on; and a loop a step stopped, or a turn that threw, makes
   later waits answer ended, the turn's error thrown by the bracket;
+- `steppedRunChecks`: the script runner over a stepped host whose waits
+  step the stage's fakes (`Headless.Stepped.runFrom`, "A wait over the
+  fakes"): a spawn, an advance and a join end with the job's result on the
+  check's thread with no activity count to read; a join on a job asleep on
+  the clock fails at once as working, and an advance with nothing due
+  stalls at once, with no hang said; a settle after a held reload blocks
+  once, on its wake-up; `journalled` has the journal fake's orders worked,
+  `indexed` moves the clock past the write's delay and leaves the index in
+  the file fake's model, and `restarted` returns the hand-over's plan, or
+  fails at once with none; `abort` calls the run's `onAbort`; and a command
+  that quits stops the script;
 - `protocolContractChecks`: the runner's protocol contract
   (`Editor/Job/ProtocolContract.lean`) on a stepped host whose services
   record to the fake recorder: a nap the clock wakes and one the loop's end
@@ -420,6 +431,7 @@ def checks (context : Context) : List Check :=
     hostChecks context ++
     bracketChecks context ++
     steppedChecks context ++
+    steppedRunChecks context ++
     protocolContractChecks context ++
     threadChecks context ++
     jobChecks context ++

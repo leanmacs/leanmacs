@@ -1476,6 +1476,51 @@ each job held at its resume until the end hands it over, records `loopEnd`
 after both are done, and a job held just after it gave its unit back is in
 a wait the loop's end withdraws ("The runner's protocol, modelled").
 
+**A wait over the fakes.** Status: built by host-tests-on-fakes phase 5. A
+driver whose collaborators are the fakes it steps (the job services'
+fakes, the session journal's and the syntax service's) hands the stepped
+bracket their work (`Stepped.Work`, one piece of it on the caller's
+thread, `false` when none can run; the kit's `SteppedFakes.work`,
+`lean/Editor/Test/Linked/Stepping.lean`), and its waits are then judged at
+the rest of the fakes, never by the activity count. Each time round the
+queue's next push is armed and the first round posts the kind's marker, as
+before; then rounds drain the queue through the turn and step the fakes
+until one moves nothing, which is the **rest** (`Stepped.toRest`, phase 4's
+`Session.round` order); and the rest is judged by `Rest.judge`
+(`lean/Editor/Headless/Wait.lean`), a verdict with no field for the count:
+settled once the wait is no longer busy; with a reload in flight
+(`Progress.reloading`), a block on the queue's next push, the reload's own
+wake-up, and the hang once its guard has run out; and otherwise the kind's
+idle outcome at once, `working` for a kind with none, never a hang. The
+reload is the one wait off the thread: over the fakes every job's code,
+completion, delivery and journal order runs on a step on the caller's
+thread, the fake clock moves only on an `advance`, and a wait due when it
+starts completes at once (`FakeClock.start`); the reload's task runs the
+real elaborator. A `restarted`'s wait (`Stepped.awaitEnd`) is the loop
+brought to rest, ended or `none` at once, and a turn that ends the loop for
+a restart publishes the plan in the progress, as the real loop does. With
+no work handed (every phase 1 to 4 stepped check), the wait is the round
+above. Pinned by `ModelTest.restVerdictChecks` (each branch of the
+verdict) and `ConfigTest.steppedRunChecks`, whose first check runs a
+spawn, an advance and a join on a host that keeps no count, so a wait that
+read the count would block until its guard.
+
+**The runner on either host.** The script runner (`Headless.runOn`) is
+written on the port both hosts implement, `Headless.Driven`
+(`lean/Editor/Headless.lean`): its requests, the window's input, its waits
+(private to `Editor.Headless`, reached through the named waits), its
+progress, how its loop ended, its fake clock and what a `restarted` waits
+on (`awaitEnd`). A real host's is `Driven.ofHost`, a stepped one's
+`Driven.ofStepped`. A run's host comes from a `Hosting` value, a bracket
+that hands its body the host's `Driven`: `Hosting.real`, under the real
+entry points (`Headless.run`, `runFrom`, `runAndDispose`, whose signatures
+are unchanged), and `Stepped.hosting`, under `Stepped.run` and
+`Stepped.runFrom`. A script's `abort` calls the run's `onAbort`: the CLI's
+ends the process with status 134 (`abortProcess`), a stepped run's throws.
+Pinned by a `ConfigTest.scriptChecks` check that runs a script through
+`runOn` over a hand-written `Hosting` and `Driven` and requires every
+directive at the port in order and `abort` at `onAbort`.
+
 **Limits.** A stepped host cannot bound a turn: a turn held inside an event
 holds the check's thread, so a check that holds the editor thread inside an
 event, or whose subject is the loop thread or the library's queue, stays on

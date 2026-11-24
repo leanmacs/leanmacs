@@ -1,4 +1,5 @@
 import ConfigTest.Check
+import ConfigTest.Editor.Headless
 import ConfigTest.Support.Configs
 import ConfigTest.Support.Gate
 import Editor.Config.Session
@@ -14,7 +15,9 @@ import Editor.Test.Linked.Host
 # Config tests: `Editor/Headless/Stepped.lean`
 
 The tests of a host stepped on the check's own thread
-(`Headless.withStepped`): `steppedChecks`. Each runs the host over a stage
+(`Headless.withStepped`): `steppedChecks`; and of the script runner over a
+stepped host whose waits step the fakes (`Headless.Stepped.runFrom` over a
+stepped stage, `Stage.stepped`): `steppedRunChecks`. Each runs the host over a stage
 (`Stage.new`), with the real elaborator, the fake clock and the recorder,
 and controls time through a port: the elaborator held at a `Gate`, let go
 from the wait's own call before it blocks (`waitBlocked`), never on time.
@@ -371,5 +374,194 @@ def steppedChecks (context : Context) : List Check :=
             (stopped == (.ended, .ended) && waits == #[.ended, .ended] &&
               thrown == some "the display broke")
             s!"stopped {repr stopped}, waits {repr waits}, thrown {thrown}" }]
+
+/-- Runs `script` on `stage`, made stepped (`Stage.stepped`), with the
+script runner over the stepped host (`Headless.Stepped.runFrom`), whose
+waits step the stage's fakes (`SteppedFakes.work`), with the hang guard and
+`onAbort`: what the run came to, and the hangs it said. It fails the check
+if the library's editor queue grew (`leavingLibraryQueue`). -/
+def runOnFakes {β σ : Type} (stage : Stage β σ) (script : Array Headless.Line)
+    (onAbort : IO Unit := Headless.Stepped.refuseAbort)
+    (waitBlocked : String → IO Unit := fun _ => pure ()) : IO (Headless.Ran × Array String) := do
+  let said ← IO.mkRef (#[] : Array String)
+  let ran ←
+    leavingLibraryQueue <|
+        Headless.Stepped.runFrom stage.collaborators stage.memory (stage.fakes.map (·.work)) script
+          hangGuard (grace := some hangGuard) (waitHung := fun line => said.modify (·.push line))
+          (waitBlocked := waitBlocked) (onAbort := onAbort)
+  return (ran, ← said.get)
+
+/-- A command `quit` that asks the editor to quit (`Editor.quit`). -/
+def quittingCompiled : Compiled :=
+  { commands := #[{ name := Quit.name, action := .plain (discard quit) }] }
+
+/-- A stepped stage for a host over the config directory `directory`
+holding `files`, with the packages `files` (its fake) and `restore`, over
+the fake files holding the state directory `stateDirectory` and `model`,
+its session journal the recording fake: what a check of the runner's
+`journalled`, `indexed` and `restarted` over the fakes runs on, with the
+fake. A restart's probe of `/A.app/Contents/MacOS/editor` passes, its
+process fake scripted with that reply. -/
+def restartingStage (context : Context) (directory : System.FilePath)
+    (files : List (String × String)) (model : FileModel := {}) :
+    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle × Headless.RecordingJournal) := do
+  writeConfig directory files
+  let running : System.FilePath := "/A.app/Contents/MacOS/editor"
+  let stage ←
+    Stage.new context context.elaborator (Config.Directory.source directory)
+        { packages := #[FilesApiTest.fake, Test.Restore.package] }
+  let stage ←
+    stage.stepped (stateFiles stateDirectory model)
+        {
+          scripts :=
+            #[{ command := Restore.probeCommand running
+                reply :=
+                  .ok { exit := .code 0, stdout := "probe: ok\n".toUTF8, stderr := .empty } }] }
+  let (stage, fake) ← stage.recordingJournal stateDirectory
+  return ({ stage with
+        collaborators :=
+          { stage.collaborators with
+            launch := { running := some running, shipped := some running } } },
+      fake)
+
+/-- The checks of the script runner over a host stepped on the check's own
+thread whose waits step the stage's fakes (`Headless.Stepped.runFrom`,
+`Editor/Headless/Stepped.lean`, "A wait over the fakes"): each wait is
+answered at the rest of the fakes, never by the activity count, and each
+outcome a real host's wait answers at idle is answered at once. -/
+def steppedRunChecks (context : Context) : List Check :=
+  [{  name :=
+        "spawn, advance and join over the fakes end with the job's result on the check's own thread, with no activity count to read: the waits are judged at the fakes' rest"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource []) { jobs := #[countJob] }
+        let stage ← stage.stepped
+        -- A host that keeps no count: a wait that read it would never find
+        -- the host idle, and would block until its guard.
+        let stage :=
+          { stage with collaborators := { stage.collaborators with tracksIdle := false } }
+        let ((failure, _), said) ←
+          runOnFakes stage #[⟨1, .request (.spawn "count")⟩, ⟨2, .advance 10⟩, ⟨3, .join⟩]
+        let mine ← IO.getTID
+        let output ← stage.output.get
+        let threads ← stage.threads.get
+        saw
+            (failure.isNone && said.isEmpty && output.contains "job 1 count: ok" &&
+              threads.all (· == mine))
+            s!"failure={repr failure} said={said} output={output} threads={threads} mine={mine}" },
+    { name :=
+        "a join over the fakes on a job asleep on a clock no advance moves fails at once as working, naming its line, with no hang said"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource []) { jobs := #[countJob] }
+        let stage ← stage.stepped
+        let ((failure, _), said) ← runOnFakes stage #[⟨1, .request (.spawn "count")⟩, ⟨2, .join⟩]
+        saw (failure == some (.working (some 2)) && said.isEmpty)
+            s!"failure={repr failure} said={said}" },
+    { name := "an advance over the fakes with nothing due stalls at once, naming its line"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        let stage ← stage.stepped
+        let ((failure, _), said) ← runOnFakes stage #[⟨1, .advance 10⟩]
+        saw (failure == some (.stalled 1 10) && said.isEmpty)
+            s!"failure={repr failure} said={said}" },
+    { name :=
+        "a settle over the fakes after a reload held at a gate blocks only on the reload's wake-up, the first block letting the gate go, and settles once the reload is installed"
+      run := do
+        let gate ← Gate.new Config.rootModule
+        let stage ← Stage.new context (gate.around context.elaborator) (memorySource emptyRoot)
+        let stage ← stage.stepped
+        let blocked ← IO.mkRef (#[] : Array String)
+        let ((failure, _), said) ←
+          runOnFakes stage #[⟨1, .request .reload⟩, ⟨2, .settle⟩] (waitBlocked := fun what => do
+              blocked.modify (·.push what)
+              gate.open)
+        let blocked ← blocked.get
+        let output ← stage.output.get
+        saw
+            (failure.isNone && said.isEmpty && !blocked.isEmpty &&
+              blocked.all (· == "running work") &&
+              output.any (·.startsWith "reload 1: installed"))
+            s!"failure={repr failure} said={said} blocked={blocked} output={output}" },
+    { name :=
+        "journalled over the fakes, after typing into a file, has every order of the journal fake worked by the next line, its drain resolved on the check's own thread"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          let notes := stateDirectory / "notes.txt"
+          let (stage, journal) ←
+            restartingStage context directory greetConfig
+                (({} : FileModel).withFile notes "notes".toUTF8)
+          let ((failure, _), said) ←
+            runOnFakes stage
+                #[⟨1, .settle⟩, ⟨2, .request (.open notes.toString)⟩, ⟨3, .settle⟩,
+                  ⟨4, .commit "typed "⟩, ⟨5, .journalled⟩]
+          let unworked ← journal.unworked
+          let orders ← journal.orders
+          let mine ← IO.getTID
+          let threads := (← journal.state.get).answerThreads
+          saw
+              (failure.isNone && said.isEmpty && unworked == 0 && !orders.isEmpty &&
+                threads.all (· == mine))
+              s!"failure={repr failure} said={said} unworked={unworked} orders={orders.size} threads={threads} mine={mine}" },
+    { name :=
+        "indexed over the fakes moves the clock past the index's write delay, and the index is in the file fake's model"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          let notes := stateDirectory / "notes.txt"
+          let (stage, _) ←
+            restartingStage context directory greetConfig
+                (({} : FileModel).withFile notes "notes".toUTF8)
+          let ((failure, _), said) ←
+            runOnFakes stage
+                #[⟨1, .settle⟩, ⟨2, .request (.open notes.toString)⟩, ⟨3, .settle⟩,
+                  ⟨4, .commit "typed "⟩, ⟨5, .indexed⟩]
+          let now ← stage.clock.now
+          let index ←
+            match stage.fakes with
+            | some fakes =>
+              (lastIndex · stateDirectory) <$> fakes.services.files.model
+            | none =>
+              pure none
+          saw (failure.isNone && said.isEmpty && now ≥ Restore.writeDelay && index.isSome)
+              s!"failure={repr failure} said={said} now={now} index={index}" },
+    { name :=
+        "restarted over the fakes returns the plan of the restart the turn ended the loop with; with no restart asked it fails at once as not restarted, with no hang said"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          let (stage, _) ← restartingStage context directory greetConfig
+          let ((failure, plan), said) ←
+            runOnFakes stage
+                #[⟨1, .settle⟩, ⟨2, .request (.run restartName)⟩, ⟨3, .restarted⟩,
+                  ⟨4, .request .show⟩]
+          let output ← stage.output.get
+          let (stillStage, _) ← restartingStage context directory greetConfig
+          let ((still, none), stillSaid) ←
+            runOnFakes stillStage #[⟨1, .settle⟩, ⟨2, .restarted⟩] | return false
+          saw
+              (failure.isNone && plan.isSome && said.isEmpty &&
+                !output.any (·.startsWith "commands:") &&
+                still == some (.notRestarted 2) &&
+                stillSaid.isEmpty)
+              s!"failure={repr failure} plan={plan.isSome} said={said} output={output} still={repr still} stillSaid={stillSaid}" },
+    { name := "abort over the fakes calls the run's onAbort, and the script stops there"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        let stage ← stage.stepped
+        let aborted ← IO.mkRef 0
+        let ((failure, _), said) ←
+          runOnFakes stage #[⟨1, .abort⟩, ⟨2, .request .show⟩] (onAbort := aborted.modify (· + 1))
+        let output ← stage.output.get
+        saw
+            (failure.isNone && said.isEmpty && (← aborted.get) == 1 &&
+              !output.any (·.startsWith "commands:"))
+            s!"failure={repr failure} said={said} aborted={← aborted.get} output={output}" },
+    { name :=
+        "a script over the fakes whose command quits the editor stops there: the scene after it is not run"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource []) quittingCompiled
+        let stage ← stage.stepped
+        let ((failure, _), said) ←
+          runOnFakes stage #[⟨1, .request (.run Quit.name)⟩, ⟨2, .settle⟩, ⟨3, .request .scene⟩]
+        let output ← stage.output.get
+        saw (failure.isNone && said.isEmpty && !output.any (·.startsWith "scene "))
+            s!"failure={repr failure} said={said} output={output}" }]
 
 end ConfigTest

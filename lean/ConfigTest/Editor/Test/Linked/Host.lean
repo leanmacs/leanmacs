@@ -214,7 +214,7 @@ def steppedStageChecks (context : Context) : List Check :=
         saw
             (unresolved &&
               said ==
-                "the loop's end cancelled 1 jobs, and the job 1 of them had not ended when nothing of the stage's fakes could run")
+                "the loop's end cancelled 1 jobs, and the job 1 of them had not ended when nothing of the stepped host's fakes could run")
             s!"the end said: {said}" },
     { name :=
         "a stepped session's ask throws a stall when a restore is in flight and nothing of the stage's fakes can run: the restore asleep on the fake clock, which only the check moves"
