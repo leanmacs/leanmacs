@@ -36,6 +36,7 @@ import Editor.State
 import Editor.SyntaxTree
 import Editor.TabBar
 import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Services
 import Editor.Text
 import Editor.Text.Real
 import Editor.Value
@@ -47,8 +48,9 @@ import Editor.Workspace
 
 The editor's loop over the real services, as the checks of a feature over
 them drive it: its jobs, commands and keys (`ProjectRig`, `rigJobs`,
-`rigCommands`, `rigKeys`), runs
-settled until every job has run, an opened file and a buffer's text; and a
+`rigCommands`, `rigKeys`), over the real services or stepped over fakes
+(`ProjectRig.stepped`), runs settled until every job has run, an opened
+file and a buffer's text; and a
 child's `PATH`, set for every child a rig's services start (`withPath`,
 `onChanged`, `onFixturePath`). Shared by several test modules; it holds no
 checks of its own.
@@ -171,6 +173,10 @@ structure ProjectRig where
   display : DisplayHandler
   /-- The services the jobs run on. -/
   services : Job.Services
+  /-- The fakes the jobs run on, for a stepped rig (`ProjectRig.stepped`),
+  with the clock they wait on: each job is run to its end on the check's
+  thread (`Job.FakePump.runToEnd`); none for a rig over the real services. -/
+  fakes : Option (SteppedServices × Job.FakeClock) := none
 
 /-- A rig over `services`, with a file service and a diff service of its own,
 each reading the snapshots its texts publish. -/
@@ -186,6 +192,41 @@ def ProjectRig.over (services : Job.Services) : IO ProjectRig := do
           diffs := Job.realDiffs services.completions published.reader held (← Job.RefusedDiffs.new)
           greps :=
             Job.realGreps services.completions published.reader held (← Job.RealGreps.new) } }
+
+/-- A rig over fakes alone (`SteppedServices`): a table of waits, a fake clock
+and a fake watch service of its own, the file fake over `files`, as the
+files, the diffs and the searches, reading the snapshots the rig's texts
+publish and holding its loads in the rig's table, and the process fake over
+`processes`. Its jobs run on the check's thread, each to its end
+(`settleProjects`): no thread, no count. -/
+def ProjectRig.stepped (files : FileModel := {}) (processes : ProcessModel := {}) :
+    IO (ProjectRig × SteppedServices) := do
+  let completions ← Job.Completions.new
+  let clock ← Job.FakeClock.new completions
+  let watches ← Job.FakeFileWatches.new completions
+  let published ← Snapshots.new
+  let held ← Job.HeldSnapshots.new
+  let stepped ←
+    SteppedServices.new completions clock watches (Job.realSnapshots published.reader) held files
+        processes
+  let recorder ← DisplayRecorder.new { advance := 8, lineHeight := 16 } published.reader
+  return ({
+        published, held, display := recorder.handle, services := stepped.jobs
+        fakes := some (stepped, clock) },
+      stepped)
+
+/-- Waits for `handle`'s job to end: on a stepped rig, run to its end on the
+caller's thread with its clock moved as its waits start
+(`Job.FakePump.runToEnd`), which throws when something is left; over real
+services, on its outcome, with `patience` a hang guard. Whether it ended. -/
+def ProjectRig.ran (rig : ProjectRig) (handle : Job.Handle) : IO Bool := do
+  match rig.fakes with
+  | some (stepped, clock) =>
+    stepped.pump.runToEnd handle.outcome.result? patience (some clock) (some stepped.scheduler)
+    return true
+  | none =>
+    -- hang guard: the job's end, on its outcome.
+    return (← Job.awaitWithin patience handle.outcome.result?).isSome
 
 /-- A rig over `services`, whose children get `path` as their `PATH`
 (`onFixturePath`), with a file service of its own. -/
@@ -231,9 +272,8 @@ partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
     let posts ← IO.mkRef (#[] : Array Invocation)
     let handle ←
       Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)
-    -- hang guard: the job's end, on its outcome; a job that hangs is
-    -- cancelled and the settling fails.
-    if (← Job.awaitWithin patience handle.outcome.result?).isNone then
+    -- A job that hangs is cancelled and the settling fails.
+    unless ← rig.ran handle do
       handle.cancel
       return none
     let label := s!"job {start.name}"

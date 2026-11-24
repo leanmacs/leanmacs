@@ -65,13 +65,13 @@ shell (`Editor.Shell`) and the workspace's modes
   on the core's test kit (`Editor.Test`) and the support in
   [`CompileTest/Support/Compile.lean`](CompileTest/Support/Compile.lean).
 - **The linked test**, [`CompileTest/Linked.lean`](CompileTest/Linked.lean),
-  an executable linked as the editor is. It runs a compile and the shipped
-  modes over the real process service
-  ([`CompileTest/Linked/Compile.lean`](CompileTest/Linked/Compile.lean),
-  [`CompileTest/Linked/Compile/Shipped.lean`](CompileTest/Linked/Compile/Shipped.lean)),
-  on the programs and trees in [`tests/compile/`](tests/compile/README),
-  and a compile in a headless host, whose script and the lines it must
-  print are in [`tests/linked/run/`](tests/linked/run/).
+  an executable linked as the editor is. It runs a compile over the real
+  process service, a compile through a host on a stepped stage
+  ([`CompileTest/Linked/Compile.lean`](CompileTest/Linked/Compile.lean)),
+  and the shipped modes on a stepped rig
+  ([`CompileTest/Linked/Compile/Shipped.lean`](CompileTest/Linked/Compile/Shipped.lean)),
+  on the fixtures, canned output and trees in
+  [`tests/compile/`](tests/compile/README).
 - **The headless fixtures**, under [`tests/headless/`](tests/headless/):
   `ex-names`, each ex name reaching its command; `config`, a config written
   on the package's declarations; and `shipped-formats`, the shipped modes'

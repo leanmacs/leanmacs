@@ -198,7 +198,6 @@ inventory, and each says `Real` in its helper or calls the runner itself.
 | Linked test | Checks | Adapter |
 |---|---|---|
 | `tests/packages/greeting/GreetingTest/Linked.lean` | its one script | A3: `Headless.run` |
-| `packages/compile/CompileTest/Linked.lean` | its one script | A3: `Headless.run` |
 | `packages/ex/ExTest/Linked/Ex.lean` | `exScriptChecks`: a wait on a host whose loop a command ended | A2: `Headless.withHost` |
 | `packages/evil/EvilTest/Linked/Evil/Operators.lean` | the eight indent checks through the Vim scheme's keys (`withEvilIndentHost`) | A5: `withRealVimHost` |
 | `packages/evil/EvilTest/Linked/Evil/TreeObjects.lean` | `treeObjectChecks`, both | A5: `withRealVimHost` |

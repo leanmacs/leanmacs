@@ -21,10 +21,10 @@
 #   the system compiler, which this executable has no flags for.
 # - `CompileTest` holds the test modules, `CompileTest/Linked.lean` among
 #   them: the root of the executable the core's `editorLinked` facet links
-#   as the editor is linked, with the Rust library. It runs a compile and
-#   the shipped modes over the real process service, on the fixtures in
-#   `tests/compile/`, and a compile in a headless host, on the script in
-#   `tests/linked/run/`.
+#   as the editor is linked, with the Rust library. It runs a compile over
+#   the real process service, a compile through a host on a stepped stage
+#   and the shipped modes on a stepped rig, on the fixtures in
+#   `tests/compile/`.
 # - `tests/headless/` holds its headless fixtures.
 #
 # Every Lean linter is on and a warning fails the build, as in the core,

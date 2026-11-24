@@ -1,9 +1,0 @@
-job 1 compile-run: started
-exec sleep 600\nsrc/a.rs:3:5: error: boom\n", scroll 0
-: compilation.error
-mode-line.inactive "*compilation:
-/src/a.rs: nothing is at the path", echo padding
-echo "previous-error: no earlier locations in
-: Compilation killed after
-\nsrc/a.rs:3:5: error: boom\nCompilation killed after
-job 3 compile-run: started

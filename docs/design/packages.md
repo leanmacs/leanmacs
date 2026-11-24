@@ -689,12 +689,16 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   imports them and runs them. A package has one test namespace where
   the core has four test roots, so its model tests keep `<P>Test/<path>`,
   which the test driver's root imports, and the ones that link the Rust
-  library need a place the driver does not import. **A check that starts
-  a host is in the root itself**, `<P>Test/Linked.lean`: only that module
-  may import the headless host, the config base and the core's entry
-  module ("What a package may import", below), so a module under
-  `<P>Test/Linked/` cannot hold it. `GreetingTest.Linked` and
-  `CompileTest.Linked` each hold theirs.
+  library need a place the driver does not import. **The root makes the
+  context of a check that starts a host**, `<P>Test/Linked.lean`: only
+  that module may import the headless host's entry points, the config base
+  and the core's entry module ("What a package may import", below), so it
+  makes the context of a harness of hosts (`HostContext.run`) and hands it
+  to the checks. A module under `<P>Test/Linked/` holds checks that start
+  a host on the core's linked test kit, a stage over that context
+  (`Editor.Test.Linked.Host`), which it may import, as
+  `FilesTest.Linked.fileChecks` and `CompileTest.compileHostChecks` do.
+  `GreetingTest.Linked` holds its one check in the root.
 - **A package's headless fixtures are excluded from the formatter** by a
   `lean-fmt.toml` in the package (`exclude = ["tests/**"]`): a config file
   is a module of a config directory, another Lake package, which the editor
@@ -827,10 +831,9 @@ over the process service, a major mode, ex names and contributions.
 | `Compile/Compiled.lean` | The `Package` value `Editor.Compile.package`, still named `compile`: nine commands, the job `compile-run`, the mode, the three contributions and six ex names |
 | `Compile/EditorPackage.lean` | The entry module: `packages := #[Editor.Compile.package]`. It imports `Compile.Compiled`, and so the whole library, which is what config sees of the package |
 | `CompileTest/Model.lean` | The test driver's root, which runs the ten model lists, 98 checks, in the test modules that mirror the library's (`CompileTest/Compile.lean`, `CompileTest/Compile/…`), over the support in `CompileTest/Support/Compile.lean` |
-| `CompileTest/Linked.lean` | The linked test's root: the two lists over the real process service (`CompileTest/Linked/Compile.lean`, `CompileTest/Linked/Compile/Shipped.lean`) and, in the root itself, a compile in a headless host; 7 checks |
+| `CompileTest/Linked.lean` | The linked test's root: it makes the hosts' context (`HostContext.run`) and starts the real services, and runs `compileHostChecks`, a compile through a host on a stepped stage, the compile over the real process service (`CompileTest/Linked/Compile.lean`) and the shipped modes on a stepped rig (`CompileTest/Linked/Compile/Shipped.lean`); 8 checks |
 | `tests/headless/ex-names`, `config`, `shipped-formats` | Its headless fixtures |
-| `tests/linked/run/` | The script the host check runs, and the lines the host must print |
-| `tests/compile/` | The fixtures of the checks over the real process service: `three-lines`, the programs that stand for cargo, lake, mise and git, and the trees the shipped modes are checked in |
+| `tests/compile/` | The fixtures of the linked checks: `three-lines`, which the compile over the real process service runs; the canned output of cargo, lake and mise, which the shipped modes' process fake answers; and the trees the shipped modes are checked in, read into the rig's file fake |
 
 - **Its library imports the core's API alone**, eleven modules, with no
   addition to the API: `Editor.Api`, `Editor.Command.Call`, `Editor.File`,
@@ -889,18 +892,18 @@ over the process service, a major mode, ex names and contributions.
   `CompileTest.projectRunChecks` was `ContractTest.projectModeChecks`: the
   model lists have the old names, and both are in one namespace now. They
   run on the core's linked test kit, with the compile mode's keys and jobs
-  passed to the rig, which names no feature outside the core. The root
-  adds `hostCheck`: the headless host over the core's packages, the core's
-  test kit's stand-in for the mode line (`Editor.Test.Shipped.modeLine`,
-  added when the mode line moved out, since `holds` names the inactive
-  window's `mode-line.inactive` status, which only shipped segments fill)
-  and this one's, in a temporary working directory, runs
-  `tests/linked/run/script`, which starts a child that writes one error
-  line and blocks, steps to its location, kills it and recompiles; each
-  line of `tests/linked/run/holds` must be part of a line the host
-  printed. The output holds the temporary directory's path, which is why
-  it is not a headless fixture compared with a file. It prints `compile
-  linked test: 7 checks passed`.
+  passed to the rig, which names no feature outside the core; the shipped
+  modes' list runs on a stepped rig (`ProjectRig.stepped`), its children
+  and files the rig's fakes. `compileHostChecks`
+  (`CompileTest/Linked/Compile.lean`), over the root's `HostContext`, is a
+  compile through a host on a stepped stage, handed the core's packages,
+  the core's test kit's stand-in for the mode line and this one's: a child,
+  the stage's process fake, writes one error line and keeps running, the
+  check steps to its location, kills it and recompiles, and the visit of
+  `next-error` is asked of the scene with its load held, and again once
+  the load has ended. It was the script `tests/linked/run/script` until
+  host-tests-on-fakes phase 4 (task `compile-linked-next-error-settle-race`).
+  It prints `compile linked test: 8 checks passed`.
 - **One table of waits a process.** The library has one completion queue,
   and a pump ends the waits of the one table it is given, so the host,
   which makes a table and starts the pump, is started first, and the

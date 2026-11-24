@@ -2197,7 +2197,7 @@ package's tests are by convention are in
   of `shipped-themes` with the
   line its pictures print, its fixtures `load-theme`, `package-names`,
   `shipped-themes` and `themes`, the linked test of `compile` with its
-  line, `compile linked test: 7 checks passed`, its fixtures `config`,
+  line, `compile linked test: 8 checks passed`, its fixtures `config`,
   `ex-names` and `shipped-formats`, the fixtures `mode-line` of
   `mode-line`, `candidates` and `prompt` of `minibuffer`, `command-prompt`
   of `execute-command`, `binding-search` of `binding-search` and
@@ -2223,12 +2223,12 @@ package's tests are by convention are in
   `fairy-floss`, in that order
   ([headless-mode.md](headless-mode.md)). `compile`: 98 checks in its
   driver (`CompileTest/Model.lean`), the ten model lists it had in the
-  core, on the core's test kit; a linked test of 7 checks
-  (`CompileTest/Linked.lean`): a compile and the shipped modes over the
-  real process service, on the fixtures under
-  `packages/compile/tests/compile`, and a compile in a headless host, in a
-  temporary working directory, whose output must hold each line of
-  `packages/compile/tests/linked/run/holds`; and three fixtures:
+  core, on the core's test kit; a linked test of 8 checks
+  (`CompileTest/Linked.lean`): a compile over the real process service,
+  on the fixture `packages/compile/tests/compile/three-lines`, the shipped
+  modes on a stepped rig over the fixture trees and canned output beside
+  it, and a compile through a host on a stepped stage
+  (`compileHostChecks`); and three fixtures:
   `ex-names`, each of the six ex names reaching its command; `config`, a
   config written on the package's declarations; and `shipped-formats`, the
   shipped modes' formats reading canned output of cargo, lake and mise

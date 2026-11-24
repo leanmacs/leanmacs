@@ -28,7 +28,8 @@ import FilesApiTest.Fake
 # Linked tests: `Compile/Shipped.lean`
 
 The tests of `Compile/Shipped.lean` that need the Rust library:
-`projectRunChecks`, the shipped modes over the real process service. The
+`projectRunChecks`, the shipped modes on a stepped rig, over the process and
+file fakes. The
 linked test's root, `CompileTest/Linked.lean`, runs them; its module doc
 says what each shows. They were `ContractTest.projectModeChecks` while the
 compile mode was a module of the core, and are written on the core's linked
@@ -43,7 +44,7 @@ open Editor.Test.Linked
 
 /-- The workspace a directory of the project mode checks under `base` is in,
 standing in for the workspace finder's answer over the trees
-`materializeProjects` writes (the core kit's `checkoutFound`): `cargo`,
+`projectFiles` holds (the core kit's `checkoutFound`): `cargo`,
 `lake` and `mise`, each a main checkout on `main`, and `cargo-wt`, a
 worktree of `cargo`'s repository on `feature`; none elsewhere. -/
 def projectFound (base directory : System.FilePath) : Option Workspace.Found :=
@@ -52,7 +53,7 @@ def projectFound (base directory : System.FilePath) : Option Workspace.Found :=
         Test.checkoutFound (base / "cargo-wt") "feature" (base / "cargo" / ".git")].findSome?
     (· directory)
 
-/-- The marker files of the trees `materializeProjects` writes under `base`,
+/-- The marker files of the trees `projectFiles` holds under `base`,
 as the fixtures under `compile` (`tests/compile`) hold them. -/
 def projectMarkers (base : System.FilePath) : Array System.FilePath :=
   #[base / "cargo" / "Cargo.toml", base / "lake" / "lakefile.lean", base / "mise" / "mise.toml",
@@ -62,7 +63,7 @@ def projectMarkers (base : System.FilePath) : Array System.FilePath :=
 the workspace's attach and its modes on markers (the core kit's
 `attachByPackage` and `markersByPackage`, over `projectFound` and
 `projectMarkers`), in the order a host registers the workspace's hooks, and
-`files-api`'s fake, which opens files over the real file service and runs
+`files-api`'s fake, which opens files over the rig's file service and runs
 their hooks. -/
 def projectPackages (base : System.FilePath) : Array Package :=
   #[Test.attachByPackage (projectFound base),
@@ -154,57 +155,94 @@ def compiledAs (text : Option String) (header : String) (canned : System.FilePat
       | final :: rest => final.startsWith last && rest.reverse == header :: lines.filter (· != "")
       | [] => false
 
-/-- Copies the tree `source` to `target`, every file with its bytes. -/
-partial def copyTree (source target : System.FilePath) : IO Unit := do
-  IO.FS.createDirAll target
+/-- `model` with the tree `source` read into it at `target`: every
+directory, and every file with its bytes. -/
+partial def treeInto (source target : System.FilePath) (model : FileModel) : IO FileModel := do
+  let mut model := model.withDirectory target
   for entry in ← source.readDir do
     if ← entry.path.isDir then
-      copyTree entry.path (target / entry.fileName)
+      model ← treeInto entry.path (target / entry.fileName) model
     else
-      IO.FS.writeBinFile (target / entry.fileName) (← IO.FS.readBinFile entry.path)
+      model := model.withFile (target / entry.fileName) (← IO.FS.readBinFile entry.path)
+  return model
 
-/-- The trees of the project mode checks under `base`, from the fixtures
-under `compile` (`tests/compile`): `cargo`, `lake` and `mise`, and
-`cargo-wt`, a copy of `cargo`, which `projectFound` answers as `cargo`'s
-worktree on `feature`. -/
-def materializeProjects (base compile : System.FilePath) : IO Unit := do
+/-- The base of the project mode checks' trees: a made-up path, which only
+the rig's file fake holds. -/
+def projectBase : System.FilePath :=
+  "/p"
+
+/-- The files of the project mode checks under `base`, read into a model
+from the fixtures under `compile` (`tests/compile`): `cargo`, `lake` and
+`mise`, and `cargo-wt`, a copy of `cargo`, which `projectFound` answers as
+`cargo`'s worktree on `feature`. -/
+def projectFiles (base compile : System.FilePath) : IO FileModel := do
+  let mut model := ({} : FileModel).withDirectory "/"
+  model := model.withDirectory base
   for tree in ["cargo", "lake", "mise"] do
-    copyTree (compile / tree) (base / tree)
-  copyTree (compile / "cargo") (base / "cargo-wt")
+    model ← treeInto (compile / tree) (base / tree) model
+  treeInto (compile / "cargo") (base / "cargo-wt") model
 
--- inferred-waits W34: removed by host-tests-on-fakes phase 4
-set_option linter.inferredWait false in
-/-- Runs `check` in a base of its own holding the project trees
-(`materializeProjects`), its real path, as a finder names it, on a rig whose
-children find the fixture programs of `compile` first on their `PATH`; then
-whether every child it started was reaped, read once a flush of the process
-service is completed (`childrenReapedTo`). The base is removed only once
-the process service has worked what was handed to it under it
-(`Linked.withFiles`, with the process service's flush). -/
-def withProjects (services : Job.Services) (compile : System.FilePath)
-    (check : ProjectRig → System.FilePath → IO Bool) : IO Bool :=
-  withFiles services (targets := [.processes]) fun directory => do
-    let base ← IO.FS.realPath directory
-    materializeProjects base compile
-    let rig ← ProjectRig.new services s!"{compile / "bin"}:/usr/bin:/bin"
-    let before ← pendingChildren
-    let held ← check rig base
-    let reaped ← childrenReapedTo services before
-    return held && reaped
+/-- The command a shipped mode's run of `line` starts in `directory`, as the
+compile mode starts it (`Compile.Order.command`). -/
+def shellOf (line : String) (directory : System.FilePath) : Process.Command :=
+  { program := "/bin/sh", arguments := #["-c", line], directory }
 
-/-- What only the real process and file services show of the shipped
-modes, with fixture programs standing in for cargo, lake and mise
-(`compile`, `tests/compile`), first on each child's `PATH`: each check
-opens files of the trees `materializeProjects` writes, over `files-api`'s
+/-- A streaming child of the rig's process fake: `line` in `directory`,
+which writes the file `canned` to `stream`, as the stand-in of `compile/bin`
+writes it, and exits with `code`. -/
+def cannedChild (line : String) (directory : System.FilePath) (canned : System.FilePath)
+    (stream : Process.Stream) (code : Nat) : IO Process.StreamScript := do
+  return {
+      command := shellOf line directory, steps := #[.write stream (← IO.FS.readBinFile canned)]
+      exit := .code code }
+
+/-- What the rig's process fake runs for the project mode checks under
+`base`, from the stand-ins of `compile/bin` and their canned output, which
+`tests/compile/bin`'s scripts write for the same commands: `cargo build` in
+each cargo tree, its errors on standard error and exit 101; `lake build`,
+on standard output and exit 1; `mise run test` in the mise tree, its errors
+on standard error and exit 1; and `mise tasks ls --json` there, which lists
+the tasks `build` and `test` in that directory. -/
+def projectProcesses (base compile : System.FilePath) : IO ProcessModel := do
+  let canned (name : String) : System.FilePath := compile / "bin" / name
+  let mise := base / "mise"
+  let tasks :=
+    s!"[\n  \{\"name\": \"build\", \"dir\": \"{mise}\", \"hide\": false, \"depends\": [], \"run\": [\"cargo build\"]},\n  \{\"name\": \"test\", \"dir\": \"{mise}\", \"hide\": false, \"depends\": [\"build\"], \"run\": [\"cargo test\"]}\n]\n"
+  return {
+      streams :=
+        #[← cannedChild "cargo build" (base / "cargo") (canned "cargo-build.txt") .err 101,
+          ← cannedChild "cargo build" (base / "cargo-wt") (canned "cargo-build.txt") .err 101,
+          ← cannedChild "lake build" (base / "lake") (canned "lake-build.txt") .out 1,
+          ← cannedChild "mise run test" mise (canned "mise-run-test.txt") .err 1]
+      scripts :=
+        #[{ command :=
+              { program := "mise", arguments := #["tasks", "ls", "--json"], directory := mise }
+            reply := .ok { exit := .code 0, stdout := tasks.toUTF8, stderr := .empty } }] }
+
+/-- Runs `check` on a stepped rig (`ProjectRig.stepped`) whose file fake
+holds the project trees under `projectBase` (`projectFiles`) and whose
+process fake runs the stand-ins' replies (`projectProcesses`): every job is
+run to its end on the check's thread, and nothing is read from or written
+to disk but the fixtures the models are read from. -/
+def withProjects (compile : System.FilePath) (check : ProjectRig → System.FilePath → IO Bool) :
+    IO Bool := do
+  let base := projectBase
+  let (rig, _) ← ProjectRig.stepped (← projectFiles base compile) (← projectProcesses base compile)
+  check rig base
+
+/-- The shipped modes run through the loop on a stepped rig, with the
+process fake answering what the fixture programs standing in for cargo,
+lake and mise write (`compile`, `tests/compile`; `projectProcesses`): each
+check opens files of the trees `projectFiles` holds, over `files-api`'s
 fake, with a file's workspace and its modes on markers given by the
 stand-ins (`projectPackages`), runs a named command and steps to its
 locations. -/
-def projectRunChecks (services : Job.Services) (compile : System.FilePath) : List Check :=
+def projectRunChecks (compile : System.FilePath) : List Check :=
   let canned (name : String) : System.FilePath := compile / "bin" / name
   [{  name :=
-        "modes criterion 8: over the real process service with the fixture cargo, compile-command build in the Cargo fixture fills cargo@main's compilation buffer with the fixture's output, ends exited abnormally with code 101, and next-error visits the rustc location in the fixture tree"
+        "modes criterion 8: with the fixture cargo's reply, compile-command build in the Cargo fixture fills cargo@main's compilation buffer with the fixture's output, ends exited abnormally with code 101, and next-error visits the rustc location in the fixture tree"
       run :=
-        withProjects services compile fun rig base => do
+        withProjects compile fun rig base => do
           let main := base / "cargo" / "src" / "main.rs"
           let some (stepped, texts) ←
             runSettled rig base [openFile main, compileCommandOf "build", nextError] | return false
@@ -217,9 +255,9 @@ def projectRunChecks (services : Job.Services) (compile : System.FilePath) : Lis
                 #[("rustc", main.toString, 4, some 18, some "mismatched types")] &&
               (← focusedAt rig texts stepped) == some (main.toString, 3, 17) },
     { name :=
-        "modes criterion 9: over the real process service with the fixture lake, compile-command build in the Lean fixture fills lake@main's compilation buffer with the fixture's output and ends exited abnormally with code 1"
+        "modes criterion 9: with the fixture lake's reply, compile-command build in the Lean fixture fills lake@main's compilation buffer with the fixture's output and ends exited abnormally with code 1"
       run :=
-        withProjects services compile fun rig base => do
+        withProjects compile fun rig base => do
           let some (built, texts) ←
             runSettled rig base
                 [openFile (base / "lake" / "Foo" / "Bar.lean"),
@@ -230,7 +268,7 @@ def projectRunChecks (services : Job.Services) (compile : System.FilePath) : Lis
     { name :=
         "modes criterion 10: after that build, next-error visits Foo/Bar.lean line 12 column 4 in the Lean fixture tree: row 11, character 4, the x of its last line"
       run :=
-        withProjects services compile fun rig base => do
+        withProjects compile fun rig base => do
           let bar := base / "lake" / "Foo" / "Bar.lean"
           let some (stepped, texts) ←
             runSettled rig base [openFile bar, compileCommandOf "build", nextError] | return false
@@ -238,9 +276,9 @@ def projectRunChecks (services : Job.Services) (compile : System.FilePath) : Lis
                 #[("lean", bar.toString, 12, some 4, some "unknown identifier 'x'")] &&
               (← focusedAt rig texts stepped) == some (bar.toString, 11, 4) },
     { name :=
-        "modes criterion 11: with the fixture mise, mise-mode offers the fixture's tasks in the mise tree, after cargo-mode's in the nested crate, and running test, whose output is rustc's errors, finds them through cargo-mode's format in the nested crate"
+        "modes criterion 11: with the fixture mise's replies, mise-mode offers the fixture's tasks in the mise tree, after cargo-mode's in the nested crate, and running test, whose output is rustc's errors, finds them through cargo-mode's format in the nested crate"
       run :=
-        withProjects services compile fun rig base => do
+        withProjects compile fun rig base => do
           let crateMain := base / "mise" / "crate" / "src" / "main.rs"
           let some (opened, _) ← runSettled rig base [openFile crateMain] | return false
           let some (tested, _) ←
@@ -269,7 +307,7 @@ def projectRunChecks (services : Job.Services) (compile : System.FilePath) : Lis
     { name :=
         "modes criterion 12: build run in the Cargo fixture and in its worktree-shaped copy fills two compilation buffers with separate error lists, next-error in each visits its own tree's file, and both workspaces read one project history holding cargo build once"
       run :=
-        withProjects services compile fun rig base => do
+        withProjects compile fun rig base => do
           let main := base / "cargo" / "src" / "main.rs"
           let wtMain := base / "cargo-wt" / "src" / "main.rs"
           let some (built, texts) ←

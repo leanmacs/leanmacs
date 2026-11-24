@@ -2355,11 +2355,10 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   canned output of cargo, lake and mise to the compile mode's reader with
   the shipped modes' formats and says the locations found (`cargo-mode
   reads 1 of #[rustc, general]: rustc error proj/src/main.rs:4:18 rows 2-8
-  mismatched types`), with no process and only relative paths. A run over a
-  real process is no static fixture, since its output holds the working
-  directory's whole path: the package's linked test runs one in a headless
-  host, in a temporary directory
-  (`packages/compile/tests/linked/run/script`).
+  mismatched types`), with no process and only relative paths. A run of a
+  child through a host is no static fixture: the package's linked test runs
+  one on a stepped stage, the child the stage's process fake
+  (`CompileTest.compileHostChecks`).
 - **An editor without the compile package**: a host of the core alone is
   handed no package, so it has nothing of the compile mode and `compile`
   as an ex name is not bound there (`ModelTest.packageChecks` and

@@ -4938,11 +4938,11 @@ formats reading canned output of cargo, lake and mise into locations; by the mod
 `model-test` and over the real file service by `contract-test`; and, in
 the package's linked test (`packages/compile/CompileTest/Linked.lean`),
 over the real process service by `CompileTest.compileRunChecks`, with the
-fixture `packages/compile/tests/compile/three-lines`, and
-`CompileTest.projectRunChecks`, with the programs in
-`packages/compile/tests/compile/bin` standing in for cargo, lake, mise and
-git and the trees beside them, and by a compile in a headless host, on the
-script `packages/compile/tests/linked/run/script`. A host of the core
+fixture `packages/compile/tests/compile/three-lines`;
+`CompileTest.projectRunChecks`, on a stepped rig whose process fake answers
+the canned output of cargo, lake and mise in
+`packages/compile/tests/compile/bin`, over the trees beside them; and by a
+compile through a host on a stepped stage, `CompileTest.compileHostChecks`. A host of the core
 alone starts with nothing of the compile mode, and `compile` as an ex name
 is not bound there, because the core's Lake package registers no package:
 the root of the set with no package imports no entry module (a pin of
